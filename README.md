@@ -1,1 +1,1 @@
-# openarity
+# Openarity
