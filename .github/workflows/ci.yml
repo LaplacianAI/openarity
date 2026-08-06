@@ -5,8 +5,8 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
-# A new push to the same PR cancels the run still in flight.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -14,29 +14,8 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  GOLANGCI_LINT_VERSION: v2.12.2
-
 jobs:
-  # Path filters, so a dashboard-only change never runs the Go suite.
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      brain: ${{ steps.filter.outputs.brain }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            brain:
-              - 'apps/brain/**'
-              - 'go.work'
-              - '.github/workflows/ci.yml'
-
   brain:
-    needs: changes
-    if: needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -52,7 +31,7 @@ jobs:
       - name: Install golangci-lint
         run: |
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
-            | sh -s -- -b "$(go env GOPATH)/bin" "${GOLANGCI_LINT_VERSION}"
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Install govulncheck
@@ -75,7 +54,7 @@ jobs:
       - name: Build
         run: make build
 
-      # Race detector on, and fails below the coverage threshold in the Makefile.
+      # Race detector on; fails below the threshold set in the Makefile.
       - name: Test and coverage
         run: make cover
 
@@ -89,28 +68,5 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: brain-coverage
-          path: apps/brain/coverage.out
-          if-no-files-found: ignore
-
       - name: Known vulnerabilities
         run: make vuln
-
-  # Single required status check, so branch protection needs only one entry
-  # and still passes when path filters skip the job.
-  ci:
-    if: always()
-    needs: [changes, brain]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fail if any needed job failed
-        run: |
-          if echo '${{ join(needs.*.result, ' ') }}' | grep -qE 'failure|cancelled'; then
-            echo "a required job failed"
-            exit 1
-          fi
-          echo "all required jobs passed or were skipped"
