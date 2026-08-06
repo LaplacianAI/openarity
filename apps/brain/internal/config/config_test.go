@@ -1,0 +1,205 @@
+package config
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
+
+// noEnv is an empty environment: every field falls back to its envDefault.
+// Shared by the other test files in this package.
+func noEnv() map[string]string { return map[string]string{} }
+
+func TestLoadDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(noEnv())
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	want := map[string]string{
+		"Environment":  string(EnvironmentDevelopment),
+		"APIBind":      "127.0.0.1:21120",
+		"WebhookBind":  "127.0.0.1:21121",
+		"LogLevel":     string(LogLevelInfo),
+		"PostgresDSN":  "postgres://postgres:postgres@localhost:5432/openarity?sslmode=disable",
+		"FalkorDBURL":  "redis://127.0.0.1:6380",
+		"RedisURL":     "redis://127.0.0.1:6379",
+		"VaultAddr":    "http://localhost:8200",
+		"OmniRouteURL": "http://localhost:20128/v1",
+	}
+	got := map[string]string{
+		"Environment":  string(cfg.Environment),
+		"APIBind":      cfg.APIBind,
+		"WebhookBind":  cfg.WebhookBind,
+		"LogLevel":     string(cfg.LogLevel),
+		"PostgresDSN":  cfg.PostgresDSN,
+		"FalkorDBURL":  cfg.FalkorDBURL,
+		"RedisURL":     cfg.RedisURL,
+		"VaultAddr":    cfg.VaultAddr,
+		"OmniRouteURL": cfg.OmniRouteURL,
+	}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("%s = %q, want %q", k, got[k], w)
+		}
+	}
+}
+
+func TestLoadOverridesFromEnv(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(map[string]string{
+		"OPENARITY_API_BIND":  "0.0.0.0:9000",
+		"OPENARITY_LOG_LEVEL": "debug",
+	})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.APIBind != "0.0.0.0:9000" {
+		t.Errorf("APIBind = %q, want the override", cfg.APIBind)
+	}
+	if cfg.LogLevel != LogLevelDebug {
+		t.Errorf("LogLevel = %q, want debug", cfg.LogLevel)
+	}
+	if cfg.WebhookBind != "127.0.0.1:21121" {
+		t.Errorf("WebhookBind = %q, want the untouched default", cfg.WebhookBind)
+	}
+}
+
+// An empty-but-set variable must not become "". http.Server turns an empty
+// Addr into port 80 on every interface.
+func TestLoadEmptyValueFallsBackToDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(map[string]string{"OPENARITY_API_BIND": ""})
+	if err != nil {
+		return // rejecting it outright is also acceptable
+	}
+	if cfg.APIBind == "" {
+		t.Fatal("empty API_BIND produced an empty bind address")
+	}
+}
+
+// load must not hand back a config that failed validation.
+func TestLoadRunsValidate(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(map[string]string{"OPENARITY_API_BIND": "no-port-here"})
+	if err == nil {
+		t.Fatalf("load accepted an invalid API_BIND, returned %+v", cfg)
+	}
+	if cfg != nil {
+		t.Errorf("load returned non-nil config alongside an error: %+v", cfg)
+	}
+}
+
+// The prefix is not optional — an unprefixed key must be ignored.
+func TestLoadIgnoresUnprefixedKeys(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(map[string]string{"API_BIND": "0.0.0.0:9999"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.APIBind != "127.0.0.1:21120" {
+		t.Errorf("APIBind = %q, an unprefixed key should be ignored", cfg.APIBind)
+	}
+}
+
+// Load is the exported entry point: load(nil), reading the real process
+// environment. Asserted loosely so a developer with OPENARITY_* exported in
+// their shell does not see a spurious failure.
+func TestLoadReadsProcessEnv(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("Load returned a nil config and no error")
+	}
+	if cfg.APIBind == "" || cfg.WebhookBind == "" {
+		t.Errorf("Load left a bind address empty: %+v", cfg)
+	}
+}
+
+// Every URL field can carry a password. None may reach a log line.
+func TestStringRedactsPasswords(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(map[string]string{
+		"OPENARITY_POSTGRES_DSN":   "postgres://user:pgsecret@localhost:5432/db?sslmode=disable",
+		"OPENARITY_FALKOR_DB_URL":  "redis://user:falkorsecret@127.0.0.1:6380",
+		"OPENARITY_REDIS_URL":      "redis://user:redissecret@127.0.0.1:6379",
+		"OPENARITY_VAULT_ADDR":     "http://user:vaultsecret@localhost:8200",
+		"OPENARITY_OMNI_ROUTE_URL": "http://user:omnisecret@localhost:20128/v1",
+	})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	s := cfg.String()
+	for _, secret := range []string{
+		"pgsecret", "falkorsecret", "redissecret", "vaultsecret", "omnisecret",
+	} {
+		if strings.Contains(s, secret) {
+			t.Errorf("String() leaked %q: %s", secret, s)
+		}
+	}
+}
+
+// Redaction must not eat the parts an operator needs to debug.
+func TestStringKeepsNonSecrets(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(map[string]string{
+		"OPENARITY_POSTGRES_DSN": "postgres://pguser:pgsecret@db.example.com:5432/openarity",
+	})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	s := cfg.String()
+	for _, want := range []string{
+		"development",     // Environment
+		"127.0.0.1:21120", // APIBind
+		"db.example.com",  // host survives
+		"pguser",          // username survives
+		"5432",            // port survives
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("String() dropped %q: %s", want, s)
+		}
+	}
+}
+
+// %v on a *Config must use String(). On a dereferenced Config it will not —
+// that path prints raw fields and leaks. Document which is safe.
+func TestStringUsedByFmtOnPointer(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(map[string]string{
+		"OPENARITY_POSTGRES_DSN": "postgres://u:leakme@localhost:5432/db",
+	})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if s := fmt.Sprintf("%v", cfg); strings.Contains(s, "leakme") {
+		t.Errorf("%%v on *Config leaked the password: %s", s)
+	}
+}
+
+// A malformed URL must not crash String(), and must not print raw either.
+func TestStringHandlesInvalidURL(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{PostgresDSN: "://bad:secret@host"}
+	s := cfg.String()
+	if strings.Contains(s, "secret") {
+		t.Errorf("String() leaked from an unparseable URL: %s", s)
+	}
+}
