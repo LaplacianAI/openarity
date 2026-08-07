@@ -1,12 +1,29 @@
 package server
 
 import (
+	"bytes"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 )
+
+// discardLogger is for tests that assert on behaviour rather than log output.
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// recordingLogger returns a logger and the buffer it writes to. Reads of the
+// buffer must happen after whatever wrote to it has finished — every use here
+// reads only once Run has returned.
+func recordingLogger() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewJSONHandler(&buf, nil)), &buf
+}
 
 func testConfig() *config.Config {
 	return &config.Config{
@@ -22,7 +39,7 @@ func TestNewBindsEachListenerToItsOwnAddress(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig()
-	srv := New(cfg)
+	srv := New(cfg, discardLogger())
 
 	if srv.api.Addr != cfg.APIBind {
 		t.Errorf("api bound to %q, want %q", srv.api.Addr, cfg.APIBind)
@@ -32,18 +49,34 @@ func TestNewBindsEachListenerToItsOwnAddress(t *testing.T) {
 	}
 }
 
-// The two listeners must not share a mux. Once routes diverge, a shared
-// handler exposes every API route on the public webhook port.
-func TestNewGivesEachListenerItsOwnHandler(t *testing.T) {
+// Every listener must be wrapped in the request logger. Building the
+// middleware and forgetting to apply it leaves an exported function no linter
+// flags — `unused` assumes an exported identifier has a caller elsewhere — so
+// this is the only thing standing between wired and silently dead.
+//
+// Handler identity cannot be compared once middleware is applied:
+// http.HandlerFunc is a func type, and == on funcs panics at runtime.
+func TestNewWrapsBothListenersInTheRequestLogger(t *testing.T) {
 	t.Parallel()
 
-	srv := New(testConfig())
+	for name, pick := range map[string]func(*Server) *http.Server{
+		"api":     func(s *Server) *http.Server { return s.api },
+		"webhook": func(s *Server) *http.Server { return s.webhook },
+	} {
+		logger, buf := recordingLogger()
+		srv := New(testConfig(), logger)
 
-	if srv.api.Handler == nil || srv.webhook.Handler == nil {
-		t.Fatal("New left a handler nil")
-	}
-	if srv.api.Handler == srv.webhook.Handler {
-		t.Error("both listeners share one handler")
+		listener := pick(srv)
+		if listener.Handler == nil {
+			t.Fatalf("New left the %s handler nil", name)
+		}
+
+		rec := httptest.NewRecorder()
+		listener.Handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/nope", nil))
+
+		if !strings.Contains(buf.String(), `"path":"/nope"`) {
+			t.Errorf("%s listener is not wrapped in the request logger: %q", name, buf.String())
+		}
 	}
 }
 
@@ -52,7 +85,7 @@ func TestNewGivesEachListenerItsOwnHandler(t *testing.T) {
 func TestNewSetsAllTimeouts(t *testing.T) {
 	t.Parallel()
 
-	srv := New(testConfig())
+	srv := New(testConfig(), discardLogger())
 
 	for name, s := range map[string]*http.Server{"api": srv.api, "webhook": srv.webhook} {
 		if s.ReadHeaderTimeout != readHeaderTimeout {
@@ -77,7 +110,7 @@ func TestNewDoesNotListen(t *testing.T) {
 	cfg := testConfig()
 	cfg.APIBind = "256.256.256.256:99999" // unresolvable, unbindable
 
-	if srv := New(cfg); srv == nil {
+	if srv := New(cfg, discardLogger()); srv == nil {
 		t.Fatal("New returned nil")
 	}
 }

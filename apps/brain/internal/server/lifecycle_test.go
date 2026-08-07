@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -84,7 +86,7 @@ func TestRunServesBothThenStopsCleanly(t *testing.T) {
 	cfg.WebhookBind = freeAddr(t)
 
 	ctx, cancel := context.WithCancel(t.Context())
-	srv := New(cfg)
+	srv := New(cfg, discardLogger())
 
 	done := make(chan error, 1)
 	go func() { done <- srv.Run(ctx) }()
@@ -108,7 +110,7 @@ func TestRunFailsFastWhenAPortIsTaken(t *testing.T) {
 	cfg.WebhookBind = occupiedAddr(t)
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg).Run(t.Context()) }()
+	go func() { done <- New(cfg, discardLogger()).Run(t.Context()) }()
 
 	if err := waitFor(t, done); err == nil {
 		t.Error("Run returned nil despite the webhook listener failing to bind")
@@ -125,7 +127,7 @@ func TestRunStopsTheHealthyListenerToo(t *testing.T) {
 	cfg.WebhookBind = occupiedAddr(t)
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg).Run(t.Context()) }()
+	go func() { done <- New(cfg, discardLogger()).Run(t.Context()) }()
 	_ = waitFor(t, done)
 
 	var lc net.ListenConfig
@@ -149,10 +151,73 @@ func TestRunWithAlreadyCancelledContext(t *testing.T) {
 	cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg).Run(ctx) }()
+	go func() { done <- New(cfg, discardLogger()).Run(ctx) }()
 
 	if err := waitFor(t, done); err != nil {
 		t.Errorf("Run with a cancelled context = %v, want nil", err)
+	}
+}
+
+// The startup log has to name the address each listener is on. It is the only
+// record of where the process actually bound, and the first thing anyone reads
+// when a port turns out to be wrong.
+func TestRunLogsBothBindAddresses(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.APIBind = freeAddr(t)
+	cfg.WebhookBind = freeAddr(t)
+
+	logger, buf := recordingLogger()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- New(cfg, logger).Run(ctx) }()
+	if err := waitFor(t, done); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	out := buf.String()
+	for _, addr := range []string{cfg.APIBind, cfg.WebhookBind} {
+		if !strings.Contains(out, addr) {
+			t.Errorf("startup log never mentioned %s: %s", addr, out)
+		}
+	}
+}
+
+// Every record must be one JSON object per line. A handler misconfigured to
+// emit text produces logs no aggregator can query, and nothing else notices.
+func TestRunLogsAreLineDelimitedJSON(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.APIBind = freeAddr(t)
+	cfg.WebhookBind = freeAddr(t)
+
+	logger, buf := recordingLogger()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- New(cfg, logger).Run(ctx) }()
+	if err := waitFor(t, done); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected a record per listener plus shutdown, got %d: %s", len(lines), buf.String())
+	}
+	for _, line := range lines {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Errorf("log line is not JSON: %q", line)
+			continue
+		}
+		if rec["msg"] == nil {
+			t.Errorf("log line has no msg: %q", line)
+		}
 	}
 }
 
@@ -160,7 +225,7 @@ func TestRunWithAlreadyCancelledContext(t *testing.T) {
 func TestShutdownBeforeRun(t *testing.T) {
 	t.Parallel()
 
-	if err := New(testConfig()).shutdown(); err != nil {
+	if err := New(testConfig(), discardLogger()).shutdown(); err != nil {
 		t.Errorf("shutdown before Run = %v, want nil", err)
 	}
 }

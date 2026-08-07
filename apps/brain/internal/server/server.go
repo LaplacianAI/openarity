@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/middleware"
 )
 
 const (
@@ -20,12 +22,16 @@ const (
 type Server struct {
 	api     *http.Server
 	webhook *http.Server
+	logger  *slog.Logger
 }
 
-func New(cfg *config.Config) *Server {
+func New(cfg *config.Config, logger *slog.Logger) *Server {
+	logRequests := middleware.LogRequests(logger)
+
 	return &Server{
-		api:     newHTTPServer(cfg.APIBind, apiHandler()),
-		webhook: newHTTPServer(cfg.WebhookBind, webhookHandler()),
+		api:     newHTTPServer(cfg.APIBind, logRequests(apiHandler())),
+		webhook: newHTTPServer(cfg.WebhookBind, logRequests(webhookHandler())),
+		logger:  logger,
 	}
 }
 
@@ -54,6 +60,9 @@ func listen(s *http.Server) error {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	s.logger.Info("Listening on API bind", "bind", s.api.Addr)
+	s.logger.Info("Listening on Webhook bind", "bind", s.webhook.Addr)
+
 	errs := make(chan error, 2)
 
 	go func() {
@@ -72,6 +81,8 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) shutdown() error {
+	s.logger.Info("Shutting down servers", "timeout", shutdownTimeout)
+
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 

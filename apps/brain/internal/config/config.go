@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net/url"
 
 	"github.com/caarlos0/env/v11"
@@ -14,7 +15,7 @@ type Config struct {
 	WebhookBind string      `env:"WEBHOOK_BIND" envDefault:"127.0.0.1:21121"`
 
 	/* Logging Configuration */
-	LogLevel LogLevel `env:"LOG_LEVEL" envDefault:"info"`
+	LogLevel slog.Level `env:"LOG_LEVEL" envDefault:"info"`
 
 	/* Datastore Configuration */
 	PostgresDSN string `env:"POSTGRES_DSN" envDefault:"postgres://postgres:postgres@localhost:5432/openarity?sslmode=disable"`

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -22,7 +23,7 @@ func TestLoadDefaults(t *testing.T) {
 		"Environment":  string(EnvironmentDevelopment),
 		"APIBind":      "127.0.0.1:21120",
 		"WebhookBind":  "127.0.0.1:21121",
-		"LogLevel":     string(LogLevelInfo),
+		"LogLevel":     slog.LevelInfo.String(),
 		"PostgresDSN":  "postgres://postgres:postgres@localhost:5432/openarity?sslmode=disable",
 		"FalkorDBURL":  "redis://127.0.0.1:6380",
 		"RedisURL":     "redis://127.0.0.1:6379",
@@ -33,7 +34,7 @@ func TestLoadDefaults(t *testing.T) {
 		"Environment":  string(cfg.Environment),
 		"APIBind":      cfg.APIBind,
 		"WebhookBind":  cfg.WebhookBind,
-		"LogLevel":     string(cfg.LogLevel),
+		"LogLevel":     cfg.LogLevel.String(),
 		"PostgresDSN":  cfg.PostgresDSN,
 		"FalkorDBURL":  cfg.FalkorDBURL,
 		"RedisURL":     cfg.RedisURL,
@@ -60,8 +61,8 @@ func TestLoadOverridesFromEnv(t *testing.T) {
 	if cfg.APIBind != "0.0.0.0:9000" {
 		t.Errorf("APIBind = %q, want the override", cfg.APIBind)
 	}
-	if cfg.LogLevel != LogLevelDebug {
-		t.Errorf("LogLevel = %q, want debug", cfg.LogLevel)
+	if cfg.LogLevel != slog.LevelDebug {
+		t.Errorf("LogLevel = %v, want debug", cfg.LogLevel)
 	}
 	if cfg.WebhookBind != "127.0.0.1:21121" {
 		t.Errorf("WebhookBind = %q, want the untouched default", cfg.WebhookBind)
