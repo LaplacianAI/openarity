@@ -26,14 +26,20 @@ break it, explains, and reviews.**
   field, the enum type if the value is a fixed set, validation, redaction in
   `String()`, and the three test files. Use it every time; a field wired into
   four of the five places is the normal failure.
+- **`add-middleware`** — anything that wraps an `http.Handler`: auth, request
+  IDs, panic recovery, rate limits, body size limits. Covers the signature,
+  wrapping the response writer, chain order, and wiring into `server.New`. Use
+  it every time; a middleware that is built and never applied passes every
+  linter and every test except the wiring one.
 
 ## Layout
 
 ```text
 apps/brain/
-  cmd/brain/           the only binary: main() and run()
+  cmd/brain/           the only binary: main(), run(), newLogger()
   internal/config/     configuration: load, validate, redact
   internal/server/     the two listeners: build, run, shut down
+  internal/middleware/ request logging, and everything that wraps a handler
   Makefile             build and code quality targets
   .golangci.yml        linters and formatters
 ```
@@ -94,12 +100,41 @@ they should be talking over HTTP instead.
   200 before asserting anything, with a deadline that fails the test. A
   `time.Sleep` long enough to be reliable is long enough to be slow, and short
   enough to be fast is flaky in CI.
+- **Use the stdlib type when it already encodes the constraint.** `LogLevel` was
+  a hand-written enum until `slog.Level` turned out to be a `TextUnmarshaler`
+  that parses case-insensitively and rejects unknown names with a better
+  message. Write your own type when the constraint is yours — `Environment` has
+  no stdlib equivalent and stays. Probe the stdlib before writing the enum.
+- **The logger is a parameter, never a global.** `slog.Default()` is a hidden
+  dependency and cannot be swapped safely under `t.Parallel()`. It reaches
+  `internal/server` through `New`, and a nil one is left to panic rather than
+  defaulted — see the trust rule below.
+- **Log fields, not sentences.** `logger.Info("request", "status", 202)`, never
+  `logger.Info(fmt.Sprintf("request returned %d", 202))`. The point is querying
+  by field. Never log a whole struct: `"config", cfg` with `%+v` bypasses the
+  `String()` that was redacting the password.
+- **Log `r.URL.Path`, never `r.URL.String()`.** Credentials travel in query
+  strings, and the log shipper takes them off the box.
+- **Middleware returns a `Middleware`, it does not take `next` directly.**
+  `func LogRequests(logger) Middleware` — dependencies in the outer call, the
+  handler in the inner one. The two-argument form nests inside-out and becomes
+  unreadable at three middlewares.
+- **An exported identifier that nothing calls is invisible.** `unused` assumes
+  an exported function has a caller in another package, so a middleware that is
+  built and never applied passes every linter. Only a test that drives the wired
+  object catches it.
+- **Validate what comes from outside; trust what comes from the composition
+  root.** `config.Load` validates because the environment is outside the
+  program. `server.New` does not check its logger for nil because `run` is
+  inside it — a nil there is a programming error, and a panic with a stack
+  trace beats a silent fallback.
 
 ## Commands
 
 ```sh
 make            # list targets
 make check      # everything CI runs: tidy, fmt, vet, lint, build, test, vuln
+make run        # run the server, Ctrl-C for a graceful shutdown
 make cover      # coverage, fails below the threshold
 make fmt        # apply gofumpt and fix import order
 make tools      # reinstall tooling — rerun after a Go upgrade
@@ -144,3 +179,11 @@ reinstalled.
   to opt out per route.
 - **Secrets are references.** A row or config field holds a Vault path, never a
   value. Only `internal/secrets` imports a secret backend SDK.
+- **`slog` from the stdlib.** No zap, no zerolog. Text with source locations in
+  development because a terminal is the reader; JSON everywhere else because a
+  log aggregator is. `AddSource` costs a stack walk per record, so development
+  only.
+- **`/healthz` is not logged.** Kubernetes probes it every ten seconds on two
+  listeners — roughly 17k lines a day that say nothing and bury everything
+  else. The skip lives in the middleware and must still let the response
+  through untouched.

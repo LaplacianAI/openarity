@@ -41,16 +41,20 @@ func stubEnv(t *testing.T) (context.Context, string) {
 	return ctx, apiBind
 }
 
-// run must write the config to the writer it was handed.
-func TestRunWritesConfig(t *testing.T) {
+// The startup log is the only evidence of what the process decided to be. It
+// has to carry the environment and the address it actually bound, written to
+// the writer run was handed.
+func TestRunLogsStartup(t *testing.T) {
 	ctx, apiBind := stubEnv(t)
 
 	var buf bytes.Buffer
 	if err := run(ctx, &buf); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if !strings.Contains(buf.String(), apiBind) {
-		t.Errorf("run wrote no recognisable config: %q", buf.String())
+	for _, want := range []string{"development", apiBind} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("startup log never mentioned %q: %s", want, buf.String())
+		}
 	}
 }
 

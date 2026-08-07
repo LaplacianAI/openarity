@@ -27,7 +27,12 @@ func run(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, cfg)
 
-	return server.New(cfg).Run(ctx)
+	logger := newLogger(cfg, out)
+	logger.Info("Starting brain service",
+		"environment", cfg.Environment,
+		"log_level", cfg.LogLevel,
+	)
+
+	return server.New(cfg, logger).Run(ctx)
 }

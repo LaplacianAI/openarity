@@ -72,6 +72,10 @@ vuln:
 build:
 	$(GO) build ./...
 
+## run: run the server, Ctrl-C to shut it down gracefully
+run:
+	$(GO) run ./cmd/brain
+
 ## check: everything CI runs
 check: tidy-check fmt-check vet lint build test vuln
 
@@ -80,4 +84,4 @@ clean:
 	rm -f $(COVER_PROFILE) $(COVER_HTML)
 	$(GO) clean -testcache
 
-.PHONY: help tools tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build check clean
+.PHONY: help tools tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build run check clean

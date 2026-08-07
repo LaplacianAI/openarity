@@ -43,8 +43,18 @@ local development breaks in a way that looks like a code bug.
 ## Step 2 — a type, if the value is a fixed set
 
 If the setting has a known set of allowed values, do **not** use a bare
-`string`. Add a type in `enums.go` with an `UnmarshalText` method, alongside
-`Environment` and `LogLevel`:
+`string`.
+
+**First check whether the stdlib already has the type.** Anything implementing
+`encoding.TextUnmarshaler` drops straight into a struct tag with no code at
+all. `LogLevel` was a hand-written enum until `slog.Level` turned out to parse
+case-insensitively and reject unknown names with a better message than ours —
+34 lines deleted. `time.Duration` is the other common one. Write a probe under
+the scratchpad and check what it actually accepts before assuming.
+
+Write your own type only when the constraint is yours. `Environment` has no
+stdlib equivalent, so it stays. Add it in `enums.go` with an `UnmarshalText`
+method, alongside `Environment`:
 
 ```go
 type Driver string
@@ -126,7 +136,10 @@ Update all three, in the file matching the source file:
 
 **`enums_test.go`** (only if step 2 applied)
 - add the type to the `encoding.TextUnmarshaler` compile-time assertion block
-- add accept-known and reject-unknown tests, following the `LogLevel` pair
+- add accept-known and reject-unknown tests, following the `Environment` set
+
+If the type came from the stdlib instead, do not re-test its parsing — assert
+the **wiring** through `load`, as `TestLoadAcceptsAnyCaseLogLevel` does.
 
 ## Step 6 — verify
 
