@@ -329,6 +329,27 @@ func TestInTxWritesAreInvisibleUntilCommit(t *testing.T) {
 	}
 }
 
+// If the transaction cannot even start, the callback must not run. Running it
+// against the pool instead would be the worst possible fallback: the writes
+// would land, unprotected, and the caller would be told the transaction
+// failed.
+func TestInTxDoesNotRunTheCallbackWhenBeginFails(t *testing.T) {
+	s := queryStore(t)
+	s.Close()
+
+	called := false
+	err := s.InTx(t.Context(), func(_ *db.Queries) error {
+		called = true
+		return nil
+	})
+	if err == nil {
+		t.Fatal("InTx succeeded against a closed pool")
+	}
+	if called {
+		t.Error("InTx ran the callback after Begin failed")
+	}
+}
+
 // Every path through InTx must hand its connection back. A leak only shows up
 // under load, as the pool slowly starves, which is a miserable thing to debug
 // from production.

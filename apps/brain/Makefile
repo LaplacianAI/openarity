@@ -99,8 +99,15 @@ build:
 run:
 	$(GO) run ./cmd/brain
 
-## generate: regenerate the sqlc query code from the migrations and queries
-generate:
+## generate: run every code generator
+#
+# An umbrella, deliberately. Today sqlc is the only generator; the OpenAPI
+# clients are coming, and when they do `make generate` keeps meaning "make the
+# generated code match the source" without anyone having to learn a new target.
+generate: generate-sql
+
+## generate-sql: regenerate the sqlc query code from the migrations and queries
+generate-sql:
 	sqlc generate
 
 ## generate-check: fail if the generated code on disk is out of date
@@ -132,4 +139,4 @@ clean:
 	rm -f $(COVER_PROFILE) $(COVER_HTML)
 	$(GO) clean -testcache
 
-.PHONY: help tools tools-editor tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build run generate generate-check migration check clean
+.PHONY: help tools tools-editor tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build run generate generate-sql generate-check migration check clean
