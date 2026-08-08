@@ -134,7 +134,7 @@ meant to test never happens.
 
 ```sh
 make cover db=postgres
-make cover-html db=openarity_test host=db.local port=5433
+make cover-html db=openarity_test    # after make testdb db=openarity_test
 ```
 
 `make cover` warns when no database is named.

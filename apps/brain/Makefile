@@ -25,8 +25,13 @@ GOPLS_VERSION       := latest
 # default: liveDSN only checks that the variable is non-empty, so a default
 # would turn "no Postgres" from a skip into a failure.
 #
-#   make cover db=postgres
-#   make cover db=openarity_test host=db.local port=5433 user=alice
+# The database has to exist — `make testdb db=name` creates it, and the tests
+# make their own schema inside it. `db=postgres` needs no setup at all.
+#
+#   make testdb db=openarity_test     # once per machine
+#   make check  db=openarity_test
+#   make check  db=postgres           # or just use the database that exists
+#   make check  db=brain host=10.0.0.5 port=5433 user=alice
 #
 # Or export BRAIN_TEST_POSTGRES_DSN yourself; anything passed here wins.
 db      ?=
@@ -147,6 +152,17 @@ generate-check: generate
 	  exit 1; \
 	fi
 
+## testdb: create the local database the tests point at — make testdb db=openarity_test
+#
+# Only the database. Each test makes its own schema inside it and drops it
+# afterwards, so this is a once-per-machine step, and pointing it at a
+# throwaway database is safe.
+testdb:
+	@test -n "$(db)" || { echo "usage: make testdb db=openarity_test"; exit 1; }
+	@createdb -h $(host) -p $(port) -U $(user) $(db) 2>/dev/null \
+	  && echo "created $(db)" \
+	  || echo "$(db) already exists on $(host):$(port)"
+
 ## migration: scaffold a timestamped migration — make migration name=add_tenants
 migration:
 	@test -n "$(name)" || { echo "usage: make migration name=add_tenants"; exit 1; }
@@ -161,4 +177,4 @@ clean:
 	rm -f $(COVER_PROFILE) $(COVER_HTML)
 	$(GO) clean -testcache
 
-.PHONY: help tools tools-editor tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build run generate generate-sql generate-check migration check clean
+.PHONY: help tools tools-editor testdb tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build run generate generate-sql generate-check migration check clean

@@ -185,7 +185,8 @@ make                    # list targets
 make check db=postgres  # everything CI runs — see the note below about db=
 make run                # run the server, Ctrl-C for a graceful shutdown
 make cover              # coverage, fails below the threshold
-make cover-html db=openarity_test host=db.local port=5433   # the HTML report
+make cover-html db=postgres      # the annotated HTML report
+make testdb db=openarity_test    # create a test database — once per machine
 make generate           # regenerate everything generated (today: sqlc)
 make fmt                # apply gofumpt and fix import order
 make tools              # reinstall tooling — rerun after a Go upgrade

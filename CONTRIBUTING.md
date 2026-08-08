@@ -70,13 +70,25 @@ is unset, so `make check` stays useful with nothing running.
 Point them at a database by passing its name:
 
 ```sh
-make check db=postgres
-make check db=openarity_test host=db.local port=5433 user=alice
-make cover-html db=openarity_test host=db.local port=5433   # annotated report
+make testdb db=openarity_test           # once per machine
+make check  db=openarity_test
+make cover-html db=openarity_test       # the annotated report
 ```
 
-`host`, `port`, `user` and `sslmode` all have defaults; only `db` is required,
-and passing it is what switches these tests on. Exporting
+The database has to exist; `make testdb` creates it. Each test then makes its
+own schema inside it and drops it afterwards, so a throwaway database is safe
+and one database serves the whole suite.
+
+To skip that step entirely, point at the `postgres` database every server
+already has:
+
+```sh
+make check db=postgres
+```
+
+`host`, `port`, `user` and `sslmode` all have defaults and take overrides —
+`make check db=brain host=10.0.0.5 port=5433 user=alice`. Only `db` is
+required, and passing it is what switches these tests on. Exporting
 `BRAIN_TEST_POSTGRES_DSN` yourself works too.
 
 There is deliberately no default database. The skip triggers on the variable
