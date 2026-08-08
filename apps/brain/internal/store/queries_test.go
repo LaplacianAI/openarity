@@ -55,6 +55,16 @@ func backdate(t *testing.T, s *Store, id uuid.UUID, at time.Time) {
 	}
 }
 
+// exec runs DDL against this test's own schema. Only the tests that
+// deliberately break the schema need it.
+func exec(t *testing.T, s *Store, sql string) {
+	t.Helper()
+
+	if _, err := s.pool.Exec(t.Context(), sql); err != nil {
+		t.Fatalf("exec %.40s…: %v", sql, err)
+	}
+}
+
 // countTeams goes through the pool rather than the generated query, so it sees
 // only committed rows. That is the whole point of it in the transaction tests.
 func countTeams(t *testing.T, s *Store) int {
@@ -178,6 +188,70 @@ func TestListTeamsOnAnEmptyTable(t *testing.T) {
 	}
 	if len(teams) != 0 {
 		t.Errorf("ListTeams returned %v, want nothing", teamNames(teams))
+	}
+}
+
+// The three error paths in a generated :many are the ones a caller depends on
+// most and sees least: each returns `nil, err`, so a query that half-failed
+// must never come back as a short list and a nil error. They are only
+// reachable by breaking the database out from under the query, which is what
+// the next three tests do — each one lands on a different branch.
+//
+// The schema is this test's own and is dropped afterwards, so mangling it is
+// free.
+
+// Branch one: the query never runs.
+func TestListTeamsReportsAQueryFailure(t *testing.T) {
+	s := queryStore(t)
+	s.Close()
+
+	teams, err := s.ListTeams(t.Context())
+	if err == nil {
+		t.Fatal("ListTeams succeeded against a closed pool")
+	}
+	if teams != nil {
+		t.Errorf("ListTeams returned %v alongside an error, want nil", teamNames(teams))
+	}
+}
+
+// Branch two: the query runs and a row will not scan. Widening id to text and
+// putting a non-uuid in it makes the generated Scan fail on the first row.
+func TestListTeamsReportsAScanFailure(t *testing.T) {
+	s := queryStore(t)
+
+	exec(t, s, "ALTER TABLE teams ALTER COLUMN id TYPE text USING id::text")
+	exec(t, s, "INSERT INTO teams (id, name) VALUES ('not-a-uuid', 'broken')")
+
+	teams, err := s.ListTeams(t.Context())
+	if err == nil {
+		t.Fatal("ListTeams accepted a row it cannot scan")
+	}
+	if teams != nil {
+		t.Errorf("ListTeams returned %v alongside an error, want nil", teamNames(teams))
+	}
+}
+
+// Branch three: rows start arriving and then the server raises. Postgres
+// streams a view, so the division by zero at row 500 lands after 499 good rows
+// have already been scanned — the error surfaces from rows.Err(), not from
+// Query. This is the branch that turns a partial result into an error, and the
+// only one where a caller could otherwise be handed half a list.
+func TestListTeamsReportsAFailureMidStream(t *testing.T) {
+	s := queryStore(t)
+
+	exec(t, s, "DROP TABLE teams")
+	exec(t, s, `CREATE VIEW teams AS
+		SELECT gen_random_uuid() AS id,
+		       CASE WHEN i < 500 THEN 'ok' ELSE (1/(500-i))::text END AS name,
+		       now() AS created_at, now() AS updated_at
+		FROM generate_series(1, 1000) i`)
+
+	teams, err := s.ListTeams(t.Context())
+	if err == nil {
+		t.Fatal("ListTeams returned a partial result as success")
+	}
+	if teams != nil {
+		t.Errorf("ListTeams returned %d rows alongside an error, want nil", len(teams))
 	}
 }
 

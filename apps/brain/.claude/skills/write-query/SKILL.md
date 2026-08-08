@@ -130,6 +130,19 @@ What the query tests here are built to catch:
   `s.pool`, that an uncommitted write is invisible. Without that, a broken
   `InTx` that writes through the pool passes every other test.
 - **Rollback on panic**, not only on error return.
+- **The three error paths of a `:many`.** Each returns `nil, err`, so a query
+  that half-failed must never surface as a short list and a nil error. Reach
+  them by breaking the database under the query — the test's schema is its own
+  and is dropped afterwards, so mangling it is free:
+
+  | Branch | How |
+  | --- | --- |
+  | `Query` fails | `s.Close()`, then call the query |
+  | `Scan` fails | `ALTER COLUMN id TYPE text`, insert a non-uuid |
+  | `rows.Err()` fails | replace the table with a view that divides by zero at row 500 — Postgres streams it, so the error arrives after 499 good rows |
+
+  Only the third one proves a *partial* result becomes an error, which is the
+  case a caller could otherwise be handed silently.
 - **Connection release.** Loop `InTx` more times than `maxConns` and assert
   `s.pool.Stat().AcquiredConns() == 0`. Give the test a bounded context: a leak
   does not make `Begin` fail, it makes `Begin` block, and without a deadline
