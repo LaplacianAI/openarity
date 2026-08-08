@@ -48,12 +48,16 @@ Go's.
 
 ```sh
 cd apps/brain
-make check     # tidy-check, fmt-check, vet, lint, build, test, vuln
-make cover     # tests with coverage; fails below 70%
+make check
 ```
 
-Together these are exactly what `.github/workflows/ci.yml` runs, in the same
-order. If they pass locally they pass in CI.
+That is `tidy-check`, `generate-check`, `fmt-check`, `vet`, `lint`, `build`,
+`cover` and `vuln` — exactly what `.github/workflows/ci.yml` runs, in the same
+order. If it passes locally it passes in CI.
+
+Run it **with a database**. The coverage floor is 70%, and with the Postgres
+tests skipping, the suite lands close enough to that floor that an unrelated
+change can trip it.
 
 Run `make fmt` to apply formatting rather than fixing it by hand — the project
 uses `gofumpt` and `gci`, and both are enforced.
@@ -91,6 +95,32 @@ OPENARITY_LOG_LEVEL=debug OPENARITY_API_BIND=127.0.0.1:8080 make run
 
 `internal/config/config.go` is the full list. Adding a setting is documented in
 `apps/brain/.claude/skills/add-env-var`.
+
+## Queries
+
+SQL lives in `internal/store/queries/*.sql`. The Go that runs it is generated
+by [sqlc](https://sqlc.dev) into `internal/store/db` and **committed** — never
+edited by hand.
+
+```sql
+-- name: GetTeam :one
+SELECT * FROM teams WHERE id = $1;
+```
+
+```sh
+make generate
+```
+
+`:one` returns a row, `:many` a slice, `:exec` only an error. sqlc reads the
+schema straight from the goose migrations, so there is no second copy to keep
+in sync.
+
+CI runs `make generate-check`, which regenerates and fails if the result
+differs from what is committed. Change a query, run `make generate`, commit
+both files together.
+
+Writes that must all succeed or all fail go through `Store.InTx`, which hands
+the callback a `*db.Queries` bound to the transaction.
 
 ## Migrations
 

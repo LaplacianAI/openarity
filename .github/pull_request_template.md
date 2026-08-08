@@ -20,13 +20,12 @@ touches storage.
 
 ```sh
 cd apps/brain
-make check
-make cover
+BRAIN_TEST_POSTGRES_DSN=... make check
 ```
 
 ## Checklist
 
-- [ ] `make check` and `make cover` pass locally
+- [ ] `make check` passes locally, with a database
 - [ ] Tests cover the new behaviour, including at least one failure case
 - [ ] Migrations, if any, have a `Down` and were applied and rolled back
 - [ ] No secret, credential or DSN with a password appears in the diff
