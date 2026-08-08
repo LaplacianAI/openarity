@@ -7,6 +7,7 @@ GO              ?= go
 COVER_PROFILE   := coverage.out
 COVER_HTML      := coverage.html
 COVER_MIN       := 70
+MIGRATIONS_DIR  := internal/store/migrations
 
 .DEFAULT_GOAL := help
 
@@ -19,6 +20,7 @@ tools:
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 	$(GO) install golang.org/x/vuln/cmd/govulncheck@latest
 	$(GO) install golang.org/x/tools/gopls@latest
+	$(GO) install github.com/pressly/goose/v3/cmd/goose@latest
 	@echo "installed with $$($(GO) version)"
 	@echo "restart your editor's language server to pick up the new gopls"
 
@@ -76,6 +78,12 @@ build:
 run:
 	$(GO) run ./cmd/brain
 
+## migration: scaffold a timestamped migration — make migration name=add_tenants
+migration:
+	@test -n "$(name)" || { echo "usage: make migration name=add_tenants"; exit 1; }
+	@mkdir -p $(MIGRATIONS_DIR)
+	goose -dir $(MIGRATIONS_DIR) create $(name) sql
+
 ## check: everything CI runs
 check: tidy-check fmt-check vet lint build test vuln
 
@@ -84,4 +92,4 @@ clean:
 	rm -f $(COVER_PROFILE) $(COVER_HTML)
 	$(GO) clean -testcache
 
-.PHONY: help tools tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build run check clean
+.PHONY: help tools tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build run migration check clean

@@ -2,11 +2,13 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
@@ -32,6 +34,36 @@ func testConfig() *config.Config {
 	}
 }
 
+// fakePinger stands in for the store. It counts calls so a test can prove
+// healthz never reaches the database.
+type fakePinger struct {
+	mu    sync.Mutex
+	err   error
+	calls int
+}
+
+// Ping honours the context, as a real one does — that is what lets a test
+// assert readyz stops when the probe disconnects.
+func (f *fakePinger) Ping(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return f.err
+}
+
+func (f *fakePinger) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// healthyDB is the usual case: a database that answers.
+func healthyDB() *fakePinger { return &fakePinger{} }
+
 // Swapping these two binds puts the API on a public port and the webhook
 // receiver on loopback. That is the whole security boundary, so assert the
 // mapping rather than trusting the field order in New.
@@ -39,7 +71,7 @@ func TestNewBindsEachListenerToItsOwnAddress(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig()
-	srv := New(cfg, discardLogger())
+	srv := New(cfg, discardLogger(), healthyDB())
 
 	if srv.api.Addr != cfg.APIBind {
 		t.Errorf("api bound to %q, want %q", srv.api.Addr, cfg.APIBind)
@@ -64,7 +96,7 @@ func TestNewWrapsBothListenersInTheRequestLogger(t *testing.T) {
 		"webhook": func(s *Server) *http.Server { return s.webhook },
 	} {
 		logger, buf := recordingLogger()
-		srv := New(testConfig(), logger)
+		srv := New(testConfig(), logger, healthyDB())
 
 		listener := pick(srv)
 		if listener.Handler == nil {
@@ -85,7 +117,7 @@ func TestNewWrapsBothListenersInTheRequestLogger(t *testing.T) {
 func TestNewSetsAllTimeouts(t *testing.T) {
 	t.Parallel()
 
-	srv := New(testConfig(), discardLogger())
+	srv := New(testConfig(), discardLogger(), healthyDB())
 
 	for name, s := range map[string]*http.Server{"api": srv.api, "webhook": srv.webhook} {
 		if s.ReadHeaderTimeout != readHeaderTimeout {
@@ -110,55 +142,28 @@ func TestNewDoesNotListen(t *testing.T) {
 	cfg := testConfig()
 	cfg.APIBind = "256.256.256.256:99999" // unresolvable, unbindable
 
-	if srv := New(cfg, discardLogger()); srv == nil {
+	if srv := New(cfg, discardLogger(), healthyDB()); srv == nil {
 		t.Fatal("New returned nil")
 	}
 }
 
-// Kubernetes probes this endpoint on the webhook listener. It must answer 200
-// on both handlers with no dependencies wired.
-func TestHealthzOnBothHandlers(t *testing.T) {
-	t.Parallel()
+// handlers returns both muxes, unwrapped by middleware, keyed by listener.
+func handlers(t *testing.T, db Pinger) map[string]http.Handler {
+	t.Helper()
 
-	for name, h := range map[string]http.Handler{
-		"api":     apiHandler(),
-		"webhook": webhookHandler(),
-	} {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("%s /healthz = %d, want 200", name, rec.Code)
-		}
-		if rec.Body.String() != "ok\n" {
-			t.Errorf("%s /healthz body = %q, want %q", name, rec.Body.String(), "ok\n")
-		}
+	srv := New(testConfig(), discardLogger(), db)
+	return map[string]http.Handler{
+		"api":     srv.apiHandler(),
+		"webhook": srv.webhookHandler(),
 	}
 }
 
-// The route is registered "GET /healthz". A bare "/healthz" pattern would
-// answer every method, turning the probe into an unauthenticated write target
-// the day it grows a body.
-func TestHealthzRejectsNonGET(t *testing.T) {
-	t.Parallel()
-
-	rec := httptest.NewRecorder()
-	apiHandler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/healthz", nil))
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST /healthz = %d, want 405", rec.Code)
-	}
-}
-
-// Nothing else is registered yet. A catch-all "/" would make every typo a 200
-// and hide routing mistakes.
+// Nothing but the probes is registered yet. A catch-all "/" would make every
+// typo a 200 and hide routing mistakes.
 func TestUnknownPathIs404(t *testing.T) {
 	t.Parallel()
 
-	for name, h := range map[string]http.Handler{
-		"api":     apiHandler(),
-		"webhook": webhookHandler(),
-	} {
+	for name, h := range handlers(t, healthyDB()) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/nope", nil))
 

@@ -25,7 +25,7 @@ func LogRequests(logger *slog.Logger) Middleware {
 				status:         http.StatusOK,
 			}
 
-			if r.URL.Path == "/healthz" {
+			if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
 				next.ServeHTTP(rw, r)
 				return
 			}

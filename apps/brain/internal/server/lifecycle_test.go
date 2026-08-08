@@ -86,7 +86,7 @@ func TestRunServesBothThenStopsCleanly(t *testing.T) {
 	cfg.WebhookBind = freeAddr(t)
 
 	ctx, cancel := context.WithCancel(t.Context())
-	srv := New(cfg, discardLogger())
+	srv := New(cfg, discardLogger(), healthyDB())
 
 	done := make(chan error, 1)
 	go func() { done <- srv.Run(ctx) }()
@@ -110,7 +110,7 @@ func TestRunFailsFastWhenAPortIsTaken(t *testing.T) {
 	cfg.WebhookBind = occupiedAddr(t)
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, discardLogger()).Run(t.Context()) }()
+	go func() { done <- New(cfg, discardLogger(), healthyDB()).Run(t.Context()) }()
 
 	if err := waitFor(t, done); err == nil {
 		t.Error("Run returned nil despite the webhook listener failing to bind")
@@ -127,7 +127,7 @@ func TestRunStopsTheHealthyListenerToo(t *testing.T) {
 	cfg.WebhookBind = occupiedAddr(t)
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, discardLogger()).Run(t.Context()) }()
+	go func() { done <- New(cfg, discardLogger(), healthyDB()).Run(t.Context()) }()
 	_ = waitFor(t, done)
 
 	var lc net.ListenConfig
@@ -151,7 +151,7 @@ func TestRunWithAlreadyCancelledContext(t *testing.T) {
 	cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, discardLogger()).Run(ctx) }()
+	go func() { done <- New(cfg, discardLogger(), healthyDB()).Run(ctx) }()
 
 	if err := waitFor(t, done); err != nil {
 		t.Errorf("Run with a cancelled context = %v, want nil", err)
@@ -173,7 +173,7 @@ func TestRunLogsBothBindAddresses(t *testing.T) {
 	cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, logger).Run(ctx) }()
+	go func() { done <- New(cfg, logger, healthyDB()).Run(ctx) }()
 	if err := waitFor(t, done); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestRunLogsAreLineDelimitedJSON(t *testing.T) {
 	cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, logger).Run(ctx) }()
+	go func() { done <- New(cfg, logger, healthyDB()).Run(ctx) }()
 	if err := waitFor(t, done); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestRunLogsAreLineDelimitedJSON(t *testing.T) {
 func TestShutdownBeforeRun(t *testing.T) {
 	t.Parallel()
 
-	if err := New(testConfig(), discardLogger()).shutdown(); err != nil {
+	if err := New(testConfig(), discardLogger(), healthyDB()).shutdown(); err != nil {
 		t.Errorf("shutdown before Run = %v, want nil", err)
 	}
 }
@@ -235,7 +235,7 @@ func TestShutdownBeforeRun(t *testing.T) {
 func TestListenMapsServerClosedToNil(t *testing.T) {
 	t.Parallel()
 
-	s := newHTTPServer(freeAddr(t), apiHandler())
+	s := newHTTPServer(freeAddr(t), New(testConfig(), discardLogger(), healthyDB()).apiHandler())
 
 	done := make(chan error, 1)
 	go func() { done <- listen(s) }()
@@ -257,7 +257,7 @@ func TestListenMapsServerClosedToNil(t *testing.T) {
 func TestListenReturnsBindError(t *testing.T) {
 	t.Parallel()
 
-	if err := listen(newHTTPServer(occupiedAddr(t), apiHandler())); err == nil {
+	if err := listen(newHTTPServer(occupiedAddr(t), New(testConfig(), discardLogger(), healthyDB()).apiHandler())); err == nil {
 		t.Error("listen returned nil for an address already in use")
 	}
 }

@@ -20,6 +20,27 @@ jobs:
     defaults:
       run:
         working-directory: apps/brain
+
+    # Tests that need a real database read BRAIN_TEST_POSTGRES_DSN and skip
+    # when it is unset, so `make test` still works locally with nothing running.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: openarity_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      BRAIN_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/openarity_test?sslmode=disable
+
     steps:
       - uses: actions/checkout@v7
 
