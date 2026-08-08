@@ -36,6 +36,10 @@ break it, explains, and reviews.**
   when an index needs `CONCURRENTLY`. Use it every time: the migration that
   freezes a table in production is indistinguishable from a safe one when the
   table is empty.
+- **`write-query`** — every query that reads or writes Postgres. Covers the
+  sqlc annotations, regenerating and committing the output, type overrides,
+  when a write needs `InTx`, and the batch and copy modes. Use it every time;
+  never hand-write the Go that runs SQL.
 - **`test-with-postgres`** — any test that needs a real database. Covers
   skipping when none is available, one schema per test, why these cannot be
   `t.Parallel()`, and how to check a test would actually fail. Read step 5
@@ -166,15 +170,25 @@ they should be talking over HTTP instead.
 ## Commands
 
 ```sh
-make            # list targets
-make check      # everything CI runs: tidy, fmt, vet, lint, build, test, vuln
-make run        # run the server, Ctrl-C for a graceful shutdown
-make cover      # coverage, fails below the threshold
-make fmt        # apply gofumpt and fix import order
-make tools      # reinstall tooling — rerun after a Go upgrade
+make                    # list targets
+make check db=postgres  # everything CI runs — see the note below about db=
+make run                # run the server, Ctrl-C for a graceful shutdown
+make cover              # coverage, fails below the threshold
+make cover-html         # write and open the HTML report
+make generate           # regenerate everything generated (today: sqlc)
+make fmt                # apply gofumpt and fix import order
+make tools              # reinstall tooling — rerun after a Go upgrade
 ```
 
 `make check` is the real gate; run it before saying anything is done.
+
+**Always pass `db=` when measuring coverage.** Database tests skip when
+`BRAIN_TEST_POSTGRES_DSN` is empty, and `db=name` is what sets it — `host`,
+`port`, `user` and `sslmode` default around it. Without it `serve`, `migrateUp`
+and every query read 0% and the total drops from 96.9% to 70.3%, which looks
+like a coverage problem and is not one. `make cover` warns when the variable is
+unset for exactly this reason. Never read a coverage report that was produced
+without a database.
 
 **After a Go toolchain upgrade, run `make tools`.** Anything installed with
 `go install` is compiled against the Go present at the time, and both

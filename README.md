@@ -119,8 +119,9 @@ make check      # everything CI runs: tidy, generate, format, vet, lint, build, 
 make generate   # regenerate the sqlc query code after changing a .sql file
 ```
 
-Tests that need Postgres skip unless `BRAIN_TEST_POSTGRES_DSN` is set, so
-`make check` works with nothing running. CI always sets it.
+Tests that need Postgres skip unless a database is named, so `make check` works
+with nothing running. Point them at one with `make check db=postgres`; CI does
+the same against a service container.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 

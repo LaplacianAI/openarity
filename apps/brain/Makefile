@@ -20,6 +20,25 @@ GOOSE_VERSION       := v3.27.3
 SQLC_VERSION        := v1.31.1
 GOPLS_VERSION       := latest
 
+# The database for tests that need one. Unset means they skip, which is what
+# keeps `make check` useful with nothing running — so there is deliberately no
+# default: liveDSN only checks that the variable is non-empty, so a default
+# would turn "no Postgres" from a skip into a failure.
+#
+#   make cover db=postgres
+#   make cover db=openarity_test host=db.local port=5433 user=alice
+#
+# Or export BRAIN_TEST_POSTGRES_DSN yourself; anything passed here wins.
+db      ?=
+host    ?= 127.0.0.1
+port    ?= 5432
+user    ?= $(USER)
+sslmode ?= disable
+
+ifneq ($(db),)
+export BRAIN_TEST_POSTGRES_DSN := postgres://$(user)@$(host):$(port)/$(db)?sslmode=$(sslmode)
+endif
+
 .DEFAULT_GOAL := help
 
 ## help: list available targets
@@ -75,6 +94,9 @@ test:
 # per-package percentages printed become "of statements in ./..." and are no
 # longer meaningful on their own; the total on the last line is the number.
 cover:
+	@test -n "$$BRAIN_TEST_POSTGRES_DSN" || printf '%s\n%s\n\n' \
+	  "warning: BRAIN_TEST_POSTGRES_DSN is unset — every database test will skip" \
+	  "         and the coverage below is not the real number. See CONTRIBUTING.md."
 	$(GO) test -race -covermode=atomic -coverpkg=./... -coverprofile=$(COVER_PROFILE) ./...
 	@$(GO) tool cover -func=$(COVER_PROFILE) | tail -1
 	@total=$$($(GO) tool cover -func=$(COVER_PROFILE) | tail -1 | grep -oE '[0-9]+\.[0-9]+'); \

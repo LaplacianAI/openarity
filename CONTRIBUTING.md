@@ -65,12 +65,22 @@ uses `gofumpt` and `gci`, and both are enforced.
 ## Tests that need a database
 
 Tests that talk to Postgres read `BRAIN_TEST_POSTGRES_DSN` and **skip** when it
-is unset, so `make check` stays useful with nothing running:
+is unset, so `make check` stays useful with nothing running.
+
+Point them at a database by passing its name:
 
 ```sh
-export BRAIN_TEST_POSTGRES_DSN="postgres://$USER@127.0.0.1:5432/postgres?sslmode=disable"
-make check
+make check db=postgres
+make check db=openarity_test host=db.local port=5433 user=alice
 ```
+
+`host`, `port`, `user` and `sslmode` all have defaults; only `db` is required,
+and passing it is what switches these tests on. Exporting
+`BRAIN_TEST_POSTGRES_DSN` yourself works too.
+
+There is deliberately no default database. The skip triggers on the variable
+being *empty*, not on the server being unreachable — so a default would turn
+"no Postgres installed" from a skip into a wall of failures.
 
 CI always sets it from a Postgres service container, so these tests always run
 there. Each test creates its own schema and drops it afterwards, so pointing
