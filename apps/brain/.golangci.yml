@@ -20,8 +20,9 @@ linters:
 
   settings:
     exhaustive:
-      # a default: clause counts as handling the rest
-      default-signifies-exhaustive: true
+      # a default: clause does NOT excuse a missing case — the point is that
+      # adding an enum value breaks every switch that ignores it
+      default-signifies-exhaustive: false
 
     errcheck:
       check-type-assertions: true

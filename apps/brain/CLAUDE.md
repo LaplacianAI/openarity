@@ -40,6 +40,13 @@ break it, explains, and reviews.**
   sqlc annotations, regenerating and committing the output, type overrides,
   when a write needs `InTx`, and the batch and copy modes. Use it every time;
   never hand-write the Go that runs SQL.
+- **`write-tests`** — every test, any package. Covers naming, when
+  `t.Parallel()` is allowed, contexts and ports and timing, what a fake owes
+  you, and step 7: break the thing and confirm the test fails. Read it before
+  writing a concurrency test.
+- **`fix-lint`** — any golangci-lint or gofumpt failure, and any change to
+  `.golangci.yml`. Lists the linters that actually fire here and the correct
+  fix for each. The fix is almost never a `nolint`.
 - **`test-with-postgres`** — any test that needs a real database. Covers
   skipping when none is available, one schema per test, why these cannot be
   `t.Parallel()`, and how to check a test would actually fail. Read step 5
@@ -159,7 +166,11 @@ they should be talking over HTTP instead.
   tests run with nothing set up.
 - **A fixed set of strings is a defined type, not a `string`.** `commandName`
   and `direction` exist so `exhaustive` fails the build when a new role is
-  added and a switch forgets it. A `default` case does not excuse a missing one.
+  added and a switch forgets it. That guarantee depends on
+  `default-signifies-exhaustive: false` — it was `true` here for three steps,
+  and adding a `commandName` reported 0 issues. Keep the `default:` arm anyway:
+  it is unreachable, it returns a clear error rather than silence, and it is
+  tested.
 - **Never put a DSN in an error message.** pgx already redacts the password in
   its own errors — `postgres://user:xxxxx@…` — and wrapping with the raw string
   undoes that. Errors reach stderr and the log shipper.
@@ -174,7 +185,7 @@ make                    # list targets
 make check db=postgres  # everything CI runs — see the note below about db=
 make run                # run the server, Ctrl-C for a graceful shutdown
 make cover              # coverage, fails below the threshold
-make cover-html         # write and open the HTML report
+make cover-html db=openarity_test host=db.local port=5433   # the HTML report
 make generate           # regenerate everything generated (today: sqlc)
 make fmt                # apply gofumpt and fix import order
 make tools              # reinstall tooling — rerun after a Go upgrade

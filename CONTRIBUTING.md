@@ -72,6 +72,7 @@ Point them at a database by passing its name:
 ```sh
 make check db=postgres
 make check db=openarity_test host=db.local port=5433 user=alice
+make cover-html db=openarity_test host=db.local port=5433   # annotated report
 ```
 
 `host`, `port`, `user` and `sslmode` all have defaults; only `db` is required,

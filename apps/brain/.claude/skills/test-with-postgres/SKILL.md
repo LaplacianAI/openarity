@@ -35,6 +35,7 @@ Locally, pass the database name and the Makefile builds the DSN:
 ```sh
 make check db=postgres
 make cover db=openarity_test host=db.local port=5433 user=alice
+make cover-html db=openarity_test host=db.local port=5433
 ```
 
 There is no default `db`, and there must not be one. The skip triggers on the
