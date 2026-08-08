@@ -20,6 +20,26 @@ func poolConfig(t *testing.T, dsn string) *pgxpool.Config {
 	return s.pool.Config()
 }
 
+// New checks the error from pgxpool.NewWithConfig, and that branch is
+// uncovered on purpose. Reading pgx v5.10.0, NewWithConfig has exactly one
+// error return — puddle.NewPool, which fails only on MaxSize < 1 — and
+// MaxSize is config.MaxConns, which applyPoolDefaults has just set to the
+// constant 10. The other exit is a panic, not an error, for a config not built
+// by ParseConfig, and New always builds one that way.
+//
+// Covering it means letting a caller inject a config, which nothing needs.
+// Pin the assumption instead: if maxConns ever becomes zero or negative — by a
+// typo, or by someone making it configurable — this fails, and New's error
+// branch stops being dead.
+func TestMaxConnsIsAboveWhatThePoolRejects(t *testing.T) {
+	t.Parallel()
+
+	if maxConns < 1 {
+		t.Fatalf("maxConns is %d — puddle rejects MaxSize < 1, so New's "+
+			"NewWithConfig error branch is now reachable and needs a real test", maxConns)
+	}
+}
+
 // Every field must be set. A dropped line here is invisible — the pool still
 // works, on pgx's defaults, which is exactly what these constants exist to
 // avoid. Same failure mode gosec G112 caught on the http.Servers.
