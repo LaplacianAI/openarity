@@ -27,53 +27,59 @@ func freeAddr(t *testing.T) string {
 	return addr
 }
 
-// Unused binds so a test never collides with a real brain on 21120, and a
-// context that is already cancelled so run returns instead of serving.
-func stubEnv(t *testing.T) (context.Context, string) {
+// stubEnv points every listener and the database at addresses nothing is
+// serving. run therefore reaches the Postgres check and stops there, which is
+// as far as it can get without a real database — see the note in
+// TestRunFailsWhenPostgresIsUnreachable.
+func stubEnv(t *testing.T) (apiBind string) {
 	t.Helper()
 
-	apiBind := freeAddr(t)
+	apiBind = freeAddr(t)
 	t.Setenv("OPENARITY_API_BIND", apiBind)
 	t.Setenv("OPENARITY_WEBHOOK_BIND", freeAddr(t))
+	t.Setenv("OPENARITY_POSTGRES_DSN",
+		"postgres://user:hunter2@"+freeAddr(t)+"/openarity?sslmode=disable")
 
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	return ctx, apiBind
+	return apiBind
 }
 
-// The startup log is the only evidence of what the process decided to be. It
-// has to carry the environment and the address it actually bound, written to
-// the writer run was handed.
-func TestRunLogsStartup(t *testing.T) {
-	ctx, apiBind := stubEnv(t)
+// The startup log must be written before anything can fail, so a process that
+// dies during startup still says what it was trying to be.
+func TestRunLogsStartupBeforeDialling(t *testing.T) {
+	stubEnv(t)
 
 	var buf bytes.Buffer
-	if err := run(ctx, &buf); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := run(t.Context(), &buf, nil); err == nil {
+		t.Fatal("run succeeded with no database")
 	}
-	for _, want := range []string{"development", apiBind} {
-		if !strings.Contains(buf.String(), want) {
-			t.Errorf("startup log never mentioned %q: %s", want, buf.String())
-		}
+	if !strings.Contains(buf.String(), "development") {
+		t.Errorf("startup log missing or written too late: %q", buf.String())
 	}
 }
 
-// A cancelled context is a clean stop, not a failure. ListenAndServe returns
-// http.ErrServerClosed on shutdown; if that is not mapped to nil, every
-// SIGTERM exits 1 and Kubernetes records a crash on every rolling update.
-func TestRunReturnsNilOnContextCancel(t *testing.T) {
-	ctx, _ := stubEnv(t)
+// The pool is lazy, so nothing but Ping proves the database is there. Without
+// that check the process comes up, passes its probe and serves every request
+// into a connection error.
+func TestRunFailsWhenPostgresIsUnreachable(t *testing.T) {
+	stubEnv(t)
 
 	var buf bytes.Buffer
-	if err := run(ctx, &buf); err != nil {
-		t.Errorf("run after a clean shutdown = %v, want nil", err)
+	err := run(t.Context(), &buf, nil)
+	if err == nil {
+		t.Fatal("run started with an unreachable database")
+	}
+	if !strings.Contains(err.Error(), "ping") && !strings.Contains(err.Error(), "database") {
+		t.Errorf("error does not say the database is the problem: %v", err)
+	}
+	if strings.Contains(buf.String(), "Listening") {
+		t.Errorf("listeners came up before the database check: %s", buf.String())
 	}
 }
 
 // The writer parameter is the only output path. Anything reaching the real
 // stdout is a hardcoded os.Stdout that tests cannot observe.
 func TestRunWritesNothingToStdout(t *testing.T) {
-	ctx, _ := stubEnv(t)
+	stubEnv(t)
 
 	f, err := os.CreateTemp(t.TempDir(), "stdout")
 	if err != nil {
@@ -84,13 +90,11 @@ func TestRunWritesNothingToStdout(t *testing.T) {
 	defer func() { os.Stdout = orig }()
 
 	var buf bytes.Buffer
-	if err := run(ctx, &buf); err != nil {
-		t.Fatalf("run: %v", err)
-	}
+	_ = run(t.Context(), &buf, nil)
+
 	if err := f.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-
 	leaked, err := os.ReadFile(f.Name())
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -104,12 +108,11 @@ func TestRunWritesNothingToStdout(t *testing.T) {
 // half-written line. Partial output before a failure is how a startup log
 // ends up claiming a listener came up that never did.
 func TestRunReturnsErrorAndWritesNothing(t *testing.T) {
-	ctx, _ := stubEnv(t)
+	stubEnv(t)
 	t.Setenv("OPENARITY_API_BIND", "no-port-here")
 
 	var buf bytes.Buffer
-	err := run(ctx, &buf)
-	if err == nil {
+	if err := run(t.Context(), &buf, nil); err == nil {
 		t.Fatal("run accepted an invalid API_BIND")
 	}
 	if buf.Len() != 0 {
@@ -117,23 +120,27 @@ func TestRunReturnsErrorAndWritesNothing(t *testing.T) {
 	}
 }
 
-// Config redaction is only useful if the startup path actually goes through
-// it. Assert on run, not on Config.String, so a future fmt.Fprintf with %+v
-// is caught here.
+// The DSN password must reach neither the log nor the returned error. The
+// error path matters most: it is printed to stderr by main and is the one
+// place redaction is easiest to forget.
 func TestRunDoesNotLeakPassword(t *testing.T) {
-	ctx, _ := stubEnv(t)
-	t.Setenv("OPENARITY_POSTGRES_DSN", "postgres://user:hunter2@localhost:5432/db?sslmode=disable")
+	stubEnv(t)
 
 	var buf bytes.Buffer
-	if err := run(ctx, &buf); err != nil {
-		t.Fatalf("run: %v", err)
+	err := run(t.Context(), &buf, nil)
+	if err == nil {
+		t.Fatal("run started with an unreachable database")
 	}
+
 	if strings.Contains(buf.String(), "hunter2") {
-		t.Errorf("run leaked the Postgres password: %q", buf.String())
+		t.Errorf("startup log leaked the Postgres password: %s", buf.String())
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("returned error leaked the Postgres password: %v", err)
 	}
 }
 
-// main must turn a config error into a non-zero exit code. os.Exit cannot be
+// main must turn a startup error into a non-zero exit code. os.Exit cannot be
 // observed in-process, so re-exec the test binary and inspect the real exit.
 // The subprocess is the same coverage-instrumented binary and its counters are
 // merged, so this is also the only thing covering main. Drop it and main goes
@@ -144,7 +151,10 @@ func TestMainExitsNonZeroOnBadConfig(t *testing.T) {
 		return
 	}
 
-	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=TestMainExitsNonZeroOnBadConfig")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestMainExitsNonZeroOnBadConfig")
 	cmd.Env = append(os.Environ(),
 		"BRAIN_TEST_SUBPROCESS=1",
 		"OPENARITY_API_BIND=no-port-here",

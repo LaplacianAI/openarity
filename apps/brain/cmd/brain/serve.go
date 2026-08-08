@@ -1,0 +1,18 @@
+package main
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/server"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
+)
+
+func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore *store.Store) error {
+	logger.Info("Starting brain service",
+		"environment", cfg.Environment,
+		"log_level", cfg.LogLevel,
+	)
+	return server.New(cfg, logger, dbStore).Run(ctx)
+}

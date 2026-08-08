@@ -2,8 +2,9 @@ package server
 
 import "net/http"
 
-func webhookHandler() http.Handler {
+func (s *Server) webhookHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", healthz)
+	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("GET /readyz", s.readyz)
 	return mux
 }

@@ -19,20 +19,26 @@ const (
 	shutdownTimeout   = 10 * time.Second
 )
 
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
 type Server struct {
 	api     *http.Server
 	webhook *http.Server
 	logger  *slog.Logger
+	db      Pinger
 }
 
-func New(cfg *config.Config, logger *slog.Logger) *Server {
-	logRequests := middleware.LogRequests(logger)
-
-	return &Server{
-		api:     newHTTPServer(cfg.APIBind, logRequests(apiHandler())),
-		webhook: newHTTPServer(cfg.WebhookBind, logRequests(webhookHandler())),
-		logger:  logger,
+func New(cfg *config.Config, logger *slog.Logger, db Pinger) *Server {
+	s := &Server{
+		logger: logger,
+		db:     db,
 	}
+	logRequests := middleware.LogRequests(logger)
+	s.api = newHTTPServer(cfg.APIBind, logRequests(s.apiHandler()))
+	s.webhook = newHTTPServer(cfg.WebhookBind, logRequests(s.webhookHandler()))
+	return s
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -44,11 +50,6 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		WriteTimeout:      writeTimeout,
 		IdleTimeout:       idleTimeout,
 	}
-}
-
-func healthz(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok\n"))
 }
 
 func listen(s *http.Server) error {
