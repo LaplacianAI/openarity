@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose a change or an addition
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Openarity is early and the design still moves. Opening this before
+        writing code is the point — it saves you building against something
+        that is about to change.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >-
+        What is hard or impossible today? Describe the situation, not the
+        solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including doing nothing, and why that is not enough.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - brain — API or webhooks
+        - brain — storage or migrations
+        - brain — configuration
+        - CLI
+        - dashboard
+        - deployment
+        - documentation
+        - not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Would you be willing to work on this?
+      options:
+        - label: I am willing to open a pull request for this
+          required: false
