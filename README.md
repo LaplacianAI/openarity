@@ -41,6 +41,8 @@ anything an agent platform does:
   redacted whenever config is printed
 - A Postgres connection pool and versioned migrations behind an advisory lock,
   applied with `brain migrate up`
+- Type-safe queries generated from SQL by sqlc, and a transaction helper that
+  rolls back on error or panic
 
 Not built yet: the graph, the planner, the agent runtime, channel adapters, the
 CLI, the dashboard, authentication.
@@ -113,11 +115,13 @@ get their own repositories.
 cd apps/brain
 make            # list targets
 make tools      # golangci-lint, govulncheck, gopls, goose
-make check      # everything CI runs: tidy, format, vet, lint, build, test, vuln
+make check      # everything CI runs: tidy, generate, format, vet, lint, build, cover, vuln
+make generate   # regenerate the sqlc query code after changing a .sql file
 ```
 
-Tests that need Postgres skip unless `BRAIN_TEST_POSTGRES_DSN` is set, so
-`make check` works with nothing running. CI always sets it.
+Tests that need Postgres skip unless a database is named, so `make check` works
+with nothing running. Point them at one with `make check db=postgres`; CI does
+the same against a service container.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 

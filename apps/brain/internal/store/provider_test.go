@@ -103,23 +103,62 @@ func TestEveryMigrationHasUpAndDown(t *testing.T) {
 }
 
 // providerFor checks the error from lock.NewPostgresSessionLocker, and that
-// branch is uncovered on purpose: the constructor only fails when an option's
-// apply() fails, and we pass no options, so the loop it lives in never runs.
+// branch is uncovered on purpose. The constructor fails only when an option's
+// apply() returns an error, and goose's WithLockID accepts any int64
+// unconditionally:
 //
-// Covering it would mean adding a lock.SessionLockerOption parameter that no
-// caller ever passes. Instead, pin the assumption here. If a goose upgrade
-// makes the constructor fallible with no options, this fails and the branch
-// becomes worth testing properly.
-func TestSessionLockerCannotFailWithoutOptions(t *testing.T) {
+//	func WithLockID(lockID int64) SessionLockerOption {
+//		return sessionLockerConfigFunc(func(c *sessionLockerConfig) error {
+//			c.lockID = lockID
+//			return nil
+//		})
+//	}
+//
+// Covering it means giving providerFor an options parameter that no caller
+// ever passes, so that a test can supply a failing one — WithLockTimeout(0, 0)
+// is the nearest candidate. A seam whose only user is a test is worse than an
+// uncovered line.
+//
+// So pin the assumption instead, using the exact call the production code
+// makes rather than an approximation of it. If a goose upgrade starts
+// validating lock IDs, this fails and the branch becomes worth testing
+// properly.
+func TestTheSessionLockerWeBuildCannotFail(t *testing.T) {
 	t.Parallel()
 
-	locker, err := lock.NewPostgresSessionLocker()
+	locker, err := lock.NewPostgresSessionLocker(lock.WithLockID(migrationLockID))
 	if err != nil {
-		t.Fatalf("NewPostgresSessionLocker now fails with no options (%v) — "+
-			"the error branch in providerFor is reachable and needs a test", err)
+		t.Fatalf("NewPostgresSessionLocker(WithLockID(%d)) now fails (%v) — "+
+			"the error branch in providerFor is reachable and needs a real test",
+			migrationLockID, err)
 	}
 	if locker == nil {
 		t.Fatal("NewPostgresSessionLocker returned nil with no error")
+	}
+}
+
+// Migrate and Rollback both check the error from provider(), and both branches
+// are uncovered for the same reason one level up: provider() calls
+// providerFor(migrationFS, "migrations"), and none of its three failure modes
+// can fire on those arguments.
+//
+//   - fs.Sub only rejects an invalid path, and "migrations" is a constant
+//   - the locker cannot fail, per the test above
+//   - goose.NewProvider rejects an empty directory, and TestMigrationsAreEmbedded
+//     proves it is not empty
+//
+// This pins the conclusion directly: if provider() ever starts failing, the
+// two branches stop being dead and this test says so.
+func TestProviderCannotFail(t *testing.T) {
+	t.Parallel()
+
+	p, err := (&Store{}).provider()
+	if err != nil {
+		t.Fatalf("provider() now fails (%v) — the error branches in Migrate "+
+			"and Rollback are reachable and need real tests", err)
+	}
+	if p == nil {
+		t.Fatal("provider() returned nil with no error")
 	}
 }
 

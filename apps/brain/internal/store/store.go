@@ -6,10 +6,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 type Store struct {
 	pool *pgxpool.Pool
+	*db.Queries
 }
 
 const (
@@ -44,8 +47,23 @@ func New(ctx context.Context, dsn string) (*Store, error) {
 	}
 
 	return &Store{
-		pool: pool,
+		pool:    pool,
+		Queries: db.New(pool),
 	}, nil
+}
+
+func (s *Store) InTx(ctx context.Context, fn func(*db.Queries) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+	if err := fn(s.WithTx(tx)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }

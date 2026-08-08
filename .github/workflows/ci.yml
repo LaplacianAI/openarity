@@ -49,17 +49,23 @@ jobs:
           go-version-file: apps/brain/go.mod
           cache-dependency-path: apps/brain/go.sum
 
-      # go install rather than the upstream install.sh: that script serves
-      # checksums from master which do not match tagged release tarballs.
+      # make tools, not a list of go install lines: the Makefile is the only
+      # place a tool version is written down, so CI and a developer machine
+      # cannot drift apart. It uses go install rather than the upstream
+      # install.sh, whose checksums come from master and do not match tagged
+      # release tarballs.
       - name: Install tools
         run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          make tools
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       # go mod tidy -diff — fails if go.mod or go.sum is stale.
       - name: Dependencies are tidy
         run: make tidy-check
+
+      # Regenerates with sqlc and fails if the committed output differs.
+      - name: Generated code is current
+        run: make generate-check
 
       # gofumpt + gci — formatting and import order, checked not applied.
       - name: Formatting and import order

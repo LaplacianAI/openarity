@@ -30,11 +30,21 @@ func liveDSN(t *testing.T) string {
 sets the variable from a service container in `.github/workflows/ci.yml`, so
 these tests always run there.
 
-Locally:
+Locally, pass the database name and the Makefile builds the DSN:
 
 ```sh
-export BRAIN_TEST_POSTGRES_DSN="postgres://$USER@127.0.0.1:5432/postgres?sslmode=disable"
+make testdb db=openarity_test    # once per machine — the database must exist
+make check  db=openarity_test
+make cover-html db=openarity_test
+make check  db=postgres          # or skip the setup and use what is there
 ```
+
+`host`, `port`, `user` and `sslmode` take overrides for a remote server.
+
+There is no default `db`, and there must not be one. The skip triggers on the
+variable being **empty**, not on the server being unreachable — so a default
+would turn "no Postgres installed" from a skip into a wall of failures for
+every contributor who does not happen to run one on 5432.
 
 The helper is duplicated per package rather than shared. It is six lines, and a
 `testdb` package would be a dependency crossing every boundary in the tree.
@@ -161,9 +171,14 @@ And which ones do not, so you do not chase them:
 
 ```sh
 cd apps/brain
-make check                                    # skips the database tests
-BRAIN_TEST_POSTGRES_DSN=... make check        # runs them
+make check                # skips the database tests
+make check db=postgres    # runs them
 ```
 
 Both must pass. A test that only works with a database set up is fine; one that
 *breaks* the suite without one is not.
+
+Read a coverage report only from the second form. Without a database, `serve`,
+`migrateUp` and every generated query report 0% — they are not untested, their
+tests skipped — and the total drops from 96.9% to 70.3%. `make cover` prints a
+warning when the variable is unset for this reason.

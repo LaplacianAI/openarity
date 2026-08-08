@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+// Long enough that a slow CI runner is not flaky, short enough that a wedged
+// cleanup fails the suite instead of hanging it.
+const cleanupTimeout = 30 * time.Second
+
 // migrationStore builds a Store pinned to a schema of its own, so migration
 // tests neither collide with each other nor leave anything behind. Every
 // table the migrations create — and goose's own version table — lands inside
@@ -33,14 +37,36 @@ func migrationStore(t *testing.T) *Store {
 	}
 
 	t.Cleanup(func() {
-		cleanup, err := New(context.WithoutCancel(t.Context()), dsn)
+		// WithoutCancel because a failing test cancels its context and cleanup
+		// still has to run; the timeout and lock_timeout because a test that
+		// leaked an open transaction still holds locks on these tables, and an
+		// unbounded DROP would queue behind them forever. A hung suite is far
+		// worse to debug than a failed one.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), cleanupTimeout)
+		defer cancel()
+
+		cleanup, err := New(ctx, dsn)
 		if err != nil {
 			t.Errorf("cleanup connect: %v", err)
 			return
 		}
 		defer cleanup.Close()
 
-		if _, err := cleanup.pool.Exec(context.WithoutCancel(t.Context()), drop); err != nil {
+		// One connection for both statements: SET is session-scoped, and the
+		// pool would happily run the DROP on a different connection that never
+		// saw it.
+		conn, err := cleanup.pool.Acquire(ctx)
+		if err != nil {
+			t.Errorf("cleanup acquire: %v", err)
+			return
+		}
+		defer conn.Release()
+
+		if _, err := conn.Exec(ctx, "SET lock_timeout = '5s'"); err != nil {
+			t.Errorf("set lock_timeout: %v", err)
+			return
+		}
+		if _, err := conn.Exec(ctx, drop); err != nil {
 			t.Errorf("drop schema: %v", err)
 		}
 	})
