@@ -25,7 +25,9 @@ func LogRequests(logger *slog.Logger) Middleware {
 				status:         http.StatusOK,
 			}
 
-			if r.URL.Path == "/healthz" {
+			// Only the probe is skipped. Any other method on the path is
+			// real traffic — likely someone probing — and stays logged.
+			if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
 				next.ServeHTTP(rw, r)
 				return
 			}

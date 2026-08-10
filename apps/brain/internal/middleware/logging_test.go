@@ -124,6 +124,21 @@ func TestLogRequestsSkipsHealthz(t *testing.T) {
 	}
 }
 
+// Only the probe is exempt. On the public listener, POST /healthz falls
+// through to the gateway — a request shaped like a probe but not one, and an
+// unlogged path there is a free probing surface.
+func TestLogRequestsLogsNonGETHealthz(t *testing.T) {
+	t.Parallel()
+
+	_, rec := serve(t, http.MethodPost, "/healthz", ok)
+	if rec == nil {
+		t.Fatal("POST /healthz was not logged")
+	}
+	if rec["method"] != "POST" || rec["path"] != "/healthz" {
+		t.Errorf("record = %v, want POST /healthz", rec)
+	}
+}
+
 // Credentials travel in query strings. Logging the raw URL puts them in
 // whatever ships the logs off the box.
 func TestLogRequestsDoesNotLogTheQueryString(t *testing.T) {
@@ -146,9 +161,10 @@ func TestLogRequestsDoesNotLogTheQueryString(t *testing.T) {
 	}
 }
 
-// A panicking handler must not lose the request record. Today nothing
-// recovers, so the middleware cannot log it — this pins the current behaviour
-// so adding RecoverPanic later is a deliberate change, not an accident.
+// LogRequests must never swallow a panic itself — RecoverPanic sits outside
+// it in the chain and owns recovery. A middleware that quietly recovers
+// leaves a half-written response and steals the record RecoverPanic would
+// have logged.
 func TestLogRequestsDoesNotSwallowAPanic(t *testing.T) {
 	t.Parallel()
 

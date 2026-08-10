@@ -25,12 +25,20 @@ type Server struct {
 	logger  *slog.Logger
 }
 
-func New(cfg *config.Config, logger *slog.Logger) *Server {
-	logRequests := middleware.LogRequests(logger)
+// New builds both listeners. webhook is the gateway's handler, passed as a
+// plain http.Handler so this package never learns what a channel is —
+// cmd/brain is the only place that knows how the two are wired together.
+func New(cfg *config.Config, logger *slog.Logger, webhook http.Handler) *Server {
+	// RecoverPanic outermost so it catches panics from everything inside,
+	// the logger next so even a panicking request's neighbours are recorded.
+	mws := []middleware.Middleware{
+		middleware.RecoverPanic(logger),
+		middleware.LogRequests(logger),
+	}
 
 	return &Server{
-		api:     newHTTPServer(cfg.APIBind, logRequests(apiHandler())),
-		webhook: newHTTPServer(cfg.WebhookBind, logRequests(webhookHandler())),
+		api:     newHTTPServer(cfg.APIBind, middleware.Chain(apiHandler(), mws...)),
+		webhook: newHTTPServer(cfg.WebhookBind, middleware.Chain(webhookHandler(webhook), mws...)),
 		logger:  logger,
 	}
 }

@@ -39,7 +39,7 @@ func TestNewBindsEachListenerToItsOwnAddress(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig()
-	srv := New(cfg, discardLogger())
+	srv := New(cfg, discardLogger(), http.NotFoundHandler())
 
 	if srv.api.Addr != cfg.APIBind {
 		t.Errorf("api bound to %q, want %q", srv.api.Addr, cfg.APIBind)
@@ -64,7 +64,7 @@ func TestNewWrapsBothListenersInTheRequestLogger(t *testing.T) {
 		"webhook": func(s *Server) *http.Server { return s.webhook },
 	} {
 		logger, buf := recordingLogger()
-		srv := New(testConfig(), logger)
+		srv := New(testConfig(), logger, http.NotFoundHandler())
 
 		listener := pick(srv)
 		if listener.Handler == nil {
@@ -85,7 +85,7 @@ func TestNewWrapsBothListenersInTheRequestLogger(t *testing.T) {
 func TestNewSetsAllTimeouts(t *testing.T) {
 	t.Parallel()
 
-	srv := New(testConfig(), discardLogger())
+	srv := New(testConfig(), discardLogger(), http.NotFoundHandler())
 
 	for name, s := range map[string]*http.Server{"api": srv.api, "webhook": srv.webhook} {
 		if s.ReadHeaderTimeout != readHeaderTimeout {
@@ -110,7 +110,7 @@ func TestNewDoesNotListen(t *testing.T) {
 	cfg := testConfig()
 	cfg.APIBind = "256.256.256.256:99999" // unresolvable, unbindable
 
-	if srv := New(cfg, discardLogger()); srv == nil {
+	if srv := New(cfg, discardLogger(), http.NotFoundHandler()); srv == nil {
 		t.Fatal("New returned nil")
 	}
 }
@@ -122,7 +122,7 @@ func TestHealthzOnBothHandlers(t *testing.T) {
 
 	for name, h := range map[string]http.Handler{
 		"api":     apiHandler(),
-		"webhook": webhookHandler(),
+		"webhook": webhookHandler(http.NotFoundHandler()),
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
@@ -150,6 +150,66 @@ func TestHealthzRejectsNonGET(t *testing.T) {
 	}
 }
 
+// The gateway owns everything on the public listener except the GET probe.
+// Mux specificity does the routing: GET /healthz stays here, and every other
+// request — POST /healthz included — falls through to the gateway. Pinned so
+// nobody "fixes" POST /healthz into an unrouted 405.
+func TestWebhookHandlerRoutesEverythingElseToTheGateway(t *testing.T) {
+	t.Parallel()
+
+	var gotPaths []string
+	gateway := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.Method+" "+r.URL.Path)
+		w.WriteHeader(http.StatusTeapot)
+	})
+	h := webhookHandler(gateway)
+
+	for _, req := range []struct{ method, path string }{
+		{http.MethodPost, "/webhook/telegram/ch-1"},
+		{http.MethodPost, "/healthz"},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), req.method, req.path, nil))
+		if rec.Code != http.StatusTeapot {
+			t.Errorf("%s %s = %d, want the gateway's 418", req.method, req.path, rec.Code)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET /healthz = %d, want 200 from the server, not the gateway", rec.Code)
+	}
+
+	want := []string{"POST /webhook/telegram/ch-1", "POST /healthz"}
+	if len(gotPaths) != len(want) || gotPaths[0] != want[0] || gotPaths[1] != want[1] {
+		t.Errorf("gateway saw %v, want %v", gotPaths, want)
+	}
+}
+
+// The wiring test the add-middleware skill demands: a panic inside the
+// gateway must come back as a 500 and a structured record, not a dropped
+// connection. Only a request through the built Server catches RecoverPanic
+// being built but never applied.
+func TestNewRecoversAGatewayPanic(t *testing.T) {
+	t.Parallel()
+
+	logger, buf := recordingLogger()
+	srv := New(testConfig(), logger, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("gateway boom")
+	}))
+
+	rec := httptest.NewRecorder()
+	srv.webhook.Handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhook/telegram/x", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("panicking gateway = %d, want 500", rec.Code)
+	}
+	if !strings.Contains(buf.String(), "gateway boom") {
+		t.Errorf("panic was not logged: %s", buf.String())
+	}
+}
+
 // Nothing else is registered yet. A catch-all "/" would make every typo a 200
 // and hide routing mistakes.
 func TestUnknownPathIs404(t *testing.T) {
@@ -157,7 +217,7 @@ func TestUnknownPathIs404(t *testing.T) {
 
 	for name, h := range map[string]http.Handler{
 		"api":     apiHandler(),
-		"webhook": webhookHandler(),
+		"webhook": webhookHandler(http.NotFoundHandler()),
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/nope", nil))

@@ -7,6 +7,7 @@ linters:
   default: standard # errcheck, govet, ineffassign, staticcheck, unused
   enable:
     - bodyclose # unclosed HTTP response bodies — leaks connections
+    - depguard # package boundaries: talk through contracts, not internals
     - errorlint # %w vs %v, errors.Is/As misuse
     - exhaustive # a new enum value must break every switch that ignores it
     - gocritic
@@ -19,6 +20,54 @@ linters:
     - unparam
 
   settings:
+    # HLD "four rules" rule 1, mechanically enforced: packages talk only
+    # through internal/contracts. Every rule here lists what a package MAY
+    # import; anything else in the module is denied. cmd/brain is the
+    # composition root and stays exempt — it is the one place that knows how
+    # everything wires together. In depguard every matching rule applies, so
+    # the internal-default catch-all must exclude every package that has its
+    # own rule.
+    depguard:
+      rules:
+        contracts:
+          files: ["**/internal/contracts/**"]
+          allow: [$gostd]
+        secrets:
+          files: ["**/internal/secrets/**"]
+          allow: [$gostd]
+        gateway:
+          files: ["**/internal/gateway/**"]
+          allow:
+            - $gostd
+            - github.com/LaplacianAI/openarity/apps/brain/internal/contracts
+            # gateway → secrets is sanctioned: HLD §Secrets rule 2 — the one
+            # SecretStore seam, fetched by path, never a value from config.
+            - github.com/LaplacianAI/openarity/apps/brain/internal/secrets
+        server:
+          files: ["**/internal/server/**"]
+          allow:
+            - $gostd
+            - github.com/LaplacianAI/openarity/apps/brain/internal/config
+            - github.com/LaplacianAI/openarity/apps/brain/internal/middleware
+        config:
+          files: ["**/internal/config/**"]
+          allow:
+            - $gostd
+            - github.com/caarlos0/env/v11
+        middleware:
+          files: ["**/internal/middleware/**"]
+          allow: [$gostd]
+        internal-default:
+          files:
+            - "**/internal/**"
+            - "!**/internal/contracts/**"
+            - "!**/internal/secrets/**"
+            - "!**/internal/gateway/**"
+            - "!**/internal/server/**"
+            - "!**/internal/config/**"
+            - "!**/internal/middleware/**"
+          allow: [$gostd]
+
     exhaustive:
       # a default: clause counts as handling the rest
       default-signifies-exhaustive: true

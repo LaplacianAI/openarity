@@ -86,7 +86,7 @@ func TestRunServesBothThenStopsCleanly(t *testing.T) {
 	cfg.WebhookBind = freeAddr(t)
 
 	ctx, cancel := context.WithCancel(t.Context())
-	srv := New(cfg, discardLogger())
+	srv := New(cfg, discardLogger(), http.NotFoundHandler())
 
 	done := make(chan error, 1)
 	go func() { done <- srv.Run(ctx) }()
@@ -110,7 +110,7 @@ func TestRunFailsFastWhenAPortIsTaken(t *testing.T) {
 	cfg.WebhookBind = occupiedAddr(t)
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, discardLogger()).Run(t.Context()) }()
+	go func() { done <- New(cfg, discardLogger(), http.NotFoundHandler()).Run(t.Context()) }()
 
 	if err := waitFor(t, done); err == nil {
 		t.Error("Run returned nil despite the webhook listener failing to bind")
@@ -127,15 +127,25 @@ func TestRunStopsTheHealthyListenerToo(t *testing.T) {
 	cfg.WebhookBind = occupiedAddr(t)
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, discardLogger()).Run(t.Context()) }()
+	go func() { done <- New(cfg, discardLogger(), http.NotFoundHandler()).Run(t.Context()) }()
 	_ = waitFor(t, done)
 
-	var lc net.ListenConfig
-	l, err := lc.Listen(t.Context(), "tcp", cfg.APIBind)
-	if err != nil {
-		t.Fatalf("api listener still holding %s after a webhook failure: %v", cfg.APIBind, err)
+	// Poll with a deadline: the OS can hold a just-closed port for a moment
+	// (Windows in particular), and a single bind attempt makes that lag look
+	// like a leaked listener.
+	deadline := time.Now().Add(5 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		var lc net.ListenConfig
+		l, err := lc.Listen(t.Context(), "tcp", cfg.APIBind)
+		if err == nil {
+			_ = l.Close()
+			return
+		}
+		lastErr = err
+		time.Sleep(10 * time.Millisecond)
 	}
-	_ = l.Close()
+	t.Fatalf("api listener still holding %s after a webhook failure: %v", cfg.APIBind, lastErr)
 }
 
 // Run must survive a context that is already cancelled — the shutdown path is
@@ -151,7 +161,7 @@ func TestRunWithAlreadyCancelledContext(t *testing.T) {
 	cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, discardLogger()).Run(ctx) }()
+	go func() { done <- New(cfg, discardLogger(), http.NotFoundHandler()).Run(ctx) }()
 
 	if err := waitFor(t, done); err != nil {
 		t.Errorf("Run with a cancelled context = %v, want nil", err)
@@ -173,7 +183,7 @@ func TestRunLogsBothBindAddresses(t *testing.T) {
 	cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, logger).Run(ctx) }()
+	go func() { done <- New(cfg, logger, http.NotFoundHandler()).Run(ctx) }()
 	if err := waitFor(t, done); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -200,7 +210,7 @@ func TestRunLogsAreLineDelimitedJSON(t *testing.T) {
 	cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, logger).Run(ctx) }()
+	go func() { done <- New(cfg, logger, http.NotFoundHandler()).Run(ctx) }()
 	if err := waitFor(t, done); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -225,7 +235,7 @@ func TestRunLogsAreLineDelimitedJSON(t *testing.T) {
 func TestShutdownBeforeRun(t *testing.T) {
 	t.Parallel()
 
-	if err := New(testConfig(), discardLogger()).shutdown(); err != nil {
+	if err := New(testConfig(), discardLogger(), http.NotFoundHandler()).shutdown(); err != nil {
 		t.Errorf("shutdown before Run = %v, want nil", err)
 	}
 }
