@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/middleware"
 )
@@ -24,16 +25,18 @@ type Pinger interface {
 }
 
 type Server struct {
-	api     *http.Server
-	webhook *http.Server
-	logger  *slog.Logger
-	db      Pinger
+	api      *http.Server
+	webhook  *http.Server
+	logger   *slog.Logger
+	db       Pinger
+	verifier auth.Verifier
 }
 
-func New(cfg *config.Config, logger *slog.Logger, db Pinger) *Server {
+func New(cfg *config.Config, logger *slog.Logger, db Pinger, verifier auth.Verifier) *Server {
 	s := &Server{
-		logger: logger,
-		db:     db,
+		logger:   logger,
+		db:       db,
+		verifier: verifier,
 	}
 	logRequests := middleware.LogRequests(logger)
 	s.api = newHTTPServer(cfg.APIBind, logRequests(s.apiHandler()))

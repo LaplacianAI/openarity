@@ -163,6 +163,10 @@ func TestRunServesWithARealDatabase(t *testing.T) {
 	t.Setenv("OPENARITY_WEBHOOK_BIND", freeAddr(t))
 	t.Setenv("OPENARITY_POSTGRES_DSN", dsn)
 
+	// serve refuses to start with no way to authenticate anyone, so the
+	// development token stands in for an identity provider here.
+	t.Setenv("OPENARITY_DEV_TOKEN", "integration-token")
+
 	ctx, cancel := context.WithCancel(t.Context())
 
 	var buf syncBuffer
@@ -187,6 +191,38 @@ func TestRunServesWithARealDatabase(t *testing.T) {
 			t.Errorf("log never mentioned %q: %s", want, out)
 		}
 	}
+}
+
+// A brain that can authenticate nobody would bind both listeners, pass its
+// probes, and reject every real request. run must refuse before anything
+// listens — and it must say which variable to set.
+func TestRunRefusesToServeWithNoWayToAuthenticate(t *testing.T) {
+	dsn := liveDSN(t)
+
+	apiBind := freeAddr(t)
+	t.Setenv("OPENARITY_API_BIND", apiBind)
+	t.Setenv("OPENARITY_WEBHOOK_BIND", freeAddr(t))
+	t.Setenv("OPENARITY_POSTGRES_DSN", dsn)
+	t.Setenv("OPENARITY_DEV_TOKEN", "")
+	t.Setenv("OPENARITY_OIDC_ENABLED", "false")
+
+	var buf syncBuffer
+	err := run(t.Context(), &buf, nil)
+	if err == nil {
+		t.Fatal("run served with nothing able to authenticate")
+	}
+	if !strings.Contains(err.Error(), "OPENARITY_DEV_TOKEN") {
+		t.Errorf("error does not say how to fix it: %v", err)
+	}
+
+	// Nothing may be left bound: a half-started process holds the port and the
+	// next attempt fails for the wrong reason.
+	var lc net.ListenConfig
+	l, listenErr := lc.Listen(t.Context(), "tcp", apiBind)
+	if listenErr != nil {
+		t.Fatalf("run left %s bound after refusing to start: %v", apiBind, listenErr)
+	}
+	_ = l.Close()
 }
 
 // The logger writes from the goroutine running run while the test reads after

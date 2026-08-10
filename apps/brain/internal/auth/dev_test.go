@@ -117,3 +117,21 @@ func TestDevVerifierComparesTheWholeToken(t *testing.T) {
 		}
 	}
 }
+
+// cmd/brain checks DevToken != "" before calling NewDevVerifier, so the error
+// it handles there can never fire. That is only true while an empty token is
+// the sole reason to fail. If this constructor grows a second rule — a minimum
+// length, a character set — this test fails and the caller has a live branch it
+// is not testing.
+func TestNewDevVerifierFailsOnlyOnAnEmptyToken(t *testing.T) {
+	t.Parallel()
+
+	for _, token := range []string{
+		"x", " ", "\n", strings.Repeat("a", 4096),
+		"tab\there", "unicode-ü", `{"json":true}`,
+	} {
+		if _, err := NewDevVerifier(token); err != nil {
+			t.Errorf("NewDevVerifier(%q) = %v, want no error — only an empty token may fail", token, err)
+		}
+	}
+}

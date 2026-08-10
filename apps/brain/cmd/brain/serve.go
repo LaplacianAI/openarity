@@ -14,5 +14,11 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 		"environment", cfg.Environment,
 		"log_level", cfg.LogLevel,
 	)
-	return server.New(cfg, logger, dbStore).Run(ctx)
+
+	verifier, err := newVerifier(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	return server.New(cfg, logger, dbStore, verifier).Run(ctx)
 }
