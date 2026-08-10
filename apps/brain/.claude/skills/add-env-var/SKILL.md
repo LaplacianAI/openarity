@@ -130,6 +130,16 @@ Update all three, in the file matching the source file:
 - if it holds a URL, add a password to it in `TestStringRedactsPasswords` and
   assert the password does not appear
 
+`TestLoadDefaults` ends with a reflective guard that walks `Config`'s fields
+and fails on any name missing from the `want` map. The table is hand-written,
+so without it a new field is not *wrong*, it is *absent* — the test stays green
+while the setting goes unchecked. If that guard fires, add the default; do not
+delete the guard.
+
+For a slice field, the map holds a shape rather than a value —
+`fmt.Sprintf("%d entries", len(cfg.SuperAdmins))` — because the map is
+`map[string]string`.
+
 **`validate_test.go`**
 - add a rejection case to `TestValidateRejectsWrongSchemePerField` or
   `TestValidateRejectsBadBinds`
@@ -144,12 +154,52 @@ the **wiring** through `load`, as `TestLoadAcceptsAnyCaseLogLevel` does.
 ## Step 6 — verify
 
 ```sh
-cd apps/brain && make check
+cd apps/brain && make check db=openarity_test
 ```
 
-This runs `tidy-check`, `fmt-check`, `vet`, `lint`, `build`, `test -race` and
-`govulncheck`. Coverage is enforced separately by `make cover`, currently at
-100% — a new field with no test will drop it.
+`check` runs `tidy-check`, `generate-check`, `fmt-check`, `vet`, `lint`,
+`build`, `cover` and `vuln`. Coverage is inside it, not separate — a new field
+with no test fails the gate rather than merely lowering a number.
 
-If the variable is meant to be set locally, add it to `.env.development` and
-the committed example file too.
+**Always pass `db=`.** It sets `BRAIN_TEST_POSTGRES_DSN`; without it every
+database test skips, coverage drops by roughly 25 points, and the report looks
+like a coverage problem that is not one. `make testdb db=openarity_test`
+creates the database, once per machine.
+
+If the variable is meant to be set locally, add it to `.env` too.
+
+## Step 7 — prove the test can fail
+
+A test that passes against broken code is worse than no test. For each guard
+added, break it and confirm the expected test fails, then restore:
+
+| Break | Should fail |
+| --- | --- |
+| delete the validation block | the rejection test in `validate_test.go` |
+| widen a condition (`if c.X != ""` → `if false`) | the same test |
+| couple a check to an unrelated field | the case that check was written for |
+| remove the field from `String()`'s arguments | the redaction test |
+
+The third row is the one that catches real mistakes. A check nested inside an
+unrelated `if` still passes every test written for the happy path — the
+`SUPER_ADMINS` validation was briefly nested inside `if c.OIDCEnabled`, and
+only a test that exercised it with OIDC *disabled* noticed.
+
+## Settings that must never be logged
+
+Some fields are secrets with no safe redacted form — a bearer token has no
+host or username worth keeping. For those, leave them out of `String()`
+entirely rather than redacting them.
+
+Omission still needs a test, because nothing in the code says the omission was
+deliberate:
+
+```go
+// String() must not grow these fields. If it does, this test says so and
+// explains what to do instead.
+func TestStringOmitsTheAuthenticationSettings(t *testing.T) {
+```
+
+Assert the *token value* is absent, not that some redaction marker is present —
+a test asserting `String()` redacts a field it never prints passes vacuously
+and proves nothing.
