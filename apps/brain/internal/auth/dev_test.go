@@ -26,7 +26,7 @@ func TestDevVerifierAcceptsTheConfiguredToken(t *testing.T) {
 		t.Fatalf("Verify: %v", err)
 	}
 
-	want := Principal{Kind: KindDev, Subject: "dev"}
+	want := Principal{Kind: KindDev, Issuer: "dev", Subject: "dev"}
 	if *p != want {
 		t.Errorf("Principal = %+v, want %+v", *p, want)
 	}
@@ -45,8 +45,12 @@ func TestDevVerifierDoesNotImpersonateAUser(t *testing.T) {
 	if p.Kind != KindDev {
 		t.Errorf("Kind = %q, want %q", p.Kind, KindDev)
 	}
-	if p.Issuer != "" {
-		t.Errorf("Issuer = %q, want empty — no identity provider was involved", p.Issuer)
+	// The issuer is the constant "dev", not empty. The dev token gets a real
+	// users row like anyone else, and (issuer, subject) is that row's key —
+	// an empty issuer would be a landmine the first time a second principal
+	// arrives without one.
+	if p.Issuer != "dev" {
+		t.Errorf("Issuer = %q, want \"dev\"", p.Issuer)
 	}
 	if p.Email != "" {
 		t.Errorf("Email = %q, want empty", p.Email)

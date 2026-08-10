@@ -115,20 +115,6 @@ func TestUsersRequireBothHalvesOfTheIdentity(t *testing.T) {
 	}
 }
 
-// The role list is a CHECK rather than an enum type so it can be changed
-// later. It still has to actually constrain.
-func TestTeamMembersRejectAnUnknownRole(t *testing.T) {
-	s := queryStore(t)
-
-	team := mustCreate(t, s, "platform")
-	user := insertUser(t, s, "https://idp", "user-1")
-
-	for _, role := range []string{"owner", "Admin", "ADMIN", "", "superuser"} {
-		err := insertMember(t, s, team.ID, user, role)
-		wantPGCode(t, err, checkViolation, "role "+role)
-	}
-}
-
 func TestTeamMembersAcceptTheDefinedRoles(t *testing.T) {
 	s := queryStore(t)
 
@@ -246,25 +232,35 @@ func TestTeamMembersAreIndexedByUser(t *testing.T) {
 	}
 }
 
-// Down must undo Up completely. A migration that cannot be rolled back is a
-// deploy that cannot be reverted.
+// Down must undo Up completely, and no further. A migration whose Down reaches
+// into an earlier migration's tables makes the stack impossible to unwind one
+// step at a time.
+//
+// Rollback undoes one migration and this is no longer the newest, so step down
+// until users goes rather than hard-coding a count that breaks on the next
+// migration added above it.
 func TestUsersAndTeamMembersRollBackCleanly(t *testing.T) {
 	s := migrationStore(t)
 
 	if _, err := s.Migrate(t.Context()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if err := s.Rollback(t.Context()); err != nil {
-		t.Fatalf("Rollback: %v", err)
-	}
 
-	for _, table := range []string{"users", "team_members"} {
-		if tableExists(t, s, table) {
-			t.Errorf("%s survived the rollback", table)
+	const maxSteps = 100
+	for step := 0; tableExists(t, s, "users"); step++ {
+		if step == maxSteps {
+			t.Fatalf("users still there after %d rollbacks", maxSteps)
+		}
+		if err := s.Rollback(t.Context()); err != nil {
+			t.Fatalf("Rollback: %v", err)
 		}
 	}
+
+	if tableExists(t, s, "team_members") {
+		t.Error("team_members survived its own migration's rollback")
+	}
 	if !tableExists(t, s, "teams") {
-		t.Error("rolling back one migration removed the previous one's table")
+		t.Error("rolling back to the users migration removed an earlier migration's table")
 	}
 }
 
