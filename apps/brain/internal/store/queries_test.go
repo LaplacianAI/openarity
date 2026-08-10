@@ -219,6 +219,9 @@ func TestListTeamsReportsAQueryFailure(t *testing.T) {
 func TestListTeamsReportsAScanFailure(t *testing.T) {
 	s := queryStore(t)
 
+	// team_members has a foreign key to teams(id); a uuid column cannot be
+	// widened to text while something references it.
+	exec(t, s, "DROP TABLE team_members")
 	exec(t, s, "ALTER TABLE teams ALTER COLUMN id TYPE text USING id::text")
 	exec(t, s, "INSERT INTO teams (id, name) VALUES ('not-a-uuid', 'broken')")
 
@@ -239,7 +242,9 @@ func TestListTeamsReportsAScanFailure(t *testing.T) {
 func TestListTeamsReportsAFailureMidStream(t *testing.T) {
 	s := queryStore(t)
 
-	exec(t, s, "DROP TABLE teams")
+	// CASCADE because team_members references teams. Without it the drop
+	// fails and the view below is never created, so the test asserts nothing.
+	exec(t, s, "DROP TABLE teams CASCADE")
 	exec(t, s, `CREATE VIEW teams AS
 		SELECT gen_random_uuid() AS id,
 		       CASE WHEN i < 500 THEN 'ok' ELSE (1/(500-i))::text END AS name,

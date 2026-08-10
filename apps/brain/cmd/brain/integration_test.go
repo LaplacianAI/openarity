@@ -102,12 +102,14 @@ func schemaDSN(t *testing.T) string {
 func TestMigrateCommandEndToEnd(t *testing.T) {
 	t.Setenv("OPENARITY_POSTGRES_DSN", schemaDSN(t))
 
+	// The property is "applied something, then applied nothing", not a
+	// particular number — the count changes with every migration added.
 	var first bytes.Buffer
 	if err := run(t.Context(), &first, []string{"migrate", "up"}); err != nil {
 		t.Fatalf("migrate up: %v", err)
 	}
-	if !strings.Contains(first.String(), `"count":1`) && !strings.Contains(first.String(), "count=1") {
-		t.Errorf("migrate up did not report applying one migration: %s", first.String())
+	if appliedNone(first.String()) {
+		t.Errorf("migrate up applied nothing to an empty schema: %s", first.String())
 	}
 
 	// Re-running is what a redeploy does. It must be a no-op, not an error.
@@ -115,14 +117,20 @@ func TestMigrateCommandEndToEnd(t *testing.T) {
 	if err := run(t.Context(), &second, []string{"migrate", "up"}); err != nil {
 		t.Fatalf("second migrate up: %v", err)
 	}
-	if !strings.Contains(second.String(), `"count":0`) && !strings.Contains(second.String(), "count=0") {
-		t.Errorf("second migrate up did not report zero applied: %s", second.String())
+	if !appliedNone(second.String()) {
+		t.Errorf("second migrate up applied something: %s", second.String())
 	}
 
 	var down bytes.Buffer
 	if err := run(t.Context(), &down, []string{"migrate", "down"}); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
+}
+
+// appliedNone reads the count off the "Applied migrations" line. Both handlers
+// are in play depending on environment, so match either encoding.
+func appliedNone(log string) bool {
+	return strings.Contains(log, `"count":0`) || strings.Contains(log, "count=0")
 }
 
 // migrate must not start a listener. A Job that binds a port would collide

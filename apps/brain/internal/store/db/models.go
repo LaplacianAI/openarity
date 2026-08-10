@@ -16,3 +16,20 @@ type Team struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+type TeamMember struct {
+	TeamID    uuid.UUID
+	UserID    uuid.UUID
+	Role      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type User struct {
+	ID        uuid.UUID
+	Issuer    string
+	Subject   string
+	Email     *string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
