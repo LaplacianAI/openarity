@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // schemes
@@ -77,6 +78,26 @@ func (c *Config) Validate() error {
 
 	if c.FalkorDBURL == c.RedisURL {
 		errs = append(errs, fmt.Errorf("FALKOR_DB_URL and REDIS_URL must differ"))
+	}
+
+	if c.OIDCEnabled {
+		if err := checkURL("OIDC_ISSUER", c.OIDCIssuer, httpSchemes...); err != nil {
+			errs = append(errs, err)
+		}
+		if c.OIDCAudience == "" {
+			errs = append(errs, fmt.Errorf("OIDC_AUDIENCE must be set when OIDC_ENABLED is true"))
+		}
+	}
+
+	for i, sub := range c.SuperAdmins {
+		if sub == "" || sub != strings.TrimSpace(sub) {
+			errs = append(errs, fmt.Errorf(
+				"SUPER_ADMINS entry %d is %q — entries must not be empty or padded with whitespace", i, sub))
+		}
+	}
+
+	if c.DevToken != "" && c.Environment != EnvironmentDevelopment {
+		errs = append(errs, fmt.Errorf("DEV_TOKEN must not be set outside development, got ENVIRONMENT=%s", c.Environment))
 	}
 
 	if len(errs) > 0 {

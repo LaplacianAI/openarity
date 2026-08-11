@@ -25,9 +25,11 @@ func LogRequests(logger *slog.Logger) Middleware {
 				status:         http.StatusOK,
 			}
 
-			// Only the probe is skipped. Any other method on the path is
-			// real traffic — likely someone probing — and stays logged.
-			if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
+			// Only the probes themselves are skipped. Kubernetes sends GET;
+			// any other method on those paths falls through to the gateway
+			// on the public listener, so it is real traffic — likely someone
+			// probing — and stays logged.
+			if r.Method == http.MethodGet && (r.URL.Path == "/healthz" || r.URL.Path == "/readyz") {
 				next.ServeHTTP(rw, r)
 				return
 			}

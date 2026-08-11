@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -29,6 +31,11 @@ func TestLoadDefaults(t *testing.T) {
 		"RedisURL":     "redis://127.0.0.1:6379",
 		"VaultAddr":    "http://localhost:8200",
 		"OmniRouteURL": "http://localhost:20128/v1",
+		"OIDCEnabled":  "false",
+		"OIDCIssuer":   "",
+		"OIDCAudience": "openarity",
+		"DevToken":     "",
+		"SuperAdmins":  "0 entries",
 	}
 	got := map[string]string{
 		"Environment":  string(cfg.Environment),
@@ -40,10 +47,26 @@ func TestLoadDefaults(t *testing.T) {
 		"RedisURL":     cfg.RedisURL,
 		"VaultAddr":    cfg.VaultAddr,
 		"OmniRouteURL": cfg.OmniRouteURL,
+		"OIDCEnabled":  strconv.FormatBool(cfg.OIDCEnabled),
+		"OIDCIssuer":   cfg.OIDCIssuer,
+		"OIDCAudience": cfg.OIDCAudience,
+		"DevToken":     cfg.DevToken,
+		"SuperAdmins":  fmt.Sprintf("%d entries", len(cfg.SuperAdmins)),
 	}
 	for k, w := range want {
 		if got[k] != w {
 			t.Errorf("%s = %q, want %q", k, got[k], w)
+		}
+	}
+
+	// The table above is written by hand, so a new field is not wrong — it is
+	// absent, and this test stays green while the setting goes unchecked. That
+	// is the half-wired failure the add-env-var skill warns about, so make it
+	// impossible: every field on Config must appear here.
+	for i := range reflect.TypeFor[Config]().NumField() {
+		name := reflect.TypeFor[Config]().Field(i).Name
+		if _, ok := want[name]; !ok {
+			t.Errorf("Config.%s has no entry in TestLoadDefaults — add its default", name)
 		}
 	}
 }

@@ -2,11 +2,14 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
@@ -32,6 +35,36 @@ func testConfig() *config.Config {
 	}
 }
 
+// fakePinger stands in for the store. It counts calls so a test can prove
+// healthz never reaches the database.
+type fakePinger struct {
+	mu    sync.Mutex
+	err   error
+	calls int
+}
+
+// Ping honours the context, as a real one does — that is what lets a test
+// assert readyz stops when the probe disconnects.
+func (f *fakePinger) Ping(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return f.err
+}
+
+func (f *fakePinger) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// healthyDB is the usual case: a database that answers.
+func healthyDB() *fakePinger { return &fakePinger{} }
+
 // Swapping these two binds puts the API on a public port and the webhook
 // receiver on loopback. That is the whole security boundary, so assert the
 // mapping rather than trusting the field order in New.
@@ -39,7 +72,7 @@ func TestNewBindsEachListenerToItsOwnAddress(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig()
-	srv := New(cfg, discardLogger(), http.NotFoundHandler())
+	srv := New(cfg, discardLogger(), healthyDB(), http.NotFoundHandler())
 
 	if srv.api.Addr != cfg.APIBind {
 		t.Errorf("api bound to %q, want %q", srv.api.Addr, cfg.APIBind)
@@ -64,7 +97,7 @@ func TestNewWrapsBothListenersInTheRequestLogger(t *testing.T) {
 		"webhook": func(s *Server) *http.Server { return s.webhook },
 	} {
 		logger, buf := recordingLogger()
-		srv := New(testConfig(), logger, http.NotFoundHandler())
+		srv := New(testConfig(), logger, healthyDB(), http.NotFoundHandler())
 
 		listener := pick(srv)
 		if listener.Handler == nil {
@@ -85,7 +118,7 @@ func TestNewWrapsBothListenersInTheRequestLogger(t *testing.T) {
 func TestNewSetsAllTimeouts(t *testing.T) {
 	t.Parallel()
 
-	srv := New(testConfig(), discardLogger(), http.NotFoundHandler())
+	srv := New(testConfig(), discardLogger(), healthyDB(), http.NotFoundHandler())
 
 	for name, s := range map[string]*http.Server{"api": srv.api, "webhook": srv.webhook} {
 		if s.ReadHeaderTimeout != readHeaderTimeout {
@@ -110,92 +143,88 @@ func TestNewDoesNotListen(t *testing.T) {
 	cfg := testConfig()
 	cfg.APIBind = "256.256.256.256:99999" // unresolvable, unbindable
 
-	if srv := New(cfg, discardLogger(), http.NotFoundHandler()); srv == nil {
+	if srv := New(cfg, discardLogger(), healthyDB(), http.NotFoundHandler()); srv == nil {
 		t.Fatal("New returned nil")
 	}
 }
 
-// Kubernetes probes this endpoint on the webhook listener. It must answer 200
-// on both handlers with no dependencies wired.
-func TestHealthzOnBothHandlers(t *testing.T) {
+// handlers returns both muxes, unwrapped by middleware, keyed by listener.
+func handlers(t *testing.T, db Pinger) map[string]http.Handler {
+	t.Helper()
+
+	srv := New(testConfig(), discardLogger(), db, http.NotFoundHandler())
+	return map[string]http.Handler{
+		"api":     srv.apiHandler(),
+		"webhook": srv.webhookHandler(),
+	}
+}
+
+// Nothing but the probes is registered on the API listener, and on the
+// webhook listener everything else belongs to the gateway — which is a
+// NotFoundHandler here. Either way a typo must not become a 200.
+func TestUnknownPathIs404(t *testing.T) {
 	t.Parallel()
 
-	for name, h := range map[string]http.Handler{
-		"api":     apiHandler(),
-		"webhook": webhookHandler(http.NotFoundHandler()),
-	} {
+	for name, h := range handlers(t, healthyDB()) {
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/nope", nil))
 
-		if rec.Code != http.StatusOK {
-			t.Errorf("%s /healthz = %d, want 200", name, rec.Code)
-		}
-		if rec.Body.String() != "ok\n" {
-			t.Errorf("%s /healthz body = %q, want %q", name, rec.Body.String(), "ok\n")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s GET /nope = %d, want 404", name, rec.Code)
 		}
 	}
 }
 
-// The route is registered "GET /healthz". A bare "/healthz" pattern would
-// answer every method, turning the probe into an unauthenticated write target
-// the day it grows a body.
-func TestHealthzRejectsNonGET(t *testing.T) {
+// The gateway owns the webhookPrefix subtree on the public listener and
+// nothing else. This is the only place the server and the gateway have to
+// agree on a string, so pin both directions: a real channel path reaches the
+// gateway with its full URL intact, and the probes never do. Change the
+// gateway's route patterns without changing this prefix and this fails
+// instead of 404ing in production.
+func TestWebhookHandlerRoutesTheGatewaySubtree(t *testing.T) {
 	t.Parallel()
 
-	rec := httptest.NewRecorder()
-	apiHandler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/healthz", nil))
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST /healthz = %d, want 405", rec.Code)
-	}
-}
-
-// The gateway owns everything on the public listener except the GET probe.
-// Mux specificity does the routing: GET /healthz stays here, and every other
-// request — POST /healthz included — falls through to the gateway. Pinned so
-// nobody "fixes" POST /healthz into an unrouted 405.
-func TestWebhookHandlerRoutesEverythingElseToTheGateway(t *testing.T) {
-	t.Parallel()
-
-	var gotPaths []string
+	var seen []string
 	gateway := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPaths = append(gotPaths, r.Method+" "+r.URL.Path)
+		seen = append(seen, r.Method+" "+r.URL.Path)
 		w.WriteHeader(http.StatusTeapot)
 	})
-	h := webhookHandler(gateway)
-
-	for _, req := range []struct{ method, path string }{
-		{http.MethodPost, "/webhook/telegram/ch-1"},
-		{http.MethodPost, "/healthz"},
-	} {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), req.method, req.path, nil))
-		if rec.Code != http.StatusTeapot {
-			t.Errorf("%s %s = %d, want the gateway's 418", req.method, req.path, rec.Code)
-		}
-	}
+	h := New(testConfig(), discardLogger(), healthyDB(), gateway).webhookHandler()
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("GET /healthz = %d, want 200 from the server, not the gateway", rec.Code)
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhook/telegram/ch-1", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("POST /webhook/telegram/ch-1 = %d, want the gateway's 418", rec.Code)
 	}
 
-	want := []string{"POST /webhook/telegram/ch-1", "POST /healthz"}
-	if len(gotPaths) != len(want) || gotPaths[0] != want[0] || gotPaths[1] != want[1] {
-		t.Errorf("gateway saw %v, want %v", gotPaths, want)
+	// The gateway matches on the full path, so the prefix must not be
+	// stripped on the way through.
+	if want := []string{"POST /webhook/telegram/ch-1"}; !slices.Equal(seen, want) {
+		t.Errorf("gateway saw %v, want %v", seen, want)
+	}
+
+	for _, probe := range []string{"/healthz", "/readyz"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, probe, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200 from the server rather than the gateway", probe, rec.Code)
+		}
+	}
+	if len(seen) != 1 {
+		t.Errorf("a probe reached the gateway: %v", seen)
 	}
 }
 
-// The wiring test the add-middleware skill demands: a panic inside the
-// gateway must come back as a 500 and a structured record, not a dropped
-// connection. Only a request through the built Server catches RecoverPanic
-// being built but never applied.
+// The wiring test the add-middleware skill demands: a panic in the gateway
+// must come back as a 500 and a structured record. Left unrecovered, net/http
+// writes no response at all, so the provider sees a reset and retries into
+// silence. Only a request through the built Server catches RecoverPanic being
+// built and never applied.
 func TestNewRecoversAGatewayPanic(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	srv := New(testConfig(), logger, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	srv := New(testConfig(), logger, healthyDB(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("gateway boom")
 	}))
 
@@ -207,23 +236,5 @@ func TestNewRecoversAGatewayPanic(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "gateway boom") {
 		t.Errorf("panic was not logged: %s", buf.String())
-	}
-}
-
-// Nothing else is registered yet. A catch-all "/" would make every typo a 200
-// and hide routing mistakes.
-func TestUnknownPathIs404(t *testing.T) {
-	t.Parallel()
-
-	for name, h := range map[string]http.Handler{
-		"api":     apiHandler(),
-		"webhook": webhookHandler(http.NotFoundHandler()),
-	} {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/nope", nil))
-
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("%s GET /nope = %d, want 404", name, rec.Code)
-		}
 	}
 }

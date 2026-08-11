@@ -1,0 +1,29 @@
+# sqlc — generate type-safe Go from the queries in internal/store/queries.
+#
+#   make generate        regenerate internal/store/db
+#   make generate-check  fail if what is committed is out of date
+#
+# The schema is the goose migrations themselves. sqlc understands the
+# `-- +goose Down` marker and ignores everything under it, so there is no
+# second copy of the schema to keep in sync.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: internal/store/migrations
+    queries: internal/store/queries
+    gen:
+      go:
+        package: db
+        out: internal/store/db
+        sql_package: pgx/v5
+
+        # Without these, a uuid column arrives as pgtype.UUID and a
+        # timestamptz as pgtype.Timestamptz — wrapper types every caller
+        # would have to unwrap. Both columns are NOT NULL, so plain Go
+        # types are safe; a nullable column of either type needs its own
+        # override with `nullable: true`.
+        overrides:
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: timestamptz
+            go_type: time.Time

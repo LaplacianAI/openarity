@@ -86,7 +86,7 @@ func TestRunServesBothThenStopsCleanly(t *testing.T) {
 	cfg.WebhookBind = freeAddr(t)
 
 	ctx, cancel := context.WithCancel(t.Context())
-	srv := New(cfg, discardLogger(), http.NotFoundHandler())
+	srv := New(cfg, discardLogger(), healthyDB(), http.NotFoundHandler())
 
 	done := make(chan error, 1)
 	go func() { done <- srv.Run(ctx) }()
@@ -110,7 +110,7 @@ func TestRunFailsFastWhenAPortIsTaken(t *testing.T) {
 	cfg.WebhookBind = occupiedAddr(t)
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, discardLogger(), http.NotFoundHandler()).Run(t.Context()) }()
+	go func() { done <- New(cfg, discardLogger(), healthyDB(), http.NotFoundHandler()).Run(t.Context()) }()
 
 	if err := waitFor(t, done); err == nil {
 		t.Error("Run returned nil despite the webhook listener failing to bind")
@@ -127,7 +127,7 @@ func TestRunStopsTheHealthyListenerToo(t *testing.T) {
 	cfg.WebhookBind = occupiedAddr(t)
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, discardLogger(), http.NotFoundHandler()).Run(t.Context()) }()
+	go func() { done <- New(cfg, discardLogger(), healthyDB(), http.NotFoundHandler()).Run(t.Context()) }()
 	_ = waitFor(t, done)
 
 	// Poll with a deadline: the OS can hold a just-closed port for a moment
@@ -161,7 +161,7 @@ func TestRunWithAlreadyCancelledContext(t *testing.T) {
 	cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, discardLogger(), http.NotFoundHandler()).Run(ctx) }()
+	go func() { done <- New(cfg, discardLogger(), healthyDB(), http.NotFoundHandler()).Run(ctx) }()
 
 	if err := waitFor(t, done); err != nil {
 		t.Errorf("Run with a cancelled context = %v, want nil", err)
@@ -183,7 +183,7 @@ func TestRunLogsBothBindAddresses(t *testing.T) {
 	cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, logger, http.NotFoundHandler()).Run(ctx) }()
+	go func() { done <- New(cfg, logger, healthyDB(), http.NotFoundHandler()).Run(ctx) }()
 	if err := waitFor(t, done); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestRunLogsAreLineDelimitedJSON(t *testing.T) {
 	cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- New(cfg, logger, http.NotFoundHandler()).Run(ctx) }()
+	go func() { done <- New(cfg, logger, healthyDB(), http.NotFoundHandler()).Run(ctx) }()
 	if err := waitFor(t, done); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestRunLogsAreLineDelimitedJSON(t *testing.T) {
 func TestShutdownBeforeRun(t *testing.T) {
 	t.Parallel()
 
-	if err := New(testConfig(), discardLogger(), http.NotFoundHandler()).shutdown(); err != nil {
+	if err := New(testConfig(), discardLogger(), healthyDB(), http.NotFoundHandler()).shutdown(); err != nil {
 		t.Errorf("shutdown before Run = %v, want nil", err)
 	}
 }
@@ -245,7 +245,7 @@ func TestShutdownBeforeRun(t *testing.T) {
 func TestListenMapsServerClosedToNil(t *testing.T) {
 	t.Parallel()
 
-	s := newHTTPServer(freeAddr(t), apiHandler())
+	s := newHTTPServer(freeAddr(t), New(testConfig(), discardLogger(), healthyDB(), http.NotFoundHandler()).apiHandler())
 
 	done := make(chan error, 1)
 	go func() { done <- listen(s) }()
@@ -267,7 +267,7 @@ func TestListenMapsServerClosedToNil(t *testing.T) {
 func TestListenReturnsBindError(t *testing.T) {
 	t.Parallel()
 
-	if err := listen(newHTTPServer(occupiedAddr(t), apiHandler())); err == nil {
+	if err := listen(newHTTPServer(occupiedAddr(t), New(testConfig(), discardLogger(), healthyDB(), http.NotFoundHandler()).apiHandler())); err == nil {
 		t.Error("listen returned nil for an address already in use")
 	}
 }

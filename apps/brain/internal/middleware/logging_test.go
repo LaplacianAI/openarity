@@ -110,17 +110,33 @@ func TestLogRequestsDoesNotAlterTheResponse(t *testing.T) {
 	}
 }
 
-// Kubernetes probes /healthz every ten seconds on two listeners. Logging it
-// buries everything else.
-func TestLogRequestsSkipsHealthz(t *testing.T) {
+// Kubernetes probes both of these every ten seconds on two listeners. Logging
+// them buries everything else. readyz reports its own failures at Warn, which
+// is the part worth keeping.
+func TestLogRequestsSkipsProbes(t *testing.T) {
 	t.Parallel()
 
-	res, rec := serve(t, http.MethodGet, "/healthz", ok)
-	if rec != nil {
-		t.Errorf("/healthz was logged: %v", rec)
+	for _, path := range []string{"/healthz", "/readyz"} {
+		res, rec := serve(t, http.MethodGet, path, ok)
+		if rec != nil {
+			t.Errorf("%s was logged: %v", path, rec)
+		}
+		if res.Code != http.StatusOK {
+			t.Errorf("%s status = %d, want 200 — the skip must not swallow the response", path, res.Code)
+		}
 	}
-	if res.Code != http.StatusOK {
-		t.Errorf("/healthz status = %d, want 200 — the skip must not swallow the response", res.Code)
+}
+
+// The skip is by exact path. A prefix match would silence /healthz-internal or
+// any future route that merely starts the same way.
+func TestLogRequestsSkipIsExact(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"/healthzz", "/healthz/deep", "/readyz-internal"} {
+		_, rec := serve(t, http.MethodGet, path, ok)
+		if rec == nil {
+			t.Errorf("%s was skipped by a prefix match", path)
+		}
 	}
 }
 

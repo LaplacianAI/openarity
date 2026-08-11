@@ -56,7 +56,27 @@ linters:
             - github.com/caarlos0/env/v11
         middleware:
           files: ["**/internal/middleware/**"]
-          allow: [$gostd]
+          allow:
+            - $gostd
+            # Authenticate needs the Verifier and the Principal it puts on the
+            # context; auth owns both and imports nothing of ours back.
+            - github.com/LaplacianAI/openarity/apps/brain/internal/auth
+            # A black-box test (package middleware_test) imports the package
+            # it tests. depguard has no "self" token, so it is listed.
+            - github.com/LaplacianAI/openarity/apps/brain/internal/middleware
+        auth:
+          files: ["**/internal/auth/**"]
+          allow:
+            - $gostd
+            - github.com/coreos/go-oidc/v3/oidc
+        store:
+          files: ["**/internal/store/**"]
+          allow:
+            - $gostd
+            - github.com/LaplacianAI/openarity/apps/brain/internal/store/db
+            - github.com/google/uuid
+            - github.com/jackc/pgx/v5
+            - github.com/pressly/goose/v3
         internal-default:
           files:
             - "**/internal/**"
@@ -66,11 +86,14 @@ linters:
             - "!**/internal/server/**"
             - "!**/internal/config/**"
             - "!**/internal/middleware/**"
+            - "!**/internal/auth/**"
+            - "!**/internal/store/**"
           allow: [$gostd]
 
     exhaustive:
-      # a default: clause counts as handling the rest
-      default-signifies-exhaustive: true
+      # a default: clause does NOT excuse a missing case — the point is that
+      # adding an enum value breaks every switch that ignores it
+      default-signifies-exhaustive: false
 
     errcheck:
       check-type-assertions: true

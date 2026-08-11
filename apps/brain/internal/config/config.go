@@ -27,6 +27,13 @@ type Config struct {
 
 	/* Model Router Configuration */
 	OmniRouteURL string `env:"OMNI_ROUTE_URL" envDefault:"http://localhost:20128/v1"`
+
+	/* Authentication Configuration */
+	OIDCEnabled  bool     `env:"OIDC_ENABLED" envDefault:"false"`
+	OIDCIssuer   string   `env:"OIDC_ISSUER" envDefault:""`
+	OIDCAudience string   `env:"OIDC_AUDIENCE" envDefault:"openarity"`
+	DevToken     string   `env:"DEV_TOKEN" envDefault:""`
+	SuperAdmins  []string `env:"SUPER_ADMINS" envDefault:""`
 }
 
 func (c *Config) String() string {

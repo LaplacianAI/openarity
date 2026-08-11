@@ -19,28 +19,38 @@ const (
 	shutdownTimeout   = 10 * time.Second
 )
 
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
 type Server struct {
 	api     *http.Server
 	webhook *http.Server
 	logger  *slog.Logger
+	db      Pinger
+	gateway http.Handler
 }
 
-// New builds both listeners. webhook is the gateway's handler, passed as a
-// plain http.Handler so this package never learns what a channel is —
-// cmd/brain is the only place that knows how the two are wired together.
-func New(cfg *config.Config, logger *slog.Logger, webhook http.Handler) *Server {
+// New builds both listeners. gateway is the channel handler, taken as a plain
+// http.Handler so this package never learns what a channel is — cmd/brain is
+// the only place that knows how the two are wired together.
+func New(cfg *config.Config, logger *slog.Logger, db Pinger, gateway http.Handler) *Server {
+	s := &Server{
+		logger:  logger,
+		db:      db,
+		gateway: gateway,
+	}
+
 	// RecoverPanic outermost so it catches panics from everything inside,
-	// the logger next so even a panicking request's neighbours are recorded.
+	// the logger next so a rejected request is still recorded.
 	mws := []middleware.Middleware{
 		middleware.RecoverPanic(logger),
 		middleware.LogRequests(logger),
 	}
 
-	return &Server{
-		api:     newHTTPServer(cfg.APIBind, middleware.Chain(apiHandler(), mws...)),
-		webhook: newHTTPServer(cfg.WebhookBind, middleware.Chain(webhookHandler(webhook), mws...)),
-		logger:  logger,
-	}
+	s.api = newHTTPServer(cfg.APIBind, middleware.Chain(s.apiHandler(), mws...))
+	s.webhook = newHTTPServer(cfg.WebhookBind, middleware.Chain(s.webhookHandler(), mws...))
+	return s
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -52,11 +62,6 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		WriteTimeout:      writeTimeout,
 		IdleTimeout:       idleTimeout,
 	}
-}
-
-func healthz(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok\n"))
 }
 
 func listen(s *http.Server) error {

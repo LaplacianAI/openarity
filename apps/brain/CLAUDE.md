@@ -31,15 +31,43 @@ break it, explains, and reviews.**
   wrapping the response writer, chain order, and wiring into `server.New`. Use
   it every time; a middleware that is built and never applied passes every
   linter and every test except the wiring one.
+- **`write-migration`** — every schema change. Covers the goose file format,
+  `lock_timeout`, expand-contract for column changes, batched backfills, and
+  when an index needs `CONCURRENTLY`. Use it every time: the migration that
+  freezes a table in production is indistinguishable from a safe one when the
+  table is empty.
+- **`write-query`** — every query that reads or writes Postgres. Covers the
+  sqlc annotations, regenerating and committing the output, type overrides,
+  when a write needs `InTx`, and the batch and copy modes. Use it every time;
+  never hand-write the Go that runs SQL.
+- **`write-tests`** — every test, any package. Covers naming, when
+  `t.Parallel()` is allowed, contexts and ports and timing, what a fake owes
+  you, and step 7: break the thing and confirm the test fails. Read it before
+  writing a concurrency test.
+- **`fix-lint`** — any golangci-lint or gofumpt failure, and any change to
+  `.golangci.yml`. Lists the linters that actually fire here and the correct
+  fix for each. The fix is almost never a `nolint`.
+- **`test-with-postgres`** — any test that needs a real database. Covers
+  skipping when none is available, one schema per test, why these cannot be
+  `t.Parallel()`, and how to check a test would actually fail. Read step 5
+  before writing any concurrency test: we shipped one that passed with the
+  guard removed.
 
 ## Layout
 
 ```text
 apps/brain/
-  cmd/brain/           the only binary: main(), run(), newLogger()
+  cmd/brain/
+    main.go            main(), run(), execute()
+    command.go         argument parsing — pure, no dependencies
+    serve.go           the serve role
+    migrate.go         the migrate role
+    logger.go          newLogger()
   internal/config/     configuration: load, validate, redact
   internal/server/     the two listeners: build, run, shut down
   internal/middleware/ request logging, and everything that wraps a handler
+  internal/store/      Postgres: pool, migrations
+    migrations/        goose .sql files, embedded into the binary
   Makefile             build and code quality targets
   .golangci.yml        linters and formatters
 ```
@@ -128,19 +156,51 @@ they should be talking over HTTP instead.
   program. `server.New` does not check its logger for nil because `run` is
   inside it — a nil there is a programming error, and a panic with a stack
   trace beats a silent fallback.
+- **Cheapest failure first.** `run` parses arguments before loading config, and
+  loads config before dialling Postgres. A typo in a Kubernetes Job spec should
+  fail instantly with `unknown command "migrat"`, not after a connect timeout
+  with an error blaming the database.
+- **Parsing is separate from execution.** `parse` turns `[]string` into a
+  `command` and is pure — no config, no database, no environment. `execute`
+  validates nothing because `parse` already did. That is what lets the argument
+  tests run with nothing set up.
+- **A fixed set of strings is a defined type, not a `string`.** `commandName`
+  and `direction` exist so `exhaustive` fails the build when a new role is
+  added and a switch forgets it. That guarantee depends on
+  `default-signifies-exhaustive: false` — it was `true` here for three steps,
+  and adding a `commandName` reported 0 issues. Keep the `default:` arm anyway:
+  it is unreachable, it returns a clear error rather than silence, and it is
+  tested.
+- **Never put a DSN in an error message.** pgx already redacts the password in
+  its own errors — `postgres://user:xxxxx@…` — and wrapping with the raw string
+  undoes that. Errors reach stderr and the log shipper.
+- **Never delete error handling to raise a coverage number.** When a branch is
+  untestable, say so in a comment and pin the assumption with a test that fails
+  if it stops holding — see `TestSessionLockerCannotFailWithoutOptions`.
 
 ## Commands
 
 ```sh
-make            # list targets
-make check      # everything CI runs: tidy, fmt, vet, lint, build, test, vuln
-make run        # run the server, Ctrl-C for a graceful shutdown
-make cover      # coverage, fails below the threshold
-make fmt        # apply gofumpt and fix import order
-make tools      # reinstall tooling — rerun after a Go upgrade
+make                    # list targets
+make check db=postgres  # everything CI runs — see the note below about db=
+make run                # run the server, Ctrl-C for a graceful shutdown
+make cover              # coverage, fails below the threshold
+make cover-html db=postgres      # the annotated HTML report
+make testdb db=openarity_test    # create a test database — once per machine
+make generate           # regenerate everything generated (today: sqlc)
+make fmt                # apply gofumpt and fix import order
+make tools              # reinstall tooling — rerun after a Go upgrade
 ```
 
 `make check` is the real gate; run it before saying anything is done.
+
+**Always pass `db=` when measuring coverage.** Database tests skip when
+`BRAIN_TEST_POSTGRES_DSN` is empty, and `db=name` is what sets it — `host`,
+`port`, `user` and `sslmode` default around it. Without it `serve`, `migrateUp`
+and every query read 0% and the total drops from 96.9% to 70.3%, which looks
+like a coverage problem and is not one. `make cover` warns when the variable is
+unset for exactly this reason. Never read a coverage report that was produced
+without a database.
 
 **After a Go toolchain upgrade, run `make tools`.** Anything installed with
 `go install` is compiled against the Go present at the time, and both
@@ -183,7 +243,37 @@ reinstalled.
   development because a terminal is the reader; JSON everywhere else because a
   log aggregator is. `AddSource` costs a stack walk per record, so development
   only.
-- **`/healthz` is not logged.** Kubernetes probes it every ten seconds on two
-  listeners — roughly 17k lines a day that say nothing and bury everything
-  else. The skip lives in the middleware and must still let the response
-  through untouched.
+- **`/healthz` and `/readyz` are not logged.** Kubernetes probes them every ten
+  seconds on two listeners — roughly 17k lines a day that say nothing and bury
+  everything else. The skip lives in the middleware, matches the path exactly,
+  and must still let the response through untouched.
+- **Liveness never checks a dependency; readiness always does.** `/healthz`
+  answers 200 with Postgres on fire — failing it restarts every pod at once,
+  which fixes nothing and adds a reconnect storm to the outage. `/readyz` pings
+  the database and returns 503, which takes the pod out of the Service and
+  restarts nothing. Both routes go on both listeners: `kubelet` probes the pod
+  IP, so the loopback API listener is unreachable to it and the webhook copies
+  are the ones Kubernetes actually uses.
+- **pgx, sqlc and goose. No ORM.** Three tools, one job each, none hiding the
+  database. The queue needs `FOR UPDATE SKIP LOCKED`, the runtime tables need
+  `jsonb` operators, and graph RAG will need CTEs — all natural in SQL and all
+  awkward through an ORM. sqlc's weakness is dynamic queries; write the two or
+  three real shapes as named queries rather than reaching for a builder.
+- **`pgxpool` is lazy.** `New` dials nothing — a stopped database, a wrong host
+  and a wrong password all return a working pool and a nil error. `Ping` is the
+  only proof, which is why `run` calls it before anything else starts.
+- **Pool settings live in code, not the DSN.** `pool_max_conns` and friends in
+  a connection string are silently overridden by `applyPoolDefaults`. One place
+  decides, and it is greppable. pgx's own default derives `MaxConns` from
+  `NumCPU`, so the same image would open 8 connections on one node and 64 on
+  another.
+- **Migrations are embedded and applied by the binary.** `brain migrate up`,
+  never the `goose` CLI against a real database — the CLI reads files from
+  disk while the binary carries its own copy, and the two drift silently. In
+  Kubernetes it is a Job that completes before the Deployment rolls: never an
+  `initContainer` on every pod, and never inside `run`.
+- **The migration advisory lock is project-specific.** goose's `DefaultLockID`
+  is crc32 of the string `"goose"` and is therefore shared by every goose user;
+  Postgres advisory locks are scoped per database, not per schema. Ours is
+  crc32 of `"openarity"`. Locking is also off unless `WithSessionLocker` is
+  passed — the default is no lock at all.
