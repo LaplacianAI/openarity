@@ -17,11 +17,26 @@ Ports match the defaults in `internal/config`, so nothing else needs setting.
 FalkorDB, Redis and Vault are running but unused — they are here so the day one
 of them is needed, it is configuration rather than archaeology.
 
+If you already run Postgres or Redis on your machine, the published ports
+collide. Every one of them can be moved without editing the file:
+
+```sh
+POSTGRES_PORT=15432 REDIS_PORT=16379 docker compose -f deployment/docker-compose.yml up -d
+```
+
+`POSTGRES_PORT`, `REDIS_PORT`, `FALKORDB_PORT`, `VAULT_PORT`, `API_PORT` and
+`WEBHOOK_PORT` all work this way. Only the host side moves — the containers
+still talk to each other on the standard ports.
+
 To run the brain in a container too:
 
 ```sh
 docker compose -f deployment/docker-compose.yml --profile brain up -d --build
 ```
+
+That profile also runs a `migrate` service to completion first, the same shape
+as the init container in `k8s/deployment.yaml`. Without it the brain comes up
+healthy against an empty schema and every route returns 500.
 
 ## Authentication
 
@@ -36,7 +51,7 @@ Dex all work — the brain only needs discovery at
 
 ```sh
 cd deployment
-cp authentik.env.example authentik.env     # then fill in both secrets
+cp .env.example .env                       # then fill in both secrets
 docker compose -f docker-compose.yml -f docker-compose.authentik.yml up -d
 ```
 
@@ -68,7 +83,14 @@ kubectl apply -f deployment/k8s/
 ```
 
 Read `secret.yaml` before applying it: the committed file is a template with a
-placeholder DSN, and it is the one file here you should not use as-is.
+placeholder DSN, and it is the one file here you should not use as-is. Nothing
+here provides Postgres — these manifests assume one already exists at the host
+in the DSN, whether that is a managed service or an operator.
+
+**These have never run on a cluster.** They pass `kubeconform -strict`, which
+checks them against the Kubernetes schema and nothing more: it cannot tell you
+that an image pulls, that a probe passes, or that the init container ordering
+behaves. The compose stack is the part that has been exercised end to end.
 
 Three things in `deployment.yaml` are decisions rather than defaults:
 

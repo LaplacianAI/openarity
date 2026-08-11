@@ -21,9 +21,12 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: openarity
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      # Postgres 18 stores data in a major-version subdirectory, so the volume
+      # goes one level up. Mounting /var/lib/postgresql/data instead makes the
+      # image refuse to start rather than silently using ephemeral storage.
+      - postgres-data:/var/lib/postgresql
     healthcheck:
       # -U and -d are not optional: without them pg_isready checks the "root"
       # database as the "root" user and reports healthy while the real one is
@@ -39,7 +42,7 @@ services:
   falkordb:
     image: falkordb/falkordb:latest
     ports:
-      - "127.0.0.1:6380:6379"
+      - "127.0.0.1:${FALKORDB_PORT:-6380}:6379"
     volumes:
       - falkordb-data:/data
     healthcheck:
@@ -52,7 +55,7 @@ services:
     image: redis:8-alpine
     command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -70,7 +73,7 @@ services:
       VAULT_DEV_ROOT_TOKEN_ID: dev-root
       VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
     ports:
-      - "127.0.0.1:8200:8200"
+      - "127.0.0.1:${VAULT_PORT:-8200}:8200"
     cap_add:
       - IPC_LOCK
     healthcheck:
@@ -78,6 +81,22 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Migrations run to completion before the brain starts, which is the same
+  # shape as the init container in k8s/deployment.yaml. Without it the service
+  # comes up healthy against an empty schema and every route 500s.
+  migrate:
+    profiles: ["brain"]
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    command: ["migrate", "up"]
+    environment:
+      OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/openarity?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   # Opt in with --profile brain. Everything else runs by default, because the
   # normal loop is dependencies in Docker and the brain on the host.
@@ -97,11 +116,13 @@ services:
       OPENARITY_DEV_TOKEN: letmein
       OPENARITY_SUPER_ADMINS: dev
     ports:
-      - "127.0.0.1:21120:21120"
-      - "127.0.0.1:21121:21121"
+      - "127.0.0.1:${API_PORT:-21120}:21120"
+      - "127.0.0.1:${WEBHOOK_PORT:-21121}:21121"
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:

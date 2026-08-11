@@ -7,7 +7,7 @@
 # swapping it means changing two settings on the brain and nothing else.
 #
 #   cd deployment
-#   cp authentik.env.example authentik.env      # then fill in the two secrets
+#   cp .env.example .env                        # then fill in the two secrets
 #   docker compose -f docker-compose.yml -f docker-compose.authentik.yml up -d
 #
 # Authentik is self-contained here — its own Postgres, its own volumes — so it
@@ -25,7 +25,7 @@ services:
     environment:
       POSTGRES_DB: authentik
       POSTGRES_USER: authentik
-      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASS:?set AUTHENTIK_PG_PASS in authentik.env}
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASS:?set AUTHENTIK_PG_PASS in deployment/.env}
     volumes:
       - authentik-database:/var/lib/postgresql/data
     healthcheck:
@@ -40,13 +40,13 @@ services:
     image: ghcr.io/goauthentik/server:2026.5.6
     command: server
     env_file:
-      - authentik.env
+      - .env
     environment:
       AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
       AUTHENTIK_POSTGRESQL__NAME: authentik
       AUTHENTIK_POSTGRESQL__USER: authentik
       AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASS}
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set AUTHENTIK_SECRET_KEY in authentik.env}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set AUTHENTIK_SECRET_KEY in deployment/.env}
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9443:9443"
@@ -63,7 +63,7 @@ services:
     image: ghcr.io/goauthentik/server:2026.5.6
     command: worker
     env_file:
-      - authentik.env
+      - .env
     environment:
       AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
       AUTHENTIK_POSTGRESQL__NAME: authentik
