@@ -1,0 +1,33 @@
+# Non-secret settings. Anything holding a credential belongs in secret.yaml,
+# because a ConfigMap is readable by anything that can list them.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: brain-config
+  labels:
+    app.kubernetes.io/name: brain
+    app.kubernetes.io/part-of: openarity
+data:
+  # The defaults bind to loopback, which nothing outside the pod can reach —
+  # not even the kubelet running the probes.
+  OPENARITY_API_BIND: "0.0.0.0:21120"
+  OPENARITY_WEBHOOK_BIND: "0.0.0.0:21121"
+
+  OPENARITY_ENVIRONMENT: "production"
+  OPENARITY_LOG_LEVEL: "info"
+
+  # Not used by the brain yet. They are here so the day a component starts
+  # using one, this file is where it is configured rather than where it is
+  # discovered to be missing.
+  OPENARITY_FALKOR_DB_URL: "redis://falkordb:6379"
+  OPENARITY_REDIS_URL: "redis://redis:6379"
+  OPENARITY_VAULT_ADDR: "http://vault:8200"
+
+  OPENARITY_OIDC_ENABLED: "true"
+  OPENARITY_OIDC_AUDIENCE: "openarity"
+  # OPENARITY_OIDC_ISSUER is deployment-specific; set it here.
+  OPENARITY_OIDC_ISSUER: "https://example.okta.com"
+
+  # Token subjects, not email addresses. A super admin bypasses every
+  # team-scoped check, so this list is a privileged one — keep it short.
+  OPENARITY_SUPER_ADMINS: ""

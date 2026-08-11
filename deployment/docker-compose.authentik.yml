@@ -1,0 +1,90 @@
+# Authentik as the identity provider for local development.
+#
+# The brain speaks OIDC to exactly one provider. That is deliberate: an
+# organisation that wants Google and GitHub and LDAP puts Authentik (or Keycloak,
+# or Okta) in front and lets it federate. This file is the reference for that
+# shape, not a dependency — anything that serves OIDC discovery works, and
+# swapping it means changing two settings on the brain and nothing else.
+#
+#   cd deployment
+#   cp .env.example .env                        # then fill in the two secrets
+#   docker compose -f docker-compose.yml -f docker-compose.authentik.yml up -d
+#
+# Authentik is self-contained here — its own Postgres, its own volumes — so it
+# can be deleted without touching the brain's data.
+#
+# Adapted from https://goauthentik.io/docker-compose.yml, pinned rather than
+# tracking latest: an identity provider that upgrades itself overnight is an
+# outage waiting for a Monday.
+
+name: openarity
+
+services:
+  authentik-postgresql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASS:?set AUTHENTIK_PG_PASS in deployment/.env}
+    volumes:
+      - authentik-database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2026.5.6
+    command: server
+    env_file:
+      - .env
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASS}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set AUTHENTIK_SECRET_KEY in deployment/.env}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:9000:9000"
+      - "${BIND_ADDR:-127.0.0.1}:9443:9443"
+    volumes:
+      - authentik-media:/media
+      - authentik-templates:/templates
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+    shm_size: 512mb
+    restart: unless-stopped
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2026.5.6
+    command: worker
+    env_file:
+      - .env
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASS}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+    volumes:
+      - authentik-media:/media
+      - authentik-certs:/certs
+      - authentik-templates:/templates
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+    shm_size: 512mb
+    restart: unless-stopped
+    # The upstream file mounts /var/run/docker.sock so the worker can manage
+    # outpost containers. That hands a container root on the host, and nothing
+    # here needs it — add it back only if you start using outposts.
+
+volumes:
+  authentik-database:
+  authentik-media:
+  authentik-certs:
+  authentik-templates:

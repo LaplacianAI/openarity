@@ -22,7 +22,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	}
 
 	authorizer := authz.New(dbStore, cfg.SuperAdmins)
-	routers := newRouters(logger, dbStore, authorizer)
+	routers := newRouters(cfg, logger, dbStore, authorizer)
 
 	return server.New(
 		cfg,

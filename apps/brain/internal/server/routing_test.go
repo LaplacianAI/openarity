@@ -12,9 +12,12 @@ import (
 // is how these tests prove the chain ran in the right order.
 type stubRouter struct {
 	pattern string
+	public  bool
 	ran     *bool
 	sawUser **auth.User
 }
+
+func (r stubRouter) Public() bool { return r.public }
 
 func (r stubRouter) Register(mux *http.ServeMux) {
 	mux.HandleFunc(r.pattern, func(w http.ResponseWriter, req *http.Request) {
@@ -44,6 +47,98 @@ func TestRoutersAreMounted(t *testing.T) {
 	if !ran {
 		t.Error("the route did not run")
 	}
+}
+
+// A public router answers without a token. That is the whole reason the flag
+// exists: a browser navigating to a documentation page cannot send one.
+func TestAPublicRouterSkipsAuthentication(t *testing.T) {
+	t.Parallel()
+
+	var ran bool
+	srv := New(testConfig(), discardLogger(), deps(healthyDB()),
+		stubRouter{pattern: "GET /docs", public: true, ran: &ran})
+
+	rec := request(t, srv.apiHandler(), http.MethodGet, "/docs", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — a public route asked for a token: %s", rec.Code, rec.Body)
+	}
+	if !ran {
+		t.Error("the route did not run")
+	}
+}
+
+// Being public must not leak across routers. One public router in the list
+// cannot be allowed to open the rest.
+func TestOnePublicRouterDoesNotOpenTheOthers(t *testing.T) {
+	t.Parallel()
+
+	var public, protected bool
+	srv := New(testConfig(), discardLogger(), deps(healthyDB()),
+		stubRouter{pattern: "GET /docs", public: true, ran: &public},
+		stubRouter{pattern: "GET /things", ran: &protected})
+
+	if rec := request(t, srv.apiHandler(), http.MethodGet, "/things", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("a protected route answered %d without a token, want 401", rec.Code)
+	}
+	if protected {
+		t.Error("the protected handler ran for an unauthenticated request")
+	}
+
+	if rec := request(t, srv.apiHandler(), http.MethodGet, "/docs", ""); rec.Code != http.StatusOK {
+		t.Errorf("the public route answered %d", rec.Code)
+	}
+}
+
+// A public route does not resolve a user, so nothing downstream may assume one
+// is on the context.
+func TestAPublicRouteHasNoUser(t *testing.T) {
+	t.Parallel()
+
+	var saw *auth.User
+	srv := New(testConfig(), discardLogger(), deps(healthyDB()),
+		stubRouter{pattern: "GET /docs", public: true, sawUser: &saw})
+
+	request(t, srv.apiHandler(), http.MethodGet, "/docs", "")
+
+	if saw != nil {
+		t.Errorf("a public route saw user %+v", saw)
+	}
+}
+
+// A valid token on a public route is ignored rather than rejected. A client
+// that sends one everywhere should not have to special-case the docs.
+func TestAPublicRouteAcceptsATokenItDoesNotNeed(t *testing.T) {
+	t.Parallel()
+
+	var ran bool
+	srv := New(testConfig(), discardLogger(), deps(healthyDB()),
+		stubRouter{pattern: "GET /docs", public: true, ran: &ran})
+
+	if rec := request(t, srv.apiHandler(), http.MethodGet, "/docs", testToken); rec.Code != http.StatusOK {
+		t.Errorf("status = %d with a valid token, want 200", rec.Code)
+	}
+	if !ran {
+		t.Error("the route did not run")
+	}
+}
+
+// The probes are mounted by the server itself. A public router must not be
+// able to take one over — the mux panics on a duplicate, so this fails the
+// boot rather than shadowing readiness.
+func TestAPublicRouterCannotShadowTheProbes(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if recover() == nil {
+			t.Error("a router claimed GET /healthz without a panic")
+		}
+	}()
+
+	var ran bool
+	srv := New(testConfig(), discardLogger(), deps(healthyDB()),
+		stubRouter{pattern: "GET /healthz", public: true, ran: &ran})
+	srv.apiHandler()
 }
 
 func TestEveryRouterIsMounted(t *testing.T) {

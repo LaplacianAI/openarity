@@ -26,6 +26,7 @@ type Pinger interface {
 
 type Router interface {
 	Register(mux *http.ServeMux)
+	Public() bool
 }
 
 type Deps struct {

@@ -1,0 +1,141 @@
+# Local dependencies for developing the brain.
+#
+# This file runs what the brain talks to, not the brain itself — you want it
+# rebuilding on save, not in a container. Ports match the defaults in
+# internal/config, so `go run ./cmd/brain` needs no environment beyond a token.
+#
+#   docker compose -f deployment/docker-compose.yml up -d
+#   cd apps/brain && go run ./cmd/brain migrate up
+#
+# To run the brain in a container as well:
+#
+#   docker compose -f deployment/docker-compose.yml --profile brain up -d --build
+
+name: openarity
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: openarity
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18 stores data in a major-version subdirectory, so the volume
+      # goes one level up. Mounting /var/lib/postgresql/data instead makes the
+      # image refuse to start rather than silently using ephemeral storage.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # -U and -d are not optional: without them pg_isready checks the "root"
+      # database as the "root" user and reports healthy while the real one is
+      # still being created.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d openarity"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Not used by the brain yet. It is here so the ports in the configuration
+  # table are real, and so the day the graph lands nobody has to find an image.
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${FALKORDB_PORT:-6380}:6379"
+    volumes:
+      - falkordb-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Development mode: in-memory, unsealed, root token "dev-root". Every secret
+  # written here is lost on restart, which is the point — nothing durable
+  # should exist on a laptop.
+  vault:
+    image: hashicorp/vault:latest
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: dev-root
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${VAULT_PORT:-8200}:8200"
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Migrations run to completion before the brain starts, which is the same
+  # shape as the init container in k8s/deployment.yaml. Without it the service
+  # comes up healthy against an empty schema and every route 500s.
+  migrate:
+    profiles: ["brain"]
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    command: ["migrate", "up"]
+    environment:
+      OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/openarity?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # Opt in with --profile brain. Everything else runs by default, because the
+  # normal loop is dependencies in Docker and the brain on the host.
+  brain:
+    profiles: ["brain"]
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    environment:
+      OPENARITY_API_BIND: "0.0.0.0:21120"
+      OPENARITY_WEBHOOK_BIND: "0.0.0.0:21121"
+      OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/openarity?sslmode=disable"
+      OPENARITY_FALKOR_DB_URL: "redis://falkordb:6379"
+      OPENARITY_REDIS_URL: "redis://redis:6379"
+      OPENARITY_VAULT_ADDR: "http://vault:8200"
+      # development keeps this usable with no identity provider. Set it to
+      # staging or production in .env and the dev token is refused outright,
+      # so OIDC becomes mandatory rather than optional.
+      OPENARITY_ENVIRONMENT: ${OPENARITY_ENVIRONMENT:-development}
+      # A shared token by default, so the stack is usable with no identity
+      # provider. Set these to point at a real one — see the README. The
+      # single-dash form is deliberate: an empty OPENARITY_DEV_TOKEN must turn
+      # the token off rather than fall back to the default.
+      OPENARITY_DEV_TOKEN: ${OPENARITY_DEV_TOKEN-letmein}
+      OPENARITY_SUPER_ADMINS: ${OPENARITY_SUPER_ADMINS-dev}
+      OPENARITY_OIDC_ENABLED: ${OPENARITY_OIDC_ENABLED:-false}
+      OPENARITY_OIDC_ISSUER: ${OPENARITY_OIDC_ISSUER-}
+      OPENARITY_OIDC_AUDIENCE: ${OPENARITY_OIDC_AUDIENCE:-openarity}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${API_PORT:-21120}:21120"
+      - "${BIND_ADDR:-127.0.0.1}:${WEBHOOK_PORT:-21121}:21121"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  falkordb-data:
+  redis-data:
