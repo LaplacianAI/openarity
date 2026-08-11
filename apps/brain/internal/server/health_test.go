@@ -102,7 +102,7 @@ func TestReadyzLogsItsFailure(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	srv := New(testConfig(), logger, brokenDB(), testVerifier())
+	srv := New(testConfig(), logger, deps(brokenDB()))
 
 	get(t, srv.apiHandler(), "/readyz")
 
@@ -121,7 +121,7 @@ func TestReadyzIsSilentWhenReady(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	srv := New(testConfig(), logger, healthyDB(), testVerifier())
+	srv := New(testConfig(), logger, deps(healthyDB()))
 
 	get(t, srv.apiHandler(), "/readyz")
 	get(t, srv.apiHandler(), "/healthz")
@@ -137,7 +137,7 @@ func TestReadyzStopsWhenTheProbeDisconnects(t *testing.T) {
 	t.Parallel()
 
 	db := healthyDB()
-	srv := New(testConfig(), discardLogger(), db, testVerifier())
+	srv := New(testConfig(), discardLogger(), deps(db))
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

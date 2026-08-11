@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 )
@@ -84,6 +86,20 @@ func (s staticVerifier) Verify(_ context.Context, token string) (*auth.Principal
 
 func testVerifier() auth.Verifier { return staticVerifier{token: testToken} }
 
+// staticResolver stands in for the store. Resolution is covered in
+// internal/store and internal/middleware; here it only has to produce a user.
+type staticResolver struct{}
+
+func (staticResolver) Resolve(_ context.Context, p *auth.Principal) (*auth.User, error) {
+	return &auth.User{ID: uuid.New(), Issuer: p.Issuer, Subject: p.Subject}, nil
+}
+
+// deps is the usual set: a database that answers, a verifier that accepts
+// testToken, and a resolver that always succeeds.
+func deps(db Pinger) Deps {
+	return Deps{DB: db, Verifier: testVerifier(), Resolver: staticResolver{}}
+}
+
 // Swapping these two binds puts the API on a public port and the webhook
 // receiver on loopback. That is the whole security boundary, so assert the
 // mapping rather than trusting the field order in New.
@@ -91,7 +107,7 @@ func TestNewBindsEachListenerToItsOwnAddress(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig()
-	srv := New(cfg, discardLogger(), healthyDB(), testVerifier())
+	srv := New(cfg, discardLogger(), deps(healthyDB()))
 
 	if srv.api.Addr != cfg.APIBind {
 		t.Errorf("api bound to %q, want %q", srv.api.Addr, cfg.APIBind)
@@ -116,7 +132,7 @@ func TestNewWrapsBothListenersInTheRequestLogger(t *testing.T) {
 		"webhook": func(s *Server) *http.Server { return s.webhook },
 	} {
 		logger, buf := recordingLogger()
-		srv := New(testConfig(), logger, healthyDB(), testVerifier())
+		srv := New(testConfig(), logger, deps(healthyDB()))
 
 		listener := pick(srv)
 		if listener.Handler == nil {
@@ -137,7 +153,7 @@ func TestNewWrapsBothListenersInTheRequestLogger(t *testing.T) {
 func TestNewSetsAllTimeouts(t *testing.T) {
 	t.Parallel()
 
-	srv := New(testConfig(), discardLogger(), healthyDB(), testVerifier())
+	srv := New(testConfig(), discardLogger(), deps(healthyDB()))
 
 	for name, s := range map[string]*http.Server{"api": srv.api, "webhook": srv.webhook} {
 		if s.ReadHeaderTimeout != readHeaderTimeout {
@@ -162,7 +178,7 @@ func TestNewDoesNotListen(t *testing.T) {
 	cfg := testConfig()
 	cfg.APIBind = "256.256.256.256:99999" // unresolvable, unbindable
 
-	if srv := New(cfg, discardLogger(), healthyDB(), testVerifier()); srv == nil {
+	if srv := New(cfg, discardLogger(), deps(healthyDB())); srv == nil {
 		t.Fatal("New returned nil")
 	}
 }
@@ -173,7 +189,7 @@ func TestNewDoesNotListen(t *testing.T) {
 func handlers(t *testing.T, db Pinger) map[string]http.Handler {
 	t.Helper()
 
-	srv := New(testConfig(), discardLogger(), db, testVerifier())
+	srv := New(testConfig(), discardLogger(), deps(db))
 	return map[string]http.Handler{
 		"api":     srv.apiHandler(),
 		"webhook": srv.webhookHandler(),

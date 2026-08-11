@@ -20,5 +20,16 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 		return err
 	}
 
-	return server.New(cfg, logger, dbStore, verifier).Run(ctx)
+	routers := newRouters(logger)
+
+	return server.New(
+		cfg,
+		logger,
+		server.Deps{
+			DB:       dbStore,
+			Verifier: verifier,
+			Resolver: dbStore,
+		},
+		routers...,
+	).Run(ctx)
 }

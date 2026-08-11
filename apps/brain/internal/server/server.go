@@ -24,19 +24,33 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+type Router interface {
+	Register(mux *http.ServeMux)
+}
+
+type Deps struct {
+	DB       Pinger
+	Verifier auth.Verifier
+	Resolver middleware.Resolver
+}
+
 type Server struct {
 	api      *http.Server
 	webhook  *http.Server
 	logger   *slog.Logger
 	db       Pinger
 	verifier auth.Verifier
+	resolver middleware.Resolver
+	routers  []Router
 }
 
-func New(cfg *config.Config, logger *slog.Logger, db Pinger, verifier auth.Verifier) *Server {
+func New(cfg *config.Config, logger *slog.Logger, deps Deps, routers ...Router) *Server {
 	s := &Server{
 		logger:   logger,
-		db:       db,
-		verifier: verifier,
+		db:       deps.DB,
+		verifier: deps.Verifier,
+		resolver: deps.Resolver,
+		routers:  routers,
 	}
 	logRequests := middleware.LogRequests(logger)
 	s.api = newHTTPServer(cfg.APIBind, logRequests(s.apiHandler()))
