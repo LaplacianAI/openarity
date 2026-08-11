@@ -25,7 +25,7 @@ half-wired setting that fails confusingly in production.
   default config passes `Validate()`. A default that fails validation means
   nobody can start the process without overriding something.
 - **Secrets do not live here.** Config holds a *reference* — a Vault path — not
-  a secret value. Values come from `SecretStore` at use time.
+  a secret value. Values come from `secrets.Store` at use time.
 
 ## Step 1 — the struct field
 

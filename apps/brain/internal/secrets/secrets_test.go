@@ -50,7 +50,47 @@ func TestStaticZeroValueFailsClosed(t *testing.T) {
 func TestChannelPathLayout(t *testing.T) {
 	t.Parallel()
 
-	if got := ChannelPath("t1", "c1"); got != "tenants/t1/channels/c1" {
+	got, err := ChannelPath("t1", "c1")
+	if err != nil {
+		t.Fatalf("ChannelPath: %v", err)
+	}
+	if got != "tenants/t1/channels/c1" {
 		t.Errorf("ChannelPath = %q", got)
+	}
+}
+
+// A segment that could change the shape of the path it is spliced into is
+// refused outright. Today every caller passes trusted registrations; the day
+// they come from a database row, "../other-tenant" must not become a path
+// that reads across the tenant namespace.
+func TestChannelPathRejectsUnusableSegments(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		tenantID, channelID string
+	}{
+		"empty tenant":          {"", "c1"},
+		"empty channel":         {"t1", ""},
+		"slash in tenant":       {"t1/x", "c1"},
+		"bare traversal":        {"..", "c1"},
+		"backslash in channel":  {"t1", `c1\x`},
+		"traversal in tenant":   {"../t2", "c1"},
+		"traversal in channel":  {"t1", "c1/../c2"},
+		"newline in channel":    {"t1", "c1\n"},
+		"delete char in tenant": {"t1\x7f", "c1"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ChannelPath(tc.tenantID, tc.channelID)
+			if !errors.Is(err, ErrBadPathSegment) {
+				t.Errorf("ChannelPath err = %v, want ErrBadPathSegment", err)
+			}
+			if got != "" {
+				t.Errorf("ChannelPath returned %q alongside the error, want empty", got)
+			}
+		})
 	}
 }

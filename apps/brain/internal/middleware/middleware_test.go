@@ -43,3 +43,23 @@ func TestChainWithNoMiddleware(t *testing.T) {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
 }
+
+// Both wrappers must expose Unwrap: http.NewResponseController reaches
+// Flush and the per-request deadline setters (which the streaming endpoints
+// will need) by unwrapping, and a wrapper without Unwrap turns every one of
+// those into ErrNotSupported.
+func TestChainedWrappersExposeTheUnderlyingWriter(t *testing.T) {
+	t.Parallel()
+
+	logger, _ := recordingLogger()
+	var flushErr error
+	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		flushErr = http.NewResponseController(w).Flush()
+	}), RecoverPanic(logger), LogRequests(logger))
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/flush", nil))
+
+	if flushErr != nil {
+		t.Errorf("Flush through both wrappers failed: %v", flushErr)
+	}
+}

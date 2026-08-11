@@ -16,7 +16,7 @@ which is also the difficulty and the deploy topology.
 
 - **`WebhookAdapter`** — `Verify(request, body, secret)` then `Parse(body)`.
   Stateless, no lifecycle, any replica may serve any request. Telegram, Slack,
-  WhatsApp. The handler fetches the secret from `SecretStore` per request and
+  WhatsApp. The handler fetches the secret from `secrets.Store` per request and
   hands the value in — a refinement of the HLD's `Verify(request, body)`
   sketch, proposed to the other maintainer in the first channel PR.
 - **`SessionAdapter`** — `Run(ctx, out)`. Owns a long-lived connection, emits
@@ -39,7 +39,7 @@ from the start, but only the webhook shape has an occupant today.
   the body; Discord: Ed25519). Nothing may read or re-serialise the body before
   the adapter's `Verify`. This is why it cannot be a generic middleware — the
   brain's own `add-middleware` skill says the same thing.
-- **Secrets come from `secrets.SecretStore`, never from config or env values.**
+- **Secrets come from `secrets.Store`, never from config or env values.**
   Per the HLD, *even webhook signing secrets are references, not values.* The
   handler fetches by path (`secrets.ChannelPath`, `tenants/<t>/channels/<id>`)
   and hands the value to `Verify`; nothing holds a literal. If you are typing

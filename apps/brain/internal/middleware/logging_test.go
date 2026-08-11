@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func recordingLogger() (*slog.Logger, *bytes.Buffer) {
@@ -140,9 +142,9 @@ func TestLogRequestsSkipIsExact(t *testing.T) {
 	}
 }
 
-// Only the probe is exempt. On the public listener, POST /healthz falls
-// through to the gateway — a request shaped like a probe but not one, and an
-// unlogged path there is a free probing surface.
+// Only the probe is exempt. POST /healthz is answered 405 by the server mux
+// — a request shaped like a probe but not one, likely someone probing, and
+// an unlogged path there is a free probing surface.
 func TestLogRequestsLogsNonGETHealthz(t *testing.T) {
 	t.Parallel()
 
@@ -174,6 +176,43 @@ func TestLogRequestsDoesNotLogTheQueryString(t *testing.T) {
 	}
 	if rec["path"] != "/things" {
 		t.Errorf("path = %v, want /things", rec["path"])
+	}
+}
+
+// The path is attacker-controlled up to the server's MaxHeaderBytes, far
+// larger than any legitimate route. Logging it uncapped hands an
+// unauthenticated caller a log-volume amplifier — and the cap must cut on a
+// rune boundary, never mid-character.
+func TestLogRequestsCapsTheLoggedPath(t *testing.T) {
+	t.Parallel()
+
+	long := "/things/" + strings.Repeat("x", 4096)
+	_, rec := serve(t, http.MethodGet, long, ok)
+	if rec == nil {
+		t.Fatal("nothing was logged")
+	}
+
+	path, _ := rec["path"].(string)
+	if len(path) > maxLoggedPath {
+		t.Errorf("logged path is %d bytes, want at most %d", len(path), maxLoggedPath)
+	}
+	if !strings.HasPrefix(path, "/things/") {
+		t.Errorf("path = %q, want the capped original", path)
+	}
+
+	// A multi-byte rune straddling the limit is dropped whole, never split
+	// into invalid UTF-8.
+	straddling := "/" + strings.Repeat("a", maxLoggedPath-2) + "€"
+	_, rec = serve(t, http.MethodGet, straddling, ok)
+	if rec == nil {
+		t.Fatal("nothing was logged")
+	}
+	path, _ = rec["path"].(string)
+	if !utf8.ValidString(path) {
+		t.Errorf("the capped path is invalid UTF-8: %q", path)
+	}
+	if strings.ContainsRune(path, '€') {
+		t.Errorf("the straddling rune survived the cap: %q", path)
 	}
 }
 

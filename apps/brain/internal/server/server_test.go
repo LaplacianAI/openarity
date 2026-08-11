@@ -133,6 +133,9 @@ func TestNewSetsAllTimeouts(t *testing.T) {
 		if s.IdleTimeout != idleTimeout {
 			t.Errorf("%s IdleTimeout = %v, want %v", name, s.IdleTimeout, idleTimeout)
 		}
+		if s.MaxHeaderBytes != maxHeaderBytes {
+			t.Errorf("%s MaxHeaderBytes = %d, want %d — the 1 MB default is a log amplifier", name, s.MaxHeaderBytes, maxHeaderBytes)
+		}
 	}
 }
 
@@ -215,11 +218,18 @@ func TestWebhookHandlerRoutesTheGatewaySubtree(t *testing.T) {
 	}
 }
 
+// panickyPinger triggers a panic inside a route both listeners serve —
+// /readyz is the one handler on the API listener that runs real code, which
+// is what lets the recovery test below drive both chains.
+type panickyPinger struct{}
+
+func (panickyPinger) Ping(context.Context) error { panic("ping boom") }
+
 // The wiring test the add-middleware skill demands: a panic in the gateway
-// must come back as a 500 and a structured record. Left unrecovered, net/http
-// writes no response at all, so the provider sees a reset and retries into
-// silence. Only a request through the built Server catches RecoverPanic being
-// built and never applied.
+// must come back as a 500 and a structured record. Left unrecovered,
+// net/http writes no response at all, so the provider sees a reset and
+// retries into silence. Only a request through the built Server catches
+// RecoverPanic being built and never applied.
 func TestNewRecoversAGatewayPanic(t *testing.T) {
 	t.Parallel()
 
@@ -236,5 +246,31 @@ func TestNewRecoversAGatewayPanic(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "gateway boom") {
 		t.Errorf("panic was not logged: %s", buf.String())
+	}
+}
+
+// RecoverPanic must be in BOTH listeners' chains — dropping it from one
+// still passes every other test. The gateway is webhook-only, so the panic
+// comes from the Pinger through /readyz, the one route on the API listener
+// that runs real code.
+func TestNewRecoversAPanicOnBothListeners(t *testing.T) {
+	t.Parallel()
+
+	for name, pick := range map[string]func(*Server) *http.Server{
+		"api":     func(s *Server) *http.Server { return s.api },
+		"webhook": func(s *Server) *http.Server { return s.webhook },
+	} {
+		logger, buf := recordingLogger()
+		srv := New(testConfig(), logger, panickyPinger{}, http.NotFoundHandler())
+
+		rec := httptest.NewRecorder()
+		pick(srv).Handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil))
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("%s: panicking readyz = %d, want 500", name, rec.Code)
+		}
+		if !strings.Contains(buf.String(), "ping boom") {
+			t.Errorf("%s: panic was not logged: %s", name, buf.String())
+		}
 	}
 }

@@ -17,6 +17,12 @@ const (
 	writeTimeout      = 30 * time.Second
 	idleTimeout       = 60 * time.Second
 	shutdownTimeout   = 10 * time.Second
+
+	// maxHeaderBytes replaces net/http's 1 MB default. Nothing served here
+	// needs long URLs or big headers, and the request line is logged — an
+	// unauthenticated 1 MB path would be a log-volume amplifier on the
+	// public listener.
+	maxHeaderBytes = 16 << 10
 )
 
 type Pinger interface {
@@ -61,6 +67,7 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
 		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
 	}
 }
 

@@ -4,6 +4,7 @@
 package gateway
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -24,13 +25,17 @@ const secretTokenHeader = "X-Telegram-Bot-Api-Secret-Token" //nolint:gosec // th
 
 // secretTokenShape is setWebhook's grammar for secret_token. A stored secret
 // outside it can never match a header Telegram accepted, so it is surfaced
-// as misconfiguration rather than 401ing silently forever. Note a bot token
-// contains ':' and is deliberately outside this shape.
+// as misconfiguration (contracts.ErrSecretUnusable) rather than 401ing
+// silently forever. Note a bot token contains ':' and is deliberately
+// outside this shape.
 var secretTokenShape = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
 
-// errSecretUnusable reports a stored secret setWebhook would have rejected —
-// a misconfiguration, not an attack, and logged as its own outcome.
-var errSecretUnusable = errors.New("stored secret is not a valid telegram secret token")
+// maxDate rejects timestamps this adapter refuses to believe: 4102444800 is
+// 2100-01-01T00:00:00Z. Telegram's date is attacker-influenced, and a large
+// enough value makes time.Unix produce a year beyond 9999, which slog's JSON
+// handler emits as a malformed record — the bound protects the log pipeline,
+// not the business logic.
+const maxDate = 4102444800
 
 // Telegram is the Telegram channel adapter. Stateless: every dependency
 // arrives per call.
@@ -41,16 +46,19 @@ func (Telegram) Channel() string { return "telegram" }
 // Verify compares the secret-token header against the stored secret in
 // constant time. The empty cases are rejected explicitly first:
 // ConstantTimeCompare("", "") is 1, so an empty stored secret plus a missing
-// header would otherwise authenticate everyone.
+// header would otherwise authenticate everyone. The comparison runs over
+// fixed-width digests because ConstantTimeCompare short-circuits on length —
+// comparing the raw strings would leak the stored token's length by timing.
 func (Telegram) Verify(r *http.Request, _ []byte, secret string) error {
 	if !secretTokenShape.MatchString(secret) {
-		return errSecretUnusable
+		return fmt.Errorf("not a valid telegram secret token: %w", contracts.ErrSecretUnusable)
 	}
 	values := r.Header.Values(secretTokenHeader)
 	if len(values) != 1 || values[0] == "" {
 		return errors.New("missing secret token header")
 	}
-	if subtle.ConstantTimeCompare([]byte(values[0]), []byte(secret)) != 1 {
+	got, want := sha256.Sum256([]byte(values[0])), sha256.Sum256([]byte(secret))
+	if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
 		return errors.New("secret token mismatch")
 	}
 	return nil
@@ -88,9 +96,10 @@ type tgChat struct {
 // Anything that is not a fresh human text-or-caption message wraps ErrIgnore
 // with the reason: non-message updates (edits, channel posts, membership
 // changes), authorless and bot-authored messages (bot authors are dropped
-// here to keep two bots in one group from looping), and messages with a
+// here to keep two bots in one group from looping), messages with a
 // zero-filled chat id, message id or date — encoding/json zero-fills missing
-// fields silently, and a "0" id would corrupt the dedup key downstream.
+// fields silently, and a "0" id would corrupt the dedup key downstream —
+// and dates past maxDate.
 func (Telegram) Parse(body []byte) (contracts.Message, error) {
 	var update tgUpdate
 	if err := json.Unmarshal(body, &update); err != nil {
@@ -111,6 +120,8 @@ func (Telegram) Parse(body []byte) (contracts.Message, error) {
 		return contracts.Message{}, fmt.Errorf("no message id: %w", contracts.ErrIgnore)
 	case msg.Date <= 0:
 		return contracts.Message{}, fmt.Errorf("no date: %w", contracts.ErrIgnore)
+	case msg.Date > maxDate:
+		return contracts.Message{}, fmt.Errorf("implausible date: %w", contracts.ErrIgnore)
 	}
 
 	text := msg.Text

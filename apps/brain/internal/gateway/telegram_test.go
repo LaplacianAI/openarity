@@ -11,7 +11,10 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/contracts"
 )
 
-func verifyRequest(t *testing.T, headerValues ...string) *http.Request {
+// Tests and fixtures here are Telegram-prefixed: slack_test.go and friends
+// will share this package, and Go rejects two functions with one name.
+
+func telegramVerifyRequest(t *testing.T, headerValues ...string) *http.Request {
 	t.Helper()
 
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhook/telegram/ch-1", nil)
@@ -21,7 +24,7 @@ func verifyRequest(t *testing.T, headerValues ...string) *http.Request {
 	return r
 }
 
-func TestVerify(t *testing.T) {
+func TestTelegramVerify(t *testing.T) {
 	t.Parallel()
 
 	tooLong := strings.Repeat("a", 257)
@@ -54,7 +57,7 @@ func TestVerify(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			err := Telegram{}.Verify(verifyRequest(t, tc.headers...), nil, tc.secret)
+			err := Telegram{}.Verify(telegramVerifyRequest(t, tc.headers...), nil, tc.secret)
 			if gotErr := err != nil; gotErr != tc.wantErr {
 				t.Errorf("Verify err = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -64,7 +67,7 @@ func TestVerify(t *testing.T) {
 
 // The handler logs a misconfigured secret as its own outcome, so the error
 // identity is a contract, not a message.
-func TestVerifyFlagsUnusableStoredSecret(t *testing.T) {
+func TestTelegramVerifyFlagsUnusableStoredSecret(t *testing.T) {
 	t.Parallel()
 
 	for name, secret := range map[string]string{
@@ -74,16 +77,16 @@ func TestVerifyFlagsUnusableStoredSecret(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			err := Telegram{}.Verify(verifyRequest(t, secret), nil, secret)
-			if !errors.Is(err, errSecretUnusable) {
-				t.Errorf("Verify err = %v, want errSecretUnusable", err)
+			err := Telegram{}.Verify(telegramVerifyRequest(t, secret), nil, secret)
+			if !errors.Is(err, contracts.ErrSecretUnusable) {
+				t.Errorf("Verify err = %v, want contracts.ErrSecretUnusable", err)
 			}
 		})
 	}
 }
 
 // A real supergroup update: negative 64-bit chat id, user id past 2^32.
-const updateJSON = `{
+const telegramUpdateJSON = `{
 	"update_id": 794029,
 	"message": {
 		"message_id": 42,
@@ -97,10 +100,10 @@ const updateJSON = `{
 // The want has Channel, ChannelID and TenantID zero on purpose: those are
 // the handler's fields, and Parse filling them would put two owners on one
 // field.
-func TestParseNormalisesARealUpdate(t *testing.T) {
+func TestTelegramParseNormalisesARealUpdate(t *testing.T) {
 	t.Parallel()
 
-	got, err := Telegram{}.Parse([]byte(updateJSON))
+	got, err := Telegram{}.Parse([]byte(telegramUpdateJSON))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -127,7 +130,7 @@ func TestParseNormalisesARealUpdate(t *testing.T) {
 // Telegram puts a photo's caption in "caption", not "text". Treating no-text
 // as ignorable without this fallback silently drops every captioned photo
 // forever.
-func TestParseFallsBackToTheCaption(t *testing.T) {
+func TestTelegramParseFallsBackToTheCaption(t *testing.T) {
 	t.Parallel()
 
 	body := `{"message": {"message_id": 7, "from": {"id": 9}, "chat": {"id": 3},
@@ -144,8 +147,11 @@ func TestParseFallsBackToTheCaption(t *testing.T) {
 
 // Everything that is not a fresh human message wraps ErrIgnore. The zero-id
 // cases matter because encoding/json zero-fills missing fields without
-// erroring, and a ConversationID of "0" would corrupt the dedup key.
-func TestParseIgnores(t *testing.T) {
+// erroring, and a ConversationID of "0" would corrupt the dedup key. The
+// implausible-date case matters because a large enough attacker-chosen date
+// makes time.Time's year exceed 9999, which slog emits as a malformed JSON
+// record.
+func TestTelegramParseIgnores(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
@@ -158,6 +164,8 @@ func TestParseIgnores(t *testing.T) {
 		"zero chat id":    `{"message": {"message_id": 1, "from": {"id": 2}, "date": 4, "text": "x"}}`,
 		"zero message id": `{"message": {"from": {"id": 2}, "chat": {"id": 3}, "date": 4, "text": "x"}}`,
 		"zero date":       `{"message": {"message_id": 1, "from": {"id": 2}, "chat": {"id": 3}, "text": "x"}}`,
+		"implausible date": `{"message": {"message_id": 1, "from": {"id": 2}, "chat": {"id": 3},
+			"date": 1099511627776, "text": "x"}}`,
 		"no text or caption": `{"message": {"message_id": 1, "from": {"id": 2}, "chat": {"id": 3},
 			"date": 4, "photo": [{"file_id": "abc"}]}}`,
 	}
@@ -176,7 +184,7 @@ func TestParseIgnores(t *testing.T) {
 
 // Malformed input is an error, never ErrIgnore — the handler logs the two
 // outcomes differently, and a decode failure must not read as a decision.
-func TestParseRejectsMalformedJSON(t *testing.T) {
+func TestTelegramParseRejectsMalformedJSON(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{

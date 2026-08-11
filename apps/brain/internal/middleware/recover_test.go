@@ -77,6 +77,47 @@ func TestRecoverPanicHandlesTheImplicit200(t *testing.T) {
 	}
 }
 
+// A panic after the response has started cannot become a 500 — the status
+// and body are already on the wire. The middleware must log the panic and
+// leave the response alone: a WriteHeader here would be net/http's
+// "superfluous WriteHeader" and a lie in the log.
+func TestRecoverPanicAfterAPartialWriteKeepsTheResponse(t *testing.T) {
+	t.Parallel()
+
+	rec, out := servePanic(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = w.Write([]byte("partial"))
+		panic("boom after write")
+	})
+
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("status = %d, want the already-committed 418", rec.Code)
+	}
+	if rec.Body.String() != "partial" {
+		t.Errorf("body = %q, want the partial write kept", rec.Body.String())
+	}
+	if !strings.Contains(out, "boom after write") {
+		t.Errorf("the panic after the write was not logged: %s", out)
+	}
+}
+
+// The panic value is arbitrary program state and can embed unbounded input.
+// The record must stay bounded even when the value does not.
+func TestRecoverPanicCapsTheLoggedValue(t *testing.T) {
+	t.Parallel()
+
+	_, out := servePanic(t, func(http.ResponseWriter, *http.Request) {
+		panic(strings.Repeat("a", 10*maxLoggedPanic))
+	})
+
+	if strings.Contains(out, strings.Repeat("a", maxLoggedPanic+1)) {
+		t.Error("the logged panic value exceeds maxLoggedPanic")
+	}
+	if !strings.Contains(out, strings.Repeat("a", maxLoggedPanic)) {
+		t.Error("the capped panic value is missing from the record")
+	}
+}
+
 // http.ErrAbortHandler is net/http's sentinel for aborting a response on
 // purpose. Recovering it would break that contract.
 func TestRecoverPanicRepanicsErrAbortHandler(t *testing.T) {
