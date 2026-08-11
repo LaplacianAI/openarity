@@ -141,6 +141,11 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 // A Down that does not actually reverse its Up only shows up on the second Up,
 // which fails with "already exists". Nothing but this exact sequence catches it.
+//
+// Rollback undoes one migration, so this walks the whole stack down and back
+// up. Doing it one at a time is the point: a Down that leaves something behind
+// breaks the very next Up, and rolling everything back at once would hide
+// which step did it.
 func TestMigrateDownThenUpAgain(t *testing.T) {
 	s := migrationStore(t)
 
@@ -148,9 +153,7 @@ func TestMigrateDownThenUpAgain(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	if err := s.Rollback(t.Context()); err != nil {
-		t.Fatalf("Rollback: %v", err)
-	}
+	rollbackAll(t, s)
 	if tableExists(t, s, "teams") {
 		t.Error("teams survived the rollback, so Down does not reverse Up")
 	}
@@ -161,6 +164,32 @@ func TestMigrateDownThenUpAgain(t *testing.T) {
 	if !tableExists(t, s, "teams") {
 		t.Error("teams missing after re-applying")
 	}
+}
+
+// rollbackAll unwinds every applied migration. The bound is a guard against a
+// Rollback that stops reporting progress rather than a real expectation about
+// how many migrations exist.
+func rollbackAll(t *testing.T, s *Store) {
+	t.Helper()
+
+	const maxMigrations = 100
+	for range maxMigrations {
+		if err := s.Rollback(t.Context()); err != nil {
+			return // nothing left to roll back
+		}
+		if !tableExists(t, s, "goose_db_version") {
+			return
+		}
+		var applied int
+		if err := s.pool.QueryRow(t.Context(),
+			"SELECT count(*) FROM goose_db_version WHERE version_id > 0").Scan(&applied); err != nil {
+			t.Fatalf("count applied migrations: %v", err)
+		}
+		if applied == 0 {
+			return
+		}
+	}
+	t.Fatalf("still had migrations applied after %d rollbacks", maxMigrations)
 }
 
 // Two migrators can overlap: a Job pod on an unreachable node is replaced

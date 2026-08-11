@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestPrincipalRoundTrip(t *testing.T) {
@@ -90,5 +92,70 @@ func TestPrincipalFromDoesNotReportATypedNil(t *testing.T) {
 	p, ok := PrincipalFrom(WithPrincipal(t.Context(), nil))
 	if ok && p == nil {
 		t.Error("PrincipalFrom reported a principal is present, but returned nil")
+	}
+}
+
+func TestUserRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	want := &User{ID: uuid.New(), Teams: []Membership{{Name: "platform", Role: "admin"}}}
+
+	got, ok := UserFrom(WithUser(t.Context(), want))
+	if !ok {
+		t.Fatal("UserFrom reported nothing on a context that carries a user")
+	}
+	if got.ID != want.ID || len(got.Teams) != 1 || got.Teams[0].Role != "admin" {
+		t.Errorf("User = %+v, want %+v", got, want)
+	}
+}
+
+// A handler on a context the identity middleware never touched must be told
+// so, not handed a zero User whose empty Teams reads as "registered, no
+// access" — which is a real state, and a very different one.
+func TestUserFromReportsAbsence(t *testing.T) {
+	t.Parallel()
+
+	u, ok := UserFrom(t.Context())
+	if ok {
+		t.Errorf("UserFrom reported a user on a bare context: %+v", u)
+	}
+	if u != nil {
+		t.Errorf("UserFrom returned %+v on a bare context, want nil", u)
+	}
+}
+
+func TestUserFromDoesNotReportATypedNil(t *testing.T) {
+	t.Parallel()
+
+	u, ok := UserFrom(WithUser(t.Context(), nil))
+	if ok && u == nil {
+		t.Error("UserFrom reported a user is present, but returned nil")
+	}
+}
+
+// Two keys, two values, no interference. Reusing one key for both would make
+// whichever was written last shadow the other.
+func TestPrincipalAndUserDoNotShareAKey(t *testing.T) {
+	t.Parallel()
+
+	ctx := WithPrincipal(t.Context(), &Principal{Kind: KindUser, Subject: "u1"})
+	ctx = WithUser(ctx, &User{ID: uuid.New()})
+
+	if p, ok := PrincipalFrom(ctx); !ok || p.Subject != "u1" {
+		t.Errorf("the principal was lost when a user was added: %+v", p)
+	}
+	if _, ok := UserFrom(ctx); !ok {
+		t.Error("the user is not readable")
+	}
+}
+
+// A user on the context without a principal is a programming error, but it
+// must not make PrincipalFrom answer with the user.
+func TestUserIsNotReadableAsAPrincipal(t *testing.T) {
+	t.Parallel()
+
+	ctx := WithUser(t.Context(), &User{ID: uuid.New()})
+	if p, ok := PrincipalFrom(ctx); ok {
+		t.Errorf("a user was read as a principal: %+v", p)
 	}
 }

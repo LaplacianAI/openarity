@@ -26,7 +26,7 @@ func TestDevVerifierAcceptsTheConfiguredToken(t *testing.T) {
 		t.Fatalf("Verify: %v", err)
 	}
 
-	want := Principal{Kind: KindDev, Subject: "dev"}
+	want := Principal{Kind: KindDev, Issuer: "dev", Subject: "dev"}
 	if *p != want {
 		t.Errorf("Principal = %+v, want %+v", *p, want)
 	}
@@ -45,8 +45,12 @@ func TestDevVerifierDoesNotImpersonateAUser(t *testing.T) {
 	if p.Kind != KindDev {
 		t.Errorf("Kind = %q, want %q", p.Kind, KindDev)
 	}
-	if p.Issuer != "" {
-		t.Errorf("Issuer = %q, want empty — no identity provider was involved", p.Issuer)
+	// The issuer is the constant "dev", not empty. The dev token gets a real
+	// users row like anyone else, and (issuer, subject) is that row's key —
+	// an empty issuer would be a landmine the first time a second principal
+	// arrives without one.
+	if p.Issuer != "dev" {
+		t.Errorf("Issuer = %q, want \"dev\"", p.Issuer)
 	}
 	if p.Email != "" {
 		t.Errorf("Email = %q, want empty", p.Email)
@@ -114,6 +118,24 @@ func TestDevVerifierComparesTheWholeToken(t *testing.T) {
 	for _, token := range []string{first, last} {
 		if _, err := v.Verify(t.Context(), token); err == nil {
 			t.Errorf("accepted %q", token)
+		}
+	}
+}
+
+// cmd/brain checks DevToken != "" before calling NewDevVerifier, so the error
+// it handles there can never fire. That is only true while an empty token is
+// the sole reason to fail. If this constructor grows a second rule — a minimum
+// length, a character set — this test fails and the caller has a live branch it
+// is not testing.
+func TestNewDevVerifierFailsOnlyOnAnEmptyToken(t *testing.T) {
+	t.Parallel()
+
+	for _, token := range []string{
+		"x", " ", "\n", strings.Repeat("a", 4096),
+		"tab\there", "unicode-ü", `{"json":true}`,
+	} {
+		if _, err := NewDevVerifier(token); err != nil {
+			t.Errorf("NewDevVerifier(%q) = %v, want no error — only an empty token may fail", token, err)
 		}
 	}
 }

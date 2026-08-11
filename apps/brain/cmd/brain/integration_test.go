@@ -102,12 +102,14 @@ func schemaDSN(t *testing.T) string {
 func TestMigrateCommandEndToEnd(t *testing.T) {
 	t.Setenv("OPENARITY_POSTGRES_DSN", schemaDSN(t))
 
+	// The property is "applied something, then applied nothing", not a
+	// particular number — the count changes with every migration added.
 	var first bytes.Buffer
 	if err := run(t.Context(), &first, []string{"migrate", "up"}); err != nil {
 		t.Fatalf("migrate up: %v", err)
 	}
-	if !strings.Contains(first.String(), `"count":1`) && !strings.Contains(first.String(), "count=1") {
-		t.Errorf("migrate up did not report applying one migration: %s", first.String())
+	if appliedNone(first.String()) {
+		t.Errorf("migrate up applied nothing to an empty schema: %s", first.String())
 	}
 
 	// Re-running is what a redeploy does. It must be a no-op, not an error.
@@ -115,14 +117,20 @@ func TestMigrateCommandEndToEnd(t *testing.T) {
 	if err := run(t.Context(), &second, []string{"migrate", "up"}); err != nil {
 		t.Fatalf("second migrate up: %v", err)
 	}
-	if !strings.Contains(second.String(), `"count":0`) && !strings.Contains(second.String(), "count=0") {
-		t.Errorf("second migrate up did not report zero applied: %s", second.String())
+	if !appliedNone(second.String()) {
+		t.Errorf("second migrate up applied something: %s", second.String())
 	}
 
 	var down bytes.Buffer
 	if err := run(t.Context(), &down, []string{"migrate", "down"}); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
+}
+
+// appliedNone reads the count off the "Applied migrations" line. Both handlers
+// are in play depending on environment, so match either encoding.
+func appliedNone(log string) bool {
+	return strings.Contains(log, `"count":0`) || strings.Contains(log, "count=0")
 }
 
 // migrate must not start a listener. A Job that binds a port would collide
@@ -163,6 +171,10 @@ func TestRunServesWithARealDatabase(t *testing.T) {
 	t.Setenv("OPENARITY_WEBHOOK_BIND", freeAddr(t))
 	t.Setenv("OPENARITY_POSTGRES_DSN", dsn)
 
+	// serve refuses to start with no way to authenticate anyone, so the
+	// development token stands in for an identity provider here.
+	t.Setenv("OPENARITY_DEV_TOKEN", "integration-token")
+
 	ctx, cancel := context.WithCancel(t.Context())
 
 	var buf syncBuffer
@@ -187,6 +199,38 @@ func TestRunServesWithARealDatabase(t *testing.T) {
 			t.Errorf("log never mentioned %q: %s", want, out)
 		}
 	}
+}
+
+// A brain that can authenticate nobody would bind both listeners, pass its
+// probes, and reject every real request. run must refuse before anything
+// listens — and it must say which variable to set.
+func TestRunRefusesToServeWithNoWayToAuthenticate(t *testing.T) {
+	dsn := liveDSN(t)
+
+	apiBind := freeAddr(t)
+	t.Setenv("OPENARITY_API_BIND", apiBind)
+	t.Setenv("OPENARITY_WEBHOOK_BIND", freeAddr(t))
+	t.Setenv("OPENARITY_POSTGRES_DSN", dsn)
+	t.Setenv("OPENARITY_DEV_TOKEN", "")
+	t.Setenv("OPENARITY_OIDC_ENABLED", "false")
+
+	var buf syncBuffer
+	err := run(t.Context(), &buf, nil)
+	if err == nil {
+		t.Fatal("run served with nothing able to authenticate")
+	}
+	if !strings.Contains(err.Error(), "OPENARITY_DEV_TOKEN") {
+		t.Errorf("error does not say how to fix it: %v", err)
+	}
+
+	// Nothing may be left bound: a half-started process holds the port and the
+	// next attempt fails for the wrong reason.
+	var lc net.ListenConfig
+	l, listenErr := lc.Listen(t.Context(), "tcp", apiBind)
+	if listenErr != nil {
+		t.Fatalf("run left %s bound after refusing to start: %v", apiBind, listenErr)
+	}
+	_ = l.Close()
 }
 
 // The logger writes from the goroutine running run while the test reads after

@@ -102,7 +102,7 @@ func TestReadyzLogsItsFailure(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	srv := New(testConfig(), logger, brokenDB())
+	srv := New(testConfig(), logger, deps(brokenDB()))
 
 	get(t, srv.apiHandler(), "/readyz")
 
@@ -121,7 +121,7 @@ func TestReadyzIsSilentWhenReady(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	srv := New(testConfig(), logger, healthyDB())
+	srv := New(testConfig(), logger, deps(healthyDB()))
 
 	get(t, srv.apiHandler(), "/readyz")
 	get(t, srv.apiHandler(), "/healthz")
@@ -137,7 +137,7 @@ func TestReadyzStopsWhenTheProbeDisconnects(t *testing.T) {
 	t.Parallel()
 
 	db := healthyDB()
-	srv := New(testConfig(), discardLogger(), db)
+	srv := New(testConfig(), discardLogger(), deps(db))
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -168,17 +168,45 @@ func TestReadyTimeoutIsBounded(t *testing.T) {
 
 // Both probes are registered "GET /...". A bare pattern answers every method,
 // turning an unauthenticated probe into a write target the day it grows a body.
+//
+// The two listeners refuse differently and both are correct. The webhook mux
+// has no catch-all, so a matching path with the wrong method is a 405. The API
+// mux sends anything unlisted through authentication first, so the same
+// request never reaches the probe at all. What matters on both is that the
+// handler does not run.
 func TestProbesRejectNonGET(t *testing.T) {
 	t.Parallel()
 
+	refused := map[string]int{
+		"api":     http.StatusUnauthorized,
+		"webhook": http.StatusMethodNotAllowed,
+	}
+
 	for name, h := range handlers(t, healthyDB()) {
 		for _, path := range []string{"/healthz", "/readyz"} {
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, nil))
+			rec := request(t, h, http.MethodPost, path, "")
 
-			if rec.Code != http.StatusMethodNotAllowed {
-				t.Errorf("%s POST %s = %d, want 405", name, path, rec.Code)
+			if rec.Code != refused[name] {
+				t.Errorf("%s POST %s = %d, want %d", name, path, rec.Code, refused[name])
 			}
+			if body := rec.Body.String(); strings.Contains(body, "ok") || strings.Contains(body, "ready") {
+				t.Errorf("%s POST %s ran the probe handler: %q", name, path, body)
+			}
+		}
+	}
+}
+
+// Even authenticated, POST is not the probe. It falls through to the mux of
+// real routes and finds nothing there.
+func TestProbesRejectNonGETEvenWithAToken(t *testing.T) {
+	t.Parallel()
+
+	api := handlers(t, healthyDB())["api"]
+
+	for _, path := range []string{"/healthz", "/readyz"} {
+		rec := request(t, api, http.MethodPost, path, testToken)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("POST %s with a token = %d, want 404: %s", path, rec.Code, rec.Body)
 		}
 	}
 }

@@ -31,6 +31,12 @@ break it, explains, and reviews.**
   wrapping the response writer, chain order, and wiring into `server.New`. Use
   it every time; a middleware that is built and never applied passes every
   linter and every test except the wiring one.
+- **`add-route`** — every API endpoint, and every new domain package under
+  `internal/api`. Covers where the route lives, the `Router` and its prefix,
+  per-package dependencies, the response contract, which status each failure
+  gets, where the `Can` check goes, and the five tests a route owes. Use it
+  every time; a route registered on the wrong mux passes every test written
+  about its body.
 - **`write-migration`** — every schema change. Covers the goose file format,
   `lock_timeout`, expand-contract for column changes, batched backfills, and
   when an index needs `CONCURRENTLY`. Use it every time: the migration that
@@ -64,9 +70,15 @@ apps/brain/
     migrate.go         the migrate role
     logger.go          newLogger()
   internal/config/     configuration: load, validate, redact
-  internal/server/     the two listeners: build, run, shut down
-  internal/middleware/ request logging, and everything that wraps a handler
-  internal/store/      Postgres: pool, migrations
+  internal/server/     the two listeners: build, run, shut down; mounts Routers
+  internal/middleware/ request logging, authentication, user resolution
+  internal/auth/       token in, Principal out — no database
+  internal/authz/      Can, and the closed vocabulary of actions
+  internal/api/        Router, WriteJSON, DecodeJSON, Page
+    <domain>/          one package per domain, each its own Router
+      <domain>.go      handler, New, the handlers
+      schema.go        request and response structs — the wire contract
+  internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary
   Makefile             build and code quality targets
   .golangci.yml        linters and formatters

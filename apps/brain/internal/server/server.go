@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/middleware"
 )
@@ -23,17 +24,33 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-type Server struct {
-	api     *http.Server
-	webhook *http.Server
-	logger  *slog.Logger
-	db      Pinger
+type Router interface {
+	Register(mux *http.ServeMux)
 }
 
-func New(cfg *config.Config, logger *slog.Logger, db Pinger) *Server {
+type Deps struct {
+	DB       Pinger
+	Verifier auth.Verifier
+	Resolver middleware.Resolver
+}
+
+type Server struct {
+	api      *http.Server
+	webhook  *http.Server
+	logger   *slog.Logger
+	db       Pinger
+	verifier auth.Verifier
+	resolver middleware.Resolver
+	routers  []Router
+}
+
+func New(cfg *config.Config, logger *slog.Logger, deps Deps, routers ...Router) *Server {
 	s := &Server{
-		logger: logger,
-		db:     db,
+		logger:   logger,
+		db:       deps.DB,
+		verifier: deps.Verifier,
+		resolver: deps.Resolver,
+		routers:  routers,
 	}
 	logRequests := middleware.LogRequests(logger)
 	s.api = newHTTPServer(cfg.APIBind, logRequests(s.apiHandler()))
