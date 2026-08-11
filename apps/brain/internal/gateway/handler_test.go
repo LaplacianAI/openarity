@@ -317,12 +317,15 @@ func (errReader) Read([]byte) (int, error) { return 0, errors.New("connection re
 
 // A body that dies mid-read is the connection failing, not the payload —
 // 503 so the provider redelivers, and never a 4xx that blames the client
-// for the network.
-func TestWebhookBodyReadFailureIs503(t *testing.T) {
+// for the network. It logs as "aborted" at WARN, never ERROR: the branch
+// is reachable without authentication, so an attacker hanging up
+// mid-request must not be able to drive the level operators page on.
+func TestWebhookBodyReadFailureIsAborted503(t *testing.T) {
 	t.Parallel()
 
+	logger, buf := recordingLogger()
 	sink := &fakeSink{}
-	h := newTelegramHandler(telegramStore(t), sink)
+	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, telegramStore(t), sink)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, telegramWebhookPath(), errReader{})
 	req.Header.Set(secretTokenHeader, testSecret)
@@ -334,6 +337,12 @@ func TestWebhookBodyReadFailureIs503(t *testing.T) {
 	}
 	if len(sink.msgs) != 0 {
 		t.Errorf("sink was called despite the body never arriving")
+	}
+	if !strings.Contains(buf.String(), `"outcome":"aborted"`) {
+		t.Errorf("outcome not logged as aborted: %s", buf.String())
+	}
+	if strings.Contains(buf.String(), `"level":"ERROR"`) {
+		t.Errorf("an unauthenticated client abort was logged at ERROR: %s", buf.String())
 	}
 }
 

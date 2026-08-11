@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bufio"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 )
@@ -23,12 +25,24 @@ func (r *recorder) Write(b []byte) (int, error) {
 	return r.ResponseWriter.Write(b)
 }
 
-// FlushError intercepts ResponseController flushes: a flush commits the
-// response, so it must count as written or a flush-then-panic request would
-// log a 500 the client never saw.
+// FlushError intercepts ResponseController flushes: a successful flush
+// commits the response, so it must count as written or a flush-then-panic
+// request would log a 500 the client never saw. A failed flush committed
+// nothing and leaves the tracking alone.
 func (r *recorder) FlushError() error {
+	err := http.NewResponseController(r.ResponseWriter).Flush()
+	if err == nil {
+		r.wrote = true
+	}
+	return err
+}
+
+// Hijack marks the response written even when the attempt fails — the
+// connection's state is unknown after it, and a status logged for a
+// connection the middleware no longer owns would be a guess.
+func (r *recorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	r.wrote = true
-	return http.NewResponseController(r.ResponseWriter).Flush()
+	return http.NewResponseController(r.ResponseWriter).Hijack()
 }
 
 // Unwrap exposes the underlying writer to http.NewResponseController for
@@ -47,10 +61,13 @@ func LogRequests(logger *slog.Logger) Middleware {
 				status:         http.StatusOK,
 			}
 
-			// Only the probes themselves are skipped. Kubernetes sends GET;
-			// any other method on those paths is answered 405 by the mux and
-			// is real traffic — likely someone probing — so it stays logged.
-			if r.Method == http.MethodGet && (r.URL.Path == "/healthz" || r.URL.Path == "/readyz") {
+			// Only the probes themselves are skipped. Kubernetes sends GET
+			// and some load balancers send HEAD — which the mux serves,
+			// since a GET pattern matches HEAD too. Any other method on
+			// those paths is answered 405 by the mux and is real traffic —
+			// likely someone probing — so it stays logged.
+			if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+				(r.URL.Path == "/healthz" || r.URL.Path == "/readyz") {
 				next.ServeHTTP(rw, r)
 				return
 			}

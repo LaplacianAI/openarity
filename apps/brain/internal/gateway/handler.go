@@ -52,7 +52,16 @@ const (
 	outcomeRejected  outcome = "rejected"
 	outcomeDropped   outcome = "dropped"
 	outcomeIgnored   outcome = "ignored"
-	outcomeError     outcome = "error"
+
+	// outcomeError is a broken dependency — a sealed Vault, a failing sink.
+	// It is the only outcome logged at ERROR, so it must never be reachable
+	// by an unauthenticated caller at will.
+	outcomeError outcome = "error"
+
+	// outcomeAborted is the client side failing mid-request — a truncated
+	// body, a reset connection. Same 503 as outcomeError so the provider
+	// retries, but network noise, and reachable pre-auth, so never ERROR.
+	outcomeAborted outcome = "aborted"
 )
 
 // reasonOversized is the one drop that is a silent permanent loss of a
@@ -91,10 +100,9 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 	level := slog.LevelInfo
 	switch {
 	case out == outcomeError:
-		// Transient infrastructure failures — a sealed Vault, a failing
-		// sink — must be visible to level-based alerting.
+		// Broken dependencies must be visible to level-based alerting.
 		level = slog.LevelError
-	case reason == reasonOversized:
+	case out == outcomeAborted, reason == reasonOversized:
 		level = slog.LevelWarn
 	}
 	attrs := []any{
@@ -139,7 +147,7 @@ func (h *handler) handle(w http.ResponseWriter, r *http.Request, channelID strin
 		}
 		// A read failure past the size check is the connection dying, not
 		// the payload — let the provider retry.
-		return http.StatusServiceUnavailable, outcomeError, "body read failed", err
+		return http.StatusServiceUnavailable, outcomeAborted, "body read failed", err
 	}
 
 	tenantID, ok := h.channels[channelID]

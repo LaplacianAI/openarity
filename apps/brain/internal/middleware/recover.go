@@ -78,9 +78,16 @@ func (w *startedWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// A failed flush committed nothing, so only a successful one flips the
+// tracking. Hijack is the opposite on purpose: after an attempt — even a
+// failed one — the connection's state is unknown, and writing a 500 into it
+// would be a guess.
 func (w *startedWriter) FlushError() error {
-	w.started = true
-	return http.NewResponseController(w.ResponseWriter).Flush()
+	err := http.NewResponseController(w.ResponseWriter).Flush()
+	if err == nil {
+		w.started = true
+	}
+	return err
 }
 
 func (w *startedWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {

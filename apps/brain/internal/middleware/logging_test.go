@@ -112,19 +112,22 @@ func TestLogRequestsDoesNotAlterTheResponse(t *testing.T) {
 	}
 }
 
-// Kubernetes probes both of these every ten seconds on two listeners. Logging
-// them buries everything else. readyz reports its own failures at Warn, which
-// is the part worth keeping.
+// Kubernetes probes both of these every ten seconds on two listeners, with
+// GET; load balancers often use HEAD, which the mux also serves since a GET
+// pattern matches HEAD. Logging either buries everything else. readyz
+// reports its own failures at Warn, which is the part worth keeping.
 func TestLogRequestsSkipsProbes(t *testing.T) {
 	t.Parallel()
 
-	for _, path := range []string{"/healthz", "/readyz"} {
-		res, rec := serve(t, http.MethodGet, path, ok)
-		if rec != nil {
-			t.Errorf("%s was logged: %v", path, rec)
-		}
-		if res.Code != http.StatusOK {
-			t.Errorf("%s status = %d, want 200 — the skip must not swallow the response", path, res.Code)
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		for _, path := range []string{"/healthz", "/readyz"} {
+			res, rec := serve(t, method, path, ok)
+			if rec != nil {
+				t.Errorf("%s %s was logged: %v", method, path, rec)
+			}
+			if res.Code != http.StatusOK {
+				t.Errorf("%s %s status = %d, want 200 — the skip must not swallow the response", method, path, res.Code)
+			}
 		}
 	}
 }
@@ -267,25 +270,60 @@ func TestLogRequestsRecordsAPanickingRequest(t *testing.T) {
 }
 
 // A handler that committed its response before panicking logs the status
-// the client actually received, not a 500 it never saw.
+// the client actually received, not a 500 it never saw. Write and Flush
+// commit implicitly — each must flip the tracking on its own, or deleting
+// one interception silently reintroduces the fabricated 500.
 func TestLogRequestsRecordsACommittedStatusOnPanic(t *testing.T) {
 	t.Parallel()
 
-	logger, buf := recordingLogger()
-
-	func() {
-		defer func() { _ = recover() }()
-		LogRequests(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusTeapot)
-			panic("boom after write")
-		})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/boom", nil))
-	}()
-
-	var record map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
-		t.Fatalf("no request record: %q", buf.String())
+	tests := map[string]struct {
+		handler http.HandlerFunc
+		want    int
+	}{
+		"explicit status then panic": {
+			func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusTeapot)
+				panic("boom after write")
+			},
+			http.StatusTeapot,
+		},
+		"implicit write then panic": {
+			func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte("body"))
+				panic("boom after write")
+			},
+			http.StatusOK,
+		},
+		"flush then panic": {
+			func(w http.ResponseWriter, _ *http.Request) {
+				if err := http.NewResponseController(w).Flush(); err != nil {
+					t.Fatalf("Flush: %v", err)
+				}
+				panic("boom after flush")
+			},
+			http.StatusOK,
+		},
 	}
-	if record["status"] != float64(http.StatusTeapot) {
-		t.Errorf("status = %v, want the committed 418", record["status"])
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			logger, buf := recordingLogger()
+
+			func() {
+				defer func() { _ = recover() }()
+				LogRequests(logger)(tc.handler).ServeHTTP(httptest.NewRecorder(),
+					httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/boom", nil))
+			}()
+
+			var record map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+				t.Fatalf("no request record: %q", buf.String())
+			}
+			if record["status"] != float64(tc.want) {
+				t.Errorf("status = %v, want the committed %d", record["status"], tc.want)
+			}
+		})
 	}
 }
