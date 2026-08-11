@@ -1,0 +1,110 @@
+# Local dependencies for developing the brain.
+#
+# This file runs what the brain talks to, not the brain itself — you want it
+# rebuilding on save, not in a container. Ports match the defaults in
+# internal/config, so `go run ./cmd/brain` needs no environment beyond a token.
+#
+#   docker compose -f deployment/docker-compose.yml up -d
+#   cd apps/brain && go run ./cmd/brain migrate up
+#
+# To run the brain in a container as well:
+#
+#   docker compose -f deployment/docker-compose.yml --profile brain up -d --build
+
+name: openarity
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: openarity
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # -U and -d are not optional: without them pg_isready checks the "root"
+      # database as the "root" user and reports healthy while the real one is
+      # still being created.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d openarity"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Not used by the brain yet. It is here so the ports in the configuration
+  # table are real, and so the day the graph lands nobody has to find an image.
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - falkordb-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Development mode: in-memory, unsealed, root token "dev-root". Every secret
+  # written here is lost on restart, which is the point — nothing durable
+  # should exist on a laptop.
+  vault:
+    image: hashicorp/vault:latest
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: dev-root
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    ports:
+      - "127.0.0.1:8200:8200"
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Opt in with --profile brain. Everything else runs by default, because the
+  # normal loop is dependencies in Docker and the brain on the host.
+  brain:
+    profiles: ["brain"]
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    environment:
+      OPENARITY_API_BIND: "0.0.0.0:21120"
+      OPENARITY_WEBHOOK_BIND: "0.0.0.0:21121"
+      OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/openarity?sslmode=disable"
+      OPENARITY_FALKOR_DB_URL: "redis://falkordb:6379"
+      OPENARITY_REDIS_URL: "redis://redis:6379"
+      OPENARITY_VAULT_ADDR: "http://vault:8200"
+      OPENARITY_ENVIRONMENT: development
+      OPENARITY_DEV_TOKEN: letmein
+      OPENARITY_SUPER_ADMINS: dev
+    ports:
+      - "127.0.0.1:21120:21120"
+      - "127.0.0.1:21121:21121"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  falkordb-data:
+  redis-data:

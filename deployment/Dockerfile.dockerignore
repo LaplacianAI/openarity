@@ -1,0 +1,13 @@
+# The build only needs apps/brain. Everything else is either irrelevant to the
+# binary or actively unwanted in an image.
+.git
+.github
+.claude
+deployment
+docs
+*.md
+
+# Local artefacts that would invalidate the build cache on every change.
+**/coverage.out
+**/*.test
+**/bin/

@@ -1,0 +1,35 @@
+# Two Services rather than one with two ports, because they have different
+# audiences: the API is for your own clients and the CLI, the webhook listener
+# receives callbacks from Slack and friends. Separating them means an Ingress
+# can expose one to the internet without the other coming along.
+apiVersion: v1
+kind: Service
+metadata:
+  name: brain-api
+  labels:
+    app.kubernetes.io/name: brain
+    app.kubernetes.io/part-of: openarity
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: brain
+  ports:
+    - name: api
+      port: 80
+      targetPort: api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: brain-webhook
+  labels:
+    app.kubernetes.io/name: brain
+    app.kubernetes.io/part-of: openarity
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: brain
+  ports:
+    - name: webhook
+      port: 80
+      targetPort: webhook
