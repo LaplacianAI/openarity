@@ -349,3 +349,43 @@ func TestCanDeniesTheZeroTeam(t *testing.T) {
 		t.Error("an unset Resource authorised an action")
 	}
 }
+
+// IsSuperAdmin is exported and handlers call it directly, so it cannot rely on
+// Can's nil check upstream. Creating a team is the platform-level decision, and
+// a panic there is a 500 with no reply body.
+func TestIsSuperAdminDeniesANilUser(t *testing.T) {
+	t.Parallel()
+
+	a := New(seeded(), []string{"boss"})
+	if a.IsSuperAdmin(nil) {
+		t.Error("a nil user was reported as a super admin")
+	}
+}
+
+func TestIsSuperAdminMatchesOnlyTheAllowlist(t *testing.T) {
+	t.Parallel()
+
+	a := New(seeded(), []string{"boss"})
+
+	if !a.IsSuperAdmin(&auth.User{Subject: "boss"}) {
+		t.Error("a listed subject was not reported as a super admin")
+	}
+	for _, subject := range []string{"bos", "bossy", "BOSS", " boss", ""} {
+		if a.IsSuperAdmin(&auth.User{Subject: subject}) {
+			t.Errorf("subject %q was reported as a super admin", subject)
+		}
+	}
+}
+
+// With no allowlist, nobody holds the platform role — an empty map lookup must
+// not read as a match.
+func TestIsSuperAdminWithNoAllowlist(t *testing.T) {
+	t.Parallel()
+
+	for _, list := range [][]string{nil, {}} {
+		a := New(seeded(), list)
+		if a.IsSuperAdmin(&auth.User{Subject: "anyone"}) {
+			t.Errorf("with super admins %v, an ordinary user held the platform role", list)
+		}
+	}
+}

@@ -23,6 +23,10 @@ type Authorizer struct {
 	superAdmins map[string]bool
 }
 
+func (a *Authorizer) IsSuperAdmin(u *auth.User) bool {
+	return u != nil && a.superAdmins[u.Subject]
+}
+
 func New(p Permissions, superAdmins []string) *Authorizer {
 	set := make(map[string]bool, len(superAdmins))
 	for _, sub := range superAdmins {
@@ -36,7 +40,7 @@ func (a *Authorizer) Can(ctx context.Context, u *auth.User, action Action, r Res
 		return false, nil
 	}
 
-	if a.superAdmins[u.Subject] {
+	if a.IsSuperAdmin(u) {
 		return true, nil
 	}
 
