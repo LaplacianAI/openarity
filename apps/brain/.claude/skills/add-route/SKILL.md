@@ -13,11 +13,20 @@ five tests at the bottom.
 ## Where it goes
 
 ```text
-internal/api/router.go        Router: prefixes, verb helpers, Register
-internal/api/response.go      WriteJSON — the one shared response function
-internal/api/<domain>/        one package per domain: teams, agents, tools
-cmd/brain/routers.go          one line per domain, the only assembly point
+internal/api/router.go            Router: prefixes, verb helpers, Register
+internal/api/response.go          WriteJSON — the one shared response function
+internal/api/request.go           DecodeJSON — the one shared body reader
+internal/api/<domain>/            one package per domain: teams, agents, tools
+internal/api/<domain>/<domain>.go handler, New, the handlers
+internal/api/<domain>/schema.go   request and response structs — the wire contract
+cmd/brain/routers.go              one line per domain, the only assembly point
 ```
+
+The wire structs live in `schema.go`, in the domain package. Not `dto.go` —
+that is a Java term Go code does not use — and not `types.go`, a catch-all that
+ends up holding whatever has no home. And never a shared `internal/api/schema`
+package: every domain would import one struct grab-bag, and a field added for
+agents would surface in the teams response.
 
 A new endpoint on an existing domain is one line in that package's `New` plus a
 handler. A new domain is a new directory and one line in `routers.go`.
@@ -29,15 +38,28 @@ Do not add a file to `internal/api` itself unless every domain needs it.
 ```go
 package teams
 
+// Store is the slice of the database this package uses, declared here rather
+// than taking *store.Store. Every route test then runs without Postgres, and a
+// query this package never calls cannot appear in it by accident.
+type Store interface {
+	CreateTeam(ctx context.Context, name string) (db.Team, error)
+	GetTeam(ctx context.Context, id uuid.UUID) (db.Team, error)
+}
+
+// Authorizer is the authorisation question this package asks — nothing more.
+type Authorizer interface {
+	IsSuperAdmin(u *auth.User) bool
+}
+
 // handler is unexported and holds exactly what this package needs. A missing
 // dependency is then a compile error rather than a nil at request time.
 type handler struct {
 	logger *slog.Logger
-	store  *store.Store
-	authz  *authz.Authorizer
+	store  Store
+	authz  Authorizer
 }
 
-func New(logger *slog.Logger, s *store.Store, a *authz.Authorizer) *api.Router {
+func New(logger *slog.Logger, s Store, a Authorizer) *api.Router {
 	h := &handler{logger: logger, store: s, authz: a}
 
 	r := api.NewRouter("/teams")
@@ -56,6 +78,10 @@ func New(logger *slog.Logger, s *store.Store, a *authz.Authorizer) *api.Router {
 - **Do not share a `handler` struct between packages.** They look alike for the
   first two domains and diverge immediately. A shared struct holding every
   dependency is a service locator, and it hides what a package actually uses.
+- **Declare dependencies as interfaces in the consuming package**, listing only
+  the methods used. `*store.Store` and `*authz.Authorizer` satisfy them without
+  changing, `cmd/brain` still passes the concrete types, and the route tests
+  need no database.
 
 ## Step 2 — the response contract
 

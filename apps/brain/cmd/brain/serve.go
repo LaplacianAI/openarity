@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/server"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
@@ -20,7 +21,8 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 		return err
 	}
 
-	routers := newRouters(logger)
+	authorizer := authz.New(dbStore, cfg.SuperAdmins)
+	routers := newRouters(logger, dbStore, authorizer)
 
 	return server.New(
 		cfg,
