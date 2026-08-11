@@ -9,7 +9,18 @@ type Membership struct {
 }
 
 type User struct {
-	ID    uuid.UUID
-	Email *string
-	Teams []Membership
+	ID      uuid.UUID
+	Issuer  string
+	Subject string
+	Email   *string
+	Teams   []Membership
+}
+
+func (u *User) RoleIn(teamID uuid.UUID) (string, bool) {
+	for _, m := range u.Teams {
+		if m.TeamID == teamID {
+			return m.Role, true
+		}
+	}
+	return "", false
 }

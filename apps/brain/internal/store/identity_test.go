@@ -2,12 +2,15 @@ package store
 
 import (
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -457,5 +460,241 @@ func TestListUserTeamsReportsAFailureMidStream(t *testing.T) {
 	}
 	if rows != nil {
 		t.Errorf("returned %d rows alongside the error, want nil", len(rows))
+	}
+}
+
+// Resolve is the bridge between a verified token and a database row. It runs
+// on every authenticated request, so it has to be correct on first login, on
+// every login after, and when the database is mid-change.
+
+func principal(subject, email string) *auth.Principal {
+	return &auth.Principal{
+		Kind: auth.KindUser, Issuer: testIssuer, Subject: subject, Email: email,
+	}
+}
+
+func TestResolveCreatesTheUserOnFirstLogin(t *testing.T) {
+	s := queryStore(t)
+
+	u, err := s.Resolve(t.Context(), principal("user-42", "someone@example.com"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	if u.ID == uuid.Nil {
+		t.Error("no id was assigned")
+	}
+	if u.Issuer != testIssuer || u.Subject != "user-42" {
+		t.Errorf("identity = (%q, %q), want (%q, user-42)", u.Issuer, u.Subject, testIssuer)
+	}
+	if u.Email == nil || *u.Email != "someone@example.com" {
+		t.Errorf("Email = %v, want someone@example.com", u.Email)
+	}
+	if n := countUsers(t, s); n != 1 {
+		t.Errorf("%d user rows after one login, want 1", n)
+	}
+}
+
+// A returning caller must land on the same row. A new id every request would
+// make audit trails meaningless and memberships unreachable.
+func TestResolveIsStableAcrossRequests(t *testing.T) {
+	s := queryStore(t)
+
+	first, err := s.Resolve(t.Context(), principal("user-42", "a@example.com"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	second, err := s.Resolve(t.Context(), principal("user-42", "a@example.com"))
+	if err != nil {
+		t.Fatalf("second Resolve: %v", err)
+	}
+
+	if first.ID != second.ID {
+		t.Errorf("a second request produced a new id: %s then %s", first.ID, second.ID)
+	}
+	if n := countUsers(t, s); n != 1 {
+		t.Errorf("%d user rows after two requests, want 1", n)
+	}
+}
+
+// A token with no email claim must produce NULL, not "". Every user without an
+// email would otherwise share a value that looks real.
+func TestResolveStoresAMissingEmailAsNull(t *testing.T) {
+	s := queryStore(t)
+
+	u, err := s.Resolve(t.Context(), principal("user-42", ""))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if u.Email != nil {
+		t.Errorf("Email = %v, want nil", u.Email)
+	}
+
+	var isNull bool
+	if err := s.pool.QueryRow(t.Context(),
+		"SELECT email IS NULL FROM users WHERE id = $1", u.ID).Scan(&isNull); err != nil {
+		t.Fatalf("read the column: %v", err)
+	}
+	if !isNull {
+		t.Error("the column holds an empty string rather than NULL")
+	}
+}
+
+// Registration grants nothing. An empty membership list is the pending state,
+// and it must be a list rather than an error or a nil that reads as unknown.
+func TestResolveGivesANewUserNoMemberships(t *testing.T) {
+	s := queryStore(t)
+
+	u, err := s.Resolve(t.Context(), principal("newcomer", ""))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if u.Teams == nil {
+		t.Error("Teams is nil, want an empty slice")
+	}
+	if len(u.Teams) != 0 {
+		t.Errorf("a new user is already in %v", u.Teams)
+	}
+}
+
+func TestResolveCarriesMemberships(t *testing.T) {
+	s := queryStore(t)
+
+	u, err := s.Resolve(t.Context(), principal("user-42", ""))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	alpha := mustCreate(t, s, "alpha")
+	bravo := mustCreate(t, s, "bravo")
+	addMember(t, s, alpha.ID, u.ID, "admin")
+	addMember(t, s, bravo.ID, u.ID, "developer")
+
+	u, err = s.Resolve(t.Context(), principal("user-42", ""))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(u.Teams) != 2 {
+		t.Fatalf("Teams = %+v, want two", u.Teams)
+	}
+
+	// RoleIn is what authz calls, so assert through it rather than by index.
+	if role, ok := u.RoleIn(alpha.ID); !ok || role != "admin" {
+		t.Errorf("role in alpha = %q (%v), want admin", role, ok)
+	}
+	if role, ok := u.RoleIn(bravo.ID); !ok || role != "developer" {
+		t.Errorf("role in bravo = %q (%v), want developer", role, ok)
+	}
+	if _, ok := u.RoleIn(uuid.New()); ok {
+		t.Error("RoleIn reported membership in a team that does not exist")
+	}
+}
+
+// Two identity providers using the same subject are two people. Resolve keys
+// on the pair, so they must not collapse into one row.
+func TestResolveKeepsIssuersApart(t *testing.T) {
+	s := queryStore(t)
+
+	a, err := s.Resolve(t.Context(), &auth.Principal{Issuer: "https://idp-a", Subject: "1"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	b, err := s.Resolve(t.Context(), &auth.Principal{Issuer: "https://idp-b", Subject: "1"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if a.ID == b.ID {
+		t.Error("the same subject under two issuers resolved to one user")
+	}
+}
+
+// The dev token is a principal like any other and gets a real row. That is
+// what lets the local path exercise this code rather than branch around it.
+func TestResolveHandlesTheDevPrincipal(t *testing.T) {
+	s := queryStore(t)
+
+	u, err := s.Resolve(t.Context(), &auth.Principal{Kind: auth.KindDev, Issuer: "dev", Subject: "dev"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if u.Issuer != "dev" || u.Subject != "dev" {
+		t.Errorf("identity = (%q, %q), want (dev, dev)", u.Issuer, u.Subject)
+	}
+}
+
+// Both queries share a transaction, so a failure in the second must undo the
+// first. Otherwise a request that failed still leaves a user row behind, and
+// the caller is told resolution failed while the row silently exists.
+func TestResolveRollsBackWhenMembershipsFail(t *testing.T) {
+	s := queryStore(t)
+
+	// Break the second query only. team_members keeps its name, so UpsertUser
+	// is unaffected and the join fails when it runs.
+	exec(t, s, "ALTER TABLE team_members RENAME COLUMN team_id TO team_id_moved")
+
+	if _, err := s.Resolve(t.Context(), principal("user-42", "")); err == nil {
+		t.Fatal("Resolve succeeded with a broken membership query")
+	}
+	if n := countUsers(t, s); n != 0 {
+		t.Errorf("%d user rows survived a failed Resolve", n)
+	}
+}
+
+func TestResolveReturnsNoUserOnFailure(t *testing.T) {
+	s := queryStore(t)
+	s.Close()
+
+	u, err := s.Resolve(t.Context(), principal("user-42", ""))
+	if err == nil {
+		t.Fatalf("Resolve succeeded against a closed pool: %+v", u)
+	}
+	if u != nil {
+		t.Errorf("Resolve returned %+v alongside the error, want nil", u)
+	}
+}
+
+// ActionsFor is the adapter that lets Store satisfy authz.Permissions.
+func TestActionsForReturnsTheRolePermissions(t *testing.T) {
+	s := queryStore(t)
+
+	actions, err := s.ActionsFor(t.Context(), "developer")
+	if err != nil {
+		t.Fatalf("ActionsFor: %v", err)
+	}
+	slices.Sort(actions)
+	if !slices.Equal(actions, []string{"agent:write", "tool:write"}) {
+		t.Errorf("developer actions = %v", actions)
+	}
+}
+
+func TestActionsForIsEmptyForAnUnknownRole(t *testing.T) {
+	s := queryStore(t)
+
+	actions, err := s.ActionsFor(t.Context(), "no-such-role")
+	if err != nil {
+		t.Fatalf("ActionsFor: %v", err)
+	}
+	if len(actions) != 0 {
+		t.Errorf("an unknown role grants %v", actions)
+	}
+}
+
+// The other query's failure. Breaking users means UpsertUser fails and
+// ListUserTeams never runs, which is the branch a broken second query cannot
+// reach.
+func TestResolveReportsAFailedUpsert(t *testing.T) {
+	s := queryStore(t)
+
+	exec(t, s, "ALTER TABLE users RENAME COLUMN subject TO subject_moved")
+
+	u, err := s.Resolve(t.Context(), principal("user-42", ""))
+	if err == nil {
+		t.Fatalf("Resolve succeeded with a broken users table: %+v", u)
+	}
+	if u != nil {
+		t.Errorf("Resolve returned %+v alongside the error, want nil", u)
+	}
+	if !strings.Contains(err.Error(), "upsert user") {
+		t.Errorf("the error does not say which query failed: %v", err)
 	}
 }
