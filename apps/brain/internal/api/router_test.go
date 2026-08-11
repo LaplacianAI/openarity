@@ -268,6 +268,115 @@ func TestAValidPrefixDoesNotPanic(t *testing.T) {
 	}
 }
 
+// Patterns is what the OpenAPI contract test compares against the spec, so it
+// has to report exactly what Register mounts — prefix included.
+func TestPatternsReportsWhatIsMounted(t *testing.T) {
+	t.Parallel()
+
+	var ran bool
+	r := NewRouter("/teams")
+	r.Get("", ok(&ran))
+	r.Post("", ok(&ran))
+	r.Get("/{id}/members", ok(&ran))
+	r.Delete("/{id}/members/{userID}", ok(&ran))
+
+	got := r.Patterns()
+	want := []string{
+		"GET /teams",
+		"POST /teams",
+		"GET /teams/{id}/members",
+		"DELETE /teams/{id}/members/{userID}",
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("Patterns() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Patterns()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// The pattern Patterns reports and the pattern ServeMux receives come from the
+// same joining logic. If they ever diverge, the contract test checks strings
+// the server never serves — and passes while the API is undocumented.
+func TestPatternsMatchWhatServeMuxIsGiven(t *testing.T) {
+	t.Parallel()
+
+	var ran bool
+	for _, prefix := range []string{"", "/teams", "/api/v1"} {
+		r := NewRouter(prefix)
+		r.Get("/{id}", ok(&ran))
+
+		mux := http.NewServeMux()
+		r.Register(mux)
+
+		pattern := r.Patterns()[0]
+		method, path, found := strings.Cut(pattern, " ")
+		if !found {
+			t.Fatalf("pattern %q has no method", pattern)
+		}
+
+		// The mux resolves the request only if the path it registered is the
+		// one Patterns named.
+		concrete := strings.Replace(path, "{id}", "42", 1)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, concrete, nil))
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("prefix %q: Patterns said %q but the mux answered %d for %s",
+				prefix, pattern, rec.Code, concrete)
+		}
+	}
+}
+
+func TestPatternsIsEmptyForAnEmptyRouter(t *testing.T) {
+	t.Parallel()
+
+	if got := NewRouter("/things").Patterns(); len(got) != 0 {
+		t.Errorf("Patterns() = %v on a router with no routes", got)
+	}
+}
+
+// Public is what puts a router outside authentication, so its default matters
+// more than most: a router that forgot to say is a protected one.
+func TestRoutersAreProtectedByDefault(t *testing.T) {
+	t.Parallel()
+
+	if NewRouter("/teams").Public() {
+		t.Error("NewRouter produced a public router — every data route would skip authentication")
+	}
+	if !NewPublicRouter("/docs").Public() {
+		t.Error("NewPublicRouter produced a protected router")
+	}
+}
+
+// A public router is a normal router in every other respect. If it validated
+// its prefix differently, the one kind of router mounted outside authentication
+// would also be the one with the weakest checks.
+func TestAPublicRouterIsOtherwiseANormalRouter(t *testing.T) {
+	t.Parallel()
+
+	var ran bool
+	r := NewPublicRouter("/docs")
+	r.Get("/spec", ok(&ran))
+
+	if got := r.Patterns(); len(got) != 1 || got[0] != "GET /docs/spec" {
+		t.Errorf("Patterns() = %v", got)
+	}
+	if rec := serve(t, r, http.MethodGet, "/docs/spec"); rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("NewPublicRouter accepted a malformed prefix that NewRouter rejects")
+		}
+	}()
+	NewPublicRouter("docs")
+}
+
 // A router with no routes is legal — a domain package might register nothing
 // under a feature flag — and must not break the mux it is given.
 func TestAnEmptyRouterMountsNothing(t *testing.T) {

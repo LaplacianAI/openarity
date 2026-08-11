@@ -235,6 +235,17 @@ Never register routes from `init()`. Dependencies cannot be passed, the set
 becomes import-order dependent, and a blank import silently changes what the
 server serves.
 
+## Step 5b — describe it in the spec
+
+`api/openapi.yaml` is the contract the CLI is generated from, and a test
+compares it against the routes the service registers. An endpoint added without
+a description **fails the build**, in both directions — a path with no route
+fails too.
+
+Follow the `update-api-spec` skill. The short version: an `operationId`, every
+status the handler can return, and `additionalProperties: false` on request
+bodies because `DecodeJSON` rejects unknown fields.
+
 ## Step 6 — the tests every route owes
 
 In the domain package, driving the mux rather than the handler function, so

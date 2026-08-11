@@ -14,6 +14,7 @@ type route struct {
 type Router struct {
 	prefix string
 	routes []route
+	public bool
 }
 
 func NewRouter(prefix string) *Router {
@@ -28,6 +29,30 @@ func NewRouter(prefix string) *Router {
 	return &Router{prefix: prefix}
 }
 
+func NewPublicRouter(prefix string) *Router {
+	r := NewRouter(prefix)
+	r.public = true
+	return r
+}
+
+func (r *Router) Public() bool { return r.public }
+
+func (r *Router) path(rt route) string {
+	path := r.prefix + rt.pattern
+	if path == "" {
+		return "/"
+	}
+	return path
+}
+
+func (r *Router) Patterns() []string {
+	out := make([]string, len(r.routes))
+	for i, rt := range r.routes {
+		out[i] = rt.method + " " + r.path(rt)
+	}
+	return out
+}
+
 func (r *Router) Get(pattern string, h http.HandlerFunc)    { r.handle(http.MethodGet, pattern, h) }
 func (r *Router) Post(pattern string, h http.HandlerFunc)   { r.handle(http.MethodPost, pattern, h) }
 func (r *Router) Put(pattern string, h http.HandlerFunc)    { r.handle(http.MethodPut, pattern, h) }
@@ -40,10 +65,6 @@ func (r *Router) handle(method, pattern string, h http.HandlerFunc) {
 
 func (r *Router) Register(mux *http.ServeMux) {
 	for _, rt := range r.routes {
-		path := r.prefix + rt.pattern
-		if path == "" {
-			path = "/"
-		}
-		mux.HandleFunc(rt.method+" "+path, rt.handler)
+		mux.HandleFunc(rt.method+" "+r.path(rt), rt.handler)
 	}
 }
