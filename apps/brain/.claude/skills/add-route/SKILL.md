@@ -108,6 +108,67 @@ type response struct {
 
 Write it with `api.WriteJSON(w, h.logger, http.StatusOK, resp)`.
 
+## Step 2b — every list route returns a page
+
+Never a bare JSON array. `api.Page[T]` is the shape:
+
+```json
+{"items": [...], "next_cursor": "eyJjIjoi..."}
+```
+
+```go
+limit, ok := api.Limit(w, r)          // ?limit=, default 50, clamped at 100
+if !ok {
+	return
+}
+
+params, ok := h.thingPage(w, r, limit) // reads ?cursor=, sets PageSize to limit+1
+if !ok {
+	return
+}
+
+rows, err := h.store.ListThings(r.Context(), params)
+// ...
+page, err := api.MapPage(rows, limit,
+	func(row db.Thing) any { return thingCursor{Name: row.Name, ID: row.ID} },
+	func(row db.Thing) thing { return thing{ID: row.ID, Name: row.Name} },
+)
+```
+
+- **The envelope goes in before the first client, not when the table grows.**
+  An array cannot become an object later without breaking every caller. The
+  cursor is additive; the envelope is not.
+- **The absence of `next_cursor` is the only end-of-collection signal.** Do not
+  add a `has_more` boolean beside it — two sources of truth that can disagree.
+  Kubernetes, Slack and AIP-158 all signal this way.
+- **Query `limit + 1` rows.** The extra row answers "is there more" without a
+  `COUNT` over the table, and `MapPage` drops it.
+- **The cursor is built from the database row, not the wire type**, so it can
+  use a column the response does not publish.
+- **`ORDER BY` needs a unique tiebreak**, always: `ORDER BY name, id`. Ties on
+  the sort column make the order unstable, and an unstable order makes a cursor
+  skip or repeat rows.
+- **Compare row constructors, not ANDed inequalities:**
+
+  ```sql
+  -- right: keyset semantics, and it can use the composite index
+  WHERE (created_at, id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid)
+
+  -- wrong: silently drops every row that ties on created_at
+  WHERE created_at < $1 AND id < $2
+  ```
+
+  The direction must match the sort: `<` with `DESC`, `>` with ascending.
+- **Gate the cursor with a `bool`, not a nullable parameter:**
+  `WHERE NOT sqlc.arg('use_cursor')::bool OR (...)`. Non-null parameters
+  generate predictable Go types; `sqlc.narg` on a uuid does not.
+- **A mangled cursor is a 400**, never a silent restart from the top — that
+  turns a client's paging loop into an infinite one.
+
+A listing whose size is bounded by something other than the table — a user's
+own memberships, say — can answer `api.Page[T]{Items: items}` with no cursor.
+Say why in a comment; the next reader will assume it was forgotten.
+
 ## Step 3 — the authorisation check
 
 Every route that acts on a team calls `Can` before doing anything:
@@ -144,6 +205,8 @@ if !allowed {
 | valid caller, not permitted | 403 | their token is fine, so do not tell them to log in again |
 | malformed body, bad path value | 400 | say which field, never echo the value back |
 | the resource does not exist | 404 | see the note below |
+| a unique constraint rejected the write | 409 | the client cannot fix a 500 by changing the body |
+| a foreign key rejected the write | 400, or 404 for the resource in the path | the constraint name says which |
 | principal or user missing from the context | 500 | unreachable behind the middleware; if it fires the route is on the wrong mux |
 | database or permission read failed | 500 | log the reason, tell the client nothing |
 

@@ -3,11 +3,13 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -139,6 +141,42 @@ func TestCreateTeamGeneratesADistinctID(t *testing.T) {
 
 	if first.ID == second.ID {
 		t.Errorf("both teams got id %s", first.ID)
+	}
+}
+
+// The name is what an operator recognises a team by, and the API publishes it.
+// Two teams sharing one are indistinguishable in every listing, so the schema
+// refuses rather than the handler.
+func TestCreateTeamRefusesADuplicateName(t *testing.T) {
+	s := queryStore(t)
+
+	mustCreate(t, s, "platform")
+
+	_, err := s.CreateTeam(t.Context(), "platform")
+	if err == nil {
+		t.Fatal("a second team took the same name")
+	}
+
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("CreateTeam returned %v, want a Postgres error", err)
+	}
+	if pgErr.Code != "23505" {
+		t.Errorf("SQLSTATE %s, want 23505 — the handler maps that code to 409", pgErr.Code)
+	}
+}
+
+// The constraint is on the exact name, so names differing only by case or
+// surrounding space are distinct rows. Handlers trim before inserting; this
+// records that the database does not fold case, which would surprise anyone
+// who assumed it did.
+func TestTeamNamesAreUniqueExactly(t *testing.T) {
+	s := queryStore(t)
+
+	mustCreate(t, s, "platform")
+
+	if _, err := s.CreateTeam(t.Context(), "Platform"); err != nil {
+		t.Errorf("CreateTeam(%q) after %q: %v", "Platform", "platform", err)
 	}
 }
 
@@ -614,23 +652,6 @@ func TestDeleteTeamIsSilentOnAMissingRow(t *testing.T) {
 	}
 }
 
-// There is no unique index on name. This test exists to make that a decision
-// rather than an oversight — if a unique constraint is ever added, this test
-// fails and forces the question of what the API should do about it.
-func TestTeamNamesAreNotUnique(t *testing.T) {
-	s := queryStore(t)
-
-	first := mustCreate(t, s, "platform")
-	second := mustCreate(t, s, "platform")
-
-	if first.ID == second.ID {
-		t.Fatal("two inserts produced one row")
-	}
-	if got := countTeams(t, s); got != 2 {
-		t.Errorf("counted %d teams, want 2", got)
-	}
-}
-
 func TestInTxCommitsWhenTheCallbackSucceeds(t *testing.T) {
 	s := queryStore(t)
 
@@ -769,9 +790,13 @@ func TestInTxReleasesItsConnection(t *testing.T) {
 
 	failure := errors.New("no")
 
-	for range maxConns * 2 {
+	for i := range maxConns * 2 {
+		// A distinct name per round: teams.name is unique, so reusing one
+		// would fail the second insert for a reason that has nothing to do
+		// with connections.
+		name := fmt.Sprintf("committed-%d", i)
 		if err := s.InTx(ctx, func(q *db.Queries) error {
-			_, err := q.CreateTeam(ctx, "committed")
+			_, err := q.CreateTeam(ctx, name)
 			return err
 		}); err != nil {
 			t.Fatalf("committing InTx: %v — a leaked connection starves the pool", err)

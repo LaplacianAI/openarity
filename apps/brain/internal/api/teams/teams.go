@@ -80,6 +80,11 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 
 	row, err := h.store.CreateTeam(r.Context(), name)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == codeUniqueViolation {
+			http.Error(w, "a team with that name already exists", http.StatusConflict)
+			return
+		}
 		h.fail(w, u, "failed to create team", err)
 		return
 	}

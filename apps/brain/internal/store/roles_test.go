@@ -221,8 +221,17 @@ func TestListRolesIsOrderedByName(t *testing.T) {
 func TestRolesRollBackRestoresTheCheck(t *testing.T) {
 	s := queryStore(t)
 
-	if err := s.Rollback(t.Context()); err != nil {
-		t.Fatalf("Rollback: %v", err)
+	// Roll back until the roles migration itself is undone rather than
+	// assuming it is the newest. Every migration added after it would
+	// otherwise break this test for a reason that has nothing to do with
+	// roles.
+	for range 10 {
+		if !tableExists(t, s, "roles") {
+			break
+		}
+		if err := s.Rollback(t.Context()); err != nil {
+			t.Fatalf("Rollback: %v", err)
+		}
 	}
 
 	for _, table := range []string{"roles", "role_permissions"} {

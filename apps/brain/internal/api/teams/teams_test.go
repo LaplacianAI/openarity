@@ -350,6 +350,22 @@ func TestCreateAcceptsANameAtTheLimit(t *testing.T) {
 	}
 }
 
+// teams.name is unique, so a duplicate is the client's mistake. Reporting it
+// as 500 would tell them to retry something that can never succeed.
+func TestCreateReportsADuplicateNameAsConflict(t *testing.T) {
+	t.Parallel()
+
+	s := &fakeStore{err: pgErr("23505", "teams_name_key")}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodPost, "/teams", `{"name":"platform"}`)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "23505") {
+		t.Errorf("the reply leaked the database error: %s", rec.Body)
+	}
+}
+
 func TestCreateReportsAStoreFailureAsInternal(t *testing.T) {
 	t.Parallel()
 
