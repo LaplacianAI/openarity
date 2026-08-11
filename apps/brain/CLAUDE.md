@@ -74,8 +74,10 @@ apps/brain/
   internal/middleware/ request logging, authentication, user resolution
   internal/auth/       token in, Principal out — no database
   internal/authz/      Can, and the closed vocabulary of actions
-  internal/api/        Router and WriteJSON
+  internal/api/        Router, WriteJSON, DecodeJSON, Page
     <domain>/          one package per domain, each its own Router
+      <domain>.go      handler, New, the handlers
+      schema.go        request and response structs — the wire contract
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary
   Makefile             build and code quality targets

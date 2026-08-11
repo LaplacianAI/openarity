@@ -43,9 +43,15 @@ anything an agent platform does:
   applied with `brain migrate up`
 - Type-safe queries generated from SQL by sqlc, and a transaction helper that
   rolls back on error or panic
+- Authentication against an OIDC provider, or a shared token for development.
+  A verified caller becomes a user row on first sight, so nobody is
+  pre-provisioned
+- Role-based authorisation. Roles and their permissions are rows, so adding a
+  role is a migration rather than a release
+- A teams API — create a team, list them, and manage membership
 
 Not built yet: the graph, the planner, the agent runtime, channel adapters, the
-CLI, the dashboard, authentication.
+CLI, the dashboard.
 
 ## Quick start
 
@@ -57,18 +63,61 @@ git clone https://github.com/LaplacianAI/openarity
 cd openarity/apps/brain
 
 go run ./cmd/brain migrate up    # create the schema
+
+# Serving needs a way to authenticate callers. For a local run, a shared token
+# is enough; name yourself a super admin to get past authorisation as well.
+export OPENARITY_DEV_TOKEN=letmein
+export OPENARITY_SUPER_ADMINS=dev
+
 go run ./cmd/brain               # serve; Ctrl-C to shut down
 ```
 
-Every setting has a working default, so neither command needs any environment.
+Every other setting has a working default. The service refuses to start with no
+authentication configured rather than serving an open API — set
+`OPENARITY_DEV_TOKEN` for development, or `OPENARITY_OIDC_ENABLED` and
+`OPENARITY_OIDC_ISSUER` against a real provider.
+
 In another shell:
 
 ```sh
 curl -s 127.0.0.1:21120/healthz    # ok
 curl -s 127.0.0.1:21120/readyz     # ready, or 503 if Postgres is unreachable
+
+# Everything else needs a token. Without one: 401.
+curl -s -H 'Authorization: Bearer letmein' 127.0.0.1:21120/whoami
+# {"kind":"dev","issuer":"dev","subject":"dev","teams":[]}
+
+curl -s -H 'Authorization: Bearer letmein' \
+     -d '{"name":"platform"}' 127.0.0.1:21120/teams
 ```
 
 `brain migrate down` rolls the last migration back.
+
+## API
+
+Everything except the probes requires `Authorization: Bearer <token>`.
+
+| Endpoint                                  | Who may call it              |
+| ----------------------------------------- | ---------------------------- |
+| `GET /healthz`, `GET /readyz`             | anyone, unauthenticated      |
+| `GET /whoami`                             | any authenticated caller     |
+| `POST /teams`                             | super admins                 |
+| `GET /teams`                              | every team, or your own      |
+| `GET /teams/{id}`                         | members, and super admins    |
+| `GET /teams/{id}/members`                 | members, and super admins    |
+| `POST /teams/{id}/members`                | `member:write` in that team  |
+| `DELETE /teams/{id}/members/{userID}`     | `member:write` in that team  |
+
+A team you are not in is a 404, never a 403 — a 403 would confirm the id exists.
+
+Listings are paged and take `?limit=` (default 50, maximum 100) and `?cursor=`:
+
+```json
+{"items": [], "next_cursor": "eyJjIjoiMjAyNi0wOC0xMVQxNToxNToyNi4uLiJ9"}
+```
+
+`next_cursor` is present only while more rows remain; its absence is the end of
+the collection. Pass it back as `?cursor=` to fetch the next page.
 
 ## Configuration
 
@@ -85,6 +134,11 @@ Environment only, every variable prefixed `OPENARITY_`:
 | `OPENARITY_REDIS_URL`      | `redis://127.0.0.1:6379`    | Cache and queues — not used yet  |
 | `OPENARITY_VAULT_ADDR`     | `http://localhost:8200`     | Secret store — not used yet      |
 | `OPENARITY_OMNI_ROUTE_URL` | `http://localhost:20128/v1` | Model router — not used yet      |
+| `OPENARITY_OIDC_ENABLED`   | `false`                     | Verify tokens against an IdP     |
+| `OPENARITY_OIDC_ISSUER`    | empty                       | Issuer URL, required if enabled  |
+| `OPENARITY_OIDC_AUDIENCE`  | `openarity`                 | Audience the token must carry    |
+| `OPENARITY_DEV_TOKEN`      | empty                       | Shared token — development only  |
+| `OPENARITY_SUPER_ADMINS`   | empty                       | Comma-separated token subjects   |
 
 The Postgres default is:
 
@@ -94,6 +148,12 @@ postgres://postgres:postgres@localhost:5432/openarity?sslmode=disable
 
 Secrets are never stored in Postgres or the graph. Rows hold Vault path
 references only.
+
+`OPENARITY_DEV_TOKEN` is a single shared secret compared in constant time. It
+exists so a development machine does not need an identity provider, and it has
+no place in a deployment — use OIDC there. `OPENARITY_SUPER_ADMINS` lists token
+subjects, not email addresses, and a super admin bypasses every team-scoped
+check.
 
 ## Repository layout
 

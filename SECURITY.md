@@ -30,10 +30,10 @@ Please include:
 
 ## What to expect
 
-| Stage                | Target             |
-| -------------------- | ------------------ |
-| Acknowledgement      | within 72 hours    |
-| Initial assessment   | within 7 days      |
+| Stage                | Target              |
+| -------------------- | ------------------- |
+| Acknowledgement      | within 72 hours     |
+| Initial assessment   | within 7 days       |
 | Fix or mitigation    | depends on severity |
 
 You will be credited in the advisory unless you ask not to be. Please give us a
@@ -62,4 +62,21 @@ These are deliberate, documented decisions rather than oversights:
 - **The health and readiness endpoints are unauthenticated by design**, and
   neither returns internal detail — `/readyz` logs the underlying error and
   returns a bare `not ready`. If either leaks anything about the database,
-  that is a bug.
+  that is a bug. Every other endpoint requires a bearer token; one that is
+  reachable without one is a bug.
+- **The service refuses to start with no authentication configured.** It fails
+  closed rather than serving an open API, so a missing setting is an outage
+  rather than an exposure.
+- **`OPENARITY_DEV_TOKEN` is a development-only shared secret**, compared in
+  constant time. It exists so a laptop does not need an identity provider.
+  Using it in a deployment is a misconfiguration, not a vulnerability in the
+  service — but tell us if it is ever accepted while OIDC is enabled.
+- **A user row is created on first successful authentication** and carries no
+  permissions until an administrator grants them. Registration is therefore
+  not a privilege.
+- **Asking for a team you are not in returns 404, not 403.** The status and
+  body are identical to a team that does not exist, because a 403 would
+  confirm the id is real. If the two ever differ — in status, body, or timing
+  — that is a bug worth reporting.
+- **A failed permission lookup is a 500, never a 403.** Unknown is not denied,
+  and a database blip must not read as a permissions decision.
