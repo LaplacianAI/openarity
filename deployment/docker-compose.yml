@@ -112,7 +112,10 @@ services:
       OPENARITY_FALKOR_DB_URL: "redis://falkordb:6379"
       OPENARITY_REDIS_URL: "redis://redis:6379"
       OPENARITY_VAULT_ADDR: "http://vault:8200"
-      OPENARITY_ENVIRONMENT: development
+      # development keeps this usable with no identity provider. Set it to
+      # staging or production in .env and the dev token is refused outright,
+      # so OIDC becomes mandatory rather than optional.
+      OPENARITY_ENVIRONMENT: ${OPENARITY_ENVIRONMENT:-development}
       # A shared token by default, so the stack is usable with no identity
       # provider. Set these to point at a real one — see the README. The
       # single-dash form is deliberate: an empty OPENARITY_DEV_TOKEN must turn
