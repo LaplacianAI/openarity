@@ -234,3 +234,58 @@ func TestLogRequestsDoesNotSwallowAPanic(t *testing.T) {
 		panic("boom")
 	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/boom", nil))
 }
+
+// A panicking request still gets its Request processed line — those are the
+// requests whose status and latency matter most, and without the deferred
+// emit they would be the only ones missing from the request log. The 500
+// mirrors what RecoverPanic writes when nothing reached the wire.
+func TestLogRequestsRecordsAPanickingRequest(t *testing.T) {
+	t.Parallel()
+
+	logger, buf := recordingLogger()
+
+	func() {
+		defer func() { _ = recover() }() // stand in for RecoverPanic outside
+		LogRequests(logger)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			panic("boom")
+		})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/boom", nil))
+	}()
+
+	var record map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+		t.Fatalf("no request record for the panicking request: %q", buf.String())
+	}
+	if record["status"] != float64(http.StatusInternalServerError) {
+		t.Errorf("status = %v, want 500", record["status"])
+	}
+	if record["panicked"] != true {
+		t.Errorf("panicked = %v, want true", record["panicked"])
+	}
+	if _, found := record["dur_ms"]; !found {
+		t.Error("no duration recorded")
+	}
+}
+
+// A handler that committed its response before panicking logs the status
+// the client actually received, not a 500 it never saw.
+func TestLogRequestsRecordsACommittedStatusOnPanic(t *testing.T) {
+	t.Parallel()
+
+	logger, buf := recordingLogger()
+
+	func() {
+		defer func() { _ = recover() }()
+		LogRequests(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusTeapot)
+			panic("boom after write")
+		})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/boom", nil))
+	}()
+
+	var record map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+		t.Fatalf("no request record: %q", buf.String())
+	}
+	if record["status"] != float64(http.StatusTeapot) {
+		t.Errorf("status = %v, want the committed 418", record["status"])
+	}
+}

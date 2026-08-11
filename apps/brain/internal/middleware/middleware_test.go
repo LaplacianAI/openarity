@@ -63,3 +63,17 @@ func TestChainedWrappersExposeTheUnderlyingWriter(t *testing.T) {
 		t.Errorf("Flush through both wrappers failed: %v", flushErr)
 	}
 }
+
+// Unwrap must return the wrapped writer itself — ResponseController's
+// probing walks this chain for everything the wrappers do not intercept.
+func TestWrappersUnwrapToTheUnderlyingWriter(t *testing.T) {
+	t.Parallel()
+
+	base := httptest.NewRecorder()
+	if got := (&recorder{ResponseWriter: base}).Unwrap(); got != http.ResponseWriter(base) {
+		t.Errorf("recorder.Unwrap = %v, want the wrapped writer", got)
+	}
+	if got := (&startedWriter{ResponseWriter: base}).Unwrap(); got != http.ResponseWriter(base) {
+		t.Errorf("startedWriter.Unwrap = %v, want the wrapped writer", got)
+	}
+}

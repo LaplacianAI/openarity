@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"bufio"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime"
 )
@@ -57,7 +59,10 @@ func RecoverPanic(logger *slog.Logger) Middleware {
 }
 
 // startedWriter records whether the response has been committed, so the
-// recovery path knows a 500 can still reach the client.
+// recovery path knows a 500 can still reach the client. Flush and Hijack
+// are intercepted for the same reason WriteHeader is: both commit the
+// response without going through Write, and an Unwrap-only wrapper would
+// let ResponseController slip past the tracking.
 type startedWriter struct {
 	http.ResponseWriter
 	started bool
@@ -73,7 +78,18 @@ func (w *startedWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// Unwrap exposes the underlying writer to http.NewResponseController.
+func (w *startedWriter) FlushError() error {
+	w.started = true
+	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+func (w *startedWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.started = true
+	return http.NewResponseController(w.ResponseWriter).Hijack()
+}
+
+// Unwrap exposes the underlying writer to http.NewResponseController for
+// everything not intercepted above.
 func (w *startedWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }

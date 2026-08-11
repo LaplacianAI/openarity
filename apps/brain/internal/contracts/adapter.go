@@ -12,8 +12,8 @@ var ErrIgnore = errors.New("update ignored")
 
 // ErrSecretUnusable reports a stored secret the channel's provider could
 // never have accepted — a misconfiguration, not an attack. Adapters return
-// it from Verify so the handler can log it as its own outcome instead of a
-// plain verification failure.
+// it from Verify so the handler can log it under its own reason instead of
+// a plain verification failure.
 var ErrSecretUnusable = errors.New("stored secret is unusable for this channel")
 
 // WebhookAdapter is one webhook channel. Verify authenticates a request

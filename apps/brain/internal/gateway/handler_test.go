@@ -63,12 +63,15 @@ func mustChannelPath(t *testing.T, tenantID, channelID string) string {
 	return path
 }
 
-func testStore(t *testing.T) secrets.Static {
+// The helpers below are Telegram-prefixed like the fixtures in
+// telegram_test.go: channel-neutral names would be taken the day
+// slack_test.go needs its own.
+func telegramStore(t *testing.T) secrets.Static {
 	t.Helper()
 	return secrets.Static{mustChannelPath(t, testTenantID, testChannelID): testSecret}
 }
 
-func newTestHandler(store secrets.Store, sink contracts.Sink) http.Handler {
+func newTelegramHandler(store secrets.Store, sink contracts.Sink) http.Handler {
 	return New(discardLogger(), Telegram{}, map[string]string{testChannelID: testTenantID}, store, sink)
 }
 
@@ -84,7 +87,7 @@ func post(t *testing.T, h http.Handler, path, body, token string) *httptest.Resp
 	return rec
 }
 
-func webhookPath() string { return "/webhook/telegram/" + testChannelID }
+func telegramWebhookPath() string { return "/webhook/telegram/" + testChannelID }
 
 // The whole point, end to end: a real Telegram update through the real
 // handler and adapter lands in the sink as exactly one exact Message, with
@@ -93,7 +96,7 @@ func TestWebhookDeliversARealUpdate(t *testing.T) {
 	t.Parallel()
 
 	sink := &fakeSink{}
-	rec := post(t, newTestHandler(testStore(t), sink), webhookPath(), telegramUpdateJSON, testSecret)
+	rec := post(t, newTelegramHandler(telegramStore(t), sink), telegramWebhookPath(), telegramUpdateJSON, testSecret)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -129,7 +132,7 @@ func TestNewRoutesByTheAdaptersChannel(t *testing.T) {
 	t.Parallel()
 
 	sink := &fakeSink{}
-	h := New(discardLogger(), fakeAdapter{}, map[string]string{testChannelID: testTenantID}, testStore(t), sink)
+	h := New(discardLogger(), fakeAdapter{}, map[string]string{testChannelID: testTenantID}, telegramStore(t), sink)
 
 	if rec := post(t, h, "/webhook/fake/"+testChannelID, `{}`, ""); rec.Code != http.StatusOK {
 		t.Errorf("the fake adapter's route = %d, want 200", rec.Code)
@@ -137,7 +140,7 @@ func TestNewRoutesByTheAdaptersChannel(t *testing.T) {
 	if len(sink.msgs) != 1 {
 		t.Errorf("sink got %d messages, want 1", len(sink.msgs))
 	}
-	if rec := post(t, h, webhookPath(), `{}`, ""); rec.Code != http.StatusNotFound {
+	if rec := post(t, h, telegramWebhookPath(), `{}`, ""); rec.Code != http.StatusNotFound {
 		t.Errorf("telegram's route on a fake-adapter handler = %d, want 404", rec.Code)
 	}
 }
@@ -163,11 +166,11 @@ func TestNewCopiesTheChannelRegistry(t *testing.T) {
 
 	channels := map[string]string{testChannelID: testTenantID}
 	sink := &fakeSink{}
-	h := New(discardLogger(), Telegram{}, channels, testStore(t), sink)
+	h := New(discardLogger(), Telegram{}, channels, telegramStore(t), sink)
 
 	delete(channels, testChannelID)
 
-	if rec := post(t, h, webhookPath(), telegramUpdateJSON, testSecret); rec.Code != http.StatusOK {
+	if rec := post(t, h, telegramWebhookPath(), telegramUpdateJSON, testSecret); rec.Code != http.StatusOK {
 		t.Errorf("status = %d after mutating the caller's map, want 200", rec.Code)
 	}
 	if len(sink.msgs) != 1 {
@@ -186,25 +189,25 @@ func TestWebhookRejectsUnauthenticatedRequests(t *testing.T) {
 		path     string
 		token    string
 	}{
-		"wrong token":          {testStore(t), nil, webhookPath(), "wrong"},
-		"missing token":        {testStore(t), nil, webhookPath(), ""},
-		"unknown channel":      {testStore(t), nil, "/webhook/telegram/nope", testSecret},
-		"no secret configured": {secrets.Static{}, nil, webhookPath(), testSecret},
+		"wrong token":          {telegramStore(t), nil, telegramWebhookPath(), "wrong"},
+		"missing token":        {telegramStore(t), nil, telegramWebhookPath(), ""},
+		"unknown channel":      {telegramStore(t), nil, "/webhook/telegram/nope", testSecret},
+		"no secret configured": {secrets.Static{}, nil, telegramWebhookPath(), testSecret},
 		"unusable stored secret": {
 			secrets.Static{mustChannelPath(t, testTenantID, testChannelID): "123456:AAHtoken"},
-			nil, webhookPath(), "123456:AAHtoken",
+			nil, telegramWebhookPath(), "123456:AAHtoken",
 		},
 		// %2F..%2F decodes to a path-traversal attempt in PathValue. It must
 		// die at the channel lookup — the secret path is composed from the
 		// registration, never from the URL.
-		"escaped path traversal": {testStore(t), nil, "/webhook/telegram/" + testChannelID + "%2F..%2Fother", testSecret},
+		"escaped path traversal": {telegramStore(t), nil, "/webhook/telegram/" + testChannelID + "%2F..%2Fother", testSecret},
 		// A registration whose tenant cannot form a secret path fails closed
 		// before the store is asked — a poisoned channels-table row must not
 		// read across the tenant namespace.
 		"unusable registration": {
-			testStore(t),
+			telegramStore(t),
 			map[string]string{testChannelID: "../" + testTenantID},
-			webhookPath(), testSecret,
+			telegramWebhookPath(), testSecret,
 		},
 	}
 
@@ -237,8 +240,8 @@ func TestWebhookStoreOutageIs503(t *testing.T) {
 	t.Parallel()
 
 	sink := &fakeSink{}
-	rec := post(t, newTestHandler(failingStore{err: errors.New("vault sealed")}, sink),
-		webhookPath(), telegramUpdateJSON, testSecret)
+	rec := post(t, newTelegramHandler(failingStore{err: errors.New("vault sealed")}, sink),
+		telegramWebhookPath(), telegramUpdateJSON, testSecret)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", rec.Code)
@@ -271,7 +274,7 @@ func TestWebhookAcksAndDropsUndeliverablePayloads(t *testing.T) {
 			t.Parallel()
 
 			sink := &fakeSink{}
-			rec := post(t, newTestHandler(testStore(t), sink), webhookPath(), body, testSecret)
+			rec := post(t, newTelegramHandler(telegramStore(t), sink), telegramWebhookPath(), body, testSecret)
 
 			if rec.Code != http.StatusOK {
 				t.Errorf("status = %d, want 200 ack-and-drop", rec.Code)
@@ -292,10 +295,10 @@ func TestWebhookOversizedBodyClosesTheConnection(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, testStore(t), &fakeSink{})
+	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, telegramStore(t), &fakeSink{})
 
 	body := `{"pad": "` + strings.Repeat("a", maxBodyBytes+1) + `"}`
-	rec := post(t, h, webhookPath(), body, testSecret)
+	rec := post(t, h, telegramWebhookPath(), body, testSecret)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200 ack-and-drop", rec.Code)
@@ -319,9 +322,9 @@ func TestWebhookBodyReadFailureIs503(t *testing.T) {
 	t.Parallel()
 
 	sink := &fakeSink{}
-	h := newTestHandler(testStore(t), sink)
+	h := newTelegramHandler(telegramStore(t), sink)
 
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, webhookPath(), errReader{})
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, telegramWebhookPath(), errReader{})
 	req.Header.Set(secretTokenHeader, testSecret)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -342,9 +345,9 @@ func TestWebhookSinkFailureIs503AndLogsTheCause(t *testing.T) {
 
 	logger, buf := recordingLogger()
 	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID},
-		testStore(t), &fakeSink{err: errors.New("bus full")})
+		telegramStore(t), &fakeSink{err: errors.New("bus full")})
 
-	rec := post(t, h, webhookPath(), telegramUpdateJSON, testSecret)
+	rec := post(t, h, telegramWebhookPath(), telegramUpdateJSON, testSecret)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", rec.Code)
@@ -362,10 +365,10 @@ func TestWebhookDeliversDuplicateUpdatesTwice(t *testing.T) {
 	t.Parallel()
 
 	sink := &fakeSink{}
-	h := newTestHandler(testStore(t), sink)
+	h := newTelegramHandler(telegramStore(t), sink)
 
 	for range 2 {
-		if rec := post(t, h, webhookPath(), telegramUpdateJSON, testSecret); rec.Code != http.StatusOK {
+		if rec := post(t, h, telegramWebhookPath(), telegramUpdateJSON, testSecret); rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200", rec.Code)
 		}
 	}
@@ -384,7 +387,7 @@ func TestWebhookVerifiesTheSenderNotTheBytes(t *testing.T) {
 	mutated := strings.Replace(telegramUpdateJSON, "deploy the thing", "drop the tables", 1)
 
 	sink := &fakeSink{}
-	rec := post(t, newTestHandler(testStore(t), sink), webhookPath(), mutated, testSecret)
+	rec := post(t, newTelegramHandler(telegramStore(t), sink), telegramWebhookPath(), mutated, testSecret)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -401,15 +404,15 @@ func TestWebhookVerifiesTheSenderNotTheBytes(t *testing.T) {
 func TestWebhookRoutingEdges(t *testing.T) {
 	t.Parallel()
 
-	h := newTestHandler(testStore(t), &fakeSink{})
+	h := newTelegramHandler(telegramStore(t), &fakeSink{})
 
 	tests := map[string]struct {
 		method, path string
 		want         int
 	}{
-		"GET on the webhook route": {http.MethodGet, webhookPath(), http.StatusMethodNotAllowed},
+		"GET on the webhook route": {http.MethodGet, telegramWebhookPath(), http.StatusMethodNotAllowed},
 		"missing channel segment":  {http.MethodPost, "/webhook/telegram/", http.StatusNotFound},
-		"extra path segment":       {http.MethodPost, webhookPath() + "/extra", http.StatusNotFound},
+		"extra path segment":       {http.MethodPost, telegramWebhookPath() + "/extra", http.StatusNotFound},
 		"unknown path":             {http.MethodGet, "/", http.StatusNotFound},
 	}
 
@@ -435,15 +438,15 @@ func TestWebhookLogsTheOutcome(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, testStore(t), &fakeSink{})
+	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, telegramStore(t), &fakeSink{})
 
-	post(t, h, webhookPath(), telegramUpdateJSON, testSecret)
+	post(t, h, telegramWebhookPath(), telegramUpdateJSON, testSecret)
 	if !strings.Contains(buf.String(), `"outcome":"delivered"`) {
 		t.Errorf("delivered outcome not logged: %s", buf.String())
 	}
 
 	buf.Reset()
-	post(t, h, webhookPath(), `{"update_id": 1, "edited_message": {"message_id": 1}}`, testSecret)
+	post(t, h, telegramWebhookPath(), `{"update_id": 1, "edited_message": {"message_id": 1}}`, testSecret)
 	out := buf.String()
 	if !strings.Contains(out, `"outcome":"ignored"`) || !strings.Contains(out, "not a message update") {
 		t.Errorf("ignored outcome and reason not logged: %s", out)
@@ -456,11 +459,11 @@ func TestWebhookNeverLogsTheSecret(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, testStore(t), &fakeSink{})
+	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, telegramStore(t), &fakeSink{})
 
-	post(t, h, webhookPath(), telegramUpdateJSON, testSecret)
-	post(t, h, webhookPath(), telegramUpdateJSON, "wrong")
-	post(t, h, webhookPath(), `not json`, testSecret)
+	post(t, h, telegramWebhookPath(), telegramUpdateJSON, testSecret)
+	post(t, h, telegramWebhookPath(), telegramUpdateJSON, "wrong")
+	post(t, h, telegramWebhookPath(), `not json`, testSecret)
 
 	if strings.Contains(buf.String(), testSecret) {
 		t.Errorf("the secret appeared in a log record: %s", buf.String())
@@ -488,18 +491,80 @@ func TestWebhookCapsTheLoggedChannelID(t *testing.T) {
 
 // The cap cuts on a rune boundary: a multi-byte character straddling the
 // limit is dropped whole, never split into invalid UTF-8 — the whole point
-// of clip is keeping attacker-controlled input log-safe.
-func TestClipCutsOnARuneBoundary(t *testing.T) {
+// of clipField is keeping attacker-controlled input log-safe.
+func TestClipFieldCutsOnARuneBoundary(t *testing.T) {
 	t.Parallel()
 
 	// 63 ASCII bytes, then a 3-byte rune straddling the 64-byte limit.
 	s := strings.Repeat("a", 63) + "€"
-	got := clip(s)
+	got := clipField(s, maxLoggedField)
 
 	if !utf8.ValidString(got) {
-		t.Fatalf("clip produced invalid UTF-8: %q", got)
+		t.Fatalf("clipField produced invalid UTF-8: %q", got)
 	}
 	if want := strings.Repeat("a", 63); got != want {
-		t.Errorf("clip = %q, want the straddling rune dropped whole", got)
+		t.Errorf("clipField = %q, want the straddling rune dropped whole", got)
+	}
+}
+
+// The ErrSecretUnusable sentinel exists so a misconfigured secret is
+// tellable apart from a plain verification failure — pin the distinct
+// reason at the handler, or deleting that branch passes every other test.
+func TestWebhookLogsSecretUnusableAsItsOwnReason(t *testing.T) {
+	t.Parallel()
+
+	logger, buf := recordingLogger()
+	store := secrets.Static{mustChannelPath(t, testTenantID, testChannelID): "123456:AAHtoken"}
+	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, store, &fakeSink{})
+
+	post(t, h, telegramWebhookPath(), telegramUpdateJSON, "123456:AAHtoken")
+
+	if !strings.Contains(buf.String(), `"reason":"secret unusable"`) {
+		t.Errorf("the secret-unusable reason was not logged: %s", buf.String())
+	}
+}
+
+// Every answer before verification must be identical whether or not the
+// channel exists — the body is read before the channel lookup so an
+// oversized post cannot be used to enumerate registered channel ids by
+// status code (200 for registered vs 401 for unknown).
+func TestWebhookOversizedBodyDoesNotRevealChannelExistence(t *testing.T) {
+	t.Parallel()
+
+	body := `{"pad": "` + strings.Repeat("a", maxBodyBytes+1) + `"}`
+
+	for name, path := range map[string]string{
+		"registered channel": telegramWebhookPath(),
+		"unknown channel":    "/webhook/telegram/nope",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sink := &fakeSink{}
+			rec := post(t, newTelegramHandler(telegramStore(t), sink), path, body, testSecret)
+
+			if rec.Code != http.StatusOK {
+				t.Errorf("status = %d, want the uniform 200 ack-and-drop", rec.Code)
+			}
+			if len(sink.msgs) != 0 {
+				t.Errorf("sink got %d messages for an oversized body", len(sink.msgs))
+			}
+		})
+	}
+}
+
+// Transient failures must be visible to level-based alerting: a sealed
+// Vault or a failing sink is level=ERROR, not another Info line.
+func TestWebhookLogsTransientFailuresAtError(t *testing.T) {
+	t.Parallel()
+
+	logger, buf := recordingLogger()
+	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID},
+		failingStore{err: errors.New("vault sealed")}, &fakeSink{})
+
+	post(t, h, telegramWebhookPath(), telegramUpdateJSON, testSecret)
+
+	if !strings.Contains(buf.String(), `"level":"ERROR"`) {
+		t.Errorf("a store outage was not logged at ERROR: %s", buf.String())
 	}
 }

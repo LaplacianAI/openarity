@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
+	"regexp"
 )
 
 // ErrNotFound reports a path with no secret behind it. Callers fail closed:
@@ -38,21 +38,21 @@ func ChannelPath(tenantID, channelID string) (string, error) {
 	return fmt.Sprintf("tenants/%s/channels/%s", tenantID, channelID), nil
 }
 
+// pathSegmentShape is the allowlist for one path segment. A denylist is the
+// wrong tool at a namespace boundary: once a backend SDK turns the path
+// into a request URL, '?' truncates it, '#' starts a fragment and '%xx' can
+// re-introduce a separator after decoding — and the next such character is
+// whichever one the list forgot.
+var pathSegmentShape = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
 // checkPathSegment rejects anything that could change the shape of the path
-// a segment is spliced into: separators, "..", and control characters.
+// a segment is spliced into.
 func checkPathSegment(s string) error {
 	switch {
-	case s == "":
-		return fmt.Errorf("empty segment: %w", ErrBadPathSegment)
-	case strings.ContainsAny(s, `/\`):
-		return fmt.Errorf("separator in segment: %w", ErrBadPathSegment)
-	case strings.Contains(s, ".."):
-		return fmt.Errorf("traversal in segment: %w", ErrBadPathSegment)
-	}
-	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
-			return fmt.Errorf("control character in segment: %w", ErrBadPathSegment)
-		}
+	case s == "." || s == "..":
+		return fmt.Errorf("traversal segment: %w", ErrBadPathSegment)
+	case !pathSegmentShape.MatchString(s):
+		return fmt.Errorf("segment outside %s: %w", pathSegmentShape, ErrBadPathSegment)
 	}
 	return nil
 }

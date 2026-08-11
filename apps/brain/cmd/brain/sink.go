@@ -19,7 +19,7 @@ func (s logSink) Deliver(_ context.Context, msg contracts.Message) error {
 	s.logger.Info("message received",
 		"channel", msg.Channel,
 		"channel_id", msg.ChannelID,
-		"tenant", msg.TenantID,
+		"tenant_id", msg.TenantID,
 		"conversation_id", msg.ConversationID,
 		"provider_message_id", msg.ProviderMessageID,
 		"provider_user_id", msg.ProviderUserID,

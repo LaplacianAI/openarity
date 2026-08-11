@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -78,6 +79,16 @@ func TestChannelPathRejectsUnusableSegments(t *testing.T) {
 		"traversal in channel":  {"t1", "c1/../c2"},
 		"newline in channel":    {"t1", "c1\n"},
 		"delete char in tenant": {"t1\x7f", "c1"},
+
+		// The allowlist cases: characters that survive a denylist but break
+		// the path the moment a backend SDK turns it into a request URL.
+		"single dot tenant":   {".", "c1"},
+		"question mark":       {"t1", "c1?list=true"},
+		"hash in tenant":      {"t1#frag", "c1"},
+		"percent encoding":    {"t1", "c1%2Fx"},
+		"space in channel":    {"t1", "c 1"},
+		"invalid utf8":        {"t1", "c1\xff"},
+		"over 128 characters": {"t1", strings.Repeat("c", 129)},
 	}
 
 	for name, tc := range tests {

@@ -4,28 +4,36 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
-	"unicode/utf8"
 )
-
-// maxLoggedPath caps the request path in log records. The path is
-// attacker-controlled up to the server's MaxHeaderBytes, which is far larger
-// than any legitimate route here — logging it uncapped hands an
-// unauthenticated caller a log-volume amplifier.
-const maxLoggedPath = 256
 
 type recorder struct {
 	http.ResponseWriter
 	status int
+	wrote  bool
 }
 
 func (r *recorder) WriteHeader(code int) {
 	r.status = code
+	r.wrote = true
 	r.ResponseWriter.WriteHeader(code)
 }
 
-// Unwrap exposes the underlying writer to http.NewResponseController, which
-// net/http uses to reach Flush and the per-request deadline setters through
-// wrappers like this one.
+func (r *recorder) Write(b []byte) (int, error) {
+	r.wrote = true
+	return r.ResponseWriter.Write(b)
+}
+
+// FlushError intercepts ResponseController flushes: a flush commits the
+// response, so it must count as written or a flush-then-panic request would
+// log a 500 the client never saw.
+func (r *recorder) FlushError() error {
+	r.wrote = true
+	return http.NewResponseController(r.ResponseWriter).Flush()
+}
+
+// Unwrap exposes the underlying writer to http.NewResponseController for
+// everything not intercepted above, such as the per-request deadline
+// setters.
 func (r *recorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
 }
@@ -47,27 +55,30 @@ func LogRequests(logger *slog.Logger) Middleware {
 				return
 			}
 
+			// The record is emitted from a defer so a panicking handler
+			// still produces one — those are the requests whose status and
+			// latency matter most. RecoverPanic sits outside this middleware
+			// and owns the recovery; the 500 logged here mirrors what it
+			// writes when nothing reached the wire.
+			panicked := true
+			defer func() {
+				status := rw.status
+				if panicked && !rw.wrote {
+					status = http.StatusInternalServerError
+				}
+				attrs := []any{
+					"method", r.Method,
+					"path", clipField(r.URL.Path, maxLoggedPath),
+					"status", status,
+					"dur_ms", time.Since(start).Milliseconds(),
+				}
+				if panicked {
+					attrs = append(attrs, "panicked", true)
+				}
+				logger.Info("Request processed", attrs...)
+			}()
 			next.ServeHTTP(rw, r)
-			logger.Info("Request processed",
-				"method", r.Method,
-				"path", clipField(r.URL.Path, maxLoggedPath),
-				"status", rw.status,
-				"dur_ms", time.Since(start).Milliseconds(),
-			)
+			panicked = false
 		})
 	}
-}
-
-// clipField caps an unbounded value for logging, cutting on a rune boundary
-// so a multi-byte character is dropped whole rather than split into invalid
-// UTF-8.
-func clipField(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
-		return s
-	}
-	n := maxBytes
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
 }

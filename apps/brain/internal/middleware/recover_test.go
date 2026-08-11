@@ -101,6 +101,50 @@ func TestRecoverPanicAfterAPartialWriteKeepsTheResponse(t *testing.T) {
 	}
 }
 
+// A ResponseController flush commits the response without touching Write or
+// WriteHeader. The wrapper must intercept it — an Unwrap-only wrapper lets
+// the flush slip past the started tracking, and a later panic would write a
+// superfluous 500 over an already-committed response.
+func TestRecoverPanicTreatsAFlushAsStarted(t *testing.T) {
+	t.Parallel()
+
+	rec, out := servePanic(t, func(w http.ResponseWriter, _ *http.Request) {
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		panic("boom after flush")
+	})
+
+	if rec.Code == http.StatusInternalServerError {
+		t.Error("a 500 was written over a flushed response")
+	}
+	if !strings.Contains(out, "boom after flush") {
+		t.Errorf("the panic after the flush was not logged: %s", out)
+	}
+}
+
+// A hijack attempt counts as started even when it fails — the attempt is
+// the last thing known about the connection, and a 500 after it is a guess.
+// httptest's recorder cannot be hijacked, which is exactly what the test
+// needs: the failed attempt alone must flip the tracking.
+func TestRecoverPanicTreatsAHijackAsStarted(t *testing.T) {
+	t.Parallel()
+
+	rec, out := servePanic(t, func(w http.ResponseWriter, _ *http.Request) {
+		if _, _, err := http.NewResponseController(w).Hijack(); err == nil {
+			t.Fatal("Hijack unexpectedly succeeded on httptest's recorder")
+		}
+		panic("boom after hijack")
+	})
+
+	if rec.Code == http.StatusInternalServerError {
+		t.Error("a 500 was written after a hijack attempt")
+	}
+	if !strings.Contains(out, "boom after hijack") {
+		t.Errorf("the panic after the hijack was not logged: %s", out)
+	}
+}
+
 // The panic value is arbitrary program state and can embed unbounded input.
 // The record must stay bounded even when the value does not.
 func TestRecoverPanicCapsTheLoggedValue(t *testing.T) {

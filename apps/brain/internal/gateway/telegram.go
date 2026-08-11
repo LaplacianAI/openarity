@@ -1,6 +1,3 @@
-// Package gateway is the brain's public inbound edge: channel adapters and
-// the webhook handler that drives them. Nothing downstream learns which
-// channel a message came from — see CLAUDE.md in this directory.
 package gateway
 
 import (

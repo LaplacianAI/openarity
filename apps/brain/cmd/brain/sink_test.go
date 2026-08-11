@@ -35,7 +35,7 @@ func TestLogSinkLogsFieldsNotContent(t *testing.T) {
 
 	out := buf.String()
 	for _, want := range []string{
-		`"channel":"telegram"`, `"channel_id":"ch-1"`, `"tenant":"t-1"`,
+		`"channel":"telegram"`, `"channel_id":"ch-1"`, `"tenant_id":"t-1"`,
 		`"conversation_id":"-100123"`, `"provider_message_id":"42"`, `"provider_user_id":"556"`,
 		`"text_len":25`,
 	} {
