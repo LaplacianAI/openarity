@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -53,11 +54,27 @@ func (q *Queries) GetTeam(ctx context.Context, id uuid.UUID) (Team, error) {
 }
 
 const listTeams = `-- name: ListTeams :many
-SELECT id, name, created_at, updated_at FROM teams ORDER BY created_at DESC
+SELECT id, name, created_at, updated_at FROM teams
+WHERE NOT $1::bool
+   OR (created_at, id) < ($2::timestamptz, $3::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT $4
 `
 
-func (q *Queries) ListTeams(ctx context.Context) ([]Team, error) {
-	rows, err := q.db.Query(ctx, listTeams)
+type ListTeamsParams struct {
+	UseCursor      bool
+	AfterCreatedAt time.Time
+	AfterID        uuid.UUID
+	PageSize       int32
+}
+
+func (q *Queries) ListTeams(ctx context.Context, arg ListTeamsParams) ([]Team, error) {
+	rows, err := q.db.Query(ctx, listTeams,
+		arg.UseCursor,
+		arg.AfterCreatedAt,
+		arg.AfterID,
+		arg.PageSize,
+	)
 	if err != nil {
 		return nil, err
 	}

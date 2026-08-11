@@ -1,6 +1,10 @@
 package teams
 
-import "github.com/google/uuid"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type team struct {
 	ID   uuid.UUID `json:"id"`
@@ -10,4 +14,26 @@ type team struct {
 
 type createRequest struct {
 	Name string `json:"name"`
+}
+
+type member struct {
+	UserID  uuid.UUID `json:"user_id"`
+	Subject string    `json:"subject"`
+	Email   *string   `json:"email,omitempty"`
+	Role    string    `json:"role"`
+}
+
+type addMemberRequest struct {
+	UserID uuid.UUID `json:"user_id"`
+	Role   string    `json:"role"`
+}
+
+type teamCursor struct {
+	CreatedAt time.Time `json:"c"`
+	ID        uuid.UUID `json:"i"`
+}
+
+type memberCursor struct {
+	Subject string    `json:"s"`
+	ID      uuid.UUID `json:"i"`
 }

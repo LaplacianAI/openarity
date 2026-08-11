@@ -36,6 +36,63 @@ func (q *Queries) AddTeamMember(ctx context.Context, arg AddTeamMemberParams) (T
 	return i, err
 }
 
+const listTeamMembers = `-- name: ListTeamMembers :many
+SELECT u.id, u.subject, u.email, tm.role
+FROM team_members tm
+JOIN users u ON u.id = tm.user_id
+WHERE tm.team_id = $1
+  AND (NOT $2::bool
+       OR (u.subject, u.id) > ($3::text, $4::uuid))
+ORDER BY u.subject, u.id
+LIMIT $5
+`
+
+type ListTeamMembersParams struct {
+	TeamID       uuid.UUID
+	UseCursor    bool
+	AfterSubject string
+	AfterID      uuid.UUID
+	PageSize     int32
+}
+
+type ListTeamMembersRow struct {
+	ID      uuid.UUID
+	Subject string
+	Email   *string
+	Role    string
+}
+
+func (q *Queries) ListTeamMembers(ctx context.Context, arg ListTeamMembersParams) ([]ListTeamMembersRow, error) {
+	rows, err := q.db.Query(ctx, listTeamMembers,
+		arg.TeamID,
+		arg.UseCursor,
+		arg.AfterSubject,
+		arg.AfterID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamMembersRow
+	for rows.Next() {
+		var i ListTeamMembersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Subject,
+			&i.Email,
+			&i.Role,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserTeams = `-- name: ListUserTeams :many
 SELECT t.id, t.name, tm.role
 FROM team_members tm

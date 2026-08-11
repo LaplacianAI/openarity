@@ -24,6 +24,19 @@ func queryStore(t *testing.T) *Store {
 	return s
 }
 
+// teamLister is satisfied by both *Store and the *db.Queries a transaction
+// hands to its callback.
+type teamLister interface {
+	ListTeams(context.Context, db.ListTeamsParams) ([]db.Team, error)
+}
+
+// allTeams asks for every team in one page. ListTeams is paginated, but most
+// of these tests are about ordering and error paths, not the cursor — the
+// keyset behaviour has its own tests below.
+func allTeams(ctx context.Context, q teamLister) ([]db.Team, error) {
+	return q.ListTeams(ctx, db.ListTeamsParams{PageSize: 1000})
+}
+
 // teamNames reads the names out of a slice, so ordering assertions report
 // something legible instead of four-field structs.
 func teamNames(teams []db.Team) []string {
@@ -159,7 +172,7 @@ func TestListTeamsReturnsNewestFirst(t *testing.T) {
 	backdate(t, s, middle.ID, now.Add(-2*time.Hour))
 	backdate(t, s, newest.ID, now.Add(-1*time.Hour))
 
-	teams, err := s.ListTeams(t.Context())
+	teams, err := allTeams(t.Context(), s)
 	if err != nil {
 		t.Fatalf("ListTeams: %v", err)
 	}
@@ -182,7 +195,7 @@ func TestListTeamsReturnsNewestFirst(t *testing.T) {
 func TestListTeamsOnAnEmptyTable(t *testing.T) {
 	s := queryStore(t)
 
-	teams, err := s.ListTeams(t.Context())
+	teams, err := allTeams(t.Context(), s)
 	if err != nil {
 		t.Fatalf("ListTeams on an empty table: %v", err)
 	}
@@ -205,7 +218,7 @@ func TestListTeamsReportsAQueryFailure(t *testing.T) {
 	s := queryStore(t)
 	s.Close()
 
-	teams, err := s.ListTeams(t.Context())
+	teams, err := allTeams(t.Context(), s)
 	if err == nil {
 		t.Fatal("ListTeams succeeded against a closed pool")
 	}
@@ -225,7 +238,7 @@ func TestListTeamsReportsAScanFailure(t *testing.T) {
 	exec(t, s, "ALTER TABLE teams ALTER COLUMN id TYPE text USING id::text")
 	exec(t, s, "INSERT INTO teams (id, name) VALUES ('not-a-uuid', 'broken')")
 
-	teams, err := s.ListTeams(t.Context())
+	teams, err := allTeams(t.Context(), s)
 	if err == nil {
 		t.Fatal("ListTeams accepted a row it cannot scan")
 	}
@@ -251,12 +264,324 @@ func TestListTeamsReportsAFailureMidStream(t *testing.T) {
 		       now() AS created_at, now() AS updated_at
 		FROM generate_series(1, 1000) i`)
 
-	teams, err := s.ListTeams(t.Context())
+	teams, err := allTeams(t.Context(), s)
 	if err == nil {
 		t.Fatal("ListTeams returned a partial result as success")
 	}
 	if teams != nil {
 		t.Errorf("ListTeams returned %d rows alongside an error, want nil", len(teams))
+	}
+}
+
+// The cursor predicate is the part of ListTeams that nothing else exercises:
+// the handler tests drive a fake, and a fake can be wrong in exactly the way
+// the SQL is. These run against Postgres.
+
+// Without a cursor the WHERE clause must let every row through, or the first
+// page of every listing is empty.
+func TestListTeamsIgnoresTheCursorWhenUnused(t *testing.T) {
+	s := queryStore(t)
+
+	mustCreate(t, s, "first")
+	mustCreate(t, s, "second")
+
+	// AfterCreatedAt and AfterID are the zero values a caller sends when there
+	// is no cursor. With UseCursor false they must not filter anything.
+	teams, err := s.ListTeams(t.Context(), db.ListTeamsParams{PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListTeams: %v", err)
+	}
+	if len(teams) != 2 {
+		t.Errorf("got %v, want both teams", teamNames(teams))
+	}
+}
+
+func TestListTeamsRespectsThePageSize(t *testing.T) {
+	s := queryStore(t)
+
+	for _, name := range []string{"a", "b", "c"} {
+		mustCreate(t, s, name)
+	}
+
+	teams, err := s.ListTeams(t.Context(), db.ListTeamsParams{PageSize: 2})
+	if err != nil {
+		t.Fatalf("ListTeams: %v", err)
+	}
+	if len(teams) != 2 {
+		t.Errorf("got %d rows for PageSize 2, want 2", len(teams))
+	}
+}
+
+// Walking the pages must yield every team exactly once. An off-by-one in the
+// row comparison shows up here as a repeat or a gap, and nowhere else.
+func TestListTeamsPagesThroughEveryRow(t *testing.T) {
+	s := queryStore(t)
+
+	now := time.Now()
+	want := map[string]bool{}
+	for i := range 5 {
+		team := mustCreate(t, s, string(rune('a'+i)))
+		backdate(t, s, team.ID, now.Add(-time.Duration(i)*time.Hour))
+		want[team.Name] = true
+	}
+
+	seen := map[string]int{}
+	params := db.ListTeamsParams{PageSize: 2}
+
+	for page := 0; ; page++ {
+		if page > 10 {
+			t.Fatal("paging did not terminate")
+		}
+
+		rows, err := s.ListTeams(t.Context(), params)
+		if err != nil {
+			t.Fatalf("ListTeams: %v", err)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		for _, row := range rows {
+			seen[row.Name]++
+		}
+
+		last := rows[len(rows)-1]
+		params.UseCursor = true
+		params.AfterCreatedAt = last.CreatedAt
+		params.AfterID = last.ID
+	}
+
+	if len(seen) != len(want) {
+		t.Errorf("saw %d distinct teams, want %d", len(seen), len(want))
+	}
+	for name, n := range seen {
+		if n != 1 {
+			t.Errorf("team %q appeared %d times", name, n)
+		}
+	}
+}
+
+// Rows sharing created_at are why the comparison is a row constructor rather
+// than two ANDed inequalities. With `created_at < x AND id < y` the tied rows
+// are dropped; with a row constructor they are ordered by id and paged
+// through.
+func TestListTeamsPagesThroughRowsSharingATimestamp(t *testing.T) {
+	s := queryStore(t)
+
+	at := time.Now().Add(-time.Hour)
+	for _, name := range []string{"a", "b", "c"} {
+		team := mustCreate(t, s, name)
+		backdate(t, s, team.ID, at)
+	}
+
+	seen := map[string]int{}
+	params := db.ListTeamsParams{PageSize: 1}
+
+	for page := 0; ; page++ {
+		if page > 10 {
+			t.Fatal("paging did not terminate on tied timestamps")
+		}
+
+		rows, err := s.ListTeams(t.Context(), params)
+		if err != nil {
+			t.Fatalf("ListTeams: %v", err)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		seen[rows[0].Name]++
+
+		params.UseCursor = true
+		params.AfterCreatedAt = rows[0].CreatedAt
+		params.AfterID = rows[0].ID
+	}
+
+	if len(seen) != 3 {
+		t.Errorf("saw %d of 3 teams sharing a timestamp: %v", len(seen), seen)
+	}
+}
+
+// A cursor must exclude the row it points at, or every page repeats its own
+// last row forever.
+func TestListTeamsExcludesTheCursorRow(t *testing.T) {
+	s := queryStore(t)
+
+	team := mustCreate(t, s, "only")
+
+	rows, err := s.ListTeams(t.Context(), db.ListTeamsParams{
+		PageSize:       10,
+		UseCursor:      true,
+		AfterCreatedAt: team.CreatedAt,
+		AfterID:        team.ID,
+	})
+	if err != nil {
+		t.Fatalf("ListTeams: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("the cursor row came back again: %v", teamNames(rows))
+	}
+}
+
+// Members are ordered by subject, and two users from different issuers can
+// share one — users is unique on (issuer, subject), not on subject. The id
+// tiebreak is what keeps that pair pageable.
+func TestListTeamMembersPagesThroughASharedSubject(t *testing.T) {
+	s := queryStore(t)
+
+	team := mustCreate(t, s, "platform")
+	for _, issuer := range []string{"okta", "github", "google"} {
+		user, err := s.UpsertUser(t.Context(), db.UpsertUserParams{Issuer: issuer, Subject: "bob"})
+		if err != nil {
+			t.Fatalf("UpsertUser(%s): %v", issuer, err)
+		}
+		if _, err := s.AddTeamMember(t.Context(), db.AddTeamMemberParams{
+			TeamID: team.ID, UserID: user.ID, Role: "developer",
+		}); err != nil {
+			t.Fatalf("AddTeamMember: %v", err)
+		}
+	}
+
+	seen := map[uuid.UUID]int{}
+	params := db.ListTeamMembersParams{TeamID: team.ID, PageSize: 1}
+
+	for page := 0; ; page++ {
+		if page > 10 {
+			t.Fatal("paging did not terminate on a shared subject")
+		}
+
+		rows, err := s.ListTeamMembers(t.Context(), params)
+		if err != nil {
+			t.Fatalf("ListTeamMembers: %v", err)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		seen[rows[0].ID]++
+
+		params.UseCursor = true
+		params.AfterSubject = rows[0].Subject
+		params.AfterID = rows[0].ID
+	}
+
+	if len(seen) != 3 {
+		t.Errorf("saw %d of 3 users sharing the subject %q", len(seen), "bob")
+	}
+	for id, n := range seen {
+		if n != 1 {
+			t.Errorf("user %s appeared %d times", id, n)
+		}
+	}
+}
+
+// The generated :many returns `nil, err` on every failure, so a half-read
+// listing must never come back as a short list and a nil error. ListTeams has
+// the same three branches covered above; these are ListTeamMembers'.
+
+// Branch one: the query never runs.
+func TestListTeamMembersReportsAQueryFailure(t *testing.T) {
+	s := queryStore(t)
+	s.Close()
+
+	rows, err := s.ListTeamMembers(t.Context(), db.ListTeamMembersParams{
+		TeamID: uuid.New(), PageSize: 10,
+	})
+	if err == nil {
+		t.Fatal("ListTeamMembers succeeded against a closed pool")
+	}
+	if rows != nil {
+		t.Errorf("returned %d rows alongside an error, want nil", len(rows))
+	}
+}
+
+// Branch two: the query runs and a row will not scan. Widening users.id to
+// text and putting a non-uuid in it makes the generated Scan fail.
+func TestListTeamMembersReportsAScanFailure(t *testing.T) {
+	s := queryStore(t)
+
+	team := mustCreate(t, s, "platform")
+
+	// team_members references users(id); the column cannot be widened while
+	// that foreign key stands.
+	// Both sides of the join have to be widened: the predicate is
+	// u.id = tm.user_id, and a text-to-uuid comparison fails at planning time
+	// rather than reaching the scan this test is about.
+	exec(t, s, "ALTER TABLE team_members DROP CONSTRAINT team_members_user_id_fkey")
+	exec(t, s, "ALTER TABLE users ALTER COLUMN id TYPE text USING id::text")
+	exec(t, s, "ALTER TABLE team_members ALTER COLUMN user_id TYPE text USING user_id::text")
+	exec(t, s, "INSERT INTO users (id, issuer, subject) VALUES ('not-a-uuid', 'okta', 'broken')")
+	exec(t, s, "INSERT INTO team_members (team_id, user_id, role) "+
+		"VALUES ('"+team.ID.String()+"', 'not-a-uuid', 'admin')")
+
+	rows, err := s.ListTeamMembers(t.Context(), db.ListTeamMembersParams{
+		TeamID: team.ID, PageSize: 10,
+	})
+	if err == nil {
+		t.Fatal("ListTeamMembers accepted a row it cannot scan")
+	}
+	if rows != nil {
+		t.Errorf("returned %d rows alongside an error, want nil", len(rows))
+	}
+}
+
+// Branch three: rows start arriving and then the server raises. Postgres
+// streams the view, so the division by zero at row 500 lands after 499 good
+// rows have already been scanned — the error surfaces from rows.Err(). This is
+// the only branch where a caller could otherwise be handed half a listing.
+func TestListTeamMembersReportsAFailureMidStream(t *testing.T) {
+	s := queryStore(t)
+
+	exec(t, s, "DROP TABLE team_members")
+	exec(t, s, `CREATE VIEW team_members AS
+		SELECT gen_random_uuid() AS team_id, u.id AS user_id,
+		       CASE WHEN i < 500 THEN 'admin' ELSE (1/(500-i))::text END AS role,
+		       now() AS created_at, now() AS updated_at
+		FROM generate_series(1, 1000) i, users u`)
+
+	// One user, so the view's cross join yields exactly the 1000 rows above.
+	if _, err := s.UpsertUser(t.Context(), db.UpsertUserParams{Issuer: "okta", Subject: "a"}); err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+
+	rows, err := s.ListTeamMembers(t.Context(), db.ListTeamMembersParams{
+		TeamID: uuid.New(), PageSize: 10000,
+	})
+	if err == nil {
+		t.Fatal("ListTeamMembers returned a partial result as success")
+	}
+	if rows != nil {
+		t.Errorf("returned %d rows alongside an error, want nil", len(rows))
+	}
+}
+
+// The query is scoped to one team. A missing WHERE would return the other
+// team's members, which is a cross-team leak rather than a paging bug.
+func TestListTeamMembersReturnsOnlyThatTeam(t *testing.T) {
+	s := queryStore(t)
+
+	mine := mustCreate(t, s, "mine")
+	theirs := mustCreate(t, s, "theirs")
+
+	for i, team := range []db.Team{mine, theirs} {
+		user, err := s.UpsertUser(t.Context(), db.UpsertUserParams{
+			Issuer: "okta", Subject: string(rune('a' + i)),
+		})
+		if err != nil {
+			t.Fatalf("UpsertUser: %v", err)
+		}
+		if _, err := s.AddTeamMember(t.Context(), db.AddTeamMemberParams{
+			TeamID: team.ID, UserID: user.ID, Role: "admin",
+		}); err != nil {
+			t.Fatalf("AddTeamMember: %v", err)
+		}
+	}
+
+	rows, err := s.ListTeamMembers(t.Context(), db.ListTeamMembersParams{
+		TeamID: mine.ID, PageSize: 10,
+	})
+	if err != nil {
+		t.Fatalf("ListTeamMembers: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Subject != "a" {
+		t.Errorf("got %+v, want only this team's member", rows)
 	}
 }
 
@@ -390,7 +715,7 @@ func TestInTxWritesAreInvisibleUntilCommit(t *testing.T) {
 		}
 
 		// The transaction must see its own write.
-		inside, err := q.ListTeams(t.Context())
+		inside, err := allTeams(t.Context(), q)
 		if err != nil {
 			return err
 		}
