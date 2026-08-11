@@ -48,8 +48,8 @@ services:
       AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASS}
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set AUTHENTIK_SECRET_KEY in deployment/.env}
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9443:9443"
+      - "${BIND_ADDR:-127.0.0.1}:9000:9000"
+      - "${BIND_ADDR:-127.0.0.1}:9443:9443"
     volumes:
       - authentik-media:/media
       - authentik-templates:/templates

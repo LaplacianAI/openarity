@@ -99,6 +99,23 @@ func TestDocsPointAtTheSpecRoute(t *testing.T) {
 	}
 }
 
+// "Try it" has to call the origin the page came from. The spec names an
+// absolute address, and any other route to the stack — a LAN address, a port
+// forward, a tunnel — makes that a cross-origin request the brain sends no
+// CORS headers for. The browser then reports a bare network failure.
+func TestDocsCallTheOriginTheyWereLoadedFrom(t *testing.T) {
+	t.Parallel()
+
+	body := call(t, http.MethodGet, "/docs").Body.String()
+
+	if !strings.Contains(body, `server-url="/"`) {
+		t.Error(`the page does not set server-url="/", so "try it" is cross-origin whenever the host differs from the spec`)
+	}
+	if !strings.Contains(body, `allow-server-selection="false"`) {
+		t.Error("server selection is enabled, so a reader can pick the absolute address and hit CORS again")
+	}
+}
+
 // The renderer comes from a CDN, which is a third-party script on a page
 // someone pastes a bearer token into. Pinning plus an integrity hash is what
 // makes that acceptable: a compromised CDN cannot substitute the bundle, and a

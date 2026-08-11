@@ -8,6 +8,11 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 )
 
+// server-url is "/" so "try it" calls the origin the page was loaded from
+// rather than the absolute address written in the spec. Those differ whenever
+// the stack is reached by any other name — a LAN address, a port forward — and
+// the request is then cross-origin, which the brain sends no CORS headers for.
+// The browser reports that as a bare network failure with nothing useful in it.
 const page = `<!doctype html>
 <html lang="en">
 <head>
@@ -23,6 +28,7 @@ const page = `<!doctype html>
 <body>
   <rapi-doc
     spec-url="/openapi.yaml"
+    server-url="/"
     render-style="read"
     show-header="false"
     allow-server-selection="false"

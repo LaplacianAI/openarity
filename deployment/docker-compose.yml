@@ -21,7 +21,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: openarity
     ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+      - "${BIND_ADDR:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       # Postgres 18 stores data in a major-version subdirectory, so the volume
       # goes one level up. Mounting /var/lib/postgresql/data instead makes the
@@ -42,7 +42,7 @@ services:
   falkordb:
     image: falkordb/falkordb:latest
     ports:
-      - "127.0.0.1:${FALKORDB_PORT:-6380}:6379"
+      - "${BIND_ADDR:-127.0.0.1}:${FALKORDB_PORT:-6380}:6379"
     volumes:
       - falkordb-data:/data
     healthcheck:
@@ -55,7 +55,7 @@ services:
     image: redis:8-alpine
     command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
     ports:
-      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+      - "${BIND_ADDR:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -73,7 +73,7 @@ services:
       VAULT_DEV_ROOT_TOKEN_ID: dev-root
       VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
     ports:
-      - "127.0.0.1:${VAULT_PORT:-8200}:8200"
+      - "${BIND_ADDR:-127.0.0.1}:${VAULT_PORT:-8200}:8200"
     cap_add:
       - IPC_LOCK
     healthcheck:
@@ -113,11 +113,18 @@ services:
       OPENARITY_REDIS_URL: "redis://redis:6379"
       OPENARITY_VAULT_ADDR: "http://vault:8200"
       OPENARITY_ENVIRONMENT: development
-      OPENARITY_DEV_TOKEN: letmein
-      OPENARITY_SUPER_ADMINS: dev
+      # A shared token by default, so the stack is usable with no identity
+      # provider. Set these to point at a real one — see the README. The
+      # single-dash form is deliberate: an empty OPENARITY_DEV_TOKEN must turn
+      # the token off rather than fall back to the default.
+      OPENARITY_DEV_TOKEN: ${OPENARITY_DEV_TOKEN-letmein}
+      OPENARITY_SUPER_ADMINS: ${OPENARITY_SUPER_ADMINS-dev}
+      OPENARITY_OIDC_ENABLED: ${OPENARITY_OIDC_ENABLED:-false}
+      OPENARITY_OIDC_ISSUER: ${OPENARITY_OIDC_ISSUER-}
+      OPENARITY_OIDC_AUDIENCE: ${OPENARITY_OIDC_AUDIENCE:-openarity}
     ports:
-      - "127.0.0.1:${API_PORT:-21120}:21120"
-      - "127.0.0.1:${WEBHOOK_PORT:-21121}:21121"
+      - "${BIND_ADDR:-127.0.0.1}:${API_PORT:-21120}:21120"
+      - "${BIND_ADDR:-127.0.0.1}:${WEBHOOK_PORT:-21121}:21121"
     depends_on:
       postgres:
         condition: service_healthy
