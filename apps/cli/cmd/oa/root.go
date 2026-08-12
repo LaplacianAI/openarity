@@ -13,6 +13,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/client"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/ui"
 )
 
@@ -27,9 +28,10 @@ type options struct {
 	tokenFlag      string
 	nonInteractive bool
 
-	saved  config.Config
-	server string
-	bare   *client.ClientWithResponses
+	saved    config.Config
+	settings config.Settings
+	server   string
+	bare     *client.ClientWithResponses
 }
 
 func newClient(server string, opts ...client.ClientOption) (*client.ClientWithResponses, error) {
@@ -42,15 +44,6 @@ func newClient(server string, opts ...client.ClientOption) (*client.ClientWithRe
 	return api, nil
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
 func (o *options) load() error {
 	saved, err := config.Load()
 	if err != nil {
@@ -58,14 +51,19 @@ func (o *options) load() error {
 	}
 	o.saved = saved
 
-	o.server = firstNonEmpty(o.serverFlag, os.Getenv("OPENARITY_SERVER"), saved.Server, config.DefaultServer)
+	path, _ := config.Path()
+	o.settings = config.Resolve(o.serverFlag, o.tokenFlag, os.Getenv, saved, path)
+	o.server = o.settings.Server.Value
 
-	o.bare, err = newClient(o.server)
+	chosenTheme, _ := theme.Parse(o.settings.Theme.Value)
+	o.styles = ui.New(o.stdout, chosenTheme)
+
+	o.bare, err = newClient(o.settings.Server.Value)
 	return err
 }
 
 func (o *options) api(ctx context.Context) (*client.ClientWithResponses, error) {
-	token, err := auth.Resolve(ctx, o.bare, o.tokenFlag, o.saved.Token, os.Getenv)
+	token, err := auth.Resolve(ctx, o.bare, o.settings.Server.Value, o.tokenFlag, o.saved.Active().Token, os.Getenv)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +77,7 @@ func (o *options) api(ctx context.Context) (*client.ClientWithResponses, error) 
 }
 
 func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
-	opts := &options{stdout: stdout, stderr: stderr, styles: ui.New(stdout, os.Getenv)}
+	opts := &options{stdout: stdout, stderr: stderr}
 
 	root := &cobra.Command{
 		Use:   "oa",
@@ -99,7 +97,10 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	root.PersistentFlags().BoolVar(&opts.nonInteractive, "non-interactive", false,
 		"never prompt; fail instead of asking")
 
-	root.AddCommand(newWhoamiCmd(opts))
+	root.AddCommand(
+		newWhoamiCmd(opts),
+		newConfigCmd(opts),
+	)
 
 	return root
 }
