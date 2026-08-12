@@ -195,7 +195,7 @@ they should be talking over HTTP instead.
 ```sh
 make                    # list targets
 make check db=postgres  # everything CI runs — see the note below about db=
-make run                # run the server, Ctrl-C for a graceful shutdown
+make run                # run the server; sources .env if present, Ctrl-C to stop
 make cover              # coverage, fails below the threshold
 make cover-html db=postgres      # the annotated HTML report
 make testdb db=openarity_test    # create a test database — once per machine
