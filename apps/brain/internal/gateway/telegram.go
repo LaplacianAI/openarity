@@ -88,7 +88,7 @@ type tgChat struct {
 }
 
 // Parse normalises a verified Update body. It fills only the payload-derived
-// Message fields; Channel, ChannelID and TenantID belong to the handler.
+// Message fields; Channel, ChannelID and TeamID belong to the handler.
 //
 // Anything that is not a fresh human text-or-caption message wraps ErrIgnore
 // with the reason: non-message updates (edits, channel posts, membership

@@ -97,7 +97,7 @@ const telegramUpdateJSON = `{
 	}
 }`
 
-// The want has Channel, ChannelID and TenantID zero on purpose: those are
+// The want has Channel, ChannelID and TeamID zero on purpose: those are
 // the handler's fields, and Parse filling them would put two owners on one
 // field.
 func TestTelegramParseNormalisesARealUpdate(t *testing.T) {

@@ -9,9 +9,9 @@ import (
 func TestStaticReturnsTheStoredSecret(t *testing.T) {
 	t.Parallel()
 
-	store := Static{"tenants/t1/channels/c1": "tok"}
+	store := Static{"teams/t1/channels/c1": "tok"}
 
-	got, err := store.Get(t.Context(), "tenants/t1/channels/c1")
+	got, err := store.Get(t.Context(), "teams/t1/channels/c1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestStaticReturnsTheStoredSecret(t *testing.T) {
 func TestStaticMissingPathIsErrNotFound(t *testing.T) {
 	t.Parallel()
 
-	got, err := Static{}.Get(t.Context(), "tenants/t1/channels/nope")
+	got, err := Static{}.Get(t.Context(), "teams/t1/channels/nope")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("Get err = %v, want ErrNotFound", err)
 	}
@@ -55,36 +55,36 @@ func TestChannelPathLayout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChannelPath: %v", err)
 	}
-	if got != "tenants/t1/channels/c1" {
+	if got != "teams/t1/channels/c1" {
 		t.Errorf("ChannelPath = %q", got)
 	}
 }
 
 // A segment that could change the shape of the path it is spliced into is
 // refused outright. Today every caller passes trusted registrations; the day
-// they come from a database row, "../other-tenant" must not become a path
-// that reads across the tenant namespace.
+// they come from a database row, "../other-team" must not become a path
+// that reads across the team namespace.
 func TestChannelPathRejectsUnusableSegments(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		tenantID, channelID string
+		teamID, channelID string
 	}{
-		"empty tenant":          {"", "c1"},
-		"empty channel":         {"t1", ""},
-		"slash in tenant":       {"t1/x", "c1"},
-		"bare traversal":        {"..", "c1"},
-		"backslash in channel":  {"t1", `c1\x`},
-		"traversal in tenant":   {"../t2", "c1"},
-		"traversal in channel":  {"t1", "c1/../c2"},
-		"newline in channel":    {"t1", "c1\n"},
-		"delete char in tenant": {"t1\x7f", "c1"},
+		"empty team":           {"", "c1"},
+		"empty channel":        {"t1", ""},
+		"slash in team":        {"t1/x", "c1"},
+		"bare traversal":       {"..", "c1"},
+		"backslash in channel": {"t1", `c1\x`},
+		"traversal in team":    {"../t2", "c1"},
+		"traversal in channel": {"t1", "c1/../c2"},
+		"newline in channel":   {"t1", "c1\n"},
+		"delete char in team":  {"t1\x7f", "c1"},
 
 		// The allowlist cases: characters that survive a denylist but break
 		// the path the moment a backend SDK turns it into a request URL.
-		"single dot tenant":   {".", "c1"},
+		"single dot team":     {".", "c1"},
 		"question mark":       {"t1", "c1?list=true"},
-		"hash in tenant":      {"t1#frag", "c1"},
+		"hash in team":        {"t1#frag", "c1"},
 		"percent encoding":    {"t1", "c1%2Fx"},
 		"space in channel":    {"t1", "c 1"},
 		"invalid utf8":        {"t1", "c1\xff"},
@@ -95,7 +95,7 @@ func TestChannelPathRejectsUnusableSegments(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := ChannelPath(tc.tenantID, tc.channelID)
+			got, err := ChannelPath(tc.teamID, tc.channelID)
 			if !errors.Is(err, ErrBadPathSegment) {
 				t.Errorf("ChannelPath err = %v, want ErrBadPathSegment", err)
 			}

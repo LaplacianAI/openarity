@@ -95,15 +95,25 @@ func (staticResolver) Resolve(_ context.Context, p *auth.Principal) (*auth.User,
 	return &auth.User{ID: uuid.New(), Issuer: p.Issuer, Subject: p.Subject}, nil
 }
 
-// deps is the usual set: a database that answers, a verifier that accepts
-// testToken, a resolver that always succeeds, and a gateway that owns no
-// routes. Tests that drive the gateway subtree swap in their own handler.
-func deps(db Pinger) Deps {
-	return Deps{DB: db, Verifier: testVerifier(), Resolver: staticResolver{}, Gateway: http.NotFoundHandler()}
+// stubGateway registers whatever routes a test hands it — and by default,
+// none, which is also the state a misconfigured deployment lands in.
+type stubGateway struct{ register func(mux *http.ServeMux) }
+
+func (g stubGateway) Register(mux *http.ServeMux) {
+	if g.register != nil {
+		g.register(mux)
+	}
 }
 
-// gatewayDeps is deps with a real gateway handler swapped in.
-func gatewayDeps(db Pinger, gw http.Handler) Deps {
+// deps is the usual set: a database that answers, a verifier that accepts
+// testToken, a resolver that always succeeds, and a gateway that registers
+// no routes. Tests that drive the gateway swap in their own.
+func deps(db Pinger) Deps {
+	return Deps{DB: db, Verifier: testVerifier(), Resolver: staticResolver{}, Gateway: stubGateway{}}
+}
+
+// gatewayDeps is deps with a real gateway swapped in.
+func gatewayDeps(db Pinger, gw Gateway) Deps {
 	d := deps(db)
 	d.Gateway = gw
 	return d
@@ -223,8 +233,8 @@ func request(t *testing.T, h http.Handler, method, path, token string) *httptest
 }
 
 // The webhook listener authenticates nothing — providers sign the body instead
-// — so an unknown path there is simply not a route. The gateway is a
-// NotFoundHandler here, so this also pins that a typo cannot become a 200.
+// — so an unknown path there is simply not a route. The gateway registers
+// nothing here, so this also pins that a typo cannot become a 200.
 func TestUnknownWebhookPathIs404(t *testing.T) {
 	t.Parallel()
 
@@ -250,20 +260,20 @@ func TestUnknownAPIPathIsUnauthorizedBeforeItIsNotFound(t *testing.T) {
 	}
 }
 
-// The gateway owns the webhookPrefix subtree on the public listener and
-// nothing else. This is the only place the server and the gateway have to
-// agree on a string, so pin both directions: a real channel path reaches the
-// gateway with its full URL intact, and the probes never do. Change the
-// gateway's route patterns without changing this prefix and this fails
-// instead of 404ing in production.
-func TestWebhookHandlerRoutesTheGatewaySubtree(t *testing.T) {
+// The gateway registers its own full route patterns on the webhook mux —
+// there is no prefix agreement between the packages. Pin both directions: a
+// route the gateway registered serves with its URL intact, and the probes
+// are answered by the server, never the gateway.
+func TestWebhookHandlerRegistersTheGateway(t *testing.T) {
 	t.Parallel()
 
 	var seen []string
-	gateway := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.Method+" "+r.URL.Path)
-		w.WriteHeader(http.StatusTeapot)
-	})
+	gateway := stubGateway{register: func(mux *http.ServeMux) {
+		mux.HandleFunc("POST /webhook/telegram/{channelID}", func(w http.ResponseWriter, r *http.Request) {
+			seen = append(seen, r.Method+" "+r.URL.Path)
+			w.WriteHeader(http.StatusTeapot)
+		})
+	}}
 	h := New(testConfig(), discardLogger(), gatewayDeps(healthyDB(), gateway)).webhookHandler()
 
 	rec := httptest.NewRecorder()
@@ -306,9 +316,11 @@ func TestNewRecoversAGatewayPanic(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	srv := New(testConfig(), logger, gatewayDeps(healthyDB(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		panic("gateway boom")
-	})))
+	srv := New(testConfig(), logger, gatewayDeps(healthyDB(), stubGateway{register: func(mux *http.ServeMux) {
+		mux.HandleFunc("POST /webhook/telegram/{channelID}", func(http.ResponseWriter, *http.Request) {
+			panic("gateway boom")
+		})
+	}}))
 
 	rec := httptest.NewRecorder()
 	srv.webhook.Handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhook/telegram/x", nil))

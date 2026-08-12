@@ -19,7 +19,7 @@ import (
 
 const (
 	testChannelID = "ch-1"
-	testTenantID  = "t-1"
+	testTeamID    = "t-1"
 	testSecret    = "tok_A-1"
 )
 
@@ -53,12 +53,12 @@ func recordingLogger() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(slog.NewJSONHandler(&buf, nil)), &buf
 }
 
-func mustChannelPath(t *testing.T, tenantID, channelID string) string {
+func mustChannelPath(t *testing.T, teamID, channelID string) string {
 	t.Helper()
 
-	path, err := secrets.ChannelPath(tenantID, channelID)
+	path, err := secrets.ChannelPath(teamID, channelID)
 	if err != nil {
-		t.Fatalf("ChannelPath(%q, %q): %v", tenantID, channelID, err)
+		t.Fatalf("ChannelPath(%q, %q): %v", teamID, channelID, err)
 	}
 	return path
 }
@@ -68,11 +68,18 @@ func mustChannelPath(t *testing.T, tenantID, channelID string) string {
 // slack_test.go needs its own.
 func telegramStore(t *testing.T) secrets.Static {
 	t.Helper()
-	return secrets.Static{mustChannelPath(t, testTenantID, testChannelID): testSecret}
+	return secrets.Static{mustChannelPath(t, testTeamID, testChannelID): testSecret}
+}
+
+// mount registers the handler on a fresh mux, the way the server does.
+func mount(g *Handler) http.Handler {
+	mux := http.NewServeMux()
+	g.Register(mux)
+	return mux
 }
 
 func newTelegramHandler(store secrets.Store, sink contracts.Sink) http.Handler {
-	return New(discardLogger(), Telegram{}, map[string]string{testChannelID: testTenantID}, store, sink)
+	return mount(New(discardLogger(), Telegram{}, map[string]string{testChannelID: testTeamID}, store, sink))
 }
 
 func post(t *testing.T, h http.Handler, path, body, token string) *httptest.ResponseRecorder {
@@ -114,7 +121,7 @@ func TestWebhookDeliversARealUpdate(t *testing.T) {
 	want := contracts.Message{
 		Channel:           "telegram",
 		ChannelID:         testChannelID,
-		TenantID:          testTenantID,
+		TeamID:            testTeamID,
 		ConversationID:    "-1001234567890",
 		ProviderMessageID: "42",
 		ProviderUserID:    "5561234567",
@@ -132,7 +139,7 @@ func TestNewRoutesByTheAdaptersChannel(t *testing.T) {
 	t.Parallel()
 
 	sink := &fakeSink{}
-	h := New(discardLogger(), fakeAdapter{}, map[string]string{testChannelID: testTenantID}, telegramStore(t), sink)
+	h := mount(New(discardLogger(), fakeAdapter{}, map[string]string{testChannelID: testTeamID}, telegramStore(t), sink))
 
 	if rec := post(t, h, "/webhook/fake/"+testChannelID, `{}`, ""); rec.Code != http.StatusOK {
 		t.Errorf("the fake adapter's route = %d, want 200", rec.Code)
@@ -164,9 +171,9 @@ func (fakeAdapter) Parse([]byte) (contracts.Message, error) {
 func TestNewCopiesTheChannelRegistry(t *testing.T) {
 	t.Parallel()
 
-	channels := map[string]string{testChannelID: testTenantID}
+	channels := map[string]string{testChannelID: testTeamID}
 	sink := &fakeSink{}
-	h := New(discardLogger(), Telegram{}, channels, telegramStore(t), sink)
+	h := mount(New(discardLogger(), Telegram{}, channels, telegramStore(t), sink))
 
 	delete(channels, testChannelID)
 
@@ -194,19 +201,19 @@ func TestWebhookRejectsUnauthenticatedRequests(t *testing.T) {
 		"unknown channel":      {telegramStore(t), nil, "/webhook/telegram/nope", testSecret},
 		"no secret configured": {secrets.Static{}, nil, telegramWebhookPath(), testSecret},
 		"unusable stored secret": {
-			secrets.Static{mustChannelPath(t, testTenantID, testChannelID): "123456:AAHtoken"},
+			secrets.Static{mustChannelPath(t, testTeamID, testChannelID): "123456:AAHtoken"},
 			nil, telegramWebhookPath(), "123456:AAHtoken",
 		},
 		// %2F..%2F decodes to a path-traversal attempt in PathValue. It must
 		// die at the channel lookup — the secret path is composed from the
 		// registration, never from the URL.
 		"escaped path traversal": {telegramStore(t), nil, "/webhook/telegram/" + testChannelID + "%2F..%2Fother", testSecret},
-		// A registration whose tenant cannot form a secret path fails closed
+		// A registration whose team cannot form a secret path fails closed
 		// before the store is asked — a poisoned channels-table row must not
-		// read across the tenant namespace.
+		// read across the team namespace.
 		"unusable registration": {
 			telegramStore(t),
-			map[string]string{testChannelID: "../" + testTenantID},
+			map[string]string{testChannelID: "../" + testTeamID},
 			telegramWebhookPath(), testSecret,
 		},
 	}
@@ -218,9 +225,9 @@ func TestWebhookRejectsUnauthenticatedRequests(t *testing.T) {
 			sink := &fakeSink{}
 			channels := tc.channels
 			if channels == nil {
-				channels = map[string]string{testChannelID: testTenantID}
+				channels = map[string]string{testChannelID: testTeamID}
 			}
-			h := New(discardLogger(), Telegram{}, channels, tc.store, sink)
+			h := mount(New(discardLogger(), Telegram{}, channels, tc.store, sink))
 			rec := post(t, h, tc.path, telegramUpdateJSON, tc.token)
 
 			if rec.Code != http.StatusUnauthorized {
@@ -295,7 +302,7 @@ func TestWebhookOversizedBodyClosesTheConnection(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, telegramStore(t), &fakeSink{})
+	h := mount(New(logger, Telegram{}, map[string]string{testChannelID: testTeamID}, telegramStore(t), &fakeSink{}))
 
 	body := `{"pad": "` + strings.Repeat("a", maxBodyBytes+1) + `"}`
 	rec := post(t, h, telegramWebhookPath(), body, testSecret)
@@ -325,7 +332,7 @@ func TestWebhookBodyReadFailureIsAborted503(t *testing.T) {
 
 	logger, buf := recordingLogger()
 	sink := &fakeSink{}
-	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, telegramStore(t), sink)
+	h := mount(New(logger, Telegram{}, map[string]string{testChannelID: testTeamID}, telegramStore(t), sink))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, telegramWebhookPath(), errReader{})
 	req.Header.Set(secretTokenHeader, testSecret)
@@ -353,8 +360,8 @@ func TestWebhookSinkFailureIs503AndLogsTheCause(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID},
-		telegramStore(t), &fakeSink{err: errors.New("bus full")})
+	h := mount(New(logger, Telegram{}, map[string]string{testChannelID: testTeamID},
+		telegramStore(t), &fakeSink{err: errors.New("bus full")}))
 
 	rec := post(t, h, telegramWebhookPath(), telegramUpdateJSON, testSecret)
 
@@ -447,7 +454,7 @@ func TestWebhookLogsTheOutcome(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, telegramStore(t), &fakeSink{})
+	h := mount(New(logger, Telegram{}, map[string]string{testChannelID: testTeamID}, telegramStore(t), &fakeSink{}))
 
 	post(t, h, telegramWebhookPath(), telegramUpdateJSON, testSecret)
 	if !strings.Contains(buf.String(), `"outcome":"delivered"`) {
@@ -468,7 +475,7 @@ func TestWebhookNeverLogsTheSecret(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, telegramStore(t), &fakeSink{})
+	h := mount(New(logger, Telegram{}, map[string]string{testChannelID: testTeamID}, telegramStore(t), &fakeSink{}))
 
 	post(t, h, telegramWebhookPath(), telegramUpdateJSON, testSecret)
 	post(t, h, telegramWebhookPath(), telegramUpdateJSON, "wrong")
@@ -485,7 +492,7 @@ func TestWebhookCapsTheLoggedChannelID(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	h := New(logger, Telegram{}, map[string]string{}, secrets.Static{}, &fakeSink{})
+	h := mount(New(logger, Telegram{}, map[string]string{}, secrets.Static{}, &fakeSink{}))
 
 	long := strings.Repeat("x", 4096)
 	post(t, h, "/webhook/telegram/"+long, telegramUpdateJSON, testSecret)
@@ -523,8 +530,8 @@ func TestWebhookLogsSecretUnusableAsItsOwnReason(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	store := secrets.Static{mustChannelPath(t, testTenantID, testChannelID): "123456:AAHtoken"}
-	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID}, store, &fakeSink{})
+	store := secrets.Static{mustChannelPath(t, testTeamID, testChannelID): "123456:AAHtoken"}
+	h := mount(New(logger, Telegram{}, map[string]string{testChannelID: testTeamID}, store, &fakeSink{}))
 
 	post(t, h, telegramWebhookPath(), telegramUpdateJSON, "123456:AAHtoken")
 
@@ -568,8 +575,8 @@ func TestWebhookLogsTransientFailuresAtError(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	h := New(logger, Telegram{}, map[string]string{testChannelID: testTenantID},
-		failingStore{err: errors.New("vault sealed")}, &fakeSink{})
+	h := mount(New(logger, Telegram{}, map[string]string{testChannelID: testTeamID},
+		failingStore{err: errors.New("vault sealed")}, &fakeSink{}))
 
 	post(t, h, telegramWebhookPath(), telegramUpdateJSON, testSecret)
 

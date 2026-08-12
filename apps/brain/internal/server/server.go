@@ -35,15 +35,20 @@ type Router interface {
 	Public() bool
 }
 
+// Gateway is the webhook listener's counterpart to Router: it registers the
+// channel routes on the public mux, full patterns and all, so this package
+// never learns what a channel is and the two packages share no path string.
+// It is not a Router because the webhook listener has no Public/protected
+// split — providers authenticate the request body, not the caller.
+type Gateway interface {
+	Register(mux *http.ServeMux)
+}
+
 type Deps struct {
 	DB       Pinger
 	Verifier auth.Verifier
 	Resolver middleware.Resolver
-
-	// Gateway is the channel handler for the webhook listener, taken as a
-	// plain http.Handler so this package never learns what a channel is —
-	// cmd/brain is the only place that knows how the two are wired together.
-	Gateway http.Handler
+	Gateway  Gateway
 }
 
 type Server struct {
@@ -53,7 +58,7 @@ type Server struct {
 	db       Pinger
 	verifier auth.Verifier
 	resolver middleware.Resolver
-	gateway  http.Handler
+	gateway  Gateway
 	routers  []Router
 }
 

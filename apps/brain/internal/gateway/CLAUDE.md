@@ -41,7 +41,7 @@ from the start, but only the webhook shape has an occupant today.
   brain's own `add-middleware` skill says the same thing.
 - **Secrets come from `secrets.Store`, never from config or env values.**
   Per the HLD, *even webhook signing secrets are references, not values.* The
-  handler fetches by path (`secrets.ChannelPath`, `tenants/<t>/channels/<id>`)
+  handler fetches by path (`secrets.ChannelPath`, `teams/<t>/channels/<id>`)
   and hands the value to `Verify`; nothing holds a literal. If you are typing
   a token into `config`, stop.
 - **Fail closed.** A secret that cannot be fetched, a signature that does not
@@ -70,7 +70,7 @@ per-channel special-casing above the adapter.
 
 1. **Verify** the request against the raw body.
 2. **Normalise** the payload into `Message`.
-3. **Resolve entities** — provider user id → our user/tenant, identify bots.
+3. **Resolve entities** — provider user id → our user/team, identify bots.
    This is a lookup into `api` (which owns identity); the adapter calls it
    through its interface, it does not read those tables.
 4. **Map** the conversation to a session (thread id or timeout, above).
@@ -81,7 +81,7 @@ While `api` and the orchestrator do not exist, the downstream of 2 runs against
 a **log-only sink** wired in `cmd/brain`. Step 3 (entity resolution) is
 deferred entirely rather than stubbed — a resolver interface with only a
 constant behind it would fail open. When `api` exists, the resolver seam takes
-a tenant id and returns a struct, not a bare user id. Stub the unbuilt, do not
+a team id and returns a struct, not a bare user id. Stub the unbuilt, do not
 break a rule.
 
 ## Testing a channel — with none of the platform built

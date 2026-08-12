@@ -71,21 +71,30 @@ const reasonOversized = "oversized body"
 type handler struct {
 	logger   *slog.Logger
 	adapter  contracts.WebhookAdapter
-	channels map[string]string // channel id → owning tenant id
+	channels map[string]string // channel id → owning team id
 	store    secrets.Store
 	sink     contracts.Sink
 }
 
+// Handler owns one adapter's slice of the webhook surface. It registers its
+// routes on the listener's mux itself — server.Gateway's shape — so the full
+// pattern lives here and nowhere else.
+type Handler struct {
+	h *handler
+}
+
 // New builds the webhook listener's handler for one adapter: that channel's
-// route and nothing else. channels maps a public channel id to the tenant
+// route and nothing else. channels maps a public channel id to the team
 // that owns it; New copies it, so a caller later mutating its map cannot
 // race the per-request lookups.
-func New(logger *slog.Logger, adapter contracts.WebhookAdapter, channels map[string]string, store secrets.Store, sink contracts.Sink) http.Handler {
-	h := &handler{logger: logger, adapter: adapter, channels: maps.Clone(channels), store: store, sink: sink}
+func New(logger *slog.Logger, adapter contracts.WebhookAdapter, channels map[string]string, store secrets.Store, sink contracts.Sink) *Handler {
+	return &Handler{h: &handler{logger: logger, adapter: adapter, channels: maps.Clone(channels), store: store, sink: sink}}
+}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /webhook/"+adapter.Channel()+"/{channelID}", h.serve)
-	return mux
+// Register mounts the channel's route. The pattern is method- and
+// channel-scoped, so the probes and any sibling channel stay untouched.
+func (g *Handler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("POST /webhook/"+g.h.adapter.Channel()+"/{channelID}", g.h.serve)
 }
 
 // serve funnels every outcome through one exit log line. The middleware
@@ -150,12 +159,12 @@ func (h *handler) handle(w http.ResponseWriter, r *http.Request, channelID strin
 		return http.StatusServiceUnavailable, outcomeAborted, "body read failed", err
 	}
 
-	tenantID, ok := h.channels[channelID]
+	teamID, ok := h.channels[channelID]
 	if !ok {
 		return http.StatusUnauthorized, outcomeRejected, "unknown channel", nil
 	}
 
-	path, err := secrets.ChannelPath(tenantID, channelID)
+	path, err := secrets.ChannelPath(teamID, channelID)
 	if err != nil {
 		// The registration itself is broken — fail closed like any other
 		// auth failure and surface the cause in the log.
@@ -189,7 +198,7 @@ func (h *handler) handle(w http.ResponseWriter, r *http.Request, channelID strin
 
 	msg.Channel = h.adapter.Channel()
 	msg.ChannelID = channelID
-	msg.TenantID = tenantID
+	msg.TeamID = teamID
 
 	// WithoutCancel: the provider hanging up must not abort a delivery that
 	// is already in flight — at-least-once starts here.

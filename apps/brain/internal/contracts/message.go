@@ -9,7 +9,7 @@ import "time"
 // Field ownership is split and pinned by tests: an adapter's Parse fills the
 // payload-derived fields (ConversationID, ProviderMessageID, ProviderUserID,
 // Text, SentAt) and leaves the rest zero; the gateway handler fills the
-// wiring-derived ones (Channel, ChannelID, TenantID) from the channel
+// wiring-derived ones (Channel, ChannelID, TeamID) from the channel
 // registration.
 //
 // Session and thread mapping are deliberately absent until a channel that
@@ -17,7 +17,7 @@ import "time"
 type Message struct {
 	Channel           string
 	ChannelID         string
-	TenantID          string
+	TeamID            string
 	ConversationID    string
 	ProviderMessageID string
 	ProviderUserID    string

@@ -14,7 +14,7 @@ import (
 // a missing secret is a rejection, never an empty string passed onward.
 var ErrNotFound = errors.New("secret not found")
 
-// ErrBadPathSegment reports a tenant or channel id that cannot form a secret
+// ErrBadPathSegment reports a team or channel id that cannot form a secret
 // path — empty, or containing characters that would escape its namespace.
 var ErrBadPathSegment = errors.New("invalid secret path segment")
 
@@ -24,18 +24,18 @@ type Store interface {
 	Get(ctx context.Context, path string) (string, error)
 }
 
-// ChannelPath is where a channel's credentials live. Paths are per-tenant so
-// one tenant's secrets are isolated and revocable as a unit (HLD §Secrets
+// ChannelPath is where a channel's credentials live. Paths are per-team so
+// one team's secrets are isolated and revocable as a unit (HLD §Secrets
 // rule 3). Both ids are validated even though today's callers pass trusted
 // registrations: the moment they come from a database row, a segment like
-// "../other-tenant" must not read across the namespace boundary.
-func ChannelPath(tenantID, channelID string) (string, error) {
-	for _, segment := range []string{tenantID, channelID} {
+// "../other-team" must not read across the namespace boundary.
+func ChannelPath(teamID, channelID string) (string, error) {
+	for _, segment := range []string{teamID, channelID} {
 		if err := checkPathSegment(segment); err != nil {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("tenants/%s/channels/%s", tenantID, channelID), nil
+	return fmt.Sprintf("teams/%s/channels/%s", teamID, channelID), nil
 }
 
 // pathSegmentShape is the allowlist for one path segment. A denylist is the
