@@ -100,6 +100,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	root.AddCommand(
 		newWhoamiCmd(opts),
 		newConfigCmd(opts),
+		newContextCmd(opts),
 	)
 
 	return root

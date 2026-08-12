@@ -149,15 +149,9 @@ func (o *options) confirm(key, value string) error {
 		overriding = o.settings.Theme
 	}
 
-	if strings.HasPrefix(overriding.Source, "OPENARITY_") {
-		fmt.Fprintln(o.stdout, o.styles.Warn.Render(
-			fmt.Sprintf("%s is set and overrides this for the current shell", overriding.Source)))
-	}
-	return nil
+	return o.warnOverride(overriding)
 }
 
-// A server set with no context yet creates one, so the first command after a
-// fresh install does not need `oa context create` first.
 const defaultContextName = "default"
 
 func setActiveServer(cfg *config.Config, server string) {

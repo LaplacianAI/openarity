@@ -1,0 +1,361 @@
+package main
+
+import (
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
+)
+
+// No command writes a token yet — `oa login` will — so a test that needs one
+// puts it in the file directly.
+func seedContext(t *testing.T, name, server, token string) {
+	t.Helper()
+
+	seed(t, "context", "create", name, "--server", server)
+
+	saved, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	saved.Contexts[name] = config.Context{Server: server, Token: token}
+
+	if err := config.Save(saved); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+}
+
+func TestCreateSwitchesToTheNewContext(t *testing.T) {
+	isolate(t)
+
+	seed(t, "context", "create", "staging", "--server", "https://staging.example.com")
+
+	saved, _ := config.Load()
+	if saved.ActiveName() != "staging" {
+		t.Errorf("active context = %q, want staging", saved.ActiveName())
+	}
+	if saved.Active().Server != "https://staging.example.com" {
+		t.Errorf("saved server = %q", saved.Active().Server)
+	}
+}
+
+// The whole reason contexts exist: two brains, two addresses, neither
+// overwriting the other. `config set server` alone could never do this.
+func TestContextsDoNotOverwriteEachOther(t *testing.T) {
+	isolate(t)
+
+	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+
+	saved, _ := config.Load()
+	if got := saved.Contexts["local"].Server; got != "http://127.0.0.1:21120" {
+		t.Errorf("local server = %q, want it untouched by creating prod", got)
+	}
+	if got := saved.Contexts["prod"].Server; got != "https://brain.example.com" {
+		t.Errorf("prod server = %q", got)
+	}
+}
+
+// `config set server` edits the active context, not a global. Writing it while
+// prod is active must not reach local.
+func TestSetServerOnlyTouchesTheActiveContext(t *testing.T) {
+	isolate(t)
+
+	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+	seed(t, "config", "set", "server", "https://elsewhere.example.com")
+
+	saved, _ := config.Load()
+	if got := saved.Contexts["local"].Server; got != "http://127.0.0.1:21120" {
+		t.Errorf("local server = %q, want it untouched while prod was active", got)
+	}
+	if got := saved.Contexts["prod"].Server; got != "https://elsewhere.example.com" {
+		t.Errorf("prod server = %q, want the write to land on the active context", got)
+	}
+}
+
+// Silently replacing one would discard a credential, and the message would say
+// it succeeded.
+func TestCreateRefusesAnExistingName(t *testing.T) {
+	isolate(t)
+
+	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+
+	out, err := execute(t, "context", "create", "prod", "--server", "https://other.example.com")
+	if err == nil {
+		t.Fatal("a duplicate name was accepted")
+	}
+	if !strings.Contains(out+err.Error(), "prod") {
+		t.Errorf("the message does not name the context: %v", err)
+	}
+
+	saved, _ := config.Load()
+	if got := saved.Contexts["prod"].Server; got != "https://brain.example.com" {
+		t.Errorf("prod server = %q, want the rejected create to have changed nothing", got)
+	}
+}
+
+// A context with no address resolves to the built-in one, so `create prod`
+// with the flag mistyped would make something named prod that talks to
+// localhost. Both the missing flag and an empty value have to be refused.
+func TestCreateRequiresAServer(t *testing.T) {
+	isolate(t)
+
+	for _, args := range [][]string{
+		{"context", "create", "prod"},
+		{"context", "create", "prod", "--server", "  "},
+	} {
+		if _, err := execute(t, args...); err == nil {
+			t.Errorf("%v was accepted with no address", args)
+		}
+	}
+
+	saved, _ := config.Load()
+	if len(saved.Contexts) != 0 {
+		t.Errorf("a rejected create wrote a context anyway: %+v", saved.Contexts)
+	}
+}
+
+func TestUseSwitchesTheActiveContext(t *testing.T) {
+	isolate(t)
+
+	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+	seed(t, "context", "use", "local")
+
+	out, err := execute(t, "config", "show")
+	if err != nil {
+		t.Fatalf("config show: %v", err)
+	}
+	if !strings.Contains(out, "http://127.0.0.1:21120") {
+		t.Errorf("the resolved server did not follow the switch:\n%s", out)
+	}
+}
+
+// A typo here would otherwise write Current pointing at nothing, and every
+// later command would quietly fall back to the built-in address.
+func TestUseRefusesAnUnknownContext(t *testing.T) {
+	isolate(t)
+
+	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+
+	out, err := execute(t, "context", "use", "prd")
+	if err == nil {
+		t.Fatal("an unknown context was accepted")
+	}
+	if !strings.Contains(out+err.Error(), "prod") {
+		t.Errorf("the message does not list what is available: %v", err)
+	}
+
+	saved, _ := config.Load()
+	if saved.ActiveName() != "prod" {
+		t.Errorf("active context = %q, want the rejected switch to have changed nothing", saved.ActiveName())
+	}
+}
+
+// The whole reason rename exists rather than delete-then-create: the token
+// has to survive, or renaming costs you a login.
+func TestRenameKeepsTheAddressAndTheToken(t *testing.T) {
+	isolate(t)
+
+	const secret = "oa_live_7f3c9a_keep_me"
+	seedContext(t, "staging", "https://staging.example.com", secret)
+
+	seed(t, "context", "rename", "staging", "preprod")
+
+	saved, _ := config.Load()
+	if _, ok := saved.Contexts["staging"]; ok {
+		t.Error("the old name survived the rename")
+	}
+
+	moved := saved.Contexts["preprod"]
+	if moved.Server != "https://staging.example.com" {
+		t.Errorf("renamed server = %q", moved.Server)
+	}
+	if moved.Token != secret {
+		t.Errorf("the token was lost in the rename: %q", moved.Token)
+	}
+}
+
+// Renaming the active one must carry Current with it, or the rename silently
+// deactivates the context you were working in.
+func TestRenameFollowsTheActiveContext(t *testing.T) {
+	isolate(t)
+
+	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	seed(t, "context", "create", "staging", "--server", "https://staging.example.com")
+	seed(t, "context", "rename", "staging", "preprod")
+
+	saved, _ := config.Load()
+	if saved.ActiveName() != "preprod" {
+		t.Errorf("active context = %q, want it to follow the rename", saved.ActiveName())
+	}
+}
+
+// Renaming onto a name in use would overwrite that context and its token,
+// while reporting success.
+func TestRenameRefusesAnExistingName(t *testing.T) {
+	isolate(t)
+
+	seedContext(t, "prod", "https://brain.example.com", "oa_live_prod")
+	seed(t, "context", "create", "staging", "--server", "https://staging.example.com")
+
+	if _, err := execute(t, "context", "rename", "staging", "prod"); err == nil {
+		t.Fatal("a rename onto an existing context was accepted")
+	}
+
+	saved, _ := config.Load()
+	if got := saved.Contexts["prod"].Token; got != "oa_live_prod" {
+		t.Errorf("prod token = %q, want the rejected rename to have changed nothing", got)
+	}
+	if _, ok := saved.Contexts["staging"]; !ok {
+		t.Error("the rejected rename removed the source context")
+	}
+}
+
+func TestRenameRefusesAnUnknownContext(t *testing.T) {
+	isolate(t)
+
+	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+
+	if _, err := execute(t, "context", "rename", "prd", "production"); err == nil {
+		t.Fatal("renaming a context that does not exist reported success")
+	}
+}
+
+func TestRenameRefusesAnUnusableName(t *testing.T) {
+	isolate(t)
+
+	seedContext(t, "prod", "https://brain.example.com", "oa_live_prod")
+
+	for _, to := range []string{"", "  ", "two words"} {
+		if _, err := execute(t, "context", "rename", "prod", to); err == nil {
+			t.Errorf("%q was accepted as a name", to)
+		}
+	}
+
+	saved, _ := config.Load()
+	if got := saved.Contexts["prod"].Token; got != "oa_live_prod" {
+		t.Errorf("prod was disturbed by a rejected rename: %+v", saved.Contexts)
+	}
+}
+
+func TestDeleteRemovesTheContext(t *testing.T) {
+	isolate(t)
+
+	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+	seed(t, "context", "delete", "prod")
+
+	saved, _ := config.Load()
+	if _, ok := saved.Contexts["prod"]; ok {
+		t.Error("prod survived delete")
+	}
+	if _, ok := saved.Contexts["local"]; !ok {
+		t.Error("delete took the other context with it")
+	}
+}
+
+// Deleting the active one must not leave Current naming a context that is
+// gone — a dangling pointer resolves to the built-in address, so the next
+// command goes somewhere nobody asked for.
+func TestDeletingTheActiveContextLeavesNoDanglingPointer(t *testing.T) {
+	isolate(t)
+
+	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+	seed(t, "context", "delete", "prod")
+
+	saved, _ := config.Load()
+	if saved.Current == "prod" {
+		t.Error("Current still names the deleted context")
+	}
+	if saved.ActiveName() != "local" {
+		t.Errorf("active context = %q, want the one that is left", saved.ActiveName())
+	}
+}
+
+// The credential is the point. A deleted context that leaves its token in the
+// file is a secret nobody believes is still there.
+func TestDeleteTakesTheTokenWithIt(t *testing.T) {
+	isolate(t)
+
+	const secret = "oa_live_7f3c9a_do_not_keep"
+	seedContext(t, "prod", "https://brain.example.com", secret)
+
+	seed(t, "context", "delete", "prod")
+
+	path, _ := config.Path()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Errorf("the token is still in the file:\n%s", data)
+	}
+}
+
+func TestDeleteRefusesAnUnknownContext(t *testing.T) {
+	isolate(t)
+
+	if _, err := execute(t, "context", "delete", "prod"); err == nil {
+		t.Fatal("deleting a context that does not exist reported success")
+	}
+}
+
+func TestListMarksTheActiveContext(t *testing.T) {
+	isolate(t)
+
+	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+
+	out, err := execute(t, "context", "list")
+	if err != nil {
+		t.Fatalf("context list: %v", err)
+	}
+	for _, want := range []string{"local", "prod", "*"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the listing is missing %q:\n%s", want, out)
+		}
+	}
+
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "local") && strings.Contains(line, "*") {
+			t.Errorf("the inactive context is marked active:\n%s", out)
+		}
+	}
+}
+
+// `oa context list` must never be the command that prints a credential.
+func TestListNeverPrintsTheToken(t *testing.T) {
+	isolate(t)
+
+	const secret = "oa_live_7f3c9a_do_not_print"
+	seedContext(t, "prod", "https://brain.example.com", secret)
+
+	out, err := execute(t, "context", "list")
+	if err != nil {
+		t.Fatalf("context list: %v", err)
+	}
+	if strings.Contains(out, secret) {
+		t.Errorf("the token is in the output:\n%s", out)
+	}
+	if !strings.Contains(out, "token saved") {
+		t.Errorf("the listing does not say the context has a credential:\n%s", out)
+	}
+}
+
+func TestEveryContextSubcommandIsRegistered(t *testing.T) {
+	isolate(t)
+
+	out, err := execute(t, "context", "--help")
+	if err != nil {
+		t.Fatalf("context --help: %v", err)
+	}
+	for _, verb := range []string{"list", "use", "create", "rename", "delete"} {
+		if !strings.Contains(out, verb) {
+			t.Errorf("%q is not registered:\n%s", verb, out)
+		}
+	}
+}
