@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 )
 
 // A pipe is not a terminal. This is the check that stops the wizard rendering
@@ -42,7 +44,7 @@ func TestNoEscapeSequencesReachANonTerminal(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	styles := New(&buf, noEnv)
+	styles := New(&buf, theme.Auto)
 
 	rendered := styles.Title.Render("platform") +
 		styles.Label.Render("subject") +
@@ -64,7 +66,7 @@ func TestStylingKeepsTheText(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	styles := New(&buf, noEnv)
+	styles := New(&buf, theme.Auto)
 
 	const name = "a-team-with-a-deliberately-long-name"
 
@@ -92,7 +94,7 @@ func TestStylesAreBoundToTheirOwnWriter(t *testing.T) {
 
 	var first, second bytes.Buffer
 
-	if New(&first, noEnv) == New(&second, noEnv) {
+	if New(&first, theme.Auto) == New(&second, theme.Auto) {
 		t.Error("New returned the same styles for two writers")
 	}
 }

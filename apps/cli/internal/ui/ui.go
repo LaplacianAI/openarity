@@ -3,15 +3,11 @@ package ui
 import (
 	"io"
 	"os"
-	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
-)
 
-type (
-	Env   func(string) string
-	theme string
+	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 )
 
 var (
@@ -21,23 +17,6 @@ var (
 	warnColor   = lipgloss.AdaptiveColor{Light: "#85540F", Dark: "#E3B778"}
 	errColor    = lipgloss.AdaptiveColor{Light: "#A83229", Dark: "#E88A82"}
 )
-
-const (
-	themeAuto  theme = "auto"
-	themeLight theme = "light"
-	themeDark  theme = "dark"
-)
-
-func themeFrom(env Env) theme {
-	switch strings.ToLower(strings.TrimSpace(env("OPENARITY_THEME"))) {
-	case "light":
-		return themeLight
-	case "dark":
-		return themeDark
-	default:
-		return themeAuto
-	}
-}
 
 type Styles struct {
 	Mark  lipgloss.Style
@@ -50,18 +29,17 @@ type Styles struct {
 	Err   lipgloss.Style
 
 	renderer *lipgloss.Renderer
-	env      Env
 }
 
-func New(w io.Writer, env Env) *Styles {
+func New(w io.Writer, chosenTheme theme.Theme) *Styles {
 	r := lipgloss.NewRenderer(w)
 
-	switch themeFrom(env) {
-	case themeLight:
+	switch chosenTheme {
+	case theme.Light:
 		r.SetHasDarkBackground(false)
-	case themeDark:
+	case theme.Dark:
 		r.SetHasDarkBackground(true)
-	case themeAuto:
+	case theme.Auto:
 		// Left to the terminal. On a non-terminal writer termenv short
 		// circuits rather than writing a query into it.
 	}
@@ -77,7 +55,6 @@ func New(w io.Writer, env Env) *Styles {
 		Err:   r.NewStyle().Foreground(errColor),
 
 		renderer: r,
-		env:      env,
 	}
 }
 

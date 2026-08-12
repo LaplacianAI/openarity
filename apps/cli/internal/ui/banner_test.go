@@ -5,11 +5,9 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
-)
 
-func envOf(pairs map[string]string) Env {
-	return func(key string) string { return pairs[key] }
-}
+	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
+)
 
 // There is no terminal art yet. The mark is K5, which has no ASCII form — it
 // was rasterised onto character grids at 13x9, 21x11 and 25x13 and every one
@@ -20,7 +18,7 @@ func TestTheBannerCarriesTheName(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	banner := New(&buf, noEnv).Banner()
+	banner := New(&buf, theme.Auto).Banner()
 
 	if !strings.Contains(banner, "openarity") {
 		t.Errorf("the banner does not carry the name: %q", banner)
@@ -34,7 +32,7 @@ func TestTheWordmarkIsLowercase(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	banner := New(&buf, noEnv).Banner()
+	banner := New(&buf, theme.Auto).Banner()
 
 	for _, wrong := range []string{"OpenArity", "OPENARITY", "Openarity"} {
 		if strings.Contains(banner, wrong) {
@@ -50,7 +48,7 @@ func TestTheBannerFitsAnEightyColumnTerminal(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	for _, line := range strings.Split(New(&buf, noEnv).Banner(), "\n") {
+	for _, line := range strings.Split(New(&buf, theme.Auto).Banner(), "\n") {
 		if width := utf8.RuneCountInString(line); width > 80 {
 			t.Errorf("a banner line is %d columns: %q", width, line)
 		}
@@ -64,7 +62,7 @@ func TestTheBannerIsPlainOnANonTerminal(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	if strings.Contains(New(&buf, noEnv).Banner(), "\x1b") {
+	if strings.Contains(New(&buf, theme.Auto).Banner(), "\x1b") {
 		t.Error("the banner emitted an escape sequence to a non-terminal writer")
 	}
 }

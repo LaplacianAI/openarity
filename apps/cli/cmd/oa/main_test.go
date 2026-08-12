@@ -7,15 +7,13 @@ import (
 	"testing"
 )
 
-func noEnv(string) string { return "" }
-
 // Every failure is prefixed, because a bare sentence on stderr is
 // indistinguishable from output of whatever else is running in that shell.
 func TestTheErrorIsPrefixedWithTheBinaryName(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	printError(&buf, noEnv, errors.New("not authenticated"))
+	printError(&buf, "", errors.New("not authenticated"))
 
 	if !strings.HasPrefix(buf.String(), "oa: ") {
 		t.Errorf("the error is not prefixed: %q", buf.String())
@@ -35,7 +33,7 @@ func TestTheErrorIsPlainOnANonTerminal(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	printError(&buf, noEnv, errors.New("not authenticated"))
+	printError(&buf, "", errors.New("not authenticated"))
 
 	if strings.Contains(buf.String(), "\x1b") {
 		t.Errorf("an escape sequence reached a non-terminal writer: %q", buf.String())
@@ -45,21 +43,23 @@ func TestTheErrorIsPlainOnANonTerminal(t *testing.T) {
 // The theme override has to reach this path too. It is the one output a user
 // sees when nothing else worked, so it must not be the one place that queries
 // the terminal and stalls.
-func TestTheErrorHonoursTheThemeOverride(t *testing.T) {
+//
+// It reads the variable rather than a resolved setting on purpose: this also
+// prints failures from resolving settings, including a config file that will
+// not parse, so there may be no readable file to take a theme from.
+func TestTheErrorHonoursTheThemeVariable(t *testing.T) {
 	t.Parallel()
 
-	env := func(key string) string {
-		if key == "OPENARITY_THEME" {
-			return "light"
+	for _, name := range []string{"light", "dark", "auto", "solarized", ""} {
+		var buf bytes.Buffer
+		printError(&buf, name, errors.New("not authenticated"))
+
+		if !strings.Contains(buf.String(), "not authenticated") {
+			t.Errorf("OPENARITY_THEME=%q: the message was lost: %q", name, buf.String())
 		}
-		return ""
-	}
-
-	var buf bytes.Buffer
-	printError(&buf, env, errors.New("not authenticated"))
-
-	if !strings.Contains(buf.String(), "not authenticated") {
-		t.Errorf("the message was lost: %q", buf.String())
+		if !strings.HasPrefix(buf.String(), "oa: ") {
+			t.Errorf("OPENARITY_THEME=%q: the error is not prefixed: %q", name, buf.String())
+		}
 	}
 }
 
@@ -70,7 +70,7 @@ func TestAMultiLineErrorKeepsItsPrefix(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	printError(&buf, noEnv, errors.New("parse config:\nline 1: bad"))
+	printError(&buf, "", errors.New("parse config:\nline 1: bad"))
 
 	first, _, found := strings.Cut(buf.String(), "\n")
 	if !found {
