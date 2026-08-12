@@ -103,18 +103,29 @@ New database tests should follow `apps/brain/.claude/skills/test-with-postgres`.
 
 ## Running the server
 
-Every setting has a working default, so this needs no environment:
+Ports and addresses all have working defaults, and they match what
+`deployment/docker-compose.yml` publishes. Authentication does not — the brain
+refuses to start with no way to identify a caller, so a bare run exits 1:
 
 ```sh
 cd apps/brain
+cp .env.example .env
 make run
 ```
 
-Configuration is environment-only and prefixed with `OPENARITY_`:
+`make run` sources `.env` when it exists; nothing in the code reads it, because
+configuration is environment-only by decision. The file is gitignored, so a
+local token never reaches a branch.
+
+Configuration is prefixed with `OPENARITY_` and can also be passed inline:
 
 ```sh
 OPENARITY_LOG_LEVEL=debug OPENARITY_API_BIND=127.0.0.1:8080 make run
 ```
+
+A setting present in `.env` wins over one passed that way — the file is
+sourced after make already has its environment. Comment the line out in `.env`
+rather than fighting it.
 
 `internal/config/config.go` is the full list. Adding a setting is documented in
 `apps/brain/.claude/skills/add-env-var`.
