@@ -1,0 +1,23 @@
+# The CLI never hand-writes a request or a response type. Both come from the
+# brain's own contract, so a change there is a compile error here rather than
+# a bug a user finds.
+#
+#   make generate        regenerate from ../brain/api/openapi.yaml
+#   make generate-check  fail if the committed output is stale — CI runs this
+package: client
+output: internal/client/client.gen.go
+
+generate:
+  # The wire types, from components/schemas.
+  models: true
+  # Both client shapes: the raw one returning *http.Response, and the
+  # WithResponse variants that parse a body per status code. Commands use the
+  # second — the CLI has to branch on 403 versus 404 to say anything useful.
+  client: true
+
+output-options:
+  # Initialisms keep one case, the same rule the hand-written code follows:
+  # UserID and ClientID, not UserId and ClientId. Without this the generated
+  # names are the one place in the repository that breaks revive's var-naming,
+  # and every call site inherits the wrong spelling.
+  name-normalizer: ToCamelCaseWithInitialisms
