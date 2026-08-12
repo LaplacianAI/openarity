@@ -1,10 +1,28 @@
 package server
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/middleware"
+)
 
 func (s *Server) apiHandler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.healthz)
-	mux.HandleFunc("GET /readyz", s.readyz)
-	return mux
+	root := http.NewServeMux()
+	protected := http.NewServeMux()
+
+	for _, r := range s.routers {
+		if r.Public() {
+			r.Register(root)
+			continue
+		}
+		r.Register(protected)
+	}
+
+	authenticated := middleware.Authenticate(s.verifier)(middleware.ResolveUser(s.resolver, s.logger)(protected))
+
+	root.HandleFunc("GET /healthz", s.healthz)
+	root.HandleFunc("GET /readyz", s.readyz)
+	root.Handle("/", authenticated)
+
+	return root
 }

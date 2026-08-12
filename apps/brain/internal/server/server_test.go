@@ -12,6 +12,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 )
 
@@ -65,6 +68,47 @@ func (f *fakePinger) callCount() int {
 // healthyDB is the usual case: a database that answers.
 func healthyDB() *fakePinger { return &fakePinger{} }
 
+// testToken is the only credential testVerifier accepts.
+const testToken = "test-token"
+
+// staticVerifier stands in for the chain so these tests can drive an
+// authenticated route without an identity provider. Real token verification is
+// covered in internal/auth; here it only has to tell accepted from rejected.
+type staticVerifier struct {
+	token string
+}
+
+func (s staticVerifier) Verify(_ context.Context, token string) (*auth.Principal, error) {
+	if token != s.token {
+		return nil, auth.ErrUnauthenticated
+	}
+	return &auth.Principal{Kind: auth.KindDev, Subject: "test"}, nil
+}
+
+func testVerifier() auth.Verifier { return staticVerifier{token: testToken} }
+
+// staticResolver stands in for the store. Resolution is covered in
+// internal/store and internal/middleware; here it only has to produce a user.
+type staticResolver struct{}
+
+func (staticResolver) Resolve(_ context.Context, p *auth.Principal) (*auth.User, error) {
+	return &auth.User{ID: uuid.New(), Issuer: p.Issuer, Subject: p.Subject}, nil
+}
+
+// deps is the usual set: a database that answers, a verifier that accepts
+// testToken, a resolver that always succeeds, and a gateway that owns no
+// routes. Tests that drive the gateway subtree swap in their own handler.
+func deps(db Pinger) Deps {
+	return Deps{DB: db, Verifier: testVerifier(), Resolver: staticResolver{}, Gateway: http.NotFoundHandler()}
+}
+
+// gatewayDeps is deps with a real gateway handler swapped in.
+func gatewayDeps(db Pinger, gw http.Handler) Deps {
+	d := deps(db)
+	d.Gateway = gw
+	return d
+}
+
 // Swapping these two binds puts the API on a public port and the webhook
 // receiver on loopback. That is the whole security boundary, so assert the
 // mapping rather than trusting the field order in New.
@@ -72,7 +116,7 @@ func TestNewBindsEachListenerToItsOwnAddress(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig()
-	srv := New(cfg, discardLogger(), healthyDB(), http.NotFoundHandler())
+	srv := New(cfg, discardLogger(), deps(healthyDB()))
 
 	if srv.api.Addr != cfg.APIBind {
 		t.Errorf("api bound to %q, want %q", srv.api.Addr, cfg.APIBind)
@@ -97,7 +141,7 @@ func TestNewWrapsBothListenersInTheRequestLogger(t *testing.T) {
 		"webhook": func(s *Server) *http.Server { return s.webhook },
 	} {
 		logger, buf := recordingLogger()
-		srv := New(testConfig(), logger, healthyDB(), http.NotFoundHandler())
+		srv := New(testConfig(), logger, deps(healthyDB()))
 
 		listener := pick(srv)
 		if listener.Handler == nil {
@@ -118,7 +162,7 @@ func TestNewWrapsBothListenersInTheRequestLogger(t *testing.T) {
 func TestNewSetsAllTimeouts(t *testing.T) {
 	t.Parallel()
 
-	srv := New(testConfig(), discardLogger(), healthyDB(), http.NotFoundHandler())
+	srv := New(testConfig(), discardLogger(), deps(healthyDB()))
 
 	for name, s := range map[string]*http.Server{"api": srv.api, "webhook": srv.webhook} {
 		if s.ReadHeaderTimeout != readHeaderTimeout {
@@ -146,35 +190,63 @@ func TestNewDoesNotListen(t *testing.T) {
 	cfg := testConfig()
 	cfg.APIBind = "256.256.256.256:99999" // unresolvable, unbindable
 
-	if srv := New(cfg, discardLogger(), healthyDB(), http.NotFoundHandler()); srv == nil {
+	if srv := New(cfg, discardLogger(), deps(healthyDB())); srv == nil {
 		t.Fatal("New returned nil")
 	}
 }
 
-// handlers returns both muxes, unwrapped by middleware, keyed by listener.
+// handlers returns both muxes, without the request logger, keyed by listener.
+// The API mux carries its own authentication — that is part of the routing
+// under test, not middleware wrapped around it.
 func handlers(t *testing.T, db Pinger) map[string]http.Handler {
 	t.Helper()
 
-	srv := New(testConfig(), discardLogger(), db, http.NotFoundHandler())
+	srv := New(testConfig(), discardLogger(), deps(db))
 	return map[string]http.Handler{
 		"api":     srv.apiHandler(),
 		"webhook": srv.webhookHandler(),
 	}
 }
 
-// Nothing but the probes is registered on the API listener, and on the
-// webhook listener everything else belongs to the gateway — which is a
-// NotFoundHandler here. Either way a typo must not become a 200.
-func TestUnknownPathIs404(t *testing.T) {
+// request drives one handler. An empty token sends no Authorization header.
+func request(t *testing.T, h http.Handler, method, path, token string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequestWithContext(t.Context(), method, path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// The webhook listener authenticates nothing — providers sign the body instead
+// — so an unknown path there is simply not a route. The gateway is a
+// NotFoundHandler here, so this also pins that a typo cannot become a 200.
+func TestUnknownWebhookPathIs404(t *testing.T) {
 	t.Parallel()
 
-	for name, h := range handlers(t, healthyDB()) {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/nope", nil))
+	rec := request(t, handlers(t, healthyDB())["webhook"], http.MethodGet, "/nope", "")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("webhook GET /nope = %d, want 404", rec.Code)
+	}
+}
 
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("%s GET /nope = %d, want 404", name, rec.Code)
-		}
+// On the API listener the catch-all pattern sends anything unlisted through
+// authentication first, so an unauthenticated caller cannot learn which routes
+// exist by watching 401 turn into 404.
+func TestUnknownAPIPathIsUnauthorizedBeforeItIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	api := handlers(t, healthyDB())["api"]
+
+	if rec := request(t, api, http.MethodGet, "/nope", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("GET /nope without a token = %d, want 401", rec.Code)
+	}
+	if rec := request(t, api, http.MethodGet, "/nope", testToken); rec.Code != http.StatusNotFound {
+		t.Errorf("GET /nope with a token = %d, want 404", rec.Code)
 	}
 }
 
@@ -192,7 +264,7 @@ func TestWebhookHandlerRoutesTheGatewaySubtree(t *testing.T) {
 		seen = append(seen, r.Method+" "+r.URL.Path)
 		w.WriteHeader(http.StatusTeapot)
 	})
-	h := New(testConfig(), discardLogger(), healthyDB(), gateway).webhookHandler()
+	h := New(testConfig(), discardLogger(), gatewayDeps(healthyDB(), gateway)).webhookHandler()
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhook/telegram/ch-1", nil))
@@ -234,9 +306,9 @@ func TestNewRecoversAGatewayPanic(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := recordingLogger()
-	srv := New(testConfig(), logger, healthyDB(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	srv := New(testConfig(), logger, gatewayDeps(healthyDB(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("gateway boom")
-	}))
+	})))
 
 	rec := httptest.NewRecorder()
 	srv.webhook.Handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhook/telegram/x", nil))
@@ -261,7 +333,7 @@ func TestNewRecoversAPanicOnBothListeners(t *testing.T) {
 		"webhook": func(s *Server) *http.Server { return s.webhook },
 	} {
 		logger, buf := recordingLogger()
-		srv := New(testConfig(), logger, panickyPinger{}, http.NotFoundHandler())
+		srv := New(testConfig(), logger, deps(panickyPinger{}))
 
 		rec := httptest.NewRecorder()
 		pick(srv).Handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil))

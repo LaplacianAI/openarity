@@ -1,1 +1,5 @@
 vendor/
+# Local secrets. deployment/authentik.env holds the identity provider's signing
+# key and database password; the .example beside it is what belongs in git.
+*.env
+!*.env.example

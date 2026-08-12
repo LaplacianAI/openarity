@@ -49,6 +49,10 @@ linters:
             - $gostd
             - github.com/LaplacianAI/openarity/apps/brain/internal/config
             - github.com/LaplacianAI/openarity/apps/brain/internal/middleware
+            # Deps carries the auth.Verifier the API listener authenticates
+            # with; the tests fake a Principal and a User, which needs uuid.
+            - github.com/LaplacianAI/openarity/apps/brain/internal/auth
+            - github.com/google/uuid
         config:
           files: ["**/internal/config/**"]
           allow:
@@ -64,16 +68,45 @@ linters:
             # A black-box test (package middleware_test) imports the package
             # it tests. depguard has no "self" token, so it is listed.
             - github.com/LaplacianAI/openarity/apps/brain/internal/middleware
+            - github.com/google/uuid # identity tests fake a resolved User
         auth:
           files: ["**/internal/auth/**"]
           allow:
             - $gostd
             - github.com/coreos/go-oidc/v3/oidc
+            - github.com/google/uuid # User.ID
+        authz:
+          files: ["**/internal/authz/**"]
+          allow:
+            - $gostd
+            # Can takes the auth.User the middleware resolved.
+            - github.com/LaplacianAI/openarity/apps/brain/internal/auth
+            - github.com/google/uuid
+        api:
+          files: ["**/internal/api/**"]
+          allow:
+            - $gostd
+            # Domain packages use the shared Router/response helpers, and a
+            # black-box test imports the package it tests — no "self" token.
+            - github.com/LaplacianAI/openarity/apps/brain/internal/api
+            # docs serves the committed OpenAPI spec.
+            - github.com/LaplacianAI/openarity/apps/brain/api
+            # Handlers read the resolved user and call the authorizer.
+            - github.com/LaplacianAI/openarity/apps/brain/internal/auth
+            - github.com/LaplacianAI/openarity/apps/brain/internal/authz
+            # sqlc-generated types are the store's wire currency for now.
+            - github.com/LaplacianAI/openarity/apps/brain/internal/store/db
+            - github.com/google/uuid
+            - github.com/jackc/pgx/v5
         store:
           files: ["**/internal/store/**"]
           allow:
             - $gostd
             - github.com/LaplacianAI/openarity/apps/brain/internal/store/db
+            # Resolve turns an auth.Principal into an auth.User; the role
+            # tests pin the seeded roles against authz's action vocabulary.
+            - github.com/LaplacianAI/openarity/apps/brain/internal/auth
+            - github.com/LaplacianAI/openarity/apps/brain/internal/authz
             - github.com/google/uuid
             - github.com/jackc/pgx/v5
             - github.com/pressly/goose/v3
@@ -87,6 +120,8 @@ linters:
             - "!**/internal/config/**"
             - "!**/internal/middleware/**"
             - "!**/internal/auth/**"
+            - "!**/internal/authz/**"
+            - "!**/internal/api/**"
             - "!**/internal/store/**"
           allow: [$gostd]
 

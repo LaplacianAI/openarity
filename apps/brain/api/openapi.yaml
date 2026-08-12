@@ -1,0 +1,497 @@
+openapi: 3.1.0
+
+info:
+  title: Openarity brain
+  version: 0.1.0
+  description: |
+    The brain's HTTP API.
+
+    This document is the contract between the service and everything that
+    talks to it, including the CLI. It is hand-written and reviewed as a diff:
+    a change here is a change to what callers may rely on.
+
+    A test compares the routes the service registers against the paths below.
+    Adding an endpoint without describing it here fails the build.
+
+    **Errors are `text/plain`, not JSON.** Successful responses are JSON;
+    failures carry a short sentence and nothing machine-readable. Clients
+    should branch on the status code, never on the body.
+  license:
+    name: MIT
+    url: https://github.com/LaplacianAI/openarity/blob/main/LICENSE
+
+servers:
+  - url: http://127.0.0.1:21120
+    description: The API listener, OPENARITY_API_BIND
+
+tags:
+  - name: probes
+    description: Unauthenticated, for orchestrators
+  - name: identity
+    description: Who the caller is
+  - name: teams
+    description: Teams and their membership
+
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [probes]
+      summary: Liveness
+      description: |
+        Answers as long as the process is running. It never touches the
+        database, so a Postgres outage must not restart the pod.
+      security: []
+      responses:
+        "200":
+          description: The process is up
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["ok"]
+
+  /readyz:
+    get:
+      operationId: getReady
+      tags: [probes]
+      summary: Readiness
+      description: |
+        Pings Postgres. The body never names the underlying error; the reason
+        is logged instead.
+      security: []
+      responses:
+        "200":
+          description: Ready to serve
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["ready"]
+        "503":
+          description: A dependency is unreachable
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["not ready"]
+
+  /whoami:
+    get:
+      operationId: getWhoami
+      tags: [identity]
+      summary: The authenticated caller
+      description: |
+        Resolves the token to a user, creating the row on first sight, and
+        returns their team memberships. The user id is deliberately not
+        published — it is a surrogate key, not an address.
+      responses:
+        "200":
+          description: The caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Whoami"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /teams:
+    get:
+      operationId: listTeams
+      tags: [teams]
+      summary: List teams
+      description: |
+        A super admin sees every team, paged. Everyone else sees the teams
+        they belong to, with their role in each, in a single page with no
+        cursor — a person's own memberships are bounded.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of teams
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+    post:
+      operationId: createTeam
+      tags: [teams]
+      summary: Create a team
+      description: |
+        Super admins only. Creating a team is platform-scoped, so there is no
+        team to check a role against.
+
+        The new team has no members. A super admin adds the first one, who is
+        then able to manage the rest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeamRequest"
+      responses:
+        "201":
+          description: The team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: A team already has that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a team with that name already exists"]
+
+  /teams/{id}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: getTeam
+      tags: [teams]
+      summary: Read one team
+      description: |
+        Members and super admins only. A team the caller may not see and a
+        team that does not exist answer identically — a 403 would confirm the
+        id is real.
+      responses:
+        "200":
+          description: The team, carrying the caller's role if they are a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/members:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listTeamMembers
+      tags: [teams]
+      summary: List a team's members
+      description: |
+        A read, so seeing the team is enough — no action is required.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of members
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: addTeamMember
+      tags: [teams]
+      summary: Add a member
+      description: |
+        Requires `member:write` in this team. The role is checked by the
+        database rather than the service: roles are rows, so an unknown one is
+        a rejected foreign key and comes back as a 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMemberRequest"
+      responses:
+        "204":
+          description: Added
+        "400":
+          description: |
+            The body is malformed, or names a user or role that does not exist.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["unknown role"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Already a member
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["already a member"]
+
+  /teams/{id}/members/{userID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: userID
+        in: path
+        required: true
+        description: The user to remove
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: removeTeamMember
+      tags: [teams]
+      summary: Remove a member
+      description: |
+        Requires `member:write` in this team. Removing someone who is not a
+        member succeeds: the caller asked for a state, and that state holds.
+      responses:
+        "204":
+          description: No longer a member
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        An OIDC access token, or the shared development token when
+        OPENARITY_DEV_TOKEN is set. The scheme is matched case-insensitively.
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: |
+        Rows per page. A value above the maximum is clamped rather than
+        refused; zero, a negative and anything unparseable are 400.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 50
+
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: |
+        An opaque position, taken verbatim from the `next_cursor` of the
+        previous page. It is not constructible by a client, and one that has
+        been altered is a 400 rather than a silent restart.
+      schema:
+        type: string
+
+    TeamID:
+      name: id
+      in: path
+      required: true
+      description: The team
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Unauthenticated:
+      description: |
+        No token, or one that no configured verifier accepts. Carries a
+        `WWW-Authenticate: Bearer` header.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            examples: ["Bearer"]
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["unauthorized"]
+
+    Forbidden:
+      description: |
+        The token is valid; the caller may not do this. They should not be
+        asked to authenticate again.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["forbidden"]
+
+    NotFound:
+      description: |
+        No such resource, or none the caller may see. The two are
+        indistinguishable on purpose.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["not found"]
+
+    BadRequest:
+      description: |
+        The request is malformed. The reply names the problem and never echoes
+        the value back, because a body can carry a credential.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["id must be a uuid"]
+
+  schemas:
+    Whoami:
+      type: object
+      required: [kind, subject, teams]
+      properties:
+        kind:
+          type: string
+          description: How the caller authenticated
+          enum: [user, service, dev]
+        issuer:
+          type: string
+          description: The identity provider that issued the token
+        subject:
+          type: string
+          description: |
+            The caller's stable identifier at that issuer. This is what
+            OPENARITY_SUPER_ADMINS matches on.
+        email:
+          type: string
+          format: email
+          description: Absent when the provider released none
+        teams:
+          type: array
+          description: Every team the caller belongs to, never a page
+          items:
+            $ref: "#/components/schemas/Membership"
+
+    Membership:
+      type: object
+      required: [id, name, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        role:
+          type: string
+          examples: ["admin"]
+
+    Team:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 200
+          examples: ["platform"]
+        role:
+          type: string
+          description: |
+            The caller's role in this team. Absent when they are not a member,
+            which is the normal case for a super admin.
+          examples: ["admin"]
+
+    Member:
+      type: object
+      required: [user_id, subject, role]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        subject:
+          type: string
+          description: The member's identifier at their provider
+        email:
+          type: string
+          format: email
+          description: Absent when the provider released none
+        role:
+          type: string
+          examples: ["developer"]
+
+    CreateTeamRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: |
+            Trimmed before it is stored, and unique across teams. A name of
+            only whitespace is a 400.
+
+    AddMemberRequest:
+      type: object
+      required: [user_id, role]
+      additionalProperties: false
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          description: |
+            Must name a row in `roles`. Ships with `admin` and `developer`;
+            deployments may add their own.
+          examples: ["developer"]
+
+    TeamPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Team"
+        next_cursor:
+          type: string
+          description: |
+            Absent on the last page. Its absence is the only end-of-collection
+            signal — there is no separate flag to disagree with it.
+
+    MemberPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Member"
+        next_cursor:
+          type: string
+          description: Absent on the last page

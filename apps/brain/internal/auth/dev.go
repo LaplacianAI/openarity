@@ -21,5 +21,5 @@ func (d devVerifier) Verify(_ context.Context, token string) (*Principal, error)
 	if subtle.ConstantTimeCompare([]byte(token), []byte(d.token)) != 1 {
 		return nil, ErrUnauthenticated
 	}
-	return &Principal{Kind: KindDev, Subject: "dev"}, nil
+	return &Principal{Kind: KindDev, Issuer: "dev", Subject: "dev"}, nil
 }
