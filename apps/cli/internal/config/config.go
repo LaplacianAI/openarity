@@ -6,15 +6,55 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 )
 
 const DefaultServer = "http://127.0.0.1:21120"
 
-type Config struct {
+type Context struct {
 	Server string `yaml:"server,omitempty"`
 	Token  string `yaml:"token,omitempty"`
+}
+
+type Config struct {
+	Current  string             `yaml:"current,omitempty"`
+	Contexts map[string]Context `yaml:"contexts,omitempty"`
+	Theme    string             `yaml:"theme,omitempty"`
+}
+
+func (c Config) active() (string, Context) {
+	if named, ok := c.Contexts[c.Current]; ok {
+		return c.Current, named
+	}
+
+	if c.Current == "" && len(c.Contexts) == 1 {
+		for name, only := range c.Contexts {
+			return name, only
+		}
+	}
+
+	return "", Context{}
+}
+
+func (c Config) Active() Context {
+	_, active := c.active()
+	return active
+}
+
+func (c Config) ActiveName() string {
+	name, _ := c.active()
+	return name
+}
+
+func (c Config) ContextNames() []string {
+	names := make([]string, 0, len(c.Contexts))
+	for name := range c.Contexts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func Path() (string, error) {

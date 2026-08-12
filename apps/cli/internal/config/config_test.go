@@ -12,6 +12,13 @@ import (
 // Every test here writes a real file, so each gets its own config directory.
 // os.UserConfigDir reads the environment, which is why these cannot be
 // t.Parallel(): t.Setenv and parallel subtests are mutually exclusive.
+func withContext(server, token string) Config {
+	return Config{
+		Current:  "local",
+		Contexts: map[string]Context{"local": {Server: server, Token: token}},
+	}
+}
+
 func isolate(t *testing.T) string {
 	t.Helper()
 
@@ -28,7 +35,7 @@ func TestLoadReturnsNothingWhenThereIsNoFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load with no file: %v", err)
 	}
-	if cfg != (Config{}) {
+	if cfg.Current != "" || len(cfg.Contexts) != 0 || cfg.Theme != "" {
 		t.Errorf("Load = %+v, want the zero value", cfg)
 	}
 }
@@ -38,7 +45,10 @@ func TestLoadReturnsNothingWhenThereIsNoFile(t *testing.T) {
 func TestSaveThenLoadRoundTrips(t *testing.T) {
 	isolate(t)
 
-	want := Config{Server: "https://brain.example.com", Token: "a-token"}
+	want := Config{
+		Current:  "local",
+		Contexts: map[string]Context{"local": {Server: "https://brain.example.com", Token: "a-token"}},
+	}
 	if err := Save(want); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -47,7 +57,7 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got != want {
+	if got.Current != want.Current || got.Contexts["local"] != want.Contexts["local"] {
 		t.Errorf("Load = %+v, want %+v", got, want)
 	}
 }
@@ -57,7 +67,7 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 func TestTheSavedFileIsOwnerOnly(t *testing.T) {
 	isolate(t)
 
-	if err := Save(Config{Server: "https://brain.example.com", Token: "a-token"}); err != nil {
+	if err := Save(withContext("https://brain.example.com", "a-token")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -88,10 +98,10 @@ func TestTheSavedFileIsOwnerOnly(t *testing.T) {
 func TestSaveReplacesRatherThanAppends(t *testing.T) {
 	isolate(t)
 
-	if err := Save(Config{Server: "https://one.example.com", Token: "first"}); err != nil {
+	if err := Save(withContext("https://one.example.com", "first")); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
-	if err := Save(Config{Server: "https://two.example.com", Token: "second"}); err != nil {
+	if err := Save(withContext("https://two.example.com", "second")); err != nil {
 		t.Fatalf("second Save: %v", err)
 	}
 
@@ -99,7 +109,7 @@ func TestSaveReplacesRatherThanAppends(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got.Token != "second" || got.Server != "https://two.example.com" {
+	if active := got.Active(); active.Token != "second" || active.Server != "https://two.example.com" {
 		t.Errorf("Load = %+v, want only the second save", got)
 	}
 }
@@ -110,7 +120,7 @@ func TestSaveReplacesRatherThanAppends(t *testing.T) {
 func TestSaveLeavesNoTemporaryFile(t *testing.T) {
 	isolate(t)
 
-	if err := Save(Config{Server: "https://brain.example.com", Token: "a-token"}); err != nil {
+	if err := Save(withContext("https://brain.example.com", "a-token")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -162,7 +172,7 @@ func TestLoadRejectsAFileItCannotParse(t *testing.T) {
 func TestAnEmptyTokenIsNotWrittenAsAValue(t *testing.T) {
 	isolate(t)
 
-	if err := Save(Config{Server: "https://brain.example.com"}); err != nil {
+	if err := Save(withContext("https://brain.example.com", "")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -207,7 +217,7 @@ func TestSaveIsAtomicUnderConcurrentReads(t *testing.T) {
 	isolate(t)
 
 	const token = "a-token-that-must-never-appear-truncated"
-	saved := Config{Server: "https://brain.example.com", Token: token}
+	saved := withContext("https://brain.example.com", token)
 
 	if err := Save(saved); err != nil {
 		t.Fatalf("seed Save: %v", err)
@@ -251,7 +261,7 @@ func TestSaveIsAtomicUnderConcurrentReads(t *testing.T) {
 					default:
 					}
 					return
-				case got.Token != token:
+				case got.Active().Token != token:
 					select {
 					case failures <- fmt.Sprintf("Load saw a truncated file: %+v", got):
 					default:
