@@ -64,7 +64,7 @@ func TestTheFlagWinsOverEverything(t *testing.T) {
 	api := development()
 	env := envOf(map[string]string{"OPENARITY_TOKEN": "from-env", "OPENARITY_DEV_TOKEN": "from-dev"})
 
-	got, err := Resolve(t.Context(), api, "from-flag", "from-file", env)
+	got, err := Resolve(t.Context(), api, "http://127.0.0.1:21120", "from-flag", "from-file", env)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestTheEnvironmentWinsOverTheSavedFile(t *testing.T) {
 	api := development()
 	env := envOf(map[string]string{"OPENARITY_TOKEN": "from-env", "OPENARITY_DEV_TOKEN": "from-dev"})
 
-	got, err := Resolve(t.Context(), api, "", "from-file", env)
+	got, err := Resolve(t.Context(), api, "http://127.0.0.1:21120", "", "from-file", env)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestTheSavedTokenIsUsedWithoutAskingTheServer(t *testing.T) {
 
 	api := development()
 
-	got, err := Resolve(t.Context(), api, "", "from-file", noEnv)
+	got, err := Resolve(t.Context(), api, "http://127.0.0.1:21120", "", "from-file", noEnv)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestTheDevelopmentTokenIsPickedUpFromTheEnvironment(t *testing.T) {
 	api := development()
 	env := envOf(map[string]string{"OPENARITY_DEV_TOKEN": "letmein"})
 
-	got, err := Resolve(t.Context(), api, "", "", env)
+	got, err := Resolve(t.Context(), api, "http://127.0.0.1:21120", "", "", env)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestTheDevelopmentTokenIsNotSentWhenTheServerRefusesIt(t *testing.T) {
 	api := production()
 	env := envOf(map[string]string{"OPENARITY_DEV_TOKEN": "letmein"})
 
-	_, err := Resolve(t.Context(), api, "", "", env)
+	_, err := Resolve(t.Context(), api, "http://127.0.0.1:21120", "", "", env)
 	if !errors.Is(err, ErrNoCredential) {
 		t.Fatalf("Resolve error = %v, want ErrNoCredential", err)
 	}
@@ -155,7 +155,7 @@ func TestTheDevelopmentTokenIsNotSentWhenTheServerRefusesIt(t *testing.T) {
 func TestNoCredentialAnywhereSaysWhatToDo(t *testing.T) {
 	t.Parallel()
 
-	_, err := Resolve(t.Context(), production(), "", "", noEnv)
+	_, err := Resolve(t.Context(), production(), "http://127.0.0.1:21120", "", "", noEnv)
 	if !errors.Is(err, ErrNoCredential) {
 		t.Fatalf("Resolve error = %v, want ErrNoCredential", err)
 	}
@@ -170,7 +170,7 @@ func TestNoCredentialAnywhereSaysWhatToDo(t *testing.T) {
 func TestAnAcceptedButMissingDevelopmentTokenIsItsOwnMessage(t *testing.T) {
 	t.Parallel()
 
-	_, err := Resolve(t.Context(), development(), "", "", noEnv)
+	_, err := Resolve(t.Context(), development(), "http://127.0.0.1:21120", "", "", noEnv)
 	if err == nil {
 		t.Fatal("Resolve accepted an empty development token")
 	}
@@ -187,7 +187,7 @@ func TestAnUnreachableServerIsNotReportedAsAMissingCredential(t *testing.T) {
 
 	api := &fakeDiscoverer{err: errors.New("dial tcp 127.0.0.1:21120: connect: connection refused")}
 
-	_, err := Resolve(t.Context(), api, "", "", noEnv)
+	_, err := Resolve(t.Context(), api, "http://127.0.0.1:21120", "", "", noEnv)
 	if err == nil {
 		t.Fatal("Resolve succeeded against an unreachable server")
 	}
@@ -207,7 +207,7 @@ func TestAServerWithoutTheEndpointIsReported(t *testing.T) {
 
 	api := &fakeDiscoverer{config: nil}
 
-	_, err := Resolve(t.Context(), api, "", "", noEnv)
+	_, err := Resolve(t.Context(), api, "http://127.0.0.1:21120", "", "", noEnv)
 	if err == nil {
 		t.Fatal("Resolve succeeded against a server that did not answer the question")
 	}
@@ -227,7 +227,7 @@ func TestSurroundingWhitespaceIsTrimmed(t *testing.T) {
 		"leading space":    "  a-token",
 		"both":             "\t a-token \n",
 	} {
-		got, err := Resolve(t.Context(), development(), in, "", noEnv)
+		got, err := Resolve(t.Context(), development(), "http://127.0.0.1:21120", in, "", noEnv)
 		if err != nil {
 			t.Fatalf("%s: Resolve: %v", name, err)
 		}
@@ -242,11 +242,120 @@ func TestSurroundingWhitespaceIsTrimmed(t *testing.T) {
 func TestABlankFlagFallsThrough(t *testing.T) {
 	t.Parallel()
 
-	got, err := Resolve(t.Context(), development(), "   ", "from-file", noEnv)
+	got, err := Resolve(t.Context(), development(), "http://127.0.0.1:21120", "   ", "from-file", noEnv)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	if got != "from-file" {
 		t.Errorf("Resolve = %q, want it to fall through to the saved token", got)
+	}
+}
+
+// The development token is a shared secret from the local shell, and the
+// brain is asked whether it accepts one. That makes the *server* the thing
+// deciding whether the client hands over a credential it already holds — so
+// any host reached by a typo, or a copied command, could claim development
+// and harvest OPENARITY_DEV_TOKEN.
+//
+// The client refuses regardless of what the server says. Loopback only.
+func TestTheDevelopmentTokenIsNeverSentToARemoteServer(t *testing.T) {
+	t.Parallel()
+
+	env := envOf(map[string]string{"OPENARITY_DEV_TOKEN": "letmein"})
+
+	for _, server := range []string{
+		"https://not-your-brain.example.com",
+		"http://192.168.1.4:21120",
+		"http://brain.internal:21120",
+		"http://10.0.0.5:21120",
+		// A hostname that merely contains the word is still remote.
+		"http://localhost.evil.example.com",
+		"http://127.0.0.1.evil.example.com",
+	} {
+		_, err := Resolve(t.Context(), development(), server, "", "", env)
+		if !errors.Is(err, ErrNoCredential) {
+			t.Errorf("%s: err = %v, want the dev token withheld", server, err)
+		}
+	}
+}
+
+// The case it exists for: a brain on this machine, started from this shell.
+func TestTheDevelopmentTokenIsSentToLoopback(t *testing.T) {
+	t.Parallel()
+
+	env := envOf(map[string]string{"OPENARITY_DEV_TOKEN": "letmein"})
+
+	for _, server := range []string{
+		"http://127.0.0.1:21120",
+		"http://localhost:21120",
+		"http://[::1]:21120",
+		"http://127.0.0.1",
+		"HTTP://LOCALHOST:21120",
+	} {
+		got, err := Resolve(t.Context(), development(), server, "", "", env)
+		if err != nil {
+			t.Errorf("%s: %v", server, err)
+			continue
+		}
+		if got != "letmein" {
+			t.Errorf("%s: token = %q, want the development token", server, got)
+		}
+	}
+}
+
+// An address that cannot be parsed is not loopback. Failing open here would
+// make a malformed --server the way around the whole rule.
+func TestAnUnparseableServerIsNotLoopback(t *testing.T) {
+	t.Parallel()
+
+	env := envOf(map[string]string{"OPENARITY_DEV_TOKEN": "letmein"})
+
+	for _, server := range []string{"", "://", "http://", "not a url at all", "http://[::1"} {
+		if _, err := Resolve(t.Context(), development(), server, "", "", env); !errors.Is(err, ErrNoCredential) {
+			t.Errorf("%q: err = %v, want the dev token withheld", server, err)
+		}
+	}
+}
+
+// The rule applies only to the token nobody typed. A --token or an exported
+// OPENARITY_TOKEN is a deliberate, per-invocation act, and refusing to send
+// one to a remote host would make the CLI useless against a real deployment.
+func TestAnExplicitTokenIsSentAnywhere(t *testing.T) {
+	t.Parallel()
+
+	const remote = "https://brain.example.com"
+
+	got, err := Resolve(t.Context(), production(), remote, "from-flag", "", envOf(nil))
+	if err != nil {
+		t.Fatalf("flag: %v", err)
+	}
+	if got != "from-flag" {
+		t.Errorf("token = %q, want the flag", got)
+	}
+
+	got, err = Resolve(t.Context(), production(), remote, "", "from-file",
+		envOf(map[string]string{"OPENARITY_TOKEN": "from-env"}))
+	if err != nil {
+		t.Fatalf("env: %v", err)
+	}
+	if got != "from-env" {
+		t.Errorf("token = %q, want the environment", got)
+	}
+}
+
+// A remote brain must not even be asked. The question "do you accept a
+// development token" has no answer worth acting on from a host that cannot
+// be given one, and asking costs a round trip on every command.
+func TestARemoteServerIsNotAskedAboutDevelopmentTokens(t *testing.T) {
+	t.Parallel()
+
+	api := development()
+	env := envOf(map[string]string{"OPENARITY_DEV_TOKEN": "letmein"})
+
+	if _, err := Resolve(t.Context(), api, "https://brain.example.com", "", "", env); err == nil {
+		t.Fatal("a remote server produced a credential")
+	}
+	if api.calls != 0 {
+		t.Errorf("a remote server was asked %d times", api.calls)
 	}
 }
