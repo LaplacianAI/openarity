@@ -29,6 +29,11 @@ var probeRoutes = []string{"GET /healthz", "GET /readyz"}
 // part of the API's contract.
 var devOnlyRoutes = []string{"GET /docs", "GET /openapi.yaml"}
 
+// publicRoutes answer without a token in every environment. The list is
+// deliberately hand-written and short: a route joins it by being named here,
+// never by a flag someone set on a router.
+var publicRoutes = []string{"GET /auth/config"}
+
 type patterned interface {
 	Patterns() []string
 }
@@ -179,12 +184,14 @@ func TestOnlyDevelopmentGetsTheDocs(t *testing.T) {
 	}
 }
 
-// Every data route stays behind authentication. Public is for documentation,
-// and a data route that acquires the flag is a silent authentication bypass.
-func TestOnlyDocumentationIsPublic(t *testing.T) {
+// Every data route stays behind authentication. Public is for documentation
+// and for the one endpoint that says how to authenticate; a data route that
+// acquires the flag is a silent authentication bypass.
+func TestOnlyDeclaredRoutesArePublic(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
+	allowed := slices.Concat(devOnlyRoutes, publicRoutes)
 
 	for _, r := range newRouters(cfg, discardLogger(), nil, nil) {
 		if !r.Public() {
@@ -196,8 +203,28 @@ func TestOnlyDocumentationIsPublic(t *testing.T) {
 			t.Fatalf("%T is public and cannot be inspected", r)
 		}
 		for _, route := range p.Patterns() {
-			if !slices.Contains(devOnlyRoutes, route) {
+			if !slices.Contains(allowed, route) {
 				t.Errorf("%s is served without authentication", route)
+			}
+		}
+	}
+}
+
+// The CLI's first call, before it holds anything. Mounting it in development
+// only would mean a staging or production client had no way to discover the
+// flow, which is the whole reason the endpoint exists.
+func TestAuthConfigIsServedInEveryEnvironment(t *testing.T) {
+	t.Parallel()
+
+	for _, environment := range []config.Environment{
+		config.EnvironmentDevelopment,
+		config.EnvironmentStaging,
+		config.EnvironmentProduction,
+	} {
+		routes := servedRoutes(t, environment)
+		for _, route := range publicRoutes {
+			if !slices.Contains(routes, route) {
+				t.Errorf("environment %q does not serve %s", environment, route)
 			}
 		}
 	}

@@ -27,6 +27,8 @@ servers:
 tags:
   - name: probes
     description: Unauthenticated, for orchestrators
+  - name: discovery
+    description: How to authenticate, readable before you can
   - name: identity
     description: Who the caller is
   - name: teams
@@ -78,6 +80,29 @@ paths:
               schema:
                 type: string
                 examples: ["not ready"]
+
+  /auth/config:
+    get:
+      operationId: getAuthConfig
+      tags: [discovery]
+      summary: How to obtain a token
+      description: |
+        Unauthenticated, because a client holding no credential has to start
+        somewhere. It reports which flow this deployment accepts and the
+        parameters that flow needs, so a client is configured with one address
+        rather than with a copy of the service's own settings.
+
+        It carries no secret. The issuer and client id are public by OAuth's
+        design for a public client, and the development token is reported as
+        accepted, never as a value.
+      security: []
+      responses:
+        "200":
+          description: How to authenticate here
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthConfig"
 
   /whoami:
     get:
@@ -367,6 +392,47 @@ components:
             examples: ["id must be a uuid"]
 
   schemas:
+    AuthConfig:
+      type: object
+      required: [environment, dev_token_accepted]
+      properties:
+        environment:
+          type: string
+          description: |
+            What this deployment considers itself. A client uses it to decide
+            whether a shared token is even worth trying.
+          enum: [development, staging, production, test]
+        dev_token_accepted:
+          type: boolean
+          description: |
+            True only when a development token is configured *and* the
+            environment is development. The value is never published — a
+            client sends the one it already holds in its own environment.
+        oidc:
+          $ref: "#/components/schemas/OIDCConfig"
+
+    OIDCConfig:
+      type: object
+      required: [issuer, client_id]
+      description: |
+        Absent when no identity provider is configured, rather than present
+        and blank: a client that branches on the key being there would
+        otherwise build a discovery URL out of an empty issuer.
+      properties:
+        issuer:
+          type: string
+          description: |
+            Served verbatim, trailing slash included. Discovery lives at
+            `<issuer>/.well-known/openid-configuration`, and the device
+            authorization endpoint is read from there rather than guessed.
+          examples: ["http://localhost:9000/application/o/openarity/"]
+        client_id:
+          type: string
+          description: |
+            OPENARITY_OIDC_AUDIENCE. The brain checks it as an audience; a
+            client sends it as a client id. Same value, two names, because
+            each side calls it what its own specification calls it.
+
     Whoami:
       type: object
       required: [kind, subject, teams]
