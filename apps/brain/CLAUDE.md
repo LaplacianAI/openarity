@@ -209,7 +209,7 @@ make tools              # reinstall tooling — rerun after a Go upgrade
 **Always pass `db=` when measuring coverage.** Database tests skip when
 `BRAIN_TEST_POSTGRES_DSN` is empty, and `db=name` is what sets it — `host`,
 `port`, `user` and `sslmode` default around it. Without it `serve`, `migrateUp`
-and every query read 0% and the total drops from 96.9% to 70.3%, which looks
+and every query read 0% and the total drops from 97.6% to 77.8%, which looks
 like a coverage problem and is not one. `make cover` warns when the variable is
 unset for exactly this reason. Never read a coverage report that was produced
 without a database.
