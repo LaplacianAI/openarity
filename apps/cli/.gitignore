@@ -2,3 +2,6 @@
 # platform-specific, so a committed copy is stale the moment anyone else
 # clones it.
 bin/
+
+# `go build` with no -o lands here, named after the package.
+oa

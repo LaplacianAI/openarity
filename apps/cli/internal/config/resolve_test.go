@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/LaplacianAI/openarity/apps/cli/internal/output"
 )
 
 func envOf(pairs map[string]string) Env {
@@ -42,7 +44,7 @@ func TestServerPrecedence(t *testing.T) {
 		"then the file":    {"", envOf(nil), saved, "https://from-file.example.com"},
 		"then the default": {"", envOf(nil), Config{}, DefaultServer},
 	} {
-		got := Resolve(tc.flag, "", tc.env, tc.saved, configPath)
+		got := Resolve(tc.flag, "", "", tc.env, tc.saved, configPath)
 		if got.Server.Value != tc.want {
 			t.Errorf("%s: server = %q, want %q", name, got.Server.Value, tc.want)
 		}
@@ -57,7 +59,7 @@ func TestEverySettingNamesWhereItCameFrom(t *testing.T) {
 	saved := ctxThemed("https://from-file.example.com", "", "light")
 	env := envOf(map[string]string{"OPENARITY_SERVER": "https://from-env.example.com"})
 
-	got := Resolve("", "", env, saved, configPath)
+	got := Resolve("", "", "", env, saved, configPath)
 
 	if !strings.Contains(got.Server.Source, "OPENARITY_SERVER") {
 		t.Errorf("server source = %q, want it to name the variable", got.Server.Source)
@@ -66,12 +68,12 @@ func TestEverySettingNamesWhereItCameFrom(t *testing.T) {
 		t.Errorf("theme source = %q, want it to name the file", got.Theme.Source)
 	}
 
-	fromFlag := Resolve("https://from-flag.example.com", "", env, saved, configPath)
+	fromFlag := Resolve("https://from-flag.example.com", "", "", env, saved, configPath)
 	if !strings.Contains(fromFlag.Server.Source, "--server") {
 		t.Errorf("server source = %q, want it to name the flag", fromFlag.Server.Source)
 	}
 
-	fromDefault := Resolve("", "", envOf(nil), Config{}, configPath)
+	fromDefault := Resolve("", "", "", envOf(nil), Config{}, configPath)
 	if !strings.Contains(fromDefault.Server.Source, "default") {
 		t.Errorf("server source = %q, want it to say default", fromDefault.Server.Source)
 	}
@@ -87,7 +89,7 @@ func TestTheTokenValueIsNeverResolved(t *testing.T) {
 	saved := ctx("", secret)
 	env := envOf(map[string]string{"OPENARITY_TOKEN": secret, "OPENARITY_DEV_TOKEN": secret})
 
-	got := Resolve("", secret, env, saved, configPath)
+	got := Resolve("", secret, "", env, saved, configPath)
 
 	if strings.Contains(got.Token.Value, secret) {
 		t.Errorf("the token value is in the resolved settings: %q", got.Token.Value)
@@ -102,12 +104,12 @@ func TestTheTokenValueIsNeverResolved(t *testing.T) {
 func TestTheTokenReportsWhetherItIsSet(t *testing.T) {
 	t.Parallel()
 
-	set := Resolve("", "", envOf(nil), ctx("", "a-token"), configPath)
+	set := Resolve("", "", "", envOf(nil), ctx("", "a-token"), configPath)
 	if set.Token.Value == "" {
 		t.Error("a saved token is reported as absent")
 	}
 
-	unset := Resolve("", "", envOf(nil), Config{}, configPath)
+	unset := Resolve("", "", "", envOf(nil), Config{}, configPath)
 	if unset.Token.Value == set.Token.Value {
 		t.Errorf("set and unset report the same thing: %q", unset.Token.Value)
 	}
@@ -120,13 +122,13 @@ func TestThemePrecedenceAndDefault(t *testing.T) {
 
 	env := envOf(map[string]string{"OPENARITY_THEME": "dark"})
 
-	if got := Resolve("", "", env, ctxThemed("", "", "light"), configPath); got.Theme.Value != "dark" {
+	if got := Resolve("", "", "", env, ctxThemed("", "", "light"), configPath); got.Theme.Value != "dark" {
 		t.Errorf("theme = %q, want the environment to win", got.Theme.Value)
 	}
-	if got := Resolve("", "", envOf(nil), ctxThemed("", "", "light"), configPath); got.Theme.Value != "light" {
+	if got := Resolve("", "", "", envOf(nil), ctxThemed("", "", "light"), configPath); got.Theme.Value != "light" {
 		t.Errorf("theme = %q, want the file", got.Theme.Value)
 	}
-	if got := Resolve("", "", envOf(nil), Config{}, configPath); got.Theme.Value != string(DefaultTheme) {
+	if got := Resolve("", "", "", envOf(nil), Config{}, configPath); got.Theme.Value != string(DefaultTheme) {
 		t.Errorf("theme = %q, want %q", got.Theme.Value, DefaultTheme)
 	}
 }
@@ -138,7 +140,7 @@ func TestThemePrecedenceAndDefault(t *testing.T) {
 func TestAnUnknownThemeIsReportedAsSet(t *testing.T) {
 	t.Parallel()
 
-	got := Resolve("", "", envOf(map[string]string{"OPENARITY_THEME": "solarized"}), Config{}, configPath)
+	got := Resolve("", "", "", envOf(map[string]string{"OPENARITY_THEME": "solarized"}), Config{}, configPath)
 
 	if got.Theme.Value != "solarized" {
 		t.Errorf("theme = %q, want it reported verbatim so the typo is visible", got.Theme.Value)
@@ -148,12 +150,106 @@ func TestAnUnknownThemeIsReportedAsSet(t *testing.T) {
 	}
 }
 
+// Output carries a flag that theme does not: `-o json` changes per command,
+// where a theme is set once. So it has four places, and the flag has to win.
+func TestOutputPrecedence(t *testing.T) {
+	t.Parallel()
+
+	saved := Config{Output: "yaml"}
+	env := envOf(map[string]string{"OPENARITY_OUTPUT": "json"})
+
+	for name, tc := range map[string]struct {
+		flag  string
+		env   Env
+		saved Config
+		want  string
+	}{
+		"flag wins":        {"table", env, saved, "table"},
+		"then environment": {"", env, saved, "json"},
+		"then the file":    {"", envOf(nil), saved, "yaml"},
+		"then the default": {"", envOf(nil), Config{}, string(DefaultOutput)},
+	} {
+		got := Resolve("", "", tc.flag, tc.env, tc.saved, configPath)
+		if got.Output.Value != tc.want {
+			t.Errorf("%s: output = %q, want %q", name, got.Output.Value, tc.want)
+		}
+	}
+}
+
+// A person at a terminal is the common case. An unset output resolving to
+// json would make every command unreadable out of the box.
+func TestOutputDefaultsToTable(t *testing.T) {
+	t.Parallel()
+
+	got := Resolve("", "", "", envOf(nil), Config{}, configPath)
+
+	if got.Output.Value != string(output.Table) {
+		t.Errorf("output = %q, want %q", got.Output.Value, output.Table)
+	}
+	if got.Output.Source != "default" {
+		t.Errorf("output source = %q, want default", got.Output.Source)
+	}
+}
+
+// Same rule as theme: config stores, it does not interpret. Reporting an
+// unrecognised format as "table" would hide the typo in the one command
+// someone runs to find it.
+func TestAnUnknownOutputIsReportedAsSet(t *testing.T) {
+	t.Parallel()
+
+	got := Resolve("", "", "", envOf(map[string]string{"OPENARITY_OUTPUT": "jsonl"}), Config{}, configPath)
+
+	if got.Output.Value != "jsonl" {
+		t.Errorf("output = %q, want it reported verbatim so the typo is visible", got.Output.Value)
+	}
+	if !strings.Contains(got.Output.Source, "OPENARITY_OUTPUT") {
+		t.Errorf("output source = %q, want it to name the variable", got.Output.Source)
+	}
+}
+
+// Output is a display preference, not a property of a brain. Switching
+// context must not silently put someone back on a table mid-script.
+func TestOutputIsNotPerContext(t *testing.T) {
+	t.Parallel()
+
+	saved := Config{
+		Current:  "prod",
+		Contexts: map[string]Context{"prod": {Server: "https://brain.example.com"}, "local": {}},
+		Output:   "json",
+	}
+
+	prod := Resolve("", "", "", envOf(nil), saved, configPath)
+
+	saved.Current = "local"
+	local := Resolve("", "", "", envOf(nil), saved, configPath)
+
+	if prod.Output.Value != local.Output.Value {
+		t.Errorf("output changed with the context: %q then %q", prod.Output.Value, local.Output.Value)
+	}
+}
+
+// The source is the whole point, and output now has the most places to come
+// from. "I set -o json and got a table" is unanswerable without it.
+func TestOutputNamesWhereItCameFrom(t *testing.T) {
+	t.Parallel()
+
+	fromFlag := Resolve("", "", "json", envOf(nil), Config{}, configPath)
+	if !strings.Contains(fromFlag.Output.Source, "--output") {
+		t.Errorf("output source = %q, want it to name the flag", fromFlag.Output.Source)
+	}
+
+	fromFile := Resolve("", "", "", envOf(nil), Config{Output: "yaml"}, configPath)
+	if !strings.Contains(fromFile.Output.Source, configPath) {
+		t.Errorf("output source = %q, want it to name the file", fromFile.Output.Source)
+	}
+}
+
 // Whitespace around a pasted value is not part of it. A server URL with a
 // trailing newline produces a request to a host that does not resolve.
 func TestResolvedValuesAreTrimmed(t *testing.T) {
 	t.Parallel()
 
-	got := Resolve("  https://from-flag.example.com\n", "", envOf(nil), Config{}, configPath)
+	got := Resolve("  https://from-flag.example.com\n", "", "", envOf(nil), Config{}, configPath)
 
 	if got.Server.Value != "https://from-flag.example.com" {
 		t.Errorf("server = %q, want it trimmed", got.Server.Value)

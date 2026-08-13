@@ -22,6 +22,7 @@ type Config struct {
 	Current  string             `yaml:"current,omitempty"`
 	Contexts map[string]Context `yaml:"contexts,omitempty"`
 	Theme    string             `yaml:"theme,omitempty"`
+	Output   string             `yaml:"output,omitempty"`
 }
 
 func (c Config) active() (string, Context) {

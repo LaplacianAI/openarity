@@ -61,7 +61,7 @@ func TestAnEmptyConfigHasNoContext(t *testing.T) {
 		t.Errorf("Active() = %+v, want the zero context", got)
 	}
 
-	settings := Resolve("", "", envOf(nil), Config{}, configPath)
+	settings := Resolve("", "", "", envOf(nil), Config{}, configPath)
 	if settings.Server.Value != DefaultServer {
 		t.Errorf("server = %q, want %q", settings.Server.Value, DefaultServer)
 	}

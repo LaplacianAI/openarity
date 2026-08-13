@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/output"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 )
 
-const DefaultTheme = theme.Auto
+const (
+	DefaultTheme  = theme.Auto
+	DefaultOutput = output.Default
+)
 
 type Env func(string) string
 
@@ -22,6 +26,7 @@ type Settings struct {
 	Server  Setting
 	Theme   Setting
 	Token   Setting
+	Output  Setting
 }
 
 type candidate struct {
@@ -54,7 +59,7 @@ func token(flag string, env Env, active Context, path string) Setting {
 	}
 }
 
-func Resolve(serverFlag, tokenFlag string, env Env, saved Config, path string) Settings {
+func Resolve(serverFlag, tokenFlag, outputFlag string, env Env, saved Config, path string) Settings {
 	active := saved.Active()
 
 	return Settings{
@@ -69,6 +74,11 @@ func Resolve(serverFlag, tokenFlag string, env Env, saved Config, path string) S
 		Theme: pick("theme", string(DefaultTheme), "default",
 			candidate{env("OPENARITY_THEME"), "OPENARITY_THEME"},
 			candidate{saved.Theme, path},
+		),
+		Output: pick("output", string(DefaultOutput), "default",
+			candidate{outputFlag, "--output"},
+			candidate{env("OPENARITY_OUTPUT"), "OPENARITY_OUTPUT"},
+			candidate{saved.Output, path},
 		),
 		Token: token(tokenFlag, env, active, path),
 	}
