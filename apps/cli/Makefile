@@ -7,11 +7,20 @@ GO           ?= go
 BINARY       := oa
 SPEC         := ../brain/api/openapi.yaml
 GENERATED    := internal/client/client.gen.go
+COVER_PROFILE := coverage.out
+COVER_HTML    := coverage.html
+COVER_MIN     := 70
+
+# The generated client is ~2000 lines nobody wrote. Counting it measures
+# oapi-codegen rather than this module, and drags the total from 84% to 35%.
+COVER_PKGS = $(shell $(GO) list ./... | grep -v '/internal/client$$' | paste -sd, -)
+
 
 # Tool versions. CI runs `make tools`, so these are the only place a version
 # is written down.
 GOLANGCI_VERSION     := v2.12.2
 OAPI_CODEGEN_VERSION := v2.8.0
+GOVULNCHECK_VERSION  := latest
 
 .DEFAULT_GOAL := help
 
@@ -23,6 +32,7 @@ help:
 tools:
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 	$(GO) install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION)
+	$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	@echo "installed with $$($(GO) version)"
 
 ## tidy: sync go.mod and go.sum
@@ -52,6 +62,19 @@ lint:
 ## test: run tests with the race detector
 test:
 	$(GO) test -race ./...
+
+## cover: run tests with coverage and fail below the minimum
+cover:
+	$(GO) test -race -covermode=atomic -coverpkg=$(COVER_PKGS) -coverprofile=$(COVER_PROFILE) ./...
+	@$(GO) tool cover -func=$(COVER_PROFILE) | tail -1
+	@total=$$($(GO) tool cover -func=$(COVER_PROFILE) | tail -1 | grep -oE '[0-9]+\.[0-9]+'); \
+	  awk -v t="$$total" -v m="$(COVER_MIN)" 'BEGIN { \
+	    if (t+0 < m+0) { printf "coverage %.1f%% is below the %d%% minimum\n", t, m; exit 1 } \
+	  }'
+
+## vuln: check dependencies against the Go vulnerability database
+vuln:
+	govulncheck ./...
 
 ## build: compile the binary into ./bin
 build:
@@ -87,7 +110,7 @@ check: tidy-check generate-check fmt-check vet lint build test
 
 ## clean: remove build artefacts
 clean:
-	rm -rf bin
+	rm -rf bin $(COVER_PROFILE) $(COVER_HTML)
 	$(GO) clean -testcache
 
 .PHONY: help tools tidy tidy-check fmt fmt-check vet lint test build install generate generate-check check clean
