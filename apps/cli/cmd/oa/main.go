@@ -8,6 +8,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/spf13/cobra"
+
+	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/config"
+	cmdcontext "github.com/LaplacianAI/openarity/apps/cli/internal/command/context"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/teams"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/whoami"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/ui"
 )
@@ -23,11 +30,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	root := newRootCmd(stdout, stderr)
+	root := cli.NewRoot(stdout, stderr, commands)
 	root.SetArgs(args)
 	return root.ExecuteContext(ctx)
 }
 
+// The only place that knows every command. One line per package, the same
+// shape as the brain's cmd/brain/routers.go.
+func commands(opts *cli.Options) []*cobra.Command {
+	return []*cobra.Command{
+		whoami.New(opts),
+		config.New(opts),
+		cmdcontext.New(opts),
+		teams.New(opts),
+	}
+}
+
+// Styled against stderr rather than stdout, because that is where it goes.
 func printError(w io.Writer, themeName string, err error) {
 	chosenTheme, _ := theme.Parse(themeName)
 	fmt.Fprintln(w, ui.New(w, chosenTheme).Err.Render("oa: "+err.Error()))

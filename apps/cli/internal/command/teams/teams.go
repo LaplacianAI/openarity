@@ -1,4 +1,4 @@
-package main
+package teams
 
 import (
 	"fmt"
@@ -6,11 +6,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/client"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output/printer"
 )
 
-func newTeamsCmd(opts *options) *cobra.Command {
+func New(opts *cli.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "teams",
 		Short: "Create teams and see the ones you belong to",
@@ -19,13 +20,13 @@ func newTeamsCmd(opts *options) *cobra.Command {
 	}
 
 	cmd.AddCommand(
-		newTeamsListCmd(opts),
-		newTeamsCreateCmd(opts),
+		newListCmd(opts),
+		newCreateCmd(opts),
 	)
 	return cmd
 }
 
-func newTeamsListCmd(opts *options) *cobra.Command {
+func newListCmd(opts *cli.Options) *cobra.Command {
 	var (
 		limit  int32
 		cursor string
@@ -39,7 +40,7 @@ func newTeamsListCmd(opts *options) *cobra.Command {
 			"pass it back with --cursor to fetch the next page.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			api, err := opts.api(cmd.Context())
+			api, err := opts.API(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -57,23 +58,23 @@ func newTeamsListCmd(opts *options) *cobra.Command {
 				return err
 			}
 			if res.JSON200 == nil {
-				return apiError(res.HTTPResponse, res.Body)
+				return cli.APIError(res.HTTPResponse, res.Body)
 			}
 			page := *res.JSON200
 
 			if len(page.Items) == 0 {
-				opts.out.Note(opts.styles.Muted.Render("no teams"))
+				opts.Out.Note(opts.Styles.Muted.Render("no teams"))
 			}
 
-			err = opts.out.Print(page, printer.Options{
+			err = opts.Out.Print(page, printer.Options{
 				Table: func(table *printer.Table) {
 					for _, team := range page.Items {
-						role := opts.styles.Muted.Render("not a member")
+						role := opts.Styles.Muted.Render("not a member")
 						if team.Role != nil {
 							role = *team.Role
 						}
-						table.Row(opts.styles.Value.Render(team.Name), role,
-							opts.styles.Muted.Render(team.ID.String()))
+						table.Row(opts.Styles.Value.Render(team.Name), role,
+							opts.Styles.Muted.Render(team.ID.String()))
 					}
 				},
 			})
@@ -82,7 +83,7 @@ func newTeamsListCmd(opts *options) *cobra.Command {
 			}
 
 			if page.NextCursor != nil {
-				opts.out.Note(opts.styles.Muted.Render(
+				opts.Out.Note(opts.Styles.Muted.Render(
 					fmt.Sprintf("more — `oa teams list --cursor %s`", *page.NextCursor)))
 			}
 			return nil
@@ -94,7 +95,7 @@ func newTeamsListCmd(opts *options) *cobra.Command {
 	return cmd
 }
 
-func newTeamsCreateCmd(opts *options) *cobra.Command {
+func newCreateCmd(opts *cli.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a team",
@@ -106,7 +107,7 @@ func newTeamsCreateCmd(opts *options) *cobra.Command {
 				return fmt.Errorf("a team needs a name")
 			}
 
-			api, err := opts.api(cmd.Context())
+			api, err := opts.API(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -117,15 +118,15 @@ func newTeamsCreateCmd(opts *options) *cobra.Command {
 				return err
 			}
 			if res.JSON201 == nil {
-				return apiError(res.HTTPResponse, res.Body)
+				return cli.APIError(res.HTTPResponse, res.Body)
 			}
 			team := *res.JSON201
 
-			return opts.out.Print(team, printer.Options{
+			return opts.Out.Print(team, printer.Options{
 				Table: func(table *printer.Table) {
-					table.Row(opts.styles.OK.Render("created"),
-						opts.styles.Value.Render(team.Name),
-						opts.styles.Muted.Render(team.ID.String()))
+					table.Row(opts.Styles.OK.Render("created"),
+						opts.Styles.Value.Render(team.Name),
+						opts.Styles.Muted.Render(team.ID.String()))
 				},
 			})
 		},

@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"errors"
@@ -9,7 +9,8 @@ import (
 
 const maxBodyInAnError = 200
 
-func apiError(res *http.Response, body []byte) error {
+// APIError turns a response the caller did not want into a sentence.
+func APIError(res *http.Response, body []byte) error {
 	detail := summarise(body)
 
 	switch res.StatusCode {

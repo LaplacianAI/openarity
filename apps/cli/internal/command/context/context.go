@@ -1,4 +1,4 @@
-package main
+package context
 
 import (
 	"fmt"
@@ -6,11 +6,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output/printer"
 )
 
-func newContextCmd(opts *options) *cobra.Command {
+func New(opts *cli.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "context",
 		Short: "Switch between brains",
@@ -19,34 +20,34 @@ func newContextCmd(opts *options) *cobra.Command {
 	}
 
 	cmd.AddCommand(
-		newContextListCmd(opts),
-		newContextUseCmd(opts),
-		newContextCreateCmd(opts),
-		newContextRenameCmd(opts),
-		newContextDeleteCmd(opts),
+		newListCmd(opts),
+		newUseCmd(opts),
+		newCreateCmd(opts),
+		newRenameCmd(opts),
+		newDeleteCmd(opts),
 	)
 	return cmd
 }
 
-func newContextListCmd(opts *options) *cobra.Command {
+func newListCmd(opts *cli.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List the saved contexts",
 		Args:    cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			views := contextViews(opts.saved)
+			views := contextViews(opts.Saved)
 			if len(views) == 0 {
-				opts.out.Note(opts.styles.Muted.Render(
+				opts.Out.Note(opts.Styles.Muted.Render(
 					"no contexts — `oa context create <name> --server <url>`"))
 			}
 
-			return opts.out.Print(views, printer.Options{
+			return opts.Out.Print(views, printer.Options{
 				Table: func(table *printer.Table) {
 					for _, view := range views {
-						marker, name := " ", opts.styles.Value.Render(view.Name)
+						marker, name := " ", opts.Styles.Value.Render(view.Name)
 						if view.Active {
-							marker, name = opts.styles.OK.Render("*"), opts.styles.Label.Render(view.Name)
+							marker, name = opts.Styles.OK.Render("*"), opts.Styles.Label.Render(view.Name)
 						}
 
 						token := "no token"
@@ -54,7 +55,7 @@ func newContextListCmd(opts *options) *cobra.Command {
 							token = "token saved"
 						}
 
-						table.Row(marker+" "+name, view.Server, opts.styles.Muted.Render(token))
+						table.Row(marker+" "+name, view.Server, opts.Styles.Muted.Render(token))
 					}
 				},
 			})
@@ -62,13 +63,13 @@ func newContextListCmd(opts *options) *cobra.Command {
 	}
 }
 
-func newContextUseCmd(opts *options) *cobra.Command {
+func newUseCmd(opts *cli.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "use <name>",
 		Short: "Make a context the one every command talks to",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			saved := opts.saved
+			saved := opts.Saved
 			name := strings.TrimSpace(args[0])
 
 			if _, ok := saved.Contexts[name]; !ok {
@@ -80,14 +81,14 @@ func newContextUseCmd(opts *options) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(opts.stdout, "%s %s\n",
-				opts.styles.OK.Render("using"), opts.styles.Value.Render(name))
-			return opts.warnOverride(opts.settings.Server)
+			fmt.Fprintf(opts.Stdout, "%s %s\n",
+				opts.Styles.OK.Render("using"), opts.Styles.Value.Render(name))
+			return opts.WarnOverride(opts.Settings.Server)
 		},
 	}
 }
 
-func newContextCreateCmd(opts *options) *cobra.Command {
+func newCreateCmd(opts *cli.Options) *cobra.Command {
 	var server string
 
 	cmd := &cobra.Command{
@@ -97,7 +98,7 @@ func newContextCreateCmd(opts *options) *cobra.Command {
 			"configurations create` does. Log in afterwards to give it a credential.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			saved := opts.saved
+			saved := opts.Saved
 			name := strings.TrimSpace(args[0])
 			address := strings.TrimSpace(server)
 
@@ -121,10 +122,10 @@ func newContextCreateCmd(opts *options) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(opts.stdout, "%s %s\n",
-				opts.styles.OK.Render("created"), opts.styles.Value.Render(name))
-			fmt.Fprintln(opts.stdout, opts.styles.Muted.Render("now using "+name))
-			return opts.warnOverride(opts.settings.Server)
+			fmt.Fprintf(opts.Stdout, "%s %s\n",
+				opts.Styles.OK.Render("created"), opts.Styles.Value.Render(name))
+			fmt.Fprintln(opts.Stdout, opts.Styles.Muted.Render("now using "+name))
+			return opts.WarnOverride(opts.Settings.Server)
 		},
 	}
 
@@ -133,7 +134,7 @@ func newContextCreateCmd(opts *options) *cobra.Command {
 	return cmd
 }
 
-func newContextRenameCmd(opts *options) *cobra.Command {
+func newRenameCmd(opts *cli.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "rename <old> <new>",
 		Short: "Rename a context, keeping its address and credential",
@@ -141,7 +142,7 @@ func newContextRenameCmd(opts *options) *cobra.Command {
 			"you would have to log in again.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			saved := opts.saved
+			saved := opts.Saved
 			from, to := strings.TrimSpace(args[0]), strings.TrimSpace(args[1])
 
 			moving, ok := saved.Contexts[from]
@@ -165,22 +166,22 @@ func newContextRenameCmd(opts *options) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(opts.stdout, "%s %s %s\n",
-				opts.styles.OK.Render("renamed"),
-				opts.styles.Value.Render(from), opts.styles.Value.Render("→ "+to))
+			fmt.Fprintf(opts.Stdout, "%s %s %s\n",
+				opts.Styles.OK.Render("renamed"),
+				opts.Styles.Value.Render(from), opts.Styles.Value.Render("→ "+to))
 			return nil
 		},
 	}
 }
 
-func newContextDeleteCmd(opts *options) *cobra.Command {
+func newDeleteCmd(opts *cli.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:     "delete <name>",
 		Aliases: []string{"rm"},
 		Short:   "Forget a context and its credential",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			saved := opts.saved
+			saved := opts.Saved
 			name := strings.TrimSpace(args[0])
 
 			if _, ok := saved.Contexts[name]; !ok {
@@ -196,11 +197,11 @@ func newContextDeleteCmd(opts *options) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(opts.stdout, "%s %s\n",
-				opts.styles.OK.Render("deleted"), opts.styles.Value.Render(name))
+			fmt.Fprintf(opts.Stdout, "%s %s\n",
+				opts.Styles.OK.Render("deleted"), opts.Styles.Value.Render(name))
 
-			if now := saved.ActiveName(); now != "" && now != opts.saved.ActiveName() {
-				fmt.Fprintf(opts.stdout, "%s\n", opts.styles.Muted.Render("now using "+now))
+			if now := saved.ActiveName(); now != "" && now != opts.Saved.ActiveName() {
+				fmt.Fprintf(opts.Stdout, "%s\n", opts.Styles.Muted.Render("now using "+now))
 			}
 			return nil
 		},
@@ -225,12 +226,4 @@ func unknownContext(saved config.Config, name string) error {
 		return fmt.Errorf("no contexts yet — `oa context create %s --server <url>`", name)
 	}
 	return fmt.Errorf("%s is not a context — try %s", name, strings.Join(names, ", "))
-}
-
-func (o *options) warnOverride(setting config.Setting) error {
-	if strings.HasPrefix(setting.Source, "OPENARITY_") {
-		fmt.Fprintln(o.stdout, o.styles.Warn.Render(
-			setting.Source+" is set and overrides this for the current shell"))
-	}
-	return nil
 }

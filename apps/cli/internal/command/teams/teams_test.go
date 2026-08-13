@@ -1,62 +1,16 @@
-package main
+package teams
 
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
+
+	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
 )
 
-// What the stub saw. The handler runs on the server's goroutine, so every
-// field is read under the mutex after the command has returned.
-type seen struct {
-	mu     sync.Mutex
-	method string
-	path   string
-	query  string
-	body   string
-	auth   string
-}
-
-func (s *seen) record(r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.method = r.Method
-	s.path = r.URL.Path
-	s.query = r.URL.RawQuery
-	s.auth = r.Header.Get("Authorization")
-
-	if r.Body != nil {
-		buf := make([]byte, 4096)
-		n, _ := r.Body.Read(buf)
-		s.body = string(buf[:n])
-	}
-}
-
-// brainStub points oa at a fake brain and hands back what it received. The
-// token comes from the environment so no discovery call is made — that path
-// belongs to internal/auth and is tested there.
-func brainStub(t *testing.T, status int, response string) *seen {
-	t.Helper()
-
-	got := &seen{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got.record(r)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(response))
-	}))
-	t.Cleanup(server.Close)
-
-	isolate(t)
-	t.Setenv("OPENARITY_SERVER", server.URL)
-	t.Setenv("OPENARITY_TOKEN", "a-token")
-
-	return got
-}
+// The root these tests drive.
+var commands = []clitest.Build{New}
 
 const twoTeams = `{
   "items": [
@@ -67,9 +21,9 @@ const twoTeams = `{
 }`
 
 func TestTeamsListRendersATable(t *testing.T) {
-	brainStub(t, http.StatusOK, twoTeams)
+	clitest.BrainStub(t, http.StatusOK, twoTeams)
 
-	out, err := execute(t, "teams", "list")
+	out, err := clitest.Execute(t, commands, "teams", "list")
 	if err != nil {
 		t.Fatalf("teams list: %v", err)
 	}
@@ -83,9 +37,9 @@ func TestTeamsListRendersATable(t *testing.T) {
 // The envelope is the contract. Printing the items alone would drop
 // next_cursor, and every consumer would believe it had the last page.
 func TestTeamsListPrintsTheEnvelope(t *testing.T) {
-	brainStub(t, http.StatusOK, twoTeams)
+	clitest.BrainStub(t, http.StatusOK, twoTeams)
 
-	out, err := execute(t, "teams", "list", "-o", "json")
+	out, err := clitest.Execute(t, commands, "teams", "list", "-o", "json")
 	if err != nil {
 		t.Fatalf("teams list -o json: %v", err)
 	}
@@ -107,44 +61,44 @@ func TestTeamsListPrintsTheEnvelope(t *testing.T) {
 // Int32Var defaults to zero and the brain answers 400 to a limit of zero, so
 // sending it unconditionally would break every default invocation.
 func TestTeamsListSendsNoLimitUnlessAsked(t *testing.T) {
-	got := brainStub(t, http.StatusOK, twoTeams)
+	got := clitest.BrainStub(t, http.StatusOK, twoTeams)
 
-	if _, err := execute(t, "teams", "list"); err != nil {
+	if _, err := clitest.Execute(t, commands, "teams", "list"); err != nil {
 		t.Fatalf("teams list: %v", err)
 	}
 
-	got.mu.Lock()
-	defer got.mu.Unlock()
+	got.Lock()
+	defer got.Unlock()
 
-	if strings.Contains(got.query, "limit") {
-		t.Errorf("query = %q, want no limit when the flag was not given", got.query)
+	if strings.Contains(got.Query, "limit") {
+		t.Errorf("query = %q, want no limit when the flag was not given", got.Query)
 	}
 }
 
 func TestTeamsListSendsTheLimitAndCursor(t *testing.T) {
-	got := brainStub(t, http.StatusOK, twoTeams)
+	got := clitest.BrainStub(t, http.StatusOK, twoTeams)
 
-	if _, err := execute(t, "teams", "list", "--limit", "5", "--cursor", "abc"); err != nil {
+	if _, err := clitest.Execute(t, commands, "teams", "list", "--limit", "5", "--cursor", "abc"); err != nil {
 		t.Fatalf("teams list: %v", err)
 	}
 
-	got.mu.Lock()
-	defer got.mu.Unlock()
+	got.Lock()
+	defer got.Unlock()
 
-	if !strings.Contains(got.query, "limit=5") {
-		t.Errorf("query = %q, want limit=5", got.query)
+	if !strings.Contains(got.Query, "limit=5") {
+		t.Errorf("query = %q, want limit=5", got.Query)
 	}
-	if !strings.Contains(got.query, "cursor=abc") {
-		t.Errorf("query = %q, want cursor=abc", got.query)
+	if !strings.Contains(got.Query, "cursor=abc") {
+		t.Errorf("query = %q, want cursor=abc", got.Query)
 	}
 }
 
 // The cursor is unusable from a terminal unless it is printed, and it must
 // never reach a document a parser will read — it is already in the envelope.
 func TestTheCursorHintReachesAPersonOnly(t *testing.T) {
-	brainStub(t, http.StatusOK, twoTeams)
+	clitest.BrainStub(t, http.StatusOK, twoTeams)
 
-	table, err := execute(t, "teams", "list")
+	table, err := clitest.Execute(t, commands, "teams", "list")
 	if err != nil {
 		t.Fatalf("teams list: %v", err)
 	}
@@ -152,7 +106,7 @@ func TestTheCursorHintReachesAPersonOnly(t *testing.T) {
 		t.Errorf("the table does not say how to fetch the next page:\n%s", table)
 	}
 
-	asJSON, err := execute(t, "teams", "list", "-o", "json")
+	asJSON, err := clitest.Execute(t, commands, "teams", "list", "-o", "json")
 	if err != nil {
 		t.Fatalf("teams list -o json: %v", err)
 	}
@@ -167,9 +121,9 @@ func TestTheCursorHintReachesAPersonOnly(t *testing.T) {
 // A super admin sees teams they are not in, so a missing role is normal rather
 // than an error. An empty cell would read as a bug.
 func TestAMissingRoleSaysSo(t *testing.T) {
-	brainStub(t, http.StatusOK, twoTeams)
+	clitest.BrainStub(t, http.StatusOK, twoTeams)
 
-	out, err := execute(t, "teams", "list")
+	out, err := clitest.Execute(t, commands, "teams", "list")
 	if err != nil {
 		t.Fatalf("teams list: %v", err)
 	}
@@ -179,9 +133,9 @@ func TestAMissingRoleSaysSo(t *testing.T) {
 }
 
 func TestTeamsListWithNothingToShow(t *testing.T) {
-	brainStub(t, http.StatusOK, `{"items": []}`)
+	clitest.BrainStub(t, http.StatusOK, `{"items": []}`)
 
-	table, err := execute(t, "teams", "list")
+	table, err := clitest.Execute(t, commands, "teams", "list")
 	if err != nil {
 		t.Fatalf("teams list: %v", err)
 	}
@@ -189,7 +143,7 @@ func TestTeamsListWithNothingToShow(t *testing.T) {
 		t.Errorf("an empty list said nothing:\n%s", table)
 	}
 
-	asJSON, err := execute(t, "teams", "list", "-o", "json")
+	asJSON, err := clitest.Execute(t, commands, "teams", "list", "-o", "json")
 	if err != nil {
 		t.Fatalf("teams list -o json: %v", err)
 	}
@@ -206,9 +160,9 @@ func TestTeamsListWithNothingToShow(t *testing.T) {
 // 403 means authenticated and not allowed. Telling someone to log in again is
 // a loop they cannot escape.
 func TestAForbiddenListNeverSuggestsLoggingIn(t *testing.T) {
-	brainStub(t, http.StatusForbidden, `{"error": "forbidden"}`)
+	clitest.BrainStub(t, http.StatusForbidden, `{"error": "forbidden"}`)
 
-	out, err := execute(t, "teams", "list")
+	out, err := clitest.Execute(t, commands, "teams", "list")
 	if err == nil {
 		t.Fatal("a 403 was reported as success")
 	}
@@ -220,9 +174,9 @@ func TestAForbiddenListNeverSuggestsLoggingIn(t *testing.T) {
 }
 
 func TestAnUnauthorisedListSaysHowToFixIt(t *testing.T) {
-	brainStub(t, http.StatusUnauthorized, `{"error": "unauthorized"}`)
+	clitest.BrainStub(t, http.StatusUnauthorized, `{"error": "unauthorized"}`)
 
-	out, err := execute(t, "teams", "list")
+	out, err := clitest.Execute(t, commands, "teams", "list")
 	if err == nil {
 		t.Fatal("a 401 was reported as success")
 	}
@@ -234,9 +188,9 @@ func TestAnUnauthorisedListSaysHowToFixIt(t *testing.T) {
 // A 500 is the brain's problem, not the caller's, and the status is the only
 // thing that tells them apart.
 func TestAServerFailureNamesTheStatus(t *testing.T) {
-	brainStub(t, http.StatusInternalServerError, `internal server error`)
+	clitest.BrainStub(t, http.StatusInternalServerError, `internal server error`)
 
-	out, err := execute(t, "teams", "list")
+	out, err := clitest.Execute(t, commands, "teams", "list")
 	if err == nil {
 		t.Fatal("a 500 was reported as success")
 	}
@@ -248,9 +202,9 @@ func TestAServerFailureNamesTheStatus(t *testing.T) {
 const oneTeam = `{"id": "6f1b8f4e-6d2a-4d1e-9a1e-2b8f4e6d2a4d", "name": "platform"}`
 
 func TestTeamsCreatePostsTheName(t *testing.T) {
-	got := brainStub(t, http.StatusCreated, oneTeam)
+	got := clitest.BrainStub(t, http.StatusCreated, oneTeam)
 
-	out, err := execute(t, "teams", "create", "platform")
+	out, err := clitest.Execute(t, commands, "teams", "create", "platform")
 	if err != nil {
 		t.Fatalf("teams create: %v", err)
 	}
@@ -258,14 +212,14 @@ func TestTeamsCreatePostsTheName(t *testing.T) {
 		t.Errorf("the confirmation is missing:\n%s", out)
 	}
 
-	got.mu.Lock()
-	defer got.mu.Unlock()
+	got.Lock()
+	defer got.Unlock()
 
-	if got.method != http.MethodPost {
-		t.Errorf("method = %s, want POST", got.method)
+	if got.Method != http.MethodPost {
+		t.Errorf("method = %s, want POST", got.Method)
 	}
-	if !strings.Contains(got.body, `"name":"platform"`) {
-		t.Errorf("body = %q, want the name", got.body)
+	if !strings.Contains(got.Body, `"name":"platform"`) {
+		t.Errorf("body = %q, want the name", got.Body)
 	}
 }
 
@@ -273,9 +227,9 @@ func TestTeamsCreatePostsTheName(t *testing.T) {
 // not an edge case. Reporting success on one would have the caller believe a
 // team exists that does not.
 func TestTeamsCreateReportsARefusal(t *testing.T) {
-	brainStub(t, http.StatusForbidden, `{"error": "forbidden"}`)
+	clitest.BrainStub(t, http.StatusForbidden, `{"error": "forbidden"}`)
 
-	out, err := execute(t, "teams", "create", "platform")
+	out, err := clitest.Execute(t, commands, "teams", "create", "platform")
 	if err == nil {
 		t.Fatal("a 403 on create was reported as success")
 	}
@@ -290,9 +244,9 @@ func TestTeamsCreateReportsARefusal(t *testing.T) {
 // A name already taken is a 409, and the brain's sentence is the useful part —
 // the CLI must pass it through rather than replacing it with a status.
 func TestTeamsCreateCarriesTheBrainsReason(t *testing.T) {
-	brainStub(t, http.StatusConflict, `{"error":"a team called platform already exists"}`)
+	clitest.BrainStub(t, http.StatusConflict, `{"error":"a team called platform already exists"}`)
 
-	_, err := execute(t, "teams", "create", "platform")
+	_, err := clitest.Execute(t, commands, "teams", "create", "platform")
 	if err == nil {
 		t.Fatal("a 409 was reported as success")
 	}
@@ -304,53 +258,53 @@ func TestTeamsCreateCarriesTheBrainsReason(t *testing.T) {
 // Whitespace around a pasted name is not part of it, and the brain answers 400
 // to a name of only whitespace — better to refuse before the round trip.
 func TestTeamsCreateTrimsAndRefusesAnEmptyName(t *testing.T) {
-	got := brainStub(t, http.StatusCreated, oneTeam)
+	got := clitest.BrainStub(t, http.StatusCreated, oneTeam)
 
-	if _, err := execute(t, "teams", "create", "  platform  "); err != nil {
+	if _, err := clitest.Execute(t, commands, "teams", "create", "  platform  "); err != nil {
 		t.Fatalf("teams create: %v", err)
 	}
 
-	got.mu.Lock()
-	if !strings.Contains(got.body, `"name":"platform"`) {
-		t.Errorf("body = %q, want the name trimmed", got.body)
+	got.Lock()
+	if !strings.Contains(got.Body, `"name":"platform"`) {
+		t.Errorf("body = %q, want the name trimmed", got.Body)
 	}
-	got.mu.Unlock()
+	got.Unlock()
 
-	blank := brainStub(t, http.StatusCreated, oneTeam)
-	if _, err := execute(t, "teams", "create", "   "); err == nil {
+	blank := clitest.BrainStub(t, http.StatusCreated, oneTeam)
+	if _, err := clitest.Execute(t, commands, "teams", "create", "   "); err == nil {
 		t.Fatal("a name of only whitespace was accepted")
 	}
 
-	blank.mu.Lock()
-	defer blank.mu.Unlock()
+	blank.Lock()
+	defer blank.Unlock()
 
-	if blank.method != "" {
+	if blank.Method != "" {
 		t.Errorf("a request was sent for a name that could not be valid: %s %s",
-			blank.method, blank.path)
+			blank.Method, blank.Path)
 	}
 }
 
 // The credential has to reach the brain, and it is the one thing a command
 // cannot be seen to do without asserting it.
 func TestTheTokenIsSent(t *testing.T) {
-	got := brainStub(t, http.StatusOK, twoTeams)
+	got := clitest.BrainStub(t, http.StatusOK, twoTeams)
 
-	if _, err := execute(t, "teams", "list"); err != nil {
+	if _, err := clitest.Execute(t, commands, "teams", "list"); err != nil {
 		t.Fatalf("teams list: %v", err)
 	}
 
-	got.mu.Lock()
-	defer got.mu.Unlock()
+	got.Lock()
+	defer got.Unlock()
 
-	if got.auth != "Bearer a-token" {
-		t.Errorf("Authorization = %q", got.auth)
+	if got.Auth != "Bearer a-token" {
+		t.Errorf("Authorization = %q", got.Auth)
 	}
 }
 
 func TestEveryTeamsSubcommandIsRegistered(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	out, err := execute(t, "teams", "--help")
+	out, err := clitest.Execute(t, commands, "teams", "--help")
 	if err != nil {
 		t.Fatalf("teams --help: %v", err)
 	}
@@ -364,10 +318,10 @@ func TestEveryTeamsSubcommandIsRegistered(t *testing.T) {
 // Every format, one loop. A command that works as a table and crashes as yaml
 // is a command nobody tests the second way.
 func TestTeamsListWorksInEveryFormat(t *testing.T) {
-	brainStub(t, http.StatusOK, twoTeams)
+	clitest.BrainStub(t, http.StatusOK, twoTeams)
 
 	for _, format := range []string{"table", "json", "yaml"} {
-		out, err := execute(t, "teams", "list", "-o", format)
+		out, err := clitest.Execute(t, commands, "teams", "list", "-o", format)
 		if err != nil {
 			t.Errorf("teams list -o %s: %v", format, err)
 			continue

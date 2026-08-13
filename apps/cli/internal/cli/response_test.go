@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"net/http"
@@ -15,7 +15,7 @@ func response(status int) *http.Response {
 func TestUnauthenticatedNamesTheCommandThatFixesIt(t *testing.T) {
 	t.Parallel()
 
-	err := apiError(response(http.StatusUnauthorized), []byte("unauthorized"))
+	err := APIError(response(http.StatusUnauthorized), []byte("unauthorized"))
 
 	if err == nil {
 		t.Fatal("a 401 produced no error")
@@ -31,7 +31,7 @@ func TestUnauthenticatedNamesTheCommandThatFixesIt(t *testing.T) {
 func TestForbiddenDoesNotAskForAnotherLogin(t *testing.T) {
 	t.Parallel()
 
-	err := apiError(response(http.StatusForbidden), []byte("forbidden"))
+	err := APIError(response(http.StatusForbidden), []byte("forbidden"))
 
 	if err == nil {
 		t.Fatal("a 403 produced no error")
@@ -54,7 +54,7 @@ func TestTheServersSentenceIsKept(t *testing.T) {
 		{http.StatusBadRequest, "id must be a uuid"},
 		{http.StatusConflict, "a team with that name already exists"},
 	} {
-		err := apiError(response(tc.status), []byte(tc.body))
+		err := APIError(response(tc.status), []byte(tc.body))
 		if err == nil {
 			t.Fatalf("%d produced no error", tc.status)
 		}
@@ -69,7 +69,7 @@ func TestTheServersSentenceIsKept(t *testing.T) {
 func TestAnUnexpectedStatusIsNamed(t *testing.T) {
 	t.Parallel()
 
-	err := apiError(response(http.StatusInternalServerError), []byte("internal server error"))
+	err := APIError(response(http.StatusInternalServerError), []byte("internal server error"))
 
 	if err == nil {
 		t.Fatal("a 500 produced no error")
@@ -87,7 +87,7 @@ func TestALongBodyIsTruncated(t *testing.T) {
 	page := "<!doctype html><html><head><title>nginx</title></head><body>" +
 		strings.Repeat("x", 4000) + "</body></html>"
 
-	err := apiError(response(http.StatusInternalServerError), []byte(page))
+	err := APIError(response(http.StatusInternalServerError), []byte(page))
 
 	if err == nil {
 		t.Fatal("no error")
@@ -102,7 +102,7 @@ func TestALongBodyIsTruncated(t *testing.T) {
 func TestNewlinesAreFlattened(t *testing.T) {
 	t.Parallel()
 
-	err := apiError(response(http.StatusBadRequest), []byte("first line\nsecond line\n"))
+	err := APIError(response(http.StatusBadRequest), []byte("first line\nsecond line\n"))
 
 	if err == nil {
 		t.Fatal("no error")
@@ -117,7 +117,7 @@ func TestNewlinesAreFlattened(t *testing.T) {
 func TestAnEmptyBodyStillProducesAMessage(t *testing.T) {
 	t.Parallel()
 
-	err := apiError(response(http.StatusNotFound), nil)
+	err := APIError(response(http.StatusNotFound), nil)
 
 	if err == nil {
 		t.Fatal("no error")
@@ -132,7 +132,7 @@ func TestAnEmptyBodyStillProducesAMessage(t *testing.T) {
 func TestASuccessfulStatusIsReportedAsAProgrammingError(t *testing.T) {
 	t.Parallel()
 
-	err := apiError(response(http.StatusOK), []byte("ok"))
+	err := APIError(response(http.StatusOK), []byte("ok"))
 
 	if err == nil {
 		t.Fatal("apiError returned nil for a 200 — the caller would report success on an unparsed body")

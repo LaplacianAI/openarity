@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"fmt"
@@ -6,13 +6,14 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output/printer"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 )
 
-func newConfigCmd(opts *options) *cobra.Command {
+func New(opts *cli.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Read and change saved settings",
@@ -21,31 +22,31 @@ func newConfigCmd(opts *options) *cobra.Command {
 	}
 
 	cmd.AddCommand(
-		newConfigShowCmd(opts),
-		newConfigSetCmd(opts),
-		newConfigUnsetCmd(opts),
-		newConfigPathCmd(opts),
+		newShowCmd(opts),
+		newSetCmd(opts),
+		newUnsetCmd(opts),
+		newPathCmd(opts),
 	)
 	return cmd
 }
 
-func newConfigShowCmd(opts *options) *cobra.Command {
+func newShowCmd(opts *cli.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
 		Short: "Show the effective settings and where each came from",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			views := settingViews(opts.settings)
+			views := settingViews(opts.Settings)
 
-			return opts.out.Print(views, printer.Options{
+			return opts.Out.Print(views, printer.Options{
 				Table: func(table *printer.Table) {
 					for _, view := range views {
 						source := ""
 						if view.Source != "" {
-							source = opts.styles.Muted.Render("(" + view.Source + ")")
+							source = opts.Styles.Muted.Render("(" + view.Source + ")")
 						}
-						table.Row(opts.styles.Label.Render(view.Name),
-							opts.styles.Value.Render(view.Value), source)
+						table.Row(opts.Styles.Label.Render(view.Name),
+							opts.Styles.Value.Render(view.Value), source)
 					}
 				},
 			})
@@ -53,7 +54,7 @@ func newConfigShowCmd(opts *options) *cobra.Command {
 	}
 }
 
-func newConfigSetCmd(opts *options) *cobra.Command {
+func newSetCmd(opts *cli.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Write a setting to the config file",
@@ -63,7 +64,7 @@ func newConfigSetCmd(opts *options) *cobra.Command {
 			"history.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			saved := opts.saved
+			saved := opts.Saved
 			key, value := args[0], strings.TrimSpace(args[1])
 
 			switch key {
@@ -92,18 +93,18 @@ func newConfigSetCmd(opts *options) *cobra.Command {
 				return err
 			}
 
-			return opts.confirm(key, value)
+			return confirm(opts, key, value)
 		},
 	}
 }
 
-func newConfigUnsetCmd(opts *options) *cobra.Command {
+func newUnsetCmd(opts *cli.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "unset <key>",
 		Short: "Remove a setting from the config file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			saved := opts.saved
+			saved := opts.Saved
 
 			switch args[0] {
 			case "server":
@@ -121,14 +122,14 @@ func newConfigUnsetCmd(opts *options) *cobra.Command {
 			if err := config.Save(saved); err != nil {
 				return err
 			}
-			fmt.Fprintf(opts.stdout, "%s %s\n",
-				opts.styles.OK.Render("unset"), opts.styles.Value.Render(args[0]))
+			fmt.Fprintf(opts.Stdout, "%s %s\n",
+				opts.Styles.OK.Render("unset"), opts.Styles.Value.Render(args[0]))
 			return nil
 		},
 	}
 }
 
-func newConfigPathCmd(opts *options) *cobra.Command {
+func newPathCmd(opts *cli.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "path",
 		Short: "Print the config file location",
@@ -140,27 +141,27 @@ func newConfigPathCmd(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(opts.stdout, path)
+			fmt.Fprintln(opts.Stdout, path)
 			return nil
 		},
 	}
 }
 
-func (o *options) confirm(key, value string) error {
-	fmt.Fprintf(o.stdout, "%s %s %s\n",
-		o.styles.OK.Render("set"), o.styles.Label.Render(key), o.styles.Value.Render(value))
+func confirm(o *cli.Options, key, value string) error {
+	fmt.Fprintf(o.Stdout, "%s %s %s\n",
+		o.Styles.OK.Render("set"), o.Styles.Label.Render(key), o.Styles.Value.Render(value))
 
 	var overriding config.Setting
 	switch key {
 	case "server":
-		overriding = o.settings.Server
+		overriding = o.Settings.Server
 	case "theme":
-		overriding = o.settings.Theme
+		overriding = o.Settings.Theme
 	case "output":
-		overriding = o.settings.Output
+		overriding = o.Settings.Output
 	}
 
-	return o.warnOverride(overriding)
+	return o.WarnOverride(overriding)
 }
 
 const defaultContextName = "default"
