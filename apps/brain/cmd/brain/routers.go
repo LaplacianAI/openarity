@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/authconfig"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/docs"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teams"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/whoami"
@@ -16,6 +17,7 @@ func newRouters(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, a
 	routers := []server.Router{
 		whoami.New(logger),
 		teams.New(logger, dbStore, authorizer),
+		authconfig.New(logger, cfg),
 	}
 
 	if cfg.Environment == config.EnvironmentDevelopment {

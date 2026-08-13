@@ -96,3 +96,63 @@ jobs:
 
       - name: Known vulnerabilities
         run: make vuln
+
+  cli:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/cli
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/cli/go.mod
+          cache-dependency-path: apps/cli/go.sum
+
+      # Same reasoning as the brain: the Makefile is the only place a tool
+      # version is written down, so CI and a developer machine cannot drift.
+      - name: Install tools
+        run: |
+          make tools
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Dependencies are tidy
+        run: make tidy-check
+
+      # Regenerates the client from the brain's spec with oapi-codegen and
+      # fails if the committed output differs. This is the job that catches a
+      # spec change landing without the client being rebuilt.
+      - name: Generated code is current
+        run: make generate-check
+
+      - name: Formatting and import order
+        run: make fmt-check
+
+      - name: Vet
+        run: make vet
+
+      - name: Lint
+        run: make lint
+
+      - name: Build
+        run: make build
+
+      # Race detector on; fails below the threshold set in the Makefile. The
+      # generated client is excluded there — counting it measures oapi-codegen.
+      - name: Test and coverage
+        run: make cover
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo '### cli coverage'
+            echo '```'
+            go tool cover -func=coverage.out | tail -20
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Known vulnerabilities
+        run: make vuln
