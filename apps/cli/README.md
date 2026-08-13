@@ -20,23 +20,25 @@ Requires Go 1.26.5. Nothing else — no database, no services.
 ## The gate
 
 ```sh
-make check      # tidy, generate, format, vet, lint, build, race tests
+make check      # tidy, generate, format, vet, lint, build, cover, vuln
 ```
 
-Run it before saying anything is done. CI runs the same thing plus `make cover`
-and `make vuln`, in the `cli` job of
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
+Run it before saying anything is done. It is the same set of steps the `cli`
+job of [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs, in
+the same order, so passing here means passing there.
 
 ```sh
-make cover      # coverage, fails below 70%
-make vuln       # govulncheck
+make cover      # coverage alone, fails below 70%
+make vuln       # govulncheck alone
 make fmt        # apply gofumpt and fix import order
 make tools      # reinstall tooling — rerun after a Go toolchain upgrade
 ```
 
-Coverage excludes `internal/client`. It is roughly two thousand generated lines
-nobody wrote, so counting it measures oapi-codegen rather than this module —
-34.6% with it, 83.8% without.
+Coverage excludes `internal/client` and `internal/clitest` — neither is this
+module's own code. The generated client is roughly two thousand lines nobody
+wrote, so counting it measures oapi-codegen: 34.6% with it, 89.3% without.
+`clitest` is the test harness, and it is well covered enough that counting it
+flatters the total rather than testing anything.
 
 ## The generated client
 

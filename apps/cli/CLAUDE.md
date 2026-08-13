@@ -133,7 +133,7 @@ unreachable from here by construction. The only thing crossing the boundary is
 
 ```sh
 make            # list targets
-make check      # everything CI runs: tidy, generate, format, vet, lint, build, test
+make check      # everything CI runs: tidy, generate, format, vet, lint, build, cover, vuln
 make cover      # coverage, fails below 70%
 make generate   # regenerate the client from the brain's spec
 make install    # put oa on your PATH, at $(go env GOPATH)/bin
@@ -143,9 +143,10 @@ make tools      # reinstall tooling — rerun after a Go upgrade
 
 `make check` is the real gate; run it before saying anything is done.
 
-**Coverage excludes `internal/client`.** It is roughly two thousand generated
-lines nobody wrote, so counting it measures oapi-codegen — 34.6% with it, 83.8%
-without.
+**Coverage excludes `internal/client` and `internal/clitest`.** Neither is this
+module's own code: the generated client is two thousand lines nobody wrote, so
+counting it measures oapi-codegen (34.6% with it, 89.3% without), and `clitest`
+is the test harness, well covered enough that counting it flatters the total.
 
 ## Decisions worth not relitigating
 

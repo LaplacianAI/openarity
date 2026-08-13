@@ -11,9 +11,12 @@ COVER_PROFILE := coverage.out
 COVER_HTML    := coverage.html
 COVER_MIN     := 70
 
-# The generated client is ~2000 lines nobody wrote. Counting it measures
-# oapi-codegen rather than this module, and drags the total from 84% to 35%.
-COVER_PKGS = $(shell $(GO) list ./... | grep -v '/internal/client$$' | paste -sd, -)
+# Two exclusions, for the same reason: neither is this module's own code.
+# The generated client is ~2000 lines nobody wrote — counting it measures
+# oapi-codegen, and drags the total from 84% to 35%. internal/clitest is the
+# test harness; it is well covered, so counting it flatters the number rather
+# than testing anything.
+COVER_PKGS = $(shell $(GO) list ./... | grep -v -e '/internal/client$$' -e '/internal/clitest$$' | paste -sd, -)
 
 
 # Tool versions. CI runs `make tools`, so these are the only place a version
@@ -106,11 +109,11 @@ generate-check: generate
 	fi
 
 ## check: everything CI runs
-check: tidy-check generate-check fmt-check vet lint build test
+check: tidy-check generate-check fmt-check vet lint build cover vuln
 
 ## clean: remove build artefacts
 clean:
 	rm -rf bin $(COVER_PROFILE) $(COVER_HTML)
 	$(GO) clean -testcache
 
-.PHONY: help tools tidy tidy-check fmt fmt-check vet lint test build install generate generate-check check clean
+.PHONY: help tools tidy tidy-check fmt fmt-check vet lint test cover vuln build install generate generate-check check clean
