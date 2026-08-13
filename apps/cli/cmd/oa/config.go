@@ -3,11 +3,12 @@ package main
 import (
 	"fmt"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/output"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/output/printer"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 )
 
@@ -34,20 +35,20 @@ func newConfigShowCmd(opts *options) *cobra.Command {
 		Short: "Show the effective settings and where each came from",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			w := tabwriter.NewWriter(opts.stdout, 0, 0, 2, ' ', 0)
-			defer w.Flush()
+			views := settingViews(opts.settings)
 
-			for _, s := range []config.Setting{
-				opts.settings.Context, opts.settings.Server, opts.settings.Theme, opts.settings.Token,
-			} {
-				source := ""
-				if s.Source != "" {
-					source = opts.styles.Muted.Render("(" + s.Source + ")")
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\n",
-					opts.styles.Label.Render(s.Name), opts.styles.Value.Render(s.Value), source)
-			}
-			return nil
+			return opts.out.Print(views, printer.Options{
+				Table: func(table *printer.Table) {
+					for _, view := range views {
+						source := ""
+						if view.Source != "" {
+							source = opts.styles.Muted.Render("(" + view.Source + ")")
+						}
+						table.Row(opts.styles.Label.Render(view.Name),
+							opts.styles.Value.Render(view.Value), source)
+					}
+				},
+			})
 		},
 	}
 }
@@ -56,7 +57,7 @@ func newConfigSetCmd(opts *options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Write a setting to the config file",
-		Long: "Keys: server, theme.\n\n" +
+		Long: "Keys: server, theme, output.\n\n" +
 			"The token is written by `oa login` rather than by hand, so it is not\n" +
 			"settable here — a credential typed as a shell argument lands in your\n" +
 			"history.",
@@ -77,6 +78,12 @@ func newConfigSetCmd(opts *options) *cobra.Command {
 					return fmt.Errorf("%q is not a theme — use one of %s", value, theme.Names())
 				}
 				saved.Theme = string(chosen)
+			case "output":
+				chosen, ok := output.Parse(value)
+				if !ok {
+					return fmt.Errorf("%q is not an output format — use one of %s", value, output.Names())
+				}
+				saved.Output = string(chosen)
 			default:
 				return fmt.Errorf("unknown setting: %s", key)
 			}
@@ -105,8 +112,10 @@ func newConfigUnsetCmd(opts *options) *cobra.Command {
 				saved.Theme = ""
 			case "token":
 				updateActive(&saved, func(c *config.Context) { c.Token = "" })
+			case "output":
+				saved.Output = ""
 			default:
-				return fmt.Errorf("%q is not a setting — try server, theme or token", args[0])
+				return fmt.Errorf("%q is not a setting — try server, theme, token or output", args[0])
 			}
 
 			if err := config.Save(saved); err != nil {
@@ -147,6 +156,8 @@ func (o *options) confirm(key, value string) error {
 		overriding = o.settings.Server
 	case "theme":
 		overriding = o.settings.Theme
+	case "output":
+		overriding = o.settings.Output
 	}
 
 	return o.warnOverride(overriding)

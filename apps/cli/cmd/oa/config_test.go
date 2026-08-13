@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -142,6 +143,92 @@ func TestUnsetRemovesOnlyItsKey(t *testing.T) {
 	}
 }
 
+func TestSetWritesTheOutputFormat(t *testing.T) {
+	isolate(t)
+
+	if _, err := execute(t, "config", "set", "output", "JSON"); err != nil {
+		t.Fatalf("config set output: %v", err)
+	}
+
+	saved, _ := config.Load()
+	if saved.Output != "json" {
+		t.Errorf("saved output = %q, want it normalised to json", saved.Output)
+	}
+}
+
+// `oa teams list -o jsonl > out.json` succeeding with a table in the file is
+// worse than failing, so the typo has to be refused on the way in.
+func TestSetRefusesAnUnknownOutputFormat(t *testing.T) {
+	isolate(t)
+
+	out, err := execute(t, "config", "set", "output", "jsonl")
+	if err == nil {
+		t.Fatal("an unknown output format was accepted")
+	}
+	if !strings.Contains(out+err.Error(), "jsonl") {
+		t.Errorf("the message does not name the value: %v", err)
+	}
+
+	saved, _ := config.Load()
+	if saved.Output != "" {
+		t.Errorf("a rejected format was written anyway: %q", saved.Output)
+	}
+}
+
+// A format that reached the config file unparsed would fail on every later
+// command, including the one someone runs to find out why.
+func TestASavedFormatIsAlwaysUsable(t *testing.T) {
+	isolate(t)
+
+	seed(t, "config", "set", "output", "yaml")
+
+	if _, err := execute(t, "config", "show"); err != nil {
+		t.Fatalf("a saved format broke the next command: %v", err)
+	}
+}
+
+// An unparseable format is a hard error rather than a silent fall back to the
+// table, unlike theme — a wrong colour still shows the data, a wrong format
+// corrupts a redirect.
+func TestAnUnknownFormatOnTheFlagFails(t *testing.T) {
+	isolate(t)
+
+	if _, err := execute(t, "config", "show", "--output", "jsonn"); err == nil {
+		t.Fatal("an unknown format on the flag was accepted")
+	}
+}
+
+func TestShowListsTheOutputFormat(t *testing.T) {
+	isolate(t)
+
+	out, err := execute(t, "config", "show")
+	if err != nil {
+		t.Fatalf("config show: %v", err)
+	}
+	if !strings.Contains(out, "output") {
+		t.Errorf("config show does not list the output format:\n%s", out)
+	}
+}
+
+func TestUnsetRemovesTheOutputFormat(t *testing.T) {
+	isolate(t)
+
+	seed(t, "config", "set", "output", "json")
+	seed(t, "config", "set", "theme", "dark")
+
+	if _, err := execute(t, "config", "unset", "output"); err != nil {
+		t.Fatalf("config unset output: %v", err)
+	}
+
+	saved, _ := config.Load()
+	if saved.Output != "" {
+		t.Errorf("output survived unset: %q", saved.Output)
+	}
+	if saved.Theme != "dark" {
+		t.Errorf("unset removed the theme too: %+v", saved)
+	}
+}
+
 // The command people run while screen sharing, and paste into issues. The
 // token must never be in it.
 func TestShowNeverPrintsTheToken(t *testing.T) {
@@ -193,6 +280,121 @@ func TestPathPrintsTheFileLocation(t *testing.T) {
 	want, _ := config.Path()
 	if !strings.Contains(out, want) {
 		t.Errorf("config path printed %q, want %q", out, want)
+	}
+}
+
+// The token must be absent from every format, not just the one someone
+// happened to test. A machine format is the one that ends up in a file.
+func TestNoFormatEverPrintsTheToken(t *testing.T) {
+	isolate(t)
+
+	const secret = "oa_live_7f3c9a_do_not_print"
+	t.Setenv("OPENARITY_TOKEN", secret)
+
+	for _, format := range []string{"table", "json", "yaml"} {
+		out, err := execute(t, "config", "show", "-o", format)
+		if err != nil {
+			t.Fatalf("config show -o %s: %v", format, err)
+		}
+		if strings.Contains(out, secret) {
+			t.Errorf("%s printed the token:\n%s", format, out)
+		}
+	}
+}
+
+// `oa config show -o json` is what a script reads, so it has to be a document
+// rather than a table with braces in it.
+func TestShowRendersJSON(t *testing.T) {
+	isolate(t)
+
+	seed(t, "config", "set", "server", "https://brain.example.com")
+
+	out, err := execute(t, "config", "show", "-o", "json")
+	if err != nil {
+		t.Fatalf("config show -o json: %v", err)
+	}
+
+	var got []map[string]string
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("the output is not json: %v\n%s", err, out)
+	}
+
+	found := map[string]string{}
+	for _, one := range got {
+		found[one["name"]] = one["value"]
+	}
+	for _, want := range []string{"context", "server", "theme", "output", "token"} {
+		if _, ok := found[want]; !ok {
+			t.Errorf("the json is missing %q: %v", want, found)
+		}
+	}
+	if found["server"] != "https://brain.example.com" {
+		t.Errorf("server = %q", found["server"])
+	}
+}
+
+// Five settings, each once, in a fixed order. A duplicated entry would print
+// the same row twice and a script reading the array would take the last.
+func TestShowListsEverySettingExactlyOnce(t *testing.T) {
+	isolate(t)
+
+	out, err := execute(t, "config", "show", "-o", "json")
+	if err != nil {
+		t.Fatalf("config show -o json: %v", err)
+	}
+
+	var got []map[string]string
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not json: %v", err)
+	}
+
+	want := []string{"context", "server", "theme", "output", "token"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d settings, want %d: %v", len(got), len(want), got)
+	}
+	for i, name := range want {
+		if got[i]["name"] != name {
+			t.Errorf("setting %d is %q, want %q", i, got[i]["name"], name)
+		}
+	}
+}
+
+// Every setting carries where it came from, and json is where a script would
+// read it to decide whether a value is safe to overwrite.
+func TestShowCarriesTheSourceInJSON(t *testing.T) {
+	isolate(t)
+
+	t.Setenv("OPENARITY_SERVER", "https://from-env.example.com")
+
+	out, err := execute(t, "config", "show", "-o", "json")
+	if err != nil {
+		t.Fatalf("config show -o json: %v", err)
+	}
+
+	var got []map[string]string
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not json: %v", err)
+	}
+
+	for _, one := range got {
+		if one["name"] == "server" && one["source"] != "OPENARITY_SERVER" {
+			t.Errorf("server source = %q, want it to name the variable", one["source"])
+		}
+	}
+}
+
+// Colour would land inside a json string and the consumer would fail to parse.
+func TestNoFormatCarriesEscapeSequences(t *testing.T) {
+	isolate(t)
+
+	for _, format := range []string{"json", "yaml"} {
+		out, err := execute(t, "config", "show", "-o", format)
+		if err != nil {
+			t.Fatalf("config show -o %s: %v", format, err)
+		}
+		if strings.Contains(out, "\x1b") {
+			t.Errorf("%s carries an escape sequence: %q", format, out)
+		}
 	}
 }
 

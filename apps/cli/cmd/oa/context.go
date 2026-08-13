@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/output/printer"
 )
 
 func newContextCmd(opts *options) *cobra.Command {
@@ -35,38 +35,29 @@ func newContextListCmd(opts *options) *cobra.Command {
 		Short:   "List the saved contexts",
 		Args:    cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			names := opts.saved.ContextNames()
-			if len(names) == 0 {
-				fmt.Fprintln(opts.stdout, opts.styles.Muted.Render(
+			views := contextViews(opts.saved)
+			if len(views) == 0 {
+				opts.out.Note(opts.styles.Muted.Render(
 					"no contexts — `oa context create <name> --server <url>`"))
-				return nil
 			}
 
-			w := tabwriter.NewWriter(opts.stdout, 0, 0, 2, ' ', 0)
-			defer w.Flush()
+			return opts.out.Print(views, printer.Options{
+				Table: func(table *printer.Table) {
+					for _, view := range views {
+						marker, name := " ", opts.styles.Value.Render(view.Name)
+						if view.Active {
+							marker, name = opts.styles.OK.Render("*"), opts.styles.Label.Render(view.Name)
+						}
 
-			active := opts.saved.ActiveName()
-			for _, name := range names {
-				saved := opts.saved.Contexts[name]
+						token := "no token"
+						if view.HasToken {
+							token = "token saved"
+						}
 
-				marker, label := " ", opts.styles.Value.Render(name)
-				if name == active {
-					marker, label = opts.styles.OK.Render("*"), opts.styles.Label.Render(name)
-				}
-
-				server := saved.Server
-				if server == "" {
-					server = opts.styles.Muted.Render(config.DefaultServer)
-				}
-
-				token := opts.styles.Muted.Render("no token")
-				if saved.Token != "" {
-					token = opts.styles.Muted.Render("token saved")
-				}
-
-				fmt.Fprintf(w, "%s %s\t%s\t%s\n", marker, label, server, token)
-			}
-			return nil
+						table.Row(marker+" "+name, view.Server, opts.styles.Muted.Render(token))
+					}
+				},
+			})
 		},
 	}
 }

@@ -13,6 +13,8 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/client"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/output"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/output/printer"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/ui"
 )
@@ -23,9 +25,11 @@ type options struct {
 	stdout io.Writer
 	stderr io.Writer
 	styles *ui.Styles
+	out    printer.Printer
 
 	serverFlag     string
 	tokenFlag      string
+	outputFlag     string
 	nonInteractive bool
 
 	saved    config.Config
@@ -52,11 +56,18 @@ func (o *options) load() error {
 	o.saved = saved
 
 	path, _ := config.Path()
-	o.settings = config.Resolve(o.serverFlag, o.tokenFlag, os.Getenv, saved, path)
+	o.settings = config.Resolve(o.serverFlag, o.tokenFlag, o.outputFlag, os.Getenv, saved, path)
 	o.server = o.settings.Server.Value
 
 	chosenTheme, _ := theme.Parse(o.settings.Theme.Value)
 	o.styles = ui.New(o.stdout, chosenTheme)
+
+	chosenOutput, ok := output.Parse(o.settings.Output.Value)
+	if !ok {
+		return fmt.Errorf("%q is not an output format — use one of %s",
+			o.settings.Output.Value, output.Names())
+	}
+	o.out = printer.New(o.stdout, chosenOutput)
 
 	o.bare, err = newClient(o.settings.Server.Value)
 	return err
@@ -96,6 +107,8 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		"the credential to send, instead of the saved one")
 	root.PersistentFlags().BoolVar(&opts.nonInteractive, "non-interactive", false,
 		"never prompt; fail instead of asking")
+	root.PersistentFlags().StringVarP(&opts.outputFlag, "output", "o", "",
+		"how to print results: "+output.Names()+" (default $OPENARITY_OUTPUT, then the saved config, then "+string(output.Default)+")")
 
 	root.AddCommand(
 		newWhoamiCmd(opts),
