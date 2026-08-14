@@ -45,6 +45,13 @@ Do not wait to be asked. These changes make a document wrong:
   README that undersells is fixed by a two-line edit, and nobody is angry.
 - **A new endpoint that is unauthenticated on purpose** → the "things worth
   knowing" list in `SECURITY.md`.
+- **Something starting to be published** — an image, a binary, a package →
+  every sentence telling people to build it themselves. These read as helpful
+  rather than stale, so nothing prompts you to find them; grep for the artifact's
+  name. Do not write the install instructions until the artifact is actually
+  fetchable: a GHCR package is private until its visibility is changed by hand,
+  so a `docker pull` line committed on merge day is wrong for everyone until
+  someone clicks it.
 
 ## Step 3 — verify, do not remember
 

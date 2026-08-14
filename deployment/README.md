@@ -251,6 +251,23 @@ Ingress written against nginx is wrong on Gateway API, and a NetworkPolicy is
 wrong wherever the CNI does not enforce it. They belong in whatever overlay or
 chart wraps these manifests.
 
-The images referenced are `ghcr.io/laplacianai/openarity-brain:latest`. Nothing
-publishes them yet; build and push your own until that exists, and pin a tag
-rather than tracking `latest` once it does.
+## Images
+
+Every push to `main` that touches the brain publishes one, built from the
+`Dockerfile` here by
+[`publish-image.yml`](../.github/workflows/publish-image.yml):
+
+```text
+ghcr.io/laplacianai/openarity-brain:latest
+ghcr.io/laplacianai/openarity-brain:sha-<commit>
+```
+
+**Pin the `sha-` tag in anything you deploy.** `latest` is a moving label — it
+points at a different image tomorrow, which leaves no name for the one that was
+working today. That is the whole reason both tags exist, and it is why
+`k8s/deployment.yaml` referencing `:latest` is a placeholder rather than a
+recommendation.
+
+The workflow publishes and nothing more. It names no host and no environment,
+because which tag a deployment follows, and when it picks one up, belongs to
+whoever runs it.
