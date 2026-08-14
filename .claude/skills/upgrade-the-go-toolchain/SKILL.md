@@ -69,15 +69,21 @@ CONTRIBUTING.md                            the prerequisites table
 apps/brain/README.md                       the prerequisites line
 apps/cli/README.md                         the prerequisites line
 .github/ISSUE_TEMPLATE/bug_report.yml      the environment placeholder
+deployment/Dockerfile                      the golang build-stage base image
 ```
 
 Find them rather than trusting this list, which goes stale the moment a
-document is added — substitute the version you are leaving:
+document is added — substitute the version you are leaving, and do not filter
+by extension, which is how `deployment/Dockerfile` gets missed:
 
 ```sh
-grep -rn '1\.26\.5' --include='*.md' --include='*.yml' --include='go.mod' \
-  --include='go.work' --include='Makefile' . | grep -v node_modules
+grep -rn '1\.26\.5' . --exclude-dir=.git --exclude-dir=node_modules
 ```
+
+The Dockerfile is the one that fails quietly. A `golang:1.26.5-alpine` base
+building a module that requires 1.26.6 does not error — it downloads the newer
+toolchain mid-build, so the image still works while taking longer and pinning
+nothing.
 
 Beware a bare `perl -pi -e` across the whole tree: this file is full of the old
 version as illustration, and rewriting it would make the skill describe an
