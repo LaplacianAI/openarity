@@ -24,14 +24,11 @@ func New(opts *cli.Options) *cobra.Command {
 				return err
 			}
 
-			res, err := api.GetWhoamiWithResponse(cmd.Context())
+			me, err := cli.Result(api.GetWhoamiWithResponse(cmd.Context()))
 			if err != nil {
-				return fmt.Errorf("call %s: %w", opts.Settings.Server.Value, err)
+				return err
 			}
-			if res.JSON200 == nil {
-				return cli.APIError(res.HTTPResponse, res.Body)
-			}
-			return printWhoami(opts, *res.JSON200)
+			return printWhoami(opts, *me)
 		},
 	}
 }

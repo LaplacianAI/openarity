@@ -27,10 +27,7 @@ func New(opts *cli.Options) *cobra.Command {
 }
 
 func newListCmd(opts *cli.Options) *cobra.Command {
-	var (
-		limit  int32
-		cursor string
-	)
+	var paging cli.Paging
 
 	cmd := &cobra.Command{
 		Use:     "list",
@@ -45,53 +42,31 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 				return err
 			}
 
-			params := &client.ListTeamsParams{}
-			if cmd.Flags().Changed("limit") {
-				params.Limit = &limit
-			}
-			if trimmed := strings.TrimSpace(cursor); trimmed != "" {
-				params.Cursor = &trimmed
-			}
-
-			res, err := api.ListTeamsWithResponse(cmd.Context(), params)
+			limit, cursor := paging.Values()
+			page, err := cli.Result(api.ListTeamsWithResponse(cmd.Context(),
+				&client.ListTeamsParams{Limit: limit, Cursor: cursor}))
 			if err != nil {
 				return err
 			}
-			if res.JSON200 == nil {
-				return cli.APIError(res.HTTPResponse, res.Body)
-			}
-			page := *res.JSON200
 
-			if len(page.Items) == 0 {
-				opts.Out.Note(opts.Styles.Muted.Render("no teams"))
-			}
-
-			err = opts.Out.Print(page, printer.Options{
-				Table: func(table *printer.Table) {
-					for _, team := range page.Items {
-						role := opts.Styles.Muted.Render("not a member")
-						if team.Role != nil {
-							role = *team.Role
-						}
-						table.Row(opts.Styles.Value.Render(team.Name), role,
-							opts.Styles.Muted.Render(team.ID.String()))
+			return cli.PrintPage(opts, cli.Page[client.Team]{
+				Items:      page.Items,
+				NextCursor: page.NextCursor,
+				Empty:      "no teams",
+				More:       "oa teams list",
+				Row: func(table *printer.Table, team client.Team) {
+					role := opts.Styles.Muted.Render("not a member")
+					if team.Role != nil {
+						role = *team.Role
 					}
+					table.Row(opts.Styles.Value.Render(team.Name), role,
+						opts.Styles.Muted.Render(team.ID.String()))
 				},
 			})
-			if err != nil {
-				return err
-			}
-
-			if page.NextCursor != nil {
-				opts.Out.Note(opts.Styles.Muted.Render(
-					fmt.Sprintf("more — `oa teams list --cursor %s`", *page.NextCursor)))
-			}
-			return nil
 		},
 	}
 
-	cmd.Flags().Int32Var(&limit, "limit", 0, "rows per page; the brain clamps anything above its maximum")
-	cmd.Flags().StringVar(&cursor, "cursor", "", "an opaque position, taken verbatim from a previous page")
+	paging.Flags(cmd)
 	return cmd
 }
 
@@ -112,15 +87,11 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 				return err
 			}
 
-			res, err := api.CreateTeamWithResponse(cmd.Context(),
-				client.CreateTeamJSONRequestBody{Name: name})
+			team, err := cli.Created(api.CreateTeamWithResponse(cmd.Context(),
+				client.CreateTeamJSONRequestBody{Name: name}))
 			if err != nil {
 				return err
 			}
-			if res.JSON201 == nil {
-				return cli.APIError(res.HTTPResponse, res.Body)
-			}
-			team := *res.JSON201
 
 			return opts.Out.Print(team, printer.Options{
 				Table: func(table *printer.Table) {
