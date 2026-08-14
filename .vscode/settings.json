@@ -1,0 +1,19 @@
+{
+  // Compose defines its own YAML tags for overriding a merged value. They are
+  // valid to `docker compose`, and unknown to a generic YAML schema, which
+  // reports "Unresolved tag: !reset". Declaring them here is what stops the
+  // editor flagging deployment/docker-compose.image.yml.
+  //
+  // Removing the tag is not the fix. Compose merges keys rather than replacing
+  // them, so an override that sets `image:` without resetting `build:` builds
+  // the image locally and tags it with the published name — you would be
+  // testing your own build while believing you were testing what CI produced.
+  "yaml.customTags": [
+    "!reset scalar",
+    "!reset mapping",
+    "!reset sequence",
+    "!override scalar",
+    "!override mapping",
+    "!override sequence"
+  ]
+}

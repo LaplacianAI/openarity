@@ -1,0 +1,37 @@
+# Run the published image instead of compiling one.
+#
+# An override for docker-compose.yml's `brain` profile, which builds from
+# source — right while you are changing the brain, wrong when you want to
+# check what CI actually produced. This runs the same artifact anyone else
+# would pull.
+#
+#   docker compose -f deployment/docker-compose.yml \
+#                  -f deployment/docker-compose.image.yml \
+#                  --profile brain up -d
+#
+# Compose merges the two in order, so everything in docker-compose.yml — the
+# environment, the ports, the healthchecks, the migrate-before-brain ordering
+# — still applies. Only the source of the image changes.
+#
+# The image is multi-architecture, so the same tag works on Apple Silicon, on
+# an ARM server and on x86 without saying which you are.
+
+name: openarity
+
+services:
+  migrate:
+    # `!reset` is required, not tidiness. Compose merges keys rather than
+    # replacing them, so leaving `build:` in place makes it build the image and
+    # then ignore it in favour of the pulled one — a slow no-op that looks
+    # like it worked.
+    build: !reset null
+    image: &image ghcr.io/laplacianai/openarity-brain:${BRAIN_TAG:-latest}
+    # Never skip a pull for a moving tag. `latest` points somewhere new after
+    # every merge, and a cached copy of an older one is indistinguishable from
+    # the current one until something behaves oddly.
+    pull_policy: always
+
+  brain:
+    build: !reset null
+    image: *image
+    pull_policy: always
