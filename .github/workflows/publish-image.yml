@@ -60,6 +60,11 @@ jobs:
           # of deployment/ cannot see it.
           context: .
           file: deployment/Dockerfile
+          # Apple Silicon, Raspberry Pis and ARM cloud instances are most of
+          # self-hosting now, and an amd64-only image simply does not start on
+          # any of them. The Dockerfile cross-compiles rather than emulating,
+          # so the second architecture costs a compile, not a QEMU run.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
