@@ -1413,3 +1413,41 @@ func makeTeams(n int) []db.Team {
 	}
 	return teams
 }
+
+// A super admin sees every team, their own included. Leaving the role off
+// there is invisible from the API alone and obvious from the CLI: `oa teams
+// list` printed "not a member" for a team `oa whoami` reported the same caller
+// as an admin of. Found the first time a real OIDC token reached the API.
+func TestListGivesASuperAdminTheirOwnRole(t *testing.T) {
+	t.Parallel()
+
+	mine, theirs := uuid.New(), uuid.New()
+	s := &fakeStore{teams: []db.Team{
+		{ID: mine, Name: "platform", CreatedAt: time.Unix(200, 0)},
+		{ID: theirs, Name: "payments", CreatedAt: time.Unix(100, 0)},
+	}}
+
+	rec := call(t, s, &fakeAuthz{super: true}, memberOf(mine, "admin"), http.MethodGet, "/teams", "")
+	got := teamsPage(t, rec)
+
+	if len(got.Items) != 2 {
+		t.Fatalf("got %d teams, want 2", len(got.Items))
+	}
+
+	roles := make(map[uuid.UUID]*string, len(got.Items))
+	for _, tm := range got.Items {
+		roles[tm.ID] = tm.Role
+	}
+
+	if roles[mine] == nil {
+		t.Error("the caller's own team carries no role, so a client cannot tell it apart from one they only administer")
+	} else if *roles[mine] != "admin" {
+		t.Errorf("Role = %q for the caller's own team, want admin", *roles[mine])
+	}
+
+	// The other half of the contract: a role that is not there must stay
+	// absent rather than becoming an empty string.
+	if roles[theirs] != nil {
+		t.Errorf("Role = %q for a team the caller does not belong to", *roles[theirs])
+	}
+}

@@ -126,7 +126,13 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 
 	page, err := api.MapPage(rows, limit,
 		func(row db.Team) any { return teamCursor{CreatedAt: row.CreatedAt, ID: row.ID} },
-		func(row db.Team) team { return team{ID: row.ID, Name: row.Name} },
+		func(row db.Team) team {
+			t := team{ID: row.ID, Name: row.Name}
+			if role, ok := u.RoleIn(row.ID); ok {
+				t.Role = &role
+			}
+			return t
+		},
 	)
 	if err != nil {
 		h.fail(w, u, "failed to page teams", err)
