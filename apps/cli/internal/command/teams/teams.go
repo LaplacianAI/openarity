@@ -22,6 +22,7 @@ func New(opts *cli.Options) *cobra.Command {
 	cmd.AddCommand(
 		newListCmd(opts),
 		newCreateCmd(opts),
+		newMembersCmd(opts),
 	)
 	return cmd
 }

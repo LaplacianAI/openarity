@@ -308,7 +308,7 @@ func TestEveryTeamsSubcommandIsRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("teams --help: %v", err)
 	}
-	for _, verb := range []string{"list", "create"} {
+	for _, verb := range []string{"list", "create", "members"} {
 		if !strings.Contains(out, verb) {
 			t.Errorf("%q is not registered:\n%s", verb, out)
 		}
