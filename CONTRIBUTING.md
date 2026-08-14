@@ -11,7 +11,7 @@ about to change.
 
 | Tool     | Version | Notes                                                  |
 | -------- | ------- | ------------------------------------------------------ |
-| Go       | 1.26.5  | pinned by `go.work` and each app's `go.mod`            |
+| Go       | 1.26.6  | pinned by `go.work` and each app's `go.mod`            |
 | make     | any     |                                                        |
 | Postgres | 13+     | optional — database tests skip without one; CI runs 18 |
 
