@@ -4,6 +4,27 @@ Nothing here is required to develop the brain — `go run ./cmd/brain` against a
 local Postgres is enough. These files exist so the dependencies are reproducible
 and so a deployment is a starting point rather than a blank page.
 
+## Commands
+
+The compose invocations below are long enough to be retyped wrongly, so the
+combinations that make sense have names:
+
+```sh
+cd deployment
+make            # list targets
+make up         # dependencies only — the normal loop, brain on your machine
+make dev        # and the brain, built from your working tree
+make image      # and the brain, from the image CI published
+make staging    # image plus authentik: OIDC only, no development token
+make ps         # what is running, and on which ports
+make logs       # follow the brain; make logs service=authentik-server
+make down       # stop everything, keeping the data
+make destroy    # and delete every volume
+```
+
+The raw commands still work and are what the rest of this file shows, because
+the flags are the explanation.
+
 ## Local development
 
 ```sh
