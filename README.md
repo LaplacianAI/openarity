@@ -73,7 +73,7 @@ against a real provider yet — that is next.
 
 ## Quick start
 
-Requires Go 1.26.5 and a Postgres 13 or newer you can reach. CI runs against
+Requires Go 1.26.6 and a Postgres 13 or newer you can reach. CI runs against
 Postgres 18.
 
 ```sh

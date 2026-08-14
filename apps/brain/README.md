@@ -13,7 +13,7 @@ make run        # sources .env if present, Ctrl-C to shut down gracefully
 make build      # compile into ./bin
 ```
 
-Requires Go 1.26.5 and a Postgres 13 or newer. CI runs against Postgres 18.
+Requires Go 1.26.6 and a Postgres 13 or newer. CI runs against Postgres 18.
 
 `make run` needs a database and a way to authenticate callers. The service
 refuses to start with no authentication configured rather than serving an open

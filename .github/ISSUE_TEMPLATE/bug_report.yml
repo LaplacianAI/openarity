@@ -78,7 +78,7 @@ body:
       description: >-
         OS and Go version. Add the Postgres version for a brain bug, and the
         terminal and value of $TERM for anything about what `oa` prints.
-      placeholder: macOS 15.1, go1.26.5, Postgres 18, iTerm2 xterm-256color
+      placeholder: macOS 15.1, go1.26.6, Postgres 18, iTerm2 xterm-256color
     validations:
       required: true
 

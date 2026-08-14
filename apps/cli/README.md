@@ -15,7 +15,7 @@ make build      # or just compile into ./bin
 oa --help
 ```
 
-Requires Go 1.26.5. Nothing else — no database, no services.
+Requires Go 1.26.6. Nothing else — no database, no services.
 
 ## The gate
 
