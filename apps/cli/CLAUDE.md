@@ -30,10 +30,11 @@ production files.
 
 ## Skills
 
-- **`add-command`** — every new command and subcommand. Covers the file, the
-  `newXCmd(opts *options)` constructor, registering it, the view type, printing
-  through `opts.out`, and the tests. Use it every time; a command that is built
-  and never registered passes every test written about its body.
+- **`add-command`** — every new command and subcommand. Covers the package, the
+  `newXCmd(opts *cli.Options)` constructor, registering it, unwrapping the
+  generated call, the view type, printing through `opts.Out`, paging, and the
+  tests. Use it every time; a subcommand that is built and never registered
+  passes every test written about its body.
 - **`add-setting`** — every new thing the CLI remembers. Covers the `Config`
   field, `Resolve` and its precedence, `config set`/`unset`/`show`, and whether
   it belongs at the top level or inside a context. Use it every time; a setting
@@ -55,13 +56,18 @@ production files.
 ```text
 apps/cli/
   cmd/oa/
-    main.go            main(), and the error printer
-    root.go            the root command, options, load(), api()
-    config.go          oa config show|set|unset|path
-    context.go         oa context list|use|create|rename|delete
-    whoami.go          oa whoami
-    views.go           the shapes commands print
-    response.go        turning an HTTP response into a sentence
+    main.go            main(), the command list, and the error printer
+  internal/cli/
+    root.go            the root command and its persistent flags
+    options.go         Options — the whole surface a command may reach
+    response.go        Result, Created, NoContent: a call becomes a value
+    page.go            Paging and PrintPage: a page becomes a table
+    args.go            ParseUUID
+  internal/command/
+    whoami/            oa whoami
+    config/            oa config show|set|unset|path
+    context/           oa context list|use|create|rename|delete
+    teams/             oa teams list|create, oa teams members list|add|remove
   internal/theme/      what a theme is — one Parse, zero dependencies
   internal/output/     what a format is
     printer/           how a value is rendered: json, yaml, table
@@ -69,13 +75,21 @@ apps/cli/
   internal/auth/       which credential to send, and to whom
   internal/ui/         colours, and whether the writer is a terminal
   internal/client/     generated from the brain's spec — never edited
+  internal/clitest/    an isolated config directory and a stub brain
   Makefile             build and code quality targets
   .golangci.yml        linters and formatters
 ```
 
-`cmd/oa` is the composition root and the only place that knows every
-dependency. `internal/output` never learns what a context is; `internal/theme`
-imports nothing but `strings`.
+`cmd/oa` is the composition root and the only place that knows every command.
+One package per command, so `ls internal/command/` names them. `internal/cli`
+is what a command may reach and the whole of it; `internal/output` never learns
+what a context is; `internal/theme` imports nothing but `strings`.
+
+`clitest` takes the command list as a parameter rather than importing the
+packages that build it — every command package's test imports `clitest`, so the
+other direction is a cycle. The cost is that it cannot prove a command is
+registered on the real root; `TestEveryCommandIsRegistered` in `cmd/oa` is what
+covers that.
 
 Each app in the monorepo is a separate Go module, so `apps/brain/internal/` is
 unreachable from here by construction. The only thing crossing the boundary is
@@ -99,7 +113,22 @@ unreachable from here by construction. The only thing crossing the boundary is
   `auto` hides the mistake in the one command they ran to find it.
 - **A bad output format is a hard error; a bad theme is not.** A wrong colour
   still shows the data. A table written into a file that expected JSON does not.
-- **Every command prints through `opts.out`, never `fmt.Fprintln(opts.stdout)`.**
+- **A generated call is unwrapped in one line, never six.** `cli.Result`,
+  `cli.Created` and `cli.NoContent` take the call whole —
+  `page, err := cli.Result(api.ListTeamsWithResponse(ctx, params))` — and hand
+  back the body or a sentence. Three functions because the field the generated
+  code fills is part of the type: a 201 has `GetJSON201`, and a 204 has no
+  `JSONxxx` field at all, so its status is the only thing that says it worked.
+- **A list command owns its rows and nothing else.** `cli.Paging` declares
+  `--limit` and `--cursor`; `cli.PrintPage` prints the envelope, the note when
+  it is empty, and the hint that names the next page. What is left is `Row`.
+  A limit of zero is never sent — the brain refuses it, so the flag's own
+  default has to mean unspecified.
+- **`PrintPage` prints its own envelope type, not the client's.** The generated
+  page types carry no yaml tags and `yaml.v3` lowercases a field name, so
+  printing them directly spells it `nextcursor` — one name in json and another
+  in yaml for the same field, and differently again per collection.
+- **Every command prints through `opts.Out`, never `fmt.Fprintln(opts.Stdout)`.**
   The exception is a hint, which goes through `Note` — it reaches a person and
   is silent under json and yaml, so a consumer never sees prose before the
   document.
@@ -133,7 +162,7 @@ unreachable from here by construction. The only thing crossing the boundary is
 
 ```sh
 make            # list targets
-make check      # everything CI runs: tidy, generate, format, vet, lint, build, test
+make check      # everything CI runs: tidy, generate, format, vet, lint, build, cover, vuln
 make cover      # coverage, fails below 70%
 make generate   # regenerate the client from the brain's spec
 make install    # put oa on your PATH, at $(go env GOPATH)/bin
@@ -143,9 +172,10 @@ make tools      # reinstall tooling — rerun after a Go upgrade
 
 `make check` is the real gate; run it before saying anything is done.
 
-**Coverage excludes `internal/client`.** It is roughly two thousand generated
-lines nobody wrote, so counting it measures oapi-codegen — 34.6% with it, 83.8%
-without.
+**Coverage excludes `internal/client` and `internal/clitest`.** Neither is this
+module's own code: the generated client is two thousand lines nobody wrote, so
+counting it measures oapi-codegen (34.6% with it, 89.3% without), and `clitest`
+is the test harness, well covered enough that counting it flatters the total.
 
 ## Decisions worth not relitigating
 

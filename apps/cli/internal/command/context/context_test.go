@@ -1,19 +1,26 @@
-package main
+package context
 
 import (
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
+	cmdconfig "github.com/LaplacianAI/openarity/apps/cli/internal/command/config"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
 )
+
+// Two commands, because several of these assert through `oa config` —
+// `config set server` writes to the active context, and `config show`
+// resolves it. That coupling is the behaviour under test.
+var commands = []clitest.Build{New, cmdconfig.New}
 
 // No command writes a token yet — `oa login` will — so a test that needs one
 // puts it in the file directly.
 func seedContext(t *testing.T, name, server, token string) {
 	t.Helper()
 
-	seed(t, "context", "create", name, "--server", server)
+	clitest.Seed(t, commands, "context", "create", name, "--server", server)
 
 	saved, err := config.Load()
 	if err != nil {
@@ -27,9 +34,9 @@ func seedContext(t *testing.T, name, server, token string) {
 }
 
 func TestCreateSwitchesToTheNewContext(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "staging", "--server", "https://staging.example.com")
+	clitest.Seed(t, commands, "context", "create", "staging", "--server", "https://staging.example.com")
 
 	saved, _ := config.Load()
 	if saved.ActiveName() != "staging" {
@@ -43,10 +50,10 @@ func TestCreateSwitchesToTheNewContext(t *testing.T) {
 // The whole reason contexts exist: two brains, two addresses, neither
 // overwriting the other. `config set server` alone could never do this.
 func TestContextsDoNotOverwriteEachOther(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
-	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+	clitest.Seed(t, commands, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	clitest.Seed(t, commands, "context", "create", "prod", "--server", "https://brain.example.com")
 
 	saved, _ := config.Load()
 	if got := saved.Contexts["local"].Server; got != "http://127.0.0.1:21120" {
@@ -60,11 +67,11 @@ func TestContextsDoNotOverwriteEachOther(t *testing.T) {
 // `config set server` edits the active context, not a global. Writing it while
 // prod is active must not reach local.
 func TestSetServerOnlyTouchesTheActiveContext(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
-	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
-	seed(t, "config", "set", "server", "https://elsewhere.example.com")
+	clitest.Seed(t, commands, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	clitest.Seed(t, commands, "context", "create", "prod", "--server", "https://brain.example.com")
+	clitest.Seed(t, commands, "config", "set", "server", "https://elsewhere.example.com")
 
 	saved, _ := config.Load()
 	if got := saved.Contexts["local"].Server; got != "http://127.0.0.1:21120" {
@@ -78,11 +85,11 @@ func TestSetServerOnlyTouchesTheActiveContext(t *testing.T) {
 // Silently replacing one would discard a credential, and the message would say
 // it succeeded.
 func TestCreateRefusesAnExistingName(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+	clitest.Seed(t, commands, "context", "create", "prod", "--server", "https://brain.example.com")
 
-	out, err := execute(t, "context", "create", "prod", "--server", "https://other.example.com")
+	out, err := clitest.Execute(t, commands, "context", "create", "prod", "--server", "https://other.example.com")
 	if err == nil {
 		t.Fatal("a duplicate name was accepted")
 	}
@@ -100,13 +107,13 @@ func TestCreateRefusesAnExistingName(t *testing.T) {
 // with the flag mistyped would make something named prod that talks to
 // localhost. Both the missing flag and an empty value have to be refused.
 func TestCreateRequiresAServer(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
 	for _, args := range [][]string{
 		{"context", "create", "prod"},
 		{"context", "create", "prod", "--server", "  "},
 	} {
-		if _, err := execute(t, args...); err == nil {
+		if _, err := clitest.Execute(t, commands, args...); err == nil {
 			t.Errorf("%v was accepted with no address", args)
 		}
 	}
@@ -118,13 +125,13 @@ func TestCreateRequiresAServer(t *testing.T) {
 }
 
 func TestUseSwitchesTheActiveContext(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
-	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
-	seed(t, "context", "use", "local")
+	clitest.Seed(t, commands, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	clitest.Seed(t, commands, "context", "create", "prod", "--server", "https://brain.example.com")
+	clitest.Seed(t, commands, "context", "use", "local")
 
-	out, err := execute(t, "config", "show")
+	out, err := clitest.Execute(t, commands, "config", "show")
 	if err != nil {
 		t.Fatalf("config show: %v", err)
 	}
@@ -136,11 +143,11 @@ func TestUseSwitchesTheActiveContext(t *testing.T) {
 // A typo here would otherwise write Current pointing at nothing, and every
 // later command would quietly fall back to the built-in address.
 func TestUseRefusesAnUnknownContext(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+	clitest.Seed(t, commands, "context", "create", "prod", "--server", "https://brain.example.com")
 
-	out, err := execute(t, "context", "use", "prd")
+	out, err := clitest.Execute(t, commands, "context", "use", "prd")
 	if err == nil {
 		t.Fatal("an unknown context was accepted")
 	}
@@ -157,12 +164,12 @@ func TestUseRefusesAnUnknownContext(t *testing.T) {
 // The whole reason rename exists rather than delete-then-create: the token
 // has to survive, or renaming costs you a login.
 func TestRenameKeepsTheAddressAndTheToken(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
 	const secret = "oa_live_7f3c9a_keep_me"
 	seedContext(t, "staging", "https://staging.example.com", secret)
 
-	seed(t, "context", "rename", "staging", "preprod")
+	clitest.Seed(t, commands, "context", "rename", "staging", "preprod")
 
 	saved, _ := config.Load()
 	if _, ok := saved.Contexts["staging"]; ok {
@@ -181,11 +188,11 @@ func TestRenameKeepsTheAddressAndTheToken(t *testing.T) {
 // Renaming the active one must carry Current with it, or the rename silently
 // deactivates the context you were working in.
 func TestRenameFollowsTheActiveContext(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
-	seed(t, "context", "create", "staging", "--server", "https://staging.example.com")
-	seed(t, "context", "rename", "staging", "preprod")
+	clitest.Seed(t, commands, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	clitest.Seed(t, commands, "context", "create", "staging", "--server", "https://staging.example.com")
+	clitest.Seed(t, commands, "context", "rename", "staging", "preprod")
 
 	saved, _ := config.Load()
 	if saved.ActiveName() != "preprod" {
@@ -196,12 +203,12 @@ func TestRenameFollowsTheActiveContext(t *testing.T) {
 // Renaming onto a name in use would overwrite that context and its token,
 // while reporting success.
 func TestRenameRefusesAnExistingName(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
 	seedContext(t, "prod", "https://brain.example.com", "oa_live_prod")
-	seed(t, "context", "create", "staging", "--server", "https://staging.example.com")
+	clitest.Seed(t, commands, "context", "create", "staging", "--server", "https://staging.example.com")
 
-	if _, err := execute(t, "context", "rename", "staging", "prod"); err == nil {
+	if _, err := clitest.Execute(t, commands, "context", "rename", "staging", "prod"); err == nil {
 		t.Fatal("a rename onto an existing context was accepted")
 	}
 
@@ -215,22 +222,22 @@ func TestRenameRefusesAnExistingName(t *testing.T) {
 }
 
 func TestRenameRefusesAnUnknownContext(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+	clitest.Seed(t, commands, "context", "create", "prod", "--server", "https://brain.example.com")
 
-	if _, err := execute(t, "context", "rename", "prd", "production"); err == nil {
+	if _, err := clitest.Execute(t, commands, "context", "rename", "prd", "production"); err == nil {
 		t.Fatal("renaming a context that does not exist reported success")
 	}
 }
 
 func TestRenameRefusesAnUnusableName(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
 	seedContext(t, "prod", "https://brain.example.com", "oa_live_prod")
 
 	for _, to := range []string{"", "  ", "two words"} {
-		if _, err := execute(t, "context", "rename", "prod", to); err == nil {
+		if _, err := clitest.Execute(t, commands, "context", "rename", "prod", to); err == nil {
 			t.Errorf("%q was accepted as a name", to)
 		}
 	}
@@ -242,11 +249,11 @@ func TestRenameRefusesAnUnusableName(t *testing.T) {
 }
 
 func TestDeleteRemovesTheContext(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
-	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
-	seed(t, "context", "delete", "prod")
+	clitest.Seed(t, commands, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	clitest.Seed(t, commands, "context", "create", "prod", "--server", "https://brain.example.com")
+	clitest.Seed(t, commands, "context", "delete", "prod")
 
 	saved, _ := config.Load()
 	if _, ok := saved.Contexts["prod"]; ok {
@@ -261,11 +268,11 @@ func TestDeleteRemovesTheContext(t *testing.T) {
 // gone — a dangling pointer resolves to the built-in address, so the next
 // command goes somewhere nobody asked for.
 func TestDeletingTheActiveContextLeavesNoDanglingPointer(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
-	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
-	seed(t, "context", "delete", "prod")
+	clitest.Seed(t, commands, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	clitest.Seed(t, commands, "context", "create", "prod", "--server", "https://brain.example.com")
+	clitest.Seed(t, commands, "context", "delete", "prod")
 
 	saved, _ := config.Load()
 	if saved.Current == "prod" {
@@ -279,12 +286,12 @@ func TestDeletingTheActiveContextLeavesNoDanglingPointer(t *testing.T) {
 // The credential is the point. A deleted context that leaves its token in the
 // file is a secret nobody believes is still there.
 func TestDeleteTakesTheTokenWithIt(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
 	const secret = "oa_live_7f3c9a_do_not_keep"
 	seedContext(t, "prod", "https://brain.example.com", secret)
 
-	seed(t, "context", "delete", "prod")
+	clitest.Seed(t, commands, "context", "delete", "prod")
 
 	path, _ := config.Path()
 	data, err := os.ReadFile(path)
@@ -297,20 +304,20 @@ func TestDeleteTakesTheTokenWithIt(t *testing.T) {
 }
 
 func TestDeleteRefusesAnUnknownContext(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	if _, err := execute(t, "context", "delete", "prod"); err == nil {
+	if _, err := clitest.Execute(t, commands, "context", "delete", "prod"); err == nil {
 		t.Fatal("deleting a context that does not exist reported success")
 	}
 }
 
 func TestListMarksTheActiveContext(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
-	seed(t, "context", "create", "prod", "--server", "https://brain.example.com")
+	clitest.Seed(t, commands, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	clitest.Seed(t, commands, "context", "create", "prod", "--server", "https://brain.example.com")
 
-	out, err := execute(t, "context", "list")
+	out, err := clitest.Execute(t, commands, "context", "list")
 	if err != nil {
 		t.Fatalf("context list: %v", err)
 	}
@@ -329,12 +336,12 @@ func TestListMarksTheActiveContext(t *testing.T) {
 
 // `oa context list` must never be the command that prints a credential.
 func TestListNeverPrintsTheToken(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
 	const secret = "oa_live_7f3c9a_do_not_print"
 	seedContext(t, "prod", "https://brain.example.com", secret)
 
-	out, err := execute(t, "context", "list")
+	out, err := clitest.Execute(t, commands, "context", "list")
 	if err != nil {
 		t.Fatalf("context list: %v", err)
 	}
@@ -347,9 +354,9 @@ func TestListNeverPrintsTheToken(t *testing.T) {
 }
 
 func TestEveryContextSubcommandIsRegistered(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	out, err := execute(t, "context", "--help")
+	out, err := clitest.Execute(t, commands, "context", "--help")
 	if err != nil {
 		t.Fatalf("context --help: %v", err)
 	}

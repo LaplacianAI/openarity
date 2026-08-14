@@ -1,54 +1,21 @@
-package main
+package config
 
 import (
-	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
 )
 
-// These write a real file, so each gets its own config directory. That reads
-// the environment, which is why they cannot be t.Parallel().
-func isolate(t *testing.T) {
-	t.Helper()
-
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("HOME", dir) // macOS ignores XDG_CONFIG_HOME
-}
-
-// execute drives the whole binary the way a shell does, so a command that is
-// built but never registered fails here rather than passing every test
-// written about its body.
-func execute(t *testing.T, args ...string) (string, error) {
-	t.Helper()
-
-	var out bytes.Buffer
-	root := newRootCmd(&out, &out)
-	root.SetArgs(args)
-	root.SetOut(&out)
-	root.SetErr(&out)
-
-	err := root.ExecuteContext(t.Context())
-	return out.String(), err
-}
-
-// seed runs a command whose failure would make the assertion below
-// meaningless rather than merely wrong.
-func seed(t *testing.T, args ...string) {
-	t.Helper()
-
-	if _, err := execute(t, args...); err != nil {
-		t.Fatalf("%v: %v", args, err)
-	}
-}
+// The root these tests drive.
+var commands = []clitest.Build{New}
 
 func TestSetWritesTheServer(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	if _, err := execute(t, "config", "set", "server", "https://brain.example.com"); err != nil {
+	if _, err := clitest.Execute(t, commands, "config", "set", "server", "https://brain.example.com"); err != nil {
 		t.Fatalf("config set server: %v", err)
 	}
 
@@ -64,9 +31,9 @@ func TestSetWritesTheServer(t *testing.T) {
 // A typo must be refused on the way in. Saved happily, it would sit there
 // being silently ignored on every run with nothing saying why.
 func TestSetRefusesAnUnknownTheme(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	out, err := execute(t, "config", "set", "theme", "solarized")
+	out, err := clitest.Execute(t, commands, "config", "set", "theme", "solarized")
 	if err == nil {
 		t.Fatal("an unknown theme was accepted")
 	}
@@ -81,9 +48,9 @@ func TestSetRefusesAnUnknownTheme(t *testing.T) {
 }
 
 func TestSetWritesAValidTheme(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	if _, err := execute(t, "config", "set", "theme", "DARK"); err != nil {
+	if _, err := clitest.Execute(t, commands, "config", "set", "theme", "DARK"); err != nil {
 		t.Fatalf("config set theme: %v", err)
 	}
 
@@ -96,9 +63,9 @@ func TestSetWritesAValidTheme(t *testing.T) {
 // An unknown key is a typo, not a new setting. Accepting it would write a
 // file that silently does nothing.
 func TestSetRefusesAnUnknownKey(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	if _, err := execute(t, "config", "set", "colour", "red"); err == nil {
+	if _, err := clitest.Execute(t, commands, "config", "set", "colour", "red"); err == nil {
 		t.Fatal("an unknown key was accepted")
 	}
 }
@@ -106,12 +73,12 @@ func TestSetRefusesAnUnknownKey(t *testing.T) {
 // Setting one value must not drop the others. Writing the whole struct from a
 // zero value is the obvious way to get this wrong.
 func TestSetKeepsTheOtherValues(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	if _, err := execute(t, "config", "set", "server", "https://brain.example.com"); err != nil {
+	if _, err := clitest.Execute(t, commands, "config", "set", "server", "https://brain.example.com"); err != nil {
 		t.Fatalf("set server: %v", err)
 	}
-	if _, err := execute(t, "config", "set", "theme", "light"); err != nil {
+	if _, err := clitest.Execute(t, commands, "config", "set", "theme", "light"); err != nil {
 		t.Fatalf("set theme: %v", err)
 	}
 
@@ -125,12 +92,12 @@ func TestSetKeepsTheOtherValues(t *testing.T) {
 }
 
 func TestUnsetRemovesOnlyItsKey(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "config", "set", "server", "https://brain.example.com")
-	seed(t, "config", "set", "theme", "dark")
+	clitest.Seed(t, commands, "config", "set", "server", "https://brain.example.com")
+	clitest.Seed(t, commands, "config", "set", "theme", "dark")
 
-	if _, err := execute(t, "config", "unset", "theme"); err != nil {
+	if _, err := clitest.Execute(t, commands, "config", "unset", "theme"); err != nil {
 		t.Fatalf("config unset: %v", err)
 	}
 
@@ -144,9 +111,9 @@ func TestUnsetRemovesOnlyItsKey(t *testing.T) {
 }
 
 func TestSetWritesTheOutputFormat(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	if _, err := execute(t, "config", "set", "output", "JSON"); err != nil {
+	if _, err := clitest.Execute(t, commands, "config", "set", "output", "JSON"); err != nil {
 		t.Fatalf("config set output: %v", err)
 	}
 
@@ -159,9 +126,9 @@ func TestSetWritesTheOutputFormat(t *testing.T) {
 // `oa teams list -o jsonl > out.json` succeeding with a table in the file is
 // worse than failing, so the typo has to be refused on the way in.
 func TestSetRefusesAnUnknownOutputFormat(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	out, err := execute(t, "config", "set", "output", "jsonl")
+	out, err := clitest.Execute(t, commands, "config", "set", "output", "jsonl")
 	if err == nil {
 		t.Fatal("an unknown output format was accepted")
 	}
@@ -178,11 +145,11 @@ func TestSetRefusesAnUnknownOutputFormat(t *testing.T) {
 // A format that reached the config file unparsed would fail on every later
 // command, including the one someone runs to find out why.
 func TestASavedFormatIsAlwaysUsable(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "config", "set", "output", "yaml")
+	clitest.Seed(t, commands, "config", "set", "output", "yaml")
 
-	if _, err := execute(t, "config", "show"); err != nil {
+	if _, err := clitest.Execute(t, commands, "config", "show"); err != nil {
 		t.Fatalf("a saved format broke the next command: %v", err)
 	}
 }
@@ -191,17 +158,17 @@ func TestASavedFormatIsAlwaysUsable(t *testing.T) {
 // table, unlike theme — a wrong colour still shows the data, a wrong format
 // corrupts a redirect.
 func TestAnUnknownFormatOnTheFlagFails(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	if _, err := execute(t, "config", "show", "--output", "jsonn"); err == nil {
+	if _, err := clitest.Execute(t, commands, "config", "show", "--output", "jsonn"); err == nil {
 		t.Fatal("an unknown format on the flag was accepted")
 	}
 }
 
 func TestShowListsTheOutputFormat(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	out, err := execute(t, "config", "show")
+	out, err := clitest.Execute(t, commands, "config", "show")
 	if err != nil {
 		t.Fatalf("config show: %v", err)
 	}
@@ -211,12 +178,12 @@ func TestShowListsTheOutputFormat(t *testing.T) {
 }
 
 func TestUnsetRemovesTheOutputFormat(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "config", "set", "output", "json")
-	seed(t, "config", "set", "theme", "dark")
+	clitest.Seed(t, commands, "config", "set", "output", "json")
+	clitest.Seed(t, commands, "config", "set", "theme", "dark")
 
-	if _, err := execute(t, "config", "unset", "output"); err != nil {
+	if _, err := clitest.Execute(t, commands, "config", "unset", "output"); err != nil {
 		t.Fatalf("config unset output: %v", err)
 	}
 
@@ -232,12 +199,12 @@ func TestUnsetRemovesTheOutputFormat(t *testing.T) {
 // The command people run while screen sharing, and paste into issues. The
 // token must never be in it.
 func TestShowNeverPrintsTheToken(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
 	const secret = "oa_live_7f3c9a_do_not_print"
 	t.Setenv("OPENARITY_TOKEN", secret)
 
-	out, err := execute(t, "config", "show")
+	out, err := clitest.Execute(t, commands, "config", "show")
 	if err != nil {
 		t.Fatalf("config show: %v", err)
 	}
@@ -252,12 +219,12 @@ func TestShowNeverPrintsTheToken(t *testing.T) {
 // With four places to set one value, "I set it and it did not take" is
 // unanswerable without saying which one won.
 func TestShowNamesTheSource(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
 	t.Setenv("OPENARITY_SERVER", "https://from-env.example.com")
-	seed(t, "config", "set", "server", "https://from-file.example.com")
+	clitest.Seed(t, commands, "config", "set", "server", "https://from-file.example.com")
 
-	out, err := execute(t, "config", "show")
+	out, err := clitest.Execute(t, commands, "config", "show")
 	if err != nil {
 		t.Fatalf("config show: %v", err)
 	}
@@ -270,9 +237,9 @@ func TestShowNamesTheSource(t *testing.T) {
 }
 
 func TestPathPrintsTheFileLocation(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	out, err := execute(t, "config", "path")
+	out, err := clitest.Execute(t, commands, "config", "path")
 	if err != nil {
 		t.Fatalf("config path: %v", err)
 	}
@@ -286,13 +253,13 @@ func TestPathPrintsTheFileLocation(t *testing.T) {
 // The token must be absent from every format, not just the one someone
 // happened to test. A machine format is the one that ends up in a file.
 func TestNoFormatEverPrintsTheToken(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
 	const secret = "oa_live_7f3c9a_do_not_print"
 	t.Setenv("OPENARITY_TOKEN", secret)
 
 	for _, format := range []string{"table", "json", "yaml"} {
-		out, err := execute(t, "config", "show", "-o", format)
+		out, err := clitest.Execute(t, commands, "config", "show", "-o", format)
 		if err != nil {
 			t.Fatalf("config show -o %s: %v", format, err)
 		}
@@ -305,11 +272,11 @@ func TestNoFormatEverPrintsTheToken(t *testing.T) {
 // `oa config show -o json` is what a script reads, so it has to be a document
 // rather than a table with braces in it.
 func TestShowRendersJSON(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "config", "set", "server", "https://brain.example.com")
+	clitest.Seed(t, commands, "config", "set", "server", "https://brain.example.com")
 
-	out, err := execute(t, "config", "show", "-o", "json")
+	out, err := clitest.Execute(t, commands, "config", "show", "-o", "json")
 	if err != nil {
 		t.Fatalf("config show -o json: %v", err)
 	}
@@ -336,9 +303,9 @@ func TestShowRendersJSON(t *testing.T) {
 // Five settings, each once, in a fixed order. A duplicated entry would print
 // the same row twice and a script reading the array would take the last.
 func TestShowListsEverySettingExactlyOnce(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	out, err := execute(t, "config", "show", "-o", "json")
+	out, err := clitest.Execute(t, commands, "config", "show", "-o", "json")
 	if err != nil {
 		t.Fatalf("config show -o json: %v", err)
 	}
@@ -362,11 +329,11 @@ func TestShowListsEverySettingExactlyOnce(t *testing.T) {
 // Every setting carries where it came from, and json is where a script would
 // read it to decide whether a value is safe to overwrite.
 func TestShowCarriesTheSourceInJSON(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
 	t.Setenv("OPENARITY_SERVER", "https://from-env.example.com")
 
-	out, err := execute(t, "config", "show", "-o", "json")
+	out, err := clitest.Execute(t, commands, "config", "show", "-o", "json")
 	if err != nil {
 		t.Fatalf("config show -o json: %v", err)
 	}
@@ -385,10 +352,10 @@ func TestShowCarriesTheSourceInJSON(t *testing.T) {
 
 // Colour would land inside a json string and the consumer would fail to parse.
 func TestNoFormatCarriesEscapeSequences(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
 	for _, format := range []string{"json", "yaml"} {
-		out, err := execute(t, "config", "show", "-o", format)
+		out, err := clitest.Execute(t, commands, "config", "show", "-o", format)
 		if err != nil {
 			t.Fatalf("config show -o %s: %v", format, err)
 		}
@@ -401,9 +368,9 @@ func TestNoFormatCarriesEscapeSequences(t *testing.T) {
 // The subcommands are the contract. One built and never registered passes
 // every test written about its body.
 func TestEverySubcommandIsRegistered(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	out, err := execute(t, "config", "--help")
+	out, err := clitest.Execute(t, commands, "config", "--help")
 	if err != nil {
 		t.Fatalf("config --help: %v", err)
 	}

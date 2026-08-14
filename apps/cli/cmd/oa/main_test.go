@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 )
 
 // Every failure is prefixed, because a bare sentence on stderr is
@@ -78,5 +81,25 @@ func TestAMultiLineErrorKeepsItsPrefix(t *testing.T) {
 	}
 	if !strings.HasPrefix(first, "oa: ") {
 		t.Errorf("the first line is not prefixed: %q", first)
+	}
+}
+
+// Nothing outside this package knows the whole command list, so this is the
+// only place the real root can be checked. A command built and registered in
+// its own package's tests but left out of commands() would pass everything
+// else and ship missing.
+func TestEveryCommandIsRegistered(t *testing.T) {
+	root := cli.NewRoot(io.Discard, io.Discard, commands)
+	_ = root
+
+	registered := map[string]bool{}
+	for _, cmd := range root.Commands() {
+		registered[cmd.Name()] = true
+	}
+
+	for _, want := range []string{"whoami", "config", "context", "teams"} {
+		if !registered[want] {
+			t.Errorf("%q is not on the root: %v", want, registered)
+		}
 	}
 }

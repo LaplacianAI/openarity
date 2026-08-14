@@ -20,23 +20,25 @@ Requires Go 1.26.5. Nothing else — no database, no services.
 ## The gate
 
 ```sh
-make check      # tidy, generate, format, vet, lint, build, race tests
+make check      # tidy, generate, format, vet, lint, build, cover, vuln
 ```
 
-Run it before saying anything is done. CI runs the same thing plus `make cover`
-and `make vuln`, in the `cli` job of
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
+Run it before saying anything is done. It is the same set of steps the `cli`
+job of [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs, in
+the same order, so passing here means passing there.
 
 ```sh
-make cover      # coverage, fails below 70%
-make vuln       # govulncheck
+make cover      # coverage alone, fails below 70%
+make vuln       # govulncheck alone
 make fmt        # apply gofumpt and fix import order
 make tools      # reinstall tooling — rerun after a Go toolchain upgrade
 ```
 
-Coverage excludes `internal/client`. It is roughly two thousand generated lines
-nobody wrote, so counting it measures oapi-codegen rather than this module —
-34.6% with it, 83.8% without.
+Coverage excludes `internal/client` and `internal/clitest` — neither is this
+module's own code. The generated client is roughly two thousand lines nobody
+wrote, so counting it measures oapi-codegen: 34.6% with it, 89.3% without.
+`clitest` is the test harness, and it is well covered enough that counting it
+flatters the total rather than testing anything.
 
 ## The generated client
 
@@ -61,7 +63,10 @@ names are `UserID` rather than `UserId`.
 ## Layout
 
 ```text
-cmd/oa/            the commands, and the composition root
+cmd/oa/            the composition root — main, and the list of commands
+internal/cli/      what a command may reach: Options, the root, unwrapping a
+                   response, paging, printing a page
+internal/command/  one package per command: whoami, config, context, teams
 internal/theme/    what a theme is — one Parse, zero dependencies
 internal/output/   what a format is
   printer/         how a value is rendered: json, yaml, table
@@ -69,7 +74,15 @@ internal/config/   the config file, and resolving a setting to a value
 internal/auth/     which credential to send, and to whom
 internal/ui/       colours, and whether the writer is a terminal
 internal/client/   generated — never edited
+internal/clitest/  the test harness: an isolated config dir and a stub brain
 ```
+
+One package per command, so `ls internal/command/` is the list of commands.
+`internal/cli` is what they may reach and nothing else — a command package that
+needs something new adds it there rather than reaching into a config map from
+the far side of the program. `cmd/oa` names every command in one slice, and the
+test that walks it is what catches a command that was built and never
+registered.
 
 `apps/brain/internal/` is unreachable from here: Go's `internal` rule is scoped
 to the module root, and each app is its own module. Nothing is shared between
