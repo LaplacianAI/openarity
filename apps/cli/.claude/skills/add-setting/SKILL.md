@@ -72,7 +72,7 @@ the token goes last.
 
 ## Step 3 — make it settable
 
-`cmd/oa/config.go`, three places, all switches:
+`internal/command/config/config.go`, three places, all switches:
 
 ```go
 			case "output":
@@ -129,7 +129,7 @@ In `internal/config/resolve_test.go`:
 5. **Scope** — resolve twice with a different `Current` and assert the value
    did or did not change, matching the step 0 decision.
 
-In `cmd/oa/config_test.go`:
+In `internal/command/config/config_test.go`:
 
 6. **`set` writes it**, normalised.
 7. **`set` refuses a bad value**, and wrote nothing when it did.

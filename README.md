@@ -62,12 +62,14 @@ platform does:
   the built-in
 - `--output table|json|yaml` on every command, so output is readable or
   parseable without a second tool
+- Teams and membership from the terminal — list, create, and add or remove a
+  member, instead of a `psql` session against the brain's database
 - Against a development brain it needs no setup: it finds the shared token in
   your shell, and only ever sends it to a loopback address
 
 Not built yet: the graph, the planner, the agent runtime, channel adapters, the
-dashboard. `oa` cannot log in against a real provider yet, and does not reach
-the teams API — both are next.
+dashboard. `oa` reaches the teams API, membership included, but cannot log in
+against a real provider yet — that is next.
 
 ## Quick start
 
@@ -130,6 +132,25 @@ oa context use local
 oa context list
 # * local    http://127.0.0.1:21120             no token
 #   staging  https://brain.staging.example.com  no token
+```
+
+Teams and membership are reachable without a database session:
+
+```sh
+oa teams list
+oa teams create platform                      # super admins only
+
+oa teams members list <team-id>
+oa teams members add <team-id> <user-id> --role developer
+oa teams members remove <team-id> <user-id>
+```
+
+A list is one page per call. When more remain the response carries a cursor,
+and the table says how to use it:
+
+```sh
+oa teams list --limit 20
+oa teams list --cursor eyJjIjoiMjAyNi0wOC0xNFQwMDowMDowMFoifQ
 ```
 
 Every command takes `--output table|json|yaml`, and `oa config` makes a choice
