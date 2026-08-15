@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -176,5 +177,39 @@ func TestSettingOneContextDoesNotTouchAnother(t *testing.T) {
 	got, _ := Load()
 	if got.Contexts["staging"].Token != "staging-token" {
 		t.Errorf("staging's token changed: %+v", got.Contexts["staging"])
+	}
+}
+
+// What a login produces now belongs to internal/credential, and this is the
+// guard that it never comes back. The config file is the one meant to be
+// readable — pasted into an issue, synced between machines — so a refresh
+// token or an expiry appearing in it is the split having quietly come undone.
+//
+// `token` is not in this list yet: it comes off Context at step 5, once the
+// store is wired into Resolve and Options. Add it here then.
+func TestTheConfigFileCarriesNoLoginState(t *testing.T) {
+	isolate(t)
+
+	cfg := Config{
+		Current:  "local",
+		Contexts: map[string]Context{"local": {Server: "http://127.0.0.1:21120", Token: "t"}},
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	path, err := Path()
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- a path this test just wrote
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	for _, absent := range []string{"expiry", "refresh_token", "0001-01-01"} {
+		if strings.Contains(string(data), absent) {
+			t.Errorf("the config file carries %q, which belongs in the credential store:\n%s", absent, data)
+		}
 	}
 }
