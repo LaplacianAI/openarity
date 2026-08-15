@@ -22,12 +22,22 @@ import (
 // Build is the New function a command package exposes.
 type Build func(*cli.Options) *cobra.Command
 
-// Isolate gives a test its own config directory. It reads the environment, so
-// a test that calls this cannot be t.Parallel().
+// Isolate gives a test its own config directory and keeps it away from the
+// machine's keychain. It reads the environment, so a test that calls this
+// cannot be t.Parallel().
+//
+// OPENARITY_NO_KEYCHAIN is the one that matters. Without it, a test that seeds
+// a credential writes into the developer's real Keychain on macOS and into
+// their Secret Service on Linux — surviving the test, visible to every other
+// test, and never cleaned up.
 func Isolate(t *testing.T) {
 	t.Helper()
 
 	dir := t.TempDir()
+	t.Setenv("OPENARITY_NO_KEYCHAIN", "1")
+	t.Setenv("OPENARITY_CONFIG_DIR", dir)
+	// Kept as a second line of defence: anything reaching os.UserConfigDir
+	// directly lands in the temporary directory too.
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir) // macOS ignores XDG_CONFIG_HOME
 }

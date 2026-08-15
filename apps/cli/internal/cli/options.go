@@ -12,6 +12,8 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/client"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/credential"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/credential/store"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output/printer"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
@@ -34,6 +36,9 @@ type Options struct {
 	Saved    config.Config
 	Settings config.Settings
 
+	Credentials credential.Store
+	credential  credential.Credential
+
 	bare *client.ClientWithResponses
 }
 
@@ -48,8 +53,28 @@ func (o *Options) Load() error {
 	}
 	o.Saved = saved
 
+	dir, err := config.Dir()
+	if err != nil {
+		return err
+	}
+	o.Credentials = store.Open(dir)
+
+	o.credential, err = o.Credentials.Get(saved.ActiveName())
+	if err != nil {
+		return err
+	}
+
 	path, _ := config.Path()
-	o.Settings = config.Resolve(o.ServerFlag, o.TokenFlag, o.OutputFlag, os.Getenv, saved, path)
+	o.Settings = config.Resolve(config.Input{
+		ServerFlag:         o.ServerFlag,
+		TokenFlag:          o.TokenFlag,
+		OutputFlag:         o.OutputFlag,
+		Env:                os.Getenv,
+		Saved:              saved,
+		Path:               path,
+		Credential:         o.credential,
+		CredentialLocation: o.Credentials.Location(),
+	})
 
 	chosenTheme, _ := theme.Parse(o.Settings.Theme.Value)
 	o.Styles = ui.New(o.Stdout, chosenTheme)
@@ -66,7 +91,8 @@ func (o *Options) Load() error {
 }
 
 func (o *Options) API(ctx context.Context) (*client.ClientWithResponses, error) {
-	token, err := auth.Resolve(ctx, o.bare, o.Settings.Server.Value, o.TokenFlag, o.Saved.Active().Token, os.Getenv)
+	token, err := auth.Resolve(
+		ctx, o.bare, o.Settings.Server.Value, o.TokenFlag, o.credential.Token, os.Getenv)
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/credential"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output"
 )
 
@@ -11,16 +12,26 @@ func envOf(pairs map[string]string) Env {
 	return func(key string) string { return pairs[key] }
 }
 
-const configPath = "/home/someone/.config/openarity/config.yaml"
+const (
+	configPath = "/home/someone/.config/openarity/config.yaml"
 
-func ctx(server, token string) Config {
-	return ctxThemed(server, token, "")
+	// What a keychain answers Location() with. Deliberately not a path: it is
+	// the value `oa config show` prints as a token's source, and half the
+	// point of the store is that it need not be a file.
+	credentialLocation = "the macOS keychain"
+)
+
+// Every test writes its own Input literal rather than going through a builder,
+// naming only the fields it is about. Env is set everywhere because Resolve
+// calls it for every setting and a nil one panics.
+func ctx(server string) Config {
+	return ctxThemed(server, "")
 }
 
-func ctxThemed(server, token, theme string) Config {
+func ctxThemed(server, theme string) Config {
 	return Config{
 		Current:  "local",
-		Contexts: map[string]Context{"local": {Server: server, Token: token}},
+		Contexts: map[string]Context{"local": {Server: server}},
 		Theme:    theme,
 	}
 }
@@ -30,7 +41,7 @@ func ctxThemed(server, token, theme string) Config {
 func TestServerPrecedence(t *testing.T) {
 	t.Parallel()
 
-	saved := ctx("https://from-file.example.com", "")
+	saved := ctx("https://from-file.example.com")
 	env := envOf(map[string]string{"OPENARITY_SERVER": "https://from-env.example.com"})
 
 	for name, tc := range map[string]struct {
@@ -44,7 +55,7 @@ func TestServerPrecedence(t *testing.T) {
 		"then the file":    {"", envOf(nil), saved, "https://from-file.example.com"},
 		"then the default": {"", envOf(nil), Config{}, DefaultServer},
 	} {
-		got := Resolve(tc.flag, "", "", tc.env, tc.saved, configPath)
+		got := Resolve(Input{ServerFlag: tc.flag, Env: tc.env, Saved: tc.saved, Path: configPath})
 		if got.Server.Value != tc.want {
 			t.Errorf("%s: server = %q, want %q", name, got.Server.Value, tc.want)
 		}
@@ -56,10 +67,10 @@ func TestServerPrecedence(t *testing.T) {
 func TestEverySettingNamesWhereItCameFrom(t *testing.T) {
 	t.Parallel()
 
-	saved := ctxThemed("https://from-file.example.com", "", "light")
+	saved := ctxThemed("https://from-file.example.com", "light")
 	env := envOf(map[string]string{"OPENARITY_SERVER": "https://from-env.example.com"})
 
-	got := Resolve("", "", "", env, saved, configPath)
+	got := Resolve(Input{Env: env, Saved: saved, Path: configPath})
 
 	if !strings.Contains(got.Server.Source, "OPENARITY_SERVER") {
 		t.Errorf("server source = %q, want it to name the variable", got.Server.Source)
@@ -68,12 +79,15 @@ func TestEverySettingNamesWhereItCameFrom(t *testing.T) {
 		t.Errorf("theme source = %q, want it to name the file", got.Theme.Source)
 	}
 
-	fromFlag := Resolve("https://from-flag.example.com", "", "", env, saved, configPath)
+	fromFlag := Resolve(Input{
+		ServerFlag: "https://from-flag.example.com",
+		Env:        env, Saved: saved, Path: configPath,
+	})
 	if !strings.Contains(fromFlag.Server.Source, "--server") {
 		t.Errorf("server source = %q, want it to name the flag", fromFlag.Server.Source)
 	}
 
-	fromDefault := Resolve("", "", "", envOf(nil), Config{}, configPath)
+	fromDefault := Resolve(Input{Env: envOf(nil), Path: configPath})
 	if !strings.Contains(fromDefault.Server.Source, "default") {
 		t.Errorf("server source = %q, want it to say default", fromDefault.Server.Source)
 	}
@@ -86,16 +100,31 @@ func TestTheTokenValueIsNeverResolved(t *testing.T) {
 	t.Parallel()
 
 	const secret = "oa_live_7f3c9a_do_not_print"
-	saved := ctx("", secret)
-	env := envOf(map[string]string{"OPENARITY_TOKEN": secret, "OPENARITY_DEV_TOKEN": secret})
 
-	got := Resolve("", secret, "", env, saved, configPath)
+	got := Resolve(Input{
+		TokenFlag: secret,
+		Env: envOf(map[string]string{
+			"OPENARITY_TOKEN":     secret,
+			"OPENARITY_DEV_TOKEN": secret,
+		}),
+		Saved:              ctx(""),
+		Path:               configPath,
+		Credential:         credential.Credential{Token: secret, Refresh: secret},
+		CredentialLocation: credentialLocation,
+	})
 
 	if strings.Contains(got.Token.Value, secret) {
 		t.Errorf("the token value is in the resolved settings: %q", got.Token.Value)
 	}
 	if strings.Contains(got.Token.Source, secret) {
 		t.Errorf("the token value leaked into its source: %q", got.Token.Source)
+	}
+	// The refresh token is the more valuable of the two and has no reason to
+	// be reported at all, so nothing here may carry it either.
+	for _, s := range []Setting{got.Server, got.Theme, got.Output, got.Context} {
+		if strings.Contains(s.Value+s.Source, secret) {
+			t.Errorf("%s carries the credential: %+v", s.Name, s)
+		}
 	}
 }
 
@@ -104,14 +133,67 @@ func TestTheTokenValueIsNeverResolved(t *testing.T) {
 func TestTheTokenReportsWhetherItIsSet(t *testing.T) {
 	t.Parallel()
 
-	set := Resolve("", "", "", envOf(nil), ctx("", "a-token"), configPath)
+	set := Resolve(Input{
+		Env: envOf(nil), Saved: ctx(""), Path: configPath,
+		Credential:         credential.Credential{Token: "a-token"},
+		CredentialLocation: credentialLocation,
+	})
 	if set.Token.Value == "" {
-		t.Error("a saved token is reported as absent")
+		t.Error("a stored token is reported as absent")
 	}
 
-	unset := Resolve("", "", "", envOf(nil), Config{}, configPath)
+	unset := Resolve(Input{
+		Env: envOf(nil), Path: configPath,
+		CredentialLocation: credentialLocation,
+	})
 	if unset.Token.Value == set.Token.Value {
 		t.Errorf("set and unset report the same thing: %q", unset.Token.Value)
+	}
+}
+
+// The credential no longer lives in config.yaml, so naming the config file as
+// its source would send someone to a file that does not contain it. On a mac
+// the answer is not a path at all.
+func TestAStoredTokenNamesTheStoreItCameFrom(t *testing.T) {
+	t.Parallel()
+
+	got := Resolve(Input{
+		Env: envOf(nil), Saved: ctx(""), Path: configPath,
+		Credential:         credential.Credential{Token: "a-token"},
+		CredentialLocation: credentialLocation,
+	})
+
+	if got.Token.Source != credentialLocation {
+		t.Errorf("token source = %q, want %q", got.Token.Source, credentialLocation)
+	}
+	if strings.Contains(got.Token.Source, configPath) {
+		t.Error("the token is reported as coming from config.yaml, which no longer holds one")
+	}
+}
+
+// A token given for one command must not be reported as though it were
+// stored — otherwise `oa --token … config show` sends the next person looking
+// in a keychain that has nothing in it.
+func TestAFlagAndTheEnvironmentOutrankTheStore(t *testing.T) {
+	t.Parallel()
+
+	stored := credential.Credential{Token: "from-the-store"}
+
+	fromFlag := Resolve(Input{
+		TokenFlag: "from-the-flag", Env: envOf(nil), Path: configPath,
+		Credential: stored, CredentialLocation: credentialLocation,
+	})
+	if fromFlag.Token.Source != "--token" {
+		t.Errorf("token source = %q, want --token", fromFlag.Token.Source)
+	}
+
+	fromEnv := Resolve(Input{
+		Env:        envOf(map[string]string{"OPENARITY_TOKEN": "from-the-environment"}),
+		Path:       configPath,
+		Credential: stored, CredentialLocation: credentialLocation,
+	})
+	if fromEnv.Token.Source != "OPENARITY_TOKEN" {
+		t.Errorf("token source = %q, want OPENARITY_TOKEN", fromEnv.Token.Source)
 	}
 }
 
@@ -122,13 +204,15 @@ func TestThemePrecedenceAndDefault(t *testing.T) {
 
 	env := envOf(map[string]string{"OPENARITY_THEME": "dark"})
 
-	if got := Resolve("", "", "", env, ctxThemed("", "", "light"), configPath); got.Theme.Value != "dark" {
+	if got := Resolve(Input{Env: env, Saved: ctxThemed("", "light"), Path: configPath}); got.Theme.Value != "dark" {
 		t.Errorf("theme = %q, want the environment to win", got.Theme.Value)
 	}
-	if got := Resolve("", "", "", envOf(nil), ctxThemed("", "", "light"), configPath); got.Theme.Value != "light" {
+	if got := Resolve(Input{
+		Env: envOf(nil), Saved: ctxThemed("", "light"), Path: configPath,
+	}); got.Theme.Value != "light" {
 		t.Errorf("theme = %q, want the file", got.Theme.Value)
 	}
-	if got := Resolve("", "", "", envOf(nil), Config{}, configPath); got.Theme.Value != string(DefaultTheme) {
+	if got := Resolve(Input{Env: envOf(nil), Path: configPath}); got.Theme.Value != string(DefaultTheme) {
 		t.Errorf("theme = %q, want %q", got.Theme.Value, DefaultTheme)
 	}
 }
@@ -140,7 +224,10 @@ func TestThemePrecedenceAndDefault(t *testing.T) {
 func TestAnUnknownThemeIsReportedAsSet(t *testing.T) {
 	t.Parallel()
 
-	got := Resolve("", "", "", envOf(map[string]string{"OPENARITY_THEME": "solarized"}), Config{}, configPath)
+	got := Resolve(Input{
+		Env:  envOf(map[string]string{"OPENARITY_THEME": "solarized"}),
+		Path: configPath,
+	})
 
 	if got.Theme.Value != "solarized" {
 		t.Errorf("theme = %q, want it reported verbatim so the typo is visible", got.Theme.Value)
@@ -169,7 +256,7 @@ func TestOutputPrecedence(t *testing.T) {
 		"then the file":    {"", envOf(nil), saved, "yaml"},
 		"then the default": {"", envOf(nil), Config{}, string(DefaultOutput)},
 	} {
-		got := Resolve("", "", tc.flag, tc.env, tc.saved, configPath)
+		got := Resolve(Input{OutputFlag: tc.flag, Env: tc.env, Saved: tc.saved, Path: configPath})
 		if got.Output.Value != tc.want {
 			t.Errorf("%s: output = %q, want %q", name, got.Output.Value, tc.want)
 		}
@@ -181,7 +268,7 @@ func TestOutputPrecedence(t *testing.T) {
 func TestOutputDefaultsToTable(t *testing.T) {
 	t.Parallel()
 
-	got := Resolve("", "", "", envOf(nil), Config{}, configPath)
+	got := Resolve(Input{Env: envOf(nil), Path: configPath})
 
 	if got.Output.Value != string(output.Table) {
 		t.Errorf("output = %q, want %q", got.Output.Value, output.Table)
@@ -197,7 +284,10 @@ func TestOutputDefaultsToTable(t *testing.T) {
 func TestAnUnknownOutputIsReportedAsSet(t *testing.T) {
 	t.Parallel()
 
-	got := Resolve("", "", "", envOf(map[string]string{"OPENARITY_OUTPUT": "jsonl"}), Config{}, configPath)
+	got := Resolve(Input{
+		Env:  envOf(map[string]string{"OPENARITY_OUTPUT": "jsonl"}),
+		Path: configPath,
+	})
 
 	if got.Output.Value != "jsonl" {
 		t.Errorf("output = %q, want it reported verbatim so the typo is visible", got.Output.Value)
@@ -218,10 +308,10 @@ func TestOutputIsNotPerContext(t *testing.T) {
 		Output:   "json",
 	}
 
-	prod := Resolve("", "", "", envOf(nil), saved, configPath)
+	prod := Resolve(Input{Env: envOf(nil), Saved: saved, Path: configPath})
 
 	saved.Current = "local"
-	local := Resolve("", "", "", envOf(nil), saved, configPath)
+	local := Resolve(Input{Env: envOf(nil), Saved: saved, Path: configPath})
 
 	if prod.Output.Value != local.Output.Value {
 		t.Errorf("output changed with the context: %q then %q", prod.Output.Value, local.Output.Value)
@@ -233,12 +323,14 @@ func TestOutputIsNotPerContext(t *testing.T) {
 func TestOutputNamesWhereItCameFrom(t *testing.T) {
 	t.Parallel()
 
-	fromFlag := Resolve("", "", "json", envOf(nil), Config{}, configPath)
+	fromFlag := Resolve(Input{OutputFlag: "json", Env: envOf(nil), Path: configPath})
 	if !strings.Contains(fromFlag.Output.Source, "--output") {
 		t.Errorf("output source = %q, want it to name the flag", fromFlag.Output.Source)
 	}
 
-	fromFile := Resolve("", "", "", envOf(nil), Config{Output: "yaml"}, configPath)
+	fromFile := Resolve(Input{
+		Env: envOf(nil), Saved: Config{Output: "yaml"}, Path: configPath,
+	})
 	if !strings.Contains(fromFile.Output.Source, configPath) {
 		t.Errorf("output source = %q, want it to name the file", fromFile.Output.Source)
 	}
@@ -249,7 +341,10 @@ func TestOutputNamesWhereItCameFrom(t *testing.T) {
 func TestResolvedValuesAreTrimmed(t *testing.T) {
 	t.Parallel()
 
-	got := Resolve("  https://from-flag.example.com\n", "", "", envOf(nil), Config{}, configPath)
+	got := Resolve(Input{
+		ServerFlag: "  https://from-flag.example.com\n",
+		Env:        envOf(nil), Path: configPath,
+	})
 
 	if got.Server.Value != "https://from-flag.example.com" {
 		t.Errorf("server = %q, want it trimmed", got.Server.Value)

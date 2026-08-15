@@ -2,12 +2,16 @@ package store
 
 import (
 	"errors"
+	"os"
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/credential"
 )
 
 func Open(dir string) credential.Store {
 	file := NewFileStore(dir)
+	if os.Getenv("OPENARITY_NO_KEYCHAIN") != "" {
+		return file
+	}
 
 	if keychain, err := NewKeyringStore(); err == nil {
 		return &fallback{preferred: keychain, file: file}

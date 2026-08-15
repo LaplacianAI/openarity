@@ -6,18 +6,18 @@ import (
 	"testing"
 )
 
-// A credential is only valid for the brain that issued it, so it lives inside
-// the context rather than beside it. A flat file makes sending staging's
-// token to production a one-word mistake.
-func TestATokenBelongsToItsContext(t *testing.T) {
+// A context is a name for a brain, and the address is the whole of it now
+// that the credential lives in the store. A flat `server` field would make
+// pointing a staging command at production a one-word mistake.
+func TestEachContextKeepsItsOwnServer(t *testing.T) {
 	isolate(t)
 
 	cfg := Config{
 		Current: "local",
 		Theme:   "dark",
 		Contexts: map[string]Context{
-			"local":   {Server: "http://127.0.0.1:21120", Token: "local-token"},
-			"staging": {Server: "https://staging.example.com", Token: "staging-token"},
+			"local":   {Server: "http://127.0.0.1:21120"},
+			"staging": {Server: "https://staging.example.com"},
 		},
 	}
 	if err := Save(cfg); err != nil {
@@ -28,11 +28,11 @@ func TestATokenBelongsToItsContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got.Contexts["local"].Token != "local-token" {
-		t.Errorf("local token = %q", got.Contexts["local"].Token)
+	if got.Contexts["local"].Server != "http://127.0.0.1:21120" {
+		t.Errorf("local server = %q", got.Contexts["local"].Server)
 	}
-	if got.Contexts["staging"].Token != "staging-token" {
-		t.Errorf("staging token = %q", got.Contexts["staging"].Token)
+	if got.Contexts["staging"].Server != "https://staging.example.com" {
+		t.Errorf("staging server = %q", got.Contexts["staging"].Server)
 	}
 	if got.Current != "local" {
 		t.Errorf("current = %q", got.Current)
@@ -62,7 +62,7 @@ func TestAnEmptyConfigHasNoContext(t *testing.T) {
 		t.Errorf("Active() = %+v, want the zero context", got)
 	}
 
-	settings := Resolve("", "", "", envOf(nil), Config{}, configPath)
+	settings := Resolve(Input{Env: envOf(nil), Path: configPath})
 	if settings.Server.Value != DefaultServer {
 		t.Errorf("server = %q, want %q", settings.Server.Value, DefaultServer)
 	}
@@ -77,13 +77,13 @@ func TestActiveReturnsTheCurrentContext(t *testing.T) {
 	cfg := Config{
 		Current: "staging",
 		Contexts: map[string]Context{
-			"local":   {Server: "http://127.0.0.1:21120", Token: "local-token"},
-			"staging": {Server: "https://staging.example.com", Token: "staging-token"},
+			"local":   {Server: "http://127.0.0.1:21120"},
+			"staging": {Server: "https://staging.example.com"},
 		},
 	}
 
 	got := cfg.Active()
-	if got.Server != "https://staging.example.com" || got.Token != "staging-token" {
+	if got.Server != "https://staging.example.com" {
 		t.Errorf("Active() = %+v, want staging", got)
 	}
 }
@@ -152,16 +152,17 @@ func TestContextNamesAreListedInAStableOrder(t *testing.T) {
 	}
 }
 
-// The whole point of contexts: a token written for one must not be readable
-// as another's. This is the mistake the flat file invited.
+// The whole point of contexts: editing one must not disturb another. The
+// credential store keys the same way, and tests that in its own package —
+// this covers the half that stayed here.
 func TestSettingOneContextDoesNotTouchAnother(t *testing.T) {
 	isolate(t)
 
 	cfg := Config{
 		Current: "local",
 		Contexts: map[string]Context{
-			"local":   {Server: "http://127.0.0.1:21120", Token: "local-token"},
-			"staging": {Server: "https://staging.example.com", Token: "staging-token"},
+			"local":   {Server: "http://127.0.0.1:21120"},
+			"staging": {Server: "https://staging.example.com"},
 		},
 	}
 	if err := Save(cfg); err != nil {
@@ -169,14 +170,14 @@ func TestSettingOneContextDoesNotTouchAnother(t *testing.T) {
 	}
 
 	loaded, _ := Load()
-	loaded.Contexts["local"] = Context{Server: "http://127.0.0.1:9999", Token: "new-local-token"}
+	loaded.Contexts["local"] = Context{Server: "http://127.0.0.1:9999"}
 	if err := Save(loaded); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
 	got, _ := Load()
-	if got.Contexts["staging"].Token != "staging-token" {
-		t.Errorf("staging's token changed: %+v", got.Contexts["staging"])
+	if got.Contexts["staging"].Server != "https://staging.example.com" {
+		t.Errorf("staging changed: %+v", got.Contexts["staging"])
 	}
 }
 
@@ -184,15 +185,12 @@ func TestSettingOneContextDoesNotTouchAnother(t *testing.T) {
 // guard that it never comes back. The config file is the one meant to be
 // readable — pasted into an issue, synced between machines — so a refresh
 // token or an expiry appearing in it is the split having quietly come undone.
-//
-// `token` is not in this list yet: it comes off Context at step 5, once the
-// store is wired into Resolve and Options. Add it here then.
 func TestTheConfigFileCarriesNoLoginState(t *testing.T) {
 	isolate(t)
 
 	cfg := Config{
 		Current:  "local",
-		Contexts: map[string]Context{"local": {Server: "http://127.0.0.1:21120", Token: "t"}},
+		Contexts: map[string]Context{"local": {Server: "http://127.0.0.1:21120"}},
 	}
 	if err := Save(cfg); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -207,7 +205,7 @@ func TestTheConfigFileCarriesNoLoginState(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 
-	for _, absent := range []string{"expiry", "refresh_token", "0001-01-01"} {
+	for _, absent := range []string{"token", "expiry", "refresh_token", "0001-01-01"} {
 		if strings.Contains(string(data), absent) {
 			t.Errorf("the config file carries %q, which belongs in the credential store:\n%s", absent, data)
 		}

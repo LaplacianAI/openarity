@@ -12,10 +12,10 @@ import (
 // Every test here writes a real file, so each gets its own config directory.
 // os.UserConfigDir reads the environment, which is why these cannot be
 // t.Parallel(): t.Setenv and parallel subtests are mutually exclusive.
-func withContext(server, token string) Config {
+func withContext(server string) Config {
 	return Config{
 		Current:  "local",
-		Contexts: map[string]Context{"local": {Server: server, Token: token}},
+		Contexts: map[string]Context{"local": {Server: server}},
 	}
 }
 
@@ -47,7 +47,7 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 
 	want := Config{
 		Current:  "local",
-		Contexts: map[string]Context{"local": {Server: "https://brain.example.com", Token: "a-token"}},
+		Contexts: map[string]Context{"local": {Server: "https://brain.example.com"}},
 	}
 	if err := Save(want); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -62,12 +62,13 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	}
 }
 
-// The file holds a bearer token. Anything group- or world-readable is a
-// credential handed to every other account on the machine.
+// It no longer holds a credential, but it does name every brain you talk to
+// and which one you are pointed at. Cheap to keep owner-only, and the mode is
+// what stops a future field from quietly becoming world-readable.
 func TestTheSavedFileIsOwnerOnly(t *testing.T) {
 	isolate(t)
 
-	if err := Save(withContext("https://brain.example.com", "a-token")); err != nil {
+	if err := Save(withContext("https://brain.example.com")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -98,10 +99,10 @@ func TestTheSavedFileIsOwnerOnly(t *testing.T) {
 func TestSaveReplacesRatherThanAppends(t *testing.T) {
 	isolate(t)
 
-	if err := Save(withContext("https://one.example.com", "first")); err != nil {
+	if err := Save(withContext("https://one.example.com")); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
-	if err := Save(withContext("https://two.example.com", "second")); err != nil {
+	if err := Save(withContext("https://two.example.com")); err != nil {
 		t.Fatalf("second Save: %v", err)
 	}
 
@@ -109,18 +110,18 @@ func TestSaveReplacesRatherThanAppends(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if active := got.Active(); active.Token != "second" || active.Server != "https://two.example.com" {
+	if active := got.Active(); active.Server != "https://two.example.com" {
 		t.Errorf("Load = %+v, want only the second save", got)
 	}
 }
 
 // Nothing may be left in the config directory but the file itself. A
-// temporary file that survived would hold the same token under a name nobody
-// cleans up.
+// temporary file that survived would hold the same contents under a name
+// nobody cleans up.
 func TestSaveLeavesNoTemporaryFile(t *testing.T) {
 	isolate(t)
 
-	if err := Save(withContext("https://brain.example.com", "a-token")); err != nil {
+	if err := Save(withContext("https://brain.example.com")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -143,8 +144,8 @@ func TestSaveLeavesNoTemporaryFile(t *testing.T) {
 }
 
 // A corrupt file must say which file and why. Returning the zero value
-// instead would silently drop a saved token and send the user through a login
-// they already did.
+// instead would silently drop every saved context and leave someone pointed at
+// the default server with no idea why.
 func TestLoadRejectsAFileItCannotParse(t *testing.T) {
 	isolate(t)
 
@@ -166,29 +167,6 @@ func TestLoadRejectsAFileItCannotParse(t *testing.T) {
 	}
 }
 
-// An empty token is absent, not a token. Writing `token: ""` into the file
-// and reading it back as a credential sends an empty bearer header, which is
-// a 401 that looks like the login failed rather than never happened.
-func TestAnEmptyTokenIsNotWrittenAsAValue(t *testing.T) {
-	isolate(t)
-
-	if err := Save(withContext("https://brain.example.com", "")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	path, err := Path()
-	if err != nil {
-		t.Fatalf("Path: %v", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if strings.Contains(string(data), "token:") {
-		t.Errorf("the file carries an empty token key: %q", data)
-	}
-}
-
 func TestPathIsUnderTheUserConfigDirectory(t *testing.T) {
 	isolate(t)
 
@@ -207,8 +185,8 @@ func TestPathIsUnderTheUserConfigDirectory(t *testing.T) {
 // The reason Save writes through a temporary file and renames it, rather than
 // writing to the path directly. os.WriteFile opens with O_TRUNC, so a reader
 // arriving mid-write sees an empty or half-written file — and Load parses an
-// empty file happily, returning a config with no token. The user is then told
-// to log in again despite having just logged in.
+// empty file happily, returning a config with no contexts at all. Every
+// command then addresses the default server instead of the one you chose.
 //
 // A rename is atomic within a filesystem: a reader sees the old file or the
 // new one, never a partial one. This test is what makes that claim real —
@@ -216,8 +194,10 @@ func TestPathIsUnderTheUserConfigDirectory(t *testing.T) {
 func TestSaveIsAtomicUnderConcurrentReads(t *testing.T) {
 	isolate(t)
 
-	const token = "a-token-that-must-never-appear-truncated"
-	saved := withContext("https://brain.example.com", token)
+	// Long enough that a truncated read is visibly not this value. The
+	// credential moved out, so the address is the longest thing left.
+	const server = "https://a-long-address-that-must-never-appear-truncated.example.com"
+	saved := withContext(server)
 
 	if err := Save(saved); err != nil {
 		t.Fatalf("seed Save: %v", err)
@@ -261,7 +241,7 @@ func TestSaveIsAtomicUnderConcurrentReads(t *testing.T) {
 					default:
 					}
 					return
-				case got.Active().Token != token:
+				case got.Active().Server != server:
 					select {
 					case failures <- fmt.Sprintf("Load saw a truncated file: %+v", got):
 					default:

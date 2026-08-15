@@ -8,6 +8,8 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
 	cmdconfig "github.com/LaplacianAI/openarity/apps/cli/internal/command/config"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/credential"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/credential/store"
 )
 
 // Two commands, because several of these assert through `oa config` —
@@ -16,21 +18,42 @@ import (
 var commands = []clitest.Build{New, cmdconfig.New}
 
 // No command writes a token yet — `oa login` will — so a test that needs one
-// puts it in the file directly.
+// seeds it.
+//
+// The credential goes through the same store the command will read, rather
+// than into config.yaml. Writing it by hand into the file would pass whether
+// or not the command consults the store at all.
 func seedContext(t *testing.T, name, server, token string) {
 	t.Helper()
 
 	clitest.Seed(t, commands, "context", "create", name, "--server", server)
+	if token == "" {
+		return
+	}
 
-	saved, err := config.Load()
+	dir, err := config.Dir()
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("config.Dir: %v", err)
 	}
-	saved.Contexts[name] = config.Context{Server: server, Token: token}
+	if err := store.Open(dir).Set(name, credential.Credential{Token: token}); err != nil {
+		t.Fatalf("seed a credential for %s: %v", name, err)
+	}
+}
 
-	if err := config.Save(saved); err != nil {
-		t.Fatalf("Save: %v", err)
+// Reads back through the store, so a test asserts on what the command would
+// actually find rather than on a file it happens to know the shape of.
+func storedToken(t *testing.T, name string) string {
+	t.Helper()
+
+	dir, err := config.Dir()
+	if err != nil {
+		t.Fatalf("config.Dir: %v", err)
 	}
+	cred, err := store.Open(dir).Get(name)
+	if err != nil {
+		t.Fatalf("read the credential for %s: %v", name, err)
+	}
+	return cred.Token
 }
 
 func TestCreateSwitchesToTheNewContext(t *testing.T) {
@@ -180,8 +203,14 @@ func TestRenameKeepsTheAddressAndTheToken(t *testing.T) {
 	if moved.Server != "https://staging.example.com" {
 		t.Errorf("renamed server = %q", moved.Server)
 	}
-	if moved.Token != secret {
-		t.Errorf("the token was lost in the rename: %q", moved.Token)
+
+	// The credential lives in the store now, so the config file moving is only
+	// half the rename. The other half is what this test was always about.
+	if got := storedToken(t, "preprod"); got != secret {
+		t.Errorf("the token was lost in the rename: %q", got)
+	}
+	if got := storedToken(t, "staging"); got != "" {
+		t.Errorf("the credential is still readable under the old name: %q", got)
 	}
 }
 
@@ -213,7 +242,7 @@ func TestRenameRefusesAnExistingName(t *testing.T) {
 	}
 
 	saved, _ := config.Load()
-	if got := saved.Contexts["prod"].Token; got != "oa_live_prod" {
+	if got := storedToken(t, "prod"); got != "oa_live_prod" {
 		t.Errorf("prod token = %q, want the rejected rename to have changed nothing", got)
 	}
 	if _, ok := saved.Contexts["staging"]; !ok {
@@ -243,8 +272,11 @@ func TestRenameRefusesAnUnusableName(t *testing.T) {
 	}
 
 	saved, _ := config.Load()
-	if got := saved.Contexts["prod"].Token; got != "oa_live_prod" {
+	if _, ok := saved.Contexts["prod"]; !ok {
 		t.Errorf("prod was disturbed by a rejected rename: %+v", saved.Contexts)
+	}
+	if got := storedToken(t, "prod"); got != "oa_live_prod" {
+		t.Errorf("prod's credential was disturbed by a rejected rename: %q", got)
 	}
 }
 
