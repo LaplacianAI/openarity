@@ -54,7 +54,16 @@ platform does:
 
 `oa` is early too, but it is real:
 
-- Named contexts — one brain and the credential it issued, kept together
+- `oa login` — a browser device flow against whichever identity provider the
+  brain uses. The brain publishes its issuer, so a client is configured with one
+  address rather than with a copy of the server's own settings
+- Credentials in the OS keychain, falling back to a `0600` file on a machine
+  that has none. Never in the config file, which is the one meant to be
+  readable, synced and pasted into an issue
+- Logins renew themselves. An expired access token is exchanged silently before
+  the request, and only the provider saying the login is dead discards it — a
+  provider having a bad minute does not log you out
+- Named contexts — a brain, and the credential it issued, under the same name
   because a token is only valid where it came from. Create, rename, switch,
   delete
 - Settings that say where they came from, so "I set it and it did not take" is
@@ -68,8 +77,7 @@ platform does:
   your shell, and only ever sends it to a loopback address
 
 Not built yet: the graph, the planner, the agent runtime, channel adapters, the
-dashboard. `oa` reaches the teams API, membership included, but cannot log in
-against a real provider yet — that is next.
+dashboard.
 
 ## Quick start
 
@@ -123,8 +131,8 @@ make install                     # puts oa on your PATH, at $(go env GOPATH)/bin
 oa whoami                        # the brain at 127.0.0.1:21120, unconfigured
 ```
 
-More than one brain is a context — an address and the credential that brain
-issued, kept together because a token is only valid where it came from:
+More than one brain is a context — an address, and the credential that brain
+issued under the same name, because a token is only valid where it came from:
 
 ```sh
 oa context create staging --server https://brain.staging.example.com
@@ -133,6 +141,28 @@ oa context list
 # * local    http://127.0.0.1:21120             no token
 #   staging  https://brain.staging.example.com  no token
 ```
+
+Anywhere that is not a development brain, log in. `oa` asks the brain which
+identity provider it trusts, prints a code and an address, and waits:
+
+```sh
+oa context use staging
+oa login
+# open  https://auth.example.com/device
+# code  WXYZ-ABCD
+# or open https://auth.example.com/device?code=WXYZ-ABCD — the code is already in it
+# waiting for approval, up to 5m0s…
+# logged in  staging  https://brain.staging.example.com
+
+oa logout          # this context only; the others keep theirs
+```
+
+The browser does not have to be on the same machine as the terminal — the code
+is what proves it is you approving, which is what makes this work over SSH.
+
+After that, nothing else needs doing: an expired token is renewed in the
+background on the next command. `oa login` comes back when the provider says the
+login itself is over, not when it merely had a bad minute.
 
 Teams and membership are reachable without a database session:
 
@@ -169,11 +199,19 @@ context  local                   (~/.config/openarity/config.yaml)
 server   http://127.0.0.1:21120  (~/.config/openarity/config.yaml)
 theme    auto                    (default)
 output   table                   (default)
-token    not set
+token    set (1174 characters)   (the macOS keychain)
 ```
 
 A flag beats an environment variable, which beats the config file, which beats
-the built-in. The token value is never printed — not truncated, not masked.
+the built-in. The token value is never printed — not truncated, not masked; only
+its length and where it was found.
+
+That last source is the whole of the credential design. A login is written to
+the OS keychain — the macOS keychain, Windows Credential Manager, or whatever
+`libsecret` is fronting on Linux — and never to `config.yaml`. Where there is no
+keychain, or the token is too large for one, it lands in `credentials.yaml`
+beside the config file at `0600`. Reads try the keychain first and fall through,
+so the two never disagree about which is current.
 
 ## API
 
@@ -241,21 +279,31 @@ check.
 The CLI reads its own variables, and unlike the brain it also has a config
 file. Each one overrides the file for one shell:
 
-| Variable              | Default           | What it does                    |
-| --------------------- | ----------------- | ------------------------------- |
-| `OPENARITY_SERVER`    | `127.0.0.1:21120` | Which brain to talk to          |
-| `OPENARITY_TOKEN`     | empty             | The credential to send          |
-| `OPENARITY_OUTPUT`    | `table`           | `table`, `json`, `yaml`         |
-| `OPENARITY_THEME`     | `auto`            | `auto`, `dark`, `light`         |
-| `OPENARITY_DEV_TOKEN` | empty             | Sent only to a loopback address |
+| Variable                 | Default           | What it does                     |
+| ------------------------ | ----------------- | -------------------------------- |
+| `OPENARITY_SERVER`       | `127.0.0.1:21120` | Which brain to talk to           |
+| `OPENARITY_TOKEN`        | empty             | The credential to send           |
+| `OPENARITY_OUTPUT`       | `table`           | `table`, `json`, `yaml`          |
+| `OPENARITY_THEME`        | `auto`            | `auto`, `dark`, `light`          |
+| `OPENARITY_DEV_TOKEN`    | empty             | Sent only to a loopback address  |
+| `OPENARITY_CONFIG_DIR`   | see below         | Where the config file lives      |
+| `OPENARITY_NO_KEYCHAIN`  | empty             | Any value: use the file, not it  |
 
 `oa` sends `OPENARITY_DEV_TOKEN` only when the resolved server is loopback.
 Letting the server decide would mean any host reached by a typo could claim to
 be in development and collect the secret from your shell.
 
+`OPENARITY_TOKEN` is for CI, where there is no browser to complete a login. It
+overrides whatever is stored, and it is not renewed — there is no refresh token
+behind a value pasted into a shell.
+
 The config file lives at `oa config path` — `~/.config/openarity/config.yaml`
-on Linux, `~/Library/Application Support/openarity/config.yaml` on macOS. It is
-written with `oa config` and `oa context`, so it never needs a text editor.
+on Linux, `~/Library/Application Support/openarity/config.yaml` on macOS, and
+under `OPENARITY_CONFIG_DIR` when that is set. It is written with `oa config`
+and `oa context`, so it never needs a text editor, and it holds no credential:
+`oa login` writes to the OS keychain, or to `credentials.yaml` in the same
+directory at `0600` where there is none. `OPENARITY_NO_KEYCHAIN` forces the
+file — useful on a headless box where unlocking a keyring is its own problem.
 
 ## Repository layout
 

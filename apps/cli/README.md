@@ -66,16 +66,24 @@ names are `UserID` rather than `UserId`.
 cmd/oa/            the composition root — main, and the list of commands
 internal/cli/      what a command may reach: Options, the root, unwrapping a
                    response, paging, printing a page
-internal/command/  one package per command: whoami, config, context, teams
+internal/command/  one package per command: whoami, config, context, teams,
+                   login, logout
 internal/theme/    what a theme is — one Parse, zero dependencies
 internal/output/   what a format is
   printer/         how a value is rendered: json, yaml, table
 internal/config/   the config file, and resolving a setting to a value
-internal/auth/     which credential to send, and to whom
+internal/credential/  what a login is: a token, a refresh token, an expiry
+  store/           where one is kept: the keychain, a file, and the fallback
+internal/auth/     the OIDC provider: discovery, the device flow, renewal
 internal/ui/       colours, and whether the writer is a terminal
 internal/client/   generated — never edited
 internal/clitest/  the test harness: an isolated config dir and a stub brain
 ```
+
+`internal/credential` is vocabulary and nothing else — a struct, three
+predicates and the `Store` interface — so it imports only `time`. Everything
+that handles a login depends on it, and it depends on nothing, which is what
+keeps `config` from importing a keychain library.
 
 One package per command, so `ls internal/command/` is the list of commands.
 `internal/cli` is what they may reach and nothing else — a command package that
@@ -109,8 +117,31 @@ That token is sent **only** to a loopback address. Against anything else `oa`
 asks you to log in rather than offering a shell secret to a host you may have
 reached by a typo.
 
+## Testing a real login
+
+The device flow needs a real identity provider; there is a compose stack for
+one in [`deployment/`](../../deployment/QUICKSTART.md).
+
+```sh
+oa context create staging --server http://<host>:21120
+oa login
+```
+
+Two environment variables exist for working on this and are worth knowing:
+
+```sh
+export OPENARITY_CONFIG_DIR=$(mktemp -d)   # a throwaway config and credentials
+export OPENARITY_NO_KEYCHAIN=1             # keep the real keychain out of it
+```
+
+`clitest.Isolate` sets both, which is why `make check` on a Mac does not leave
+entries behind. It did, once — the filesystem was isolated and the keychain was
+not, and nothing in the test output said so. `security find-generic-password -s
+openarity` is how that was found and how it stays found.
+
 ## Conventions and decisions
 
 `CLAUDE.md` holds the house style, the layout rationale, and the decisions
 worth not relitigating. `.claude/skills/` holds the step-by-step guides for
-adding a command, a setting or an output format.
+adding a command, a setting or an output format, and for touching anything that
+handles a credential.

@@ -142,7 +142,11 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/
     "authorization_flow": "<authorization pk>",
     "invalidation_flow": "<invalidation pk>",
     "client_type": "public",
-    "grant_types": ["authorization_code", "refresh_token"],
+    "grant_types": [
+      "authorization_code",
+      "refresh_token",
+      "urn:ietf:params:oauth:grant-type:device_code"
+    ],
     "signing_key": "<certificate pk>",
     "sub_mode": "user_username",
     "redirect_uris": [{"matching_mode": "strict", "url": "http://localhost:8080/callback"}]
@@ -153,11 +157,16 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/
   -d '{"name":"Openarity","slug":"openarity","provider":<provider pk>}'
 ```
 
-Three fields decide whether login works at all:
+Four fields decide whether login works at all:
 
+- **`client_type` is `public`.** `oa` ships to other people's machines, so a
+  client secret in it would not be secret. The person approving in the browser
+  is what stands in for one.
 - **`grant_types` defaults to `[]`**, and an empty list refuses every login with
   "the request is otherwise malformed". The real reason,
   `Invalid grant_type for provider`, appears only in authentik's container log.
+  `oa login` needs the device code URN *and* `refresh_token` — without the
+  second, the login works and dies an hour later with nothing to renew from.
 - **`invalidation_flow` is required** and cannot be null.
 - **`sub_mode`** decides what `sub` holds. The default `hashed_user_id` is an
   opaque hash, so `OPENARITY_SUPER_ADMINS=akadmin` never matches and every
@@ -170,7 +179,27 @@ curl -s "$HOST/application/o/openarity/.well-known/openid-configuration" | jq .i
 # must equal OPENARITY_OIDC_ISSUER exactly, trailing slash included
 ```
 
-### 5. Start the brain
+### 5. Give the device flow somewhere to enter the code
+
+`oa login` uses [RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628), and
+**authentik ships no flow for it.** Without this step the provider is configured
+correctly, `oa login` prints a code, and the address it prints is a 404. Nothing
+in either log says why.
+
+In the web UI, because this is two objects and a link between them:
+
+1. **Flows and Stages → Flows → Create**, with
+   **Designation: `Stage Configuration`** and
+   **Authentication: `Require authentication`**. Name it `device-code`.
+2. **System → Brands →** edit the active brand → **Default code flow** → the
+   flow you just made.
+
+"Require authentication" is what makes the sign-in page appear first; without
+it the code page is reached by an anonymous visitor and has nobody to attach
+the approval to. The brand field is the one that is easy to miss — it is far
+from the provider, and the provider looks complete without it.
+
+### 6. Start the brain
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.authentik.yml --profile brain up -d
@@ -183,88 +212,73 @@ a failing brain restarts forever and the reason scrolls past.
 The `migrate` service runs to completion first and the brain waits for it, so
 the schema is always applied before anything serves.
 
-### 6. Get a token
+### 7. Log in
 
 Logging into the authentik dashboard is **not** enough: that is a browser
-cookie, and the brain wants a JWT from the OIDC flow. Run the authorization
-code flow. Until the CLI exists, any OIDC client will do, or:
+cookie, and the brain wants a JWT from the OIDC flow. `oa login` runs that flow.
 
 ```sh
-python3 - <<'PY'
-import base64, hashlib, http.server, json, secrets, urllib.parse, urllib.request
+cd ../apps/cli && make install && cd -
 
-CLIENT_ID = "<your client_id>"
-HOST = "http://192.168.1.4:9000"
-REDIRECT = "http://localhost:8080/callback"
-
-verifier = base64.urlsafe_b64encode(secrets.token_bytes(48)).decode().rstrip("=")
-challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
-
-print(HOST + "/application/o/authorize/?" + urllib.parse.urlencode({
-    "client_id": CLIENT_ID, "response_type": "code", "scope": "openid profile email",
-    "redirect_uri": REDIRECT, "state": "qa",
-    "code_challenge": challenge, "code_challenge_method": "S256"}), flush=True)
-
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        code = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)["code"][0]
-        body = urllib.parse.urlencode({
-            "grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT,
-            "client_id": CLIENT_ID, "code_verifier": verifier}).encode()
-        req = urllib.request.Request(HOST + "/application/o/token/", data=body, method="POST")
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        with urllib.request.urlopen(req) as r:
-            open("/tmp/openarity-token.txt", "w").write(json.load(r)["access_token"])
-        self.send_response(200); self.end_headers()
-        self.wfile.write(b"token written to /tmp/openarity-token.txt")
-    def log_message(self, *a): pass
-
-http.server.HTTPServer(("127.0.0.1", 8080), H).handle_request()
-PY
+oa context create staging --server http://192.168.1.4:21120
+oa login
+# open  http://192.168.1.4:9000/device
+# code  WXYZ-ABCD
+# waiting for approval, up to 5m0s…
 ```
 
-The client is **public**, so authentik requires PKCE — that is what
-`code_challenge` is. Open the printed URL, log in as `akadmin`, and the token
-lands in the file.
+Open the address, sign in as `akadmin`, enter the code, approve. `oa` stores the
+result in your keychain under the context name, and renews it from then on
+without asking again.
 
-### 7. Who does the brain think you are?
+`oa` asks the brain at `/auth/config` which issuer and client id to use, so
+nothing here is configured twice. If it reports that the server has no identity
+provider, the brain is running with `OPENARITY_OIDC_ENABLED=false`.
+
+### 8. Who does the brain think you are?
 
 ```sh
-TOKEN=$(cat /tmp/openarity-token.txt)
-curl -s -H "Authorization: Bearer $TOKEN" http://192.168.1.4:21120/whoami
+oa whoami
 ```
 
-```json
-{"kind":"user","issuer":"http://192.168.1.4:9000/application/o/openarity/","subject":"akadmin","teams":[]}
+```text
+kind     user
+subject  akadmin
+issuer   http://192.168.1.4:9000/application/o/openarity/
+teams    none
 ```
 
-`teams: []` is correct. A first login creates the user row and grants nothing —
+`teams none` is correct. A first login creates the user row and grants nothing —
 registration is not a privilege.
 
-### 8. Create a team
+### 9. Create a team
 
 ```sh
-curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-     -d '{"name":"platform"}' http://192.168.1.4:21120/teams
+oa teams create platform
 ```
 
-A 403 means the `subject` from step 7 is not in `OPENARITY_SUPER_ADMINS`. Copy
-it in exactly and restart the brain.
+A 403 means the `subject` from step 8 is not in `OPENARITY_SUPER_ADMINS`. Copy
+it in exactly and restart the brain. It is the *subject*, not the email address.
 
-### 9. Add its first member
+### 10. Add its first member
 
 A new team has nobody in it, and only a super admin can put the first person
-there. `POST /members` needs a user id, and no endpoint exposes one yet:
+there. Both arguments are ids:
+
+```sh
+oa teams list                    # the team id
+oa teams members add <team id> <user id> --role admin
+```
+
+Nothing exposes a user id yet, so until it does the only source is the database:
 
 ```sh
 docker compose -f docker-compose.yml exec postgres \
   psql -U postgres -d openarity -Atc "select id, subject from users"
-
-curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"user_id":"<uuid>","role":"admin"}' \
-  http://192.168.1.4:21120/teams/<team id>/members
-# 204 No Content
 ```
+
+The roles that exist are `admin` and `developer`, and they are rows: anything
+else comes back as a 400 from a rejected foreign key, not as a CLI error.
 
 From then on that person manages the team's membership themselves, without
 being a super admin.
@@ -276,15 +290,39 @@ being a super admin.
 authentik federates; the brain never learns about Google. It keeps issuing its
 own tokens, so `OPENARITY_OIDC_ISSUER` and the audience do not change.
 
-**Google rejects `http` redirect URIs except on `localhost`.** A LAN address
-therefore cannot be used, so federation testing needs setup A — authentik on
-`127.0.0.1:9000` with the brain on the host — or TLS in front of authentik.
+**Google rejects `http` redirect URIs except on `localhost`, and rejects private
+IP addresses outright** — a LAN address returns `device_id and device_name are
+required for private IP`. Two ways out:
 
-In Google Cloud, create an OAuth client (Web application) with:
+- **`localhost`** — setup A, authentik on `127.0.0.1:9000` with the brain on the
+  host. Simplest, and it is why setup A exists.
+- **A tunnel with a stable hostname** — needed if the brain is in Docker. Point
+  it at authentik and make `OPENARITY_OIDC_ISSUER`, the authentik callback URL
+  and the Google client all use the tunnel's address:
+
+  ```sh
+  ngrok http 192.168.1.4:9000        # a reserved domain, not a random one
+  ```
+
+  **Do not pass `--host-header=rewrite`.** authentik builds `iss` and its
+  callback URLs from the `Host` header, so rewriting it makes discovery
+  advertise `http://192.168.1.4:9000/...` while the browser is on the tunnel —
+  and the brain then rejects every token for a mismatched issuer.
+
+  A changed tunnel address means `OPENARITY_OIDC_ISSUER` changes, and that
+  is a one-way door: users are keyed by `(issuer, subject)`, so every existing
+  user row is orphaned along with its team memberships. Reserve the hostname.
+
+In Google Cloud, create an OAuth client (Web application) whose redirect URI is
+authentik's callback at whichever address you chose:
 
 ```text
 http://localhost:9000/source/oauth/callback/google/
+https://<your-tunnel>/source/oauth/callback/google/
 ```
+
+Google takes a few minutes to publish a change to that list; a
+`redirect_uri_mismatch` immediately after editing is usually just early.
 
 Then:
 
@@ -326,6 +364,11 @@ same address rather than creating a second account.
 | 401 with a token you just got | the token's `iss` is not `OPENARITY_OIDC_ISSUER`, usually `127.0.0.1` against a LAN address |
 | 401 on the dev token | it is empty, or the environment is not development |
 | Login is "otherwise malformed" | the provider's `grant_types` is empty |
+| `oa login`: `Client authentication failed` | the provider is missing the device code grant, or is not `public` |
+| The device page 404s | no flow with designation `Stage Configuration`, or the brand's **Default code flow** is unset |
+| Logged in, then logged out an hour later | `refresh_token` is not in the provider's `grant_types` |
+| `oa`: connection refused to the brain | the brain crash-looped; it fetches discovery at boot and exits if the IdP is down |
+| Everyone lost their teams | `OPENARITY_OIDC_ISSUER` changed — users are keyed by `(issuer, subject)` |
 | 403 on `POST /teams` | your `subject` is not in `OPENARITY_SUPER_ADMINS` |
 | 404 for a team that exists | you are not a member and not a super admin — deliberate, a 403 would confirm the id |
 | `/docs` 404s | the environment is not `development` |
@@ -337,7 +380,17 @@ always on the first lines.
 
 ## What is not reproducible yet
 
-The authentik provider and application created here live only in that
-container's database. Someone cloning the repository starts from nothing.
-authentik's answer is blueprints — YAML applied at startup — and moving this
-configuration into one is the right next step before anyone else uses the stack.
+The authentik provider, application, device-code flow and brand setting created
+here live only in that container's database. Someone cloning the repository
+starts from nothing. authentik's answer is blueprints — YAML applied at startup
+— and moving this configuration into one is the right next step before anyone
+else uses the stack.
+
+Two things worth knowing before you build on this:
+
+- **`OPENARITY_OIDC_ISSUER` is part of user identity.** The users table is
+  unique on `(issuer, subject)`, so changing the issuer creates a second row for
+  every person and silently orphans their memberships. Nothing warns. Treat it
+  as a one-way door until there is a remap step.
+- **The brain fetches OIDC discovery at boot and exits if it fails.** Start
+  authentik first, and expect a restart loop if it is down when the brain rolls.
