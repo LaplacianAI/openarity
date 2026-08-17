@@ -1,6 +1,6 @@
 ---
 name: update-api-spec
-description: Update api/openapi.yaml when an endpoint is added, changed or removed — the hand-written contract the CLI and every other client are generated from. Covers what belongs in the spec, the conventions it already follows, how to validate it, the test that fails when it drifts from the routes, and when a change is breaking. Use alongside add-route for every endpoint.
+description: Update api/openapi.yaml when an endpoint is added, changed or removed — the hand-written contract the CLI and every other client are generated from. Covers what belongs in the spec, the conventions it already follows, which keywords wreck the generated client, how to validate it, the test that fails when it drifts from the routes and the drift it cannot catch, and when a change is breaking. Use alongside add-route for every endpoint.
 ---
 
 # Update the API spec

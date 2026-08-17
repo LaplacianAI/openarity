@@ -1,6 +1,6 @@
 ---
 name: write-tests
-description: Write a Go test for the CLI — any package, any layer. Covers the execute/isolate/seed helpers, when t.Parallel() is allowed, what the test writer cannot see, and the mutation step that proves the test would actually fail. Use for every test.
+description: Write a Go test for the CLI — any package, any layer. Covers the execute/isolate/seed helpers, the two stub brains and when the routed one is required, when t.Parallel() is allowed, what the test writer cannot see, and the mutation step that proves the test would actually fail. Use for every test.
 ---
 
 # Write a test
@@ -120,6 +120,20 @@ refusal, assert that **nothing changed**:
 		t.Errorf("prod server = %q, want the rejected create to have changed nothing", got)
 	}
 ```
+
+**A request that should not have been made is a negative too**, and it is the
+one nothing else catches. A command that reaches an endpoint it did not need
+still succeeds — it merely required an authority it should not have, and no
+assertion about its output will ever notice:
+
+```go
+	if n := script.Calls(http.MethodGet, "/users"); n != 0 {
+		t.Errorf("the directory was read %d times to add somebody by name", n)
+	}
+```
+
+Assert it whenever a command could plausibly have taken a shortcut through a
+wider-scoped endpoint. `Calls` returning zero is the whole test.
 
 ## Step 5 — know what the test writer cannot see
 
