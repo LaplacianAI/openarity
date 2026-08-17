@@ -64,6 +64,13 @@ curl -s -H 'Authorization: Bearer letmein' -H 'Content-Type: application/json' \
 The dev principal's subject is `dev`, which is why `OPENARITY_SUPER_ADMINS=dev`
 is what lets it create a team. Browse the API at <http://127.0.0.1:21120/docs>.
 
+If you later turn OIDC on while keeping the dev token — a development machine
+exercising the real login and still able to `curl` — the brain refuses to start
+with `OPENARITY_SUPER_ADMINS=dev`. A super admin is named by subject, the dev
+token's subject is fixed at `dev`, and an account called `dev` at your identity
+provider would satisfy the same entry. Name yourself instead, by the `sub` your
+provider issues.
+
 ---
 
 ## B — compose, with authentik
