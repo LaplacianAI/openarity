@@ -43,8 +43,6 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 			params := client.ListUsersParams{}
 			params.Limit, params.Cursor = paging.Values()
 
-			// The hint carries the subject, or paging a search silently widens
-			// to everybody on the second page.
 			more := "oa users list"
 			if len(args) == 1 {
 				subject := strings.TrimSpace(args[0])
@@ -75,7 +73,8 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 					if user.Email != nil {
 						email = string(*user.Email)
 					}
-					table.Row(opts.Styles.Value.Render(user.Subject), email,
+					table.Row(opts.Styles.Value.Render(user.Subject),
+						opts.Styles.Muted.Render(user.Issuer), email,
 						opts.Styles.Muted.Render(user.ID.String()))
 				},
 			})

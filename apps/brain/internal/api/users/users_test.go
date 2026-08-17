@@ -114,8 +114,17 @@ func caller() *auth.User {
 	}
 }
 
+// One issuer unless a test says otherwise. A row with a blank issuer would
+// let a handler that never reads the column pass every test that does not
+// look at it.
+const testIssuer = "https://auth.example.com/application/o/openarity/"
+
 func row(subject string, email *string) db.ListUsersRow {
-	return db.ListUsersRow{ID: uuid.New(), Subject: subject, Email: email}
+	return db.ListUsersRow{ID: uuid.New(), Issuer: testIssuer, Subject: subject, Email: email}
+}
+
+func rowAt(issuer, subject string) db.ListUsersRow {
+	return db.ListUsersRow{ID: uuid.New(), Issuer: issuer, Subject: subject}
 }
 
 func usersPage(t *testing.T, rec *httptest.ResponseRecorder) api.Page[user] {
@@ -476,8 +485,64 @@ func TestTheResponseCarriesOnlyContractedFields(t *testing.T) {
 		t.Fatalf("the item is not an object: %v", items[0])
 	}
 	for key := range first {
-		if key != "id" && key != "subject" && key != "email" {
+		if key != "id" && key != "issuer" && key != "subject" && key != "email" {
 			t.Errorf("a user carries an uncontracted key %q", key)
+		}
+	}
+}
+
+// The issuer is required in the spec, and it is the half of the identity that
+// makes two rows with one subject two different people. Dropped, a listing
+// cannot be read: the duplicated subjects look like a bug in the upsert.
+func TestEveryUserCarriesItsIssuer(t *testing.T) {
+	t.Parallel()
+
+	s := &fakeStore{users: []db.ListUsersRow{row("alice", nil)}}
+
+	rec := call(t, s, allow(), caller(), http.MethodGet, "/users")
+
+	got := usersPage(t, rec)
+	if len(got.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(got.Items))
+	}
+	if got.Items[0].Issuer != testIssuer {
+		t.Errorf("issuer = %q, want %q", got.Items[0].Issuer, testIssuer)
+	}
+}
+
+// The case that sent somebody to psql: one provider reached under two URLs
+// leaves the same person under both, and the subject alone cannot tell them
+// apart. Two rows, same subject, and the issuer is the only thing that
+// distinguishes them.
+func TestTwoIssuersWithOneSubjectStayDistinguishable(t *testing.T) {
+	t.Parallel()
+
+	const (
+		byName = "https://auth.example.com/application/o/openarity/"
+		byIP   = "http://10.0.0.5:9000/application/o/openarity/"
+	)
+	s := &fakeStore{users: []db.ListUsersRow{
+		rowAt(byName, "akadmin"),
+		rowAt(byIP, "akadmin"),
+	}}
+
+	rec := call(t, s, allow(), caller(), http.MethodGet, "/users")
+
+	got := usersPage(t, rec)
+	if len(got.Items) != 2 {
+		t.Fatalf("items = %d, want both rows", len(got.Items))
+	}
+
+	issuers := map[string]bool{}
+	for _, u := range got.Items {
+		if u.Subject != "akadmin" {
+			t.Errorf("subject = %q", u.Subject)
+		}
+		issuers[u.Issuer] = true
+	}
+	for _, want := range []string{byName, byIP} {
+		if !issuers[want] {
+			t.Errorf("the response cannot distinguish the rows — %q is missing: %s", want, rec.Body)
 		}
 	}
 }
