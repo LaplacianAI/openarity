@@ -36,7 +36,7 @@ make tools      # reinstall tooling — rerun after a Go toolchain upgrade
 
 Coverage excludes `internal/client` and `internal/clitest` — neither is this
 module's own code. The generated client is roughly two thousand lines nobody
-wrote, so counting it measures oapi-codegen: 34.6% with it, 89.3% without.
+wrote, so counting it measures oapi-codegen: 71.3% with it, 86.3% without.
 `clitest` is the test harness, and it is well covered enough that counting it
 flatters the total rather than testing anything.
 

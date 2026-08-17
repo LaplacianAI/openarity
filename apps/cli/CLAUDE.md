@@ -68,7 +68,7 @@ apps/cli/
     options.go         Options — the whole surface a command may reach
     response.go        Result, Created, NoContent: a call becomes a value
     page.go            Paging and PrintPage: a page becomes a table
-    args.go            ParseUUID
+    lookup.go          ResolveTeam, ResolveMember: a name becomes an id
   internal/command/
     whoami/            oa whoami
     config/            oa config show|set|unset|path
@@ -179,6 +179,13 @@ unreachable from here by construction. The only thing crossing the boundary is
   directory permission at all. `ResolveUser` existed for one afternoon and was
   deleted when the API grew `subject` — if it comes back, something has been
   designed the wrong way round.
+- **An exported identifier that nothing calls is invisible, and coverage is
+  what finds it.** `unused` assumes an exported function has a caller in
+  another package, so it stays silent. `cli.ParseUUID` outlived its last caller
+  by a commit and was found at 0.0% in a per-function coverage report — nothing
+  else in the gate said a word. Read the report per function occasionally, not
+  just the total; a lone 0.0% is usually dead code rather than an untested
+  branch.
 - **`os.Exit` appears only in `main`, and `main` holds no defers.** Same reason
   as the brain: `os.Exit` skips deferred functions.
 - **Tests mirror source files**, and a test that needs a config file gets its
@@ -203,7 +210,7 @@ make tools      # reinstall tooling — rerun after a Go upgrade
 
 **Coverage excludes `internal/client` and `internal/clitest`.** Neither is this
 module's own code: the generated client is two thousand lines nobody wrote, so
-counting it measures oapi-codegen (34.6% with it, 89.3% without), and `clitest`
+counting it measures oapi-codegen (71.3% with it, 86.3% without), and `clitest`
 is the test harness, well covered enough that counting it flatters the total.
 
 ## Decisions worth not relitigating

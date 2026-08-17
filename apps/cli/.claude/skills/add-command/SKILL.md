@@ -99,9 +99,25 @@ func newListCmd(opts *cli.Options) *cobra.Command {
   handler, so Ctrl-C cancels the request in flight.
 - **`opts.API(ctx)` for anything authenticated.** It resolves the credential and
   fails before the request when there is none.
-- **An id argument goes through `cli.ParseUUID`.** A mistyped one reaching the
-  brain comes back as a 400 about a path parameter, which reads as the CLI's
-  fault rather than a typo. Assert in a test that no request was sent.
+- **An argument that names a resource goes through a resolver, not a uuid
+  parse.** `cli.ResolveTeam` and `cli.ResolveMember` take a name *or* an id and
+  return an id — a uuid is used as given and never looked up, so a script
+  passing ids pays nothing.
+
+  Resolve against the narrowest list that can answer. A team goes through
+  `GET /teams`, which every member may already read; a member goes through that
+  team's own `GET /teams/{id}/members`, never `GET /users` — the directory
+  needs `membership:write` somewhere, a far larger permission to require for
+  "take this person out of my team".
+
+  Better still, do not resolve at all. `oa teams members add` sends the subject
+  in the request body and the brain resolves it while adding, so naming
+  somebody costs no lookup and no directory permission. Check whether the
+  endpoint accepts a name before writing a resolver for it.
+
+  Two things a test owes here: that an id was **not** looked up, and that a
+  name nobody has is reported as a name — `"not a uuid"` describes an argument
+  the person never intended to type.
 
 ## Step 3 — unwrap the call
 
