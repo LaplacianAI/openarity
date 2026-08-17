@@ -61,6 +61,63 @@ func TestTheServersSentenceIsKept(t *testing.T) {
 	}
 }
 
+// Two different things arrive as 404 and they need different answers. The
+// router answers an unrouted path with exactly "404 page not found", which
+// means the endpoint is not there — the shape of `oa` being newer than the
+// brain it is talking to, after a CLI upgrade or before a deployment.
+//
+// Reported as "not found, or not visible to you" it reads as a permission
+// problem, and the next hour goes on roles and tokens.
+func TestAMissingRouteIsNotReportedAsAMissingRecord(t *testing.T) {
+	t.Parallel()
+
+	err := APIError(http.StatusNotFound, []byte("404 page not found\n"))
+	if err == nil {
+		t.Fatal("a 404 produced no error")
+	}
+	if strings.Contains(err.Error(), "visible to you") {
+		t.Errorf("a missing endpoint was reported as a permission problem: %v", err)
+	}
+	if !strings.Contains(err.Error(), "older") {
+		t.Errorf("the message does not say the brain may be behind: %v", err)
+	}
+}
+
+// The brain's own 404s name what was not found — "no user has that subject"
+// is the whole answer to `oa users list somebody`. It was being discarded for
+// a fixed sentence that says less.
+func TestTheBrainsOwn404SentenceIsKept(t *testing.T) {
+	t.Parallel()
+
+	err := APIError(http.StatusNotFound, []byte("no user has that subject\n"))
+	if err == nil {
+		t.Fatal("a 404 produced no error")
+	}
+	if !strings.Contains(err.Error(), "no user has that subject") {
+		t.Errorf("the brain's sentence was dropped: %v", err)
+	}
+}
+
+// The bare "not found" the brain sends for a team or a membership says
+// nothing the generic sentence does not, and the generic one adds the half
+// that matters: it may be there and not yours to see.
+func TestAGeneric404StillMentionsVisibility(t *testing.T) {
+	t.Parallel()
+
+	for _, body := range []string{"not found\n", ""} {
+		err := APIError(http.StatusNotFound, []byte(body))
+		if err == nil {
+			t.Fatalf("a 404 with body %q produced no error", body)
+		}
+		if !strings.Contains(err.Error(), "visible to you") {
+			t.Errorf("body %q lost the visibility half: %v", body, err)
+		}
+		if strings.Contains(err.Error(), "older") {
+			t.Errorf("body %q was mistaken for a missing endpoint: %v", body, err)
+		}
+	}
+}
+
 // An unexpected status has no sentence worth trusting, so the status itself
 // is what identifies it in a bug report.
 func TestAnUnexpectedStatusIsNamed(t *testing.T) {

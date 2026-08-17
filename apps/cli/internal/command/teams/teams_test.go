@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
 )
 
@@ -19,6 +21,42 @@ const twoTeams = `{
   ],
   "next_cursor": "eyJjIjoiMjAyNi0wOC0xM1QwMDowMDowMFoifQ"
 }`
+
+// role is absent when the caller is not a member, which is the normal case
+// for a super admin — so this is the field most likely to be missing, on the
+// listing a super admin is most likely to run. Without a yaml tag carrying
+// omitempty it printed as `role: null`, which reads as a member with no role
+// rather than as somebody who is not a member.
+func TestATeamTheCallerIsNotInHasNoRoleKeyInYAML(t *testing.T) {
+	clitest.BrainStub(t, http.StatusOK, twoTeams)
+
+	out, err := clitest.Execute(t, commands, "teams", "list", "-o", "yaml")
+	if err != nil {
+		t.Fatalf("teams list -o yaml: %v", err)
+	}
+	if strings.Contains(out, "null") {
+		t.Errorf("a team the caller is not in rendered a null role:\n%s", out)
+	}
+
+	var got struct {
+		Items []struct {
+			Name string  `yaml:"name"`
+			Role *string `yaml:"role"`
+		} `yaml:"items"`
+	}
+	if err := yaml.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not yaml: %v\n%s", err, out)
+	}
+	if len(got.Items) != 2 {
+		t.Fatalf("items = %+v", got.Items)
+	}
+	if got.Items[0].Role == nil || *got.Items[0].Role != "admin" {
+		t.Errorf("the role the caller does have was lost: %+v", got.Items[0])
+	}
+	if got.Items[1].Role != nil {
+		t.Errorf("a team the caller is not in carries a role: %v", *got.Items[1].Role)
+	}
+}
 
 func TestTeamsListRendersATable(t *testing.T) {
 	clitest.BrainStub(t, http.StatusOK, twoTeams)

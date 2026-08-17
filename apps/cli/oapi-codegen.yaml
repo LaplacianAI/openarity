@@ -21,3 +21,12 @@ output-options:
   # names are the one place in the repository that breaks revive's var-naming,
   # and every call site inherits the wrong spelling.
   name-normalizer: ToCamelCaseWithInitialisms
+  # `oa <anything> -o yaml` renders these types, and yaml.v3 does not read
+  # json tags: without this it falls back to lowercasing the Go field name and
+  # ignores omitempty. UserID became `userid` where json says `user_id`, and
+  # an absent email printed as `email: null` where json omitted it — the two
+  # formats of one command disagreeing about both the name and the field.
+  #
+  # The generated yaml tag mirrors the json field name and its omitempty, so
+  # the two stay identical as the spec grows.
+  yaml-tags: true
