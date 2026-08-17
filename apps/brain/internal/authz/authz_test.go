@@ -16,6 +16,9 @@ import (
 type fakePermissions struct {
 	actions map[string][]string
 	err     error
+	// errRole narrows err to one role, so a test can fail the read for one
+	// membership while the others answer. An empty errRole fails every read.
+	errRole string
 	calls   int
 	sawRole string
 }
@@ -23,7 +26,7 @@ type fakePermissions struct {
 func (f *fakePermissions) ActionsFor(_ context.Context, role string) ([]string, error) {
 	f.calls++
 	f.sawRole = role
-	if f.err != nil {
+	if f.err != nil && (f.errRole == "" || f.errRole == role) {
 		return nil, f.err
 	}
 	return f.actions[role], nil
@@ -34,8 +37,8 @@ func seeded() *fakePermissions {
 	// Strings, not Actions: this is what a table an administrator can edit
 	// hands back, and it carries no guarantee of being a known action.
 	return &fakePermissions{actions: map[string][]string{
-		"admin":     {"agent:write", "tool:write", "channel:write", "member:write"},
-		"developer": {"agent:write", "tool:write"},
+		"admin":  {"agent:write", "tool:write", "channel:write", "membership:write"},
+		"member": {"agent:write", "tool:write"},
 	}}
 }
 
@@ -66,8 +69,8 @@ func TestCanAllowsAGrantedAction(t *testing.T) {
 	team := uuid.New()
 	a := New(seeded(), nil)
 
-	if !allowed(t, a, userIn(team, "developer"), ActionAgentWrite, Resource{TeamID: team}) {
-		t.Error("a developer was refused agent:write in their own team")
+	if !allowed(t, a, userIn(team, "member"), ActionAgentWrite, Resource{TeamID: team}) {
+		t.Error("a member was refused agent:write in their own team")
 	}
 }
 
@@ -77,8 +80,8 @@ func TestCanDeniesAnActionTheRoleDoesNotHave(t *testing.T) {
 	team := uuid.New()
 	a := New(seeded(), nil)
 
-	if allowed(t, a, userIn(team, "developer"), ActionMemberWrite, Resource{TeamID: team}) {
-		t.Error("a developer was allowed member:write")
+	if allowed(t, a, userIn(team, "member"), ActionMembershipWrite, Resource{TeamID: team}) {
+		t.Error("a member was allowed membership:write")
 	}
 }
 
@@ -121,16 +124,16 @@ func TestCanUsesTheRoleForTheTeamBeingActedOn(t *testing.T) {
 		Subject: "user-42",
 		Teams: []auth.Membership{
 			{TeamID: alpha, Name: "alpha", Role: "admin"},
-			{TeamID: bravo, Name: "bravo", Role: "developer"},
+			{TeamID: bravo, Name: "bravo", Role: "member"},
 		},
 	}
 	a := New(seeded(), nil)
 
-	if !allowed(t, a, u, ActionMemberWrite, Resource{TeamID: alpha}) {
-		t.Error("admin of alpha was refused member:write in alpha")
+	if !allowed(t, a, u, ActionMembershipWrite, Resource{TeamID: alpha}) {
+		t.Error("admin of alpha was refused membership:write in alpha")
 	}
-	if allowed(t, a, u, ActionMemberWrite, Resource{TeamID: bravo}) {
-		t.Error("admin of alpha was allowed member:write in bravo, where they are a developer")
+	if allowed(t, a, u, ActionMembershipWrite, Resource{TeamID: bravo}) {
+		t.Error("admin of alpha was allowed membership:write in bravo, where they are a member")
 	}
 }
 
@@ -387,5 +390,230 @@ func TestIsSuperAdminWithNoAllowlist(t *testing.T) {
 		if a.IsSuperAdmin(&auth.User{Subject: "anyone"}) {
 			t.Errorf("with super admins %v, an ordinary user held the platform role", list)
 		}
+	}
+}
+
+// CanInAnyTeam answers the same question without a team. Everything below is
+// about the two ways that can go wrong: being weaker than it should be, and
+// being confused with Can by a future caller.
+
+// userWith builds one membership per role, each in its own team. The team ids
+// are what CanInAnyTeam must ignore.
+func userWith(roles ...string) *auth.User {
+	u := &auth.User{ID: uuid.New(), Subject: "user-42"}
+	for _, role := range roles {
+		u.Teams = append(u.Teams, auth.Membership{TeamID: uuid.New(), Name: "team", Role: role})
+	}
+	return u
+}
+
+func allowedAnywhere(t *testing.T, a *Authorizer, u *auth.User, action Action) bool {
+	t.Helper()
+
+	ok, err := a.CanInAnyTeam(t.Context(), u, action)
+	if err != nil {
+		t.Fatalf("CanInAnyTeam returned an error: %v", err)
+	}
+	return ok
+}
+
+// The whole reason it exists: one qualifying membership is enough, and the
+// caller never says which team they meant.
+func TestCanInAnyTeamAllowsWhenOneMembershipGrantsIt(t *testing.T) {
+	t.Parallel()
+
+	a := New(seeded(), nil)
+
+	if !allowedAnywhere(t, a, userWith("member", "admin"), ActionMembershipWrite) {
+		t.Error("an admin of one team was refused membership:write anywhere")
+	}
+}
+
+// The position of the qualifying membership must not matter. A loop that
+// returns on the first role's answer rather than continuing passes the test
+// above and fails this one.
+func TestCanInAnyTeamDoesNotDependOnMembershipOrder(t *testing.T) {
+	t.Parallel()
+
+	a := New(seeded(), nil)
+
+	for _, roles := range [][]string{
+		{"admin", "member"},
+		{"member", "admin"},
+		{"member", "member", "admin"},
+		{"admin"},
+	} {
+		if !allowedAnywhere(t, a, userWith(roles...), ActionMembershipWrite) {
+			t.Errorf("roles %v were refused membership:write", roles)
+		}
+	}
+}
+
+// Being in twenty teams with a role that does not grant it is still no.
+func TestCanInAnyTeamDeniesWhenNoMembershipGrantsIt(t *testing.T) {
+	t.Parallel()
+
+	a := New(seeded(), nil)
+	roles := make([]string, 20)
+	for i := range roles {
+		roles[i] = "member"
+	}
+
+	if allowedAnywhere(t, a, userWith(roles...), ActionMembershipWrite) {
+		t.Error("a member of twenty teams was allowed membership:write")
+	}
+}
+
+// The state right after a first login. Nothing has been granted, so the
+// directory is not readable.
+func TestCanInAnyTeamDeniesAUserWithNoMemberships(t *testing.T) {
+	t.Parallel()
+
+	perms := seeded()
+	a := New(perms, nil)
+	fresh := &auth.User{ID: uuid.New(), Subject: "newcomer"}
+
+	for _, action := range AllActions {
+		if allowedAnywhere(t, a, fresh, action) {
+			t.Errorf("a user with no memberships was allowed %q anywhere", action)
+		}
+	}
+	if perms.calls != 0 {
+		t.Errorf("the permission source was read %d times for a user with no memberships", perms.calls)
+	}
+}
+
+// Same bootstrap problem as Can: a super admin holds no membership rows, so
+// the loop would find nothing and the first team could never be populated.
+func TestCanInAnyTeamAllowsASuperAdminWithNoMemberships(t *testing.T) {
+	t.Parallel()
+
+	perms := seeded()
+	a := New(perms, []string{"boss"})
+	boss := &auth.User{ID: uuid.New(), Subject: "boss"}
+
+	for _, action := range AllActions {
+		if !allowedAnywhere(t, a, boss, action) {
+			t.Errorf("a super admin was refused %q", action)
+		}
+	}
+	if perms.calls != 0 {
+		t.Errorf("the permission source was read %d times for a super admin", perms.calls)
+	}
+}
+
+func TestCanInAnyTeamDeniesANilUser(t *testing.T) {
+	t.Parallel()
+
+	perms := seeded()
+	a := New(perms, []string{""})
+
+	ok, err := a.CanInAnyTeam(t.Context(), nil, ActionAgentWrite)
+	if err != nil {
+		t.Fatalf("CanInAnyTeam returned an error for a nil user: %v", err)
+	}
+	if ok {
+		t.Error("a nil user was allowed")
+	}
+	if perms.calls != 0 {
+		t.Errorf("the permission source was read %d times for a nil user", perms.calls)
+	}
+}
+
+// The dangerous direction. If a failed read were skipped rather than returned,
+// this user's admin membership would be found afterwards and the answer would
+// be a permit produced by a database error.
+func TestCanInAnyTeamReportsAReadFailureRatherThanContinuing(t *testing.T) {
+	t.Parallel()
+
+	down := errors.New("connection refused")
+	perms := seeded()
+	perms.err, perms.errRole = down, "member"
+	a := New(perms, nil)
+
+	ok, err := a.CanInAnyTeam(t.Context(), userWith("member", "admin"), ActionMembershipWrite)
+	if err == nil {
+		t.Fatal("a failed permission read was reported as a plain answer")
+	}
+	if ok {
+		t.Error("a failed permission read produced a permit")
+	}
+	if !errors.Is(err, down) {
+		t.Errorf("the underlying failure was lost: %v", err)
+	}
+}
+
+func TestCanInAnyTeamNamesTheRoleInAnError(t *testing.T) {
+	t.Parallel()
+
+	a := New(&fakePermissions{err: errors.New("boom")}, nil)
+
+	_, err := a.CanInAnyTeam(t.Context(), userWith("release-manager"), ActionAgentWrite)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "release-manager") {
+		t.Errorf("error does not name the role: %v", err)
+	}
+}
+
+// Twenty memberships are usually two roles. Asking per membership rather than
+// per distinct role turns one directory lookup into twenty round trips, and
+// nothing about the answer would change.
+func TestCanInAnyTeamAsksOncePerDistinctRole(t *testing.T) {
+	t.Parallel()
+
+	perms := seeded()
+	a := New(perms, nil)
+
+	roles := make([]string, 0, 20)
+	for range 10 {
+		roles = append(roles, "member", "reviewer")
+	}
+
+	if allowedAnywhere(t, a, userWith(roles...), ActionMembershipWrite) {
+		t.Fatal("neither role grants membership:write")
+	}
+	if perms.calls != 2 {
+		t.Errorf("the permission source was read %d times for 2 distinct roles across 20 teams", perms.calls)
+	}
+}
+
+// A role an administrator invented and granted nothing to permits nothing,
+// however many teams it is held in.
+func TestCanInAnyTeamDeniesARoleWithNoPermissions(t *testing.T) {
+	t.Parallel()
+
+	a := New(seeded(), nil)
+
+	for _, action := range AllActions {
+		if allowedAnywhere(t, a, userWith("release-manager", "release-manager"), action) {
+			t.Errorf("a role with no permissions allowed %q", action)
+		}
+	}
+}
+
+// CanInAnyTeam is strictly weaker than Can, and that is the property a future
+// caller has to be unable to get wrong. Where Can denies for a specific team,
+// CanInAnyTeam may still permit — so the two are never interchangeable.
+func TestCanInAnyTeamIsWeakerThanCan(t *testing.T) {
+	t.Parallel()
+
+	alpha, bravo := uuid.New(), uuid.New()
+	u := &auth.User{
+		ID:      uuid.New(),
+		Subject: "user-42",
+		Teams: []auth.Membership{
+			{TeamID: alpha, Name: "alpha", Role: "admin"},
+			{TeamID: bravo, Name: "bravo", Role: "member"},
+		},
+	}
+	a := New(seeded(), nil)
+
+	if allowed(t, a, u, ActionMembershipWrite, Resource{TeamID: bravo}) {
+		t.Error("Can allowed membership:write in a team where the user is only a member")
+	}
+	if !allowedAnywhere(t, a, u, ActionMembershipWrite) {
+		t.Error("CanInAnyTeam refused what the user holds in alpha")
 	}
 }

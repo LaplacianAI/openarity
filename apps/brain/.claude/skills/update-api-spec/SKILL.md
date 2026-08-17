@@ -31,7 +31,7 @@ not a discipline anyone has to remember.
       tags: [teams]
       summary: Add a member
       description: |
-        Requires `member:write` in this team. The role is checked by the
+        Requires `membership:write` in this team. The role is checked by the
         database rather than the service: roles are rows, so an unknown one is
         a rejected foreign key and comes back as a 400.
       requestBody:
@@ -58,7 +58,7 @@ not a discipline anyone has to remember.
   responses; a status that only this operation produces is written inline.
 - **Path parameters shared by every operation on a path go on the path**, not
   repeated per verb.
-- **The description says why, not what.** "Requires `member:write`" is a fact a
+- **The description says why, not what.** "Requires `membership:write`" is a fact a
   reader cannot get from the schema; "adds a member to a team" is the summary
   repeated.
 
