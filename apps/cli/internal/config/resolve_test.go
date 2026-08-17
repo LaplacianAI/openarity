@@ -350,3 +350,85 @@ func TestResolvedValuesAreTrimmed(t *testing.T) {
 		t.Errorf("server = %q, want it trimmed", got.Server.Value)
 	}
 }
+
+// The flag has to beat the environment, and the two are only ever compared
+// when both are set. Testing each against the store separately — which is what
+// TestAFlagAndTheEnvironmentOutrankTheStore does — passes with the two
+// candidates in either order.
+//
+// The consequence of getting it wrong is quiet: somebody with OPENARITY_TOKEN
+// exported in their shell passes --token to use a different identity, and the
+// shell's credential is sent instead. Both are valid tokens, so the request
+// succeeds — as the wrong person.
+func TestTheFlagBeatsTheEnvironmentForEverySetting(t *testing.T) {
+	t.Parallel()
+
+	got := Resolve(Input{
+		ServerFlag: "https://from-the-flag.example.com",
+		TokenFlag:  "from-the-flag",
+		OutputFlag: "yaml",
+		Env: envOf(map[string]string{
+			"OPENARITY_SERVER": "https://from-the-environment.example.com",
+			"OPENARITY_TOKEN":  "from-the-environment",
+			"OPENARITY_OUTPUT": "json",
+		}),
+		Path:               configPath,
+		Credential:         credential.Credential{Token: "from-the-store"},
+		CredentialLocation: credentialLocation,
+	})
+
+	for name, setting := range map[string]Setting{
+		"server": got.Server,
+		"token":  got.Token,
+		"output": got.Output,
+	} {
+		if !strings.HasPrefix(setting.Source, "--") {
+			t.Errorf("%s came from %q, want the flag", name, setting.Source)
+		}
+	}
+	if got.Server.Value != "https://from-the-flag.example.com" {
+		t.Errorf("server = %q, want the flag's value", got.Server.Value)
+	}
+	if got.Output.Value != "yaml" {
+		t.Errorf("output = %q, want the flag's value", got.Output.Value)
+	}
+	// The token's value is never published, so its source is the only evidence
+	// of which credential is about to be sent.
+	if got.Token.Source != "--token" {
+		t.Errorf("token source = %q, want --token", got.Token.Source)
+	}
+}
+
+// And the environment beats the file, which is the other adjacent pair. A
+// shell variable that quietly loses to a saved config is the "I set it and it
+// did not take" complaint the Source field exists to answer.
+func TestTheEnvironmentBeatsTheConfigFile(t *testing.T) {
+	t.Parallel()
+
+	saved := Config{
+		Current:  "local",
+		Contexts: map[string]Context{"local": {Server: "https://from-the-file.example.com"}},
+		Output:   "json",
+		Theme:    "light",
+	}
+
+	got := Resolve(Input{
+		Env: envOf(map[string]string{
+			"OPENARITY_SERVER": "https://from-the-environment.example.com",
+			"OPENARITY_OUTPUT": "yaml",
+			"OPENARITY_THEME":  "dark",
+		}),
+		Saved: saved,
+		Path:  configPath,
+	})
+
+	for name, setting := range map[string]Setting{
+		"server": got.Server,
+		"output": got.Output,
+		"theme":  got.Theme,
+	} {
+		if !strings.HasPrefix(setting.Source, "OPENARITY_") {
+			t.Errorf("%s came from %q, want the environment", name, setting.Source)
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -209,5 +210,108 @@ func TestLocationNamesSomethingAPersonCanFind(t *testing.T) {
 	}
 	if strings.Contains(got, "/") {
 		t.Errorf("Location() = %q — a keychain is not a path", got)
+	}
+}
+
+// ErrTooBig is the hinge of the whole fallback: store.Set checks
+// errors.Is(err, ErrTooBig) to decide between "write to the file instead" and
+// "fail the login". If this translation stops happening, an oversized token
+// becomes a hard failure on exactly the machines that needed the fallback —
+// and nothing else would notice, because the keyring mock accepts any size
+// and never produces ErrSetDataTooBig itself.
+func TestAnOversizedSecretBecomesErrTooBig(t *testing.T) {
+	keyring.MockInitWithError(keyring.ErrSetDataTooBig)
+	t.Cleanup(keyring.MockInit)
+
+	s := &KeyringStore{}
+	err := s.Set("local", credential.Credential{Token: "a-token-larger-than-the-keychain-allows"})
+
+	if !errors.Is(err, ErrTooBig) {
+		t.Fatalf("Set = %v, want it to satisfy errors.Is(err, ErrTooBig)", err)
+	}
+	// The size is what makes the message actionable — "too large" alone leaves
+	// somebody guessing whether it was by ten bytes or ten kilobytes.
+	if !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("the error does not say how large it was: %v", err)
+	}
+}
+
+// Any other keychain failure is that failure, not a fallback signal. Treating
+// a locked keychain as ErrTooBig would silently move credentials out of it,
+// which is the opposite of what a locked keychain means.
+func TestAnotherKeychainFailureIsNotErrTooBig(t *testing.T) {
+	locked := errors.New("the keychain is locked")
+	keyring.MockInitWithError(locked)
+	t.Cleanup(keyring.MockInit)
+
+	s := &KeyringStore{}
+	err := s.Set("local", credential.Credential{Token: "a-token"})
+
+	if err == nil {
+		t.Fatal("a locked keychain accepted a write")
+	}
+	if errors.Is(err, ErrTooBig) {
+		t.Errorf("a locked keychain was reported as an oversized credential: %v", err)
+	}
+	if !errors.Is(err, locked) {
+		t.Errorf("the underlying failure was lost: %v", err)
+	}
+}
+
+// Rename must not overwrite a context that already holds a login. The two
+// credentials belong to different brains, and silently replacing one is a
+// logout nobody asked for and cannot undo.
+func TestRenameRefusesToOverwriteAnExistingCredential(t *testing.T) {
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
+
+	s := &KeyringStore{}
+	if err := s.Set("old", credential.Credential{Token: "the-one-being-moved"}); err != nil {
+		t.Fatalf("seed old: %v", err)
+	}
+	if err := s.Set("new", credential.Credential{Token: "the-one-already-there"}); err != nil {
+		t.Fatalf("seed new: %v", err)
+	}
+
+	if err := s.Rename("old", "new"); err == nil {
+		t.Fatal("a rename onto an occupied context succeeded")
+	}
+
+	for name, want := range map[string]string{
+		"old": "the-one-being-moved",
+		"new": "the-one-already-there",
+	} {
+		got, err := s.Get(name)
+		if err != nil {
+			t.Fatalf("Get(%s): %v", name, err)
+		}
+		if got.Token != want {
+			t.Errorf("%s = %q, want %q — a refused rename must change nothing", name, got.Token, want)
+		}
+	}
+}
+
+// The order inside Rename — write the new entry, then remove the old — is
+// deliberate: an interruption between the two duplicates a credential rather
+// than losing it, and losing it means a silent logout with no way back.
+//
+// It is not reachable through go-keyring's mock, and that is worth stating
+// rather than leaving as an untested line. MockInitWithError fails *every*
+// operation, so a failure injected for the write also fails the Get before it
+// and Rename returns before reaching the part under test; MockInit installs a
+// fresh empty provider, so a working keychain cannot be restored afterwards to
+// inspect what survived. Reaching it would mean injecting the three keyring
+// calls as package-level variables, which is more indirection in production
+// code than one ordering is worth.
+//
+// This test pins the assumption instead: if the mock ever gains per-operation
+// failures, it starts failing and the real assertion becomes writable.
+func TestTheKeyringMockCannotFailOneOperationAtATime(t *testing.T) {
+	keyring.MockInitWithError(keyring.ErrSetDataTooBig)
+	t.Cleanup(keyring.MockInit)
+
+	if _, err := keyring.Get(service, "anything"); err == nil {
+		t.Error("the mock now fails writes without failing reads — Rename's " +
+			"write-before-delete order can be tested directly")
 	}
 }
