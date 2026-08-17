@@ -164,16 +164,31 @@ After that, nothing else needs doing: an expired token is renewed in the
 background on the next command. `oa login` comes back when the provider says the
 login itself is over, not when it merely had a bad minute.
 
-Teams and membership are reachable without a database session:
+Teams and membership are reachable without a database session, by name rather
+than by uuid:
 
 ```sh
 oa teams list
 oa teams create platform                      # super admins only
 
-oa teams members list <team-id>
-oa teams members add <team-id> <user-id> --role developer
-oa teams members remove <team-id> <user-id>
+oa teams members list platform
+oa teams members add platform alice --role member
+oa teams members remove platform alice
 ```
+
+Every argument still accepts an id, so existing scripts keep working and pay no
+lookup. `alice` is the subject she signs in as — she has to have logged in once,
+because a user row is created on first sight and never synced from the provider:
+
+```sh
+oa users list                                 # everyone who has logged in
+oa users list alice                           # one exact subject, with her id
+```
+
+`add` sends the subject to the brain rather than looking it up, so naming
+somebody needs `membership:write` in that team and nothing more. `oa users list`
+is for the other question — who is there at all — and needs to be an admin of
+some team.
 
 A list is one page per call. When more remain the response carries a cursor,
 and the table says how to use it:
@@ -217,18 +232,31 @@ so the two never disagree about which is current.
 
 Everything except the probes requires `Authorization: Bearer <token>`.
 
-| Endpoint                                  | Who may call it              |
-| ----------------------------------------- | ---------------------------- |
-| `GET /healthz`, `GET /readyz`             | anyone, unauthenticated      |
-| `GET /whoami`                             | any authenticated caller     |
-| `POST /teams`                             | super admins                 |
-| `GET /teams`                              | every team, or your own      |
-| `GET /teams/{id}`                         | members, and super admins    |
-| `GET /teams/{id}/members`                 | members, and super admins    |
-| `POST /teams/{id}/members`                | `member:write` in that team  |
-| `DELETE /teams/{id}/members/{userID}`     | `member:write` in that team  |
+| Endpoint                              | Who may call it                     |
+| ------------------------------------- | ----------------------------------- |
+| `GET /healthz`, `GET /readyz`         | anyone, unauthenticated             |
+| `GET /auth/config`                    | anyone, unauthenticated             |
+| `GET /whoami`                         | any authenticated caller            |
+| `GET /users`                          | `membership:write` in **some** team |
+| `POST /teams`                         | super admins                        |
+| `GET /teams`                          | every team, or your own             |
+| `GET /teams/{id}`                     | members, and super admins           |
+| `GET /teams/{id}/members`             | members, and super admins           |
+| `POST /teams/{id}/members`            | `membership:write` in **that** team |
+| `DELETE /teams/{id}/members/{userID}` | `membership:write` in **that** team |
 
 A team you are not in is a 404, never a 403 — a 403 would confirm the id exists.
+
+`GET /users` is the only route whose check is "somewhere" rather than "here",
+because a caller looking somebody up has no team in mind yet. It is restricted
+at all because the directory is every subject and email the deployment has seen:
+open to anyone, `?subject=` becomes a way to test whether a username exists.
+
+Adding a member does **not** go through it. `POST /teams/{id}/members` takes
+`user_id` **or** `subject` — exactly one — and resolves the subject itself, so
+naming somebody needs no permission to read the directory. A subject nobody has
+is a 404; one that matches two people, which needs two issuers, is a 409 listing
+the ids.
 
 Listings are paged and take `?limit=` (default 50, maximum 100) and `?cursor=`:
 

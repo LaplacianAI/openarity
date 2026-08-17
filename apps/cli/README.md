@@ -67,7 +67,7 @@ cmd/oa/            the composition root — main, and the list of commands
 internal/cli/      what a command may reach: Options, the root, unwrapping a
                    response, paging, printing a page
 internal/command/  one package per command: whoami, config, context, teams,
-                   login, logout
+                   users, login, logout
 internal/theme/    what a theme is — one Parse, zero dependencies
 internal/output/   what a format is
   printer/         how a value is rendered: json, yaml, table

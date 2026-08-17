@@ -263,22 +263,36 @@ it in exactly and restart the brain. It is the *subject*, not the email address.
 ### 10. Add its first member
 
 A new team has nobody in it, and only a super admin can put the first person
-there. Both arguments are ids:
+there. Both arguments take a name — the team's, and the subject the person
+signs in as:
 
 ```sh
-oa teams list                    # the team id
-oa teams members add <team id> <user id> --role admin
+oa teams members add platform akadmin --role admin
 ```
 
-Nothing exposes a user id yet, so until it does the only source is the database:
+No ids anywhere. The team name is resolved against `oa teams list`, and the
+subject is sent to the brain, which resolves it while adding. That second part
+matters: adding somebody you can name needs `membership:write` in that team and
+nothing else — never permission to read the whole directory.
+
+They must have logged in at least once. A user row is created on first sight
+and never synced from authentik, so somebody who has an account there but has
+never run `oa login` cannot be added yet:
 
 ```sh
-docker compose -f docker-compose.yml exec postgres \
-  psql -U postgres -d openarity -Atc "select id, subject from users"
+oa users list                    # everyone who has logged in
+oa users list akadmin            # one exact subject
 ```
 
-The roles that exist are `admin` and `developer`, and they are rows: anything
-else comes back as a 400 from a rejected foreign key, not as a CLI error.
+Two answers you may get instead of a 204:
+
+- **`no user has that subject`** — they have not logged in yet.
+- **`2 users have that subject`** — two identity providers issued the same
+  name. The reply lists the ids; retry with one of them in place of the
+  subject. Only possible once a second issuer is configured.
+
+The roles that exist are `admin` and `member`, and they are rows: anything else
+comes back as a 400 from a rejected foreign key, not as a CLI error.
 
 From then on that person manages the team's membership themselves, without
 being a super admin.

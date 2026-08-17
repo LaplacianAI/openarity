@@ -74,6 +74,7 @@ apps/cli/
     config/            oa config show|set|unset|path
     context/           oa context list|use|create|rename|delete
     teams/             oa teams list|create, oa teams members list|add|remove
+    users/             oa users list — who has logged in, and their id
     login/             oa login — the device flow, start to stored
     logout/            oa logout — discard this context's credential
   internal/theme/      what a theme is — one Parse, zero dependencies
@@ -165,6 +166,19 @@ unreachable from here by construction. The only thing crossing the boundary is
 - **Never print a credential.** Not truncated, not masked, not in an error.
   `config.Resolve` never puts a token value in a `Setting` — it reports
   `set (N characters)` — so there is nothing to redact further up.
+- **An argument that takes an id takes a name too, and a uuid is never looked
+  up.** `cli.ResolveTeam` and `cli.ResolveMember` parse first and return an id
+  unchanged, so existing scripts pay nothing and a name costs one request.
+- **Resolve against the narrowest list that can answer.** A team resolves
+  through `GET /teams`, which every member may read. A member resolves through
+  that team's own `GET /teams/{id}/members`, not `GET /users` — the directory
+  needs `membership:write` somewhere, which is a far larger permission to
+  require for "take this person out of my team".
+- **Adding somebody resolves nothing.** The subject goes into the request body
+  and the brain resolves it while adding, so `oa teams members add` needs no
+  directory permission at all. `ResolveUser` existed for one afternoon and was
+  deleted when the API grew `subject` — if it comes back, something has been
+  designed the wrong way round.
 - **`os.Exit` appears only in `main`, and `main` holds no defers.** Same reason
   as the brain: `os.Exit` skips deferred functions.
 - **Tests mirror source files**, and a test that needs a config file gets its
