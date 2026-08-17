@@ -214,6 +214,27 @@ func TestRenamingToTheSameNameKeepsTheCredential(t *testing.T) {
 	}
 }
 
+// The file store's counterpart to the keychain's guard. Set refuses an empty
+// context; Rename has to refuse the same thing one call later, or a login
+// moves to a key nothing reads back.
+func TestRenameRefusesAnEmptyDestination(t *testing.T) {
+	t.Parallel()
+
+	s := newStore(t)
+	if err := s.Set("prod", aLogin()); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	if err := s.Rename("prod", ""); err == nil {
+		t.Fatal("a credential was renamed to an empty context")
+	}
+
+	kept, _ := s.Get("prod")
+	if kept.Token != aLogin().Token {
+		t.Errorf("the source credential was lost: %+v", kept)
+	}
+}
+
 // Unreachable through `oa context rename`, which refuses an existing name
 // first. Reaching it means config.yaml and this file disagree, and the
 // credential that would be overwritten is the one in use.

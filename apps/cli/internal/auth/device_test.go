@@ -268,6 +268,34 @@ func TestAnOAuthErrorStartingTheDeviceFlowEndsIt(t *testing.T) {
 	}
 }
 
+// The one refusal with a cause the person can act on, and the reason it is
+// singled out rather than left to the generic message: offline_access is not
+// granted by default on several providers, and "the identity provider refused
+// the login request" sends somebody looking at their password. The scopes
+// asked for have to be in the message, because nothing else prints them.
+func TestARefusedScopeSaysWhichScopesWereAskedFor(t *testing.T) {
+	t.Parallel()
+
+	p := deviceProvider(t, jsonHandler(http.StatusBadRequest,
+		`{"error":"invalid_scope","error_description":"offline_access is not allowed"}`), nil)
+
+	_, err := p.StartDevice(t.Context())
+	if err == nil {
+		t.Fatal("a refused scope was accepted")
+	}
+	if !strings.Contains(err.Error(), "offline_access") {
+		t.Errorf("the message does not name the scopes asked for: %v", err)
+	}
+	if !strings.Contains(err.Error(), "scopes it allows") {
+		t.Errorf("the message does not say where to look: %v", err)
+	}
+	// The provider's own description is the half that says which scope, so
+	// wrapping must not drop it.
+	if !strings.Contains(err.Error(), "is not allowed") {
+		t.Errorf("the provider's description was lost: %v", err)
+	}
+}
+
 func TestWaitForTokenReturnsTheTokenOnceApproved(t *testing.T) {
 	t.Parallel()
 

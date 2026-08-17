@@ -187,6 +187,55 @@ func TestKeychainRenameRefusesToOverwrite(t *testing.T) {
 	}
 }
 
+// `oa context rename` renames the context whether or not anyone has logged
+// into it, so Rename is reached with nothing to move. Treating that as an
+// error would make renaming a context you have not logged into fail, and
+// treating it as something to move would file a zero credential under the new
+// name — which reads back as a login that is present but empty.
+func TestKeychainRenamingAContextWithNoCredentialIsNotAnError(t *testing.T) {
+	s := mockKeychain(t)
+
+	if err := s.Rename("never-logged-in", "renamed"); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+
+	// Get cannot tell the difference: a stored zero credential unmarshals to
+	// the same value as nothing stored at all. The assertion has to be that
+	// no keychain entry exists, or carrying the empty credential through
+	// would pass this test while filing an empty secret under every context
+	// name anybody ever renamed.
+	if _, err := keyring.Get(service, "renamed"); !errors.Is(err, keyring.ErrNotFound) {
+		t.Errorf("the rename created a keychain entry for a context with no login (err = %v)", err)
+	}
+}
+
+// An empty destination is the same hazard Set guards against, reached one
+// call further in: the keychain accepts an empty account name, so the
+// credential would move somewhere nothing reads back — a silent logout.
+//
+// Measured: deleting Rename's own guard does not change the outcome here.
+// Rename reaches Set, Set refuses with the same sentence, and the source
+// survives because the refusal lands before the Delete. The guard is
+// defence-in-depth, and a mutation sweep will report it as surviving forever.
+// The file store's equivalent guard is not redundant — FileStore.Rename
+// writes the map directly rather than going through Set, so removing it there
+// really does file a credential under an empty key.
+func TestKeychainRenameRefusesAnEmptyDestination(t *testing.T) {
+	s := mockKeychain(t)
+	if err := s.Set("prod", aLogin()); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	if err := s.Rename("prod", ""); err == nil {
+		t.Fatal("a credential was renamed to an empty context")
+	}
+
+	kept, _ := s.Get("prod")
+	if kept.Token != aLogin().Token {
+		t.Errorf("the source credential was lost: %+v", kept)
+	}
+}
+
 // The whole reason NewKeyringStore probes rather than assuming: an SSH
 // session, a container and CI have no keychain, and `oa` has to notice before
 // it relies on one rather than failing a login later.

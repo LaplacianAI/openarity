@@ -1,6 +1,7 @@
 package context
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -382,6 +383,78 @@ func TestListNeverPrintsTheToken(t *testing.T) {
 	}
 	if !strings.Contains(out, "token saved") {
 		t.Errorf("the listing does not say the context has a credential:\n%s", out)
+	}
+}
+
+// The first thing a new person runs, and the one moment an empty listing is
+// expected rather than a symptom. A bare table with no rows says nothing
+// about what to do next.
+func TestListOnAFreshMachineSaysHowToMakeOne(t *testing.T) {
+	clitest.Isolate(t)
+
+	out, err := clitest.Execute(t, commands, "context", "list")
+	if err != nil {
+		t.Fatalf("context list: %v", err)
+	}
+	if !strings.Contains(out, "no contexts") {
+		t.Errorf("an empty listing does not say so:\n%s", out)
+	}
+	if !strings.Contains(out, "context create") {
+		t.Errorf("an empty listing does not say how to make one:\n%s", out)
+	}
+}
+
+// The note is prose for a person, so it must not reach a parser that was
+// promised a list.
+func TestAnEmptyListIsStillValidJSON(t *testing.T) {
+	clitest.Isolate(t)
+
+	out, err := clitest.Execute(t, commands, "context", "list", "-o", "json")
+	if err != nil {
+		t.Fatalf("context list -o json: %v", err)
+	}
+
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not json: %v\n%s", err, out)
+	}
+	if len(got) != 0 {
+		t.Errorf("an empty listing produced %d rows: %s", len(got), out)
+	}
+}
+
+// Renaming a context to the name it already has is a typo, and the rename is
+// Set-then-Delete against the same key: carried through, it would report
+// success and leave the context gone.
+func TestRenameToTheSameNameIsRefusedAndChangesNothing(t *testing.T) {
+	clitest.Isolate(t)
+
+	seedContext(t, "prod", "https://brain.example.com", "prod-token")
+
+	_, err := clitest.Execute(t, commands, "context", "rename", "prod", "prod")
+	if err == nil {
+		t.Fatal("renaming a context to its own name reported success")
+	}
+	// Without the guard the name-is-taken check refuses it anyway, so the
+	// error alone proves nothing. What the guard buys is the message: the
+	// generic one tells you to use prod or delete it first, which is advice
+	// to destroy the context you were trying to keep.
+	if !strings.Contains(err.Error(), "already called that") {
+		t.Errorf("the message does not say the name is unchanged: %v", err)
+	}
+	if strings.Contains(err.Error(), "delete it first") {
+		t.Errorf("a same-name rename is told to delete the context: %v", err)
+	}
+
+	saved, _ := config.Load()
+	if _, ok := saved.Contexts["prod"]; !ok {
+		t.Errorf("the context is gone: %+v", saved.Contexts)
+	}
+	if saved.Contexts["prod"].Server != "https://brain.example.com" {
+		t.Errorf("the address was disturbed: %+v", saved.Contexts["prod"])
+	}
+	if got := storedToken(t, "prod"); got != "prod-token" {
+		t.Errorf("the credential was disturbed: %q", got)
 	}
 }
 
