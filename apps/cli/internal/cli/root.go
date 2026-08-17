@@ -38,6 +38,9 @@ func NewRoot(stdout, stderr io.Writer, commands Commands) *cobra.Command {
 	root.PersistentFlags().StringVarP(&opts.OutputFlag, "output", "o", "",
 		"how to print results: "+output.Names()+" (default $OPENARITY_OUTPUT, then the saved config, then "+string(output.Default)+")")
 
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+
 	root.AddCommand(commands(opts)...)
 
 	return root

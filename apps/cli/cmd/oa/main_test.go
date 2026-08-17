@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -101,5 +102,67 @@ func TestEveryCommandIsRegistered(t *testing.T) {
 		if !registered[want] {
 			t.Errorf("%q is not on the root: %v", want, registered)
 		}
+	}
+}
+
+// run is the whole program minus os.Exit: it wires the signal handler, builds
+// the root and executes. Nothing else drives it, so a change that broke
+// argument handling or writer wiring would only be found by running the binary
+// by hand.
+func TestRunWritesToTheWritersItIsGiven(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	if err := run(t.Context(), []string{"--help"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run --help: %v", err)
+	}
+
+	if stdout.Len() == 0 && stderr.Len() == 0 {
+		t.Fatal("run wrote nothing to either writer")
+	}
+	combined := stdout.String() + stderr.String()
+	for _, want := range []string{"oa talks to a brain", "Available Commands", "login", "users"} {
+		if !strings.Contains(combined, want) {
+			t.Errorf("help does not mention %q:\n%s", want, combined)
+		}
+	}
+}
+
+// The exit code comes from this error, so an unknown command has to return one
+// rather than printing a suggestion and succeeding — a script would carry on.
+func TestRunReturnsAnErrorForAnUnknownCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	err := run(t.Context(), []string{"nonsense"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("an unknown command exited zero")
+	}
+	if !strings.Contains(err.Error(), "nonsense") {
+		t.Errorf("the error does not name what was typed: %v", err)
+	}
+}
+
+// Nothing may reach os.Stdout directly: a test cannot observe it, and neither
+// can anything redirecting output to a file.
+func TestRunSendsNothingToTheProcessStreams(t *testing.T) {
+	real := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = real })
+
+	var stdout, stderr bytes.Buffer
+	_ = run(t.Context(), []string{"--help"}, &stdout, &stderr)
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	leaked, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(leaked) != 0 {
+		t.Errorf("run wrote to os.Stdout directly: %q", leaked)
 	}
 }

@@ -15,9 +15,11 @@ import (
 // ErrTooBig is unreachable through it, and neither store can be made to fail
 // on demand.
 type fakeStore struct {
-	name   string
-	creds  map[string]credential.Credential
-	setErr error
+	name      string
+	creds     map[string]credential.Credential
+	setErr    error
+	deleteErr error
+	renameErr error
 }
 
 func newFake(name string) *fakeStore {
@@ -39,11 +41,17 @@ func (f *fakeStore) Set(context string, cred credential.Credential) error {
 }
 
 func (f *fakeStore) Delete(context string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	delete(f.creds, context)
 	return nil
 }
 
 func (f *fakeStore) Rename(from, to string) error {
+	if f.renameErr != nil {
+		return f.renameErr
+	}
 	moving, ok := f.creds[from]
 	if !ok || from == to {
 		return nil
@@ -280,5 +288,95 @@ func TestOpenProducesAWorkingStore(t *testing.T) {
 	}
 	if after, _ := s.Get("staging"); !after.IsZero() {
 		t.Errorf("still there after a logout: %+v", after)
+	}
+}
+
+// The location a caller is shown is the keychain's, because that is where a
+// credential of ordinary size actually goes. Reporting the file would make
+// `oa config show` name a path that usually holds nothing, and renewal
+// compares this string against the source Resolve picked — get it wrong and
+// nothing is ever renewed.
+func TestTheFallbackReportsThePreferredLocation(t *testing.T) {
+	t.Parallel()
+
+	both, keychain, _ := newFallback()
+
+	if got := both.Location(); got != keychain.Location() {
+		t.Errorf("Location() = %q, want the keychain's %q", got, keychain.Location())
+	}
+}
+
+// Logging out has to clear both, and a failure in the first must not leave the
+// second untouched and unreported — the credential would survive in a store
+// nothing mentions and the next command would still be logged in.
+func TestAFailedDeleteIsReportedRatherThanHalfDone(t *testing.T) {
+	t.Parallel()
+
+	locked := errors.New("the keychain is locked")
+	both, keychain, file := newFallback()
+	keychain.creds["local"] = credential.Credential{Token: "a"}
+	file.creds["local"] = credential.Credential{Token: "b"}
+	keychain.deleteErr = locked
+
+	if err := both.Delete("local"); !errors.Is(err, locked) {
+		t.Fatalf("Delete = %v, want the underlying failure", err)
+	}
+	if _, ok := file.creds["local"]; !ok {
+		t.Error("the file copy was removed even though the first delete failed")
+	}
+}
+
+func TestAFailedRenameIsReported(t *testing.T) {
+	t.Parallel()
+
+	locked := errors.New("the keychain is locked")
+	both, keychain, file := newFallback()
+	keychain.creds["old"] = credential.Credential{Token: "a"}
+	file.creds["old"] = credential.Credential{Token: "b"}
+	keychain.renameErr = locked
+
+	if err := both.Rename("old", "new"); !errors.Is(err, locked) {
+		t.Fatalf("Rename = %v, want the underlying failure", err)
+	}
+	if _, ok := file.creds["new"]; ok {
+		t.Error("the file copy was renamed even though the first rename failed")
+	}
+}
+
+// The oversized path writes to the file and then clears the keychain. If that
+// clear fails the caller has to hear about it: reads go keychain-first, so a
+// stale entry left there would be served ahead of the credential just written.
+func TestAnOversizedWriteReportsAFailedKeychainClear(t *testing.T) {
+	t.Parallel()
+
+	locked := errors.New("the keychain is locked")
+	both, keychain, file := newFallback()
+	keychain.setErr = ErrTooBig
+	keychain.deleteErr = locked
+
+	err := both.Set("local", credential.Credential{Token: "a-very-large-token"})
+	if !errors.Is(err, locked) {
+		t.Fatalf("Set = %v, want the failed clear reported", err)
+	}
+	if _, ok := file.creds["local"]; !ok {
+		t.Error("the credential never reached the file")
+	}
+}
+
+// A write that fails for any other reason is that failure, not a fallback.
+// Falling back on every error would quietly move credentials out of the
+// keychain the first time it was locked.
+func TestOnlyAnOversizedWriteFallsBackToTheFile(t *testing.T) {
+	t.Parallel()
+
+	locked := errors.New("the keychain is locked")
+	both, keychain, file := newFallback()
+	keychain.setErr = locked
+
+	if err := both.Set("local", credential.Credential{Token: "a"}); !errors.Is(err, locked) {
+		t.Fatalf("Set = %v, want the underlying failure", err)
+	}
+	if _, ok := file.creds["local"]; ok {
+		t.Error("a locked keychain silently moved the credential to the file")
 	}
 }

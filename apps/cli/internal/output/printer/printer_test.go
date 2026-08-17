@@ -346,3 +346,26 @@ func TestMachineFormatsDoNotPad(t *testing.T) {
 		t.Errorf("name = %q, want it unpadded", got.Name)
 	}
 }
+
+// A note reaches a person, not a parser. The json and yaml printers inherit
+// base.Note, which does nothing on purpose: a hint printed before a document
+// corrupts it, and `oa … -o json | jq` would fail on prose it never expected.
+func TestOnlyTheTablePrinterPrintsANote(t *testing.T) {
+	t.Parallel()
+
+	for _, format := range []output.Format{output.JSON, output.YAML} {
+		var buf bytes.Buffer
+		p := New(&buf, format)
+		p.Note("more — pass --cursor to see the rest")
+
+		if buf.Len() != 0 {
+			t.Errorf("%s printed a note into the document: %q", format, buf.String())
+		}
+	}
+
+	var buf bytes.Buffer
+	New(&buf, output.Table).Note("more — pass --cursor to see the rest")
+	if !strings.Contains(buf.String(), "--cursor") {
+		t.Errorf("the table printer swallowed the note: %q", buf.String())
+	}
+}
