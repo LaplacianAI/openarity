@@ -39,6 +39,12 @@ production files.
   field, `Resolve` and its precedence, `config set`/`unset`/`show`, and whether
   it belongs at the top level or inside a context. Use it every time; a setting
   wired into three of the four places is the normal failure.
+- **`handle-a-credential`** — anything that reads, writes, renews, prints or
+  moves a login: a store, `oa login`, a context lifecycle operation, a new OAuth
+  grant. Covers the keychain size limit and its fallback, which refresh failures
+  are fatal, and the four tests. Use it every time; every failure in this area is
+  silent — a leak nothing prints, a logout nobody asked for, a renewal that works
+  exactly once.
 - **`add-output-format`** — a fourth format alongside table, json and yaml.
   Covers the `Format` constant, `Parse`, the printer type, and the two tests
   that stop it being silently wrong.
@@ -62,23 +68,33 @@ apps/cli/
     options.go         Options — the whole surface a command may reach
     response.go        Result, Created, NoContent: a call becomes a value
     page.go            Paging and PrintPage: a page becomes a table
-    args.go            ParseUUID
+    lookup.go          ResolveTeam, ResolveMember: a name becomes an id
   internal/command/
     whoami/            oa whoami
     config/            oa config show|set|unset|path
     context/           oa context list|use|create|rename|delete
     teams/             oa teams list|create, oa teams members list|add|remove
+    users/             oa users list — who has logged in, and their id
+    login/             oa login — the device flow, start to stored
+    logout/            oa logout — discard this context's credential
   internal/theme/      what a theme is — one Parse, zero dependencies
   internal/output/     what a format is
     printer/           how a value is rendered: json, yaml, table
   internal/config/     the config file, and resolving a setting to a value
-  internal/auth/       which credential to send, and to whom
+  internal/credential/ what a login is — a struct, three predicates, one Store
+    store/             file.go, keyring.go, and Open, which picks
+  internal/auth/       the OIDC provider: discovery, device.go, refresh.go
   internal/ui/         colours, and whether the writer is a terminal
   internal/client/     generated from the brain's spec — never edited
   internal/clitest/    an isolated config directory and a stub brain
   Makefile             build and code quality targets
   .golangci.yml        linters and formatters
 ```
+
+`internal/credential` imports `time` and nothing else. It is the vocabulary
+every other package agrees on, so it cannot import any of them: `store` depends
+on it, `config` embeds it in a `Resolve` input, `cli` holds a `Store`. Put a
+keychain call in there and `config` starts linking a C library.
 
 `cmd/oa` is the composition root and the only place that knows every command.
 One package per command, so `ls internal/command/` names them. `internal/cli`
@@ -150,6 +166,26 @@ unreachable from here by construction. The only thing crossing the boundary is
 - **Never print a credential.** Not truncated, not masked, not in an error.
   `config.Resolve` never puts a token value in a `Setting` — it reports
   `set (N characters)` — so there is nothing to redact further up.
+- **An argument that takes an id takes a name too, and a uuid is never looked
+  up.** `cli.ResolveTeam` and `cli.ResolveMember` parse first and return an id
+  unchanged, so existing scripts pay nothing and a name costs one request.
+- **Resolve against the narrowest list that can answer.** A team resolves
+  through `GET /teams`, which every member may read. A member resolves through
+  that team's own `GET /teams/{id}/members`, not `GET /users` — the directory
+  needs `membership:write` somewhere, which is a far larger permission to
+  require for "take this person out of my team".
+- **Adding somebody resolves nothing.** The subject goes into the request body
+  and the brain resolves it while adding, so `oa teams members add` needs no
+  directory permission at all. `ResolveUser` existed for one afternoon and was
+  deleted when the API grew `subject` — if it comes back, something has been
+  designed the wrong way round.
+- **An exported identifier that nothing calls is invisible, and coverage is
+  what finds it.** `unused` assumes an exported function has a caller in
+  another package, so it stays silent. `cli.ParseUUID` outlived its last caller
+  by a commit and was found at 0.0% in a per-function coverage report — nothing
+  else in the gate said a word. Read the report per function occasionally, not
+  just the total; a lone 0.0% is usually dead code rather than an untested
+  branch.
 - **`os.Exit` appears only in `main`, and `main` holds no defers.** Same reason
   as the brain: `os.Exit` skips deferred functions.
 - **Tests mirror source files**, and a test that needs a config file gets its
@@ -174,14 +210,54 @@ make tools      # reinstall tooling — rerun after a Go upgrade
 
 **Coverage excludes `internal/client` and `internal/clitest`.** Neither is this
 module's own code: the generated client is two thousand lines nobody wrote, so
-counting it measures oapi-codegen (34.6% with it, 89.3% without), and `clitest`
+counting it measures oapi-codegen (71.3% with it, 86.3% without), and `clitest`
 is the test harness, well covered enough that counting it flatters the total.
 
 ## Decisions worth not relitigating
 
 - **This is gcloud, not a chat client.** Contexts, not a single `server` field.
-  A credential is only valid for the brain that issued it, so the token lives
-  *inside* the context and travels with it.
+  A credential is only valid for the brain that issued it, so both are keyed by
+  the context name and every lifecycle operation moves the pair —
+  `oa context rename` renames the credential too, `delete` deletes it.
+- **A credential is not a setting.** `config.yaml` is meant to be readable,
+  synced and pasted into an issue; a token in it is a leak waiting for the first
+  bug report. `Context` holds `{Server string}` and nothing else, and the login
+  lives in `internal/credential/store`. This split was made *after* the token
+  sat in the config file for a while — do not put it back.
+- **Keychain first, file underneath, and the fallback writes to exactly one.**
+  `store.Open` returns a `fallback` when a keychain probe succeeds. `Get` reads
+  the keychain and falls through to the file; `Set` writes one and **deletes
+  from the other**. Without that delete a token too large for the keychain would
+  be written to the file while a stale one stayed in the keychain, and the read
+  order would keep serving the stale one — a login that appears to succeed and
+  changes nothing.
+- **The keychain has a size limit, and it is smaller than it looks.** Measured,
+  not assumed: macOS caps the whole `security` command line at 4096 bytes and
+  the secret is hex-encoded, so about 3009 bytes survive; Windows is 2560. A
+  token carrying twenty group claims passes here and fails on somebody else's
+  laptop, which is why `ErrTooBig` falls back rather than failing. No test can
+  reach the real cap — `keyring.MockInit()` accepts 16KB — so the limit is a
+  constant with a comment, not something a test discovers.
+- **Renewal reuses the precedence `Resolve` already computed.**
+  `renewIfExpired` returns early unless `Settings.Token.Source ==
+  Credentials.Location()`. One comparison, and it means the rule for *which*
+  credential gets renewed can never drift from the rule for which one gets sent.
+  A separate `if flag == "" && env == ""` chain in `cli` would be that drift.
+- **Only `invalid_grant` discards a stored login.** `auth.ErrRefreshRejected`
+  exists so `renewIfExpired` knows which failures are fatal. A 500 or
+  `temporarily_unavailable` is a provider having a bad minute; treating it as a
+  dead login would log out everyone the moment authentik restarted, and the two
+  bugs are indistinguishable from the outside.
+- **A provider that sends no `refresh_token` back is keeping the old one.**
+  Rotation is optional in OAuth. Storing what came back would give a login that
+  renews exactly once and then dies — which looks identical to a rotating
+  provider whose old token was not replaced, and needs the opposite fix.
+- **`oa login` checks there is a context before it contacts anyone.**
+  Discovering there is nowhere to store a credential *after* a person has
+  approved in a browser is the worst possible place to fail.
+- **The prompt goes to `opts.Stderr`, not through `opts.Out`.** `Note` is
+  silent under json and yaml, and a login whose code is only visible in table
+  mode is a login that cannot be completed with `-o json`.
 - **Output is a top-level setting, not per-context.** It is how you like to read
   output, not a property of a brain. Switching context must not silently put you
   back on a table mid-script.

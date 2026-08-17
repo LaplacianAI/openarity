@@ -159,7 +159,9 @@ func TestWhoamiExposesOnlyTheContractedFields(t *testing.T) {
 		t.Fatalf("body is not valid JSON: %v", err)
 	}
 
-	allowed := map[string]bool{"kind": true, "issuer": true, "subject": true, "email": true, "teams": true}
+	allowed := map[string]bool{
+		"id": true, "kind": true, "issuer": true, "subject": true, "email": true, "teams": true,
+	}
 	for key := range raw {
 		if !allowed[key] {
 			t.Errorf("unexpected field %q: %s", key, rec.Body)
@@ -181,16 +183,52 @@ func TestWhoamiExposesOnlyTheContractedFields(t *testing.T) {
 	}
 }
 
-// The user id is deliberately absent. It is an internal key, and publishing it
-// invites a client to put it in URLs before that is a contract.
-func TestWhoamiDoesNotPublishTheUserID(t *testing.T) {
+// The caller's own id, which is the only way someone in no team can learn it —
+// GET /users needs membership:write somewhere, and a person with no team holds
+// nothing. Without this they cannot ask to be added.
+//
+// It was deliberately withheld until /users existed. Publishing it discloses
+// nothing they did not already send.
+func TestWhoamiPublishesTheCallersOwnID(t *testing.T) {
 	t.Parallel()
 
 	u := &auth.User{ID: uuid.New(), Issuer: "https://idp", Subject: "user-42"}
 	rec := get(t, testPrincipal(), u)
 
-	if strings.Contains(rec.Body.String(), u.ID.String()) {
-		t.Errorf("the response contains the internal user id: %s", rec.Body)
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("body is not valid JSON: %v", err)
+	}
+	if got := raw["id"]; got != u.ID.String() {
+		t.Errorf("id = %v, want %s", got, u.ID)
+	}
+}
+
+// Never absent, so no omitempty: Resolve upserts every principal on first
+// sight, a development token included. A missing key would send a client
+// looking for a field the contract says is always there.
+func TestWhoamiAlwaysCarriesAnID(t *testing.T) {
+	t.Parallel()
+
+	for name, p := range map[string]*auth.Principal{
+		"a user": testPrincipal(),
+		"a dev token": {
+			Kind: auth.KindDev, Issuer: "dev", Subject: "dev",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := get(t, p, &auth.User{ID: uuid.New(), Issuer: "dev", Subject: "dev"})
+
+			var raw map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+				t.Fatalf("body is not valid JSON: %v", err)
+			}
+			if _, ok := raw["id"]; !ok {
+				t.Errorf("no id in the response: %s", rec.Body)
+			}
+		})
 	}
 }
 

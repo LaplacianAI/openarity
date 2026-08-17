@@ -35,6 +35,10 @@ type fakeStore struct {
 	teams     []db.Team
 	members   []db.ListTeamMembersRow
 	userTeams []db.ListUserTeamsRow
+	// bySubject is the directory the subject form resolves against. It is
+	// keyed by subject and holds a slice because a subject is unique only per
+	// issuer, so two rows is a state the schema permits.
+	bySubject map[string][]db.FindUsersBySubjectRow
 	err       error
 
 	created      []string
@@ -42,8 +46,19 @@ type fakeStore struct {
 	removed      []db.RemoveTeamMemberParams
 	teamArgs     []db.ListTeamsParams
 	memberArgs   []db.ListTeamMembersParams
+	subjectArgs  []db.FindUsersBySubjectParams
 	listedUser   int
 	getTeamCalls int
+}
+
+func (f *fakeStore) FindUsersBySubject(
+	_ context.Context, arg db.FindUsersBySubjectParams,
+) ([]db.FindUsersBySubjectRow, error) {
+	f.subjectArgs = append(f.subjectArgs, arg)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return truncate(f.bySubject[arg.Subject], arg.PageSize), nil
 }
 
 func (f *fakeStore) CreateTeam(_ context.Context, name string) (db.Team, error) {
@@ -254,7 +269,7 @@ func TestCreateIsRefusedToEveryoneElse(t *testing.T) {
 	for name, u := range map[string]*auth.User{
 		"an outsider":        outsider(),
 		"an admin of a team": memberOf(uuid.New(), "admin"),
-		"a developer of one": memberOf(uuid.New(), "developer"),
+		"a member of one":    memberOf(uuid.New(), "member"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -416,10 +431,10 @@ func TestListGivesEveryoneElseOnlyTheirOwnTeams(t *testing.T) {
 	id := uuid.New()
 	s := &fakeStore{
 		teams:     []db.Team{{ID: uuid.New(), Name: "payments"}}, // must not appear
-		userTeams: []db.ListUserTeamsRow{{ID: id, Name: "platform", Role: "developer"}},
+		userTeams: []db.ListUserTeamsRow{{ID: id, Name: "platform", Role: "member"}},
 	}
 
-	rec := call(t, s, &fakeAuthz{}, memberOf(id, "developer"), http.MethodGet, "/teams", "")
+	rec := call(t, s, &fakeAuthz{}, memberOf(id, "member"), http.MethodGet, "/teams", "")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
@@ -432,8 +447,8 @@ func TestListGivesEveryoneElseOnlyTheirOwnTeams(t *testing.T) {
 	if len(got.Items) != 1 || got.Items[0].ID != id {
 		t.Fatalf("got %+v, want only the caller's team", got.Items)
 	}
-	if got.Items[0].Role == nil || *got.Items[0].Role != "developer" {
-		t.Errorf("Role = %v, want developer — a member's own listing must carry it", got.Items[0].Role)
+	if got.Items[0].Role == nil || *got.Items[0].Role != "member" {
+		t.Errorf("Role = %v, want member — a member's own listing must carry it", got.Items[0].Role)
 	}
 	if got.NextCursor != nil {
 		t.Errorf("a membership listing carries a cursor %q, but it is one page by construction", *got.NextCursor)
@@ -447,7 +462,7 @@ func TestListGivesEachTeamItsOwnRole(t *testing.T) {
 
 	s := &fakeStore{userTeams: []db.ListUserTeamsRow{
 		{ID: uuid.New(), Name: "platform", Role: "admin"},
-		{ID: uuid.New(), Name: "payments", Role: "developer"},
+		{ID: uuid.New(), Name: "payments", Role: "member"},
 	}}
 
 	got := teamsPage(t, call(t, s, &fakeAuthz{}, outsider(), http.MethodGet, "/teams", ""))
@@ -458,8 +473,8 @@ func TestListGivesEachTeamItsOwnRole(t *testing.T) {
 	if got.Items[0].Role == nil || got.Items[1].Role == nil {
 		t.Fatal("a role is missing")
 	}
-	if *got.Items[0].Role != "admin" || *got.Items[1].Role != "developer" {
-		t.Errorf("roles = %q, %q; want admin, developer", *got.Items[0].Role, *got.Items[1].Role)
+	if *got.Items[0].Role != "admin" || *got.Items[1].Role != "member" {
+		t.Errorf("roles = %q, %q; want admin, member", *got.Items[0].Role, *got.Items[1].Role)
 	}
 }
 
@@ -830,7 +845,7 @@ func TestListMembersReturnsTheTeamsMembers(t *testing.T) {
 		members: []db.ListTeamMembersRow{{ID: userID, Subject: "alice", Email: &email, Role: "admin"}},
 	}
 
-	rec := call(t, s, &fakeAuthz{}, memberOf(id, "developer"), http.MethodGet, "/teams/"+id.String()+"/members", "")
+	rec := call(t, s, &fakeAuthz{}, memberOf(id, "member"), http.MethodGet, "/teams/"+id.String()+"/members", "")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
@@ -856,10 +871,10 @@ func TestListMembersOmitsAMissingEmail(t *testing.T) {
 	id := uuid.New()
 	s := &fakeStore{
 		teams:   []db.Team{{ID: id, Name: "platform"}},
-		members: []db.ListTeamMembersRow{{ID: uuid.New(), Subject: "bob", Role: "developer"}},
+		members: []db.ListTeamMembersRow{{ID: uuid.New(), Subject: "bob", Role: "member"}},
 	}
 
-	rec := call(t, s, &fakeAuthz{}, memberOf(id, "developer"), http.MethodGet, "/teams/"+id.String()+"/members", "")
+	rec := call(t, s, &fakeAuthz{}, memberOf(id, "member"), http.MethodGet, "/teams/"+id.String()+"/members", "")
 
 	if strings.Contains(rec.Body.String(), "email") {
 		t.Errorf("a member with no email still carries the key: %s", rec.Body)
@@ -908,8 +923,8 @@ func TestListMembersPagesThroughSharedSubjects(t *testing.T) {
 	id := uuid.New()
 	all := []db.ListTeamMembersRow{
 		{ID: uuid.New(), Subject: "bob", Role: "admin"},
-		{ID: uuid.New(), Subject: "bob", Role: "developer"},
-		{ID: uuid.New(), Subject: "carol", Role: "developer"},
+		{ID: uuid.New(), Subject: "bob", Role: "member"},
+		{ID: uuid.New(), Subject: "carol", Role: "member"},
 	}
 	s := &fakeStore{teams: []db.Team{{ID: id, Name: "platform"}}, members: all}
 
@@ -921,7 +936,7 @@ func TestListMembersPagesThroughSharedSubjects(t *testing.T) {
 			t.Fatal("paging did not terminate on a shared subject")
 		}
 
-		page := membersPage(t, call(t, s, &fakeAuthz{}, memberOf(id, "developer"), http.MethodGet, path, ""))
+		page := membersPage(t, call(t, s, &fakeAuthz{}, memberOf(id, "member"), http.MethodGet, path, ""))
 		for _, m := range page.Items {
 			seen[m.UserID]++
 		}
@@ -946,7 +961,7 @@ func TestListMembersScopesTheQueryToTheTeam(t *testing.T) {
 
 	id := uuid.New()
 	s := &fakeStore{teams: []db.Team{{ID: id, Name: "platform"}}}
-	call(t, s, &fakeAuthz{}, memberOf(id, "developer"), http.MethodGet, "/teams/"+id.String()+"/members", "")
+	call(t, s, &fakeAuthz{}, memberOf(id, "member"), http.MethodGet, "/teams/"+id.String()+"/members", "")
 
 	if len(s.memberArgs) != 1 {
 		t.Fatalf("queried %d times, want 1", len(s.memberArgs))
@@ -1031,7 +1046,7 @@ func TestAddMemberAddsTheUser(t *testing.T) {
 	s := &fakeStore{}
 	a := &fakeAuthz{allowed: true}
 
-	body := fmt.Sprintf(`{"user_id":%q,"role":"developer"}`, userID)
+	body := fmt.Sprintf(`{"user_id":%q,"role":"member"}`, userID)
 	rec := call(t, s, a, memberOf(id, "admin"), http.MethodPost, "/teams/"+id.String()+"/members", body)
 
 	if rec.Code != http.StatusNoContent {
@@ -1040,11 +1055,11 @@ func TestAddMemberAddsTheUser(t *testing.T) {
 	if len(s.added) != 1 {
 		t.Fatalf("added %d members, want 1", len(s.added))
 	}
-	if s.added[0].TeamID != id || s.added[0].UserID != userID || s.added[0].Role != "developer" {
+	if s.added[0].TeamID != id || s.added[0].UserID != userID || s.added[0].Role != "member" {
 		t.Errorf("added %+v", s.added[0])
 	}
-	if !slices.Contains(a.asked, authz.ActionMemberWrite) {
-		t.Errorf("asked for %v, want member:write", a.asked)
+	if !slices.Contains(a.asked, authz.ActionMembershipWrite) {
+		t.Errorf("asked for %v, want membership:write", a.asked)
 	}
 }
 
@@ -1053,9 +1068,9 @@ func TestAddMemberIsRefusedWithoutTheAction(t *testing.T) {
 
 	id := uuid.New()
 	s := &fakeStore{}
-	body := fmt.Sprintf(`{"user_id":%q,"role":"developer"}`, uuid.New())
+	body := fmt.Sprintf(`{"user_id":%q,"role":"member"}`, uuid.New())
 
-	rec := call(t, s, &fakeAuthz{allowed: false}, memberOf(id, "developer"),
+	rec := call(t, s, &fakeAuthz{allowed: false}, memberOf(id, "member"),
 		http.MethodPost, "/teams/"+id.String()+"/members", body)
 
 	if rec.Code != http.StatusForbidden {
@@ -1073,7 +1088,7 @@ func TestAddMemberReportsAnAuthorisationFailureAsInternal(t *testing.T) {
 
 	id := uuid.New()
 	a := &fakeAuthz{err: errors.New("roles table is gone")}
-	body := fmt.Sprintf(`{"user_id":%q,"role":"developer"}`, uuid.New())
+	body := fmt.Sprintf(`{"user_id":%q,"role":"member"}`, uuid.New())
 
 	rec := call(t, &fakeStore{}, a, memberOf(id, "admin"), http.MethodPost, "/teams/"+id.String()+"/members", body)
 
@@ -1106,7 +1121,7 @@ func TestAddMemberMapsConstraintsToStatuses(t *testing.T) {
 
 			id := uuid.New()
 			s := &fakeStore{err: tc.err}
-			body := fmt.Sprintf(`{"user_id":%q,"role":"developer"}`, uuid.New())
+			body := fmt.Sprintf(`{"user_id":%q,"role":"member"}`, uuid.New())
 
 			rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(id, "admin"),
 				http.MethodPost, "/teams/"+id.String()+"/members", body)
@@ -1124,9 +1139,9 @@ func TestAddMemberRejectsABadBody(t *testing.T) {
 	for name, body := range map[string]string{
 		"empty":            ``,
 		"malformed":        `{"user_id":`,
-		"user id not uuid": `{"user_id":"abc","role":"developer"}`,
-		"user id a number": `{"user_id":42,"role":"developer"}`,
-		"unknown key":      fmt.Sprintf(`{"user_id":%q,"role":"developer","admin":true}`, uuid.New()),
+		"user id not uuid": `{"user_id":"abc","role":"member"}`,
+		"user id a number": `{"user_id":42,"role":"member"}`,
+		"unknown key":      fmt.Sprintf(`{"user_id":%q,"role":"member","admin":true}`, uuid.New()),
 		"two objects":      `{"user_id":"x"}{"user_id":"y"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1153,15 +1168,214 @@ func TestAddMemberChecksAuthorisationBeforeTheBody(t *testing.T) {
 	t.Parallel()
 
 	id := uuid.New()
-	valid := fmt.Sprintf(`{"user_id":%q,"role":"developer"}`, uuid.New())
+	valid := fmt.Sprintf(`{"user_id":%q,"role":"member"}`, uuid.New())
 
-	ok := call(t, &fakeStore{}, &fakeAuthz{}, memberOf(id, "developer"),
+	ok := call(t, &fakeStore{}, &fakeAuthz{}, memberOf(id, "member"),
 		http.MethodPost, "/teams/"+id.String()+"/members", valid)
-	garbage := call(t, &fakeStore{}, &fakeAuthz{}, memberOf(id, "developer"),
+	garbage := call(t, &fakeStore{}, &fakeAuthz{}, memberOf(id, "member"),
 		http.MethodPost, "/teams/"+id.String()+"/members", "garbage")
 
 	if ok.Code != garbage.Code {
 		t.Errorf("a valid body gives %d and garbage gives %d", ok.Code, garbage.Code)
+	}
+}
+
+// --- POST /teams/{id}/members, by subject ---------------------------------
+
+// The reason subject is accepted at all: naming somebody you can name is a
+// smaller authority than reading the directory, so this endpoint resolves it
+// rather than making the client fetch an id from GET /users first.
+func TestAddMemberResolvesASubject(t *testing.T) {
+	t.Parallel()
+
+	id, userID := uuid.New(), uuid.New()
+	s := &fakeStore{bySubject: map[string][]db.FindUsersBySubjectRow{
+		"alice": {{ID: userID, Subject: "alice"}},
+	}}
+
+	rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(id, "admin"),
+		http.MethodPost, "/teams/"+id.String()+"/members", `{"subject":"alice","role":"member"}`)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rec.Code, rec.Body)
+	}
+	if len(s.added) != 1 || s.added[0].UserID != userID || s.added[0].TeamID != id {
+		t.Fatalf("added %+v, want the resolved id in this team", s.added)
+	}
+	if len(s.subjectArgs) != 1 || s.subjectArgs[0].Subject != "alice" {
+		t.Errorf("looked up %+v, want the subject verbatim", s.subjectArgs)
+	}
+}
+
+// An id given directly must not be looked up. The two forms are alternatives,
+// not a fallback chain.
+func TestAddMemberDoesNotLookUpAUserID(t *testing.T) {
+	t.Parallel()
+
+	id, userID := uuid.New(), uuid.New()
+	s := &fakeStore{}
+
+	body := fmt.Sprintf(`{"user_id":%q,"role":"member"}`, userID)
+	rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(id, "admin"),
+		http.MethodPost, "/teams/"+id.String()+"/members", body)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rec.Code, rec.Body)
+	}
+	if len(s.subjectArgs) != 0 {
+		t.Errorf("the directory was searched %d times for a request carrying an id",
+			len(s.subjectArgs))
+	}
+}
+
+// Neither is a malformed request; both is two different people named in one
+// body. Guessing which was meant is how somebody ends up in a team nobody
+// named them for.
+func TestAddMemberRequiresExactlyOneOfIDAndSubject(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	for name, body := range map[string]string{
+		"neither":              `{"role":"member"}`,
+		"both":                 fmt.Sprintf(`{"user_id":%q,"subject":"alice","role":"member"}`, userID),
+		"a blank subject":      `{"subject":"","role":"member"}`,
+		"a whitespace subject": `{"subject":"   ","role":"member"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			id := uuid.New()
+			s := &fakeStore{bySubject: map[string][]db.FindUsersBySubjectRow{
+				"alice": {{ID: userID, Subject: "alice"}},
+			}}
+
+			rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(id, "admin"),
+				http.MethodPost, "/teams/"+id.String()+"/members", body)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400: %s", rec.Code, rec.Body)
+			}
+			if len(s.added) != 0 {
+				t.Errorf("a membership was stored anyway: %+v", s.added)
+			}
+		})
+	}
+}
+
+// 404 rather than 400: the body is well-formed and the caller named a person
+// who does not exist. A user row appears on first login, so the honest answer
+// is that there is nobody by that name yet.
+func TestAddMemberAnswers404ForASubjectNobodyHas(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{bySubject: map[string][]db.FindUsersBySubjectRow{}}
+
+	rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(id, "admin"),
+		http.MethodPost, "/teams/"+id.String()+"/members", `{"subject":"nobody","role":"member"}`)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body)
+	}
+	if len(s.added) != 0 {
+		t.Error("a membership was stored for a user that does not exist")
+	}
+}
+
+// Only possible where two issuers are configured, and the one case where
+// picking a row would put the wrong person in a team. The ids are the way
+// forward, so they have to be in the reply.
+func TestAnAmbiguousSubjectIsA409NamingTheIDs(t *testing.T) {
+	t.Parallel()
+
+	id, first, second := uuid.New(), uuid.New(), uuid.New()
+	s := &fakeStore{bySubject: map[string][]db.FindUsersBySubjectRow{
+		"alice": {{ID: first, Subject: "alice"}, {ID: second, Subject: "alice"}},
+	}}
+
+	rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(id, "admin"),
+		http.MethodPost, "/teams/"+id.String()+"/members", `{"subject":"alice","role":"member"}`)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body)
+	}
+	for _, want := range []string{first.String(), second.String(), "user_id"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("the reply does not carry %s: %s", want, rec.Body)
+		}
+	}
+	if len(s.added) != 0 {
+		t.Error("one of them was added anyway")
+	}
+}
+
+// The lookup runs after the authorisation check, so somebody who may not write
+// members here cannot use this endpoint to ask whether a person exists. The
+// two statuses must be indistinguishable.
+func TestAForbiddenCallerCannotProbeForSubjects(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{bySubject: map[string][]db.FindUsersBySubjectRow{
+		"alice": {{ID: uuid.New(), Subject: "alice"}},
+	}}
+
+	real := call(t, s, &fakeAuthz{allowed: false}, memberOf(id, "member"),
+		http.MethodPost, "/teams/"+id.String()+"/members", `{"subject":"alice","role":"member"}`)
+	fake := call(t, s, &fakeAuthz{allowed: false}, memberOf(id, "member"),
+		http.MethodPost, "/teams/"+id.String()+"/members", `{"subject":"nobody","role":"member"}`)
+
+	if real.Code != http.StatusForbidden || fake.Code != http.StatusForbidden {
+		t.Fatalf("a subject that exists gives %d and one that does not gives %d, want 403 for both",
+			real.Code, fake.Code)
+	}
+	if real.Body.String() != fake.Body.String() {
+		t.Errorf("the bodies differ: %q against %q", real.Body, fake.Body)
+	}
+	if len(s.subjectArgs) != 0 {
+		t.Errorf("the directory was searched %d times for a forbidden caller", len(s.subjectArgs))
+	}
+}
+
+// A failed lookup is unknown, not "no such person". Reporting it as a 404
+// would have an admin retyping a name that was correct all along.
+func TestAFailedSubjectLookupIsA500(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{err: errors.New("connection refused")}
+
+	rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(id, "admin"),
+		http.MethodPost, "/teams/"+id.String()+"/members", `{"subject":"alice","role":"member"}`)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "connection refused") {
+		t.Errorf("the reply leaked the database error: %s", rec.Body)
+	}
+}
+
+// The bound exists so one misconfigured deployment cannot build an error
+// message out of a table scan.
+func TestASubjectLookupIsBounded(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	rows := make([]db.FindUsersBySubjectRow, 50)
+	for i := range rows {
+		rows[i] = db.FindUsersBySubjectRow{ID: uuid.New(), Subject: "alice"}
+	}
+	s := &fakeStore{bySubject: map[string][]db.FindUsersBySubjectRow{"alice": rows}}
+
+	call(t, s, &fakeAuthz{allowed: true}, memberOf(id, "admin"),
+		http.MethodPost, "/teams/"+id.String()+"/members", `{"subject":"alice","role":"member"}`)
+
+	if len(s.subjectArgs) != 1 {
+		t.Fatalf("looked up %d times", len(s.subjectArgs))
+	}
+	if s.subjectArgs[0].PageSize <= 0 || s.subjectArgs[0].PageSize > 100 {
+		t.Errorf("PageSize = %d, want a small bound", s.subjectArgs[0].PageSize)
 	}
 }
 
@@ -1183,8 +1397,8 @@ func TestRemoveMemberRemovesTheUser(t *testing.T) {
 	if len(s.removed) != 1 || s.removed[0].TeamID != id || s.removed[0].UserID != userID {
 		t.Errorf("removed %+v", s.removed)
 	}
-	if !slices.Contains(a.asked, authz.ActionMemberWrite) {
-		t.Errorf("asked for %v, want member:write", a.asked)
+	if !slices.Contains(a.asked, authz.ActionMembershipWrite) {
+		t.Errorf("asked for %v, want membership:write", a.asked)
 	}
 }
 
@@ -1195,7 +1409,7 @@ func TestRemoveMemberIsRefusedWithoutTheAction(t *testing.T) {
 	s := &fakeStore{}
 	path := fmt.Sprintf("/teams/%s/members/%s", id, uuid.New())
 
-	rec := call(t, s, &fakeAuthz{allowed: false}, memberOf(id, "developer"), http.MethodDelete, path, "")
+	rec := call(t, s, &fakeAuthz{allowed: false}, memberOf(id, "member"), http.MethodDelete, path, "")
 
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", rec.Code)

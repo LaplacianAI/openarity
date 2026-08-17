@@ -13,7 +13,10 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/config"
 	cmdcontext "github.com/LaplacianAI/openarity/apps/cli/internal/command/context"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/login"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/logout"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/teams"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/users"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/whoami"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/ui"
@@ -35,18 +38,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return root.ExecuteContext(ctx)
 }
 
-// The only place that knows every command. One line per package, the same
-// shape as the brain's cmd/brain/routers.go.
 func commands(opts *cli.Options) []*cobra.Command {
 	return []*cobra.Command{
 		whoami.New(opts),
 		config.New(opts),
 		cmdcontext.New(opts),
 		teams.New(opts),
+		users.New(opts),
+		login.New(opts),
+		logout.New(opts),
 	}
 }
 
-// Styled against stderr rather than stdout, because that is where it goes.
 func printError(w io.Writer, themeName string, err error) {
 	chosenTheme, _ := theme.Parse(themeName)
 	fmt.Fprintln(w, ui.New(w, chosenTheme).Err.Render("oa: "+err.Error()))

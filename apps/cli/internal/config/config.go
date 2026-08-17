@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -59,11 +60,11 @@ func (c Config) ContextNames() []string {
 }
 
 func Path() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := Dir()
 	if err != nil {
 		return "", fmt.Errorf("locate the user config directory: %w", err)
 	}
-	return filepath.Join(dir, "openarity", "config.yaml"), nil
+	return filepath.Join(dir, "config.yaml"), nil
 }
 
 func Load() (Config, error) {
@@ -126,4 +127,16 @@ func Save(cfg Config) error {
 	}
 
 	return nil
+}
+
+func Dir() (string, error) {
+	if custom := strings.TrimSpace(os.Getenv("OPENARITY_CONFIG_DIR")); custom != "" {
+		return custom, nil
+	}
+
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("locate the user config directory: %w", err)
+	}
+	return filepath.Join(base, "openarity"), nil
 }

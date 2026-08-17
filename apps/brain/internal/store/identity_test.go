@@ -241,7 +241,7 @@ func TestListUserTeamsSeesOnlyItsOwnUser(t *testing.T) {
 
 	me := upsert(t, s, testIssuer, "me", nil)
 	them := upsert(t, s, testIssuer, "them", nil)
-	addMember(t, s, mine.ID, me.ID, "developer")
+	addMember(t, s, mine.ID, me.ID, "member")
 	addMember(t, s, theirs.ID, them.ID, "admin")
 
 	rows, err := s.ListUserTeams(t.Context(), me.ID)
@@ -260,7 +260,7 @@ func TestListUserTeamsIsOrderedByName(t *testing.T) {
 	user := upsert(t, s, testIssuer, "user-42", nil)
 	for _, name := range []string{"zulu", "alpha", "mike"} {
 		team := mustCreate(t, s, name)
-		addMember(t, s, team.ID, user.ID, "developer")
+		addMember(t, s, team.ID, user.ID, "member")
 	}
 
 	rows, err := s.ListUserTeams(t.Context(), user.ID)
@@ -289,7 +289,7 @@ func TestListUserTeamsCarriesADifferentRolePerTeam(t *testing.T) {
 	alpha := mustCreate(t, s, "alpha")
 	bravo := mustCreate(t, s, "bravo")
 	addMember(t, s, alpha.ID, user.ID, "admin")
-	addMember(t, s, bravo.ID, user.ID, "developer")
+	addMember(t, s, bravo.ID, user.ID, "member")
 
 	rows, err := s.ListUserTeams(t.Context(), user.ID)
 	if err != nil {
@@ -300,8 +300,8 @@ func TestListUserTeamsCarriesADifferentRolePerTeam(t *testing.T) {
 	for _, r := range rows {
 		roles[r.Name] = r.Role
 	}
-	if roles["alpha"] != "admin" || roles["bravo"] != "developer" {
-		t.Errorf("roles = %v, want alpha:admin bravo:developer", roles)
+	if roles["alpha"] != "admin" || roles["bravo"] != "member" {
+		t.Errorf("roles = %v, want alpha:admin bravo:member", roles)
 	}
 }
 
@@ -312,7 +312,7 @@ func TestAddTeamMemberRefusesADuplicate(t *testing.T) {
 
 	team := mustCreate(t, s, "platform")
 	user := upsert(t, s, testIssuer, "user-42", nil)
-	addMember(t, s, team.ID, user.ID, "developer")
+	addMember(t, s, team.ID, user.ID, "member")
 
 	_, err := s.AddTeamMember(t.Context(), db.AddTeamMemberParams{
 		TeamID: team.ID, UserID: user.ID, Role: "admin",
@@ -568,7 +568,7 @@ func TestResolveCarriesMemberships(t *testing.T) {
 	alpha := mustCreate(t, s, "alpha")
 	bravo := mustCreate(t, s, "bravo")
 	addMember(t, s, alpha.ID, u.ID, "admin")
-	addMember(t, s, bravo.ID, u.ID, "developer")
+	addMember(t, s, bravo.ID, u.ID, "member")
 
 	u, err = s.Resolve(t.Context(), principal("user-42", ""))
 	if err != nil {
@@ -582,8 +582,8 @@ func TestResolveCarriesMemberships(t *testing.T) {
 	if role, ok := u.RoleIn(alpha.ID); !ok || role != "admin" {
 		t.Errorf("role in alpha = %q (%v), want admin", role, ok)
 	}
-	if role, ok := u.RoleIn(bravo.ID); !ok || role != "developer" {
-		t.Errorf("role in bravo = %q (%v), want developer", role, ok)
+	if role, ok := u.RoleIn(bravo.ID); !ok || role != "member" {
+		t.Errorf("role in bravo = %q (%v), want member", role, ok)
 	}
 	if _, ok := u.RoleIn(uuid.New()); ok {
 		t.Error("RoleIn reported membership in a team that does not exist")
@@ -657,13 +657,13 @@ func TestResolveReturnsNoUserOnFailure(t *testing.T) {
 func TestActionsForReturnsTheRolePermissions(t *testing.T) {
 	s := queryStore(t)
 
-	actions, err := s.ActionsFor(t.Context(), "developer")
+	actions, err := s.ActionsFor(t.Context(), "member")
 	if err != nil {
 		t.Fatalf("ActionsFor: %v", err)
 	}
 	slices.Sort(actions)
 	if !slices.Equal(actions, []string{"agent:write", "tool:write"}) {
-		t.Errorf("developer actions = %v", actions)
+		t.Errorf("member actions = %v", actions)
 	}
 }
 

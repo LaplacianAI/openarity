@@ -112,7 +112,12 @@ func newUnsetCmd(opts *cli.Options) *cobra.Command {
 			case "theme":
 				saved.Theme = ""
 			case "token":
-				updateActive(&saved, func(c *config.Context) { c.Token = "" })
+				if err := opts.Credentials.Delete(opts.Saved.ActiveName()); err != nil {
+					return err
+				}
+				fmt.Fprintf(opts.Stdout, "%s %s\n",
+					opts.Styles.OK.Render("unset"), opts.Styles.Value.Render("token"))
+				return nil
 			case "output":
 				saved.Output = ""
 			default:

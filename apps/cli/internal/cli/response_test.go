@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -132,5 +133,127 @@ func TestASuccessfulStatusIsReportedAsAProgrammingError(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("apiError returned nil for a 200 — the caller would report success on an unparsed body")
+	}
+}
+
+// fakeResponse stands in for a generated *WithResponse type. The generated
+// code fills a different field per status, which is why there are three
+// unwrappers rather than one.
+type fakeResponse struct {
+	status  int
+	body    []byte
+	json200 *string
+	json201 *string
+}
+
+func (f *fakeResponse) StatusCode() int     { return f.status }
+func (f *fakeResponse) GetBody() []byte     { return f.body }
+func (f *fakeResponse) GetJSON200() *string { return f.json200 }
+func (f *fakeResponse) GetJSON201() *string { return f.json201 }
+
+// A transport failure is returned untouched. Wrapping it in an API error would
+// blame the brain for a DNS failure or a closed VPN.
+func TestTheUnwrappersPassATransportErrorThrough(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("dial tcp: connection refused")
+
+	if _, err := Result[string](&fakeResponse{}, boom); !errors.Is(err, boom) {
+		t.Errorf("Result rewrote the transport error: %v", err)
+	}
+	if _, err := Created[string](&fakeResponse{}, boom); !errors.Is(err, boom) {
+		t.Errorf("Created rewrote the transport error: %v", err)
+	}
+	if err := NoContent(&fakeResponse{}, boom); !errors.Is(err, boom) {
+		t.Errorf("NoContent rewrote the transport error: %v", err)
+	}
+}
+
+// A 201 fills GetJSON201 and leaves GetJSON200 nil. Unwrapping a create with
+// Result would therefore report a successful creation as a failure.
+func TestCreatedReadsThe201Body(t *testing.T) {
+	t.Parallel()
+
+	body := "the-new-team"
+	got, err := Created[string](&fakeResponse{status: http.StatusCreated, json201: &body}, nil)
+	if err != nil {
+		t.Fatalf("Created: %v", err)
+	}
+	if got == nil || *got != body {
+		t.Errorf("got %v, want the body", got)
+	}
+}
+
+// The generated type for a 201 has no JSON200 field to fall back on, so a
+// status that is not 201 has to become an error rather than a nil body the
+// caller dereferences.
+func TestCreatedTurnsAnythingElseIntoAnError(t *testing.T) {
+	t.Parallel()
+
+	_, err := Created[string](&fakeResponse{status: http.StatusConflict, body: []byte("already exists")}, nil)
+	if err == nil {
+		t.Fatal("a 409 was unwrapped as a created resource")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("the brain's reason was dropped: %v", err)
+	}
+}
+
+// 204 has no body at all, so its status is the only thing that says it worked.
+func TestNoContentAcceptsOnly204(t *testing.T) {
+	t.Parallel()
+
+	if err := NoContent(&fakeResponse{status: http.StatusNoContent}, nil); err != nil {
+		t.Fatalf("a 204 was reported as a failure: %v", err)
+	}
+
+	for _, status := range []int{http.StatusOK, http.StatusAccepted, http.StatusCreated} {
+		if err := NoContent(&fakeResponse{status: status}, nil); err == nil {
+			t.Errorf("status %d was accepted as a completed write", status)
+		}
+	}
+}
+
+// A 500 names the status, because the caller can do nothing about it and the
+// number is what they will quote in a bug report.
+func TestAServerErrorCarriesTheStatus(t *testing.T) {
+	t.Parallel()
+
+	withBody := APIError(http.StatusInternalServerError, []byte("boom"))
+	if !strings.Contains(withBody.Error(), "500") || !strings.Contains(withBody.Error(), "boom") {
+		t.Errorf("the error drops the status or the detail: %v", withBody)
+	}
+
+	bare := APIError(http.StatusBadGateway, nil)
+	if !strings.Contains(bare.Error(), "502") {
+		t.Errorf("a 500 with no body lost its status: %v", bare)
+	}
+}
+
+// An unrecognised status with no body still has to say something. An empty
+// error message reads as a bug in the CLI.
+func TestAnUnknownStatusWithNoBodyStillExplains(t *testing.T) {
+	t.Parallel()
+
+	err := APIError(http.StatusTeapot, nil)
+	if err == nil || err.Error() == "" {
+		t.Fatalf("a 418 with no body produced %v", err)
+	}
+	if !strings.Contains(err.Error(), "418") {
+		t.Errorf("the status is not in the message: %v", err)
+	}
+}
+
+// A body long enough to fill a terminal is truncated, because an error is a
+// sentence and a stack trace pasted into one is unreadable.
+func TestALongBodyIsSummarised(t *testing.T) {
+	t.Parallel()
+
+	err := APIError(http.StatusBadRequest, []byte(strings.Repeat("x", maxBodyInAnError*3)))
+	if len(err.Error()) > maxBodyInAnError+10 {
+		t.Errorf("the body was not truncated: %d characters", len(err.Error()))
+	}
+	if !strings.HasSuffix(err.Error(), "…") {
+		t.Errorf("truncation is not marked: %q", err.Error())
 	}
 }

@@ -7,10 +7,54 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/credential"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/credential/store"
 )
 
 // The root these tests drive.
 var commands = []clitest.Build{New}
+
+// Two contexts, each with a credential, one of them active. `unset token`
+// picks which credential to delete, so a test with a single context cannot
+// tell a correct choice from a hardcoded one.
+func seedTwoContexts(t *testing.T, active string) {
+	t.Helper()
+
+	saved := config.Config{
+		Current: active,
+		Contexts: map[string]config.Context{
+			"prod":    {Server: "https://prod.example.com"},
+			"staging": {Server: "https://staging.example.com"},
+		},
+	}
+	if err := config.Save(saved); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	dir, err := config.Dir()
+	if err != nil {
+		t.Fatalf("config.Dir: %v", err)
+	}
+	for _, name := range []string{"prod", "staging"} {
+		if err := store.Open(dir).Set(name, credential.Credential{Token: name + "-token"}); err != nil {
+			t.Fatalf("seed a credential for %s: %v", name, err)
+		}
+	}
+}
+
+func storedToken(t *testing.T, name string) string {
+	t.Helper()
+
+	dir, err := config.Dir()
+	if err != nil {
+		t.Fatalf("config.Dir: %v", err)
+	}
+	cred, err := store.Open(dir).Get(name)
+	if err != nil {
+		t.Fatalf("read the credential for %s: %v", name, err)
+	}
+	return cred.Token
+}
 
 func TestSetWritesTheServer(t *testing.T) {
 	clitest.Isolate(t)
@@ -362,6 +406,127 @@ func TestNoFormatCarriesEscapeSequences(t *testing.T) {
 		if strings.Contains(out, "\x1b") {
 			t.Errorf("%s carries an escape sequence: %q", format, out)
 		}
+	}
+}
+
+// The destructive branch, and the only one that returns before config.Save:
+// it deletes a credential rather than clearing a field. Deleting the wrong
+// one logs somebody out of a context they never named and still reports
+// success, because nothing after the delete looks at what it removed.
+func TestUnsetTokenDeletesOnlyTheActiveContextsCredential(t *testing.T) {
+	clitest.Isolate(t)
+
+	seedTwoContexts(t, "staging")
+
+	out, err := clitest.Execute(t, commands, "config", "unset", "token")
+	if err != nil {
+		t.Fatalf("config unset token: %v", err)
+	}
+
+	if got := storedToken(t, "staging"); got != "" {
+		t.Errorf("the active context's credential survived: %q", got)
+	}
+	if got := storedToken(t, "prod"); got != "prod-token" {
+		t.Errorf("prod's credential = %q, want it untouched", got)
+	}
+	if !strings.Contains(out, "token") {
+		t.Errorf("the command did not say what it removed:\n%s", out)
+	}
+}
+
+// The token lives in the credential store, not in config.yaml. Clearing it by
+// writing the config file would report success and leave the credential where
+// it was — still found and still sent on the next request.
+func TestUnsetTokenLeavesTheRestOfTheConfigAlone(t *testing.T) {
+	clitest.Isolate(t)
+
+	seedTwoContexts(t, "staging")
+	clitest.Seed(t, commands, "config", "set", "theme", "dark")
+
+	if _, err := clitest.Execute(t, commands, "config", "unset", "token"); err != nil {
+		t.Fatalf("config unset token: %v", err)
+	}
+
+	saved, _ := config.Load()
+	if saved.Theme != "dark" {
+		t.Errorf("theme = %q, want unsetting the token to have left it alone", saved.Theme)
+	}
+	if len(saved.Contexts) != 2 {
+		t.Errorf("contexts = %+v, want both still there", saved.Contexts)
+	}
+	if saved.ActiveName() != "staging" {
+		t.Errorf("active context = %q", saved.ActiveName())
+	}
+}
+
+// Unsetting the server means falling back to the default, not sending
+// requests to an empty address.
+func TestUnsetRemovesTheServerFromTheActiveContext(t *testing.T) {
+	clitest.Isolate(t)
+
+	seedTwoContexts(t, "staging")
+
+	if _, err := clitest.Execute(t, commands, "config", "unset", "server"); err != nil {
+		t.Fatalf("config unset server: %v", err)
+	}
+
+	saved, _ := config.Load()
+	if saved.Active().Server != "" {
+		t.Errorf("the server survived unset: %q", saved.Active().Server)
+	}
+	if saved.Contexts["prod"].Server != "https://prod.example.com" {
+		t.Errorf("unset reached the other context: %+v", saved.Contexts["prod"])
+	}
+
+	out, err := clitest.Execute(t, commands, "config", "show")
+	if err != nil {
+		t.Fatalf("config show: %v", err)
+	}
+	if !strings.Contains(out, config.DefaultServer) {
+		t.Errorf("an unset server did not fall back to the default:\n%s", out)
+	}
+}
+
+// Same reasoning as the unknown key on `set`: a typo that is accepted quietly
+// looks like it worked and changes nothing.
+func TestUnsetRefusesAnUnknownKey(t *testing.T) {
+	clitest.Isolate(t)
+
+	out, err := clitest.Execute(t, commands, "config", "unset", "colour")
+	if err == nil {
+		t.Fatal("an unknown key was accepted")
+	}
+	if !strings.Contains(out+err.Error(), "colour") {
+		t.Errorf("the message does not name the key: %v", err)
+	}
+	// The message is the only place a person finds out what they could have
+	// typed instead.
+	for _, key := range []string{"server", "theme", "token", "output"} {
+		if !strings.Contains(out+err.Error(), key) {
+			t.Errorf("the message does not offer %q: %v", key, err)
+		}
+	}
+}
+
+// An empty server saved is worse than no server saved: the fallback to the
+// default stops happening and every command fails against an address that is
+// not there.
+func TestSetRefusesAnEmptyServer(t *testing.T) {
+	clitest.Isolate(t)
+
+	clitest.Seed(t, commands, "config", "set", "server", "https://brain.example.com")
+
+	out, err := clitest.Execute(t, commands, "config", "set", "server", "   ")
+	if err == nil {
+		t.Fatal("an empty server was accepted")
+	}
+	if !strings.Contains(out+err.Error(), "unset") {
+		t.Errorf("the message does not point at `oa config unset server`: %v", err)
+	}
+
+	saved, _ := config.Load()
+	if saved.Active().Server != "https://brain.example.com" {
+		t.Errorf("the rejected value was written anyway: %q", saved.Active().Server)
 	}
 }
 

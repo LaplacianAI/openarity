@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/credential"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 )
@@ -34,6 +35,19 @@ type candidate struct {
 	source string
 }
 
+type Input struct {
+	ServerFlag string
+	TokenFlag  string
+	OutputFlag string
+
+	Env   Env
+	Saved Config
+	Path  string
+
+	Credential         credential.Credential
+	CredentialLocation string
+}
+
 func pick(name, fallback, fallbackSource string, candidates ...candidate) Setting {
 	for _, c := range candidates {
 		if value := strings.TrimSpace(c.value); value != "" {
@@ -43,11 +57,11 @@ func pick(name, fallback, fallbackSource string, candidates ...candidate) Settin
 	return Setting{Name: name, Value: fallback, Source: fallbackSource}
 }
 
-func token(flag string, env Env, active Context, path string) Setting {
+func token(input Input) Setting {
 	found := pick("token", "", "",
-		candidate{flag, "--token"},
-		candidate{env("OPENARITY_TOKEN"), "OPENARITY_TOKEN"},
-		candidate{active.Token, path},
+		candidate{input.TokenFlag, "--token"},
+		candidate{input.Env("OPENARITY_TOKEN"), "OPENARITY_TOKEN"},
+		candidate{input.Credential.Token, input.CredentialLocation},
 	)
 	if found.Value == "" {
 		return Setting{Name: "token", Value: "not set", Source: ""}
@@ -59,27 +73,27 @@ func token(flag string, env Env, active Context, path string) Setting {
 	}
 }
 
-func Resolve(serverFlag, tokenFlag, outputFlag string, env Env, saved Config, path string) Settings {
-	active := saved.Active()
+func Resolve(input Input) Settings {
+	active := input.Saved.Active()
 
 	return Settings{
 		Context: pick("context", "none", "default",
-			candidate{saved.ActiveName(), path},
+			candidate{input.Saved.ActiveName(), input.Path},
 		),
 		Server: pick("server", DefaultServer, "default",
-			candidate{serverFlag, "--server"},
-			candidate{env("OPENARITY_SERVER"), "OPENARITY_SERVER"},
-			candidate{active.Server, path},
+			candidate{input.ServerFlag, "--server"},
+			candidate{input.Env("OPENARITY_SERVER"), "OPENARITY_SERVER"},
+			candidate{active.Server, input.Path},
 		),
 		Theme: pick("theme", string(DefaultTheme), "default",
-			candidate{env("OPENARITY_THEME"), "OPENARITY_THEME"},
-			candidate{saved.Theme, path},
+			candidate{input.Env("OPENARITY_THEME"), "OPENARITY_THEME"},
+			candidate{input.Saved.Theme, input.Path},
 		),
 		Output: pick("output", string(DefaultOutput), "default",
-			candidate{outputFlag, "--output"},
-			candidate{env("OPENARITY_OUTPUT"), "OPENARITY_OUTPUT"},
-			candidate{saved.Output, path},
+			candidate{input.OutputFlag, "--output"},
+			candidate{input.Env("OPENARITY_OUTPUT"), "OPENARITY_OUTPUT"},
+			candidate{input.Saved.Output, input.Path},
 		),
-		Token: token(tokenFlag, env, active, path),
+		Token: token(input),
 	}
 }

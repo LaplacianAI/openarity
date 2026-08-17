@@ -33,6 +33,8 @@ tags:
     description: Who the caller is
   - name: teams
     description: Teams and their membership
+  - name: users
+    description: Finding a user's id
 
 security:
   - bearerAuth: []
@@ -111,8 +113,11 @@ paths:
       summary: The authenticated caller
       description: |
         Resolves the token to a user, creating the row on first sight, and
-        returns their team memberships. The user id is deliberately not
-        published — it is a surrogate key, not an address.
+        returns their team memberships.
+
+        The id is the caller's own, so publishing it discloses nothing they
+        did not already send. It is what someone pastes into a request to be
+        added to a team.
       responses:
         "200":
           description: The caller
@@ -240,9 +245,14 @@ paths:
       tags: [teams]
       summary: Add a member
       description: |
-        Requires `member:write` in this team. The role is checked by the
-        database rather than the service: roles are rows, so an unknown one is
-        a rejected foreign key and comes back as a 400.
+        Requires `membership:write` in this team, and nothing else — naming
+        somebody by `subject` deliberately does not require permission to read
+        the directory, because "add the person I can name" is a smaller
+        authority than "show me everyone".
+
+        The role is checked by the database rather than the service: roles are
+        rows, so an unknown one is a rejected foreign key and comes back as a
+        400.
       requestBody:
         required: true
         content:
@@ -254,7 +264,8 @@ paths:
           description: Added
         "400":
           description: |
-            The body is malformed, or names a user or role that does not exist.
+            The body is malformed, names a user or role that does not exist,
+            or carries neither `user_id` nor `subject` — or both.
           content:
             text/plain:
               schema:
@@ -265,9 +276,19 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: |
+            No such team, or none the caller may see. A `subject` nobody has
+            is a 404 too: the caller named a person, and there is no person.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["no user has that subject"]
         "409":
-          description: Already a member
+          description: |
+            Already a member, or the `subject` matched more than one person.
+            The second is only possible where two issuers are configured, and
+            the reply names the ids so a retry with `user_id` resolves it.
           content:
             text/plain:
               schema:
@@ -289,11 +310,56 @@ paths:
       tags: [teams]
       summary: Remove a member
       description: |
-        Requires `member:write` in this team. Removing someone who is not a
+        Requires `membership:write` in this team. Removing someone who is not a
         member succeeds: the caller asked for a state, and that state holds.
       responses:
         "204":
           description: No longer a member
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: Find a user
+      description: |
+        Adding someone to a team needs their id, and an id is the one thing
+        nobody can tell you over chat. This is where it is looked up.
+
+        Super admins, and admins of at least one team. Not every authenticated
+        caller: the directory is every subject and email the deployment has
+        ever seen, and a filtered read of it is an existence oracle for anyone
+        who can guess a username. Requiring `membership:write` *somewhere* keeps it
+        with the people whose job is adding members, without asking which team
+        they had in mind — they are looking someone up precisely because they
+        do not yet have a row to check against.
+
+        `subject` narrows to an exact match. There is no prefix or substring
+        search, deliberately: a directory that answers "who starts with s" is
+        one someone walks.
+      parameters:
+        - name: subject
+          in: query
+          required: false
+          description: |
+            The identifier at the provider, matched exactly. An unknown one is
+            an empty page, not a 404.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPage"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -435,8 +501,15 @@ components:
 
     Whoami:
       type: object
-      required: [kind, subject, teams]
+      required: [id, kind, subject, teams]
       properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            Always present: every principal is resolved to a row on first
+            sight, a development token included. It is the caller's own id, so
+            publishing it discloses nothing they did not already send.
         kind:
           type: string
           description: How the caller authenticated
@@ -506,7 +579,7 @@ components:
           description: Absent when the provider released none
         role:
           type: string
-          examples: ["developer"]
+          examples: ["member"]
 
     CreateTeamRequest:
       type: object
@@ -523,18 +596,42 @@ components:
 
     AddMemberRequest:
       type: object
-      required: [user_id, role]
+      required: [role]
       additionalProperties: false
+      description: |
+        Exactly one of `user_id` and `subject`. Neither is a 400, and so is
+        both — guessing which the caller meant is how somebody ends up in a
+        team they were never named for.
+
+        `subject` exists so that adding a person you can name does not require
+        permission to read the whole directory. It is the smaller authority,
+        and it is the one this endpoint should need.
+
+        The exactly-one rule is enforced by the service and stated here rather
+        than written as a `oneOf`: oapi-codegen turns a top-level `oneOf` into
+        a `json.RawMessage` union with a hand-rolled `MarshalJSON`, and every
+        client then builds this body through generated accessors instead of a
+        struct literal. Verified, not assumed.
       properties:
         user_id:
           type: string
           format: uuid
+          description: |
+            Unambiguous, and the only form that works when two providers issue
+            the same subject. `GET /users` is where one comes from.
+        subject:
+          type: string
+          description: |
+            The identifier at the provider, matched exactly. Unique only per
+            issuer, so a deployment federating a second one can see this match
+            more than one person — that answers 409, never a guess.
+          examples: ["alice"]
         role:
           type: string
           description: |
-            Must name a row in `roles`. Ships with `admin` and `developer`;
+            Must name a row in `roles`. Ships with `admin` and `member`;
             deployments may add their own.
-          examples: ["developer"]
+          examples: ["member"]
 
     TeamPage:
       type: object
@@ -558,6 +655,34 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Member"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    User:
+      type: object
+      required: [id, subject]
+      properties:
+        id:
+          type: string
+          format: uuid
+        subject:
+          type: string
+          description: The identifier at their provider
+          examples: ["akadmin"]
+        email:
+          type: string
+          format: email
+          description: Absent when the provider released none
+
+    UserPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
         next_cursor:
           type: string
           description: Absent on the last page

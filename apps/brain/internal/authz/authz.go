@@ -56,3 +56,30 @@ func (a *Authorizer) Can(ctx context.Context, u *auth.User, action Action, r Res
 
 	return slices.Contains(actions, string(action)), nil
 }
+
+func (a *Authorizer) CanInAnyTeam(ctx context.Context, u *auth.User, action Action) (bool, error) {
+	if u == nil {
+		return false, nil
+	}
+	if a.IsSuperAdmin(u) {
+		return true, nil
+	}
+
+	asked := make(map[string]bool, len(u.Teams))
+	for _, team := range u.Teams {
+		if asked[team.Role] {
+			continue
+		}
+		asked[team.Role] = true
+
+		actions, err := a.permissions.ActionsFor(ctx, team.Role)
+		if err != nil {
+			return false, fmt.Errorf("authz: actions for role %q: %w", team.Role, err)
+		}
+		if slices.Contains(actions, string(action)) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}

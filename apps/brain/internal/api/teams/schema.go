@@ -24,8 +24,9 @@ type member struct {
 }
 
 type addMemberRequest struct {
-	UserID uuid.UUID `json:"user_id"`
-	Role   string    `json:"role"`
+	UserID  *uuid.UUID `json:"user_id,omitempty"`
+	Subject *string    `json:"subject,omitempty"`
+	Role    string     `json:"role"`
 }
 
 type teamCursor struct {

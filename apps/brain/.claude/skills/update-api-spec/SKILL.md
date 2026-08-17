@@ -1,6 +1,6 @@
 ---
 name: update-api-spec
-description: Update api/openapi.yaml when an endpoint is added, changed or removed — the hand-written contract the CLI and every other client are generated from. Covers what belongs in the spec, the conventions it already follows, how to validate it, the test that fails when it drifts from the routes, and when a change is breaking. Use alongside add-route for every endpoint.
+description: Update api/openapi.yaml when an endpoint is added, changed or removed — the hand-written contract the CLI and every other client are generated from. Covers what belongs in the spec, the conventions it already follows, which keywords wreck the generated client, how to validate it, the test that fails when it drifts from the routes and the drift it cannot catch, and when a change is breaking. Use alongside add-route for every endpoint.
 ---
 
 # Update the API spec
@@ -31,7 +31,7 @@ not a discipline anyone has to remember.
       tags: [teams]
       summary: Add a member
       description: |
-        Requires `member:write` in this team. The role is checked by the
+        Requires `membership:write` in this team. The role is checked by the
         database rather than the service: roles are rows, so an unknown one is
         a rejected foreign key and comes back as a 400.
       requestBody:
@@ -58,7 +58,7 @@ not a discipline anyone has to remember.
   responses; a status that only this operation produces is written inline.
 - **Path parameters shared by every operation on a path go on the path**, not
   repeated per verb.
-- **The description says why, not what.** "Requires `member:write`" is a fact a
+- **The description says why, not what.** "Requires `membership:write`" is a fact a
   reader cannot get from the schema; "adds a member to a team" is the summary
   repeated.
 
@@ -81,6 +81,10 @@ Match these rather than inventing a second style:
 - **`security: []` on an operation makes it public.** Only the probes have it.
   Adding it anywhere else is a decision for review, and it belongs in the
   `SECURITY.md` list of unauthenticated endpoints too.
+- **A body that accepts one of two fields is documented, not `oneOf`.** Mark
+  only the always-required fields in `required`, make the alternatives
+  optional, and state the rule in the `description` — then enforce it in the
+  handler and test both spellings. See the note below for why.
 
 ## Step 3 — validate before committing
 
@@ -140,3 +144,26 @@ served copy cannot drift from the committed one.
 - **The spec described a JSON error envelope the service never sent.** It was
   written from what the API ought to do rather than from a `curl`. Run the
   request and copy the output.
+- **A top-level `oneOf` on a request schema wrecks the generated client.**
+  `AddMemberRequest` takes `user_id` or `subject`, and writing that as
+
+  ```yaml
+      oneOf:
+        - required: [user_id]
+        - required: [subject]
+  ```
+
+  made oapi-codegen emit a `union json.RawMessage` field, a hand-rolled
+  `MarshalJSON`, and two `AddMemberRequest0 = interface{}` aliases. Every
+  client then has to build the body through generated accessors instead of a
+  struct literal. Probed, not assumed — generate and read the output before
+  keeping a `oneOf`.
+
+  The constraint still belongs in the spec, as prose in the `description` and
+  as a 400 the handler returns. A schema keyword that no client can use is
+  worth less than a sentence a reader can.
+- **A field added to a response schema fails nothing.** The contract test
+  compares *routes* against paths, not bodies. `Whoami` grew `id` in the spec
+  and the handler kept not sending it for three commits; the drift only
+  surfaced when the generated client was read by hand. When a schema gains a
+  required field, add the assertion to that route's test in the same change.

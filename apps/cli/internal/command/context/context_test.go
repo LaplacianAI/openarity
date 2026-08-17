@@ -1,6 +1,7 @@
 package context
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -8,6 +9,8 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
 	cmdconfig "github.com/LaplacianAI/openarity/apps/cli/internal/command/config"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/config"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/credential"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/credential/store"
 )
 
 // Two commands, because several of these assert through `oa config` —
@@ -16,21 +19,42 @@ import (
 var commands = []clitest.Build{New, cmdconfig.New}
 
 // No command writes a token yet — `oa login` will — so a test that needs one
-// puts it in the file directly.
+// seeds it.
+//
+// The credential goes through the same store the command will read, rather
+// than into config.yaml. Writing it by hand into the file would pass whether
+// or not the command consults the store at all.
 func seedContext(t *testing.T, name, server, token string) {
 	t.Helper()
 
 	clitest.Seed(t, commands, "context", "create", name, "--server", server)
+	if token == "" {
+		return
+	}
 
-	saved, err := config.Load()
+	dir, err := config.Dir()
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("config.Dir: %v", err)
 	}
-	saved.Contexts[name] = config.Context{Server: server, Token: token}
+	if err := store.Open(dir).Set(name, credential.Credential{Token: token}); err != nil {
+		t.Fatalf("seed a credential for %s: %v", name, err)
+	}
+}
 
-	if err := config.Save(saved); err != nil {
-		t.Fatalf("Save: %v", err)
+// Reads back through the store, so a test asserts on what the command would
+// actually find rather than on a file it happens to know the shape of.
+func storedToken(t *testing.T, name string) string {
+	t.Helper()
+
+	dir, err := config.Dir()
+	if err != nil {
+		t.Fatalf("config.Dir: %v", err)
 	}
+	cred, err := store.Open(dir).Get(name)
+	if err != nil {
+		t.Fatalf("read the credential for %s: %v", name, err)
+	}
+	return cred.Token
 }
 
 func TestCreateSwitchesToTheNewContext(t *testing.T) {
@@ -180,8 +204,14 @@ func TestRenameKeepsTheAddressAndTheToken(t *testing.T) {
 	if moved.Server != "https://staging.example.com" {
 		t.Errorf("renamed server = %q", moved.Server)
 	}
-	if moved.Token != secret {
-		t.Errorf("the token was lost in the rename: %q", moved.Token)
+
+	// The credential lives in the store now, so the config file moving is only
+	// half the rename. The other half is what this test was always about.
+	if got := storedToken(t, "preprod"); got != secret {
+		t.Errorf("the token was lost in the rename: %q", got)
+	}
+	if got := storedToken(t, "staging"); got != "" {
+		t.Errorf("the credential is still readable under the old name: %q", got)
 	}
 }
 
@@ -213,7 +243,7 @@ func TestRenameRefusesAnExistingName(t *testing.T) {
 	}
 
 	saved, _ := config.Load()
-	if got := saved.Contexts["prod"].Token; got != "oa_live_prod" {
+	if got := storedToken(t, "prod"); got != "oa_live_prod" {
 		t.Errorf("prod token = %q, want the rejected rename to have changed nothing", got)
 	}
 	if _, ok := saved.Contexts["staging"]; !ok {
@@ -243,8 +273,11 @@ func TestRenameRefusesAnUnusableName(t *testing.T) {
 	}
 
 	saved, _ := config.Load()
-	if got := saved.Contexts["prod"].Token; got != "oa_live_prod" {
+	if _, ok := saved.Contexts["prod"]; !ok {
 		t.Errorf("prod was disturbed by a rejected rename: %+v", saved.Contexts)
+	}
+	if got := storedToken(t, "prod"); got != "oa_live_prod" {
+		t.Errorf("prod's credential was disturbed by a rejected rename: %q", got)
 	}
 }
 
@@ -350,6 +383,78 @@ func TestListNeverPrintsTheToken(t *testing.T) {
 	}
 	if !strings.Contains(out, "token saved") {
 		t.Errorf("the listing does not say the context has a credential:\n%s", out)
+	}
+}
+
+// The first thing a new person runs, and the one moment an empty listing is
+// expected rather than a symptom. A bare table with no rows says nothing
+// about what to do next.
+func TestListOnAFreshMachineSaysHowToMakeOne(t *testing.T) {
+	clitest.Isolate(t)
+
+	out, err := clitest.Execute(t, commands, "context", "list")
+	if err != nil {
+		t.Fatalf("context list: %v", err)
+	}
+	if !strings.Contains(out, "no contexts") {
+		t.Errorf("an empty listing does not say so:\n%s", out)
+	}
+	if !strings.Contains(out, "context create") {
+		t.Errorf("an empty listing does not say how to make one:\n%s", out)
+	}
+}
+
+// The note is prose for a person, so it must not reach a parser that was
+// promised a list.
+func TestAnEmptyListIsStillValidJSON(t *testing.T) {
+	clitest.Isolate(t)
+
+	out, err := clitest.Execute(t, commands, "context", "list", "-o", "json")
+	if err != nil {
+		t.Fatalf("context list -o json: %v", err)
+	}
+
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not json: %v\n%s", err, out)
+	}
+	if len(got) != 0 {
+		t.Errorf("an empty listing produced %d rows: %s", len(got), out)
+	}
+}
+
+// Renaming a context to the name it already has is a typo, and the rename is
+// Set-then-Delete against the same key: carried through, it would report
+// success and leave the context gone.
+func TestRenameToTheSameNameIsRefusedAndChangesNothing(t *testing.T) {
+	clitest.Isolate(t)
+
+	seedContext(t, "prod", "https://brain.example.com", "prod-token")
+
+	_, err := clitest.Execute(t, commands, "context", "rename", "prod", "prod")
+	if err == nil {
+		t.Fatal("renaming a context to its own name reported success")
+	}
+	// Without the guard the name-is-taken check refuses it anyway, so the
+	// error alone proves nothing. What the guard buys is the message: the
+	// generic one tells you to use prod or delete it first, which is advice
+	// to destroy the context you were trying to keep.
+	if !strings.Contains(err.Error(), "already called that") {
+		t.Errorf("the message does not say the name is unchanged: %v", err)
+	}
+	if strings.Contains(err.Error(), "delete it first") {
+		t.Errorf("a same-name rename is told to delete the context: %v", err)
+	}
+
+	saved, _ := config.Load()
+	if _, ok := saved.Contexts["prod"]; !ok {
+		t.Errorf("the context is gone: %+v", saved.Contexts)
+	}
+	if saved.Contexts["prod"].Server != "https://brain.example.com" {
+		t.Errorf("the address was disturbed: %+v", saved.Contexts["prod"])
+	}
+	if got := storedToken(t, "prod"); got != "prod-token" {
+		t.Errorf("the credential was disturbed: %q", got)
 	}
 }
 

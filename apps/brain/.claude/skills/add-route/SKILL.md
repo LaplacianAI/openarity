@@ -1,6 +1,6 @@
 ---
 name: add-route
-description: Add an HTTP route to the brain's API — a new endpoint on an existing domain, or a whole new domain package. Covers where the route lives, the Router, per-package dependencies, the response contract, which status code each failure gets, where the authorisation check goes, and the tests every route owes. Use for every endpoint.
+description: Add an HTTP route to the brain's API — a new endpoint on an existing domain, or a whole new domain package. Covers where the route lives, the Router, per-package dependencies, the response contract, which status code each failure gets, where the authorisation check goes, whether a request body should reference another resource by id or by name, and the tests every route owes. Use for every endpoint.
 ---
 
 # Add a route to the API
@@ -190,12 +190,54 @@ if !allowed {
 - **`Can` is the only place a role is interpreted.** Never `if role == "admin"`
   in a handler — that is the line that makes swapping the authorisation backend
   an audit of every file.
+- **`CanInAnyTeam` is for a route with no team in it, and nothing else.** It
+  asks whether the caller holds an action *anywhere*, so it is strictly weaker
+  than `Can`: an admin of one team passes it. Using it on a team-scoped route
+  would make one admin role an admin role everywhere. `GET /users` is the only
+  caller, because somebody looking a person up has no team in mind yet.
+
+  Declare whichever one the package uses in its own `Authorizer` interface and
+  not both — `internal/api/users` can only reach `CanInAnyTeam`, so the rule is
+  enforced by the compiler rather than by this paragraph.
 - **The error and the denial are different.** A failed permission read is
   *unknown*, not *denied*: 500, not 403. Collapsing them makes a database blip
   look like a permissions problem.
 - **Actions are constants in `internal/authz`.** A new one goes in `action.go`,
   in `AllActions`, and in a seed migration — a test fails if any of the three is
   missed.
+
+## Step 3b — a write that references another resource
+
+A body naming a second resource can take its id, its name, or either. The
+question is not ergonomics, it is **what permission the caller needs to produce
+the id.**
+
+`POST /teams/{id}/members` takes `user_id` **or** `subject`. It accepts the
+subject because the alternative was making every caller read `GET /users`
+first, and that endpoint needs `membership:write` somewhere — a far larger
+authority than "add the person I can already name". Resolving it server-side
+leaves `membership:write` in the named team as the only thing checked, which is
+the authority actually being exercised.
+
+Four rules when you do this:
+
+- **Exactly one, and neither is a 400.** Preferring the id when both are given
+  silently ignores a name somebody meant, and the two can name different
+  people.
+- **Resolve after the authorisation check, never before.** Otherwise the route
+  answers "does this person exist" to anyone who can reach it — an existence
+  oracle wearing a write endpoint. The two 403s must be byte-identical.
+- **A key that is not unique answers 409, listing what matched.** `subject` is
+  unique only per issuer. Picking a row puts the wrong person in a team and
+  looks identical afterwards; the ids make a retry with the unambiguous form
+  possible.
+- **Nothing matching is 404, not 400.** The body is well-formed; the caller
+  named somebody who does not exist.
+
+The path is different: it stays an id. `/teams/{id}` accepting a name means
+guessing whether a segment is a name or a uuid, and a team named like a uuid
+breaks it. Clients resolve path references themselves — cheaply, when the list
+they resolve against needs no special permission.
 
 ## Step 4 — which status
 
@@ -265,6 +307,24 @@ struct grows a field, rather than when a client notices.
 For a route with a body, add: a malformed body, a missing required field, and a
 field of the wrong type — all 400, and none of them reaching the store.
 
+For a route that resolves a reference (step 3b), four more:
+
+```text
+6  exactly one form          neither and both are 400, and nothing was stored
+7  nothing matched           404, not 400 — the body was fine
+8  more than one matched     409 naming what matched, and nothing was stored
+9  a forbidden caller cannot probe
+                             the same 403, byte for byte, for a reference that
+                             exists and one that does not — and the store was
+                             never read
+```
+
+Test 9 is the one with no natural home. Every other test here is about what a
+permitted caller gets; this is about what an unpermitted one can *learn*, and
+without it a write endpoint quietly becomes an existence oracle for anybody who
+can reach it. Assert on the body as well as the status — a reply that differs
+by one word is still an oracle.
+
 ## Step 7 — prove it can fail
 
 Break each guard and confirm the matching test fails, then restore:
@@ -276,8 +336,17 @@ Break each guard and confirm the matching test fails, then restore:
 | register the route on the public mux | the unauthorised test |
 | add a field to the response struct | the contracted-fields test |
 | change `r.Get` to `r.Post` | the wrong-method test |
+| resolve the reference before the `Can` check | the probe test |
+| prefer the id when both forms are given | the exactly-one test |
+| return the first row instead of 409 | the ambiguity test |
 
-The third row is worth doing once per domain. A route mounted outside the
+**A mutation that does not compile proves nothing.** Deleting a branch usually
+leaves a variable unused, and a build failure reads as "caught" if you are only
+watching for a red test. Gate on `go build` first, and shape the mutation to
+keep the identifier referenced — `if false && !allowed` rather than deleting
+the block.
+
+The public-mux row is worth doing once per domain. A route mounted outside the
 authenticated mux passes every test written about its body.
 
 ## Things that have gone wrong here

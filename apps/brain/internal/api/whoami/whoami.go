@@ -11,6 +11,7 @@ import (
 )
 
 type whoamiResponse struct {
+	ID      uuid.UUID    `json:"id"`
 	Kind    string       `json:"kind"`
 	Issuer  string       `json:"issuer,omitempty"`
 	Subject string       `json:"subject"`
@@ -51,6 +52,7 @@ func (h *handler) whoami(w http.ResponseWriter, r *http.Request) {
 	}
 
 	api.WriteJSON(w, h.logger, http.StatusOK, whoamiResponse{
+		ID:      u.ID,
 		Kind:    string(p.Kind),
 		Issuer:  u.Issuer,
 		Subject: u.Subject,

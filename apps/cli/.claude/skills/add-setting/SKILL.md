@@ -1,16 +1,24 @@
 ---
 name: add-setting
-description: Add a setting the CLI remembers — an address, a preference, a credential reference. Covers whether it belongs at the top level or inside a context, the Config field, precedence in Resolve, the config set/unset/show wiring, and the tests. Use whenever a new value must survive between commands.
+description: Add a setting the CLI remembers — an address, a preference, a reference to something else. Covers whether it belongs at the top level or inside a context, the Config field, precedence in Resolve, the config set/unset/show wiring, and the tests. Use whenever a new value must survive between commands. A credential is not a setting — see handle-a-credential.
 ---
 
 # Add a setting
 
 Everything the CLI remembers lives in one file, written only through `oa config`
-and `oa context`. A setting is not done until all five steps below are complete
-— one wired into four of the five places is a value that saves and never takes
-effect, with nothing saying why.
+and `oa context`. A setting is not done until every step below is complete — one
+wired into four of the five places is a value that saves and never takes effect,
+with nothing saying why.
 
-## Step 0 — top level, or inside a context?
+## Step 0 — is it a setting at all?
+
+**A secret is not a setting.** `config.yaml` is meant to be readable, synced
+between machines and pasted into an issue. Anything whose value must not be
+printed belongs in `internal/credential/store`, keyed by context — read
+`handle-a-credential` instead. `token` used to live in `Context` and was moved
+out for exactly this reason.
+
+## Step 1 — top level, or inside a context?
 
 This is the only decision that is expensive to change later.
 
@@ -20,11 +28,11 @@ This is the only decision that is expensive to change later.
 | Would switching brains sensibly change it?              | inside `Context` |
 | Is it how *you* like to work, regardless of which brain?| top level     |
 
-`server` and `token` are per-context: a credential is only valid for the brain
-that issued it, so the two travel together. `theme` and `output` are top level —
-switching context must not silently put you back on a table mid-script.
+`server` is per-context, and is currently the whole of `Context`. `theme` and
+`output` are top level — switching context must not silently put you back on a
+table mid-script.
 
-## Step 1 — the field
+## Step 2 — the field
 
 `internal/config/config.go`:
 
@@ -44,7 +52,7 @@ something `oa config show` can display verbatim.
 
 **`omitempty` always** — an unset setting should not appear in the file at all.
 
-## Step 2 — resolve it
+## Step 3 — resolve it
 
 `internal/config/resolve.go`. Every setting resolves the same way, and the
 order never varies: **flag, environment, file, built-in.**
@@ -65,12 +73,18 @@ order never varies: **flag, environment, file, built-in.**
 - The default constant goes in the `const` block with `DefaultTheme`. Point it
   at the owning package's default (`output.Default`), never a bare string.
 - **Never put a credential's value in a `Setting`.** `token` reports
-  `set (N characters)`; see the `token` function.
+  `set (N characters)` and names where it was found — a keychain, a file, a
+  flag, `OPENARITY_TOKEN`. See the `token` function.
 
 Its position in the `Settings` struct is the order `oa config show` prints, and
 the token goes last.
 
-## Step 3 — make it settable
+`Resolve` takes the credential it should describe as an `Input` field rather
+than reading a store itself — `config` must not learn what a keychain is. That
+same `Token.Source` is what `renewIfExpired` compares against, so the rule for
+which credential gets renewed cannot drift from the rule for which gets sent.
+
+## Step 4 — make it settable
 
 `internal/command/config/config.go`, three places, all switches:
 
@@ -102,14 +116,15 @@ the token goes last.
   written.** Without the new case, `oa config set` reports success on a value
   that will not take effect in that shell.
 - **A credential is never settable here.** `oa config set token` is refused on
-  purpose: a secret typed as a shell argument lands in history. `unset token`
-  is allowed.
+  purpose: a secret typed as a shell argument lands in history. `oa login` is
+  how one arrives. `unset token` is allowed and reaches the credential store,
+  not the config file — it is `oa logout` under the name someone will guess.
 
 For a per-context setting, write through `updateActive` rather than assigning —
 it creates the default context when none exists, so the first command after a
 fresh install works.
 
-## Step 4 — the enum, if it is one
+## Step 5 — the enum, if it is one
 
 A fixed set of strings gets its own leaf package with exactly one `Parse`, like
 `internal/theme` and `internal/output`. See `add-output-format`.
@@ -117,7 +132,7 @@ A fixed set of strings gets its own leaf package with exactly one `Parse`, like
 Never a second parser. `config` stores the value and something else renders it;
 two parsers is how "dark" starts meaning different things in two places.
 
-## Step 5 — the tests
+## Step 6 — the tests
 
 In `internal/config/resolve_test.go`:
 

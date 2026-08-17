@@ -199,15 +199,25 @@ Swapping providers is those four settings and nothing else — no code, no
 migration. `OPENARITY_SUPER_ADMINS` matches the `sub` claim, not an email
 address, and the value differs between providers even for the same person.
 
-### Step 5 — get a token
+### Step 5 — log in
 
-The brain is an API; nothing in it performs a login. Until the CLI exists, run
-the authorization code flow by hand — or point any OIDC client at the values
-above. `GET /whoami` is the quickest check that it worked:
+The brain is an API; nothing in it performs a login. `oa login` does, using the
+OAuth device flow — it reads the issuer and client id from the brain's own
+`/auth/config`, so nothing is configured twice:
 
 ```sh
-curl -s -H "Authorization: Bearer $ACCESS_TOKEN" http://192.168.1.4:21120/whoami
+oa context create staging --server http://192.168.1.4:21120
+oa login
+oa whoami
 ```
+
+The provider needs three things for this to work, and
+[QUICKSTART.md](QUICKSTART.md) has them in order: a **public** client, the
+device code and `refresh_token` grants, and a flow with designation *Stage
+Configuration* selected as the brand's **Default code flow** — authentik ships
+none, so the code page 404s until you make one.
+
+Any other OIDC client works too; the brain only ever sees a bearer token.
 
 A first login creates the user row with no memberships. Whoever is listed in
 `OPENARITY_SUPER_ADMINS` can then create a team and add the first member.

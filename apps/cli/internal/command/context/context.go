@@ -36,7 +36,10 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 		Short:   "List the saved contexts",
 		Args:    cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			views := contextViews(opts.Saved)
+			views, err := contextViews(opts.Saved, opts.Credentials)
+			if err != nil {
+				return err
+			}
 			if len(views) == 0 {
 				opts.Out.Note(opts.Styles.Muted.Render(
 					"no contexts — `oa context create <name> --server <url>`"))
@@ -152,7 +155,11 @@ func newRenameCmd(opts *cli.Options) *cobra.Command {
 			if from == to {
 				return fmt.Errorf("%s is already called that", from)
 			}
+
 			if err := usableName(saved, args[1]); err != nil {
+				return err
+			}
+			if err := opts.Credentials.Rename(from, to); err != nil {
 				return err
 			}
 
@@ -186,6 +193,9 @@ func newDeleteCmd(opts *cli.Options) *cobra.Command {
 
 			if _, ok := saved.Contexts[name]; !ok {
 				return unknownContext(saved, name)
+			}
+			if err := opts.Credentials.Delete(name); err != nil {
+				return err
 			}
 
 			delete(saved.Contexts, name)

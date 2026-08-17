@@ -119,7 +119,7 @@ func TestTeamMembersAcceptTheDefinedRoles(t *testing.T) {
 	s := queryStore(t)
 
 	user := insertUser(t, s, "https://idp", "user-1")
-	for _, role := range []string{"admin", "developer"} {
+	for _, role := range []string{"admin", "member"} {
 		team := mustCreate(t, s, "team-"+role)
 		if err := insertMember(t, s, team.ID, user, role); err != nil {
 			t.Errorf("role %q was rejected: %v", role, err)
@@ -136,7 +136,7 @@ func TestTeamMembersRejectASecondRoleForTheSamePair(t *testing.T) {
 	team := mustCreate(t, s, "platform")
 	user := insertUser(t, s, "https://idp", "user-1")
 
-	if err := insertMember(t, s, team.ID, user, "developer"); err != nil {
+	if err := insertMember(t, s, team.ID, user, "member"); err != nil {
 		t.Fatalf("first membership: %v", err)
 	}
 
