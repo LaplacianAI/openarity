@@ -27,10 +27,14 @@ servers:
 tags:
   - name: probes
     description: Unauthenticated, for orchestrators
+  - name: discovery
+    description: How to authenticate, readable before you can
   - name: identity
     description: Who the caller is
   - name: teams
     description: Teams and their membership
+  - name: users
+    description: Finding a user's id
 
 security:
   - bearerAuth: []
@@ -79,6 +83,29 @@ paths:
                 type: string
                 examples: ["not ready"]
 
+  /auth/config:
+    get:
+      operationId: getAuthConfig
+      tags: [discovery]
+      summary: How to obtain a token
+      description: |
+        Unauthenticated, because a client holding no credential has to start
+        somewhere. It reports which flow this deployment accepts and the
+        parameters that flow needs, so a client is configured with one address
+        rather than with a copy of the service's own settings.
+
+        It carries no secret. The issuer and client id are public by OAuth's
+        design for a public client, and the development token is reported as
+        accepted, never as a value.
+      security: []
+      responses:
+        "200":
+          description: How to authenticate here
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthConfig"
+
   /whoami:
     get:
       operationId: getWhoami
@@ -86,8 +113,11 @@ paths:
       summary: The authenticated caller
       description: |
         Resolves the token to a user, creating the row on first sight, and
-        returns their team memberships. The user id is deliberately not
-        published — it is a surrogate key, not an address.
+        returns their team memberships.
+
+        The id is the caller's own, so publishing it discloses nothing they
+        did not already send. It is what someone pastes into a request to be
+        added to a team.
       responses:
         "200":
           description: The caller
@@ -215,9 +245,14 @@ paths:
       tags: [teams]
       summary: Add a member
       description: |
-        Requires `member:write` in this team. The role is checked by the
-        database rather than the service: roles are rows, so an unknown one is
-        a rejected foreign key and comes back as a 400.
+        Requires `membership:write` in this team, and nothing else — naming
+        somebody by `subject` deliberately does not require permission to read
+        the directory, because "add the person I can name" is a smaller
+        authority than "show me everyone".
+
+        The role is checked by the database rather than the service: roles are
+        rows, so an unknown one is a rejected foreign key and comes back as a
+        400.
       requestBody:
         required: true
         content:
@@ -229,7 +264,8 @@ paths:
           description: Added
         "400":
           description: |
-            The body is malformed, or names a user or role that does not exist.
+            The body is malformed, names a user or role that does not exist,
+            or carries neither `user_id` nor `subject` — or both.
           content:
             text/plain:
               schema:
@@ -240,14 +276,37 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          description: Already a member
+          description: |
+            No such team, or none the caller may see. A `subject` nobody has
+            is a 404 too: the caller named a person, and there is no person.
           content:
             text/plain:
               schema:
                 type: string
-                examples: ["already a member"]
+                examples: ["no user has that subject"]
+        "409":
+          description: |
+            Already a member, or the `subject` matched more than one person.
+
+            The second needs no federation, which an earlier version of this
+            description got wrong. A user row is keyed on `(issuer, subject)`
+            and rows accumulate, so one provider whose issuer URL changed —
+            moved behind a tunnel, addressed by IP rather than by name — leaves
+            the same person behind under both. Observed in a single-provider
+            deployment.
+
+            The reply names the issuer beside each id, because the id alone
+            gives no basis to choose and the wrong choice grants a role to an
+            identity nobody can authenticate as.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples:
+                  - "already a member"
+                  - "2 users have that subject — retry with user_id:
+                     47c93149-6e9e-49ea-a9f6-34011f1e1e04 (https://auth.example.com/),
+                     e096f85a-a05b-4699-919a-e0c5c5b57072 (https://auth.internal/)"
 
   /teams/{id}/members/{userID}:
     parameters:
@@ -264,11 +323,56 @@ paths:
       tags: [teams]
       summary: Remove a member
       description: |
-        Requires `member:write` in this team. Removing someone who is not a
+        Requires `membership:write` in this team. Removing someone who is not a
         member succeeds: the caller asked for a state, and that state holds.
       responses:
         "204":
           description: No longer a member
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: Find a user
+      description: |
+        Adding someone to a team needs their id, and an id is the one thing
+        nobody can tell you over chat. This is where it is looked up.
+
+        Super admins, and admins of at least one team. Not every authenticated
+        caller: the directory is every subject and email the deployment has
+        ever seen, and a filtered read of it is an existence oracle for anyone
+        who can guess a username. Requiring `membership:write` *somewhere* keeps it
+        with the people whose job is adding members, without asking which team
+        they had in mind — they are looking someone up precisely because they
+        do not yet have a row to check against.
+
+        `subject` narrows to an exact match. There is no prefix or substring
+        search, deliberately: a directory that answers "who starts with s" is
+        one someone walks.
+      parameters:
+        - name: subject
+          in: query
+          required: false
+          description: |
+            The identifier at the provider, matched exactly. An unknown one is
+            an empty page, not a 404.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPage"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -367,10 +471,58 @@ components:
             examples: ["id must be a uuid"]
 
   schemas:
+    AuthConfig:
+      type: object
+      required: [environment, dev_token_accepted]
+      properties:
+        environment:
+          type: string
+          description: |
+            What this deployment considers itself. A client uses it to decide
+            whether a shared token is even worth trying.
+          enum: [development, staging, production, test]
+        dev_token_accepted:
+          type: boolean
+          description: |
+            True only when a development token is configured *and* the
+            environment is development. The value is never published — a
+            client sends the one it already holds in its own environment.
+        oidc:
+          $ref: "#/components/schemas/OIDCConfig"
+
+    OIDCConfig:
+      type: object
+      required: [issuer, client_id]
+      description: |
+        Absent when no identity provider is configured, rather than present
+        and blank: a client that branches on the key being there would
+        otherwise build a discovery URL out of an empty issuer.
+      properties:
+        issuer:
+          type: string
+          description: |
+            Served verbatim, trailing slash included. Discovery lives at
+            `<issuer>/.well-known/openid-configuration`, and the device
+            authorization endpoint is read from there rather than guessed.
+          examples: ["http://localhost:9000/application/o/openarity/"]
+        client_id:
+          type: string
+          description: |
+            OPENARITY_OIDC_AUDIENCE. The brain checks it as an audience; a
+            client sends it as a client id. Same value, two names, because
+            each side calls it what its own specification calls it.
+
     Whoami:
       type: object
-      required: [kind, subject, teams]
+      required: [id, kind, subject, teams]
       properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            Always present: every principal is resolved to a row on first
+            sight, a development token included. It is the caller's own id, so
+            publishing it discloses nothing they did not already send.
         kind:
           type: string
           description: How the caller authenticated
@@ -440,7 +592,7 @@ components:
           description: Absent when the provider released none
         role:
           type: string
-          examples: ["developer"]
+          examples: ["member"]
 
     CreateTeamRequest:
       type: object
@@ -457,18 +609,43 @@ components:
 
     AddMemberRequest:
       type: object
-      required: [user_id, role]
+      required: [role]
       additionalProperties: false
+      description: |
+        Exactly one of `user_id` and `subject`. Neither is a 400, and so is
+        both — guessing which the caller meant is how somebody ends up in a
+        team they were never named for.
+
+        `subject` exists so that adding a person you can name does not require
+        permission to read the whole directory. It is the smaller authority,
+        and it is the one this endpoint should need.
+
+        The exactly-one rule is enforced by the service and stated here rather
+        than written as a `oneOf`: oapi-codegen turns a top-level `oneOf` into
+        a `json.RawMessage` union with a hand-rolled `MarshalJSON`, and every
+        client then builds this body through generated accessors instead of a
+        struct literal. Verified, not assumed.
       properties:
         user_id:
           type: string
           format: uuid
+          description: |
+            Unambiguous, and the only form that works when two providers issue
+            the same subject. `GET /users` is where one comes from.
+        subject:
+          type: string
+          description: |
+            The identifier at the provider, matched exactly. Unique only per
+            issuer, and rows survive a change of issuer, so this can match more
+            than one person without a second provider ever being configured —
+            that answers 409, never a guess.
+          examples: ["alice"]
         role:
           type: string
           description: |
-            Must name a row in `roles`. Ships with `admin` and `developer`;
+            Must name a row in `roles`. Ships with `admin` and `member`;
             deployments may add their own.
-          examples: ["developer"]
+          examples: ["member"]
 
     TeamPage:
       type: object
@@ -492,6 +669,42 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Member"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    User:
+      type: object
+      required: [id, issuer, subject]
+      properties:
+        id:
+          type: string
+          format: uuid
+        issuer:
+          type: string
+          description: |
+            The identity provider that issued their token, from the `iss`
+            claim. Identity is `(issuer, subject)`, so this is not decoration:
+            it is the half that makes two rows with the same subject two
+            different people. Without it a listing cannot be read.
+          examples: ["https://auth.example.com/application/o/openarity/"]
+        subject:
+          type: string
+          description: The identifier at their provider
+          examples: ["akadmin"]
+        email:
+          type: string
+          format: email
+          description: Absent when the provider released none
+
+    UserPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
         next_cursor:
           type: string
           description: Absent on the last page

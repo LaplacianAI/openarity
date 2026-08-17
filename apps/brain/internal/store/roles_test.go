@@ -29,8 +29,8 @@ func TestSeededRolesExist(t *testing.T) {
 			t.Errorf("role %q has no description", r.Name)
 		}
 	}
-	if !slices.Equal(names, []string{"admin", "developer"}) {
-		t.Errorf("roles = %v, want [admin developer]", names)
+	if !slices.Equal(names, []string{"admin", "member"}) {
+		t.Errorf("roles = %v, want [admin member]", names)
 	}
 }
 
@@ -38,8 +38,8 @@ func TestSeededPermissions(t *testing.T) {
 	s := queryStore(t)
 
 	for role, want := range map[string][]string{
-		"admin":     {"agent:write", "channel:write", "member:write", "tool:write"},
-		"developer": {"agent:write", "tool:write"},
+		"admin":  {"agent:write", "channel:write", "membership:write", "tool:write"},
+		"member": {"agent:write", "tool:write"},
 	} {
 		got, err := s.ListRolePermissions(t.Context(), role)
 		if err != nil {
@@ -52,23 +52,23 @@ func TestSeededPermissions(t *testing.T) {
 	}
 }
 
-// admin must be able to do everything developer can. A developer who can do
+// admin must be able to do everything member can. A member who can do
 // something their admin cannot is a hole nobody would think to look for.
-func TestAdminIsASupersetOfDeveloper(t *testing.T) {
+func TestAdminIsASupersetOfMember(t *testing.T) {
 	s := queryStore(t)
 
 	admin, err := s.ListRolePermissions(t.Context(), "admin")
 	if err != nil {
 		t.Fatalf("ListRolePermissions(admin): %v", err)
 	}
-	developer, err := s.ListRolePermissions(t.Context(), "developer")
+	member, err := s.ListRolePermissions(t.Context(), "member")
 	if err != nil {
-		t.Fatalf("ListRolePermissions(developer): %v", err)
+		t.Fatalf("ListRolePermissions(member): %v", err)
 	}
 
-	for _, action := range developer {
+	for _, action := range member {
 		if !slices.Contains(admin, action) {
-			t.Errorf("developer may %q and admin may not", action)
+			t.Errorf("member may %q and admin may not", action)
 		}
 	}
 }
@@ -93,23 +93,23 @@ func TestDeletingAnUnusedRoleTakesItsPermissions(t *testing.T) {
 }
 
 // Deleting a role people hold must fail rather than silently strip their
-// memberships. An admin removing "developer" should be told twelve people
+// memberships. An admin removing "member" should be told twelve people
 // are using it, not discover it from a support ticket.
 func TestARoleInUseCannotBeDeleted(t *testing.T) {
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
 	user := upsert(t, s, testIssuer, "user-42", nil)
-	addMember(t, s, team.ID, user.ID, "developer")
+	addMember(t, s, team.ID, user.ID, "member")
 
-	_, err := s.pool.Exec(t.Context(), `DELETE FROM roles WHERE name = 'developer'`)
+	_, err := s.pool.Exec(t.Context(), `DELETE FROM roles WHERE name = 'member'`)
 	wantPGCode(t, err, foreignKeyViolation, "deleting a role somebody holds")
 
 	rows, err := s.ListUserTeams(t.Context(), user.ID)
 	if err != nil {
 		t.Fatalf("ListUserTeams: %v", err)
 	}
-	if len(rows) != 1 || rows[0].Role != "developer" {
+	if len(rows) != 1 || rows[0].Role != "member" {
 		t.Errorf("the membership was disturbed: %+v", rows)
 	}
 }
@@ -188,12 +188,12 @@ func TestARoleWithNoPermissionsIsEmptyNotAnError(t *testing.T) {
 func TestListRolePermissionsIsScopedToItsRole(t *testing.T) {
 	s := queryStore(t)
 
-	perms, err := s.ListRolePermissions(t.Context(), "developer")
+	perms, err := s.ListRolePermissions(t.Context(), "member")
 	if err != nil {
 		t.Fatalf("ListRolePermissions: %v", err)
 	}
-	if slices.Contains(perms, "member:write") {
-		t.Errorf("developer holds an admin-only action: %v", perms)
+	if slices.Contains(perms, "membership:write") {
+		t.Errorf("member holds an admin-only action: %v", perms)
 	}
 }
 

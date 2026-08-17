@@ -2,14 +2,27 @@
 #
 #   docker build -f deployment/Dockerfile -t openarity/brain .
 
-FROM golang:1.26.5-alpine AS build
+# --platform=$BUILDPLATFORM pins the build stage to the machine doing the
+# building, never the machine being built for. Without it, buildx runs the
+# whole arm64 stage under QEMU emulation and a Go compile takes minutes rather
+# than seconds. Go cross-compiles natively, so emulating it buys nothing.
+FROM --platform=$BUILDPLATFORM golang:1.26.6-alpine AS build
 
 WORKDIR /src
+
+# Set by buildx for each platform it is asked for: arm64, amd64. Declaring the
+# ARG is what brings it into scope — an undeclared TARGETARCH expands to empty
+# and the build silently produces the builder's own architecture.
+ARG TARGETARCH
+ARG TARGETOS
 
 # GOWORK=off so the build uses apps/brain's own go.mod. The workspace at the
 # repository root lists modules that are not copied into this image, and go
 # refuses to build a workspace whose members are missing.
-ENV GOWORK=off CGO_ENABLED=0
+#
+# CGO_ENABLED=0 was already required for the distroless base, which carries no
+# libc. It is also what makes cross-compiling work at all.
+ENV GOWORK=off CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH
 
 # Dependencies first: they change far less often than the code, so this layer
 # survives most rebuilds.

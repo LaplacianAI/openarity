@@ -3,7 +3,14 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 )
+
+// What validate.go guards. A test-only import of internal/auth pins it to the
+// value the dev verifier really produces; production config still imports
+// nothing.
+const devSubject = "dev"
 
 // devEnv is a development environment with a dev token set — the only
 // combination that is legal.
@@ -356,5 +363,115 @@ func TestStringOmitsTheAuthenticationSettings(t *testing.T) {
 			t.Errorf("String() now prints %s — add a redaction assertion for it "+
 				"and delete this test: %s", field, s)
 		}
+	}
+}
+
+// oidcEnv is the combination that makes the two subject namespaces overlap:
+// one identity provider, and a dev token whose subject is fixed.
+func oidcEnv(extra map[string]string) map[string]string {
+	return devEnv(mergeEnv(map[string]string{
+		"OPENARITY_OIDC_ENABLED":  "true",
+		"OPENARITY_OIDC_ISSUER":   "https://auth.example.com/application/o/openarity/",
+		"OPENARITY_OIDC_AUDIENCE": "openarity",
+	}, extra))
+}
+
+func mergeEnv(base, extra map[string]string) map[string]string {
+	for k, v := range extra {
+		base[k] = v
+	}
+	return base
+}
+
+// SUPER_ADMINS lists subjects with no issuer, which is right where a brain has
+// one identity provider — but the dev token is a second issuer with the fixed
+// subject "dev". With both verifiers on, an identity-provider account named
+// "dev" satisfies the entry meant for the shared local token and is granted
+// every action in every team.
+//
+// No documented setup sets both at once — the quickstart's local section runs
+// the dev token alone and its authentik section runs OIDC alone. But the
+// combination is deliberately supported: TestDevTokenAndOIDCCoexistInDevelopment
+// blesses it as "a development machine exercising the real path and still able
+// to curl", which is precisely where somebody carries SUPER_ADMINS=dev over
+// from the local section.
+func TestSuperAdminsRefusesTheDevSubjectWhenOIDCIsOn(t *testing.T) {
+	t.Parallel()
+
+	// load validates, so a rejected configuration never becomes a Config.
+	cfg, err := load(oidcEnv(map[string]string{"OPENARITY_SUPER_ADMINS": "dev"}))
+	if err == nil {
+		t.Fatalf("an identity-provider account named \"dev\" can become a super admin: %+v", cfg)
+	}
+	if !strings.Contains(err.Error(), "SUPER_ADMINS") {
+		t.Errorf("the error does not name the variable to change: %v", err)
+	}
+	// The reason has to travel with it. "not allowed" sends somebody looking
+	// for a typo rather than at the two namespaces overlapping.
+	if !strings.Contains(err.Error(), "development token") {
+		t.Errorf("the error does not say why: %v", err)
+	}
+}
+
+// It has to be rejected however it is written, or the check is advice rather
+// than a guard.
+func TestTheDevSubjectIsRefusedAnywhereInTheList(t *testing.T) {
+	t.Parallel()
+
+	for _, list := range []string{"dev", "akadmin,dev", "dev,akadmin", "a,dev,b"} {
+		if cfg, err := load(oidcEnv(map[string]string{"OPENARITY_SUPER_ADMINS": list})); err == nil {
+			t.Errorf("SUPER_ADMINS=%q was accepted with OIDC enabled: %+v", list, cfg)
+		}
+	}
+}
+
+// The documented local setup — a dev token and no identity provider — has no
+// second namespace to collide with and must keep working untouched.
+func TestTheDevSubjectIsFineWithoutOIDC(t *testing.T) {
+	t.Parallel()
+
+	if _, err := load(devEnv(map[string]string{"OPENARITY_SUPER_ADMINS": "dev"})); err != nil {
+		t.Fatalf("SUPER_ADMINS=dev with no identity provider was rejected: %v", err)
+	}
+}
+
+// The guard is about one reserved subject, not about running OIDC with super
+// admins at all. Rejecting the normal case would push people to unset
+// SUPER_ADMINS entirely, which leaves a brain nobody can administer.
+func TestAnOrdinarySubjectIsAcceptedWithOIDC(t *testing.T) {
+	t.Parallel()
+
+	if _, err := load(oidcEnv(map[string]string{"OPENARITY_SUPER_ADMINS": "akadmin,shrijeeth"})); err != nil {
+		t.Fatalf("ordinary super admins with OIDC were rejected: %v", err)
+	}
+}
+
+// The guard above matches the literal "dev", and internal/auth decides what
+// the development token's subject actually is. Nothing links the two, so a
+// rename there would leave this package guarding a string no principal can
+// have — the guard would pass every test it owns and protect nothing.
+//
+// The same shape shipped once already in this repository: a role renamed in
+// SQL while the Go constant still said the old name, which produced 403s that
+// explained nothing. This is the cheap version of that lesson.
+func TestTheGuardWatchesTheSubjectTheDevTokenActuallyHas(t *testing.T) {
+	t.Parallel()
+
+	const token = "local-dev-token"
+
+	v, err := auth.NewDevVerifier(token)
+	if err != nil {
+		t.Fatalf("NewDevVerifier: %v", err)
+	}
+
+	p, err := v.Verify(t.Context(), token)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	if p.Subject != devSubject {
+		t.Errorf("the dev token's subject is %q but config guards %q — "+
+			"SUPER_ADMINS would accept the guarded value and grant super admin "+
+			"to an identity-provider account with that name", p.Subject, devSubject)
 	}
 }

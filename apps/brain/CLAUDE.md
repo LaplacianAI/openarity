@@ -195,7 +195,7 @@ they should be talking over HTTP instead.
 ```sh
 make                    # list targets
 make check db=postgres  # everything CI runs — see the note below about db=
-make run                # run the server, Ctrl-C for a graceful shutdown
+make run                # run the server; sources .env if present, Ctrl-C to stop
 make cover              # coverage, fails below the threshold
 make cover-html db=postgres      # the annotated HTML report
 make testdb db=openarity_test    # create a test database — once per machine
@@ -209,7 +209,7 @@ make tools              # reinstall tooling — rerun after a Go upgrade
 **Always pass `db=` when measuring coverage.** Database tests skip when
 `BRAIN_TEST_POSTGRES_DSN` is empty, and `db=name` is what sets it — `host`,
 `port`, `user` and `sslmode` default around it. Without it `serve`, `migrateUp`
-and every query read 0% and the total drops from 96.9% to 70.3%, which looks
+and every query read 0% and the total drops from 97.6% to 77.8%, which looks
 like a coverage problem and is not one. `make cover` warns when the variable is
 unset for exactly this reason. Never read a coverage report that was produced
 without a database.
@@ -251,6 +251,27 @@ reinstalled.
   to opt out per route.
 - **Secrets are references.** A row or config field holds a Vault path, never a
   value. Only `internal/secrets` imports a secret backend SDK.
+- **A write resolves the name it was given; it does not send the caller to a
+  directory first.** `POST /teams/{id}/members` takes `user_id` or `subject`,
+  because requiring the id would mean requiring `GET /users`, which needs
+  `membership:write` *somewhere* — a much larger authority than adding one
+  person you can already name. The question to ask of any reference in a
+  request body is what permission the caller needs to produce it.
+- **`Can` for a team, `CanInAnyTeam` for a route with no team in it.** The
+  second is strictly weaker — an admin of one team passes it — so a
+  team-scoped route using it would turn one admin role into an admin role
+  everywhere. `GET /users` is the only caller and is meant to stay that way; a
+  second one is a signal something is being asked the wrong way round.
+- **Roles are rows, actions are code.** `roles` and `role_permissions` are
+  data an administrator edits; `authz.Action` is a closed vocabulary with a
+  test tying the constants to `AllActions`. Note that `role_permissions.action`
+  has no foreign key behind it, so a typo there grants nothing and says
+  nothing — the Go constants are the only thing holding the vocabulary.
+- **A subject is not unique.** `users` is unique on `(issuer, subject)`, so
+  anything keyed on subject alone can match more than one person and must
+  answer rather than pick. With one provider configured it never fires, which
+  is exactly why it has to be handled when it is written rather than when it
+  happens.
 - **`slog` from the stdlib.** No zap, no zerolog. Text with source locations in
   development because a terminal is the reader; JSON everywhere else because a
   log aggregator is. `AddSource` costs a stack walk per record, so development

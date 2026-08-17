@@ -4,6 +4,27 @@ Nothing here is required to develop the brain — `go run ./cmd/brain` against a
 local Postgres is enough. These files exist so the dependencies are reproducible
 and so a deployment is a starting point rather than a blank page.
 
+## Commands
+
+The compose invocations below are long enough to be retyped wrongly, so the
+combinations that make sense have names:
+
+```sh
+cd deployment
+make            # list targets
+make up         # dependencies only — the normal loop, brain on your machine
+make dev        # and the brain, built from your working tree
+make image      # and the brain, from the image CI published
+make staging    # image plus authentik: OIDC only, no development token
+make ps         # what is running, and on which ports
+make logs       # follow the brain; make logs service=authentik-server
+make down       # stop everything, keeping the data
+make destroy    # and delete every volume
+```
+
+The raw commands still work and are what the rest of this file shows, because
+the flags are the explanation.
+
 ## Local development
 
 ```sh
@@ -178,15 +199,25 @@ Swapping providers is those four settings and nothing else — no code, no
 migration. `OPENARITY_SUPER_ADMINS` matches the `sub` claim, not an email
 address, and the value differs between providers even for the same person.
 
-### Step 5 — get a token
+### Step 5 — log in
 
-The brain is an API; nothing in it performs a login. Until the CLI exists, run
-the authorization code flow by hand — or point any OIDC client at the values
-above. `GET /whoami` is the quickest check that it worked:
+The brain is an API; nothing in it performs a login. `oa login` does, using the
+OAuth device flow — it reads the issuer and client id from the brain's own
+`/auth/config`, so nothing is configured twice:
 
 ```sh
-curl -s -H "Authorization: Bearer $ACCESS_TOKEN" http://192.168.1.4:21120/whoami
+oa context create staging --server http://192.168.1.4:21120
+oa login
+oa whoami
 ```
+
+The provider needs three things for this to work, and
+[QUICKSTART.md](QUICKSTART.md) has them in order: a **public** client, the
+device code and `refresh_token` grants, and a flow with designation *Stage
+Configuration* selected as the brand's **Default code flow** — authentik ships
+none, so the code page 404s until you make one.
+
+Any other OIDC client works too; the brain only ever sees a bearer token.
 
 A first login creates the user row with no memberships. Whoever is listed in
 `OPENARITY_SUPER_ADMINS` can then create a team and add the first member.
@@ -251,6 +282,23 @@ Ingress written against nginx is wrong on Gateway API, and a NetworkPolicy is
 wrong wherever the CNI does not enforce it. They belong in whatever overlay or
 chart wraps these manifests.
 
-The images referenced are `ghcr.io/laplacianai/openarity-brain:latest`. Nothing
-publishes them yet; build and push your own until that exists, and pin a tag
-rather than tracking `latest` once it does.
+## Images
+
+Every push to `main` that touches the brain publishes one, built from the
+`Dockerfile` here by
+[`publish-image.yml`](../.github/workflows/publish-image.yml):
+
+```text
+ghcr.io/laplacianai/openarity-brain:latest
+ghcr.io/laplacianai/openarity-brain:sha-<commit>
+```
+
+**Pin the `sha-` tag in anything you deploy.** `latest` is a moving label — it
+points at a different image tomorrow, which leaves no name for the one that was
+working today. That is the whole reason both tags exist, and it is why
+`k8s/deployment.yaml` referencing `:latest` is a placeholder rather than a
+recommendation.
+
+The workflow publishes and nothing more. It names no host and no environment,
+because which tag a deployment follows, and when it picks one up, belongs to
+whoever runs it.

@@ -472,7 +472,7 @@ func TestListTeamMembersPagesThroughASharedSubject(t *testing.T) {
 			t.Fatalf("UpsertUser(%s): %v", issuer, err)
 		}
 		if _, err := s.AddTeamMember(t.Context(), db.AddTeamMemberParams{
-			TeamID: team.ID, UserID: user.ID, Role: "developer",
+			TeamID: team.ID, UserID: user.ID, Role: "member",
 		}); err != nil {
 			t.Fatalf("AddTeamMember: %v", err)
 		}

@@ -8,6 +8,22 @@ body:
         Do not report security vulnerabilities here — see
         [SECURITY.md](https://github.com/LaplacianAI/openarity/blob/main/SECURITY.md).
 
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where
+      description: Which part of Openarity behaved wrongly.
+      options:
+        - brain — API or webhooks
+        - brain — storage or migrations
+        - brain — configuration
+        - CLI — oa
+        - deployment
+        - documentation
+        - not sure
+    validations:
+      required: true
+
   - type: textarea
     id: what-happened
     attributes:
@@ -59,8 +75,10 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: OS, Go version, Postgres version.
-      placeholder: macOS 15.1, go1.26.5, Postgres 18
+      description: >-
+        OS and Go version. Add the Postgres version for a brain bug, and the
+        terminal and value of $TERM for anything about what `oa` prints.
+      placeholder: macOS 15.1, go1.26.6, Postgres 18, iTerm2 xterm-256color
     validations:
       required: true
 

@@ -3,6 +3,7 @@ package teams
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -20,6 +21,7 @@ import (
 const (
 	maxNameBytes        = 200
 	codeUniqueViolation = "23505"
+	maxSubjectMatches   = 10
 )
 
 type Store interface {
@@ -30,6 +32,7 @@ type Store interface {
 	ListTeamMembers(ctx context.Context, arg db.ListTeamMembersParams) ([]db.ListTeamMembersRow, error)
 	AddTeamMember(ctx context.Context, arg db.AddTeamMemberParams) (db.TeamMember, error)
 	RemoveTeamMember(ctx context.Context, arg db.RemoveTeamMemberParams) error
+	FindUsersBySubject(ctx context.Context, arg db.FindUsersBySubjectParams) ([]db.FindUsersBySubjectRow, error)
 }
 
 type Authorizer interface {
@@ -126,7 +129,13 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 
 	page, err := api.MapPage(rows, limit,
 		func(row db.Team) any { return teamCursor{CreatedAt: row.CreatedAt, ID: row.ID} },
-		func(row db.Team) team { return team{ID: row.ID, Name: row.Name} },
+		func(row db.Team) team {
+			t := team{ID: row.ID, Name: row.Name}
+			if role, ok := u.RoleIn(row.ID); ok {
+				t.Role = &role
+			}
+			return t
+		},
 	)
 	if err != nil {
 		h.fail(w, u, "failed to page teams", err)
@@ -269,8 +278,15 @@ func (h *handler) addMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, ok := h.namedUser(w, u, r, req)
+	if !ok {
+		return
+	}
+
 	_, err := h.store.AddTeamMember(r.Context(), db.AddTeamMemberParams{
-		TeamID: id, UserID: req.UserID, Role: req.Role,
+		TeamID: id,
+		UserID: userID,
+		Role:   req.Role,
 	})
 	if err != nil {
 		h.failMembership(w, u, err)
@@ -278,6 +294,54 @@ func (h *handler) addMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handler) namedUser(
+	w http.ResponseWriter, u *auth.User, r *http.Request, req addMemberRequest,
+) (uuid.UUID, bool) {
+	subject := ""
+	if req.Subject != nil {
+		subject = strings.TrimSpace(*req.Subject)
+	}
+
+	switch {
+	case req.UserID != nil && subject != "":
+		http.Error(w, "give user_id or subject, not both", http.StatusBadRequest)
+		return uuid.Nil, false
+	case req.UserID != nil:
+		return *req.UserID, true
+	case subject == "":
+		http.Error(w, "give a user_id or a subject", http.StatusBadRequest)
+		return uuid.Nil, false
+	}
+
+	rows, err := h.store.FindUsersBySubject(r.Context(), db.FindUsersBySubjectParams{
+		Subject: subject, PageSize: maxSubjectMatches,
+	})
+	if err != nil {
+		h.fail(w, u, "failed to look up a subject", err)
+		return uuid.Nil, false
+	}
+
+	switch len(rows) {
+	case 0:
+		http.Error(w, "no user has that subject", http.StatusNotFound)
+		return uuid.Nil, false
+	case 1:
+		return rows[0].ID, true
+	default:
+		http.Error(w, ambiguousSubject(rows), http.StatusConflict)
+		return uuid.Nil, false
+	}
+}
+
+func ambiguousSubject(rows []db.FindUsersBySubjectRow) string {
+	named := make([]string, len(rows))
+	for i, row := range rows {
+		named[i] = fmt.Sprintf("%s (%s)", row.ID, row.Issuer)
+	}
+	return fmt.Sprintf("%d users have that subject — retry with user_id: %s",
+		len(rows), strings.Join(named, ", "))
 }
 
 func (h *handler) removeMember(w http.ResponseWriter, r *http.Request) {
@@ -313,7 +377,7 @@ func (h *handler) mayWriteMembers(w http.ResponseWriter, r *http.Request) (*auth
 		return nil, uuid.Nil, false
 	}
 
-	allowed, err := h.authz.Can(r.Context(), u, authz.ActionMemberWrite, authz.Resource{TeamID: id})
+	allowed, err := h.authz.Can(r.Context(), u, authz.ActionMembershipWrite, authz.Resource{TeamID: id})
 	if err != nil {
 		h.fail(w, u, "authorisation check failed", err)
 		return nil, uuid.Nil, false

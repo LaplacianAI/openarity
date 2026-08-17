@@ -31,6 +31,8 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	// broken. The sink stands in for the orchestrator.
 	gw := gateway.New(logger, gateway.Telegram{}, map[string]string{}, secrets.Static{}, logSink{logger: logger})
 
+	warnIfIssuerIsNew(ctx, cfg, logger, dbStore)
+
 	return server.New(
 		cfg,
 		logger,

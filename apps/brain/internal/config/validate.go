@@ -100,6 +100,13 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("DEV_TOKEN must not be set outside development, got ENVIRONMENT=%s", c.Environment))
 	}
 
+	if c.OIDCEnabled && slices.Contains(c.SuperAdmins, "dev") {
+		errs = append(errs, fmt.Errorf(
+			"SUPER_ADMINS must not contain \"dev\" when OIDC_ENABLED is true: "+
+				"it is the development token's subject, and an identity-provider "+
+				"account of the same name would match it"))
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("validation failed: %v", errs)
 	}

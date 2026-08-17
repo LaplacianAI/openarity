@@ -11,7 +11,7 @@ about to change.
 
 | Tool     | Version | Notes                                                  |
 | -------- | ------- | ------------------------------------------------------ |
-| Go       | 1.26.5  | pinned by `go.work` and each app's `go.mod`            |
+| Go       | 1.26.6  | pinned by `go.work` and each app's `go.mod`            |
 | make     | any     |                                                        |
 | Postgres | 13+     | optional — database tests skip without one; CI runs 18 |
 
@@ -22,21 +22,30 @@ git clone https://github.com/LaplacianAI/openarity
 cd openarity/apps/brain
 make tools
 make check
+
+cd ../cli
+make tools
+make check
 ```
 
-`make tools` installs `golangci-lint`, `govulncheck`, `gopls` and `goose` into
-your `GOPATH/bin`. Rerun it after a Go upgrade.
+Each module installs its own tooling, because each pins its own versions. The
+brain needs `golangci-lint`, `govulncheck`, `gopls` and `goose`; the CLI needs
+`golangci-lint`, `govulncheck` and `oapi-codegen`. Rerun `make tools` after a Go
+upgrade — anything installed with `go install` is compiled against the Go
+present at the time, and breaks with a version-mismatch error until reinstalled.
 
 `make` on its own lists every target.
 
 ## Repository layout
 
 ```text
-apps/brain/        the Go backend — the only app that exists today
+apps/brain/        the Go backend
+apps/cli/          oa, the command-line client
+deployment/        manifests
 go.work            ties every Go module in the repository together
 ```
 
-`apps/cli`, `apps/dashboard` and `deploy/` are planned and not here yet.
+`apps/dashboard` is planned and not here yet.
 
 Each app is **its own Go module**, tied together by `go.work` at the root. Run
 `make` from inside the app directory, not from the repository root. `go build
@@ -46,18 +55,21 @@ Go's.
 
 ## Before you open a pull request
 
+Run the gate in every module you touched.
+
 ```sh
-cd apps/brain
-make check
+cd apps/brain && make check db=postgres
+cd apps/cli   && make check
 ```
 
-That is `tidy-check`, `generate-check`, `fmt-check`, `vet`, `lint`, `build`,
-`cover` and `vuln` — exactly what `.github/workflows/ci.yml` runs, in the same
-order. If it passes locally it passes in CI.
+That is `tidy-check`, `generate-check`, `fmt-check`, `vet`, `lint`, `build` and
+the tests — the same steps `.github/workflows/ci.yml` runs, in the same order,
+as two jobs named `brain` and `cli`. CI adds `cover` and `vuln` on top. If it
+passes locally it passes there.
 
-Run it **with a database**. The coverage floor is 70%, and with the Postgres
-tests skipping, the suite lands close enough to that floor that an unrelated
-change can trip it.
+Run the brain's **with a database**. The coverage floor is 70%, and with the
+Postgres tests skipping the suite lands close enough to it that an unrelated
+change can trip it. The CLI needs nothing running.
 
 Run `make fmt` to apply formatting rather than fixing it by hand — the project
 uses `gofumpt` and `gci`, and both are enforced.
@@ -103,18 +115,29 @@ New database tests should follow `apps/brain/.claude/skills/test-with-postgres`.
 
 ## Running the server
 
-Every setting has a working default, so this needs no environment:
+Ports and addresses all have working defaults, and they match what
+`deployment/docker-compose.yml` publishes. Authentication does not — the brain
+refuses to start with no way to identify a caller, so a bare run exits 1:
 
 ```sh
 cd apps/brain
+cp .env.example .env
 make run
 ```
 
-Configuration is environment-only and prefixed with `OPENARITY_`:
+`make run` sources `.env` when it exists; nothing in the code reads it, because
+configuration is environment-only by decision. The file is gitignored, so a
+local token never reaches a branch.
+
+Configuration is prefixed with `OPENARITY_` and can also be passed inline:
 
 ```sh
 OPENARITY_LOG_LEVEL=debug OPENARITY_API_BIND=127.0.0.1:8080 make run
 ```
+
+A setting present in `.env` wins over one passed that way — the file is
+sourced after make already has its environment. Comment the line out in `.env`
+rather than fighting it.
 
 `internal/config/config.go` is the full list. Adding a setting is documented in
 `apps/brain/.claude/skills/add-env-var`.
@@ -160,6 +183,35 @@ same advisory lock.
 one. Always write the `Down`. `apps/brain/.claude/skills/write-migration`
 covers locking, expand–contract changes and batched backfills.
 
+## Working on the CLI
+
+`oa` needs no database and no services. Its gate is one command:
+
+```sh
+cd apps/cli
+make check
+make install    # put oa on your PATH to try it
+```
+
+`internal/client/client.gen.go` is generated from `apps/brain/api/openapi.yaml`
+by [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) and
+**committed** — never edited by hand.
+
+```sh
+make generate
+```
+
+CI runs `make generate-check`, which regenerates and fails if the result
+differs from what is committed. That is the job that catches a spec change
+landing in the brain without the client being rebuilt: change an endpoint, run
+`make generate` in `apps/cli`, and commit both modules together.
+
+Coverage there excludes `internal/client`. It is roughly two thousand generated
+lines nobody wrote, so counting it measures oapi-codegen rather than the module.
+
+Adding a command, a setting or an output format is documented in
+`apps/cli/.claude/skills/`.
+
 ## Branches and pull requests
 
 `main` is protected: no direct pushes, no force-pushes, and CI must pass.
@@ -177,8 +229,9 @@ covers locking, expand–contract changes and batched backfills.
 
 ```text
 feat(brain): serve the API and webhook listeners
+feat(cli): contexts, and settings that say where they came from
 fix(brain): close the pool when migrate fails
-docs(brain): record what the listener work settled
+docs(cli): record why the dev token never leaves loopback
 chore: bump checkout and setup-go to v7
 ```
 

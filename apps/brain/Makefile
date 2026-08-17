@@ -122,9 +122,17 @@ vuln:
 build:
 	$(GO) build ./...
 
-## run: run the server, Ctrl-C to shut it down gracefully
+## run: run the server with .env if present, Ctrl-C to shut it down gracefully
+#
+# `set -a` is what makes the file useful: it exports every assignment that
+# follows, and without it they stay shell-local and the process sees nothing.
+# Nothing in the code reads .env — config is env-only, by decision — so this
+# target is the only thing that turns the file into environment.
+#
+# A missing .env is not an error. Every setting has a default, and the ones
+# that do not have one fail with a message naming them.
 run:
-	$(GO) run ./cmd/brain
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; exec $(GO) run ./cmd/brain
 
 ## generate: run every code generator
 #

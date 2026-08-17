@@ -1,0 +1,12 @@
+# `make build` output. The binary is built from source on demand and is
+# platform-specific, so a committed copy is stale the moment anyone else
+# clones it.
+bin/
+
+# `go build` with no -o lands here, named after the package. Anchored and
+# not a directory, or it also swallows cmd/oa.
+/oa
+
+# `make cover` output.
+coverage.out
+coverage.html

@@ -15,7 +15,43 @@ permissions:
   contents: read
 
 jobs:
+  # Path filters belong here rather than on `on:`. A job skipped by `if:` still
+  # reports a conclusion and satisfies a required status check; a job that never
+  # runs reports nothing at all, and the pull request waits for it forever.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      brain: ${{ steps.filter.outputs.brain }}
+      cli: ${{ steps.filter.outputs.cli }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned to a commit rather than a tag: a tag is mutable, and this is the
+      # only third-party action in the workflow.
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            brain:
+              - 'apps/brain/**'
+              - 'go.work'
+              - 'go.work.sum'
+              - '.github/workflows/ci.yml'
+            cli:
+              - 'apps/cli/**'
+              # The CLI's client is generated from the brain's spec, so a change
+              # there has to run generate-check here. Leaving this out disables
+              # the one check that catches a spec landing without a rebuilt
+              # client.
+              - 'apps/brain/api/openapi.yaml'
+              - 'go.work'
+              - 'go.work.sum'
+              - '.github/workflows/ci.yml'
+
   brain:
+    needs: changes
+    if: needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -89,6 +125,68 @@ jobs:
         run: |
           {
             echo '### brain coverage'
+            echo '```'
+            go tool cover -func=coverage.out | tail -20
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Known vulnerabilities
+        run: make vuln
+
+  cli:
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/cli
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/cli/go.mod
+          cache-dependency-path: apps/cli/go.sum
+
+      # Same reasoning as the brain: the Makefile is the only place a tool
+      # version is written down, so CI and a developer machine cannot drift.
+      - name: Install tools
+        run: |
+          make tools
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Dependencies are tidy
+        run: make tidy-check
+
+      # Regenerates the client from the brain's spec with oapi-codegen and
+      # fails if the committed output differs. This is the job that catches a
+      # spec change landing without the client being rebuilt.
+      - name: Generated code is current
+        run: make generate-check
+
+      - name: Formatting and import order
+        run: make fmt-check
+
+      - name: Vet
+        run: make vet
+
+      - name: Lint
+        run: make lint
+
+      - name: Build
+        run: make build
+
+      # Race detector on; fails below the threshold set in the Makefile. The
+      # generated client is excluded there — counting it measures oapi-codegen.
+      - name: Test and coverage
+        run: make cover
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo '### cli coverage'
             echo '```'
             go tool cover -func=coverage.out | tail -20
             echo '```'

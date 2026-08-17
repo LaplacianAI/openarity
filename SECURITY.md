@@ -80,3 +80,23 @@ These are deliberate, documented decisions rather than oversights:
   — that is a bug worth reporting.
 - **A failed permission lookup is a 500, never a 403.** Unknown is not denied,
   and a database blip must not read as a permissions decision.
+- **`oa` stores a login in the OS keychain**, and in a `0600` file beside the
+  config only where there is no keychain or the token does not fit one. It is
+  never written to `config.yaml`, which is the file people sync and paste into
+  issues. A credential appearing there is a bug — report it.
+- **`oa` never prints a credential.** Not truncated, not masked, not in an error
+  or a `--output json` document. `oa config show` reports a length and a
+  location. Anything that echoes a token value is a bug.
+- **`oa` is a public OAuth client and holds no client secret.** It ships to
+  other people's machines, so a secret in it would not be one. Approval by the
+  human at the identity provider is what stands in for it, which is why every
+  login needs a browser.
+- **The device flow can be phished, and that is inherent to it.** Someone who
+  talks you into approving a code they generated gets a token. `oa` prints the
+  code and asks you to type it rather than opening a browser silently, so an
+  approval you did not start looks like one — but no client-side change can
+  remove this. Do not approve a code you were sent.
+- **Renewal is trusted less than it looks.** A stored login is discarded only
+  when the provider says the grant itself is invalid; a 500 or an outage leaves
+  it alone. If a transient provider failure ever deletes a credential, that is a
+  bug — it would log out an entire fleet during a restart.
