@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
 )
 
@@ -34,6 +36,46 @@ func TestMembersListRendersATable(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the table is missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// The field-name half of the same defect. yaml.v3 lowercases the Go field
+// name when there is no yaml tag, so UserID rendered as `userid` while json
+// said `user_id` — one command describing the same field by two names, and
+// only the json one matching the API it came from.
+//
+// The tags are generated from oapi-codegen.yaml, so this is asserted through
+// a command: no file in this package fails if that setting goes away.
+func TestYAMLNamesTheFieldsTheWayJSONDoes(t *testing.T) {
+	clitest.BrainStub(t, http.StatusOK, twoMembers)
+
+	out, err := clitest.Execute(t, commands, "teams", "members", "list", teamID, "-o", "yaml")
+	if err != nil {
+		t.Fatalf("teams members list -o yaml: %v", err)
+	}
+
+	if !strings.Contains(out, "user_id:") {
+		t.Errorf("yaml does not carry user_id:\n%s", out)
+	}
+	if strings.Contains(out, "userid:") {
+		t.Errorf("yaml renamed the field to userid:\n%s", out)
+	}
+	// The second member has no email. Absent has to mean absent here too.
+	if strings.Contains(out, "null") {
+		t.Errorf("an absent email rendered as null:\n%s", out)
+	}
+
+	var got struct {
+		Items []struct {
+			UserID  string `yaml:"user_id"`
+			Subject string `yaml:"subject"`
+		} `yaml:"items"`
+	}
+	if err := yaml.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not yaml: %v\n%s", err, out)
+	}
+	if len(got.Items) != 2 || got.Items[0].UserID != userID {
+		t.Errorf("items = %+v", got.Items)
 	}
 }
 

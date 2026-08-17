@@ -81,7 +81,7 @@ type AddMemberRequest struct {
 	//
 	//
 	// Examples: member
-	Role string `json:"role"`
+	Role string `json:"role" yaml:"role"`
 
 	// Subject The identifier at the provider, matched exactly. Unique only per
 	// issuer, so a deployment federating a second one can see this match
@@ -89,11 +89,11 @@ type AddMemberRequest struct {
 	//
 	//
 	// Examples: alice
-	Subject *string `json:"subject,omitempty"`
+	Subject *string `json:"subject,omitempty" yaml:"subject,omitempty"`
 
 	// UserID Unambiguous, and the only form that works when two providers issue
 	// the same subject. `GET /users` is where one comes from.
-	UserID *openapi_types.UUID `json:"user_id,omitempty"`
+	UserID *openapi_types.UUID `json:"user_id,omitempty" yaml:"user_id,omitempty"`
 }
 
 // AuthConfig defines model for AuthConfig.
@@ -101,16 +101,16 @@ type AuthConfig struct {
 	// DevTokenAccepted True only when a development token is configured *and* the
 	// environment is development. The value is never published — a
 	// client sends the one it already holds in its own environment.
-	DevTokenAccepted bool `json:"dev_token_accepted"`
+	DevTokenAccepted bool `json:"dev_token_accepted" yaml:"dev_token_accepted"`
 
 	// Environment What this deployment considers itself. A client uses it to decide
 	// whether a shared token is even worth trying.
-	Environment AuthConfigEnvironment `json:"environment"`
+	Environment AuthConfigEnvironment `json:"environment" yaml:"environment"`
 
 	// Oidc Absent when no identity provider is configured, rather than present
 	// and blank: a client that branches on the key being there would
 	// otherwise build a discovery URL out of an empty issuer.
-	Oidc *OIDCConfig `json:"oidc,omitempty"`
+	Oidc *OIDCConfig `json:"oidc,omitempty" yaml:"oidc,omitempty"`
 }
 
 // AuthConfigEnvironment What this deployment considers itself. A client uses it to decide
@@ -121,37 +121,37 @@ type AuthConfigEnvironment string
 type CreateTeamRequest struct {
 	// Name Trimmed before it is stored, and unique across teams. A name of
 	// only whitespace is a 400.
-	Name string `json:"name"`
+	Name string `json:"name" yaml:"name"`
 }
 
 // Member defines model for Member.
 type Member struct {
 	// Email Absent when the provider released none
-	Email *openapi_types.Email `json:"email,omitempty"`
+	Email *openapi_types.Email `json:"email,omitempty" yaml:"email,omitempty"`
 
 	// Role Examples: member
-	Role string `json:"role"`
+	Role string `json:"role" yaml:"role"`
 
 	// Subject The member's identifier at their provider
-	Subject string             `json:"subject"`
-	UserID  openapi_types.UUID `json:"user_id"`
+	Subject string             `json:"subject" yaml:"subject"`
+	UserID  openapi_types.UUID `json:"user_id" yaml:"user_id"`
 }
 
 // MemberPage defines model for MemberPage.
 type MemberPage struct {
-	Items []Member `json:"items"`
+	Items []Member `json:"items" yaml:"items"`
 
 	// NextCursor Absent on the last page
-	NextCursor *string `json:"next_cursor,omitempty"`
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
 // Membership defines model for Membership.
 type Membership struct {
-	ID   openapi_types.UUID `json:"id"`
-	Name string             `json:"name"`
+	ID   openapi_types.UUID `json:"id" yaml:"id"`
+	Name string             `json:"name" yaml:"name"`
 
 	// Role Examples: admin
-	Role string `json:"role"`
+	Role string `json:"role" yaml:"role"`
 }
 
 // OIDCConfig Absent when no identity provider is configured, rather than present
@@ -161,7 +161,7 @@ type OIDCConfig struct {
 	// ClientID OPENARITY_OIDC_AUDIENCE. The brain checks it as an audience; a
 	// client sends it as a client id. Same value, two names, because
 	// each side calls it what its own specification calls it.
-	ClientID string `json:"client_id"`
+	ClientID string `json:"client_id" yaml:"client_id"`
 
 	// Issuer Served verbatim, trailing slash included. Discovery lives at
 	// `<issuer>/.well-known/openid-configuration`, and the device
@@ -169,75 +169,75 @@ type OIDCConfig struct {
 	//
 	//
 	// Examples: http://localhost:9000/application/o/openarity/
-	Issuer string `json:"issuer"`
+	Issuer string `json:"issuer" yaml:"issuer"`
 }
 
 // Team defines model for Team.
 type Team struct {
-	ID openapi_types.UUID `json:"id"`
+	ID openapi_types.UUID `json:"id" yaml:"id"`
 
 	// Name Examples: platform
-	Name string `json:"name"`
+	Name string `json:"name" yaml:"name"`
 
 	// Role The caller's role in this team. Absent when they are not a member,
 	// which is the normal case for a super admin.
 	//
 	//
 	// Examples: admin
-	Role *string `json:"role,omitempty"`
+	Role *string `json:"role,omitempty" yaml:"role,omitempty"`
 }
 
 // TeamPage defines model for TeamPage.
 type TeamPage struct {
-	Items []Team `json:"items"`
+	Items []Team `json:"items" yaml:"items"`
 
 	// NextCursor Absent on the last page. Its absence is the only end-of-collection
 	// signal — there is no separate flag to disagree with it.
-	NextCursor *string `json:"next_cursor,omitempty"`
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
 // User defines model for User.
 type User struct {
 	// Email Absent when the provider released none
-	Email *openapi_types.Email `json:"email,omitempty"`
-	ID    openapi_types.UUID   `json:"id"`
+	Email *openapi_types.Email `json:"email,omitempty" yaml:"email,omitempty"`
+	ID    openapi_types.UUID   `json:"id" yaml:"id"`
 
 	// Subject The identifier at their provider
 	//
 	// Examples: akadmin
-	Subject string `json:"subject"`
+	Subject string `json:"subject" yaml:"subject"`
 }
 
 // UserPage defines model for UserPage.
 type UserPage struct {
-	Items []User `json:"items"`
+	Items []User `json:"items" yaml:"items"`
 
 	// NextCursor Absent on the last page
-	NextCursor *string `json:"next_cursor,omitempty"`
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
 // Whoami defines model for Whoami.
 type Whoami struct {
 	// Email Absent when the provider released none
-	Email *openapi_types.Email `json:"email,omitempty"`
+	Email *openapi_types.Email `json:"email,omitempty" yaml:"email,omitempty"`
 
 	// ID Always present: every principal is resolved to a row on first
 	// sight, a development token included. It is the caller's own id, so
 	// publishing it discloses nothing they did not already send.
-	ID openapi_types.UUID `json:"id"`
+	ID openapi_types.UUID `json:"id" yaml:"id"`
 
 	// Issuer The identity provider that issued the token
-	Issuer *string `json:"issuer,omitempty"`
+	Issuer *string `json:"issuer,omitempty" yaml:"issuer,omitempty"`
 
 	// Kind How the caller authenticated
-	Kind WhoamiKind `json:"kind"`
+	Kind WhoamiKind `json:"kind" yaml:"kind"`
 
 	// Subject The caller's stable identifier at that issuer. This is what
 	// OPENARITY_SUPER_ADMINS matches on.
-	Subject string `json:"subject"`
+	Subject string `json:"subject" yaml:"subject"`
 
 	// Teams Every team the caller belongs to, never a page
-	Teams []Membership `json:"teams"`
+	Teams []Membership `json:"teams" yaml:"teams"`
 }
 
 // WhoamiKind How the caller authenticated
@@ -256,40 +256,40 @@ type TeamID = openapi_types.UUID
 type ListTeamsParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
 	// refused; zero, a negative and anything unparseable are 400.
-	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
 
 	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
-	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
 }
 
 // ListTeamMembersParams defines parameters for ListTeamMembers.
 type ListTeamMembersParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
 	// refused; zero, a negative and anything unparseable are 400.
-	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
 
 	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
-	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
 }
 
 // ListUsersParams defines parameters for ListUsers.
 type ListUsersParams struct {
 	// Subject The identifier at the provider, matched exactly. An unknown one is
 	// an empty page, not a 404.
-	Subject *string `form:"subject,omitempty" json:"subject,omitempty"`
+	Subject *string `form:"subject,omitempty" json:"subject,omitempty" yaml:"subject,omitempty"`
 
 	// Limit Rows per page. A value above the maximum is clamped rather than
 	// refused; zero, a negative and anything unparseable are 400.
-	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
 
 	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
-	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
 }
 
 // CreateTeamJSONRequestBody defines body for CreateTeam for application/json ContentType.

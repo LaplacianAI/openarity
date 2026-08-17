@@ -3,8 +3,11 @@ package users
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
 )
@@ -126,6 +129,56 @@ func TestUsersListPrintsTheEnvelope(t *testing.T) {
 	}
 	if got["next_cursor"] != "eyJzIjoiYm9iIn0" {
 		t.Errorf("next_cursor = %#v, want it carried through verbatim", got["next_cursor"])
+	}
+}
+
+// The two structured formats have to describe the same thing. yaml.v3 does
+// not read json tags, so without yaml tags on the generated types it falls
+// back to lowercasing the Go field name and ignores omitempty — one command
+// answering `user_id` in json and `userid` in yaml, and omitting an absent
+// email from one while printing `email: null` in the other.
+//
+// The tags come from oapi-codegen.yaml rather than from any file here, which
+// is why this is asserted through a command: nothing else fails if that
+// setting is removed.
+func TestJSONAndYAMLDescribeTheSameUsers(t *testing.T) {
+	clitest.BrainStub(t, http.StatusOK, twoUsers)
+
+	asJSON, err := clitest.Execute(t, commands, "users", "list", "-o", "json")
+	if err != nil {
+		t.Fatalf("users list -o json: %v", err)
+	}
+
+	clitest.BrainStub(t, http.StatusOK, twoUsers)
+	asYAML, err := clitest.Execute(t, commands, "users", "list", "-o", "yaml")
+	if err != nil {
+		t.Fatalf("users list -o yaml: %v", err)
+	}
+
+	var fromJSON, fromYAML map[string]any
+	if err := json.Unmarshal([]byte(asJSON), &fromJSON); err != nil {
+		t.Fatalf("not json: %v\n%s", err, asJSON)
+	}
+	if err := yaml.Unmarshal([]byte(asYAML), &fromYAML); err != nil {
+		t.Fatalf("not yaml: %v\n%s", err, asYAML)
+	}
+
+	if !reflect.DeepEqual(fromJSON, fromYAML) {
+		t.Errorf("the two formats disagree\njson:\n%s\nyaml:\n%s", asJSON, asYAML)
+	}
+}
+
+// bob has no email, and absent has to mean absent in both formats. `null` is
+// a value: a consumer testing for the key finds one and reads nothing.
+func TestAnAbsentEmailIsOmittedFromYAMLToo(t *testing.T) {
+	clitest.BrainStub(t, http.StatusOK, twoUsers)
+
+	out, err := clitest.Execute(t, commands, "users", "list", "-o", "yaml")
+	if err != nil {
+		t.Fatalf("users list -o yaml: %v", err)
+	}
+	if strings.Contains(out, "null") {
+		t.Errorf("a user with no email rendered as null:\n%s", out)
 	}
 }
 
