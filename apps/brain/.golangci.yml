@@ -58,6 +58,13 @@ linters:
           allow:
             - $gostd
             - github.com/caarlos0/env/v11
+            # Test-only, and depguard cannot say so — the same shape as the
+            # self-import listed under middleware. Validate refuses the literal
+            # "dev" in SUPER_ADMINS while auth decides what the dev token's
+            # subject actually is; one test imports auth to pin them together,
+            # because a rename there would otherwise leave this guarding a
+            # value no principal can hold. No production file here imports it.
+            - github.com/LaplacianAI/openarity/apps/brain/internal/auth
         middleware:
           files: ["**/internal/middleware/**"]
           allow:
@@ -82,8 +89,19 @@ linters:
             # Can takes the auth.User the middleware resolved.
             - github.com/LaplacianAI/openarity/apps/brain/internal/auth
             - github.com/google/uuid
+        # authconfig is excluded because its whole job is to publish the
+        # configuration — /auth/config tells a client how to authenticate, so
+        # it is a projection of config by definition. Routing it through
+        # contracts would mean inventing a type that mirrors config exactly.
+        # Every other api package stays under the rule below.
+        authconfig:
+          files: ["**/internal/api/authconfig/**"]
+          allow:
+            - $gostd
+            - github.com/LaplacianAI/openarity/apps/brain/internal/api
+            - github.com/LaplacianAI/openarity/apps/brain/internal/config
         api:
-          files: ["**/internal/api/**"]
+          files: ["**/internal/api/**", "!**/internal/api/authconfig/**"]
           allow:
             - $gostd
             # Domain packages use the shared Router/response helpers, and a
