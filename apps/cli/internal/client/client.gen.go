@@ -84,8 +84,9 @@ type AddMemberRequest struct {
 	Role string `json:"role" yaml:"role"`
 
 	// Subject The identifier at the provider, matched exactly. Unique only per
-	// issuer, so a deployment federating a second one can see this match
-	// more than one person — that answers 409, never a guess.
+	// issuer, and rows survive a change of issuer, so this can match more
+	// than one person without a second provider ever being configured —
+	// that answers 409, never a guess.
 	//
 	//
 	// Examples: alice
@@ -201,6 +202,15 @@ type User struct {
 	// Email Absent when the provider released none
 	Email *openapi_types.Email `json:"email,omitempty" yaml:"email,omitempty"`
 	ID    openapi_types.UUID   `json:"id" yaml:"id"`
+
+	// Issuer The identity provider that issued their token, from the `iss`
+	// claim. Identity is `(issuer, subject)`, so this is not decoration:
+	// it is the half that makes two rows with the same subject two
+	// different people. Without it a listing cannot be read.
+	//
+	//
+	// Examples: https://auth.example.com/application/o/openarity/
+	Issuer string `json:"issuer" yaml:"issuer"`
 
 	// Subject The identifier at their provider
 	//

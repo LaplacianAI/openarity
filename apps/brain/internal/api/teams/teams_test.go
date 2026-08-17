@@ -1288,9 +1288,17 @@ func TestAddMemberAnswers404ForASubjectNobodyHas(t *testing.T) {
 func TestAnAmbiguousSubjectIsA409NamingTheIDs(t *testing.T) {
 	t.Parallel()
 
+	const (
+		byName = "https://auth.example.com/application/o/openarity/"
+		byIP   = "http://10.0.0.5:9000/application/o/openarity/"
+	)
+
 	id, first, second := uuid.New(), uuid.New(), uuid.New()
 	s := &fakeStore{bySubject: map[string][]db.FindUsersBySubjectRow{
-		"alice": {{ID: first, Subject: "alice"}, {ID: second, Subject: "alice"}},
+		"alice": {
+			{ID: first, Issuer: byName, Subject: "alice"},
+			{ID: second, Issuer: byIP, Subject: "alice"},
+		},
 	}}
 
 	rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(id, "admin"),
@@ -1302,6 +1310,14 @@ func TestAnAmbiguousSubjectIsA409NamingTheIDs(t *testing.T) {
 	for _, want := range []string{first.String(), second.String(), "user_id"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("the reply does not carry %s: %s", want, rec.Body)
+		}
+	}
+	// The ids alone are unusable. Two uuids and no issuer gives an operator no
+	// basis to choose, and the wrong choice grants a role to an identity
+	// nobody can present a token for — a silent no-op.
+	for _, want := range []string{byName, byIP} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("the reply gives no basis to choose — %q is missing: %s", want, rec.Body)
 		}
 	}
 	if len(s.added) != 0 {

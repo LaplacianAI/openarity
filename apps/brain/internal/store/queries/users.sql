@@ -10,7 +10,7 @@ RETURNING *;
 SELECT * FROM users WHERE id = $1;
 
 -- name: ListUsers :many
-SELECT id, subject, email
+SELECT id, issuer, subject, email
 FROM users
 WHERE (NOT sqlc.arg('use_subject')::bool OR subject = sqlc.arg('subject')::text)
   AND (NOT sqlc.arg('use_cursor')::bool
@@ -19,7 +19,7 @@ ORDER BY subject, id
 LIMIT sqlc.arg('page_size');
 
 -- name: FindUsersBySubject :many
-SELECT id, subject, email
+SELECT id, issuer, subject, email
 FROM users
 WHERE subject = sqlc.arg('subject')::text
 ORDER BY id

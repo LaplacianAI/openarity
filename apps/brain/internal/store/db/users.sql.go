@@ -12,7 +12,7 @@ import (
 )
 
 const findUsersBySubject = `-- name: FindUsersBySubject :many
-SELECT id, subject, email
+SELECT id, issuer, subject, email
 FROM users
 WHERE subject = $1::text
 ORDER BY id
@@ -26,6 +26,7 @@ type FindUsersBySubjectParams struct {
 
 type FindUsersBySubjectRow struct {
 	ID      uuid.UUID
+	Issuer  string
 	Subject string
 	Email   *string
 }
@@ -39,7 +40,12 @@ func (q *Queries) FindUsersBySubject(ctx context.Context, arg FindUsersBySubject
 	var items []FindUsersBySubjectRow
 	for rows.Next() {
 		var i FindUsersBySubjectRow
-		if err := rows.Scan(&i.ID, &i.Subject, &i.Email); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Issuer,
+			&i.Subject,
+			&i.Email,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -69,7 +75,7 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, subject, email
+SELECT id, issuer, subject, email
 FROM users
 WHERE (NOT $1::bool OR subject = $2::text)
   AND (NOT $3::bool
@@ -89,6 +95,7 @@ type ListUsersParams struct {
 
 type ListUsersRow struct {
 	ID      uuid.UUID
+	Issuer  string
 	Subject string
 	Email   *string
 }
@@ -109,7 +116,12 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 	var items []ListUsersRow
 	for rows.Next() {
 		var i ListUsersRow
-		if err := rows.Scan(&i.ID, &i.Subject, &i.Email); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Issuer,
+			&i.Subject,
+			&i.Email,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

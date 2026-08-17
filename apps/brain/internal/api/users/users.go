@@ -71,7 +71,12 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	page, err := api.MapPage(rows, limit,
 		func(row db.ListUsersRow) any { return userCursor{Subject: row.Subject, ID: row.ID} },
 		func(row db.ListUsersRow) user {
-			return user{ID: row.ID, Subject: row.Subject, Email: row.Email}
+			return user{
+				ID:      row.ID,
+				Issuer:  row.Issuer,
+				Subject: row.Subject,
+				Email:   row.Email,
+			}
 		},
 	)
 	if err != nil {

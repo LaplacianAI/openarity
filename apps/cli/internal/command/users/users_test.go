@@ -19,13 +19,29 @@ const (
 	bobID   = "0f1e2d3c-4b5a-4968-8776-655443332211"
 )
 
+const anIssuer = "https://auth.example.com/application/o/openarity/"
+
 const twoUsers = `{
   "items": [
     {"id": "9c4e1a2b-3d5f-4a6b-8c7d-1e2f3a4b5c6d", "subject": "alice",
+     "issuer": "https://auth.example.com/application/o/openarity/",
      "email": "alice@example.com"},
-    {"id": "0f1e2d3c-4b5a-4968-8776-655443332211", "subject": "bob"}
+    {"id": "0f1e2d3c-4b5a-4968-8776-655443332211", "subject": "bob",
+     "issuer": "https://auth.example.com/application/o/openarity/"}
   ],
   "next_cursor": "eyJzIjoiYm9iIn0"
+}`
+
+// One provider reached under two URLs. The subjects are identical, so the
+// issuer is the only thing that tells the rows apart — and it is exactly the
+// listing that sent somebody to psql to read their own user table.
+const oneSubjectTwoIssuers = `{
+  "items": [
+    {"id": "47c93149-6e9e-49ea-a9f6-34011f1e1e04", "subject": "akadmin",
+     "issuer": "http://10.0.0.5:9000/application/o/openarity/"},
+    {"id": "e096f85a-a05b-4699-919a-e0c5c5b57072", "subject": "akadmin",
+     "issuer": "https://auth.example.com/application/o/openarity/"}
+  ]
 }`
 
 func TestUsersListRendersATable(t *testing.T) {
@@ -129,6 +145,51 @@ func TestUsersListPrintsTheEnvelope(t *testing.T) {
 	}
 	if got["next_cursor"] != "eyJzIjoiYm9iIn0" {
 		t.Errorf("next_cursor = %#v, want it carried through verbatim", got["next_cursor"])
+	}
+}
+
+// Two rows reading `akadmin` with different ids and nothing else on the line
+// is unreadable — it looks like the brain created a duplicate rather than like
+// two distinct principals, which is what they are.
+func TestTheTableDistinguishesOneSubjectAtTwoIssuers(t *testing.T) {
+	clitest.BrainStub(t, http.StatusOK, oneSubjectTwoIssuers)
+
+	out, err := clitest.Execute(t, commands, "users", "list")
+	if err != nil {
+		t.Fatalf("users list: %v", err)
+	}
+
+	for _, want := range []string{
+		"http://10.0.0.5:9000/application/o/openarity/",
+		"https://auth.example.com/application/o/openarity/",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the table cannot tell the rows apart — %q is missing:\n%s", want, out)
+		}
+	}
+
+	// Each issuer belongs on the line of the person it authenticated, not
+	// printed once as a heading.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "47c93149") && !strings.Contains(line, "10.0.0.5") {
+			t.Errorf("the row is not on the same line as its issuer:\n%s", out)
+		}
+	}
+}
+
+// The issuer is a url and the table is column-aligned, so a row that loses its
+// id or its email to the new column is a silent regression.
+func TestEveryColumnSurvivesTheIssuer(t *testing.T) {
+	clitest.BrainStub(t, http.StatusOK, twoUsers)
+
+	out, err := clitest.Execute(t, commands, "users", "list")
+	if err != nil {
+		t.Fatalf("users list: %v", err)
+	}
+	for _, want := range []string{"alice", anIssuer, "alice@example.com", aliceID, "bob", "no email", bobID} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the table is missing %q:\n%s", want, out)
+		}
 	}
 }
 
