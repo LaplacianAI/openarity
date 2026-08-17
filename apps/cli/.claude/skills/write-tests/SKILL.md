@@ -37,6 +37,8 @@ not what it asserts. The assertion is already in the code.
 | a pure function             | call it directly, `t.Parallel()`       |
 | a command end to end        | `execute(t, "context", "list")`        |
 | anything touching the config file | `isolate(t)` first, no `t.Parallel()` |
+| a command that calls one endpoint | `clitest.BrainStub(t, status, body)` |
+| a command that calls two, or where the order matters | `clitest.Routes(t, ...)` |
 
 `execute` drives the whole binary the way a shell does — it builds the root
 command, so a command that is built but never registered fails here rather than
@@ -62,6 +64,37 @@ func TestListMarksTheActiveContext(t *testing.T) {
   for anything whose failure would make the real assertion meaningless.
 - **`execute` returns combined output and the error.** Assert on `out+err.Error()`
   when checking a message, because cobra may print rather than return.
+
+### Two stubs, and when the second one is required
+
+`clitest.BrainStub` serves one canned reply to every path and remembers only
+the last request. That is enough for a command that makes one call.
+
+It is not enough the moment a command resolves a name, because the interesting
+assertions are about **which endpoints were called and in what order** — and a
+single reply cannot be both a page of teams and a 204. `clitest.Routes` takes
+`http.ServeMux` patterns and records every request:
+
+```go
+script := clitest.Routes(t, map[string]clitest.Reply{
+	"GET /teams":               {Status: http.StatusOK, Body: onePage},
+	"POST /teams/{id}/members": {Status: http.StatusNoContent, Body: ""},
+})
+
+if n := script.Calls(http.MethodGet, "/users"); n != 0 {
+	t.Errorf("the directory was read %d times to add somebody by name", n)
+}
+seen := script.All()   // in order
+```
+
+- **Key the `Reply` fields.** `govet`'s `composites` fails an unkeyed literal
+  for a struct from another package, and `make lint` reports only three of them
+  before truncating.
+- **Assert the calls that must *not* happen.** `Calls(...) != 0` on an endpoint
+  the command should never touch is what catches a permission regression — the
+  request still succeeds, it just needed an authority it should not have.
+- **An unrouted request answers 404 and is still recorded**, so a call nobody
+  expected shows up as a failed assertion rather than a hang.
 
 ## Step 3 — t.Parallel() only where nothing is shared
 

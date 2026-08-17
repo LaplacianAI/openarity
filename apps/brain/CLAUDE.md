@@ -251,6 +251,27 @@ reinstalled.
   to opt out per route.
 - **Secrets are references.** A row or config field holds a Vault path, never a
   value. Only `internal/secrets` imports a secret backend SDK.
+- **A write resolves the name it was given; it does not send the caller to a
+  directory first.** `POST /teams/{id}/members` takes `user_id` or `subject`,
+  because requiring the id would mean requiring `GET /users`, which needs
+  `membership:write` *somewhere* — a much larger authority than adding one
+  person you can already name. The question to ask of any reference in a
+  request body is what permission the caller needs to produce it.
+- **`Can` for a team, `CanInAnyTeam` for a route with no team in it.** The
+  second is strictly weaker — an admin of one team passes it — so a
+  team-scoped route using it would turn one admin role into an admin role
+  everywhere. `GET /users` is the only caller and is meant to stay that way; a
+  second one is a signal something is being asked the wrong way round.
+- **Roles are rows, actions are code.** `roles` and `role_permissions` are
+  data an administrator edits; `authz.Action` is a closed vocabulary with a
+  test tying the constants to `AllActions`. Note that `role_permissions.action`
+  has no foreign key behind it, so a typo there grants nothing and says
+  nothing — the Go constants are the only thing holding the vocabulary.
+- **A subject is not unique.** `users` is unique on `(issuer, subject)`, so
+  anything keyed on subject alone can match more than one person and must
+  answer rather than pick. With one provider configured it never fires, which
+  is exactly why it has to be handled when it is written rather than when it
+  happens.
 - **`slog` from the stdlib.** No zap, no zerolog. Text with source locations in
   development because a terminal is the reader; JSON everywhere else because a
   log aggregator is. `AddSource` costs a stack walk per record, so development

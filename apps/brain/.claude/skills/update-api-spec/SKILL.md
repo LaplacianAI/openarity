@@ -81,6 +81,10 @@ Match these rather than inventing a second style:
 - **`security: []` on an operation makes it public.** Only the probes have it.
   Adding it anywhere else is a decision for review, and it belongs in the
   `SECURITY.md` list of unauthenticated endpoints too.
+- **A body that accepts one of two fields is documented, not `oneOf`.** Mark
+  only the always-required fields in `required`, make the alternatives
+  optional, and state the rule in the `description` — then enforce it in the
+  handler and test both spellings. See the note below for why.
 
 ## Step 3 — validate before committing
 
@@ -140,3 +144,26 @@ served copy cannot drift from the committed one.
 - **The spec described a JSON error envelope the service never sent.** It was
   written from what the API ought to do rather than from a `curl`. Run the
   request and copy the output.
+- **A top-level `oneOf` on a request schema wrecks the generated client.**
+  `AddMemberRequest` takes `user_id` or `subject`, and writing that as
+
+  ```yaml
+      oneOf:
+        - required: [user_id]
+        - required: [subject]
+  ```
+
+  made oapi-codegen emit a `union json.RawMessage` field, a hand-rolled
+  `MarshalJSON`, and two `AddMemberRequest0 = interface{}` aliases. Every
+  client then has to build the body through generated accessors instead of a
+  struct literal. Probed, not assumed — generate and read the output before
+  keeping a `oneOf`.
+
+  The constraint still belongs in the spec, as prose in the `description` and
+  as a 400 the handler returns. A schema keyword that no client can use is
+  worth less than a sentence a reader can.
+- **A field added to a response schema fails nothing.** The contract test
+  compares *routes* against paths, not bodies. `Whoami` grew `id` in the spec
+  and the handler kept not sending it for three commits; the drift only
+  surfaced when the generated client was read by hand. When a schema gains a
+  required field, add the assertion to that route's test in the same change.

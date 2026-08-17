@@ -190,12 +190,54 @@ if !allowed {
 - **`Can` is the only place a role is interpreted.** Never `if role == "admin"`
   in a handler — that is the line that makes swapping the authorisation backend
   an audit of every file.
+- **`CanInAnyTeam` is for a route with no team in it, and nothing else.** It
+  asks whether the caller holds an action *anywhere*, so it is strictly weaker
+  than `Can`: an admin of one team passes it. Using it on a team-scoped route
+  would make one admin role an admin role everywhere. `GET /users` is the only
+  caller, because somebody looking a person up has no team in mind yet.
+
+  Declare whichever one the package uses in its own `Authorizer` interface and
+  not both — `internal/api/users` can only reach `CanInAnyTeam`, so the rule is
+  enforced by the compiler rather than by this paragraph.
 - **The error and the denial are different.** A failed permission read is
   *unknown*, not *denied*: 500, not 403. Collapsing them makes a database blip
   look like a permissions problem.
 - **Actions are constants in `internal/authz`.** A new one goes in `action.go`,
   in `AllActions`, and in a seed migration — a test fails if any of the three is
   missed.
+
+## Step 3b — a write that references another resource
+
+A body naming a second resource can take its id, its name, or either. The
+question is not ergonomics, it is **what permission the caller needs to produce
+the id.**
+
+`POST /teams/{id}/members` takes `user_id` **or** `subject`. It accepts the
+subject because the alternative was making every caller read `GET /users`
+first, and that endpoint needs `membership:write` somewhere — a far larger
+authority than "add the person I can already name". Resolving it server-side
+leaves `membership:write` in the named team as the only thing checked, which is
+the authority actually being exercised.
+
+Four rules when you do this:
+
+- **Exactly one, and neither is a 400.** Preferring the id when both are given
+  silently ignores a name somebody meant, and the two can name different
+  people.
+- **Resolve after the authorisation check, never before.** Otherwise the route
+  answers "does this person exist" to anyone who can reach it — an existence
+  oracle wearing a write endpoint. The two 403s must be byte-identical.
+- **A key that is not unique answers 409, listing what matched.** `subject` is
+  unique only per issuer. Picking a row puts the wrong person in a team and
+  looks identical afterwards; the ids make a retry with the unambiguous form
+  possible.
+- **Nothing matching is 404, not 400.** The body is well-formed; the caller
+  named somebody who does not exist.
+
+The path is different: it stays an id. `/teams/{id}` accepting a name means
+guessing whether a segment is a name or a uuid, and a team named like a uuid
+breaks it. Clients resolve path references themselves — cheaply, when the list
+they resolve against needs no special permission.
 
 ## Step 4 — which status
 
