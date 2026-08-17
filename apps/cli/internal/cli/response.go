@@ -7,7 +7,10 @@ import (
 	"strings"
 )
 
-const maxBodyInAnError = 200
+const (
+	maxBodyInAnError = 200
+	noSuchRoute      = "404 page not found"
+)
 
 type (
 	okResponse[T any] interface {
@@ -65,6 +68,13 @@ func APIError(status int, body []byte) error {
 	case http.StatusForbidden:
 		return errors.New("you are not allowed to do that")
 	case http.StatusNotFound:
+		if detail == noSuchRoute {
+			return errors.New("this brain has no such endpoint — it is probably " +
+				"running an older build than `oa`")
+		}
+		if detail != "" && detail != "not found" {
+			return errors.New(detail)
+		}
 		return errors.New("not found, or not visible to you")
 	}
 
