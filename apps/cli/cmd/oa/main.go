@@ -16,6 +16,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/login"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/logout"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/teams"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/users"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/whoami"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/ui"
@@ -43,6 +44,7 @@ func commands(opts *cli.Options) []*cobra.Command {
 		config.New(opts),
 		cmdcontext.New(opts),
 		teams.New(opts),
+		users.New(opts),
 		login.New(opts),
 		logout.New(opts),
 	}

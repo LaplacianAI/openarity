@@ -43,34 +43,57 @@ func (e AuthConfigEnvironment) Valid() bool {
 
 // Defines values for WhoamiKind.
 const (
-	Dev     WhoamiKind = "dev"
-	Service WhoamiKind = "service"
-	User    WhoamiKind = "user"
+	WhoamiKindDev     WhoamiKind = "dev"
+	WhoamiKindService WhoamiKind = "service"
+	WhoamiKindUser    WhoamiKind = "user"
 )
 
 // Valid indicates whether the value is a known member of the WhoamiKind enum.
 func (e WhoamiKind) Valid() bool {
 	switch e {
-	case Dev:
+	case WhoamiKindDev:
 		return true
-	case Service:
+	case WhoamiKindService:
 		return true
-	case User:
+	case WhoamiKindUser:
 		return true
 	default:
 		return false
 	}
 }
 
-// AddMemberRequest defines model for AddMemberRequest.
+// AddMemberRequest Exactly one of `user_id` and `subject`. Neither is a 400, and so is
+// both — guessing which the caller meant is how somebody ends up in a
+// team they were never named for.
+//
+// `subject` exists so that adding a person you can name does not require
+// permission to read the whole directory. It is the smaller authority,
+// and it is the one this endpoint should need.
+//
+// The exactly-one rule is enforced by the service and stated here rather
+// than written as a `oneOf`: oapi-codegen turns a top-level `oneOf` into
+// a `json.RawMessage` union with a hand-rolled `MarshalJSON`, and every
+// client then builds this body through generated accessors instead of a
+// struct literal. Verified, not assumed.
 type AddMemberRequest struct {
-	// Role Must name a row in `roles`. Ships with `admin` and `developer`;
+	// Role Must name a row in `roles`. Ships with `admin` and `member`;
 	// deployments may add their own.
 	//
 	//
-	// Examples: developer
-	Role   string             `json:"role"`
-	UserID openapi_types.UUID `json:"user_id"`
+	// Examples: member
+	Role string `json:"role"`
+
+	// Subject The identifier at the provider, matched exactly. Unique only per
+	// issuer, so a deployment federating a second one can see this match
+	// more than one person — that answers 409, never a guess.
+	//
+	//
+	// Examples: alice
+	Subject *string `json:"subject,omitempty"`
+
+	// UserID Unambiguous, and the only form that works when two providers issue
+	// the same subject. `GET /users` is where one comes from.
+	UserID *openapi_types.UUID `json:"user_id,omitempty"`
 }
 
 // AuthConfig defines model for AuthConfig.
@@ -106,7 +129,7 @@ type Member struct {
 	// Email Absent when the provider released none
 	Email *openapi_types.Email `json:"email,omitempty"`
 
-	// Role Examples: developer
+	// Role Examples: member
 	Role string `json:"role"`
 
 	// Subject The member's identifier at their provider
@@ -173,10 +196,35 @@ type TeamPage struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
+// User defines model for User.
+type User struct {
+	// Email Absent when the provider released none
+	Email *openapi_types.Email `json:"email,omitempty"`
+	ID    openapi_types.UUID   `json:"id"`
+
+	// Subject The identifier at their provider
+	//
+	// Examples: akadmin
+	Subject string `json:"subject"`
+}
+
+// UserPage defines model for UserPage.
+type UserPage struct {
+	Items []User `json:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
 // Whoami defines model for Whoami.
 type Whoami struct {
 	// Email Absent when the provider released none
 	Email *openapi_types.Email `json:"email,omitempty"`
+
+	// ID Always present: every principal is resolved to a row on first
+	// sight, a development token included. It is the caller's own id, so
+	// publishing it discloses nothing they did not already send.
+	ID openapi_types.UUID `json:"id"`
 
 	// Issuer The identity provider that issued the token
 	Issuer *string `json:"issuer,omitempty"`
@@ -218,6 +266,22 @@ type ListTeamsParams struct {
 
 // ListTeamMembersParams defines parameters for ListTeamMembers.
 type ListTeamMembersParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListUsersParams defines parameters for ListUsers.
+type ListUsersParams struct {
+	// Subject The identifier at the provider, matched exactly. An unknown one is
+	// an empty page, not a 404.
+	Subject *string `form:"subject,omitempty" json:"subject,omitempty"`
+
 	// Limit Rows per page. A value above the maximum is clamped rather than
 	// refused; zero, a negative and anything unparseable are 400.
 	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
@@ -391,9 +455,14 @@ type ClientInterface interface {
 
 	// AddTeamMemberWithBody Add a member
 	//
-	// Requires `member:write` in this team. The role is checked by the
-	// database rather than the service: roles are rows, so an unknown one is
-	// a rejected foreign key and comes back as a 400.
+	// Requires `membership:write` in this team, and nothing else — naming
+	// somebody by `subject` deliberately does not require permission to read
+	// the directory, because "add the person I can name" is a smaller
+	// authority than "show me everyone".
+	//
+	// The role is checked by the database rather than the service: roles are
+	// rows, so an unknown one is a rejected foreign key and comes back as a
+	// 400.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -402,9 +471,14 @@ type ClientInterface interface {
 
 	// AddTeamMember Add a member
 	//
-	// Requires `member:write` in this team. The role is checked by the
-	// database rather than the service: roles are rows, so an unknown one is
-	// a rejected foreign key and comes back as a 400.
+	// Requires `membership:write` in this team, and nothing else — naming
+	// somebody by `subject` deliberately does not require permission to read
+	// the directory, because "add the person I can name" is a smaller
+	// authority than "show me everyone".
+	//
+	// The role is checked by the database rather than the service: roles are
+	// rows, so an unknown one is a rejected foreign key and comes back as a
+	// 400.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -413,17 +487,40 @@ type ClientInterface interface {
 
 	// RemoveTeamMember Remove a member
 	//
-	// Requires `member:write` in this team. Removing someone who is not a
+	// Requires `membership:write` in this team. Removing someone who is not a
 	// member succeeds: the caller asked for a state, and that state holds.
 	//
 	// Corresponds with DELETE /teams/{id}/members/{userID} (the `RemoveTeamMember` operationId).
 	RemoveTeamMember(ctx context.Context, id TeamID, userID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListUsers Find a user
+	//
+	// Adding someone to a team needs their id, and an id is the one thing
+	// nobody can tell you over chat. This is where it is looked up.
+	//
+	// Super admins, and admins of at least one team. Not every authenticated
+	// caller: the directory is every subject and email the deployment has
+	// ever seen, and a filtered read of it is an existence oracle for anyone
+	// who can guess a username. Requiring `membership:write` *somewhere* keeps it
+	// with the people whose job is adding members, without asking which team
+	// they had in mind — they are looking someone up precisely because they
+	// do not yet have a row to check against.
+	//
+	// `subject` narrows to an exact match. There is no prefix or substring
+	// search, deliberately: a directory that answers "who starts with s" is
+	// one someone walks.
+	//
+	// Corresponds with GET /users (the `ListUsers` operationId).
+	ListUsers(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetWhoami The authenticated caller
 	//
 	// Resolves the token to a user, creating the row on first sight, and
-	// returns their team memberships. The user id is deliberately not
-	// published — it is a surrogate key, not an address.
+	// returns their team memberships.
+	//
+	// The id is the caller's own, so publishing it discloses nothing they
+	// did not already send. It is what someone pastes into a request to be
+	// added to a team.
 	//
 	// Corresponds with GET /whoami (the `GetWhoami` operationId).
 	GetWhoami(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -592,9 +689,14 @@ func (c *Client) ListTeamMembers(ctx context.Context, id TeamID, params *ListTea
 
 // AddTeamMemberWithBody Add a member
 //
-// Requires `member:write` in this team. The role is checked by the
-// database rather than the service: roles are rows, so an unknown one is
-// a rejected foreign key and comes back as a 400.
+// Requires `membership:write` in this team, and nothing else — naming
+// somebody by `subject` deliberately does not require permission to read
+// the directory, because "add the person I can name" is a smaller
+// authority than "show me everyone".
+//
+// The role is checked by the database rather than the service: roles are
+// rows, so an unknown one is a rejected foreign key and comes back as a
+// 400.
 //
 // Takes any type of body and a specified content type.
 //
@@ -613,9 +715,14 @@ func (c *Client) AddTeamMemberWithBody(ctx context.Context, id TeamID, contentTy
 
 // AddTeamMember Add a member
 //
-// Requires `member:write` in this team. The role is checked by the
-// database rather than the service: roles are rows, so an unknown one is
-// a rejected foreign key and comes back as a 400.
+// Requires `membership:write` in this team, and nothing else — naming
+// somebody by `subject` deliberately does not require permission to read
+// the directory, because "add the person I can name" is a smaller
+// authority than "show me everyone".
+//
+// The role is checked by the database rather than the service: roles are
+// rows, so an unknown one is a rejected foreign key and comes back as a
+// 400.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -634,7 +741,7 @@ func (c *Client) AddTeamMember(ctx context.Context, id TeamID, body AddTeamMembe
 
 // RemoveTeamMember Remove a member
 //
-// Requires `member:write` in this team. Removing someone who is not a
+// Requires `membership:write` in this team. Removing someone who is not a
 // member succeeds: the caller asked for a state, and that state holds.
 //
 // Corresponds with DELETE /teams/{id}/members/{userID} (the `RemoveTeamMember` operationId).
@@ -650,11 +757,44 @@ func (c *Client) RemoveTeamMember(ctx context.Context, id TeamID, userID openapi
 	return c.Client.Do(req)
 }
 
+// ListUsers Find a user
+//
+// Adding someone to a team needs their id, and an id is the one thing
+// nobody can tell you over chat. This is where it is looked up.
+//
+// Super admins, and admins of at least one team. Not every authenticated
+// caller: the directory is every subject and email the deployment has
+// ever seen, and a filtered read of it is an existence oracle for anyone
+// who can guess a username. Requiring `membership:write` *somewhere* keeps it
+// with the people whose job is adding members, without asking which team
+// they had in mind — they are looking someone up precisely because they
+// do not yet have a row to check against.
+//
+// `subject` narrows to an exact match. There is no prefix or substring
+// search, deliberately: a directory that answers "who starts with s" is
+// one someone walks.
+//
+// Corresponds with GET /users (the `ListUsers` operationId).
+func (c *Client) ListUsers(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListUsersRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetWhoami The authenticated caller
 //
 // Resolves the token to a user, creating the row on first sight, and
-// returns their team memberships. The user id is deliberately not
-// published — it is a surrogate key, not an address.
+// returns their team memberships.
+//
+// The id is the caller's own, so publishing it discloses nothing they
+// did not already send. It is what someone pastes into a request to be
+// added to a team.
 //
 // Corresponds with GET /whoami (the `GetWhoami` operationId).
 func (c *Client) GetWhoami(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1051,6 +1191,84 @@ func NewRemoveTeamMemberRequest(server string, id TeamID, userID openapi_types.U
 	return req, nil
 }
 
+// NewListUsersRequest constructs an http.Request for the ListUsers method
+func NewListUsersRequest(server string, params *ListUsersParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/users")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Subject != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "subject", *params.Subject, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetWhoamiRequest constructs an http.Request for the GetWhoami method
 func NewGetWhoamiRequest(server string) (*http.Request, error) {
 	var err error
@@ -1217,9 +1435,14 @@ type ClientWithResponsesInterface interface {
 
 	// AddTeamMemberWithBodyWithResponse Add a member
 	//
-	// Requires `member:write` in this team. The role is checked by the
-	// database rather than the service: roles are rows, so an unknown one is
-	// a rejected foreign key and comes back as a 400.
+	// Requires `membership:write` in this team, and nothing else — naming
+	// somebody by `subject` deliberately does not require permission to read
+	// the directory, because "add the person I can name" is a smaller
+	// authority than "show me everyone".
+	//
+	// The role is checked by the database rather than the service: roles are
+	// rows, so an unknown one is a rejected foreign key and comes back as a
+	// 400.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -1228,9 +1451,14 @@ type ClientWithResponsesInterface interface {
 
 	// AddTeamMemberWithResponse Add a member
 	//
-	// Requires `member:write` in this team. The role is checked by the
-	// database rather than the service: roles are rows, so an unknown one is
-	// a rejected foreign key and comes back as a 400.
+	// Requires `membership:write` in this team, and nothing else — naming
+	// somebody by `subject` deliberately does not require permission to read
+	// the directory, because "add the person I can name" is a smaller
+	// authority than "show me everyone".
+	//
+	// The role is checked by the database rather than the service: roles are
+	// rows, so an unknown one is a rejected foreign key and comes back as a
+	// 400.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -1239,7 +1467,7 @@ type ClientWithResponsesInterface interface {
 
 	// RemoveTeamMemberWithResponse Remove a member
 	//
-	// Requires `member:write` in this team. Removing someone who is not a
+	// Requires `membership:write` in this team. Removing someone who is not a
 	// member succeeds: the caller asked for a state, and that state holds.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -1247,11 +1475,36 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /teams/{id}/members/{userID} (the `RemoveTeamMember` operationId).
 	RemoveTeamMemberWithResponse(ctx context.Context, id TeamID, userID openapi_types.UUID, reqEditors ...RequestEditorFn) (*RemoveTeamMemberResponse, error)
 
+	// ListUsersWithResponse Find a user
+	//
+	// Adding someone to a team needs their id, and an id is the one thing
+	// nobody can tell you over chat. This is where it is looked up.
+	//
+	// Super admins, and admins of at least one team. Not every authenticated
+	// caller: the directory is every subject and email the deployment has
+	// ever seen, and a filtered read of it is an existence oracle for anyone
+	// who can guess a username. Requiring `membership:write` *somewhere* keeps it
+	// with the people whose job is adding members, without asking which team
+	// they had in mind — they are looking someone up precisely because they
+	// do not yet have a row to check against.
+	//
+	// `subject` narrows to an exact match. There is no prefix or substring
+	// search, deliberately: a directory that answers "who starts with s" is
+	// one someone walks.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /users (the `ListUsers` operationId).
+	ListUsersWithResponse(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*ListUsersResponse, error)
+
 	// GetWhoamiWithResponse The authenticated caller
 	//
 	// Resolves the token to a user, creating the row on first sight, and
-	// returns their team memberships. The user id is deliberately not
-	// published — it is a surrogate key, not an address.
+	// returns their team memberships.
+	//
+	// The id is the caller's own, so publishing it discloses nothing they
+	// did not already send. It is what someone pastes into a request to be
+	// added to a team.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -1642,6 +1895,54 @@ func (r RemoveTeamMemberResponse) ContentType() string {
 	return ""
 }
 
+// ListUsersResponse401Headers the declared response headers of an HTTP 401 response for ListUsers
+type ListUsersResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListUsersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UserPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListUsersResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListUsersResponse) GetJSON200() *UserPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListUsersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListUsersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListUsersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListUsersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetWhoamiResponse401Headers the declared response headers of an HTTP 401 response for GetWhoami
 type GetWhoamiResponse401Headers struct {
 	WWWAuthenticate *string
@@ -1833,9 +2134,14 @@ func (c *ClientWithResponses) ListTeamMembersWithResponse(ctx context.Context, i
 
 // AddTeamMemberWithBodyWithResponse Add a member
 //
-// Requires `member:write` in this team. The role is checked by the
-// database rather than the service: roles are rows, so an unknown one is
-// a rejected foreign key and comes back as a 400.
+// Requires `membership:write` in this team, and nothing else — naming
+// somebody by `subject` deliberately does not require permission to read
+// the directory, because "add the person I can name" is a smaller
+// authority than "show me everyone".
+//
+// The role is checked by the database rather than the service: roles are
+// rows, so an unknown one is a rejected foreign key and comes back as a
+// 400.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1850,9 +2156,14 @@ func (c *ClientWithResponses) AddTeamMemberWithBodyWithResponse(ctx context.Cont
 
 // AddTeamMemberWithResponse Add a member
 //
-// Requires `member:write` in this team. The role is checked by the
-// database rather than the service: roles are rows, so an unknown one is
-// a rejected foreign key and comes back as a 400.
+// Requires `membership:write` in this team, and nothing else — naming
+// somebody by `subject` deliberately does not require permission to read
+// the directory, because "add the person I can name" is a smaller
+// authority than "show me everyone".
+//
+// The role is checked by the database rather than the service: roles are
+// rows, so an unknown one is a rejected foreign key and comes back as a
+// 400.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1867,7 +2178,7 @@ func (c *ClientWithResponses) AddTeamMemberWithResponse(ctx context.Context, id 
 
 // RemoveTeamMemberWithResponse Remove a member
 //
-// Requires `member:write` in this team. Removing someone who is not a
+// Requires `membership:write` in this team. Removing someone who is not a
 // member succeeds: the caller asked for a state, and that state holds.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -1881,11 +2192,42 @@ func (c *ClientWithResponses) RemoveTeamMemberWithResponse(ctx context.Context, 
 	return ParseRemoveTeamMemberResponse(rsp)
 }
 
+// ListUsersWithResponse Find a user
+//
+// Adding someone to a team needs their id, and an id is the one thing
+// nobody can tell you over chat. This is where it is looked up.
+//
+// Super admins, and admins of at least one team. Not every authenticated
+// caller: the directory is every subject and email the deployment has
+// ever seen, and a filtered read of it is an existence oracle for anyone
+// who can guess a username. Requiring `membership:write` *somewhere* keeps it
+// with the people whose job is adding members, without asking which team
+// they had in mind — they are looking someone up precisely because they
+// do not yet have a row to check against.
+//
+// `subject` narrows to an exact match. There is no prefix or substring
+// search, deliberately: a directory that answers "who starts with s" is
+// one someone walks.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /users (the `ListUsers` operationId).
+func (c *ClientWithResponses) ListUsersWithResponse(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*ListUsersResponse, error) {
+	rsp, err := c.ListUsers(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListUsersResponse(rsp)
+}
+
 // GetWhoamiWithResponse The authenticated caller
 //
 // Resolves the token to a user, creating the row on first sight, and
-// returns their team memberships. The user id is deliberately not
-// published — it is a surrogate key, not an address.
+// returns their team memberships.
+//
+// The id is the caller's own, so publishing it discloses nothing they
+// did not already send. It is what someone pastes into a request to be
+// added to a team.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -2157,6 +2499,45 @@ func ParseRemoveTeamMemberResponse(rsp *http.Response) (*RemoveTeamMemberRespons
 	switch {
 	case rsp.StatusCode == 401:
 		var headers RemoveTeamMemberResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListUsersResponse parses an HTTP response from a ListUsersWithResponse call
+func ParseListUsersResponse(rsp *http.Response) (*ListUsersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListUsersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UserPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListUsersResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

@@ -182,20 +182,27 @@ func TestMembersListSendsTheLimitAndCursor(t *testing.T) {
 	}
 }
 
-// A mistyped id would otherwise come back as a 400 about a path parameter,
-// which reads as the CLI's fault. Nothing should leave the machine.
-func TestABadTeamIDNeverReachesTheBrain(t *testing.T) {
-	got := clitest.BrainStub(t, http.StatusOK, twoMembers)
+// Anything that is not a uuid is a name now, so it is looked up rather than
+// refused. A name nobody has has to say so in terms of the name — "not a uuid"
+// would be describing an argument the person never intended to type.
+func TestAnUnknownTeamNameIsReportedAsAName(t *testing.T) {
+	script := clitest.Routes(t, map[string]clitest.Reply{
+		"GET /teams": {Status: http.StatusOK, Body: `{"items":[{"id":"` + teamID + `","name":"platform"}]}`},
+	})
 
-	if _, err := clitest.Execute(t, commands, "teams", "members", "list", "not-a-uuid"); err == nil {
-		t.Fatal("a malformed team id was accepted")
+	_, err := clitest.Execute(t, commands, "teams", "members", "list", "payments")
+	if err == nil {
+		t.Fatal("a team nobody has was accepted")
+	}
+	if !strings.Contains(err.Error(), "payments") {
+		t.Errorf("the error does not name what was typed: %v", err)
+	}
+	if strings.Contains(err.Error(), "uuid") {
+		t.Errorf("the error blames the format of a name: %v", err)
 	}
 
-	got.Lock()
-	defer got.Unlock()
-
-	if got.Method != "" {
-		t.Errorf("a request was sent for an id that could not be valid: %s %s", got.Method, got.Path)
+	if n := script.Calls(http.MethodGet, "/teams/"+teamID+"/members"); n != 0 {
+		t.Errorf("the members of some team were listed anyway (%d calls)", n)
 	}
 }
 
@@ -268,20 +275,172 @@ func TestMembersAddRefusesAWhitespaceRole(t *testing.T) {
 	}
 }
 
-func TestABadUserIDNeverReachesTheBrain(t *testing.T) {
-	got := clitest.BrainStub(t, http.StatusNoContent, "")
+// The whole point of the design: a subject travels in the body and the brain
+// resolves it. Two requests, not three, and — the part that matters — no call
+// to /users, so adding somebody never needs permission to read the directory.
+func TestASubjectIsSentInTheBodyRatherThanLookedUp(t *testing.T) {
+	script := clitest.Routes(t, map[string]clitest.Reply{
+		"GET /teams":               {Status: http.StatusOK, Body: `{"items":[{"id":"` + teamID + `","name":"platform"}]}`},
+		"GET /users":               {Status: http.StatusOK, Body: `{"items":[{"id":"` + userID + `","subject":"alice"}]}`},
+		"POST /teams/{id}/members": {Status: http.StatusNoContent, Body: ""},
+	})
 
-	_, err := clitest.Execute(t, commands,
-		"teams", "members", "add", teamID, "not-a-uuid", "--role", "developer")
-	if err == nil {
-		t.Fatal("a malformed user id was accepted")
+	if _, err := clitest.Execute(t, commands,
+		"teams", "members", "add", "platform", "alice", "--role", "member"); err != nil {
+		t.Fatalf("teams members add: %v", err)
 	}
 
-	got.Lock()
-	defer got.Unlock()
+	if n := script.Calls(http.MethodGet, "/users"); n != 0 {
+		t.Errorf("the directory was read %d times to add somebody by name", n)
+	}
 
-	if got.Method != "" {
-		t.Errorf("a request was sent for an id that could not be valid: %s %s", got.Method, got.Path)
+	seen := script.All()
+	if len(seen) != 2 {
+		t.Fatalf("made %d requests, want one team lookup and one write: %+v", len(seen), seen)
+	}
+
+	last := seen[len(seen)-1]
+	if last.Method != http.MethodPost || last.Path != "/teams/"+teamID+"/members" {
+		t.Fatalf("the write was %s %s, want a POST against the resolved team", last.Method, last.Path)
+	}
+	if !strings.Contains(last.Body, `"subject":"alice"`) {
+		t.Errorf("body = %q, want the subject verbatim", last.Body)
+	}
+	if strings.Contains(last.Body, "user_id") {
+		t.Errorf("body = %q, want no user_id — exactly one of the two is allowed", last.Body)
+	}
+}
+
+// An id given directly is sent as user_id, which is the unambiguous form and
+// the only one that works when two providers issue the same subject.
+func TestAUserIDIsSentAsAnIDNotASubject(t *testing.T) {
+	script := clitest.Routes(t, map[string]clitest.Reply{
+		"POST /teams/{id}/members": {Status: http.StatusNoContent, Body: ""},
+	})
+
+	if _, err := clitest.Execute(t, commands,
+		"teams", "members", "add", teamID, userID, "--role", "member"); err != nil {
+		t.Fatalf("teams members add: %v", err)
+	}
+
+	seen := script.All()
+	if len(seen) != 1 {
+		t.Fatalf("made %d requests, want one: %+v", len(seen), seen)
+	}
+	if !strings.Contains(seen[0].Body, `"user_id":"`+userID+`"`) {
+		t.Errorf("body = %q, want the id as user_id", seen[0].Body)
+	}
+	if strings.Contains(seen[0].Body, "subject") {
+		t.Errorf("body = %q, want no subject alongside the id", seen[0].Body)
+	}
+}
+
+// A subject nobody has is the brain's answer now, not the CLI's. What the CLI
+// still owes is not swallowing it — reporting 404 as success would leave an
+// admin believing somebody was added.
+func TestAnUnknownSubjectIsReportedRatherThanSwallowed(t *testing.T) {
+	clitest.Routes(t, map[string]clitest.Reply{
+		"POST /teams/{id}/members": {Status: http.StatusNotFound, Body: "no user has that subject"},
+	})
+
+	_, err := clitest.Execute(t, commands,
+		"teams", "members", "add", teamID, "nobody", "--role", "member")
+	if err == nil {
+		t.Fatal("a 404 was reported as a successful add")
+	}
+}
+
+// Two providers can issue the same subject, and the brain refuses rather than
+// guessing. The ids it names are the way forward, so they have to survive into
+// what the person reads.
+func TestAnAmbiguousSubjectKeepsTheIDsTheBrainOffered(t *testing.T) {
+	other := "0f1e2d3c-4b5a-4968-8776-655443332211"
+	clitest.Routes(t, map[string]clitest.Reply{
+		"POST /teams/{id}/members": {
+			Status: http.StatusConflict,
+			Body:   "2 users have that subject — retry with user_id: " + userID + ", " + other,
+		},
+	})
+
+	_, err := clitest.Execute(t, commands,
+		"teams", "members", "add", teamID, "alice", "--role", "member")
+	if err == nil {
+		t.Fatal("an ambiguous subject was reported as a successful add")
+	}
+	for _, want := range []string{userID, other} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error drops %s, which is the way forward: %v", want, err)
+		}
+	}
+}
+
+// Both are knowable from the argument list, so rejecting them must not cost a
+// round trip.
+func TestArgumentsAreCheckedBeforeAnythingIsSent(t *testing.T) {
+	for name, args := range map[string][]string{
+		"an empty role":    {"teams", "members", "add", "platform", "alice", "--role", "   "},
+		"an empty subject": {"teams", "members", "add", "platform", "   ", "--role", "member"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script := clitest.Routes(t, map[string]clitest.Reply{
+				"GET /teams": {Status: http.StatusOK, Body: `{"items":[{"id":"` + teamID + `","name":"platform"}]}`},
+			})
+
+			if _, err := clitest.Execute(t, commands, args...); err == nil {
+				t.Fatalf("%s was accepted", name)
+			}
+			if seen := script.All(); len(seen) != 0 {
+				t.Errorf("a request went out before the arguments were checked: %+v", seen)
+			}
+		})
+	}
+}
+
+// Removing needs an id in the path, so a subject still has to be resolved —
+// but against the team's own members, never the directory. You can only take
+// out somebody you can already see.
+func TestRemoveResolvesASubjectAgainstTheTeamsMembers(t *testing.T) {
+	script := clitest.Routes(t, map[string]clitest.Reply{
+		"GET /teams":                        {Status: http.StatusOK, Body: `{"items":[{"id":"` + teamID + `","name":"platform"}]}`},
+		"GET /teams/{id}/members":           {Status: http.StatusOK, Body: twoMembers},
+		"DELETE /teams/{id}/members/{user}": {Status: http.StatusNoContent, Body: ""},
+	})
+
+	if _, err := clitest.Execute(t, commands,
+		"teams", "members", "remove", "platform", "ak"); err != nil {
+		t.Fatalf("teams members remove: %v", err)
+	}
+
+	if n := script.Calls(http.MethodGet, "/users"); n != 0 {
+		t.Errorf("the directory was read %d times to remove a member", n)
+	}
+
+	seen := script.All()
+	last := seen[len(seen)-1]
+	if last.Method != http.MethodDelete || last.Path != "/teams/"+teamID+"/members/"+userID {
+		t.Errorf("deleted %s %s, want the id resolved from the member list",
+			last.Method, last.Path)
+	}
+}
+
+// Somebody who is not in the team has no id to put in the path, and the
+// message has to say that rather than blaming the format of what was typed.
+func TestRemovingSomebodyNotInTheTeamSaysSo(t *testing.T) {
+	script := clitest.Routes(t, map[string]clitest.Reply{
+		"GET /teams":                        {Status: http.StatusOK, Body: `{"items":[{"id":"` + teamID + `","name":"platform"}]}`},
+		"GET /teams/{id}/members":           {Status: http.StatusOK, Body: `{"items":[]}`},
+		"DELETE /teams/{id}/members/{user}": {Status: http.StatusNoContent, Body: ""},
+	})
+
+	_, err := clitest.Execute(t, commands, "teams", "members", "remove", "platform", "stranger")
+	if err == nil {
+		t.Fatal("a subject nobody in the team has was accepted")
+	}
+	if !strings.Contains(err.Error(), "stranger") {
+		t.Errorf("the error does not name what was typed: %v", err)
+	}
+	if n := script.Calls(http.MethodDelete, "/teams/"+teamID+"/members/"+userID); n != 0 {
+		t.Error("something was deleted anyway")
 	}
 }
 
