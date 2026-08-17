@@ -336,12 +336,12 @@ func (h *handler) namedUser(
 }
 
 func ambiguousSubject(rows []db.FindUsersBySubjectRow) string {
-	ids := make([]string, len(rows))
+	named := make([]string, len(rows))
 	for i, row := range rows {
-		ids[i] = row.ID.String()
+		named[i] = fmt.Sprintf("%s (%s)", row.ID, row.Issuer)
 	}
 	return fmt.Sprintf("%d users have that subject — retry with user_id: %s",
-		len(rows), strings.Join(ids, ", "))
+		len(rows), strings.Join(named, ", "))
 }
 
 func (h *handler) removeMember(w http.ResponseWriter, r *http.Request) {
