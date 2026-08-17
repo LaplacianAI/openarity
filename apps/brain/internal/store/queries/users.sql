@@ -24,3 +24,6 @@ FROM users
 WHERE subject = sqlc.arg('subject')::text
 ORDER BY id
 LIMIT sqlc.arg('page_size');
+
+-- name: ListUserIssuers :many
+SELECT DISTINCT issuer FROM users ORDER BY issuer;
