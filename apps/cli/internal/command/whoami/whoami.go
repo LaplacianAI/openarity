@@ -14,7 +14,9 @@ func New(opts *cli.Options) *cobra.Command {
 		Short: "Show who the current credential authenticates as",
 		Long: "Resolves the credential and asks the brain who it belongs to.\n\n" +
 			"This is the quickest check that a login worked, and the only way to see\n" +
-			"which teams you are in and with what role.",
+			"which teams you are in and with what role.\n\n" +
+			"`-o json` is the form to script against: it carries your own user id and\n" +
+			"the teams as objects, where the table renders them for reading.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			api, err := opts.API(cmd.Context())
