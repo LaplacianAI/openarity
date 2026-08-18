@@ -105,7 +105,7 @@ func TestTheResponseCarriesNoSecret(t *testing.T) {
 
 	cfg := developmentConfig()
 	cfg.PostgresDSN = "postgres://postgres:hunter2@localhost:5432/openarity"
-	cfg.VaultAddr = "http://vault.internal:8200"
+	cfg.SecretsAddr = "http://vault.internal:8200"
 	cfg.SuperAdmins = []string{"akadmin"}
 
 	rec, _ := get(t, cfg)

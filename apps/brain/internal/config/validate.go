@@ -68,7 +68,7 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
-	if err := checkURL("VAULT_ADDR", c.VaultAddr, httpSchemes...); err != nil {
+	if err := checkURL("SECRETS_ADDR", c.SecretsAddr, httpSchemes...); err != nil {
 		errs = append(errs, err)
 	}
 

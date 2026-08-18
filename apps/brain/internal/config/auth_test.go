@@ -155,7 +155,7 @@ func TestOIDCAudienceRequiredWhenEnabled(t *testing.T) {
 		PostgresDSN:  "postgres://localhost:5432/openarity",
 		FalkorDBURL:  "redis://127.0.0.1:6380",
 		RedisURL:     "redis://127.0.0.1:6379",
-		VaultAddr:    "http://localhost:8200",
+		SecretsAddr:  "http://localhost:8200",
 		OmniRouteURL: "http://localhost:20128/v1",
 		OIDCEnabled:  true,
 		OIDCIssuer:   "https://auth.example.com/application/o/openarity/",

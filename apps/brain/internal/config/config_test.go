@@ -22,36 +22,42 @@ func TestLoadDefaults(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"Environment":  string(EnvironmentDevelopment),
-		"APIBind":      "127.0.0.1:21120",
-		"WebhookBind":  "127.0.0.1:21121",
-		"LogLevel":     slog.LevelInfo.String(),
-		"PostgresDSN":  "postgres://postgres:postgres@localhost:5432/openarity?sslmode=disable",
-		"FalkorDBURL":  "redis://127.0.0.1:6380",
-		"RedisURL":     "redis://127.0.0.1:6379",
-		"VaultAddr":    "http://localhost:8200",
-		"OmniRouteURL": "http://localhost:20128/v1",
-		"OIDCEnabled":  "false",
-		"OIDCIssuer":   "",
-		"OIDCAudience": "openarity",
-		"DevToken":     "",
-		"SuperAdmins":  "0 entries",
+		"Environment":          string(EnvironmentDevelopment),
+		"APIBind":              "127.0.0.1:21120",
+		"WebhookBind":          "127.0.0.1:21121",
+		"LogLevel":             slog.LevelInfo.String(),
+		"PostgresDSN":          "postgres://postgres:postgres@localhost:5432/openarity?sslmode=disable",
+		"FalkorDBURL":          "redis://127.0.0.1:6380",
+		"RedisURL":             "redis://127.0.0.1:6379",
+		"SecretsAddr":          "http://localhost:8200",
+		"SecretsAppRoleID":     "",
+		"SecretsAppRoleSecret": "",
+		"SecretsKVMount":       "secret",
+		"OmniRouteURL":         "http://localhost:20128/v1",
+		"OIDCEnabled":          "false",
+		"OIDCIssuer":           "",
+		"OIDCAudience":         "openarity",
+		"DevToken":             "",
+		"SuperAdmins":          "0 entries",
 	}
 	got := map[string]string{
-		"Environment":  string(cfg.Environment),
-		"APIBind":      cfg.APIBind,
-		"WebhookBind":  cfg.WebhookBind,
-		"LogLevel":     cfg.LogLevel.String(),
-		"PostgresDSN":  cfg.PostgresDSN,
-		"FalkorDBURL":  cfg.FalkorDBURL,
-		"RedisURL":     cfg.RedisURL,
-		"VaultAddr":    cfg.VaultAddr,
-		"OmniRouteURL": cfg.OmniRouteURL,
-		"OIDCEnabled":  strconv.FormatBool(cfg.OIDCEnabled),
-		"OIDCIssuer":   cfg.OIDCIssuer,
-		"OIDCAudience": cfg.OIDCAudience,
-		"DevToken":     cfg.DevToken,
-		"SuperAdmins":  fmt.Sprintf("%d entries", len(cfg.SuperAdmins)),
+		"Environment":          string(cfg.Environment),
+		"APIBind":              cfg.APIBind,
+		"WebhookBind":          cfg.WebhookBind,
+		"LogLevel":             cfg.LogLevel.String(),
+		"PostgresDSN":          cfg.PostgresDSN,
+		"FalkorDBURL":          cfg.FalkorDBURL,
+		"RedisURL":             cfg.RedisURL,
+		"SecretsAddr":          cfg.SecretsAddr,
+		"SecretsAppRoleID":     cfg.SecretsAppRoleID,
+		"SecretsAppRoleSecret": cfg.SecretsAppRoleSecret,
+		"SecretsKVMount":       cfg.SecretsKVMount,
+		"OmniRouteURL":         cfg.OmniRouteURL,
+		"OIDCEnabled":          strconv.FormatBool(cfg.OIDCEnabled),
+		"OIDCIssuer":           cfg.OIDCIssuer,
+		"OIDCAudience":         cfg.OIDCAudience,
+		"DevToken":             cfg.DevToken,
+		"SuperAdmins":          fmt.Sprintf("%d entries", len(cfg.SuperAdmins)),
 	}
 	for k, w := range want {
 		if got[k] != w {
@@ -158,7 +164,7 @@ func TestStringRedactsPasswords(t *testing.T) {
 		"OPENARITY_POSTGRES_DSN":   "postgres://user:pgsecret@localhost:5432/db?sslmode=disable",
 		"OPENARITY_FALKOR_DB_URL":  "redis://user:falkorsecret@127.0.0.1:6380",
 		"OPENARITY_REDIS_URL":      "redis://user:redissecret@127.0.0.1:6379",
-		"OPENARITY_VAULT_ADDR":     "http://user:vaultsecret@localhost:8200",
+		"OPENARITY_SECRETS_ADDR":   "http://user:baosecret@localhost:8200",
 		"OPENARITY_OMNI_ROUTE_URL": "http://user:omnisecret@localhost:20128/v1",
 	})
 	if err != nil {
@@ -167,11 +173,31 @@ func TestStringRedactsPasswords(t *testing.T) {
 
 	s := cfg.String()
 	for _, secret := range []string{
-		"pgsecret", "falkorsecret", "redissecret", "vaultsecret", "omnisecret",
+		"pgsecret", "falkorsecret", "redissecret", "baosecret", "omnisecret",
 	} {
 		if strings.Contains(s, secret) {
 			t.Errorf("String() leaked %q: %s", secret, s)
 		}
+	}
+}
+
+// The AppRole secret is not a URL, so redactURL cannot help. What keeps it
+// out of a log line is that String() lists fields by hand — this pins that,
+// because adding the field to the format string would be a one-word change
+// nobody would question in review.
+func TestStringNeverPrintsTheAppRoleSecret(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(map[string]string{
+		"OPENARITY_SECRETS_APPROLE_ID":     "role-abc",
+		"OPENARITY_SECRETS_APPROLE_SECRET": "approlesecret",
+	})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if s := cfg.String(); strings.Contains(s, "approlesecret") {
+		t.Errorf("String() printed the AppRole secret: %s", s)
 	}
 }
 
