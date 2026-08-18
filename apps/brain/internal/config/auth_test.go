@@ -73,7 +73,16 @@ func TestNoDevTokenIsValidInEveryEnvironment(t *testing.T) {
 	for _, envName := range []Environment{
 		EnvironmentDevelopment, EnvironmentProduction, EnvironmentStaging, EnvironmentTest,
 	} {
-		if _, err := load(map[string]string{"OPENARITY_ENVIRONMENT": string(envName)}); err != nil {
+		env := map[string]string{"OPENARITY_ENVIRONMENT": string(envName)}
+		if envName != EnvironmentDevelopment {
+			// The secret store is mandatory outside development. Supplying it
+			// keeps this test about the DEV_TOKEN rule rather than about
+			// whichever requirement was added most recently.
+			env["OPENARITY_SECRETS_APPROLE_ID"] = "role-abc"
+			env["OPENARITY_SECRETS_APPROLE_SECRET"] = "approlesecret"
+		}
+
+		if _, err := load(env); err != nil {
 			t.Errorf("ENVIRONMENT=%s with no DEV_TOKEN was rejected: %v", envName, err)
 		}
 	}

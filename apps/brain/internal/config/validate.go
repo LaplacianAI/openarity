@@ -100,6 +100,23 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("DEV_TOKEN must not be set outside development, got ENVIRONMENT=%s", c.Environment))
 	}
 
+	if c.Environment != EnvironmentDevelopment && c.SecretsAppRoleID == "" {
+		errs = append(errs, fmt.Errorf(
+			"SECRETS_APPROLE_ID and SECRETS_APPROLE_SECRET are required outside "+
+				"development, got ENVIRONMENT=%s: the secret store is a dependency, "+
+				"not a feature flag", c.Environment))
+	}
+
+	if (c.SecretsAppRoleID == "") != (c.SecretsAppRoleSecret == "") {
+		missing := "SECRETS_APPROLE_ID"
+		if c.SecretsAppRoleID != "" {
+			missing = "SECRETS_APPROLE_SECRET"
+		}
+		errs = append(errs, fmt.Errorf(
+			"%s is required when the other half of the AppRole credential is set",
+			missing))
+	}
+
 	if c.OIDCEnabled && slices.Contains(c.SuperAdmins, "dev") {
 		errs = append(errs, fmt.Errorf(
 			"SUPER_ADMINS must not contain \"dev\" when OIDC_ENABLED is true: "+
