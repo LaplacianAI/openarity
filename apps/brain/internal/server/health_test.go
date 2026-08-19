@@ -210,3 +210,130 @@ func TestProbesRejectNonGETEvenWithAToken(t *testing.T) {
 		}
 	}
 }
+
+// sealedBao is the failure this whole task exists to make diagnosable.
+var errSealed = errors.New("OpenBao is sealed")
+
+func sealedBao() *fakePinger { return &fakePinger{err: errSealed} }
+
+func TestReadyzPassesWhenEveryCheckPasses(t *testing.T) {
+	t.Parallel()
+
+	for name, h := range handlersWith(t,
+		Check{Name: "postgres", Pinger: healthyDB()},
+		Check{Name: "openbao", Pinger: healthyDB()},
+	) {
+		if rec := get(t, h, "/readyz"); rec.Code != http.StatusOK {
+			t.Errorf("%s /readyz = %d, want 200", name, rec.Code)
+		}
+	}
+}
+
+// A sealed OpenBao must fail readiness even though Postgres is fine.
+// Checking only the database would leave the pod in the Service, taking
+// webhooks it cannot verify.
+func TestReadyzFailsWhenOnlyTheSecretStoreIsDown(t *testing.T) {
+	t.Parallel()
+
+	for name, h := range handlersWith(t,
+		Check{Name: "postgres", Pinger: healthyDB()},
+		Check{Name: "openbao", Pinger: sealedBao()},
+	) {
+		if rec := get(t, h, "/readyz"); rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s /readyz = %d with OpenBao sealed, want 503", name, rec.Code)
+		}
+	}
+}
+
+// /readyz is served on the public webhook listener. Which dependency broke
+// is an operator's business, and naming it in the body tells a stranger
+// which part of the stack to come back to.
+func TestReadyzDoesNotNameTheDependencyInTheResponse(t *testing.T) {
+	t.Parallel()
+
+	for name, h := range handlersWith(t,
+		Check{Name: "postgres", Pinger: healthyDB()},
+		Check{Name: "openbao", Pinger: sealedBao()},
+	) {
+		rec := get(t, h, "/readyz")
+		body := rec.Body.String()
+		for _, leak := range []string{"openbao", "postgres", "sealed"} {
+			if strings.Contains(strings.ToLower(body), leak) {
+				t.Errorf("%s /readyz body named %q: %q", name, leak, body)
+			}
+		}
+	}
+}
+
+// The name has to reach the operator somewhere, and the log is the private
+// half. Without this the name is only a struct field nobody reads.
+func TestReadyzNamesTheFailingDependencyInTheLog(t *testing.T) {
+	t.Parallel()
+
+	logger, buf := recordingLogger()
+	srv := New(testConfig(), logger, depsWith(
+		Check{Name: "postgres", Pinger: healthyDB()},
+		Check{Name: "openbao", Pinger: sealedBao()},
+	))
+
+	get(t, srv.apiHandler(), "/readyz")
+
+	out := buf.String()
+	if !strings.Contains(out, "openbao") {
+		t.Errorf("the log does not name the failing dependency: %s", out)
+	}
+	if !strings.Contains(out, errSealed.Error()) {
+		t.Errorf("the log does not say why it failed: %s", out)
+	}
+}
+
+// A failed check stops the probe. Pinging the rest costs a round trip each
+// on a pod that is already out of the Service, every ten seconds.
+func TestReadyzStopsAtTheFirstFailure(t *testing.T) {
+	t.Parallel()
+
+	second := healthyDB()
+	srv := New(testConfig(), discardLogger(), depsWith(
+		Check{Name: "postgres", Pinger: brokenDB()},
+		Check{Name: "openbao", Pinger: second},
+	))
+
+	get(t, srv.apiHandler(), "/readyz")
+
+	if got := second.callCount(); got != 0 {
+		t.Errorf("the second check was pinged %d times after the first failed", got)
+	}
+}
+
+// Every check runs when they all pass — a loop that returned after the
+// first success would report ready with a sealed OpenBao behind it.
+func TestReadyzPingsEveryCheck(t *testing.T) {
+	t.Parallel()
+
+	db, bao := healthyDB(), healthyDB()
+	srv := New(testConfig(), discardLogger(), depsWith(
+		Check{Name: "postgres", Pinger: db},
+		Check{Name: "openbao", Pinger: bao},
+	))
+
+	get(t, srv.apiHandler(), "/readyz")
+
+	if db.callCount() != 1 || bao.callCount() != 1 {
+		t.Errorf("pings: postgres=%d openbao=%d, want 1 each", db.callCount(), bao.callCount())
+	}
+}
+
+// A server wired with no checks would answer ready forever. Deps.DB could
+// not be forgotten without a nil panic; a slice can, silently, and the
+// symptom is a pod that never leaves the Service during an outage.
+func TestNewRejectsAnEmptyCheckList(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if recover() == nil {
+			t.Error("New accepted Deps with no checks; readiness would always pass")
+		}
+	}()
+
+	New(testConfig(), discardLogger(), depsWith())
+}

@@ -57,8 +57,9 @@ jobs:
       run:
         working-directory: apps/brain
 
-    # Tests that need a real database read BRAIN_TEST_POSTGRES_DSN and skip
-    # when it is unset, so `make test` still works locally with nothing running.
+    # Tests that need a real database or a real secret store read
+    # BRAIN_TEST_POSTGRES_DSN and BRAIN_TEST_SECRETS_ADDR, and skip when they
+    # are unset, so `make test` still works locally with nothing running.
     services:
       postgres:
         image: postgres:18
@@ -74,8 +75,32 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # The image already defaults to `server -dev`, which matters because a
+      # service container cannot override the command — only the environment
+      # and docker run options.
+      openbao:
+        image: openbao/openbao:2.6.2
+        env:
+          # BAO_, not VAULT_. The VAULT_-prefixed names leave the server
+          # running with a randomly generated root token, so every live test
+          # would fail with 403 rather than skip.
+          BAO_DEV_ROOT_TOKEN_ID: ci-root
+          # The dev listener binds loopback inside the container; without this
+          # the port mapping reaches nothing.
+          BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --cap-add=IPC_LOCK
+          --health-cmd "bao status -address=http://127.0.0.1:8200"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       BRAIN_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/openarity_test?sslmode=disable
+      BRAIN_TEST_SECRETS_ADDR: http://localhost:8200
+      BRAIN_TEST_SECRETS_TOKEN: ci-root
 
     steps:
       - uses: actions/checkout@v7

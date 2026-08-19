@@ -78,13 +78,14 @@ provider issues.
 ### 1. Choose the address
 
 ```sh
-ipconfig getifaddr en0        # macOS, e.g. 192.168.1.4
-hostname -I | cut -d' ' -f1   # Linux
+LAN_IP=$(ipconfig getifaddr en0)        # macOS
+LAN_IP=$(hostname -I | cut -d' ' -f1)   # Linux
+echo "$LAN_IP"
 ```
 
-Everything below uses `192.168.1.4`; substitute yours. This publishes authentik
-and Postgres on your network while the stack is up — fine at a desk, not on
-café wifi.
+Every command below uses `$LAN_IP`, so run one of those first and keep the
+shell. This publishes authentik and Postgres on your network while the stack
+is up — fine at a desk, not on café wifi.
 
 ### 2. Write deployment/.env
 
@@ -103,13 +104,13 @@ AUTHENTIK_BOOTSTRAP_PASSWORD=<choose one; this is a real login>
 AUTHENTIK_BOOTSTRAP_TOKEN=<openssl rand -base64 36>
 AUTHENTIK_BOOTSTRAP_EMAIL=you@example.com
 
-BIND_ADDR=192.168.1.4
+BIND_ADDR=<your LAN address>
 POSTGRES_PORT=15432
 REDIS_PORT=16379
 
 OPENARITY_ENVIRONMENT=staging
 OPENARITY_OIDC_ENABLED=true
-OPENARITY_OIDC_ISSUER=http://192.168.1.4:9000/application/o/openarity/
+OPENARITY_OIDC_ISSUER=http://<your LAN address>:9000/application/o/openarity/
 OPENARITY_OIDC_AUDIENCE=<filled in at step 4>
 OPENARITY_SUPER_ADMINS=akadmin
 OPENARITY_DEV_TOKEN=
@@ -122,7 +123,7 @@ is refused outright, and the brain will not start with both set.
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.authentik.yml up -d
-until curl -sf 192.168.1.4:9000/-/health/ready/ >/dev/null; do sleep 5; done
+until curl -sf "$LAN_IP:9000/-/health/ready/" >/dev/null; do sleep 5; done
 ```
 
 If authentik has already initialised once, the bootstrap variables are ignored.
@@ -132,7 +133,7 @@ Start over with `docker volume rm openarity_authentik-database`.
 
 ```sh
 TOKEN=$(grep AUTHENTIK_BOOTSTRAP_TOKEN .env | cut -d= -f2)
-HOST=http://192.168.1.4:9000
+HOST=http://$LAN_IP:9000
 
 curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v3/flows/instances/?designation=authorization"
 curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v3/flows/instances/?designation=invalidation"
@@ -227,9 +228,9 @@ cookie, and the brain wants a JWT from the OIDC flow. `oa login` runs that flow.
 ```sh
 cd ../apps/cli && make install && cd -
 
-oa context create staging --server http://192.168.1.4:21120
+oa context create staging --server "http://$LAN_IP:21120"
 oa login
-# open  http://192.168.1.4:9000/device
+# open  http://<your LAN address>:9000/device
 # code  WXYZ-ABCD
 # waiting for approval, up to 5m0s…
 ```
@@ -251,7 +252,7 @@ oa whoami
 ```text
 kind     user
 subject  akadmin
-issuer   http://192.168.1.4:9000/application/o/openarity/
+issuer   http://<your LAN address>:9000/application/o/openarity/
 teams    none
 ```
 
@@ -322,12 +323,12 @@ required for private IP`. Two ways out:
   and the Google client all use the tunnel's address:
 
   ```sh
-  ngrok http 192.168.1.4:9000        # a reserved domain, not a random one
+  ngrok http "$LAN_IP:9000"        # a reserved domain, not a random one
   ```
 
   **Do not pass `--host-header=rewrite`.** authentik builds `iss` and its
   callback URLs from the `Host` header, so rewriting it makes discovery
-  advertise `http://192.168.1.4:9000/...` while the browser is on the tunnel —
+  advertise `http://<your LAN address>:9000/...` while the browser is on the tunnel —
   and the brain then rejects every token for a mismatched issuer.
 
   A changed tunnel address means `OPENARITY_OIDC_ISSUER` changes, and that

@@ -1,0 +1,71 @@
+# A real OpenBao instead of the dev-mode one.
+#
+# docker-compose.yml runs OpenBao in dev mode: in memory, unsealed, root token
+# "dev-root", everything lost on restart. That is the right first rung of the
+# ladder for a laptop, and useless for anything that has to survive a reboot.
+#
+# This overlay replaces it with file storage and a `seal "static"` stanza, so
+# the store keeps its data and comes back unsealed with no command run.
+#
+#   make bao-init        # once, ever — see OPENBAO.md
+#   make bao-approle     # prints the two lines for .env
+#   docker compose -f deployment/docker-compose.yml \
+#                  -f deployment/docker-compose.openbao.yml \
+#                  --profile brain up -d
+#
+# Compose merges the two in order, so the base file's networks, the
+# migrate-before-brain ordering and every other service still apply. Only
+# OpenBao changes shape.
+#
+# The `:?` guards below are interpolated for the whole file before compose
+# looks at which service you asked for, so they fire even on
+# `up -d openbao`. The bootstrap needs a running OpenBao *before* the AppRole
+# exists, so the bao-* targets in the Makefile pass placeholder values to get
+# past interpolation; nothing starts the brain with them.
+
+name: openarity
+
+services:
+  openbao:
+    image: openbao/openbao:2.6.2
+    restart: unless-stopped
+    # `!reset` is required, not tidiness. Compose merges keys rather than
+    # replacing them, so the dev-mode BAO_DEV_* variables would survive into
+    # this service and silently put a file-storage server back into dev mode.
+    #
+    # `[]` rather than `null`: both reset identically, and an empty sequence
+    # is what the compose JSON schema declares for these two keys, so editors
+    # do not flag it as a type error.
+    environment: !reset []
+    ports: !reset []
+    command: server -config=/openbao/config/bao.hcl
+    volumes:
+      - openbao-data:/openbao/file
+      - ./openbao:/openbao/config:ro
+      - ./openbao/keys:/openbao/keys:ro
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      # 200 unsealed, 501 not yet initialised, 503 sealed. wget -q fails on
+      # any non-2xx, so only a usable OpenBao is ever healthy — which is what
+      # makes the brain's depends_on below mean something.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8200/v1/sys/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  brain:
+    depends_on:
+      openbao:
+        condition: service_healthy
+    environment:
+      OPENARITY_SECRETS_ADDR: http://openbao:8200
+      OPENARITY_SECRETS_KV_MOUNT: secret
+      # Opting into this overlay means opting into a real secret store, so an
+      # absent credential is a mistake rather than a development default. The
+      # brain would otherwise start on the in-memory store and verify nothing.
+      OPENARITY_SECRETS_APPROLE_ID: ${OPENARITY_SECRETS_APPROLE_ID:?run make bao-approle first — see deployment/OPENBAO.md}
+      OPENARITY_SECRETS_APPROLE_SECRET: ${OPENARITY_SECRETS_APPROLE_SECRET:?run make bao-approle first — see deployment/OPENBAO.md}
+
+volumes:
+  openbao-data:

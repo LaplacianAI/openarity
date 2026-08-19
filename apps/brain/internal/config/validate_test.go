@@ -43,7 +43,7 @@ func TestValidateRejectsWrongSchemePerField(t *testing.T) {
 		"OPENARITY_POSTGRES_DSN":   "redis://127.0.0.1:6379",
 		"OPENARITY_REDIS_URL":      "http://127.0.0.1:6379",
 		"OPENARITY_FALKOR_DB_URL":  "postgres://127.0.0.1:6380",
-		"OPENARITY_VAULT_ADDR":     "redis://127.0.0.1:8200",
+		"OPENARITY_SECRETS_ADDR":   "redis://127.0.0.1:8200",
 		"OPENARITY_OMNI_ROUTE_URL": "redis://127.0.0.1:20128",
 	}
 	for key, bad := range tests {
@@ -132,8 +132,8 @@ func TestErrorsNameTheField(t *testing.T) {
 		t.Errorf("error should name API_BIND, got: %v", err)
 	}
 
-	err = checkURL("VAULT_ADDR", "nonsense", httpSchemes...)
-	if err == nil || !strings.Contains(err.Error(), "VAULT_ADDR") {
-		t.Errorf("error should name VAULT_ADDR, got: %v", err)
+	err = checkURL("SECRETS_ADDR", "nonsense", httpSchemes...)
+	if err == nil || !strings.Contains(err.Error(), "SECRETS_ADDR") {
+		t.Errorf("error should name SECRETS_ADDR, got: %v", err)
 	}
 }
