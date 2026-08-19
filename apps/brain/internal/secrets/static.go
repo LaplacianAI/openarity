@@ -7,6 +7,8 @@ import (
 
 type Static map[string]map[string]string
 
+var _ Store = Static(nil)
+
 func (s Static) Get(_ context.Context, path, key string) (string, error) {
 	value, ok := s[path][key]
 	if !ok {

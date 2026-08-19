@@ -31,6 +31,10 @@ type Writer interface {
 	Delete(ctx context.Context, path string) error
 }
 
+type Prober interface {
+	Ping(ctx context.Context) error
+}
+
 func Path(teamID uuid.UUID, kind Kind, id uuid.UUID) string {
 	return TeamPath(teamID, kind) + "/" + id.String()
 }

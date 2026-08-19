@@ -1,0 +1,226 @@
+package secrets
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/google/uuid"
+)
+
+// The stub in openbao_test.go encodes what this package believes OpenBao
+// does. These tests are what check that belief. They skip unless a real
+// server is reachable:
+//
+//	docker run -d --name openbao -p 8200:8200 \
+//	  -e BAO_DEV_ROOT_TOKEN_ID=dev-root openbao/openbao:latest server -dev
+//	export BRAIN_TEST_SECRETS_ADDR=http://127.0.0.1:8200
+//	export BRAIN_TEST_SECRETS_TOKEN=dev-root
+
+func liveBao(t *testing.T) (addr, root string) {
+	t.Helper()
+
+	addr = os.Getenv("BRAIN_TEST_SECRETS_ADDR")
+	root = os.Getenv("BRAIN_TEST_SECRETS_TOKEN")
+	if addr == "" || root == "" {
+		t.Skip("BRAIN_TEST_SECRETS_ADDR or BRAIN_TEST_SECRETS_TOKEN is not set")
+	}
+	return addr, root
+}
+
+// admin talks to a live OpenBao with the root token, to set up what the
+// store under test then uses without any privilege of its own.
+type admin struct {
+	t     *testing.T
+	addr  string
+	token string
+}
+
+func (a admin) do(method, path string, payload any) map[string]any {
+	a.t.Helper()
+
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			a.t.Fatalf("marshal %s %s: %v", method, path, err)
+		}
+		body = bytes.NewReader(encoded)
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), method, a.addr+path, body)
+	if err != nil {
+		a.t.Fatalf("build %s %s: %v", method, path, err)
+	}
+	req.Header.Set("X-Vault-Token", a.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		a.t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= http.StatusInternalServerError {
+		a.t.Fatalf("%s %s returned %d: %s", method, path, resp.StatusCode, raw)
+	}
+
+	var decoded struct {
+		Data map[string]any `json:"data"`
+	}
+	_ = json.Unmarshal(raw, &decoded)
+	return decoded.Data
+}
+
+// grantSecretMount is what the brain's own AppRole policy looks like: the
+// whole KV mount, nothing else.
+const grantSecretMount = `path "secret/*" ` +
+	`{ capabilities = ["create","read","update","delete","list"] }`
+
+// Enabling an auth method twice is a 400, and two tests doing it at once
+// makes the dev server's in-memory storage fail the whole transaction.
+var enableAppRole sync.Once
+
+// appRole sets up an AppRole with the given policy and hands back its
+// credentials. Doing it here rather than in a fixture is the point: the
+// login path is the half a stub cannot prove.
+//
+// Names are per-test because these run in parallel and OpenBao's inmem
+// backend fails a concurrent write to the same key with a 500, not a retry.
+func appRole(t *testing.T, addr, root, policy string) (roleID, secretID string) {
+	t.Helper()
+
+	a := admin{t: t, addr: addr, token: root}
+	enableAppRole.Do(func() {
+		a.do(http.MethodPost, "/v1/sys/auth/approle", map[string]string{"type": "approle"})
+	})
+
+	name := strings.ToLower(strings.ReplaceAll(t.Name(), "/", "-"))
+
+	a.do(http.MethodPut, "/v1/sys/policies/acl/"+name,
+		map[string]string{"policy": policy})
+
+	a.do(http.MethodPost, "/v1/auth/approle/role/"+name, map[string]any{
+		"token_ttl":      "60s",
+		"token_policies": name,
+	})
+
+	roleData := a.do(http.MethodGet, "/v1/auth/approle/role/"+name+"/role-id", nil)
+	secretData := a.do(http.MethodPost, "/v1/auth/approle/role/"+name+"/secret-id", nil)
+
+	roleID, _ = roleData["role_id"].(string)
+	secretID, _ = secretData["secret_id"].(string)
+	if roleID == "" || secretID == "" {
+		t.Fatalf("AppRole setup produced role_id=%q secret_id=%q", roleID, secretID)
+	}
+	return roleID, secretID
+}
+
+func liveStore(t *testing.T) Store {
+	t.Helper()
+
+	addr, root := liveBao(t)
+	roleID, secretID := appRole(t, addr, root, grantSecretMount)
+	return NewOpenBao(addr, roleID, secretID, "secret", nil)
+}
+
+// Every other test asserts a failure direction. Without this one, a Ping
+// that always errored would still pass the suite.
+func TestPingSucceedsAgainstRealOpenBao(t *testing.T) {
+	t.Parallel()
+
+	addr, _ := liveBao(t)
+
+	if err := asProber(t, NewOpenBao(addr, "", "", "secret", nil)).Ping(t.Context()); err != nil {
+		t.Fatalf("Ping against a live OpenBao: %v", err)
+	}
+}
+
+// The whole lifecycle against a real server: AppRole login, the KV v2 data
+// segment, the write wrapper, and the metadata delete. Each of these is a
+// place the stub could be wrong in the same way the code is.
+func TestRoundTripAgainstRealOpenBao(t *testing.T) {
+	t.Parallel()
+
+	addr, root := liveBao(t)
+	roleID, secretID := appRole(t, addr, root, grantSecretMount)
+	store := NewOpenBao(addr, roleID, secretID, "secret", nil)
+
+	path := Path(uuid.New(), KindChannel, uuid.New())
+
+	if err := asWriter(t, store).Put(t.Context(), path, "signing_secret", "s3cr3t"); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	got, err := store.Get(t.Context(), path, "signing_secret")
+	if err != nil {
+		t.Fatalf("Get after Put: %v", err)
+	}
+	if got != "s3cr3t" {
+		t.Errorf("Get = %q, want %q", got, "s3cr3t")
+	}
+
+	if err := asWriter(t, store).Delete(t.Context(), path); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if _, err := store.Get(t.Context(), path, "signing_secret"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get after Delete: err = %v, want ErrNotFound", err)
+	}
+
+	// The read above cannot tell a destroyed secret from a soft-deleted one:
+	// KV v2 answers 404 for both. Only asking OpenBao to bring it back can.
+	// A DELETE on the data path leaves the credential live behind a 404, and
+	// this is the assertion that would catch it.
+	admin{t: t, addr: addr, token: root}.do(http.MethodPost,
+		"/v1/secret/undelete/"+path, map[string][]int{"versions": {1}})
+
+	if _, err := store.Get(t.Context(), path, "signing_secret"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("undelete brought the secret back: Delete only soft-deleted it")
+	}
+}
+
+// A path nobody ever wrote, against a real server: 404 with an empty error
+// list, which the stub asserts and only this can confirm.
+func TestMissingSecretIsNotFoundAgainstRealOpenBao(t *testing.T) {
+	t.Parallel()
+
+	store := liveStore(t)
+	path := Path(uuid.New(), KindChannel, uuid.New())
+
+	if _, err := store.Get(t.Context(), path, "signing_secret"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// A denial and an absence are one status code apart, and only the absence is
+// a data problem. Reading an unwritten path on a *granted* mount returns 404,
+// so the denial has to come from a mount the policy never mentions —
+// cubbyhole does not work here, because a token may always read its own.
+func TestDeniedPathIsUnavailableAgainstRealOpenBao(t *testing.T) {
+	t.Parallel()
+
+	addr, root := liveBao(t)
+
+	admin{t: t, addr: addr, token: root}.do(http.MethodPost, "/v1/sys/mounts/denied",
+		map[string]any{"type": "kv", "options": map[string]string{"version": "2"}})
+
+	roleID, secretID := appRole(t, addr, root, grantSecretMount)
+	store := NewOpenBao(addr, roleID, secretID, "denied", nil)
+
+	_, err := store.Get(t.Context(), "teams/a/channels/b", "k")
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v, want ErrUnavailable", err)
+	}
+	if errors.Is(err, ErrNotFound) {
+		t.Error("a denial was reported as a missing secret")
+	}
+}
