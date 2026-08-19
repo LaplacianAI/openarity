@@ -17,10 +17,12 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), readyTimeout)
 	defer cancel()
 
-	if err := s.db.Ping(ctx); err != nil {
-		s.logger.Warn("not ready", "error", err)
-		http.Error(w, "not ready", http.StatusServiceUnavailable)
-		return
+	for _, c := range s.checks {
+		if err := c.Pinger.Ping(ctx); err != nil {
+			s.logger.Warn("not ready", "dependency", c.Name, "error", err)
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
 	}
 
 	_, _ = w.Write([]byte("ready\n"))

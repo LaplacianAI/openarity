@@ -94,10 +94,16 @@ func (staticResolver) Resolve(_ context.Context, p *auth.Principal) (*auth.User,
 	return &auth.User{ID: uuid.New(), Issuer: p.Issuer, Subject: p.Subject}, nil
 }
 
-// deps is the usual set: a database that answers, a verifier that accepts
+// deps is the usual set: one database check, a verifier that accepts
 // testToken, and a resolver that always succeeds.
 func deps(db Pinger) Deps {
-	return Deps{DB: db, Verifier: testVerifier(), Resolver: staticResolver{}}
+	return depsWith(Check{Name: "postgres", Pinger: db})
+}
+
+// depsWith is deps for the tests that care about more than one dependency.
+// Keeping deps(db) as it was means no existing test has to change shape.
+func depsWith(checks ...Check) Deps {
+	return Deps{Checks: checks, Verifier: testVerifier(), Resolver: staticResolver{}}
 }
 
 // Swapping these two binds puts the API on a public port and the webhook
@@ -188,8 +194,13 @@ func TestNewDoesNotListen(t *testing.T) {
 // under test, not middleware wrapped around it.
 func handlers(t *testing.T, db Pinger) map[string]http.Handler {
 	t.Helper()
+	return handlersWith(t, Check{Name: "postgres", Pinger: db})
+}
 
-	srv := New(testConfig(), discardLogger(), deps(db))
+func handlersWith(t *testing.T, checks ...Check) map[string]http.Handler {
+	t.Helper()
+
+	srv := New(testConfig(), discardLogger(), depsWith(checks...))
 	return map[string]http.Handler{
 		"api":     srv.apiHandler(),
 		"webhook": srv.webhookHandler(),

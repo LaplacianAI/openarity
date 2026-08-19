@@ -30,25 +30,33 @@ type Router interface {
 }
 
 type Deps struct {
-	DB       Pinger
+	Checks   []Check
 	Verifier auth.Verifier
 	Resolver middleware.Resolver
+}
+
+type Check struct {
+	Name   string
+	Pinger Pinger
 }
 
 type Server struct {
 	api      *http.Server
 	webhook  *http.Server
 	logger   *slog.Logger
-	db       Pinger
 	verifier auth.Verifier
 	resolver middleware.Resolver
 	routers  []Router
+	checks   []Check
 }
 
 func New(cfg *config.Config, logger *slog.Logger, deps Deps, routers ...Router) *Server {
+	if len(deps.Checks) == 0 {
+		panic("server.New: Deps.Checks is empty; readiness would always pass")
+	}
 	s := &Server{
 		logger:   logger,
-		db:       deps.DB,
+		checks:   deps.Checks,
 		verifier: deps.Verifier,
 		resolver: deps.Resolver,
 		routers:  routers,

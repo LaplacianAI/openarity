@@ -30,7 +30,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 		cfg,
 		logger,
 		server.Deps{
-			DB:       dbStore,
+			Checks:   []server.Check{{Name: "postgres", Pinger: dbStore}},
 			Verifier: verifier,
 			Resolver: dbStore,
 		},
