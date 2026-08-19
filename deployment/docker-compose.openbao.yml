@@ -32,8 +32,12 @@ services:
     # `!reset` is required, not tidiness. Compose merges keys rather than
     # replacing them, so the dev-mode BAO_DEV_* variables would survive into
     # this service and silently put a file-storage server back into dev mode.
-    environment: !reset null
-    ports: !reset null
+    #
+    # `[]` rather than `null`: both reset identically, and an empty sequence
+    # is what the compose JSON schema declares for these two keys, so editors
+    # do not flag it as a type error.
+    environment: !reset []
+    ports: !reset []
     command: server -config=/openbao/config/bao.hcl
     volumes:
       - openbao-data:/openbao/file
