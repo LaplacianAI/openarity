@@ -265,7 +265,7 @@ func TestTheDevelopmentTokenIsNeverSentToARemoteServer(t *testing.T) {
 
 	for _, server := range []string{
 		"https://not-your-brain.example.com",
-		"http://192.168.1.4:21120",
+		"http://192.168.0.10:21120",
 		"http://brain.internal:21120",
 		"http://10.0.0.5:21120",
 		// A hostname that merely contains the word is still remote.

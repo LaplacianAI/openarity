@@ -87,15 +87,16 @@ container's. `host.docker.internal` does not resolve on macOS hosts either. Use
 the machine's LAN address:
 
 ```sh
-ipconfig getifaddr en0     # macOS, for example 192.168.1.4
-hostname -I | cut -d' ' -f1  # Linux
+LAN_IP=$(ipconfig getifaddr en0)        # macOS
+LAN_IP=$(hostname -I | cut -d' ' -f1)   # Linux
+echo "$LAN_IP"
 ```
 
 Put it in `deployment/.env`. Every published port moves with it, and the
 compose files still default to loopback for anyone who does not set it:
 
 ```sh
-BIND_ADDR=192.168.1.4
+BIND_ADDR=<your LAN address>
 ```
 
 This does expose authentik and Postgres to your network for as long as the
@@ -133,7 +134,7 @@ are easy to miss. Doing it over the API makes them explicit:
 
 ```sh
 TOKEN=<AUTHENTIK_BOOTSTRAP_TOKEN>
-HOST=http://192.168.1.4:9000
+HOST=http://$LAN_IP:9000
 
 # The flows and the signing certificate authentik ships with.
 curl -s -H "Authorization: Bearer $TOKEN" \
@@ -185,9 +186,11 @@ curl -s "$HOST/application/o/openarity/.well-known/openid-configuration" | jq .i
 ### Step 4 — point the brain at it
 
 ```sh
-cat >> .env <<'EOF'
+# Unquoted heredoc: $LAN_IP has to expand, because compose reads .env
+# literally and would take the variable name as the address.
+cat >> .env <<EOF
 OPENARITY_OIDC_ENABLED=true
-OPENARITY_OIDC_ISSUER=http://192.168.1.4:9000/application/o/openarity/
+OPENARITY_OIDC_ISSUER=http://$LAN_IP:9000/application/o/openarity/
 OPENARITY_OIDC_AUDIENCE=<the provider's client ID>
 OPENARITY_SUPER_ADMINS=akadmin
 OPENARITY_DEV_TOKEN=
@@ -211,7 +214,7 @@ OAuth device flow — it reads the issuer and client id from the brain's own
 `/auth/config`, so nothing is configured twice:
 
 ```sh
-oa context create staging --server http://192.168.1.4:21120
+oa context create staging --server "http://$LAN_IP:21120"
 oa login
 oa whoami
 ```
