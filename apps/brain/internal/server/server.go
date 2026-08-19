@@ -99,12 +99,19 @@ func (s *Server) Run(ctx context.Context) error {
 		errs <- listen(s.webhook)
 	}()
 
+	var first error
+	pending := 2
 	select {
-	case err := <-errs:
-		return errors.Join(err, s.shutdown())
+	case first = <-errs:
+		pending = 1
 	case <-ctx.Done():
-		return s.shutdown()
 	}
+
+	err := errors.Join(first, s.shutdown())
+	for range pending {
+		<-errs
+	}
+	return err
 }
 
 func (s *Server) shutdown() error {
