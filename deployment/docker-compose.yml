@@ -67,17 +67,25 @@ services:
   # Development mode: in-memory, unsealed, root token "dev-root". Every secret
   # written here is lost on restart, which is the point — nothing durable
   # should exist on a laptop.
-  vault:
-    image: hashicorp/vault:latest
+  #
+  # OpenBao rather than Vault: Vault is BUSL-1.1, source-available and not
+  # OSI-licensed. OpenBao is the MPL-2.0 Linux Foundation fork and is API
+  # compatible, down to the X-Vault-Token header.
+  openbao:
+    image: openbao/openbao:2.6.2
     environment:
-      VAULT_DEV_ROOT_TOKEN_ID: dev-root
-      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+      BAO_DEV_ROOT_TOKEN_ID: dev-root
+      # The dev listener binds loopback inside the container, so without this
+      # the port mapping reaches nothing.
+      BAO_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:${VAULT_PORT:-8200}:8200"
+      - "${BIND_ADDR:-127.0.0.1}:${OPENBAO_PORT:-8200}:8200"
     cap_add:
       - IPC_LOCK
     healthcheck:
-      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      # bao, not vault: the fork renamed the binary. Exit 0 unsealed, 2
+      # sealed, 1 unreachable.
+      test: ["CMD", "bao", "status", "-address=http://127.0.0.1:8200"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -111,7 +119,12 @@ services:
       OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/openarity?sslmode=disable"
       OPENARITY_FALKOR_DB_URL: "redis://falkordb:6379"
       OPENARITY_REDIS_URL: "redis://redis:6379"
-      OPENARITY_VAULT_ADDR: "http://vault:8200"
+      OPENARITY_SECRETS_ADDR: "http://openbao:8200"
+      # Unset by default, which puts the brain on the in-memory secret store
+      # and logs a warning. Compose's OpenBao runs in dev mode with no AppRole
+      # configured; set these in .env once one exists.
+      OPENARITY_SECRETS_APPROLE_ID: ${OPENARITY_SECRETS_APPROLE_ID-}
+      OPENARITY_SECRETS_APPROLE_SECRET: ${OPENARITY_SECRETS_APPROLE_SECRET-}
       # development keeps this usable with no identity provider. Set it to
       # staging or production in .env and the dev token is refused outright,
       # so OIDC becomes mandatory rather than optional.

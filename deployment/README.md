@@ -45,7 +45,7 @@ collide. Every one of them can be moved without editing the file:
 POSTGRES_PORT=15432 REDIS_PORT=16379 docker compose -f deployment/docker-compose.yml up -d
 ```
 
-`POSTGRES_PORT`, `REDIS_PORT`, `FALKORDB_PORT`, `VAULT_PORT`, `API_PORT` and
+`POSTGRES_PORT`, `REDIS_PORT`, `FALKORDB_PORT`, `OPENBAO_PORT`, `API_PORT` and
 `WEBHOOK_PORT` all work this way. Only the host side moves — the containers
 still talk to each other on the standard ports.
 

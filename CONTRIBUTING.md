@@ -113,6 +113,35 @@ this at a scratch database is safe.
 
 New database tests should follow `apps/brain/.claude/skills/test-with-postgres`.
 
+## Tests that need a secret store
+
+The same shape, with two variables instead of one. Tests that talk to OpenBao
+read `BRAIN_TEST_SECRETS_ADDR` and `BRAIN_TEST_SECRETS_TOKEN`, and **skip**
+when either is unset:
+
+```sh
+docker run -d --name openbao -p 8200:8200 \
+  -e BAO_DEV_ROOT_TOKEN_ID=dev-root \
+  -e BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+  openbao/openbao:2.6.2
+
+export BRAIN_TEST_SECRETS_ADDR=http://127.0.0.1:8200
+export BRAIN_TEST_SECRETS_TOKEN=dev-root
+```
+
+Both `BAO_` names matter. `VAULT_DEV_ROOT_TOKEN_ID` leaves the server running
+with a randomly generated root token, so the tests fail with 403 instead of
+skipping; and without `BAO_DEV_LISTEN_ADDRESS` the dev listener binds loopback
+*inside* the container and the port mapping reaches nothing.
+
+The token is a root token, and the tests use it only to set up the AppRole and
+policy the store under test then authenticates with — the store itself never
+sees it. Dev mode keeps everything in memory, so a restart is a clean slate.
+
+`deployment/docker-compose.yml` runs the same thing as a service if you would
+rather not manage the container by hand. CI runs an OpenBao service container,
+so these tests always run there.
+
 ## Running the server
 
 Ports and addresses all have working defaults, and they match what
