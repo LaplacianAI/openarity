@@ -16,6 +16,7 @@ import (
 const (
 	baoTimeout  = 5 * time.Second
 	maxBodySize = 1 << 20
+	renewSkew   = 10 * time.Second
 )
 
 type openBao struct {
@@ -57,19 +58,49 @@ func (v *openBao) metadataURL(path string) string {
 	return v.addr + "/v1/" + url.PathEscape(v.mount) + "/metadata/" + path
 }
 
+func (v *openBao) renew(ctx context.Context, current string) (time.Duration, error) {
+	status, body, err := v.do(ctx, http.MethodPost,
+		v.addr+"/v1/auth/token/renew-self", current, []byte(`{}`))
+	if err != nil {
+		return 0, err
+	}
+	if status != http.StatusOK {
+		return 0, fmt.Errorf("%w: renew-self returned %d", ErrUnavailable, status)
+	}
+
+	var doc struct {
+		Auth struct {
+			LeaseDuration int `json:"lease_duration"`
+		} `json:"auth"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	return time.Duration(doc.Auth.LeaseDuration) * time.Second, nil
+}
+
 func (v *openBao) authToken(ctx context.Context) (string, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	if v.tok != "" && time.Now().Before(v.expires) {
+	now := time.Now()
+	switch {
+	case v.tok == "":
+		// No session yet.
+	case now.Before(v.expires.Add(-renewSkew)):
 		return v.tok, nil
+	default:
+		if lease, err := v.renew(ctx, v.tok); err == nil {
+			v.expires = now.Add(lease)
+			return v.tok, nil
+		}
 	}
 
 	tok, lease, err := v.login(ctx)
 	if err != nil {
 		return "", err
 	}
-	v.tok, v.expires = tok, time.Now().Add(lease)
+	v.tok, v.expires = tok, now.Add(lease)
 	return tok, nil
 }
 

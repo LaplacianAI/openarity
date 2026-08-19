@@ -3,6 +3,7 @@ package secrets
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,11 +11,26 @@ import (
 	"testing"
 )
 
-const loginPath = "/v1/auth/approle/login"
+const (
+	loginPath = "/v1/auth/approle/login"
+	renewPath = "/v1/auth/token/renew-self"
+)
 
-// loginBody is what a real OpenBao answers an AppRole login with. Verified
-// against OpenBao 2.6.1 — the token is nested under "auth", not at the top.
-const loginBody = `{"auth":{"client_token":"tok-1","lease_duration":60,"renewable":true}}`
+// authBody is what a real OpenBao answers a login or a renew with. Verified
+// against OpenBao 2.6.1 — the token is nested under "auth", not at the top,
+// and a renew returns the same token with a fresh lease.
+func authBody(tok string, lease int) string {
+	return fmt.Sprintf(
+		`{"auth":{"client_token":%q,"lease_duration":%d,"renewable":true}}`, tok, lease)
+}
+
+// authOptions is the token lifecycle the stub simulates. A lease shorter than
+// renewSkew puts the token in the renewal window immediately, which is how
+// these tests reach the renewal path without sleeping or moving a clock.
+type authOptions struct {
+	lease       int
+	renewStatus int
+}
 
 // call is one request the stub saw. Recorded under a mutex because the
 // handler runs on the server's goroutine and the assertions run on the
@@ -29,9 +45,12 @@ type call struct {
 type baoStub struct {
 	*httptest.Server
 
+	auth authOptions
+
 	mu     sync.Mutex
 	calls  []call
 	logins int
+	renews int
 }
 
 func (s *baoStub) record(r *http.Request) {
@@ -40,8 +59,11 @@ func (s *baoStub) record(r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if r.URL.Path == loginPath {
+	switch r.URL.Path {
+	case loginPath:
 		s.logins++
+	case renewPath:
+		s.renews++
 	}
 	s.calls = append(s.calls, call{
 		method: r.Method,
@@ -51,41 +73,68 @@ func (s *baoStub) record(r *http.Request) {
 	})
 }
 
-func (s *baoStub) snapshot() ([]call, int) {
+func (s *baoStub) snapshot() (calls []call, logins, renews int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]call(nil), s.calls...), s.logins
+	return append([]call(nil), s.calls...), s.logins, s.renews
 }
 
-// last returns the last non-login call, which is the one under test.
+// tokenName is the token the stub is currently handing out. Each login
+// returns a different one, so a test can tell a renewed session from a
+// replaced one — with a fixed token every such assertion passes vacuously.
+func (s *baoStub) tokenName() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return fmt.Sprintf("tok-%d", s.logins)
+}
+
+// last returns the last call that was not part of the token lifecycle, which
+// is the one under test.
 func (s *baoStub) last(t *testing.T) call {
 	t.Helper()
 
-	calls, _ := s.snapshot()
+	calls, _, _ := s.snapshot()
 	for i := len(calls) - 1; i >= 0; i-- {
-		if calls[i].path != loginPath {
+		if calls[i].path != loginPath && calls[i].path != renewPath {
 			return calls[i]
 		}
 	}
-	t.Fatal("the stub saw no call other than the login")
+	t.Fatal("the stub saw no call other than the token lifecycle")
 	return call{}
 }
 
-// newStub answers the login, then hands everything else to reply.
+// newStub answers the token lifecycle with a lease long enough that nothing
+// renews, then hands everything else to reply.
 func newStub(t *testing.T, reply http.HandlerFunc) *baoStub {
 	t.Helper()
+	return newAuthStub(t, authOptions{lease: 60, renewStatus: http.StatusOK}, reply)
+}
 
-	stub := &baoStub{}
+func newAuthStub(t *testing.T, auth authOptions, reply http.HandlerFunc) *baoStub {
+	t.Helper()
+
+	stub := &baoStub{auth: auth}
 	stub.Server = httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			stub.record(r)
 
 			w.Header().Set("Content-Type", "application/json")
-			if r.URL.Path == loginPath {
-				_, _ = w.Write([]byte(loginBody))
-				return
+			switch r.URL.Path {
+			case loginPath:
+				_, _ = w.Write([]byte(authBody(stub.tokenName(), stub.auth.lease)))
+			case renewPath:
+				w.WriteHeader(stub.auth.renewStatus)
+				if stub.auth.renewStatus == http.StatusOK {
+					_, _ = w.Write([]byte(authBody(stub.tokenName(), stub.auth.lease)))
+					return
+				}
+				// A refused renewal carries a real body. Writing nothing here
+				// made the fallback happen for the wrong reason: the empty
+				// input failed to unmarshal, so the status check went untested.
+				_, _ = w.Write([]byte(`{"errors":["permission denied"]}`))
+			default:
+				reply(w, r)
 			}
-			reply(w, r)
 		}))
 	t.Cleanup(stub.Close)
 	return stub
@@ -268,8 +317,12 @@ func TestOpenBaoLogsInOncePerLease(t *testing.T) {
 		}
 	}
 
-	if _, logins := stub.snapshot(); logins != 1 {
+	_, logins, renews := stub.snapshot()
+	if logins != 1 {
 		t.Errorf("logins = %d, want 1 — the token is not being reused", logins)
+	}
+	if renews != 0 {
+		t.Errorf("renews = %d, want 0 — a token nowhere near expiry must not be renewed", renews)
 	}
 }
 
@@ -314,7 +367,7 @@ func TestOpenBaoPingDoesNotLogIn(t *testing.T) {
 		t.Fatalf("Ping: %v", err)
 	}
 
-	if _, logins := stub.snapshot(); logins != 0 {
+	if _, logins, _ := stub.snapshot(); logins != 0 {
 		t.Errorf("logins = %d, want 0 — Ping must not need a token", logins)
 	}
 }
@@ -461,5 +514,115 @@ func TestOpenBaoLoginWithoutATokenIsUnavailable(t *testing.T) {
 	store := NewOpenBao(srv.URL, "role", "secret-id", "secret", srv.Client())
 	if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("err = %v, want ErrUnavailable", err)
+	}
+}
+
+// A token near expiry is renewed, not replaced. Logging in again works, but
+// it spends a use on a role with secret_id_num_uses set and abandons a lease
+// OpenBao is still tracking.
+func TestOpenBaoRenewsRatherThanLoggingInAgain(t *testing.T) {
+	t.Parallel()
+
+	stub := newAuthStub(t, authOptions{lease: 1, renewStatus: http.StatusOK},
+		answering(http.StatusOK, `{"data":{"data":{"k":"v"}}}`))
+	store := newTestBao(t, stub)
+
+	for range 2 {
+		if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+	}
+
+	_, logins, renews := stub.snapshot()
+	if logins != 1 {
+		t.Errorf("logins = %d, want 1 — a near-expiry token must be renewed", logins)
+	}
+	if renews != 1 {
+		t.Errorf("renews = %d, want 1", renews)
+	}
+}
+
+// OpenBao forgets a token whose lease lapsed and answers renew-self 403; a
+// token that was never renewable answers 400. Verified against OpenBao 2.6.1.
+// Either way the only way back is a fresh login, and it has to happen inside
+// the read rather than surfacing as a failed request.
+func TestOpenBaoLogsInAgainWhenRenewalIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		status int
+	}{
+		{"forgotten", http.StatusForbidden},
+		{"not renewable", http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			stub := newAuthStub(t, authOptions{lease: 1, renewStatus: tc.status},
+				answering(http.StatusOK, `{"data":{"data":{"k":"v"}}}`))
+			store := newTestBao(t, stub)
+
+			for range 2 {
+				if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); err != nil {
+					t.Fatalf("Get after a refused renewal: %v", err)
+				}
+			}
+
+			_, logins, renews := stub.snapshot()
+			if renews != 1 {
+				t.Errorf("renews = %d, want 1 — renewal must be tried before logging in", renews)
+			}
+			if logins != 2 {
+				t.Errorf("logins = %d, want 2 — a refused renewal must fall back to a login", logins)
+			}
+		})
+	}
+}
+
+// A renewal that is refused must not leave the old token cached: the next
+// read would send a token OpenBao has forgotten and get a 403 that looks
+// like a policy problem.
+func TestOpenBaoReplacesTheTokenAfterARefusedRenewal(t *testing.T) {
+	t.Parallel()
+
+	stub := newAuthStub(t, authOptions{lease: 1, renewStatus: http.StatusForbidden},
+		answering(http.StatusOK, `{"data":{"data":{"k":"v"}}}`))
+	store := newTestBao(t, stub)
+
+	for range 2 {
+		if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+	}
+
+	if got := stub.last(t).token; got != "tok-2" {
+		t.Errorf("X-Vault-Token = %q, want tok-2, the token from the second login", got)
+	}
+}
+
+// A cold store under load must log in once, not once per goroutine. The lock
+// is held across the login for exactly this reason, so this is what would
+// catch someone releasing it early to make the code look better.
+func TestOpenBaoLogsInOnceUnderConcurrentReads(t *testing.T) {
+	t.Parallel()
+
+	stub := newStub(t, answering(http.StatusOK, `{"data":{"data":{"k":"v"}}}`))
+	store := newTestBao(t, stub)
+
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); err != nil {
+				t.Errorf("Get: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if _, logins, _ := stub.snapshot(); logins != 1 {
+		t.Errorf("logins = %d, want 1 — twenty cold readers stampeded the login", logins)
 	}
 }

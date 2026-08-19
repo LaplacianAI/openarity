@@ -97,6 +97,13 @@ var enableAppRole sync.Once
 // backend fails a concurrent write to the same key with a 500, not a retry.
 func appRole(t *testing.T, addr, root, policy string) (roleID, secretID string) {
 	t.Helper()
+	return appRoleWith(t, addr, root, policy, map[string]any{"token_ttl": "60s"})
+}
+
+func appRoleWith(
+	t *testing.T, addr, root, policy string, role map[string]any,
+) (roleID, secretID string) {
+	t.Helper()
 
 	a := admin{t: t, addr: addr, token: root}
 	enableAppRole.Do(func() {
@@ -108,10 +115,8 @@ func appRole(t *testing.T, addr, root, policy string) (roleID, secretID string) 
 	a.do(http.MethodPut, "/v1/sys/policies/acl/"+name,
 		map[string]string{"policy": policy})
 
-	a.do(http.MethodPost, "/v1/auth/approle/role/"+name, map[string]any{
-		"token_ttl":      "60s",
-		"token_policies": name,
-	})
+	role["token_policies"] = name
+	a.do(http.MethodPost, "/v1/auth/approle/role/"+name, role)
 
 	roleData := a.do(http.MethodGet, "/v1/auth/approle/role/"+name+"/role-id", nil)
 	secretData := a.do(http.MethodPost, "/v1/auth/approle/role/"+name+"/secret-id", nil)
@@ -222,5 +227,33 @@ func TestDeniedPathIsUnavailableAgainstRealOpenBao(t *testing.T) {
 	}
 	if errors.Is(err, ErrNotFound) {
 		t.Error("a denial was reported as a missing secret")
+	}
+}
+
+// Renewal against a real server. The role allows its secret-id to be used
+// exactly once, so a second login is impossible — a second read that
+// succeeds can only have renewed. A two-second lease is inside renewSkew
+// immediately, so nothing here sleeps.
+func TestRenewsAgainstRealOpenBao(t *testing.T) {
+	t.Parallel()
+
+	addr, root := liveBao(t)
+	roleID, secretID := appRoleWith(t, addr, root, grantSecretMount, map[string]any{
+		"token_ttl":          "2s",
+		"secret_id_num_uses": 1,
+	})
+	store := NewOpenBao(addr, roleID, secretID, "secret", nil)
+	path := Path(uuid.New(), KindChannel, uuid.New())
+
+	if err := asWriter(t, store).Put(t.Context(), path, "signing_secret", "s3cr3t"); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	got, err := store.Get(t.Context(), path, "signing_secret")
+	if err != nil {
+		t.Fatalf("Get on a renewed token: %v", err)
+	}
+	if got != "s3cr3t" {
+		t.Errorf("Get = %q, want %q", got, "s3cr3t")
 	}
 }
