@@ -3,3 +3,8 @@ vendor/
 # key and database password; the .example beside it is what belongs in git.
 *.env
 !*.env.example
+
+# The 32-byte seal key and init-keys.json, which holds the recovery keys and
+# the root token. Either one alone is a full compromise of every secret in
+# OpenBao. See deployment/OPENBAO.md.
+deployment/openbao/keys/

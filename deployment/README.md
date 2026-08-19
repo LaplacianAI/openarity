@@ -49,6 +49,11 @@ POSTGRES_PORT=15432 REDIS_PORT=16379 docker compose -f deployment/docker-compose
 `WEBHOOK_PORT` all work this way. Only the host side moves — the containers
 still talk to each other on the standard ports.
 
+OpenBao runs in dev mode here — in memory, unsealed, wiped on restart. For one
+that survives a reboot, `deployment/docker-compose.openbao.yml` is an overlay
+with file storage and a seal that opens itself. See
+[OPENBAO.md](OPENBAO.md).
+
 To run the brain in a container too:
 
 ```sh
