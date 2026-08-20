@@ -104,11 +104,12 @@ internal/config/     configuration: load, validate, redact
 internal/server/     the two listeners; mounts Routers
 internal/middleware/ request logging, authentication, user resolution
 internal/auth/       token in, Principal out — no database
-internal/authz/      Can, and the closed vocabulary of actions
+internal/authz/      Can, CanInAnyTeam, the five scopes, the route table
 internal/api/        Router, WriteJSON, DecodeJSON, Page
   <domain>/          one package per domain, each its own Router
 internal/store/      Postgres: pool, migrations, queries
   migrations/        goose .sql files, embedded into the binary
+  rbac.json          the permissions, roles and route mappings we ship
 ```
 
 One binary. If a worker appears it becomes an argument (`brain worker`), not a

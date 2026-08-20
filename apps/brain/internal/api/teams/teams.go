@@ -14,7 +14,6 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -35,19 +34,18 @@ type Store interface {
 	FindUsersBySubject(ctx context.Context, arg db.FindUsersBySubjectParams) ([]db.FindUsersBySubjectRow, error)
 }
 
-type Authorizer interface {
+type SuperAdmins interface {
 	IsSuperAdmin(u *auth.User) bool
-	Can(ctx context.Context, u *auth.User, action authz.Action, r authz.Resource) (bool, error)
 }
 
 type handler struct {
-	logger *slog.Logger
-	store  Store
-	authz  Authorizer
+	logger      *slog.Logger
+	store       Store
+	superAdmins SuperAdmins
 }
 
-func New(logger *slog.Logger, s Store, a Authorizer) *api.Router {
-	h := &handler{logger: logger, store: s, authz: a}
+func New(logger *slog.Logger, s Store, a SuperAdmins) *api.Router {
+	h := &handler{logger: logger, store: s, superAdmins: a}
 
 	r := api.NewRouter("/teams")
 	r.Post("", h.create)
@@ -60,15 +58,7 @@ func New(logger *slog.Logger, s Store, a Authorizer) *api.Router {
 }
 
 func (h *handler) create(w http.ResponseWriter, r *http.Request) {
-	u, ok := h.caller(w, r)
-	if !ok {
-		return
-	}
-
-	if !h.authz.IsSuperAdmin(u) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
+	u := api.Caller(r)
 
 	var req createRequest
 	if !api.DecodeJSON(w, r, &req) {
@@ -96,17 +86,14 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {
-	u, ok := h.caller(w, r)
-	if !ok {
-		return
-	}
+	u := api.Caller(r)
 
 	limit, ok := api.Limit(w, r)
 	if !ok {
 		return
 	}
 
-	if !h.authz.IsSuperAdmin(u) {
+	if !h.superAdmins.IsSuperAdmin(u) {
 		teams, err := h.myTeams(r.Context(), u)
 		if err != nil {
 			h.fail(w, u, "failed to list teams", err)
@@ -179,12 +166,9 @@ func (h *handler) myTeams(ctx context.Context, u *auth.User) ([]team, error) {
 }
 
 func (h *handler) get(w http.ResponseWriter, r *http.Request) {
-	u, ok := h.caller(w, r)
-	if !ok {
-		return
-	}
+	u := api.Caller(r)
 
-	id, ok := h.teamID(w, r)
+	id, ok := h.team(w, r)
 	if !ok {
 		return
 	}
@@ -202,12 +186,9 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) listMembers(w http.ResponseWriter, r *http.Request) {
-	u, ok := h.caller(w, r)
-	if !ok {
-		return
-	}
+	u := api.Caller(r)
 
-	id, ok := h.teamID(w, r)
+	id, ok := h.team(w, r)
 	if !ok {
 		return
 	}
@@ -268,7 +249,9 @@ func (h *handler) memberPage(w http.ResponseWriter, r *http.Request, teamID uuid
 }
 
 func (h *handler) addMember(w http.ResponseWriter, r *http.Request) {
-	u, id, ok := h.mayWriteMembers(w, r)
+	u := api.Caller(r)
+
+	id, ok := h.team(w, r)
 	if !ok {
 		return
 	}
@@ -345,7 +328,9 @@ func ambiguousSubject(rows []db.FindUsersBySubjectRow) string {
 }
 
 func (h *handler) removeMember(w http.ResponseWriter, r *http.Request) {
-	u, id, ok := h.mayWriteMembers(w, r)
+	u := api.Caller(r)
+
+	id, ok := h.team(w, r)
 	if !ok {
 		return
 	}
@@ -366,36 +351,7 @@ func (h *handler) removeMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *handler) mayWriteMembers(w http.ResponseWriter, r *http.Request) (*auth.User, uuid.UUID, bool) {
-	u, ok := h.caller(w, r)
-	if !ok {
-		return nil, uuid.Nil, false
-	}
-
-	id, ok := h.teamID(w, r)
-	if !ok {
-		return nil, uuid.Nil, false
-	}
-
-	allowed, err := h.authz.Can(r.Context(), u, authz.ActionMembershipWrite, authz.Resource{TeamID: id})
-	if err != nil {
-		h.fail(w, u, "authorisation check failed", err)
-		return nil, uuid.Nil, false
-	}
-	if !allowed {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return nil, uuid.Nil, false
-	}
-
-	return u, id, true
-}
-
 func (h *handler) visibleTeam(w http.ResponseWriter, r *http.Request, u *auth.User, id uuid.UUID) (db.Team, bool) {
-	if _, isMember := u.RoleIn(id); !isMember && !h.authz.IsSuperAdmin(u) {
-		http.Error(w, "not found", http.StatusNotFound)
-		return db.Team{}, false
-	}
-
 	row, err := h.store.GetTeam(r.Context(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -407,15 +363,6 @@ func (h *handler) visibleTeam(w http.ResponseWriter, r *http.Request, u *auth.Us
 	}
 
 	return row, true
-}
-
-func (h *handler) teamID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	id, err := uuid.Parse(r.PathValue("id"))
-	if err != nil {
-		http.Error(w, "id must be a uuid", http.StatusBadRequest)
-		return uuid.Nil, false
-	}
-	return id, true
 }
 
 func (h *handler) fail(w http.ResponseWriter, u *auth.User, msg string, err error) {
@@ -444,20 +391,20 @@ func (h *handler) failMembership(w http.ResponseWriter, u *auth.User, err error)
 	}
 }
 
-func (h *handler) caller(w http.ResponseWriter, r *http.Request) (*auth.User, bool) {
-	u, ok := auth.UserFrom(r.Context())
-	if !ok {
-		h.logger.Error("teams ran without a user — check the middleware order")
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return nil, false
-	}
-	return u, true
-}
-
 func teamName(raw string) (string, bool) {
 	name := strings.TrimSpace(raw)
 	if name == "" || len(name) > maxNameBytes {
 		return "", false
 	}
 	return name, true
+}
+
+func (h *handler) team(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	id, ok := api.TeamFrom(r.Context())
+	if !ok {
+		h.logger.Error("route has no team — check its scope in rbac.json", "path", r.URL.Path)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return uuid.Nil, false
+	}
+	return id, true
 }

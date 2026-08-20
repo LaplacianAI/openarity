@@ -16,9 +16,16 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
+
+// openGuard maps every route and changes nothing. What the guard does with a
+// denial is tested where the guard lives; these tests are about the handler.
+type openGuard struct{}
+
+func (openGuard) Wrap(_ string, next http.HandlerFunc) (http.HandlerFunc, error) {
+	return next, nil
+}
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -72,28 +79,14 @@ func compareKey(a string, aID uuid.UUID, b string, bID uuid.UUID) int {
 	return strings.Compare(aID.String(), bID.String())
 }
 
-// fakeAuthz answers the one question this package asks, and records it. The
-// action is recorded because asking for the wrong one would still produce a
-// working route with the wrong people allowed through it.
-type fakeAuthz struct {
-	allowed bool
-	err     error
-	asked   []authz.Action
-}
-
-func (f *fakeAuthz) CanInAnyTeam(_ context.Context, _ *auth.User, a authz.Action) (bool, error) {
-	f.asked = append(f.asked, a)
-	return f.allowed, f.err
-}
-
 // call drives one request through the registered routes with the user already
 // on the context, exactly as the middleware chain leaves it. Driving the mux
 // rather than the handler puts the pattern under test too.
-func call(t *testing.T, s Store, a Authorizer, u *auth.User, method, path string) *httptest.ResponseRecorder {
+func call(t *testing.T, s Store, u *auth.User, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), s, a).Register(mux)
+	New(discardLogger(), s).Register(mux, openGuard{})
 
 	req := httptest.NewRequestWithContext(t.Context(), method, path, nil)
 	if u != nil {
@@ -137,8 +130,6 @@ func usersPage(t *testing.T, rec *httptest.ResponseRecorder) api.Page[user] {
 	return got
 }
 
-func allow() *fakeAuthz { return &fakeAuthz{allowed: true} }
-
 // --- the happy path ------------------------------------------------------
 
 func TestListReturnsAPageOfUsers(t *testing.T) {
@@ -148,7 +139,7 @@ func TestListReturnsAPageOfUsers(t *testing.T) {
 	alice := row("alice", &email)
 	s := &fakeStore{users: []db.ListUsersRow{alice, row("bob", nil)}}
 
-	rec := call(t, s, allow(), caller(), http.MethodGet, "/users")
+	rec := call(t, s, caller(), http.MethodGet, "/users")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
@@ -177,7 +168,7 @@ func TestSubjectIsPassedToTheStoreAsAnExactFilter(t *testing.T) {
 
 	s := &fakeStore{users: []db.ListUsersRow{row("alice", nil), row("alice-two", nil), row("bob", nil)}}
 
-	rec := call(t, s, allow(), caller(), http.MethodGet, "/users?subject=alice")
+	rec := call(t, s, caller(), http.MethodGet, "/users?subject=alice")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
@@ -203,7 +194,7 @@ func TestAnUnknownSubjectIsAnEmptyPage(t *testing.T) {
 
 	s := &fakeStore{users: []db.ListUsersRow{row("alice", nil)}}
 
-	rec := call(t, s, allow(), caller(), http.MethodGet, "/users?subject=nobody")
+	rec := call(t, s, caller(), http.MethodGet, "/users?subject=nobody")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
@@ -222,7 +213,7 @@ func TestABlankSubjectIsNotAFilter(t *testing.T) {
 	for _, path := range []string{"/users", "/users?subject=", "/users?subject=%20%20"} {
 		s := &fakeStore{users: []db.ListUsersRow{row("alice", nil), row("bob", nil)}}
 
-		rec := call(t, s, allow(), caller(), http.MethodGet, path)
+		rec := call(t, s, caller(), http.MethodGet, path)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: status = %d, want 200: %s", path, rec.Code, rec.Body)
 		}
@@ -240,7 +231,7 @@ func TestABlankSubjectIsNotAFilter(t *testing.T) {
 func TestAnEmptyDirectoryIsAnEmptyArray(t *testing.T) {
 	t.Parallel()
 
-	rec := call(t, &fakeStore{}, allow(), caller(), http.MethodGet, "/users")
+	rec := call(t, &fakeStore{}, caller(), http.MethodGet, "/users")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
@@ -258,7 +249,7 @@ func TestAMissingEmailIsOmitted(t *testing.T) {
 
 	s := &fakeStore{users: []db.ListUsersRow{row("alice", nil)}}
 
-	rec := call(t, s, allow(), caller(), http.MethodGet, "/users")
+	rec := call(t, s, caller(), http.MethodGet, "/users")
 
 	if strings.Contains(rec.Body.String(), "email") {
 		t.Errorf("a user with no email carries the key: %s", rec.Body)
@@ -266,91 +257,11 @@ func TestAMissingEmailIsOmitted(t *testing.T) {
 }
 
 // --- authorisation -------------------------------------------------------
-
-func TestListAsksForMembershipWrite(t *testing.T) {
-	t.Parallel()
-
-	a := allow()
-	call(t, &fakeStore{}, a, caller(), http.MethodGet, "/users")
-
-	if !slices.Contains(a.asked, authz.ActionMembershipWrite) {
-		t.Errorf("asked for %v, want membership:write", a.asked)
-	}
-}
-
-// A member — the role that cannot add anyone — has no use for the directory,
-// and the store must not be reached to find that out.
-func TestListIsForbiddenWithoutTheAction(t *testing.T) {
-	t.Parallel()
-
-	s := &fakeStore{users: []db.ListUsersRow{row("alice", nil)}}
-
-	rec := call(t, s, &fakeAuthz{allowed: false}, caller(), http.MethodGet, "/users")
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body)
-	}
-	if len(s.args) != 0 {
-		t.Errorf("the store was read %d times for a forbidden caller", len(s.args))
-	}
-	if strings.Contains(rec.Body.String(), "alice") {
-		t.Errorf("a forbidden reply carried a subject: %s", rec.Body)
-	}
-}
-
-// Unknown is not denied. A failed permission read is a 500, because a database
-// blip reported as a 403 sends somebody to audit roles that were never wrong.
-func TestAFailedAuthorisationReadIsA500(t *testing.T) {
-	t.Parallel()
-
-	s := &fakeStore{}
-	a := &fakeAuthz{allowed: true, err: errors.New("connection refused")}
-
-	rec := call(t, s, a, caller(), http.MethodGet, "/users")
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body)
-	}
-	if len(s.args) != 0 {
-		t.Errorf("the store was read despite the authorisation check failing")
-	}
-	if strings.Contains(rec.Body.String(), "connection refused") {
-		t.Errorf("the reply leaks the underlying error: %s", rec.Body)
-	}
-}
-
-// The order of the two guards is observable. Parsing the limit first would
-// answer 400 to a caller who may not use the route at all, which tells them it
-// exists and what it accepts.
-func TestAuthorisationIsCheckedBeforeTheQueryString(t *testing.T) {
-	t.Parallel()
-
-	rec := call(t, &fakeStore{}, &fakeAuthz{allowed: false}, caller(),
-		http.MethodGet, "/users?limit=not-a-number")
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want 403 — the limit was parsed before the check", rec.Code)
-	}
-}
-
-// Unreachable behind the middleware, so it is a 500 rather than a 401: if it
-// ever fires, the route is mounted on the wrong mux and the reply should not
-// invite a retry with a token.
-func TestListRefusesARequestWithNoUser(t *testing.T) {
-	t.Parallel()
-
-	s := &fakeStore{}
-	a := allow()
-
-	rec := call(t, s, a, nil, http.MethodGet, "/users")
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body)
-	}
-	if len(a.asked) != 0 || len(s.args) != 0 {
-		t.Error("the handler ran without a user on the context")
-	}
-}
+//
+// Which permission this route requires is a row in route_permissions, and the
+// guard applies it before the handler is reached. Both live in
+// internal/api/authorize_test.go now; asserting them here would test the fake
+// guard this file installs.
 
 // --- paging --------------------------------------------------------------
 
@@ -363,7 +274,7 @@ func TestAFullPageCarriesACursorAndNotTheExtraRow(t *testing.T) {
 		row("alice", nil), row("bob", nil), row("carol", nil),
 	}}
 
-	rec := call(t, s, allow(), caller(), http.MethodGet, "/users?limit=2")
+	rec := call(t, s, caller(), http.MethodGet, "/users?limit=2")
 
 	got := usersPage(t, rec)
 	if len(got.Items) != 2 {
@@ -391,7 +302,7 @@ func TestPagingWalksEveryUserExactlyOnce(t *testing.T) {
 	seen := make([]string, 0, len(rows))
 	path := "/users?limit=2"
 	for range 10 {
-		rec := call(t, s, allow(), caller(), http.MethodGet, path)
+		rec := call(t, s, caller(), http.MethodGet, path)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 		}
@@ -424,7 +335,7 @@ func TestACursorKeepsTheSubjectFilter(t *testing.T) {
 		t.Fatalf("EncodeCursor: %v", err)
 	}
 
-	call(t, s, allow(), caller(), http.MethodGet, "/users?subject=alice&cursor="+cursor)
+	call(t, s, caller(), http.MethodGet, "/users?subject=alice&cursor="+cursor)
 
 	if !s.args[0].UseSubject || s.args[0].Subject != "alice" {
 		t.Errorf("params = %+v, want the filter kept alongside the cursor", s.args[0])
@@ -442,7 +353,7 @@ func TestAMangledCursorIsABadRequest(t *testing.T) {
 	for _, cursor := range []string{"not-base64!!", "bm90LWpzb24", "eyJzIjo0Mn0"} {
 		s := &fakeStore{users: []db.ListUsersRow{row("alice", nil)}}
 
-		rec := call(t, s, allow(), caller(), http.MethodGet, "/users?cursor="+cursor)
+		rec := call(t, s, caller(), http.MethodGet, "/users?cursor="+cursor)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("cursor %q: status = %d, want 400: %s", cursor, rec.Code, rec.Body)
 		}
@@ -464,7 +375,7 @@ func TestTheResponseCarriesOnlyContractedFields(t *testing.T) {
 	email := "alice@example.com"
 	s := &fakeStore{users: []db.ListUsersRow{row("alice", &email)}}
 
-	rec := call(t, s, allow(), caller(), http.MethodGet, "/users")
+	rec := call(t, s, caller(), http.MethodGet, "/users")
 
 	var envelope map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
@@ -499,7 +410,7 @@ func TestEveryUserCarriesItsIssuer(t *testing.T) {
 
 	s := &fakeStore{users: []db.ListUsersRow{row("alice", nil)}}
 
-	rec := call(t, s, allow(), caller(), http.MethodGet, "/users")
+	rec := call(t, s, caller(), http.MethodGet, "/users")
 
 	got := usersPage(t, rec)
 	if len(got.Items) != 1 {
@@ -526,7 +437,7 @@ func TestTwoIssuersWithOneSubjectStayDistinguishable(t *testing.T) {
 		rowAt(byIP, "akadmin"),
 	}}
 
-	rec := call(t, s, allow(), caller(), http.MethodGet, "/users")
+	rec := call(t, s, caller(), http.MethodGet, "/users")
 
 	got := usersPage(t, rec)
 	if len(got.Items) != 2 {
@@ -554,7 +465,7 @@ func TestTheRouteAnswersOnlyGet(t *testing.T) {
 		http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
 	} {
 		s := &fakeStore{}
-		rec := call(t, s, allow(), caller(), method, "/users")
+		rec := call(t, s, caller(), method, "/users")
 
 		if rec.Code == http.StatusOK {
 			t.Errorf("%s /users answered 200", method)
@@ -573,7 +484,7 @@ func TestAStoreFailureIsA500(t *testing.T) {
 
 	s := &fakeStore{err: errors.New("connection refused")}
 
-	rec := call(t, s, allow(), caller(), http.MethodGet, "/users")
+	rec := call(t, s, caller(), http.MethodGet, "/users")
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body)
@@ -589,7 +500,7 @@ func TestTheLimitIsClampedAndValidated(t *testing.T) {
 	t.Parallel()
 
 	s := &fakeStore{}
-	if rec := call(t, s, allow(), caller(), http.MethodGet, "/users?limit=5000"); rec.Code != http.StatusOK {
+	if rec := call(t, s, caller(), http.MethodGet, "/users?limit=5000"); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
 	}
 	if s.args[0].PageSize != api.MaxLimit+1 {
@@ -598,7 +509,7 @@ func TestTheLimitIsClampedAndValidated(t *testing.T) {
 
 	for _, limit := range []string{"0", "-1", "abc"} {
 		bad := &fakeStore{}
-		rec := call(t, bad, allow(), caller(), http.MethodGet, "/users?limit="+limit)
+		rec := call(t, bad, caller(), http.MethodGet, "/users?limit="+limit)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("limit %q: status = %d, want 400", limit, rec.Code)
 		}

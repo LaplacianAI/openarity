@@ -12,10 +12,10 @@ func (s *Server) apiHandler() http.Handler {
 
 	for _, r := range s.routers {
 		if r.Public() {
-			r.Register(root)
+			r.Register(root, s.guard)
 			continue
 		}
-		r.Register(protected)
+		r.Register(protected, s.guard)
 	}
 
 	authenticated := middleware.Authenticate(s.verifier)(middleware.ResolveUser(s.resolver, s.logger)(protected))

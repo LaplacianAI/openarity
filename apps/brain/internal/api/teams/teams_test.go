@@ -154,7 +154,8 @@ func truncate[T any](rows []T, size int32) []T {
 	return rows
 }
 
-// fakeAuthz answers both questions this package asks.
+// fakeAuthz answers every question the guard asks, and the one this package
+// asks for itself.
 type fakeAuthz struct {
 	super   bool
 	allowed bool
@@ -164,6 +165,36 @@ type fakeAuthz struct {
 
 func (f *fakeAuthz) IsSuperAdmin(*auth.User) bool { return f.super }
 
+// The guard's any_team check. No route in this package uses it, so reaching it
+// is itself the failure.
+func (f *fakeAuthz) CanInAnyTeam(context.Context, *auth.User, authz.Action) (bool, error) {
+	panic("a teams route used the strictly weaker CanInAnyTeam")
+}
+
+// teamRoutes is what rbac.json maps for this package. Building the real guard
+// rather than an open one keeps these tests driving the composition production
+// uses — a route whose scope changed would fail here too, not only in store.
+func teamRoutes(t *testing.T) authz.Routes {
+	t.Helper()
+
+	rs := authz.NewRoutes()
+	add := func(method, path, scope string, permission *string) {
+		t.Helper()
+		if err := rs.Add(method, path, scope, permission); err != nil {
+			t.Fatalf("Add %s %s: %v", method, path, err)
+		}
+	}
+
+	membership := "membership:write"
+	add("POST", "/teams", "super_admin", nil)
+	add("GET", "/teams", "authenticated", nil)
+	add("GET", "/teams/{id}", "member", nil)
+	add("GET", "/teams/{id}/members", "member", nil)
+	add("POST", "/teams/{id}/members", "team", &membership)
+	add("DELETE", "/teams/{id}/members/{userID}", "team", &membership)
+	return rs
+}
+
 func (f *fakeAuthz) Can(_ context.Context, _ *auth.User, a authz.Action, _ authz.Resource) (bool, error) {
 	f.asked = append(f.asked, a)
 	return f.allowed, f.err
@@ -172,11 +203,11 @@ func (f *fakeAuthz) Can(_ context.Context, _ *auth.User, a authz.Action, _ authz
 // call drives one request through the registered routes with the user already
 // on the context, exactly as the middleware chain leaves it. Driving the mux
 // rather than the handler puts the pattern under test too.
-func call(t *testing.T, s Store, a Authorizer, u *auth.User, method, path, body string) *httptest.ResponseRecorder {
+func call(t *testing.T, s Store, a *fakeAuthz, u *auth.User, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), s, a).Register(mux)
+	New(discardLogger(), s, a).Register(mux, api.NewGuard(teamRoutes(t), a, discardLogger()))
 
 	var reader io.Reader
 	if body != "" {
@@ -483,9 +514,9 @@ func TestListGivesEachTeamItsOwnRole(t *testing.T) {
 func TestListReturnsAnEmptyArrayNotNull(t *testing.T) {
 	t.Parallel()
 
-	for name, a := range map[string]Authorizer{
-		"super admin": &fakeAuthz{super: true},
-		"member":      &fakeAuthz{},
+	for name, a := range map[string]*fakeAuthz{
+		"super admin": {super: true},
+		"member":      {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -686,9 +717,9 @@ func TestListDoesNotUseACursorOnTheFirstPage(t *testing.T) {
 func TestListReportsAStoreFailureAsInternal(t *testing.T) {
 	t.Parallel()
 
-	for name, a := range map[string]Authorizer{
-		"super admin": &fakeAuthz{super: true},
-		"member":      &fakeAuthz{},
+	for name, a := range map[string]*fakeAuthz{
+		"super admin": {super: true},
+		"member":      {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -1058,7 +1089,7 @@ func TestAddMemberAddsTheUser(t *testing.T) {
 	if s.added[0].TeamID != id || s.added[0].UserID != userID || s.added[0].Role != "member" {
 		t.Errorf("added %+v", s.added[0])
 	}
-	if !slices.Contains(a.asked, authz.ActionMembershipWrite) {
+	if !slices.Contains(a.asked, authz.Action("membership:write")) {
 		t.Errorf("asked for %v, want membership:write", a.asked)
 	}
 }
@@ -1413,7 +1444,7 @@ func TestRemoveMemberRemovesTheUser(t *testing.T) {
 	if len(s.removed) != 1 || s.removed[0].TeamID != id || s.removed[0].UserID != userID {
 		t.Errorf("removed %+v", s.removed)
 	}
-	if !slices.Contains(a.asked, authz.ActionMembershipWrite) {
+	if !slices.Contains(a.asked, authz.Action("membership:write")) {
 		t.Errorf("asked for %v, want membership:write", a.asked)
 	}
 }

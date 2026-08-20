@@ -1,0 +1,78 @@
+{
+  "$comment": [
+    "The permissions this software enforces, the roles it ships with, and which",
+    "permission each route requires. Applied by `brain migrate up`.",
+    "",
+    "This file is the product's defaults, not the last word. The database is the",
+    "source of truth at runtime, so an enterprise creating its own roles and",
+    "granting them from a dashboard needs no deploy. The loader reflects that:",
+    "",
+    "  permissions  upserted. Never deleted — an enterprise may have granted",
+    "               one, and the foreign key would refuse anyway.",
+    "  roles        only the ones named here are touched. A role created by an",
+    "               operator is never modified or removed.",
+    "  routes       replaced wholesale. Routes come from code, so this file is",
+    "               authoritative and a row for a route that no longer exists",
+    "               is stale rather than someone's configuration.",
+    "",
+    "Startup compares the mux against `routes` and refuses to serve when a",
+    "protected route has no entry. A missing mapping is a crash naming the",
+    "route, never a silently open endpoint."
+  ],
+
+  "permissions": [
+    { "name": "agent:write", "description": "Create and change agents" },
+    { "name": "tool:write", "description": "Create and change tools" },
+    { "name": "channel:write", "description": "Connect and configure channels" },
+    { "name": "membership:write", "description": "Add and remove team members" },
+    { "name": "user:read", "description": "Look people up by name or subject" }
+  ],
+
+  "roles": [
+    {
+      "name": "admin",
+      "description": "Full access within a team, including membership",
+      "permissions": [
+        "agent:write",
+        "tool:write",
+        "channel:write",
+        "membership:write",
+        "user:read"
+      ]
+    },
+    {
+      "name": "member",
+      "description": "Create and change agents and tools within a team",
+      "permissions": ["agent:write", "tool:write"]
+    }
+  ],
+
+  "routes": [
+    { "method": "POST", "path": "/teams", "scope": "super_admin" },
+    { "method": "GET", "path": "/teams", "scope": "authenticated" },
+    { "method": "GET", "path": "/teams/{id}", "scope": "member" },
+    { "method": "GET", "path": "/teams/{id}/members", "scope": "member" },
+
+    {
+      "method": "POST",
+      "path": "/teams/{id}/members",
+      "scope": "team",
+      "permission": "membership:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/members/{userID}",
+      "scope": "team",
+      "permission": "membership:write"
+    },
+
+    {
+      "method": "GET",
+      "path": "/users",
+      "scope": "any_team",
+      "permission": "user:read"
+    },
+
+    { "method": "GET", "path": "/whoami", "scope": "authenticated" }
+  ]
+}

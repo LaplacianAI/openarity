@@ -1,11 +1,35 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+// guardFunc lets a test be a RouteGuard without declaring a type per case.
+type guardFunc func(string, http.HandlerFunc) (http.HandlerFunc, error)
+
+func (f guardFunc) Wrap(key string, next http.HandlerFunc) (http.HandlerFunc, error) {
+	return f(key, next)
+}
+
+// openGuard maps every route and changes nothing, so the tests below are about
+// what Register mounts rather than about authorisation.
+func openGuard() RouteGuard {
+	return guardFunc(func(_ string, next http.HandlerFunc) (http.HandlerFunc, error) {
+		return next, nil
+	})
+}
+
+// recordingGuard maps every route and remembers the keys it was asked about.
+func recordingGuard(keys *[]string) RouteGuard {
+	return guardFunc(func(key string, next http.HandlerFunc) (http.HandlerFunc, error) {
+		*keys = append(*keys, key)
+		return next, nil
+	})
+}
 
 // ok records that it ran and returns 200.
 func ok(ran *bool) http.HandlerFunc {
@@ -20,7 +44,7 @@ func serve(t *testing.T, r *Router, method, path string) *httptest.ResponseRecor
 	t.Helper()
 
 	mux := http.NewServeMux()
-	r.Register(mux)
+	r.Register(mux, openGuard())
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, path, nil))
@@ -174,11 +198,11 @@ func TestSeveralRoutersShareAMux(t *testing.T) {
 
 	t1 := NewRouter("/teams")
 	t1.Get("", ok(&teams))
-	t1.Register(mux)
+	t1.Register(mux, openGuard())
 
 	a1 := NewRouter("/agents")
 	a1.Get("", ok(&agents))
-	a1.Register(mux)
+	a1.Register(mux, openGuard())
 
 	for _, path := range []string{"/teams", "/agents"} {
 		rec := httptest.NewRecorder()
@@ -209,11 +233,11 @@ func TestADuplicatePatternPanics(t *testing.T) {
 
 	first := NewRouter("/teams")
 	first.Get("", ok(&a))
-	first.Register(mux)
+	first.Register(mux, openGuard())
 
 	second := NewRouter("/teams")
 	second.Get("", ok(&b))
-	second.Register(mux)
+	second.Register(mux, openGuard())
 }
 
 // A prefix without a leading slash produces a pattern ServeMux reads as a host
@@ -310,7 +334,7 @@ func TestPatternsMatchWhatServeMuxIsGiven(t *testing.T) {
 		r.Get("/{id}", ok(&ran))
 
 		mux := http.NewServeMux()
-		r.Register(mux)
+		r.Register(mux, openGuard())
 
 		pattern := r.Patterns()[0]
 		method, path, found := strings.Cut(pattern, " ")
@@ -383,7 +407,7 @@ func TestAnEmptyRouterMountsNothing(t *testing.T) {
 	t.Parallel()
 
 	mux := http.NewServeMux()
-	NewRouter("/things").Register(mux)
+	NewRouter("/things").Register(mux, openGuard())
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/things", nil))
@@ -391,4 +415,111 @@ func TestAnEmptyRouterMountsNothing(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
+}
+
+// Every protected route goes through the guard, and the key it is asked about
+// is the mounted pattern — prefix included. A guard asked about "" or "/{id}"
+// would look up the wrong row, or none.
+func TestRegisterGuardsEveryProtectedRoute(t *testing.T) {
+	t.Parallel()
+
+	var ran bool
+	r := NewRouter("/teams")
+	r.Get("", ok(&ran))
+	r.Post("", ok(&ran))
+	r.Delete("/{id}/members/{userID}", ok(&ran))
+
+	var keys []string
+	r.Register(http.NewServeMux(), recordingGuard(&keys))
+
+	want := []string{"GET /teams", "POST /teams", "DELETE /teams/{id}/members/{userID}"}
+	if len(keys) != len(want) {
+		t.Fatalf("guard saw %v, want %v", keys, want)
+	}
+	for i := range want {
+		if keys[i] != want[i] {
+			t.Errorf("guard saw %q, want %q", keys[i], want[i])
+		}
+	}
+}
+
+// A public router is mounted outside authentication, so there is no caller to
+// authorise. Sending it through the guard would demand an rbac.json entry for
+// /healthz and refuse to boot without one.
+func TestRegisterDoesNotGuardAPublicRouter(t *testing.T) {
+	t.Parallel()
+
+	var ran bool
+	r := NewPublicRouter("/docs")
+	r.Get("/spec", ok(&ran))
+
+	var keys []string
+	mux := http.NewServeMux()
+	r.Register(mux, recordingGuard(&keys))
+
+	if len(keys) != 0 {
+		t.Errorf("the guard was asked about a public route: %v", keys)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/docs/spec", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 — a public route still has to serve", rec.Code)
+	}
+}
+
+// The handler the mux ends up with is the guard's, not the original. A
+// Register that mounted the unwrapped handler would pass every test about
+// routing and leave every route open.
+func TestTheMuxGetsTheGuardedHandler(t *testing.T) {
+	t.Parallel()
+
+	var ran bool
+	denied := guardFunc(func(_ string, _ http.HandlerFunc) (http.HandlerFunc, error) {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+		}, nil
+	})
+
+	r := NewRouter("/teams")
+	r.Get("", ok(&ran))
+
+	mux := http.NewServeMux()
+	r.Register(mux, denied)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/teams", nil))
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 — the mux got the unguarded handler", rec.Code)
+	}
+	if ran {
+		t.Error("the original handler ran despite the guard refusing")
+	}
+}
+
+// A route the guard cannot map must stop the boot, the same way a duplicate
+// pattern does. Starting anyway would serve it with no check at all, and the
+// only symptom is an endpoint that answers when it should not.
+func TestRegisterPanicsWhenARouteIsUnmapped(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("registering an unmapped route did not panic")
+		}
+		if msg, isString := r.(string); !isString || !strings.Contains(msg, "GET /teams") {
+			t.Errorf("the panic does not name the route: %v", r)
+		}
+	}()
+
+	var ran bool
+	unmapped := guardFunc(func(key string, _ http.HandlerFunc) (http.HandlerFunc, error) {
+		return nil, errors.New("route " + key + " is not in rbac.json")
+	})
+
+	r := NewRouter("/teams")
+	r.Get("", ok(&ran))
+	r.Register(http.NewServeMux(), unmapped)
 }

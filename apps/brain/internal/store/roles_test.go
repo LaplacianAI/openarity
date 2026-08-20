@@ -3,13 +3,15 @@ package store
 import (
 	"slices"
 	"testing"
-
-	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 )
 
-// Roles are data an admin can edit; actions are code. These tests hold that
-// line: the seed has to be right, a role in use cannot vanish, and nothing may
-// grant a role that does not exist.
+// Roles and the permissions they hold are both data an admin can edit. These
+// tests hold what the database still has to guarantee: the shipped roles are
+// right, a role in use cannot vanish, and nothing may grant a role that does
+// not exist.
+//
+// Whether the grants match rbac.json is rbac_test.go's question, not this
+// file's.
 
 // The two seeded roles are the system working at all. A deployment that boots
 // with an empty roles table can grant nobody anything, and the failure is
@@ -38,7 +40,7 @@ func TestSeededPermissions(t *testing.T) {
 	s := queryStore(t)
 
 	for role, want := range map[string][]string{
-		"admin":  {"agent:write", "channel:write", "membership:write", "tool:write"},
+		"admin":  {"agent:write", "channel:write", "membership:write", "tool:write", "user:read"},
 		"member": {"agent:write", "tool:write"},
 	} {
 		got, err := s.ListRolePermissions(t.Context(), role)
@@ -331,77 +333,5 @@ func TestRoleQueriesReportAFailureMidStream(t *testing.T) {
 		t.Errorf("ListRolePermissions returned a partial list as a success: %d rows", len(perms))
 	} else if perms != nil {
 		t.Errorf("ListRolePermissions returned %d rows alongside the error", len(perms))
-	}
-}
-
-// Roles are data and actions are code, so nothing in the database prevents an
-// action string that no code ever checks. A typo in a seed, or an admin
-// inserting "agent:wrote", produces a permission row that reads as a grant and
-// denies everything — silently, because no call site ever asks about it.
-//
-// This is the only thing standing between a data-driven permission model and a
-// permission that does not exist.
-func TestEveryPermissionNamesAKnownAction(t *testing.T) {
-	s := queryStore(t)
-
-	known := map[string]bool{}
-	for _, a := range authz.AllActions {
-		known[string(a)] = true
-	}
-
-	rows, err := s.pool.Query(t.Context(),
-		`SELECT DISTINCT role, action FROM role_permissions ORDER BY role, action`)
-	if err != nil {
-		t.Fatalf("read permissions: %v", err)
-	}
-	defer rows.Close()
-
-	var seen int
-	for rows.Next() {
-		var role, action string
-		if err := rows.Scan(&role, &action); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
-		seen++
-		if !known[action] {
-			t.Errorf("role %q grants %q, which is not an authz.Action — nothing checks it", role, action)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("read permissions: %v", err)
-	}
-	if seen == 0 {
-		t.Error("no permissions in the database — the seed did not run")
-	}
-}
-
-// The other direction. An action the code checks but no role holds is a
-// capability nobody in a fresh deployment has, which is usually a forgotten
-// seed rather than a deliberate choice.
-func TestEveryActionIsGrantedToSomeRole(t *testing.T) {
-	s := queryStore(t)
-
-	granted := map[string]bool{}
-	rows, err := s.pool.Query(t.Context(), `SELECT DISTINCT action FROM role_permissions`)
-	if err != nil {
-		t.Fatalf("read permissions: %v", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var action string
-		if err := rows.Scan(&action); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
-		granted[action] = true
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("read permissions: %v", err)
-	}
-
-	for _, a := range authz.AllActions {
-		if !granted[string(a)] {
-			t.Errorf("%q is checked by the code but held by no role — add it to a seed", a)
-		}
 	}
 }

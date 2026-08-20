@@ -187,8 +187,8 @@ oa users list alice                           # one exact subject, with her id
 
 `add` sends the subject to the brain rather than looking it up, so naming
 somebody needs `membership:write` in that team and nothing more. `oa users list`
-is for the other question — who is there at all — and needs to be an admin of
-some team.
+is for the other question — who is there at all — and needs `user:read` in some
+team.
 
 A list is one page per call. When more remain the response carries a cursor,
 and the table says how to use it:
@@ -237,7 +237,7 @@ Everything except the probes requires `Authorization: Bearer <token>`.
 | `GET /healthz`, `GET /readyz`         | anyone, unauthenticated             |
 | `GET /auth/config`                    | anyone, unauthenticated             |
 | `GET /whoami`                         | any authenticated caller            |
-| `GET /users`                          | `membership:write` in **some** team |
+| `GET /users`                          | `user:read` in **some** team        |
 | `POST /teams`                         | super admins                        |
 | `GET /teams`                          | every team, or your own             |
 | `GET /teams/{id}`                     | members, and super admins           |

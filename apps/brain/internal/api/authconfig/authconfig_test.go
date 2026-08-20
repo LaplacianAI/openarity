@@ -15,6 +15,14 @@ import (
 
 const devToken = "s3cr3t-shared-token"
 
+// openGuard maps every route and changes nothing. The guard's own behaviour is
+// tested in internal/api; these tests are about the handler.
+type openGuard struct{}
+
+func (openGuard) Wrap(_ string, next http.HandlerFunc) (http.HandlerFunc, error) {
+	return next, nil
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -23,7 +31,7 @@ func call(t *testing.T, cfg *config.Config, method, path string) *httptest.Respo
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), cfg).Register(mux)
+	New(discardLogger(), cfg).Register(mux, openGuard{})
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, path, nil))
@@ -258,7 +266,7 @@ func TestTheResponseDoesNotFollowLaterConfigChanges(t *testing.T) {
 	cfg.OIDCIssuer = "https://later.example.com/"
 
 	mux := http.NewServeMux()
-	router.Register(mux)
+	router.Register(mux, openGuard{})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/auth/config", nil))
 

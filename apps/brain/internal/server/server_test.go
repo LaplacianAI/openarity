@@ -94,6 +94,15 @@ func (staticResolver) Resolve(_ context.Context, p *auth.Principal) (*auth.User,
 	return &auth.User{ID: uuid.New(), Issuer: p.Issuer, Subject: p.Subject}, nil
 }
 
+// openGuard maps every route and changes nothing. What the guard decides is
+// tested in internal/api; these tests are about what New mounts and in which
+// order the middleware runs.
+type openGuard struct{}
+
+func (openGuard) Wrap(_ string, next http.HandlerFunc) (http.HandlerFunc, error) {
+	return next, nil
+}
+
 // deps is the usual set: one database check, a verifier that accepts
 // testToken, and a resolver that always succeeds.
 func deps(db Pinger) Deps {
@@ -103,7 +112,7 @@ func deps(db Pinger) Deps {
 // depsWith is deps for the tests that care about more than one dependency.
 // Keeping deps(db) as it was means no existing test has to change shape.
 func depsWith(checks ...Check) Deps {
-	return Deps{Checks: checks, Verifier: testVerifier(), Resolver: staticResolver{}}
+	return Deps{Checks: checks, Verifier: testVerifier(), Resolver: staticResolver{}, Guard: openGuard{}}
 }
 
 // Swapping these two binds puts the API on a public port and the webhook

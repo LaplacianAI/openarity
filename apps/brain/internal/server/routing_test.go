@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 )
 
@@ -19,8 +20,8 @@ type stubRouter struct {
 
 func (r stubRouter) Public() bool { return r.public }
 
-func (r stubRouter) Register(mux *http.ServeMux) {
-	mux.HandleFunc(r.pattern, func(w http.ResponseWriter, req *http.Request) {
+func (r stubRouter) Register(mux *http.ServeMux, g api.RouteGuard) {
+	h := func(w http.ResponseWriter, req *http.Request) {
 		if r.ran != nil {
 			*r.ran = true
 		}
@@ -29,7 +30,19 @@ func (r stubRouter) Register(mux *http.ServeMux) {
 			*r.sawUser = u
 		}
 		w.WriteHeader(http.StatusOK)
-	})
+	}
+
+	// The same split apiHandler makes: a public router is outside
+	// authentication, so there is no caller to authorise.
+	if !r.public {
+		guarded, err := g.Wrap(r.pattern, h)
+		if err != nil {
+			panic(err)
+		}
+		h = guarded
+	}
+
+	mux.HandleFunc(r.pattern, h)
 }
 
 // A router that is accepted and never mounted is the failure this whole seam

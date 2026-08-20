@@ -11,6 +11,10 @@ type route struct {
 	handler http.HandlerFunc
 }
 
+type RouteGuard interface {
+	Wrap(key string, next http.HandlerFunc) (http.HandlerFunc, error)
+}
+
 type Router struct {
 	prefix string
 	routes []route
@@ -45,10 +49,14 @@ func (r *Router) path(rt route) string {
 	return path
 }
 
+func (r *Router) pattern(rt route) string {
+	return rt.method + " " + r.path(rt)
+}
+
 func (r *Router) Patterns() []string {
 	out := make([]string, len(r.routes))
 	for i, rt := range r.routes {
-		out[i] = rt.method + " " + r.path(rt)
+		out[i] = r.pattern(rt)
 	}
 	return out
 }
@@ -63,8 +71,19 @@ func (r *Router) handle(method, pattern string, h http.HandlerFunc) {
 	r.routes = append(r.routes, route{method: method, pattern: pattern, handler: h})
 }
 
-func (r *Router) Register(mux *http.ServeMux) {
+func (r *Router) Register(mux *http.ServeMux, g RouteGuard) {
 	for _, rt := range r.routes {
-		mux.HandleFunc(rt.method+" "+r.path(rt), rt.handler)
+		pattern := r.pattern(rt)
+		handler := rt.handler
+
+		if !r.public {
+			guarded, err := g.Wrap(pattern, handler)
+			if err != nil {
+				panic("api: " + err.Error())
+			}
+			handler = guarded
+		}
+
+		mux.HandleFunc(pattern, handler)
 	}
 }

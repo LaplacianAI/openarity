@@ -30,6 +30,20 @@ func liveDSN(t *testing.T) string {
 }
 
 // waitForHealthz blocks until the listener answers 200, or fails the test.
+// mustMigrate brings the schema up before a serve test. serve reads the route
+// mapping at startup and refuses without one, so a test that shares this
+// database with the migrate-down test would otherwise fail for a reason that
+// has nothing to do with what it is checking. Production has the same
+// requirement: the migrate Job completes before the Deployment rolls.
+func mustMigrate(t *testing.T) {
+	t.Helper()
+
+	var buf syncBuffer
+	if err := run(t.Context(), &buf, []string{"migrate", "up"}); err != nil {
+		t.Fatalf("migrate up: %v (%s)", err, buf.String())
+	}
+}
+
 func waitForHealthz(t *testing.T, addr string) {
 	t.Helper()
 
@@ -176,6 +190,8 @@ func TestRunServesWithARealDatabase(t *testing.T) {
 	// serve refuses to start with no way to authenticate anyone, so the
 	// development token stands in for an identity provider here.
 	t.Setenv("OPENARITY_DEV_TOKEN", "integration-token")
+
+	mustMigrate(t)
 
 	ctx, cancel := context.WithCancel(t.Context())
 
@@ -347,6 +363,8 @@ func TestReadinessFollowsTheSecretStore(t *testing.T) {
 	t.Setenv("OPENARITY_SECRETS_ADDR", baoAddr)
 	t.Setenv("OPENARITY_SECRETS_APPROLE_ID", "role")
 	t.Setenv("OPENARITY_SECRETS_APPROLE_SECRET", "secret-id")
+
+	mustMigrate(t)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

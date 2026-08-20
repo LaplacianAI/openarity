@@ -107,8 +107,8 @@ func newListCmd(opts *cli.Options) *cobra.Command {
   Resolve against the narrowest list that can answer. A team goes through
   `GET /teams`, which every member may already read; a member goes through that
   team's own `GET /teams/{id}/members`, never `GET /users` — the directory
-  needs `membership:write` somewhere, a far larger permission to require for
-  "take this person out of my team".
+  needs `user:read` somewhere, a far larger permission to require for "take
+  this person out of my team".
 
   Better still, do not resolve at all. `oa teams members add` sends the subject
   in the request body and the brain resolves it while adding, so naming

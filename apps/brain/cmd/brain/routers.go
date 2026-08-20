@@ -18,7 +18,7 @@ func newRouters(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, a
 	routers := []server.Router{
 		whoami.New(logger),
 		teams.New(logger, dbStore, authorizer),
-		users.New(logger, dbStore, authorizer),
+		users.New(logger, dbStore),
 		authconfig.New(logger, cfg),
 	}
 

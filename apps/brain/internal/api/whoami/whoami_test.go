@@ -14,6 +14,14 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 )
 
+// openGuard maps every route and changes nothing. The guard's own behaviour is
+// tested in internal/api; these tests are about the handler.
+type openGuard struct{}
+
+func (openGuard) Wrap(_ string, next http.HandlerFunc) (http.HandlerFunc, error) {
+	return next, nil
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -26,7 +34,7 @@ func call(t *testing.T, method string, p *auth.Principal, u *auth.User) *httptes
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger()).Register(mux)
+	New(discardLogger()).Register(mux, openGuard{})
 
 	req := httptest.NewRequestWithContext(t.Context(), method, "/whoami", nil)
 	if p != nil {
