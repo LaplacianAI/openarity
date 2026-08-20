@@ -10,6 +10,11 @@ import (
 	"github.com/google/uuid"
 )
 
+type Permission struct {
+	Name        string
+	Description string
+}
+
 type Role struct {
 	Name        string
 	Description string
@@ -18,6 +23,13 @@ type Role struct {
 type RolePermission struct {
 	Role   string
 	Action string
+}
+
+type RoutePermission struct {
+	Method     string
+	Path       string
+	Permission *string
+	Scope      string
 }
 
 type Team struct {

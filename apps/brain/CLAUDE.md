@@ -31,10 +31,15 @@ break it, explains, and reviews.**
   wrapping the response writer, chain order, and wiring into `server.New`. Use
   it every time; a middleware that is built and never applied passes every
   linter and every test except the wiring one.
+- **`authorise-a-route`** — anything about who may call what: adding a
+  permission, choosing a route's scope, adding a role, or working out why a
+  request came back 403 or 404. Covers the five scopes, `rbac.json`, what is
+  live versus what needs a restart, and the checks that fail the boot. Read it
+  before adding a route, and before touching `internal/authz`.
 - **`add-route`** — every API endpoint, and every new domain package under
   `internal/api`. Covers where the route lives, the `Router` and its prefix,
   per-package dependencies, the response contract, which status each failure
-  gets, where the `Can` check goes, and the five tests a route owes. Use it
+  gets, and the five tests a route owes. Use it
   every time; a route registered on the wrong mux passes every test written
   about its body.
 - **`write-migration`** — every schema change. Covers the goose file format,
@@ -73,13 +78,15 @@ apps/brain/
   internal/server/     the two listeners: build, run, shut down; mounts Routers
   internal/middleware/ request logging, authentication, user resolution
   internal/auth/       token in, Principal out — no database
-  internal/authz/      Can, and the closed vocabulary of actions
+  internal/authz/      Can, CanInAnyTeam, the five scopes, the route table
   internal/api/        Router, WriteJSON, DecodeJSON, Page
+    authorize.go       the Guard: one check per route, chosen by its scope
     <domain>/          one package per domain, each its own Router
       <domain>.go      handler, New, the handlers
       schema.go        request and response structs — the wire contract
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary
+    rbac.json          the permissions, roles and route mappings we ship
   Makefile             build and code quality targets
   .golangci.yml        linters and formatters
 ```
@@ -254,19 +261,38 @@ reinstalled.
 - **A write resolves the name it was given; it does not send the caller to a
   directory first.** `POST /teams/{id}/members` takes `user_id` or `subject`,
   because requiring the id would mean requiring `GET /users`, which needs
-  `membership:write` *somewhere* — a much larger authority than adding one
-  person you can already name. The question to ask of any reference in a
+  `user:read` *somewhere* — a much larger authority than adding one person you
+  can already name. The question to ask of any reference in a
   request body is what permission the caller needs to produce it.
+- **Permissions are data; scopes are code.** Adding a permission, creating a
+  role, or pointing a route at a different permission is rows, not a deploy —
+  which is what lets an enterprise compose roles in a dashboard. Adding a
+  *scope* is code, because each one is a different check.
+  `internal/store/rbac.json` is the product's default catalogue, applied by
+  `brain migrate up`: permissions are upserted and never deleted, only the
+  roles named in the file are touched, and routes are replaced wholesale.
+  `role_permissions.action` and `route_permissions.permission` are foreign keys
+  onto `permissions`, so a typo is a rejected write rather than a grant that
+  silently means nothing.
+- **The guard wraps every route; it is never a per-route decorator.**
+  `Router.Register` takes an `api.RouteGuard` and there is no way to mount a
+  handler without it. A decorator can be forgotten, and a forgotten one is an
+  open endpoint that passes every test written about its body. A protected
+  route with no row in `route_permissions` panics at startup naming the route;
+  rows for routes nothing serves fail `serve` with the same specificity.
 - **`Can` for a team, `CanInAnyTeam` for a route with no team in it.** The
   second is strictly weaker — an admin of one team passes it — so a
   team-scoped route using it would turn one admin role into an admin role
-  everywhere. `GET /users` is the only caller and is meant to stay that way; a
-  second one is a signal something is being asked the wrong way round.
-- **Roles are rows, actions are code.** `roles` and `role_permissions` are
-  data an administrator edits; `authz.Action` is a closed vocabulary with a
-  test tying the constants to `AllActions`. Note that `role_permissions.action`
-  has no foreign key behind it, so a typo there grants nothing and says
-  nothing — the Go constants are the only thing holding the vocabulary.
+  everywhere. This is now a property of the *scope* rather than of the calling
+  package: `any_team` on a route with `{id}` in its path is refused by a test
+  in `internal/store`.
+- **`member` is not `team` with a permission everyone holds.** Belonging is a
+  fact and cannot be revoked or forgotten; a grant is configuration and can be
+  both. Collapsing them would make "a member who cannot open their own team"
+  reachable by omitting one line from a role in a dashboard. `member` also
+  costs no query — it reads memberships already on the request — and denies
+  with 404 rather than 403, because a team you do not belong to should not be
+  confirmed to exist.
 - **A subject is not unique.** `users` is unique on `(issuer, subject)`, so
   anything keyed on subject alone can match more than one person and must
   answer rather than pick. With one provider configured it never fires, which

@@ -172,8 +172,8 @@ unreachable from here by construction. The only thing crossing the boundary is
 - **Resolve against the narrowest list that can answer.** A team resolves
   through `GET /teams`, which every member may read. A member resolves through
   that team's own `GET /teams/{id}/members`, not `GET /users` — the directory
-  needs `membership:write` somewhere, which is a far larger permission to
-  require for "take this person out of my team".
+  needs `user:read` somewhere, which is a far larger permission to require for
+  "take this person out of my team".
 - **Adding somebody resolves nothing.** The subject goes into the request body
   and the brain resolves it while adding, so `oa teams members add` needs no
   directory permission at all. `ResolveUser` existed for one afternoon and was

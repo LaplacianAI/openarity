@@ -48,7 +48,14 @@ func (s *Store) Migrate(ctx context.Context) (int, error) {
 	}
 
 	applied, err := provider.Up(ctx)
-	return len(applied), err
+	if err != nil {
+		return len(applied), err
+	}
+
+	if err := s.LoadRBAC(ctx); err != nil {
+		return len(applied), fmt.Errorf("load rbac: %w", err)
+	}
+	return len(applied), nil
 }
 
 func (s *Store) Rollback(ctx context.Context) error {

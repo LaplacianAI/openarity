@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/middleware"
@@ -25,7 +26,7 @@ type Pinger interface {
 }
 
 type Router interface {
-	Register(mux *http.ServeMux)
+	Register(mux *http.ServeMux, g api.RouteGuard)
 	Public() bool
 }
 
@@ -33,6 +34,7 @@ type Deps struct {
 	Checks   []Check
 	Verifier auth.Verifier
 	Resolver middleware.Resolver
+	Guard    api.RouteGuard
 }
 
 type Check struct {
@@ -46,6 +48,7 @@ type Server struct {
 	logger   *slog.Logger
 	verifier auth.Verifier
 	resolver middleware.Resolver
+	guard    api.RouteGuard
 	routers  []Router
 	checks   []Check
 }
@@ -54,11 +57,15 @@ func New(cfg *config.Config, logger *slog.Logger, deps Deps, routers ...Router) 
 	if len(deps.Checks) == 0 {
 		panic("server.New: Deps.Checks is empty; readiness would always pass")
 	}
+	if deps.Guard == nil {
+		panic("server.New: Deps.Guard is nil; Register would panic on the first route")
+	}
 	s := &Server{
 		logger:   logger,
 		checks:   deps.Checks,
 		verifier: deps.Verifier,
 		resolver: deps.Resolver,
+		guard:    deps.Guard,
 		routers:  routers,
 	}
 	logRequests := middleware.LogRequests(logger)

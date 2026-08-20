@@ -12,6 +12,14 @@ import (
 	apispec "github.com/LaplacianAI/openarity/apps/brain/api"
 )
 
+// openGuard maps every route and changes nothing. The guard's own behaviour is
+// tested in internal/api; these tests are about the handler.
+type openGuard struct{}
+
+func (openGuard) Wrap(_ string, next http.HandlerFunc) (http.HandlerFunc, error) {
+	return next, nil
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -20,7 +28,7 @@ func call(t *testing.T, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger()).Register(mux)
+	New(discardLogger()).Register(mux, openGuard{})
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, path, nil))

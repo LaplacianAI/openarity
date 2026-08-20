@@ -5,7 +5,15 @@ description: Add an HTTP middleware to the brain — request logging, authentica
 
 # Add a middleware to `internal/middleware`
 
-Everything that wraps an `http.Handler` lives in one package. A middleware is
+Everything that wraps an `http.Handler` lives in one package.
+
+**One exception, and it is deliberate: the authorisation guard.** It lives in
+`internal/api` and is applied by `Router.Register`, not by `server.New`,
+because the check a route needs depends on *which route it is* and the `Router`
+is the only thing that knows a handler's method and pattern. Wrapping there
+also removes the failure step 4 below warns about — `Register` will not compile
+without a guard, so it cannot be built and never applied. See the
+`authorise-a-route` skill. Nothing else gets this treatment. A middleware is
 not done until it is wired into `server.New` and a test drives the wired
 object — the failure mode here is silent, and no linter catches it.
 

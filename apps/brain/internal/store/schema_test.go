@@ -19,6 +19,10 @@ const (
 	checkViolation      = "23514"
 	foreignKeyViolation = "23503"
 	notNullViolation    = "23502"
+	// ON DELETE RESTRICT raises its own code, not foreign_key_violation.
+	// NO ACTION would give 23503 — the difference is that RESTRICT checks
+	// immediately rather than at the end of the statement.
+	restrictViolation = "23001"
 )
 
 // insertUser writes a user directly, bypassing any query layer, and returns

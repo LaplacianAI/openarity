@@ -1,14 +1,19 @@
 ---
 name: add-route
-description: Add an HTTP route to the brain's API — a new endpoint on an existing domain, or a whole new domain package. Covers where the route lives, the Router, per-package dependencies, the response contract, which status code each failure gets, where the authorisation check goes, whether a request body should reference another resource by id or by name, and the tests every route owes. Use for every endpoint.
+description: Add an HTTP route to the brain's API — a new endpoint on an existing domain, or a whole new domain package. Covers where the route lives, the Router, per-package dependencies, the response contract, which status code each failure gets, mapping the route in rbac.json, whether a request body should reference another resource by id or by name, and the tests every route owes. Use for every endpoint.
 ---
 
 # Add a route to the API
 
 Every API route lives in a domain package under `internal/api/`, is mounted by
-`internal/server`, and runs behind authentication and user resolution. A route
-is not done until it has an authorisation check, a response contract, and the
-five tests at the bottom.
+`internal/server`, and runs behind authentication, user resolution and the
+authorisation guard. A route is not done until it is mapped in `rbac.json`, has
+a response contract, and has the five tests at the bottom.
+
+**The handler contains no authorisation check.** Which check runs is a row, and
+the guard applies it before the handler is reached — a route with no row will
+not start. Read the `authorise-a-route` skill for the scopes and the file; this
+skill assumes you have chosen one.
 
 ## Where it goes
 
@@ -46,21 +51,15 @@ type Store interface {
 	GetTeam(ctx context.Context, id uuid.UUID) (db.Team, error)
 }
 
-// Authorizer is the authorisation question this package asks — nothing more.
-type Authorizer interface {
-	IsSuperAdmin(u *auth.User) bool
-}
-
 // handler is unexported and holds exactly what this package needs. A missing
 // dependency is then a compile error rather than a nil at request time.
 type handler struct {
 	logger *slog.Logger
 	store  Store
-	authz  Authorizer
 }
 
-func New(logger *slog.Logger, s Store, a Authorizer) *api.Router {
-	h := &handler{logger: logger, store: s, authz: a}
+func New(logger *slog.Logger, s Store) *api.Router {
+	h := &handler{logger: logger, store: s}
 
 	r := api.NewRouter("/teams")
 	r.Post("", h.create)
@@ -69,6 +68,16 @@ func New(logger *slog.Logger, s Store, a Authorizer) *api.Router {
 	return r
 }
 ```
+
+Most domain packages take **no authorizer at all** — `users` does not import
+`internal/authz`. Take one only when a handler decides *what to return* rather
+than *whether to run*: `teams` declares a one-method `SuperAdmins` interface
+because `GET /teams` shows every team to a super admin and only your own to
+everyone else. That is a content decision, not an access check.
+
+Name such an interface for what it answers, not `Authorizer`. `api.Authorizer`
+is the guard's, and it is the only one that decides access — a second type
+called `Authorizer` makes every mention of the word ambiguous.
 
 - **`New` returns `*api.Router`**, which satisfies `server.Router`. Nothing else
   is exported.
@@ -169,42 +178,51 @@ A listing whose size is bounded by something other than the table — a user's
 own memberships, say — can answer `api.Page[T]{Items: items}` with no cursor.
 Say why in a comment; the next reader will assume it was forgotten.
 
-## Step 3 — the authorisation check
+## Step 3 — map it in rbac.json
 
-Every route that acts on a team calls `Can` before doing anything:
+The handler has no authorisation code in it. Add a row instead:
 
-```go
-allowed, err := h.authz.Can(r.Context(), user, authz.ActionAgentWrite,
-	authz.Resource{TeamID: teamID})
-if err != nil {
-	h.logger.Error("authorisation check failed", "subject", user.Subject, "error", err)
-	http.Error(w, "internal server error", http.StatusInternalServerError)
-	return
-}
-if !allowed {
-	http.Error(w, "forbidden", http.StatusForbidden)
-	return
-}
+```json
+{ "method": "POST", "path": "/teams/{id}/agents",
+  "scope": "team", "permission": "agent:write" }
 ```
 
-- **`Can` is the only place a role is interpreted.** Never `if role == "admin"`
-  in a handler — that is the line that makes swapping the authorisation backend
-  an audit of every file.
-- **`CanInAnyTeam` is for a route with no team in it, and nothing else.** It
-  asks whether the caller holds an action *anywhere*, so it is strictly weaker
-  than `Can`: an admin of one team passes it. Using it on a team-scoped route
-  would make one admin role an admin role everywhere. `GET /users` is the only
-  caller, because somebody looking a person up has no team in mind yet.
+`path` is the mux pattern with the prefix, exactly as `Router.Patterns()`
+reports it. A route with no row **panics at startup** naming the route, and a
+row for a route nothing serves fails `serve` — so this step cannot be
+forgotten, only got wrong.
 
-  Declare whichever one the package uses in its own `Authorizer` interface and
-  not both — `internal/api/users` can only reach `CanInAnyTeam`, so the rule is
-  enforced by the compiler rather than by this paragraph.
-- **The error and the denial are different.** A failed permission read is
-  *unknown*, not *denied*: 500, not 403. Collapsing them makes a database blip
-  look like a permissions problem.
-- **Actions are constants in `internal/authz`.** A new one goes in `action.go`,
-  in `AllActions`, and in a seed migration — a test fails if any of the three is
-  missed.
+Choosing the scope, adding a permission, and what the loader touches are the
+`authorise-a-route` skill. The short version:
+
+| Path has `{id}`? | Needs a capability? | Scope |
+| --- | --- | --- |
+| yes | yes | `team` |
+| yes | no | `member` (denies with 404) |
+| no | yes | `any_team` |
+| no | no | `authenticated` |
+
+`any_team` on a route with `{id}` in it is the mistake to watch for — an admin
+of one team passes it, so they reach every team.
+
+Then pin it in `TestTheRouteMappingIsWhatWeIntend`
+(`internal/store/rbac_test.go`), which fails when a route is added without a
+decision recorded here.
+
+In the handler, read what the guard produced:
+
+```go
+u := api.Caller(r)                       // the guard answered 500 if absent
+id, ok := api.TeamFrom(r.Context())      // member and team scopes only
+```
+
+- **Never re-check what the scope checked.** A second `Can` is a query for an
+  answer already obtained, and the two can disagree after a refactor.
+- **Never `if role == "admin"`.** That is the line that makes swapping the
+  authorisation backend an audit of every file.
+- **Never parse `{id}` yourself** on a `member` or `team` route. The guard
+  parsed it to run the check; parsing again is a chance to get a different
+  answer than the one that was authorised.
 
 ## Step 3b — a write that references another resource
 
@@ -214,10 +232,10 @@ the id.**
 
 `POST /teams/{id}/members` takes `user_id` **or** `subject`. It accepts the
 subject because the alternative was making every caller read `GET /users`
-first, and that endpoint needs `membership:write` somewhere — a far larger
-authority than "add the person I can already name". Resolving it server-side
-leaves `membership:write` in the named team as the only thing checked, which is
-the authority actually being exercised.
+first, and that endpoint needs `user:read` somewhere — a far larger authority
+than "add the person I can already name". Resolving it server-side leaves
+`membership:write` in the named team as the only thing checked, which is the
+authority actually being exercised.
 
 Four rules when you do this:
 
@@ -260,10 +278,11 @@ already knows the resource exists.
 
 ```go
 // cmd/brain/routers.go
-func newRouters(logger *slog.Logger, dbStore *store.Store, a *authz.Authorizer) []server.Router {
+func newRouters(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, a *authz.Authorizer) []server.Router {
 	return []server.Router{
 		whoami.New(logger),
 		teams.New(logger, dbStore, a),
+		users.New(logger, dbStore),
 	}
 }
 ```
@@ -276,6 +295,11 @@ the back door.
 Never register routes from `init()`. Dependencies cannot be passed, the set
 becomes import-order dependent, and a blank import silently changes what the
 server serves.
+
+A router that must be reachable **without a token** — `docs`, `authconfig` —
+uses `api.NewPublicRouter`. Its routes skip the guard entirely and must **not**
+appear in `rbac.json`: they would be reported as mapped-but-unserved and stop
+the boot.
 
 ## Step 5b — describe it in the spec
 
@@ -296,10 +320,21 @@ the pattern is under test too:
 ```text
 1  the happy path            status, and every field of the body
 2  unauthorised              no token → 401, and the handler did not run
-3  forbidden                 a caller without the action → 403
+3  forbidden                 a caller the route's scope refuses, driving the
+                             real guard — not an open one
 4  the wrong method          POST on a GET route does not answer
 5  only contracted fields    unmarshal to map[string]any and reject extras
 ```
+
+Test 3 builds the guard from the scopes `rbac.json` gives this package's
+routes, so the composition under test is the one production uses:
+
+```go
+New(logger, s, a).Register(mux, api.NewGuard(teamRoutes(t), a, logger))
+```
+
+An open guard is right only where the package has nothing to say about
+authorisation. Where the tests assert 403s and 404s, drive the real thing.
 
 Test 5 is the one people skip and the one that catches a leak: it fails when a
 struct grows a field, rather than when a client notices.
@@ -331,12 +366,13 @@ Break each guard and confirm the matching test fails, then restore:
 
 | Break | Should fail |
 | --- | --- |
-| delete the `Can` check | the forbidden test |
+| change the route's scope to `authenticated` in the test's route table | the forbidden test |
+| change a `member` route to `team` | the 404-not-403 test |
 | return 403 instead of 500 on a read error | the read-failure test |
 | register the route on the public mux | the unauthorised test |
 | add a field to the response struct | the contracted-fields test |
 | change `r.Get` to `r.Post` | the wrong-method test |
-| resolve the reference before the `Can` check | the probe test |
+| resolve the reference before reading `api.Caller` | the probe test |
 | prefer the id when both forms are given | the exactly-one test |
 | return the first row instead of 409 | the ambiguity test |
 
@@ -349,6 +385,9 @@ the block.
 The public-mux row is worth doing once per domain. A route mounted outside the
 authenticated mux passes every test written about its body.
 
+Deleting the route's row from `rbac.json` is not a useful mutation: the process
+will not start, which is the design. Confirm it once, then move on.
+
 ## Things that have gone wrong here
 
 - **`Router` prefix joining.** `NewRouter("")` once rewrote the prefix to `"/"`,
@@ -358,6 +397,10 @@ authenticated mux passes every test written about its body.
   routing conflict should fail the boot, not leave one route shadowed.
 - **`httptest.ResponseRecorder.Header()` is the live map**, so a header set too
   late to reach the wire still appears there. Assert on `rec.Result().Header`.
+- **A domain package that authorised itself.** `users` and `teams` each carried
+  their own `Can` call and their own `Authorizer` interface, which meant every
+  new route had to remember to add one. Both are gone; the guard does it, and
+  `Register` will not mount a route without it.
 - **`Resource.Kind` was declared and never used.** A discriminator nothing sets
   makes the first `switch` on it treat every existing call site as the empty
   case. Do not add a field before it has a reader.

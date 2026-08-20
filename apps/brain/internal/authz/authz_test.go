@@ -11,6 +11,21 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 )
 
+// The vocabulary lives in rbac.json now, not in Go, so these tests name the
+// permissions they use rather than importing constants. Any string is a valid
+// Action here — what makes one real is a row in permissions, and that is the
+// store package's question, not this one's.
+const (
+	agentWrite      Action = "agent:write"
+	membershipWrite Action = "membership:write"
+)
+
+// The five the product ships. Kept as a fixture so a test can sweep the whole
+// vocabulary without the vocabulary having to be code.
+var testActions = []Action{
+	agentWrite, "tool:write", "channel:write", membershipWrite, "user:read",
+}
+
 // fakePermissions answers from a map and counts reads, so a test can prove
 // both what Can decided and how much it asked.
 type fakePermissions struct {
@@ -69,7 +84,7 @@ func TestCanAllowsAGrantedAction(t *testing.T) {
 	team := uuid.New()
 	a := New(seeded(), nil)
 
-	if !allowed(t, a, userIn(team, "member"), ActionAgentWrite, Resource{TeamID: team}) {
+	if !allowed(t, a, userIn(team, "member"), agentWrite, Resource{TeamID: team}) {
 		t.Error("a member was refused agent:write in their own team")
 	}
 }
@@ -80,7 +95,7 @@ func TestCanDeniesAnActionTheRoleDoesNotHave(t *testing.T) {
 	team := uuid.New()
 	a := New(seeded(), nil)
 
-	if allowed(t, a, userIn(team, "member"), ActionMembershipWrite, Resource{TeamID: team}) {
+	if allowed(t, a, userIn(team, "member"), membershipWrite, Resource{TeamID: team}) {
 		t.Error("a member was allowed membership:write")
 	}
 }
@@ -93,7 +108,7 @@ func TestCanDeniesAUserWithNoMemberships(t *testing.T) {
 	a := New(seeded(), nil)
 	fresh := &auth.User{ID: uuid.New(), Subject: "newcomer"}
 
-	for _, action := range AllActions {
+	for _, action := range testActions {
 		if allowed(t, a, fresh, action, Resource{TeamID: uuid.New()}) {
 			t.Errorf("a user with no memberships was allowed %q", action)
 		}
@@ -108,7 +123,7 @@ func TestCanDeniesInATeamTheUserIsNotIn(t *testing.T) {
 	mine, theirs := uuid.New(), uuid.New()
 	a := New(seeded(), nil)
 
-	if allowed(t, a, userIn(mine, "admin"), ActionAgentWrite, Resource{TeamID: theirs}) {
+	if allowed(t, a, userIn(mine, "admin"), agentWrite, Resource{TeamID: theirs}) {
 		t.Error("an admin of one team was allowed to act on another")
 	}
 }
@@ -129,10 +144,10 @@ func TestCanUsesTheRoleForTheTeamBeingActedOn(t *testing.T) {
 	}
 	a := New(seeded(), nil)
 
-	if !allowed(t, a, u, ActionMembershipWrite, Resource{TeamID: alpha}) {
+	if !allowed(t, a, u, membershipWrite, Resource{TeamID: alpha}) {
 		t.Error("admin of alpha was refused membership:write in alpha")
 	}
-	if allowed(t, a, u, ActionMembershipWrite, Resource{TeamID: bravo}) {
+	if allowed(t, a, u, membershipWrite, Resource{TeamID: bravo}) {
 		t.Error("admin of alpha was allowed membership:write in bravo, where they are a member")
 	}
 }
@@ -146,7 +161,7 @@ func TestCanAllowsASuperAdminWithNoMemberships(t *testing.T) {
 	a := New(seeded(), []string{"boss"})
 	boss := &auth.User{ID: uuid.New(), Subject: "boss"}
 
-	for _, action := range AllActions {
+	for _, action := range testActions {
 		if !allowed(t, a, boss, action, Resource{TeamID: uuid.New()}) {
 			t.Errorf("a super admin was refused %q", action)
 		}
@@ -161,7 +176,7 @@ func TestCanDoesNotReadPermissionsForASuperAdmin(t *testing.T) {
 	perms := seeded()
 	a := New(perms, []string{"boss"})
 
-	allowed(t, a, &auth.User{Subject: "boss"}, ActionAgentWrite, Resource{TeamID: uuid.New()})
+	allowed(t, a, &auth.User{Subject: "boss"}, agentWrite, Resource{TeamID: uuid.New()})
 
 	if perms.calls != 0 {
 		t.Errorf("the permission source was read %d times for a super admin", perms.calls)
@@ -178,7 +193,7 @@ func TestSuperAdminMatchingIsExact(t *testing.T) {
 
 	for _, subject := range []string{"bos", "bossy", "BOSS", "Boss", " boss", "boss ", ""} {
 		u := &auth.User{ID: uuid.New(), Subject: subject}
-		if allowed(t, a, u, ActionAgentWrite, Resource{TeamID: uuid.New()}) {
+		if allowed(t, a, u, agentWrite, Resource{TeamID: uuid.New()}) {
 			t.Errorf("subject %q was treated as a super admin", subject)
 		}
 	}
@@ -193,7 +208,7 @@ func TestNoSuperAdminsMeansNobodyBypasses(t *testing.T) {
 		a := New(seeded(), list)
 		u := &auth.User{ID: uuid.New(), Subject: "anyone"}
 
-		if allowed(t, a, u, ActionAgentWrite, Resource{TeamID: uuid.New()}) {
+		if allowed(t, a, u, agentWrite, Resource{TeamID: uuid.New()}) {
 			t.Errorf("with super admins %v, an ordinary user bypassed authorisation", list)
 		}
 	}
@@ -210,7 +225,7 @@ func TestCanReportsAPermissionReadFailureAsAnError(t *testing.T) {
 	a := New(&fakePermissions{err: down}, nil)
 	team := uuid.New()
 
-	ok, err := a.Can(t.Context(), userIn(team, "admin"), ActionAgentWrite, Resource{TeamID: team})
+	ok, err := a.Can(t.Context(), userIn(team, "admin"), agentWrite, Resource{TeamID: team})
 	if err == nil {
 		t.Fatal("a failed permission read was reported as a plain denial")
 	}
@@ -230,7 +245,7 @@ func TestPermissionErrorNamesTheRole(t *testing.T) {
 	a := New(&fakePermissions{err: errors.New("boom")}, nil)
 	team := uuid.New()
 
-	_, err := a.Can(t.Context(), userIn(team, "release-manager"), ActionAgentWrite, Resource{TeamID: team})
+	_, err := a.Can(t.Context(), userIn(team, "release-manager"), agentWrite, Resource{TeamID: team})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -248,7 +263,7 @@ func TestCanDoesNotReadPermissionsWhenTheUserIsNotInTheTeam(t *testing.T) {
 	perms := seeded()
 	a := New(perms, nil)
 
-	allowed(t, a, userIn(uuid.New(), "admin"), ActionAgentWrite, Resource{TeamID: uuid.New()})
+	allowed(t, a, userIn(uuid.New(), "admin"), agentWrite, Resource{TeamID: uuid.New()})
 
 	if perms.calls != 0 {
 		t.Errorf("the permission source was read %d times for a user outside the team", perms.calls)
@@ -262,7 +277,7 @@ func TestCanReadsPermissionsOncePerCall(t *testing.T) {
 	a := New(perms, nil)
 	team := uuid.New()
 
-	allowed(t, a, userIn(team, "admin"), ActionAgentWrite, Resource{TeamID: team})
+	allowed(t, a, userIn(team, "admin"), agentWrite, Resource{TeamID: team})
 
 	if perms.calls != 1 {
 		t.Errorf("the permission source was read %d times, want 1", perms.calls)
@@ -280,7 +295,7 @@ func TestCanDeniesARoleWithNoPermissions(t *testing.T) {
 	team := uuid.New()
 	a := New(seeded(), nil)
 
-	for _, action := range AllActions {
+	for _, action := range testActions {
 		if allowed(t, a, userIn(team, "release-manager"), action, Resource{TeamID: team}) {
 			t.Errorf("a role with no permissions allowed %q", action)
 		}
@@ -299,7 +314,7 @@ func TestCanIgnoresPermissionsThatAreNotActions(t *testing.T) {
 	}}, nil)
 
 	u := userIn(team, "typist")
-	for _, action := range AllActions {
+	for _, action := range testActions {
 		if allowed(t, a, u, action, Resource{TeamID: team}) {
 			t.Errorf("a permission row that is not an action allowed %q", action)
 		}
@@ -314,7 +329,7 @@ func TestCanDeniesANilUser(t *testing.T) {
 	perms := seeded()
 	a := New(perms, []string{""})
 
-	ok, err := a.Can(t.Context(), nil, ActionAgentWrite, Resource{TeamID: uuid.New()})
+	ok, err := a.Can(t.Context(), nil, agentWrite, Resource{TeamID: uuid.New()})
 	if err != nil {
 		t.Fatalf("Can returned an error for a nil user: %v", err)
 	}
@@ -348,7 +363,7 @@ func TestCanDeniesTheZeroTeam(t *testing.T) {
 
 	a := New(seeded(), nil)
 
-	if allowed(t, a, userIn(uuid.New(), "admin"), ActionAgentWrite, Resource{}) {
+	if allowed(t, a, userIn(uuid.New(), "admin"), agentWrite, Resource{}) {
 		t.Error("an unset Resource authorised an action")
 	}
 }
@@ -424,7 +439,7 @@ func TestCanInAnyTeamAllowsWhenOneMembershipGrantsIt(t *testing.T) {
 
 	a := New(seeded(), nil)
 
-	if !allowedAnywhere(t, a, userWith("member", "admin"), ActionMembershipWrite) {
+	if !allowedAnywhere(t, a, userWith("member", "admin"), membershipWrite) {
 		t.Error("an admin of one team was refused membership:write anywhere")
 	}
 }
@@ -443,7 +458,7 @@ func TestCanInAnyTeamDoesNotDependOnMembershipOrder(t *testing.T) {
 		{"member", "member", "admin"},
 		{"admin"},
 	} {
-		if !allowedAnywhere(t, a, userWith(roles...), ActionMembershipWrite) {
+		if !allowedAnywhere(t, a, userWith(roles...), membershipWrite) {
 			t.Errorf("roles %v were refused membership:write", roles)
 		}
 	}
@@ -459,7 +474,7 @@ func TestCanInAnyTeamDeniesWhenNoMembershipGrantsIt(t *testing.T) {
 		roles[i] = "member"
 	}
 
-	if allowedAnywhere(t, a, userWith(roles...), ActionMembershipWrite) {
+	if allowedAnywhere(t, a, userWith(roles...), membershipWrite) {
 		t.Error("a member of twenty teams was allowed membership:write")
 	}
 }
@@ -473,7 +488,7 @@ func TestCanInAnyTeamDeniesAUserWithNoMemberships(t *testing.T) {
 	a := New(perms, nil)
 	fresh := &auth.User{ID: uuid.New(), Subject: "newcomer"}
 
-	for _, action := range AllActions {
+	for _, action := range testActions {
 		if allowedAnywhere(t, a, fresh, action) {
 			t.Errorf("a user with no memberships was allowed %q anywhere", action)
 		}
@@ -492,7 +507,7 @@ func TestCanInAnyTeamAllowsASuperAdminWithNoMemberships(t *testing.T) {
 	a := New(perms, []string{"boss"})
 	boss := &auth.User{ID: uuid.New(), Subject: "boss"}
 
-	for _, action := range AllActions {
+	for _, action := range testActions {
 		if !allowedAnywhere(t, a, boss, action) {
 			t.Errorf("a super admin was refused %q", action)
 		}
@@ -508,7 +523,7 @@ func TestCanInAnyTeamDeniesANilUser(t *testing.T) {
 	perms := seeded()
 	a := New(perms, []string{""})
 
-	ok, err := a.CanInAnyTeam(t.Context(), nil, ActionAgentWrite)
+	ok, err := a.CanInAnyTeam(t.Context(), nil, agentWrite)
 	if err != nil {
 		t.Fatalf("CanInAnyTeam returned an error for a nil user: %v", err)
 	}
@@ -531,7 +546,7 @@ func TestCanInAnyTeamReportsAReadFailureRatherThanContinuing(t *testing.T) {
 	perms.err, perms.errRole = down, "member"
 	a := New(perms, nil)
 
-	ok, err := a.CanInAnyTeam(t.Context(), userWith("member", "admin"), ActionMembershipWrite)
+	ok, err := a.CanInAnyTeam(t.Context(), userWith("member", "admin"), membershipWrite)
 	if err == nil {
 		t.Fatal("a failed permission read was reported as a plain answer")
 	}
@@ -548,7 +563,7 @@ func TestCanInAnyTeamNamesTheRoleInAnError(t *testing.T) {
 
 	a := New(&fakePermissions{err: errors.New("boom")}, nil)
 
-	_, err := a.CanInAnyTeam(t.Context(), userWith("release-manager"), ActionAgentWrite)
+	_, err := a.CanInAnyTeam(t.Context(), userWith("release-manager"), agentWrite)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -571,7 +586,7 @@ func TestCanInAnyTeamAsksOncePerDistinctRole(t *testing.T) {
 		roles = append(roles, "member", "reviewer")
 	}
 
-	if allowedAnywhere(t, a, userWith(roles...), ActionMembershipWrite) {
+	if allowedAnywhere(t, a, userWith(roles...), membershipWrite) {
 		t.Fatal("neither role grants membership:write")
 	}
 	if perms.calls != 2 {
@@ -586,7 +601,7 @@ func TestCanInAnyTeamDeniesARoleWithNoPermissions(t *testing.T) {
 
 	a := New(seeded(), nil)
 
-	for _, action := range AllActions {
+	for _, action := range testActions {
 		if allowedAnywhere(t, a, userWith("release-manager", "release-manager"), action) {
 			t.Errorf("a role with no permissions allowed %q", action)
 		}
@@ -610,10 +625,10 @@ func TestCanInAnyTeamIsWeakerThanCan(t *testing.T) {
 	}
 	a := New(seeded(), nil)
 
-	if allowed(t, a, u, ActionMembershipWrite, Resource{TeamID: bravo}) {
+	if allowed(t, a, u, membershipWrite, Resource{TeamID: bravo}) {
 		t.Error("Can allowed membership:write in a team where the user is only a member")
 	}
-	if !allowedAnywhere(t, a, u, ActionMembershipWrite) {
+	if !allowedAnywhere(t, a, u, membershipWrite) {
 		t.Error("CanInAnyTeam refused what the user holds in alpha")
 	}
 }

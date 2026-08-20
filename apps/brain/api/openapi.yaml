@@ -344,13 +344,14 @@ paths:
         Adding someone to a team needs their id, and an id is the one thing
         nobody can tell you over chat. This is where it is looked up.
 
-        Super admins, and admins of at least one team. Not every authenticated
-        caller: the directory is every subject and email the deployment has
-        ever seen, and a filtered read of it is an existence oracle for anyone
-        who can guess a username. Requiring `membership:write` *somewhere* keeps it
-        with the people whose job is adding members, without asking which team
-        they had in mind — they are looking someone up precisely because they
-        do not yet have a row to check against.
+        Requires `user:read` in at least one team, and super admins always.
+        Not every authenticated caller: the directory is every subject and
+        email the deployment has ever seen, and a filtered read of it is an
+        existence oracle for anyone who can guess a username.
+
+        The check is "somewhere" rather than "in this team", because the
+        caller is looking someone up precisely to find out which team they
+        should be in — there is no team to check against yet.
 
         `subject` narrows to an exact match. There is no prefix or substring
         search, deliberately: a directory that answers "who starts with s" is

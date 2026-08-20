@@ -8,7 +8,6 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -16,18 +15,13 @@ type Store interface {
 	ListUsers(ctx context.Context, arg db.ListUsersParams) ([]db.ListUsersRow, error)
 }
 
-type Authorizer interface {
-	CanInAnyTeam(ctx context.Context, u *auth.User, action authz.Action) (bool, error)
-}
-
 type handler struct {
 	logger *slog.Logger
 	store  Store
-	authz  Authorizer
 }
 
-func New(logger *slog.Logger, s Store, a Authorizer) *api.Router {
-	h := &handler{logger: logger, store: s, authz: a}
+func New(logger *slog.Logger, s Store) *api.Router {
+	h := &handler{logger: logger, store: s}
 
 	r := api.NewRouter("/users")
 	r.Get("", h.list)
@@ -35,22 +29,7 @@ func New(logger *slog.Logger, s Store, a Authorizer) *api.Router {
 }
 
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {
-	u, ok := auth.UserFrom(r.Context())
-	if !ok {
-		h.logger.Error("users ran without a user — check the middleware order")
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	allowed, err := h.authz.CanInAnyTeam(r.Context(), u, authz.ActionMembershipWrite)
-	if err != nil {
-		h.fail(w, u, "authorisation check failed", err)
-		return
-	}
-	if !allowed {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
+	u := api.Caller(r)
 
 	limit, ok := api.Limit(w, r)
 	if !ok {
