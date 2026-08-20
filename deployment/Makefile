@@ -2,7 +2,7 @@
 #
 #   make           list targets
 #   make up        dependencies only, brain on your machine
-#   make staging   everything in containers, OIDC, published image
+#   make staging   everything in containers, OIDC, published image, real OpenBao
 #
 # Every target is a docker compose invocation that is otherwise long enough to
 # be retyped wrongly. The compose files hold the actual configuration; this
@@ -10,12 +10,18 @@
 
 COMPOSE := docker compose -f docker-compose.yml
 
-# Three overlays, composed by the targets below.
+# Three overlays and a profile, composed by the targets below.
 #
 #   IMAGE runs the published image instead of building one, which is the
 #   difference between testing what CI produced and testing your own tree.
-#   OIDC adds authentik. PROFILE opts the brain and its migrate step in —
-#   without it the stack is dependencies only.
+#   OIDC adds authentik. BAO swaps the in-memory OpenBao for the one with file
+#   storage and a seal that opens itself. PROFILE opts the brain and its
+#   migrate step in — without it the stack is dependencies only.
+#
+#   A target that omits BAO defines `openbao` in dev mode, so running one
+#   while the real OpenBao is up asks compose to replace it. up, dev and image
+#   are the fast local loop and use dev mode deliberately; `make bao` is the
+#   same loop against the real one.
 IMAGE   := -f docker-compose.image.yml
 OIDC    := -f docker-compose.authentik.yml
 BAO     := -f docker-compose.openbao.yml
@@ -54,9 +60,18 @@ dev:
 image:
 	$(COMPOSE) $(IMAGE) $(PROFILE) up -d
 
-## staging: image plus authentik — OIDC only, no development token
+# The only target that runs every production choice at once: the published
+# image, OIDC instead of the development token, and a real OpenBao instead of
+# the in-memory one. The last is not optional here — a production-like stack
+# whose secret store forgets everything on restart is the same trap in a
+# different place, and running this alongside a real OpenBao without $(BAO)
+# tries to replace it with the dev-mode container.
+#
+# It refuses to start without OPENARITY_SECRETS_APPROLE_ID and _SECRET, which
+# is the point. See OPENBAO.md; `make bao-approle` prints them.
+## staging: published image, authentik, and the real OpenBao — needs an AppRole
 staging:
-	$(COMPOSE) $(OIDC) $(IMAGE) $(PROFILE) up -d
+	$(COMPOSE) $(OIDC) $(IMAGE) $(BAO) $(PROFILE) up -d
 
 ## restart: recreate every running container, keeping volumes
 restart:
