@@ -8,3 +8,11 @@ vendor/
 # the root token. Either one alone is a full compromise of every secret in
 # OpenBao. See deployment/OPENBAO.md.
 deployment/openbao/keys/
+
+# Editor state, except the settings that belong to the project rather than to
+# a person. .vscode/settings.json declares compose's !reset and !override
+# tags, without which every contributor sees "Unresolved tag" on a file that
+# is correct; extensions.json is a recommendation, not a preference.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json

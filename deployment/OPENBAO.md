@@ -36,11 +36,16 @@ make bao-init      # once, ever — writes openbao/keys/init-keys.json
 make bao-approle   # prints two lines for .env
 ```
 
-Paste those two lines into `deployment/.env`, then:
+Paste those two lines into `deployment/.env`, then either:
 
 ```sh
 make bao           # dependencies and the brain, against the real OpenBao
+make staging       # the whole stack: published image, OIDC, real OpenBao
 ```
+
+Those two are the targets that include this overlay. `make up`, `make dev` and
+`make image` deliberately use the in-memory OpenBao, so do not mix them with a
+running real one — see the troubleshooting entry at the bottom.
 
 On Linux the container runs as uid 100 and cannot read a `0600` file owned by
 you. Give it the key without widening the mode:
@@ -141,6 +146,25 @@ this one expensive to find.
 OPENARITY_SECRETS_APPROLE_ID is missing a value".** Working as intended: the
 overlay means a real secret store, and a brain with no credentials would fall
 back to the in-memory one and verify nothing. Run `make bao-approle`.
+
+**`image with reference openbao/openbao:… does not match the specified
+platform`, on a target that was working.** Compose is trying to *replace* the
+running OpenBao, and the platform mismatch is what stopped it — it is a
+symptom, not the problem.
+
+`up`, `dev` and `image` define `openbao` in dev mode. Running one of them while
+the real OpenBao is up asks compose to recreate that container as the
+in-memory one. The data volume survives untouched, so nothing looks lost;
+every read simply returns 404, which is indistinguishable from a secret that
+was never written.
+
+Use the target that matches the OpenBao you are running — `make bao` for the
+local loop, `make staging` for the full stack. Both include the overlay. If you
+genuinely want dev mode back, remove the container first:
+
+```sh
+docker rm -f openarity-openbao-1
+```
 
 **The brain exits at startup with `secret store unavailable`.** Also working
 as intended — it refuses to serve against a store it cannot reach, rather than
