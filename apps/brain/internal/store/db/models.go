@@ -10,6 +10,15 @@ import (
 	"github.com/google/uuid"
 )
 
+type Channel struct {
+	ID        uuid.UUID
+	TeamID    uuid.UUID
+	Provider  string
+	Name      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type Permission struct {
 	Name        string
 	Description string
