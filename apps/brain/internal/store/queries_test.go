@@ -80,6 +80,41 @@ func exec(t *testing.T, s *Store, sql string) {
 	}
 }
 
+// dropReferencesTo removes every table with a foreign key to the named one,
+// except those the caller still needs. A uuid column cannot be widened to
+// text while anything references it, and the tests below do exactly that.
+func dropReferencesTo(t *testing.T, s *Store, table string, keep ...string) {
+	t.Helper()
+
+	rows, err := s.pool.Query(t.Context(), `
+		SELECT DISTINCT c.conrelid::regclass::text
+		FROM pg_constraint c
+		WHERE c.confrelid = $1::regclass
+		  AND c.contype = 'f'
+		  AND c.conrelid <> $1::regclass
+		  AND NOT (c.conrelid::regclass::text = ANY($2::text[]))`, table, keep)
+	if err != nil {
+		t.Fatalf("find references to %s: %v", table, err)
+	}
+
+	var referencing []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		referencing = append(referencing, name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("find references to %s: %v", table, err)
+	}
+
+	for _, name := range referencing {
+		exec(t, s, "DROP TABLE "+name+" CASCADE")
+	}
+}
+
 // countTeams goes through the pool rather than the generated query, so it sees
 // only committed rows. That is the whole point of it in the transaction tests.
 func countTeams(t *testing.T, s *Store) int {
@@ -546,9 +581,11 @@ func TestListTeamMembersReportsAScanFailure(t *testing.T) {
 	// u.id = tm.user_id, and a text-to-uuid comparison fails at planning time
 	// rather than reaching the scan this test is about.
 	exec(t, s, "ALTER TABLE team_members DROP CONSTRAINT team_members_user_id_fkey")
-	// Anything else pointing at users(id) goes entirely — this test is about
-	// scanning a team member, and nothing here reads those tables.
-	exec(t, s, "DROP TABLE channel_senders")
+	// Everything else pointing at users(id) goes entirely. Asked of the
+	// catalogue rather than listed by hand, because this test had to be
+	// edited for channel_senders and again for messages — a test that needs
+	// a line per new foreign key is one people start deleting.
+	dropReferencesTo(t, s, "users", "team_members")
 	exec(t, s, "ALTER TABLE users ALTER COLUMN id TYPE text USING id::text")
 	exec(t, s, "ALTER TABLE team_members ALTER COLUMN user_id TYPE text USING user_id::text")
 	exec(t, s, "INSERT INTO users (id, issuer, subject) VALUES ('not-a-uuid', 'okta', 'broken')")

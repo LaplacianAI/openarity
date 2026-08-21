@@ -26,6 +26,17 @@ type ChannelSender struct {
 	CreatedAt time.Time
 }
 
+type Message struct {
+	ID              uuid.UUID
+	ChannelID       uuid.UUID
+	UserID          uuid.UUID
+	ExternalID      string
+	ConversationRef string
+	Text            string
+	SentAt          *time.Time
+	ReceivedAt      time.Time
+}
+
 type PendingSender struct {
 	ChannelID  uuid.UUID
 	SenderRef  string
