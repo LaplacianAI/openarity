@@ -1,6 +1,10 @@
 package gateway
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
 
 type ConversationKind string
 
@@ -60,4 +64,28 @@ type Inbound struct {
 type Result struct {
 	Messages []Inbound
 	Reply    []byte
+}
+
+func (in Inbound) Validate() error {
+	switch {
+	case in.ExternalID == "":
+		return errors.New("no ExternalID, which is the idempotency key")
+	case in.Author.Ref == "":
+		return errors.New("no Author.Ref, so the sender cannot be resolved")
+	case in.Conversation.Ref == "":
+		return errors.New("no Conversation.Ref, so it belongs to no session")
+	}
+
+	switch in.Conversation.Kind {
+	case ConversationDirect, ConversationGroup, ConversationThread:
+	default:
+		return fmt.Errorf("conversation kind %q is not direct, group or thread", in.Conversation.Kind)
+	}
+
+	for i, m := range in.Mentions {
+		if m.SenderRef == "" {
+			return fmt.Errorf("mention %d has no SenderRef", i)
+		}
+	}
+	return nil
 }

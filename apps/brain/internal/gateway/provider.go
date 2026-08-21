@@ -45,6 +45,8 @@ type Fetcher interface {
 
 type Registry map[string]Provider
 
+// NewRegistry fails rather than letting one name resolve to two adapters, or
+// registering one that nothing will ever call.
 func NewRegistry(providers ...Provider) (Registry, error) {
 	reg := Registry{}
 	for _, p := range providers {
@@ -58,6 +60,8 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		if len(p.Routes()) == 0 {
 			return nil, fmt.Errorf("gateway: provider %q declares no routes", name)
 		}
+		// An adapter that asks for no secret has nothing to verify against,
+		// so its Verify can only be returning nil.
 		if len(p.Keys()) == 0 {
 			return nil, fmt.Errorf("gateway: provider %q declares no secret keys, so it cannot verify anything", name)
 		}
