@@ -84,6 +84,9 @@ apps/brain/
     <domain>/          one package per domain, each its own Router
       <domain>.go      handler, New, the handlers
       schema.go        request and response structs — the wire contract
+  internal/gateway/    a provider's webhook in, normalised messages out
+    providertest/      the conformance suite every adapter runs
+    <provider>/        one package per platform; custom is the reference
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary
     rbac.json          the permissions, roles and route mappings we ship
@@ -274,6 +277,23 @@ reinstalled.
   `role_permissions.action` and `route_permissions.permission` are foreign keys
   onto `permissions`, so a typo is a rejected write rather than a grant that
   silently means nothing.
+- **A channel adapter receives values, never capabilities.** It gets a
+  `gateway.WebhookRequest` rather than the `*http.Request`, `Credentials`
+  rather than `secrets.Store`, and a `ReceivedAt` rather than the clock. So it
+  cannot hijack the connection, read another channel's signing secret, or be
+  untestable. Adapters are the code most likely to be wrong and least likely to
+  be reviewed closely, and they sit on a public unauthenticated URL — what is
+  left after taking the authority away is a function from bytes to structs,
+  which can be tested exhaustively without being trusted. `Keys()` is the
+  mechanism: the adapter declares which secrets it needs and the handler
+  fetches them, scoped to the channel in the URL. See
+  `internal/gateway/CLAUDE.md`.
+- **The reference adapter ships; it is not a fake.** `internal/gateway/custom`
+  is a real generic webhook anyone can integrate against, and it runs the same
+  `providertest` suite as every other adapter. A test double is written by the
+  same person, at the same time, with the same misunderstandings as the thing
+  it validates, so it agrees by construction — a second real implementation is
+  what proves an abstraction rather than the code.
 - **The guard wraps every route; it is never a per-route decorator.**
   `Router.Register` takes an `api.RouteGuard` and there is no way to mount a
   handler without it. A decorator can be forgotten, and a forgotten one is an
