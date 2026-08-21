@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/channels"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/config"
 	cmdcontext "github.com/LaplacianAI/openarity/apps/cli/internal/command/context"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/login"
@@ -44,6 +45,7 @@ func commands(opts *cli.Options) []*cobra.Command {
 		config.New(opts),
 		cmdcontext.New(opts),
 		teams.New(opts),
+		channels.New(opts),
 		users.New(opts),
 		login.New(opts),
 		logout.New(opts),

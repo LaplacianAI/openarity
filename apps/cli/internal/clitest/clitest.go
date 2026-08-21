@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -60,6 +61,30 @@ func Execute(t *testing.T, builds []Build, args ...string) (string, error) {
 	root.SetArgs(args)
 	root.SetOut(&out)
 	root.SetErr(&out)
+
+	err := root.ExecuteContext(t.Context())
+	return out.String(), err
+}
+
+// ExecuteWithStdin is Execute with something piped in. A credential must never
+// be a flag — argv is readable by every process on the machine through ps — so
+// the commands that take one read it from here, and testing them means being
+// able to write to it.
+func ExecuteWithStdin(t *testing.T, builds []Build, stdin string, args ...string) (string, error) {
+	t.Helper()
+
+	var out bytes.Buffer
+	root := cli.NewRoot(&out, &out, func(opts *cli.Options) []*cobra.Command {
+		commands := make([]*cobra.Command, 0, len(builds))
+		for _, build := range builds {
+			commands = append(commands, build(opts))
+		}
+		return commands
+	})
+	root.SetArgs(args)
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(strings.NewReader(stdin))
 
 	err := root.ExecuteContext(t.Context())
 	return out.String(), err
