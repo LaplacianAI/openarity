@@ -270,11 +270,12 @@ func TestListTeamsReportsAQueryFailure(t *testing.T) {
 func TestListTeamsReportsAScanFailure(t *testing.T) {
 	s := queryStore(t)
 
-	// A uuid column cannot be widened to text while anything references it,
-	// so every table with a foreign key to teams(id) goes first. A new one
-	// added later fails here with SQLSTATE 42804 rather than silently.
-	exec(t, s, "DROP TABLE team_members")
-	exec(t, s, "DROP TABLE channels")
+	// A uuid column cannot be widened to text while anything references it.
+	// CASCADE rather than naming each table: every foreign key added later
+	// reaches teams through one of these, and a test that has to be edited
+	// for each new table is a test people start deleting.
+	exec(t, s, "DROP TABLE team_members CASCADE")
+	exec(t, s, "DROP TABLE channels CASCADE")
 	exec(t, s, "ALTER TABLE teams ALTER COLUMN id TYPE text USING id::text")
 	exec(t, s, "INSERT INTO teams (id, name) VALUES ('not-a-uuid', 'broken')")
 
@@ -545,6 +546,9 @@ func TestListTeamMembersReportsAScanFailure(t *testing.T) {
 	// u.id = tm.user_id, and a text-to-uuid comparison fails at planning time
 	// rather than reaching the scan this test is about.
 	exec(t, s, "ALTER TABLE team_members DROP CONSTRAINT team_members_user_id_fkey")
+	// Anything else pointing at users(id) goes entirely — this test is about
+	// scanning a team member, and nothing here reads those tables.
+	exec(t, s, "DROP TABLE channel_senders")
 	exec(t, s, "ALTER TABLE users ALTER COLUMN id TYPE text USING id::text")
 	exec(t, s, "ALTER TABLE team_members ALTER COLUMN user_id TYPE text USING user_id::text")
 	exec(t, s, "INSERT INTO users (id, issuer, subject) VALUES ('not-a-uuid', 'okta', 'broken')")

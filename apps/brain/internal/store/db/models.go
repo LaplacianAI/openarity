@@ -19,6 +19,22 @@ type Channel struct {
 	UpdatedAt time.Time
 }
 
+type ChannelSender struct {
+	ChannelID uuid.UUID
+	SenderRef string
+	UserID    uuid.UUID
+	CreatedAt time.Time
+}
+
+type PendingSender struct {
+	ChannelID  uuid.UUID
+	SenderRef  string
+	SenderName string
+	FirstSeen  time.Time
+	LastSeen   time.Time
+	SeenCount  int32
+}
+
 type Permission struct {
 	Name        string
 	Description string
