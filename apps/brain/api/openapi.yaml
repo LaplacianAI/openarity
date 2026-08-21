@@ -33,6 +33,8 @@ tags:
     description: Who the caller is
   - name: teams
     description: Teams and their membership
+  - name: channels
+    description: Where a team's messages arrive from
   - name: users
     description: Finding a user's id
 
@@ -334,6 +336,131 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /teams/{id}/channels:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listChannels
+      tags: [channels]
+      summary: List a team's channels
+      description: |
+        A read, so belonging to the team is enough. A channel id is not a
+        secret — it is the routing key in that channel's own hook URL, and
+        every member needs to know which channels exist.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of channels
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: createChannel
+      tags: [channels]
+      summary: Connect a channel
+      description: |
+        Requires `channel:write` in this team.
+
+        `provider` must name an adapter this build has. Refusing an unknown
+        one here makes it a 400 now rather than a 404 on every webhook later,
+        when nobody is watching.
+
+        The signing secret is written to the secret store and never to
+        Postgres, and no endpoint ever returns it again. Supply one when the
+        provider issues it — Slack's Signing Secret, Meta's App Secret — and
+        omit it otherwise: the server then generates one and echoes it in this
+        response only, which is the last time anyone sees it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChannelRequest"
+      responses:
+        "201":
+          description: |
+            Connected. `signing_secret` is present only when the server
+            generated it. Store it now; it cannot be read back.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedChannel"
+        "400":
+          description: |
+            The body is malformed, the name is empty or over 200 characters,
+            `provider` names no adapter, or `signing_secret` was supplied
+            blank.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["unknown provider"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The team already has a channel with that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a channel with that name already exists"]
+        "503":
+          description: |
+            The secret store is unreachable, so the channel was not created.
+            A row whose secret is missing would refuse every webhook with no
+            explanation, so it is rolled back rather than left behind.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the secret store is unavailable"]
+
+  /teams/{id}/channels/{channelID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: channelID
+        in: path
+        required: true
+        description: The channel to disconnect
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: deleteChannel
+      tags: [channels]
+      summary: Disconnect a channel
+      description: |
+        Requires `channel:write` in this team. Its signing secret is deleted
+        with it — Postgres cascades do not reach the secret store.
+
+        A channel belonging to another team answers 404, not 403: the caller
+        was authorised for the team they named, not for a channel they only
+        guessed the id of, and confirming the id exists would let anyone walk
+        the uuid space.
+      responses:
+        "204":
+          description: Disconnected
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users:
     get:
@@ -670,6 +797,73 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Member"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    Channel:
+      type: object
+      required: [id, team_id, provider, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            The routing key in this channel's hook URL. Not a secret — what
+            authenticates a webhook is its signature, never knowledge of the
+            URL.
+        team_id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+          description: |
+            The adapter that parses this channel's webhooks, lower case and
+            matched exactly.
+          examples: ["custom"]
+        name:
+          type: string
+          description: Unique within the team, case-insensitively
+          examples: ["support-tickets"]
+
+    CreatedChannel:
+      allOf:
+        - $ref: "#/components/schemas/Channel"
+        - type: object
+          properties:
+            signing_secret:
+              type: string
+              description: |
+                Present only when the server generated it, and only in this
+                response. It is never returned again by any endpoint.
+              examples: ["whsec_8Kd2mQ7pR4tXn1vB6yL0aZ3cE5gH9jS"]
+
+    CreateChannelRequest:
+      type: object
+      required: [provider, name]
+      properties:
+        provider:
+          type: string
+          examples: ["custom"]
+        name:
+          type: string
+          maxLength: 200
+          examples: ["support-tickets"]
+        signing_secret:
+          type: string
+          description: |
+            The provider's own signing secret, when the provider issues one.
+            Omit it to have the server generate a strong one and return it
+            once.
+
+    ChannelPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Channel"
         next_cursor:
           type: string
           description: Absent on the last page

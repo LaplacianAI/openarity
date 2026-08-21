@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -43,7 +42,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.store.ListUsers(r.Context(), params)
 	if err != nil {
-		h.fail(w, u, "failed to list users", err)
+		api.Fail(w, h.logger, u, "failed to list users", err)
 		return
 	}
 
@@ -59,7 +58,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	if err != nil {
-		h.fail(w, u, "failed to page users", err)
+		api.Fail(w, h.logger, u, "failed to page users", err)
 		return
 	}
 
@@ -88,9 +87,4 @@ func (h *handler) userPage(w http.ResponseWriter, r *http.Request, limit int32) 
 	params.AfterSubject = c.Subject
 	params.AfterID = c.ID
 	return params, true
-}
-
-func (h *handler) fail(w http.ResponseWriter, u *auth.User, msg string, err error) {
-	h.logger.Error(msg, "subject", u.Subject, "error", err)
-	http.Error(w, "internal server error", http.StatusInternalServerError)
 }

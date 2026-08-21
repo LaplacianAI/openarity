@@ -446,8 +446,17 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"GET /teams/{id}/members":             "member",
 		"POST /teams/{id}/members":            "team membership:write",
 		"DELETE /teams/{id}/members/{userID}": "team membership:write",
-		"GET /users":                          "any_team user:read",
-		"GET /whoami":                         "authenticated",
+
+		// Listing is `member` and not `team channel:read`: a channel id is
+		// the routing key in its own hook URL, not a secret, and everyone in
+		// the team needs to see which channels exist. Connecting one is an
+		// admin act, so writes carry a permission.
+		"GET /teams/{id}/channels":                "member",
+		"POST /teams/{id}/channels":               "team channel:write",
+		"DELETE /teams/{id}/channels/{channelID}": "team channel:write",
+
+		"GET /users":  "any_team user:read",
+		"GET /whoami": "authenticated",
 	}
 
 	got := make(map[string]string, len(f.Routes))

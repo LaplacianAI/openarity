@@ -270,9 +270,11 @@ func TestListTeamsReportsAQueryFailure(t *testing.T) {
 func TestListTeamsReportsAScanFailure(t *testing.T) {
 	s := queryStore(t)
 
-	// team_members has a foreign key to teams(id); a uuid column cannot be
-	// widened to text while something references it.
+	// A uuid column cannot be widened to text while anything references it,
+	// so every table with a foreign key to teams(id) goes first. A new one
+	// added later fails here with SQLSTATE 42804 rather than silently.
 	exec(t, s, "DROP TABLE team_members")
+	exec(t, s, "DROP TABLE channels")
 	exec(t, s, "ALTER TABLE teams ALTER COLUMN id TYPE text USING id::text")
 	exec(t, s, "INSERT INTO teams (id, name) VALUES ('not-a-uuid', 'broken')")
 

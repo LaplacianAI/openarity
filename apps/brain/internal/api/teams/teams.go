@@ -65,7 +65,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name, ok := teamName(req.Name)
+	name, ok := api.Name(req.Name, maxNameBytes)
 	if !ok {
 		http.Error(w, "name must be between 1 and 200 characters", http.StatusBadRequest)
 		return
@@ -78,7 +78,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "a team with that name already exists", http.StatusConflict)
 			return
 		}
-		h.fail(w, u, "failed to create team", err)
+		api.Fail(w, h.logger, u, "failed to create team", err)
 		return
 	}
 
@@ -96,7 +96,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	if !h.superAdmins.IsSuperAdmin(u) {
 		teams, err := h.myTeams(r.Context(), u)
 		if err != nil {
-			h.fail(w, u, "failed to list teams", err)
+			api.Fail(w, h.logger, u, "failed to list teams", err)
 			return
 		}
 		api.WriteJSON(w, h.logger, http.StatusOK, api.Page[team]{Items: teams})
@@ -110,7 +110,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.store.ListTeams(r.Context(), params)
 	if err != nil {
-		h.fail(w, u, "failed to list teams", err)
+		api.Fail(w, h.logger, u, "failed to list teams", err)
 		return
 	}
 
@@ -125,7 +125,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	if err != nil {
-		h.fail(w, u, "failed to page teams", err)
+		api.Fail(w, h.logger, u, "failed to page teams", err)
 		return
 	}
 
@@ -168,7 +168,7 @@ func (h *handler) myTeams(ctx context.Context, u *auth.User) ([]team, error) {
 func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 	u := api.Caller(r)
 
-	id, ok := h.team(w, r)
+	id, ok := api.RequireTeam(w, r, h.logger)
 	if !ok {
 		return
 	}
@@ -188,7 +188,7 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 func (h *handler) listMembers(w http.ResponseWriter, r *http.Request) {
 	u := api.Caller(r)
 
-	id, ok := h.team(w, r)
+	id, ok := api.RequireTeam(w, r, h.logger)
 	if !ok {
 		return
 	}
@@ -209,7 +209,7 @@ func (h *handler) listMembers(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.store.ListTeamMembers(r.Context(), params)
 	if err != nil {
-		h.fail(w, u, "failed to list members", err)
+		api.Fail(w, h.logger, u, "failed to list members", err)
 		return
 	}
 
@@ -222,7 +222,7 @@ func (h *handler) listMembers(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	if err != nil {
-		h.fail(w, u, "failed to page members", err)
+		api.Fail(w, h.logger, u, "failed to page members", err)
 		return
 	}
 
@@ -251,7 +251,7 @@ func (h *handler) memberPage(w http.ResponseWriter, r *http.Request, teamID uuid
 func (h *handler) addMember(w http.ResponseWriter, r *http.Request) {
 	u := api.Caller(r)
 
-	id, ok := h.team(w, r)
+	id, ok := api.RequireTeam(w, r, h.logger)
 	if !ok {
 		return
 	}
@@ -302,7 +302,7 @@ func (h *handler) namedUser(
 		Subject: subject, PageSize: maxSubjectMatches,
 	})
 	if err != nil {
-		h.fail(w, u, "failed to look up a subject", err)
+		api.Fail(w, h.logger, u, "failed to look up a subject", err)
 		return uuid.Nil, false
 	}
 
@@ -330,7 +330,7 @@ func ambiguousSubject(rows []db.FindUsersBySubjectRow) string {
 func (h *handler) removeMember(w http.ResponseWriter, r *http.Request) {
 	u := api.Caller(r)
 
-	id, ok := h.team(w, r)
+	id, ok := api.RequireTeam(w, r, h.logger)
 	if !ok {
 		return
 	}
@@ -344,7 +344,7 @@ func (h *handler) removeMember(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.RemoveTeamMember(r.Context(), db.RemoveTeamMemberParams{
 		TeamID: id, UserID: userID,
 	}); err != nil {
-		h.fail(w, u, "failed to remove member", err)
+		api.Fail(w, h.logger, u, "failed to remove member", err)
 		return
 	}
 
@@ -358,22 +358,17 @@ func (h *handler) visibleTeam(w http.ResponseWriter, r *http.Request, u *auth.Us
 		return db.Team{}, false
 	}
 	if err != nil {
-		h.fail(w, u, "failed to read team", err)
+		api.Fail(w, h.logger, u, "failed to read team", err)
 		return db.Team{}, false
 	}
 
 	return row, true
 }
 
-func (h *handler) fail(w http.ResponseWriter, u *auth.User, msg string, err error) {
-	h.logger.Error(msg, "subject", u.Subject, "error", err)
-	http.Error(w, "internal server error", http.StatusInternalServerError)
-}
-
 func (h *handler) failMembership(w http.ResponseWriter, u *auth.User, err error) {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
-		h.fail(w, u, "failed to add member", err)
+		api.Fail(w, h.logger, u, "failed to add member", err)
 		return
 	}
 
@@ -387,24 +382,6 @@ func (h *handler) failMembership(w http.ResponseWriter, u *auth.User, err error)
 	case pgErr.ConstraintName == "team_members_role_fkey":
 		http.Error(w, "unknown role", http.StatusBadRequest)
 	default:
-		h.fail(w, u, "failed to add member", err)
+		api.Fail(w, h.logger, u, "failed to add member", err)
 	}
-}
-
-func teamName(raw string) (string, bool) {
-	name := strings.TrimSpace(raw)
-	if name == "" || len(name) > maxNameBytes {
-		return "", false
-	}
-	return name, true
-}
-
-func (h *handler) team(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	id, ok := api.TeamFrom(r.Context())
-	if !ok {
-		h.logger.Error("route has no team — check its scope in rbac.json", "path", r.URL.Path)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return uuid.Nil, false
-	}
-	return id, true
 }
