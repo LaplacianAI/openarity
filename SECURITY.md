@@ -62,8 +62,29 @@ These are deliberate, documented decisions rather than oversights:
 - **The health and readiness endpoints are unauthenticated by design**, and
   neither returns internal detail — `/readyz` logs the underlying error and
   returns a bare `not ready`. If either leaks anything about the database,
-  that is a bug. Every other endpoint requires a bearer token; one that is
-  reachable without one is a bug.
+  that is a bug. Every endpoint on the API listener requires a bearer token;
+  one that is reachable without one is a bug.
+- **The webhook listener is unauthenticated by design and authenticates by
+  request signature instead.** `/hooks/{provider}/{channel_id}` proves that a
+  delivery came from someone holding that one channel's signing secret; there
+  is no caller, no session and no permission to check. A delivery accepted
+  without a valid signature is a bug, and so is one accepted with a signature
+  belonging to a different channel or a different provider.
+- **The gateway answers 403 identically for a bad signature, an unknown
+  channel, a deleted channel and a channel belonging to another provider.** The
+  status and the body are the same in all four cases, because any difference
+  confirms which channel ids are real. The request body is also read before the
+  channel is looked up, so how long a refusal takes does not depend on whether
+  the channel exists — though the path is not constant-time overall, and we do
+  not claim it is. A difference in status or body between those four is a bug.
+- **A channel's signing secret is shown once, when the channel is created.** It
+  is written to the secret store, and no endpoint reads it back — the API
+  returns it only in the response that created it. An API response, log line or
+  error message containing one afterwards is a bug.
+- **A message from an unrecognised sender is dropped, not stored.** Only their
+  provider-side id and display name are queued for approval, bounded to 50 per
+  channel — the text they sent is never written anywhere. A message body from
+  an unapproved sender reaching the database is a bug.
 - **The service refuses to start with no authentication configured.** It fails
   closed rather than serving an open API, so a missing setting is an outage
   rather than an exposure.
