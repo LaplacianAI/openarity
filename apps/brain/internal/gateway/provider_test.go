@@ -180,6 +180,80 @@ func TestAProviderMayDeclareSeveralRoutes(t *testing.T) {
 	}
 }
 
+// A suffix is pasted onto "/hooks/{name}/{channel_id}". Without the slash,
+// "events" mounts /hooks/slack/{channel_id}events — a path that is not what
+// anyone configured and that no test of the adapter would reveal.
+func TestRegistryRefusesASuffixWithNoLeadingSlash(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewRegistry(stubProvider{name: "slack", routes: []Route{
+		{Method: http.MethodPost, Suffix: "events"},
+	}})
+	if err == nil {
+		t.Fatal("NewRegistry accepted a suffix that does not start with /")
+	}
+	if !strings.Contains(err.Error(), "slack") {
+		t.Errorf("the error does not name the provider: %v", err)
+	}
+}
+
+// A trailing slash is a second path for the same route, and only one of them
+// is the one written on the provider's configuration page.
+func TestRegistryRefusesASuffixWithATrailingSlash(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewRegistry(stubProvider{name: "slack", routes: []Route{
+		{Method: http.MethodPost, Suffix: "/events/"},
+	}})
+	if err == nil {
+		t.Fatal("NewRegistry accepted a suffix ending in /")
+	}
+}
+
+// An empty method makes the pattern " /hooks/slack/{channel_id}", which
+// http.ServeMux rejects with a panic about pattern syntax — a long way from
+// the adapter that wrote it.
+func TestRegistryRefusesARouteWithNoMethod(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewRegistry(stubProvider{name: "slack", routes: []Route{{Method: ""}}})
+	if err == nil {
+		t.Fatal("NewRegistry accepted a route with no method")
+	}
+	if !strings.Contains(err.Error(), "slack") {
+		t.Errorf("the error does not name the provider: %v", err)
+	}
+}
+
+// Two identical routes panic the mux at boot with a message about a duplicate
+// pattern. Catching it here says which adapter, which is the part that is hard
+// to work out from the other message.
+func TestRegistryRefusesTwoIdenticalRoutes(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewRegistry(stubProvider{name: "slack", routes: []Route{
+		{Method: http.MethodPost, Suffix: "/events"},
+		{Method: http.MethodPost, Suffix: "/events"},
+	}})
+	if err == nil {
+		t.Fatal("NewRegistry accepted the same route twice")
+	}
+}
+
+// The same suffix under two methods is how a provider serves a verification
+// GET and an event POST on one URL, so it must stay legal.
+func TestOneSuffixMayHaveTwoMethods(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewRegistry(stubProvider{name: "slack", routes: []Route{
+		{Method: http.MethodGet, Suffix: "/events"},
+		{Method: http.MethodPost, Suffix: "/events"},
+	}})
+	if err != nil {
+		t.Errorf("NewRegistry refused a GET and a POST on one suffix: %v", err)
+	}
+}
+
 // Most of what arrives at a webhook is not a message — a reaction, an edit, a
 // bot joining a room. The zero Result is how an adapter says "nothing to do",
 // so it has to be a valid answer rather than something the handler treats as
@@ -192,7 +266,7 @@ func TestTheZeroResultIsNothingToDo(t *testing.T) {
 	if len(r.Messages) != 0 {
 		t.Errorf("Messages = %v, want none", r.Messages)
 	}
-	if r.Reply != nil {
-		t.Errorf("Reply = %q, want none", r.Reply)
+	if r.Ack != nil {
+		t.Errorf("Ack = %q, want none", r.Ack)
 	}
 }

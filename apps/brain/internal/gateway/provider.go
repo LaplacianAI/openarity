@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -55,8 +56,8 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		if _, dup := reg[name]; dup {
 			return nil, fmt.Errorf("gateway: two providers named %q", name)
 		}
-		if len(p.Routes()) == 0 {
-			return nil, fmt.Errorf("gateway: provider %q declares no routes", name)
+		if err := checkRoutes(name, p.Routes()); err != nil {
+			return nil, err
 		}
 		if len(p.Keys()) == 0 {
 			return nil, fmt.Errorf("gateway: provider %q declares no secret keys, so it cannot verify anything", name)
@@ -69,4 +70,26 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 func (r Registry) Get(name string) (Provider, bool) {
 	p, ok := r[name]
 	return p, ok
+}
+
+func checkRoutes(name string, routes []Route) error {
+	if len(routes) == 0 {
+		return fmt.Errorf("gateway: provider %q declares no routes", name)
+	}
+
+	seen := make(map[Route]bool, len(routes))
+	for _, rt := range routes {
+		switch {
+		case rt.Method == "":
+			return fmt.Errorf("gateway: provider %q declares a route with no method", name)
+		case rt.Suffix != "" && !strings.HasPrefix(rt.Suffix, "/"):
+			return fmt.Errorf("gateway: provider %q has suffix %q, which must start with /", name, rt.Suffix)
+		case strings.HasSuffix(rt.Suffix, "/"):
+			return fmt.Errorf("gateway: provider %q has suffix %q, which must not end with /", name, rt.Suffix)
+		case seen[rt]:
+			return fmt.Errorf("gateway: provider %q declares %s %q twice", name, rt.Method, rt.Suffix)
+		}
+		seen[rt] = true
+	}
+	return nil
 }

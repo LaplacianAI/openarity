@@ -63,7 +63,7 @@ type Inbound struct {
 
 type Result struct {
 	Messages []Inbound
-	Reply    []byte
+	Ack      []byte
 }
 
 func (in Inbound) Validate() error {

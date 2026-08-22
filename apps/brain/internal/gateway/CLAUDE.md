@@ -17,6 +17,9 @@ without being trusted at all.
 internal/gateway/
   message.go        Inbound, Result, Validate — the normalised contract
   provider.go       Provider, WebhookRequest, Credentials, Registry
+  handler.go        the request path: route, verify, parse, resolve, deliver
+  senders.go        ResolveSender, and the display-name cleaning
+  sink.go           where a delivery goes; inbox.go is the stand-in
   providertest/     the conformance suite every adapter runs
   custom/           the generic adapter, and the reference implementation
   <provider>/       one package per platform: slack, telegram, discord
@@ -29,7 +32,22 @@ named from there. Provider-specific behaviour has nowhere to live except inside
 the provider's own package, and the compiler enforces it instead of a reviewer.
 
 Wiring is `cmd/brain`, exactly as route packages are. Adding an adapter is one
-line there plus a package that passes `providertest`.
+line in `newRegistry` plus a package that passes `providertest`. The routes
+mount themselves: `New` walks the registry and registers
+`{Method} /hooks/{name}/{channel_id}{Suffix}` for every route every provider
+declares.
+
+The path chooses the adapter, so an unknown provider is a 404 from the mux
+before any query runs — and the channel row's `provider` column is compared to
+it, so a channel id posted to another provider's path is refused. Without that
+comparison a channel id works on every provider's path at once, and the weakest
+signature scheme among them is the one that counts.
+
+Everything mounts on the **webhook** listener, never the API one. The two
+authenticate on incompatible principles: an API route identifies a caller and
+asks what they may do; a hook proves a signature over raw bytes and has no
+caller at all. On the API mux every provider on earth is rejected for carrying
+no bearer token.
 
 ## Adapters receive values, never capabilities
 
@@ -74,17 +92,36 @@ Consequences that follow from purity:
 Most of what a busy webhook receives is not a message — a reaction, an edit,
 someone joining a room. The zero `Result` is the correct answer, not an error.
 
-Only two things are not a 200: a **403** for a signature that does not verify,
-and a **500** when the secret store is unreachable, because that is *unknown*
-rather than *denied*. Everything else — junk body, unknown sender, replay —
-answers 200. Non-200 makes providers retry and eventually disable the endpoint,
-and none of those are conditions a retry would fix.
+`Result.Ack` exists for one reason: Slack refuses to save a webhook URL until
+the endpoint echoes its `url_verification` challenge back in the response. The
+adapter *returns* the bytes and the handler writes them, so the adapter still
+cannot set a status, stream, or hijack the connection. When one provider needs
+an escape hatch, widen the return value, not the capability.
 
-`Result.Reply` exists for one reason: Slack refuses to save a webhook URL until
-the endpoint echoes its `url_verification` challenge. The adapter *returns* the
-bytes and the handler writes them, so the adapter still cannot set a status,
-stream, or hijack the connection. When one provider needs an escape hatch,
-widen the return value, not the capability.
+It is `Ack` and not `Reply` because `Reply` is the name the outbound seam will
+want. The agent's answer is a long-running job — a workflow that finishes
+minutes later and posts through the provider's API on a new connection. It
+cannot ride this response, which is closed within seconds. Two directions, and
+they are not symmetric: inbound is synchronous and mandatory, outbound is
+asynchronous and optional.
+
+## What each status code means
+
+A provider retries on any non-2xx and eventually disables an endpoint that
+keeps failing, so every code is an instruction. The rule is **"we couldn't"
+gets a retry, "we won't" does not.**
+
+| Status | When | Because |
+| --- | --- | --- |
+| **200** | delivered, or deliberately dropped | an unapproved sender, a body no adapter can parse, a reaction — a retry brings the same thing back |
+| **403** | bad signature, unknown channel, deleted channel, a channel belonging to another provider | all four are the same answer on purpose: a different status or message tells a stranger which channel ids exist |
+| **413** | body over `maxBody` | |
+| **500** | our database or the sink failed | the one failure a retry actually fixes. Every write on this path is idempotent, so asking again is free — answering 200 loses the message with nothing anywhere recording that it existed |
+| **503** | a declared credential could not be read | fail closed. `Verify` is never called with `""` |
+
+The handler reads the body **before** looking the channel up. Reading second
+makes how quickly a request is refused into an oracle for which channel ids are
+real.
 
 ## Verify
 
@@ -103,6 +140,8 @@ widen the return value, not the capability.
   `NewRegistry` refuses it. That catches the `Verify` that was stubbed during
   development and never finished — the mistake this whole package is shaped
   around.
+- **The handler fetches every key `Keys()` names, or refuses.** A declared key
+  the store does not hold is a 503, never an empty string handed to `Verify`.
 
 ## Validate belongs to Inbound
 
@@ -121,7 +160,15 @@ format live in the adapter.** `ExternalID` must be non-empty whoever produced
 the message. `sent_at` must be RFC 3339 because *our JSON* says so, and Slack
 sends a float string — so that rule stays in `custom`.
 
-The handler calls `Validate` on everything `Parse` returns. Adapters do not.
+The handler calls `Validate` on everything `Parse` returns, in `resolve`, and
+that is the only production call site. Adapters do not call it themselves: a
+rule each implementer must remember to apply is documentation, not enforcement.
+`providertest` checks it too, but the suite is opt-in and so cannot be the
+guarantee — the handler is on the path every message takes.
+
+A message that fails is dropped and logged; the rest of the batch survives, and
+its sender is *not* queued for approval. An adapter bug must not be able to
+fill a channel's pending list.
 
 ## Writing an adapter
 
@@ -176,7 +223,8 @@ Outbound replies, attachment ingest, and socket transports. Slack Socket Mode
 and the Discord gateway are long-lived connections and `Provider` describes a
 request, so they need a second interface with a lifecycle.
 
-When outbound lands it is a third optional interface alongside `Fetcher`, not a
-method on `Provider` — every existing adapter keeps compiling and simply
-reports `ok == false`. **A method belongs on `Provider` only when every
+When outbound lands it is a `Replier` interface alongside `Fetcher`, not a
+method on `Provider` — an adapter for a plain incoming webhook has nowhere to
+post back to, and a stub returning nil is indistinguishable from success.
+Detected at registration, never with a type assertion at the call site. **A method belongs on `Provider` only when every
 implementation must have it and their implementations genuinely differ.**

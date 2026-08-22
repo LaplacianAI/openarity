@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -522,4 +524,68 @@ func TestRegisterPanicsWhenARouteIsUnmapped(t *testing.T) {
 	r := NewRouter("/teams")
 	r.Get("", ok(&ran))
 	r.Register(http.NewServeMux(), unmapped)
+}
+
+// Handle exists for the gateway, which learns its method from an adapter
+// rather than from a literal. What it registers must be indistinguishable from
+// what the five wrappers register.
+func TestHandleRegistersTheSameAsTheNamedVerbs(t *testing.T) {
+	t.Parallel()
+
+	named := NewRouter("/hooks")
+	named.Post("/custom", func(http.ResponseWriter, *http.Request) {})
+
+	dynamic := NewRouter("/hooks")
+	dynamic.Handle(http.MethodPost, "/custom", func(http.ResponseWriter, *http.Request) {})
+
+	if got, want := dynamic.Patterns(), named.Patterns(); !slices.Equal(got, want) {
+		t.Errorf("Handle registered %v, want %v", got, want)
+	}
+}
+
+func TestHandleServesEveryMethodTheRouterSupports(t *testing.T) {
+	t.Parallel()
+
+	for _, method := range []string{
+		http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
+	} {
+		t.Run(method, func(t *testing.T) {
+			t.Parallel()
+
+			var ran bool
+			r := NewPublicRouter("/hooks")
+			r.Handle(method, "/custom", ok(&ran))
+
+			mux := http.NewServeMux()
+			r.Register(mux, nil)
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, "/hooks/custom", nil))
+
+			if !ran {
+				t.Errorf("%s /hooks/custom did not run", method)
+			}
+		})
+	}
+}
+
+// A method http.ServeMux would reject has to fail here instead, where the
+// message names the router. Left to the mux it surfaces as a pattern-syntax
+// panic from inside net/http, a long way from the adapter that caused it.
+func TestHandleRefusesAMethodItCannotServe(t *testing.T) {
+	t.Parallel()
+
+	for _, method := range []string{"", "post", "BREW", "GET /x", "GET,POST"} {
+		t.Run("method "+strconv.Quote(method), func(t *testing.T) {
+			t.Parallel()
+
+			defer func() {
+				if recover() == nil {
+					t.Errorf("Handle accepted method %q", method)
+				}
+			}()
+
+			NewRouter("/hooks").Handle(method, "/custom", func(http.ResponseWriter, *http.Request) {})
+		})
+	}
 }
