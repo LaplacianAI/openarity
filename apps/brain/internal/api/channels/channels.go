@@ -24,7 +24,7 @@ const (
 	codeUniqueViolation = "23505"
 
 	secretBytes  = 32
-	secretPrefix = "whsec_"
+	secretPrefix = "oawh_"
 )
 
 type Store interface {

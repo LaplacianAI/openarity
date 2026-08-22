@@ -1,6 +1,6 @@
 ---
 name: add-route
-description: Add an HTTP route to the brain's API — a new endpoint on an existing domain, or a whole new domain package. Covers where the route lives, the Router, per-package dependencies, the response contract, which status code each failure gets, mapping the route in rbac.json, whether a request body should reference another resource by id or by name, and the tests every route owes. Use for every endpoint.
+description: Add an HTTP route to the brain's API — a new endpoint on an existing domain, or a whole new domain package. Covers where the route lives, the Router, per-package dependencies, the response contract, which status code each failure gets, mapping the route in rbac.json, whether a request body should reference another resource by id or by name, choosing between the API and webhook listeners, and the tests every route owes. Use for every endpoint.
 ---
 
 # Add a route to the API
@@ -14,6 +14,37 @@ a response contract, and has the five tests at the bottom.
 the guard applies it before the handler is reached — a route with no row will
 not start. Read the `authorise-a-route` skill for the scopes and the file; this
 skill assumes you have chosen one.
+
+## Step 0 — which listener
+
+There are two, and they are not interchangeable. Getting this wrong is not a
+style mistake: an API route on the webhook listener answers with no check at
+all, and a hook on the API listener rejects every provider on earth for not
+carrying a bearer token.
+
+| | API listener | webhook listener |
+| --- | --- | --- |
+| bind | `OPENARITY_API_BIND` | `OPENARITY_WEBHOOK_BIND` |
+| who calls it | `oa`, the dashboard, a script | Slack, Telegram, anything on the internet |
+| the question it asks | *who are you, and what may you do* | *did this come from someone holding this channel's secret* |
+| how it is mounted | `newRouters` → `server.New(..., routers...)` | `newWebhookRouters` → `Deps.WebhookRouters` |
+| `rbac.json` row | required | none — the router is public |
+| in `openapi.yaml` | required | no; it is not part of the client contract |
+| router | `api.NewRouter(prefix)` | `api.NewPublicRouter(prefix)` |
+
+Everything in the rest of this skill is about the **API** listener. If you are
+adding a provider webhook, you are almost certainly not adding a route at all:
+`internal/gateway` mounts one per `(provider, suffix)` automatically from the
+registry, so an adapter declaring a `Route` is the whole of it. Read
+`internal/gateway/CLAUDE.md`.
+
+A webhook router must be public. `server.New` refuses a non-public one by name,
+because that listener has no guard to hand `Register` and the alternative is a
+nil-pointer panic somewhere less obvious.
+
+**`Router.Handle(method, pattern, h)`** exists for the gateway, whose method
+comes from an adapter rather than from a literal. Use `Get`/`Post`/… everywhere
+else — a method you can spell at the call site should be spelled there.
 
 ## Where it goes
 

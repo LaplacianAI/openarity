@@ -180,7 +180,7 @@ func (f *fakeSink) delivered() []Delivery {
 	return out
 }
 
-const testSecret = "whsec_test"
+const testSecret = "oawh_test"
 
 type harness struct {
 	provider *hookProvider

@@ -20,6 +20,13 @@ spec, and the contract test proves the two agree. That test fails the build if
 a route exists without a path, or a path exists without a route — so this is
 not a discipline anyone has to remember.
 
+**The webhook listener is not in the spec.** `/hooks/{provider}/{channel_id}`
+is a contract with Slack and Telegram, not with our clients — no generated
+client would ever call it, and describing it publishes a map of every channel
+route to people who cannot use it. The contract test reads `newRouters` only,
+so it will not notice; a separate test asserts `/hooks/` appears in neither the
+API routes nor the spec.
+
 ## Step 1 — describe the operation
 
 ```yaml
