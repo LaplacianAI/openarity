@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -97,6 +98,17 @@ type AddMemberRequest struct {
 	UserID *openapi_types.UUID `json:"user_id,omitempty" yaml:"user_id,omitempty"`
 }
 
+// ApproveSenderRequest defines model for ApproveSenderRequest.
+type ApproveSenderRequest struct {
+	// SenderRef Taken from the pending queue, or supplied directly when the
+	// provider id is already known.
+	SenderRef string `json:"sender_ref" yaml:"sender_ref"`
+
+	// UserID Who this sender speaks as. Must already be a member of the
+	// channel's team.
+	UserID openapi_types.UUID `json:"user_id" yaml:"user_id"`
+}
+
 // AuthConfig defines model for AuthConfig.
 type AuthConfig struct {
 	// DevTokenAccepted True only when a development token is configured *and* the
@@ -142,6 +154,24 @@ type Channel struct {
 // ChannelPage defines model for ChannelPage.
 type ChannelPage struct {
 	Items []Channel `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// ChannelSender defines model for ChannelSender.
+type ChannelSender struct {
+	// CreatedAt When they were approved
+	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
+	SenderRef string    `json:"sender_ref" yaml:"sender_ref"`
+
+	// UserID The user this sender speaks as
+	UserID openapi_types.UUID `json:"user_id" yaml:"user_id"`
+}
+
+// ChannelSenderPage defines model for ChannelSenderPage.
+type ChannelSenderPage struct {
+	Items []ChannelSender `json:"items" yaml:"items"`
 
 	// NextCursor Absent on the last page
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
@@ -249,6 +279,34 @@ type OIDCConfig struct {
 	Issuer string `json:"issuer" yaml:"issuer"`
 }
 
+// PendingSender defines model for PendingSender.
+type PendingSender struct {
+	FirstSeen time.Time `json:"first_seen" yaml:"first_seen"`
+	LastSeen  time.Time `json:"last_seen" yaml:"last_seen"`
+
+	// SeenCount How many messages they have sent that were dropped
+	SeenCount int32 `json:"seen_count" yaml:"seen_count"`
+
+	// SenderName What they call themselves, which they typed. Control characters
+	// are stripped and it is clipped on the way in, but two people may
+	// still share a name — that is the reason approval matches on
+	// `sender_ref` and shows this only as a hint.
+	SenderName string `json:"sender_name" yaml:"sender_name"`
+
+	// SenderRef The provider's own id for this person, unique within the channel
+	// rather than globally — Slack's ids repeat across workspaces, which
+	// is why approval is per channel.
+	SenderRef string `json:"sender_ref" yaml:"sender_ref"`
+}
+
+// PendingSenderPage defines model for PendingSenderPage.
+type PendingSenderPage struct {
+	Items []PendingSender `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
 // Team defines model for Team.
 type Team struct {
 	ID openapi_types.UUID `json:"id" yaml:"id"`
@@ -329,6 +387,9 @@ type Whoami struct {
 // WhoamiKind How the caller authenticated
 type WhoamiKind string
 
+// ChannelID defines model for ChannelID.
+type ChannelID = openapi_types.UUID
+
 // Cursor defines model for Cursor.
 type Cursor = string
 
@@ -352,6 +413,36 @@ type ListTeamsParams struct {
 
 // ListChannelsParams defines parameters for ListChannels.
 type ListChannelsParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
+// RemoveChannelSenderParams defines parameters for RemoveChannelSender.
+type RemoveChannelSenderParams struct {
+	// Ref The provider-side sender id, exactly as it was recorded
+	Ref string `form:"ref" json:"ref" yaml:"ref"`
+}
+
+// ListChannelSendersParams defines parameters for ListChannelSenders.
+type ListChannelSendersParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
+// ListPendingSendersParams defines parameters for ListPendingSenders.
+type ListPendingSendersParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
 	// refused; zero, a negative and anything unparseable are 400.
 	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
@@ -395,6 +486,9 @@ type CreateTeamJSONRequestBody = CreateTeamRequest
 
 // CreateChannelJSONRequestBody defines body for CreateChannel for application/json ContentType.
 type CreateChannelJSONRequestBody = CreateChannelRequest
+
+// ApproveChannelSenderJSONRequestBody defines body for ApproveChannelSender for application/json ContentType.
+type ApproveChannelSenderJSONRequestBody = ApproveSenderRequest
 
 // AddTeamMemberJSONRequestBody defines body for AddTeamMember for application/json ContentType.
 type AddTeamMemberJSONRequestBody = AddMemberRequest
@@ -606,6 +700,98 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveChannelSender Remove a sender, or dismiss a pending one
+	//
+	// Requires `channel:write` in this team. Clears both the approval and
+	// any pending row for that ref, because the caller cannot always tell
+	// which they are looking at and the wrong guess leaves one behind.
+	//
+	// Not a block. Their next message queues them again, which is what makes
+	// a mistaken removal recoverable — and what makes removal alone
+	// ineffective against somebody persistent.
+	//
+	// Removing a ref that was never linked is 204, not 404: the caller asked
+	// for a state and that state holds, and a 404 would let an admin probe
+	// which provider ids are linked one request at a time.
+	//
+	// The ref is a query parameter rather than a path segment because it is
+	// provider-controlled text. A ref of `.` or `..` in a path is rewritten
+	// by the router before any handler runs, and the standard path-escaping
+	// functions leave dots alone — so such a sender could never be removed.
+	//
+	// Corresponds with DELETE /teams/{id}/channels/{channelID}/senders (the `RemoveChannelSender` operationId).
+	RemoveChannelSender(ctx context.Context, id TeamID, channelID ChannelID, params *RemoveChannelSenderParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListChannelSenders List approved senders
+	//
+	// Requires `channel:write` in this team. Who may speak to the agent
+	// through this channel, and as whom.
+	//
+	// Corresponds with GET /teams/{id}/channels/{channelID}/senders (the `ListChannelSenders` operationId).
+	ListChannelSenders(ctx context.Context, id TeamID, channelID ChannelID, params *ListChannelSendersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApproveChannelSenderWithBody Approve a sender
+	//
+	// Requires `channel:write` in this team. Links a provider-side sender to
+	// a user and takes them out of the pending queue, in one statement.
+	//
+	// This is what lets somebody instruct an agent as a named user, so it is
+	// an admin act rather than a member one. `user_id` must already be a
+	// member of this team — otherwise approving would be a way to give
+	// somebody a voice in a team they do not belong to, needing only
+	// `channel:write` rather than `membership:write`.
+	//
+	// A `sender_ref` that was never pending is accepted: an admin who
+	// already knows a provider id may link it before its owner has spoken.
+	//
+	// Approving somebody already approved moves them to the new user, so
+	// correcting a mistake is one call rather than a remove and an add.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
+	ApproveChannelSenderWithBody(ctx context.Context, id TeamID, channelID ChannelID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApproveChannelSender Approve a sender
+	//
+	// Requires `channel:write` in this team. Links a provider-side sender to
+	// a user and takes them out of the pending queue, in one statement.
+	//
+	// This is what lets somebody instruct an agent as a named user, so it is
+	// an admin act rather than a member one. `user_id` must already be a
+	// member of this team — otherwise approving would be a way to give
+	// somebody a voice in a team they do not belong to, needing only
+	// `channel:write` rather than `membership:write`.
+	//
+	// A `sender_ref` that was never pending is accepted: an admin who
+	// already knows a provider id may link it before its owner has spoken.
+	//
+	// Approving somebody already approved moves them to the new user, so
+	// correcting a mistake is one call rather than a remove and an add.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
+	ApproveChannelSender(ctx context.Context, id TeamID, channelID ChannelID, body ApproveChannelSenderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPendingSenders List senders waiting to be approved
+	//
+	// Requires `channel:write` in this team — the same permission as
+	// connecting the channel, because this queue is only actionable by
+	// whoever can approve, and it holds text a stranger chose.
+	//
+	// A sender the brain has never linked to a user has their provider-side
+	// id and display name recorded here, bounded to 50 per channel, and
+	// their message is dropped. Nothing they wrote is stored.
+	//
+	// `sender_name` is attacker-controlled on every platform: it is whatever
+	// the person typed into their profile. Control characters are stripped
+	// and it is clipped to 64 characters on the way in, but it is still
+	// theirs. Render it as data.
+	//
+	// Corresponds with GET /teams/{id}/channels/{channelID}/senders/pending (the `ListPendingSenders` operationId).
+	ListPendingSenders(ctx context.Context, id TeamID, channelID ChannelID, params *ListPendingSendersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeamMembers List a team's members
 	//
@@ -922,6 +1108,148 @@ func (c *Client) CreateChannel(ctx context.Context, id TeamID, body CreateChanne
 // Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 func (c *Client) DeleteChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteChannelRequest(c.Server, id, channelID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemoveChannelSender Remove a sender, or dismiss a pending one
+//
+// Requires `channel:write` in this team. Clears both the approval and
+// any pending row for that ref, because the caller cannot always tell
+// which they are looking at and the wrong guess leaves one behind.
+//
+// Not a block. Their next message queues them again, which is what makes
+// a mistaken removal recoverable — and what makes removal alone
+// ineffective against somebody persistent.
+//
+// Removing a ref that was never linked is 204, not 404: the caller asked
+// for a state and that state holds, and a 404 would let an admin probe
+// which provider ids are linked one request at a time.
+//
+// The ref is a query parameter rather than a path segment because it is
+// provider-controlled text. A ref of `.` or `..` in a path is rewritten
+// by the router before any handler runs, and the standard path-escaping
+// functions leave dots alone — so such a sender could never be removed.
+//
+// Corresponds with DELETE /teams/{id}/channels/{channelID}/senders (the `RemoveChannelSender` operationId).
+func (c *Client) RemoveChannelSender(ctx context.Context, id TeamID, channelID ChannelID, params *RemoveChannelSenderParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveChannelSenderRequest(c.Server, id, channelID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListChannelSenders List approved senders
+//
+// Requires `channel:write` in this team. Who may speak to the agent
+// through this channel, and as whom.
+//
+// Corresponds with GET /teams/{id}/channels/{channelID}/senders (the `ListChannelSenders` operationId).
+func (c *Client) ListChannelSenders(ctx context.Context, id TeamID, channelID ChannelID, params *ListChannelSendersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListChannelSendersRequest(c.Server, id, channelID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApproveChannelSenderWithBody Approve a sender
+//
+// Requires `channel:write` in this team. Links a provider-side sender to
+// a user and takes them out of the pending queue, in one statement.
+//
+// This is what lets somebody instruct an agent as a named user, so it is
+// an admin act rather than a member one. `user_id` must already be a
+// member of this team — otherwise approving would be a way to give
+// somebody a voice in a team they do not belong to, needing only
+// `channel:write` rather than `membership:write`.
+//
+// A `sender_ref` that was never pending is accepted: an admin who
+// already knows a provider id may link it before its owner has spoken.
+//
+// Approving somebody already approved moves them to the new user, so
+// correcting a mistake is one call rather than a remove and an add.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
+func (c *Client) ApproveChannelSenderWithBody(ctx context.Context, id TeamID, channelID ChannelID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveChannelSenderRequestWithBody(c.Server, id, channelID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApproveChannelSender Approve a sender
+//
+// Requires `channel:write` in this team. Links a provider-side sender to
+// a user and takes them out of the pending queue, in one statement.
+//
+// This is what lets somebody instruct an agent as a named user, so it is
+// an admin act rather than a member one. `user_id` must already be a
+// member of this team — otherwise approving would be a way to give
+// somebody a voice in a team they do not belong to, needing only
+// `channel:write` rather than `membership:write`.
+//
+// A `sender_ref` that was never pending is accepted: an admin who
+// already knows a provider id may link it before its owner has spoken.
+//
+// Approving somebody already approved moves them to the new user, so
+// correcting a mistake is one call rather than a remove and an add.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
+func (c *Client) ApproveChannelSender(ctx context.Context, id TeamID, channelID ChannelID, body ApproveChannelSenderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveChannelSenderRequest(c.Server, id, channelID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPendingSenders List senders waiting to be approved
+//
+// Requires `channel:write` in this team — the same permission as
+// connecting the channel, because this queue is only actionable by
+// whoever can approve, and it holds text a stranger chose.
+//
+// A sender the brain has never linked to a user has their provider-side
+// id and display name recorded here, bounded to 50 per channel, and
+// their message is dropped. Nothing they wrote is stored.
+//
+// `sender_name` is attacker-controlled on every platform: it is whatever
+// the person typed into their profile. Control characters are stripped
+// and it is clipped to 64 characters on the way in, but it is still
+// theirs. Render it as data.
+//
+// Corresponds with GET /teams/{id}/channels/{channelID}/senders/pending (the `ListPendingSenders` operationId).
+func (c *Client) ListPendingSenders(ctx context.Context, id TeamID, channelID ChannelID, params *ListPendingSendersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPendingSendersRequest(c.Server, id, channelID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1454,6 +1782,284 @@ func NewDeleteChannelRequest(server string, id TeamID, channelID openapi_types.U
 	return req, nil
 }
 
+// NewRemoveChannelSenderRequest constructs an http.Request for the RemoveChannelSender method
+func NewRemoveChannelSenderRequest(server string, id TeamID, channelID ChannelID, params *RemoveChannelSenderParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "channelID", channelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/channels/%s/senders", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ref", params.Ref, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListChannelSendersRequest constructs an http.Request for the ListChannelSenders method
+func NewListChannelSendersRequest(server string, id TeamID, channelID ChannelID, params *ListChannelSendersParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "channelID", channelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/channels/%s/senders", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewApproveChannelSenderRequest calls the generic ApproveChannelSender builder with application/json body
+func NewApproveChannelSenderRequest(server string, id TeamID, channelID ChannelID, body ApproveChannelSenderJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApproveChannelSenderRequestWithBody(server, id, channelID, "application/json", bodyReader)
+}
+
+// NewApproveChannelSenderRequestWithBody constructs an http.Request for the ApproveChannelSender method, with any body, and a specified content type
+func NewApproveChannelSenderRequestWithBody(server string, id TeamID, channelID ChannelID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "channelID", channelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/channels/%s/senders", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListPendingSendersRequest constructs an http.Request for the ListPendingSenders method
+func NewListPendingSendersRequest(server string, id TeamID, channelID ChannelID, params *ListPendingSendersParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "channelID", channelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/channels/%s/senders/pending", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListTeamMembersRequest constructs an http.Request for the ListTeamMembers method
 func NewListTeamMembersRequest(server string, id TeamID, params *ListTeamMembersParams) (*http.Request, error) {
 	var err error
@@ -1911,6 +2517,104 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteChannelResponse, error)
+
+	// RemoveChannelSenderWithResponse Remove a sender, or dismiss a pending one
+	//
+	// Requires `channel:write` in this team. Clears both the approval and
+	// any pending row for that ref, because the caller cannot always tell
+	// which they are looking at and the wrong guess leaves one behind.
+	//
+	// Not a block. Their next message queues them again, which is what makes
+	// a mistaken removal recoverable — and what makes removal alone
+	// ineffective against somebody persistent.
+	//
+	// Removing a ref that was never linked is 204, not 404: the caller asked
+	// for a state and that state holds, and a 404 would let an admin probe
+	// which provider ids are linked one request at a time.
+	//
+	// The ref is a query parameter rather than a path segment because it is
+	// provider-controlled text. A ref of `.` or `..` in a path is rewritten
+	// by the router before any handler runs, and the standard path-escaping
+	// functions leave dots alone — so such a sender could never be removed.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id}/channels/{channelID}/senders (the `RemoveChannelSender` operationId).
+	RemoveChannelSenderWithResponse(ctx context.Context, id TeamID, channelID ChannelID, params *RemoveChannelSenderParams, reqEditors ...RequestEditorFn) (*RemoveChannelSenderResponse, error)
+
+	// ListChannelSendersWithResponse List approved senders
+	//
+	// Requires `channel:write` in this team. Who may speak to the agent
+	// through this channel, and as whom.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/channels/{channelID}/senders (the `ListChannelSenders` operationId).
+	ListChannelSendersWithResponse(ctx context.Context, id TeamID, channelID ChannelID, params *ListChannelSendersParams, reqEditors ...RequestEditorFn) (*ListChannelSendersResponse, error)
+
+	// ApproveChannelSenderWithBodyWithResponse Approve a sender
+	//
+	// Requires `channel:write` in this team. Links a provider-side sender to
+	// a user and takes them out of the pending queue, in one statement.
+	//
+	// This is what lets somebody instruct an agent as a named user, so it is
+	// an admin act rather than a member one. `user_id` must already be a
+	// member of this team — otherwise approving would be a way to give
+	// somebody a voice in a team they do not belong to, needing only
+	// `channel:write` rather than `membership:write`.
+	//
+	// A `sender_ref` that was never pending is accepted: an admin who
+	// already knows a provider id may link it before its owner has spoken.
+	//
+	// Approving somebody already approved moves them to the new user, so
+	// correcting a mistake is one call rather than a remove and an add.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
+	ApproveChannelSenderWithBodyWithResponse(ctx context.Context, id TeamID, channelID ChannelID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveChannelSenderResponse, error)
+
+	// ApproveChannelSenderWithResponse Approve a sender
+	//
+	// Requires `channel:write` in this team. Links a provider-side sender to
+	// a user and takes them out of the pending queue, in one statement.
+	//
+	// This is what lets somebody instruct an agent as a named user, so it is
+	// an admin act rather than a member one. `user_id` must already be a
+	// member of this team — otherwise approving would be a way to give
+	// somebody a voice in a team they do not belong to, needing only
+	// `channel:write` rather than `membership:write`.
+	//
+	// A `sender_ref` that was never pending is accepted: an admin who
+	// already knows a provider id may link it before its owner has spoken.
+	//
+	// Approving somebody already approved moves them to the new user, so
+	// correcting a mistake is one call rather than a remove and an add.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
+	ApproveChannelSenderWithResponse(ctx context.Context, id TeamID, channelID ChannelID, body ApproveChannelSenderJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveChannelSenderResponse, error)
+
+	// ListPendingSendersWithResponse List senders waiting to be approved
+	//
+	// Requires `channel:write` in this team — the same permission as
+	// connecting the channel, because this queue is only actionable by
+	// whoever can approve, and it holds text a stranger chose.
+	//
+	// A sender the brain has never linked to a user has their provider-side
+	// id and display name recorded here, bounded to 50 per channel, and
+	// their message is dropped. Nothing they wrote is stored.
+	//
+	// `sender_name` is attacker-controlled on every platform: it is whatever
+	// the person typed into their profile. Control characters are stripped
+	// and it is clipped to 64 characters on the way in, but it is still
+	// theirs. Render it as data.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/channels/{channelID}/senders/pending (the `ListPendingSenders` operationId).
+	ListPendingSendersWithResponse(ctx context.Context, id TeamID, channelID ChannelID, params *ListPendingSendersParams, reqEditors ...RequestEditorFn) (*ListPendingSendersResponse, error)
 
 	// ListTeamMembersWithResponse List a team's members
 	//
@@ -2391,6 +3095,184 @@ func (r DeleteChannelResponse) ContentType() string {
 	return ""
 }
 
+// RemoveChannelSenderResponse401Headers the declared response headers of an HTTP 401 response for RemoveChannelSender
+type RemoveChannelSenderResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type RemoveChannelSenderResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RemoveChannelSenderResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r RemoveChannelSenderResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveChannelSenderResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveChannelSenderResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemoveChannelSenderResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListChannelSendersResponse401Headers the declared response headers of an HTTP 401 response for ListChannelSenders
+type ListChannelSendersResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListChannelSendersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ChannelSenderPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListChannelSendersResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListChannelSendersResponse) GetJSON200() *ChannelSenderPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListChannelSendersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListChannelSendersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListChannelSendersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListChannelSendersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ApproveChannelSenderResponse401Headers the declared response headers of an HTTP 401 response for ApproveChannelSender
+type ApproveChannelSenderResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ApproveChannelSenderResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ApproveChannelSenderResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r ApproveChannelSenderResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApproveChannelSenderResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApproveChannelSenderResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApproveChannelSenderResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListPendingSendersResponse401Headers the declared response headers of an HTTP 401 response for ListPendingSenders
+type ListPendingSendersResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListPendingSendersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PendingSenderPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListPendingSendersResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPendingSendersResponse) GetJSON200() *PendingSenderPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPendingSendersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPendingSendersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPendingSendersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPendingSendersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListTeamMembersResponse401Headers the declared response headers of an HTTP 401 response for ListTeamMembers
 type ListTeamMembersResponse401Headers struct {
 	WWWAuthenticate *string
@@ -2831,6 +3713,134 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, id 
 	return ParseDeleteChannelResponse(rsp)
 }
 
+// RemoveChannelSenderWithResponse Remove a sender, or dismiss a pending one
+//
+// Requires `channel:write` in this team. Clears both the approval and
+// any pending row for that ref, because the caller cannot always tell
+// which they are looking at and the wrong guess leaves one behind.
+//
+// Not a block. Their next message queues them again, which is what makes
+// a mistaken removal recoverable — and what makes removal alone
+// ineffective against somebody persistent.
+//
+// Removing a ref that was never linked is 204, not 404: the caller asked
+// for a state and that state holds, and a 404 would let an admin probe
+// which provider ids are linked one request at a time.
+//
+// The ref is a query parameter rather than a path segment because it is
+// provider-controlled text. A ref of `.` or `..` in a path is rewritten
+// by the router before any handler runs, and the standard path-escaping
+// functions leave dots alone — so such a sender could never be removed.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id}/channels/{channelID}/senders (the `RemoveChannelSender` operationId).
+func (c *ClientWithResponses) RemoveChannelSenderWithResponse(ctx context.Context, id TeamID, channelID ChannelID, params *RemoveChannelSenderParams, reqEditors ...RequestEditorFn) (*RemoveChannelSenderResponse, error) {
+	rsp, err := c.RemoveChannelSender(ctx, id, channelID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveChannelSenderResponse(rsp)
+}
+
+// ListChannelSendersWithResponse List approved senders
+//
+// Requires `channel:write` in this team. Who may speak to the agent
+// through this channel, and as whom.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/channels/{channelID}/senders (the `ListChannelSenders` operationId).
+func (c *ClientWithResponses) ListChannelSendersWithResponse(ctx context.Context, id TeamID, channelID ChannelID, params *ListChannelSendersParams, reqEditors ...RequestEditorFn) (*ListChannelSendersResponse, error) {
+	rsp, err := c.ListChannelSenders(ctx, id, channelID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListChannelSendersResponse(rsp)
+}
+
+// ApproveChannelSenderWithBodyWithResponse Approve a sender
+//
+// Requires `channel:write` in this team. Links a provider-side sender to
+// a user and takes them out of the pending queue, in one statement.
+//
+// This is what lets somebody instruct an agent as a named user, so it is
+// an admin act rather than a member one. `user_id` must already be a
+// member of this team — otherwise approving would be a way to give
+// somebody a voice in a team they do not belong to, needing only
+// `channel:write` rather than `membership:write`.
+//
+// A `sender_ref` that was never pending is accepted: an admin who
+// already knows a provider id may link it before its owner has spoken.
+//
+// Approving somebody already approved moves them to the new user, so
+// correcting a mistake is one call rather than a remove and an add.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
+func (c *ClientWithResponses) ApproveChannelSenderWithBodyWithResponse(ctx context.Context, id TeamID, channelID ChannelID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveChannelSenderResponse, error) {
+	rsp, err := c.ApproveChannelSenderWithBody(ctx, id, channelID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApproveChannelSenderResponse(rsp)
+}
+
+// ApproveChannelSenderWithResponse Approve a sender
+//
+// Requires `channel:write` in this team. Links a provider-side sender to
+// a user and takes them out of the pending queue, in one statement.
+//
+// This is what lets somebody instruct an agent as a named user, so it is
+// an admin act rather than a member one. `user_id` must already be a
+// member of this team — otherwise approving would be a way to give
+// somebody a voice in a team they do not belong to, needing only
+// `channel:write` rather than `membership:write`.
+//
+// A `sender_ref` that was never pending is accepted: an admin who
+// already knows a provider id may link it before its owner has spoken.
+//
+// Approving somebody already approved moves them to the new user, so
+// correcting a mistake is one call rather than a remove and an add.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
+func (c *ClientWithResponses) ApproveChannelSenderWithResponse(ctx context.Context, id TeamID, channelID ChannelID, body ApproveChannelSenderJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveChannelSenderResponse, error) {
+	rsp, err := c.ApproveChannelSender(ctx, id, channelID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApproveChannelSenderResponse(rsp)
+}
+
+// ListPendingSendersWithResponse List senders waiting to be approved
+//
+// Requires `channel:write` in this team — the same permission as
+// connecting the channel, because this queue is only actionable by
+// whoever can approve, and it holds text a stranger chose.
+//
+// A sender the brain has never linked to a user has their provider-side
+// id and display name recorded here, bounded to 50 per channel, and
+// their message is dropped. Nothing they wrote is stored.
+//
+// `sender_name` is attacker-controlled on every platform: it is whatever
+// the person typed into their profile. Control characters are stripped
+// and it is clipped to 64 characters on the way in, but it is still
+// theirs. Render it as data.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/channels/{channelID}/senders/pending (the `ListPendingSenders` operationId).
+func (c *ClientWithResponses) ListPendingSendersWithResponse(ctx context.Context, id TeamID, channelID ChannelID, params *ListPendingSendersParams, reqEditors ...RequestEditorFn) (*ListPendingSendersResponse, error) {
+	rsp, err := c.ListPendingSenders(ctx, id, channelID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPendingSendersResponse(rsp)
+}
+
 // ListTeamMembersWithResponse List a team's members
 //
 // A read, so seeing the team is enough — no action is required.
@@ -3224,6 +4234,142 @@ func ParseDeleteChannelResponse(rsp *http.Response) (*DeleteChannelResponse, err
 	switch {
 	case rsp.StatusCode == 401:
 		var headers DeleteChannelResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRemoveChannelSenderResponse parses an HTTP response from a RemoveChannelSenderWithResponse call
+func ParseRemoveChannelSenderResponse(rsp *http.Response) (*RemoveChannelSenderResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveChannelSenderResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers RemoveChannelSenderResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListChannelSendersResponse parses an HTTP response from a ListChannelSendersWithResponse call
+func ParseListChannelSendersResponse(rsp *http.Response) (*ListChannelSendersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListChannelSendersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ChannelSenderPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListChannelSendersResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseApproveChannelSenderResponse parses an HTTP response from a ApproveChannelSenderWithResponse call
+func ParseApproveChannelSenderResponse(rsp *http.Response) (*ApproveChannelSenderResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApproveChannelSenderResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ApproveChannelSenderResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListPendingSendersResponse parses an HTTP response from a ListPendingSendersWithResponse call
+func ParseListPendingSendersResponse(rsp *http.Response) (*ListPendingSendersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPendingSendersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PendingSenderPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListPendingSendersResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
