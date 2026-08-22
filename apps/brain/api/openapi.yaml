@@ -462,6 +462,153 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/channels/{channelID}/senders/pending:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ChannelID"
+    get:
+      operationId: listPendingSenders
+      tags: [channels]
+      summary: List senders waiting to be approved
+      description: |
+        Requires `channel:write` in this team — the same permission as
+        connecting the channel, because this queue is only actionable by
+        whoever can approve, and it holds text a stranger chose.
+
+        A sender the brain has never linked to a user has their provider-side
+        id and display name recorded here, bounded to 50 per channel, and
+        their message is dropped. Nothing they wrote is stored.
+
+        `sender_name` is attacker-controlled on every platform: it is whatever
+        the person typed into their profile. Control characters are stripped
+        and it is clipped to 64 characters on the way in, but it is still
+        theirs. Render it as data.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of pending senders, most recently first seen first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingSenderPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/channels/{channelID}/senders:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ChannelID"
+    get:
+      operationId: listChannelSenders
+      tags: [channels]
+      summary: List approved senders
+      description: |
+        Requires `channel:write` in this team. Who may speak to the agent
+        through this channel, and as whom.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of approved senders, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelSenderPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: approveChannelSender
+      tags: [channels]
+      summary: Approve a sender
+      description: |
+        Requires `channel:write` in this team. Links a provider-side sender to
+        a user and takes them out of the pending queue, in one statement.
+
+        This is what lets somebody instruct an agent as a named user, so it is
+        an admin act rather than a member one. `user_id` must already be a
+        member of this team — otherwise approving would be a way to give
+        somebody a voice in a team they do not belong to, needing only
+        `channel:write` rather than `membership:write`.
+
+        A `sender_ref` that was never pending is accepted: an admin who
+        already knows a provider id may link it before its owner has spoken.
+
+        Approving somebody already approved moves them to the new user, so
+        correcting a mistake is one call rather than a remove and an add.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveSenderRequest"
+      responses:
+        "204":
+          description: Approved
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: removeChannelSender
+      tags: [channels]
+      summary: Remove a sender, or dismiss a pending one
+      description: |
+        Requires `channel:write` in this team. Clears both the approval and
+        any pending row for that ref, because the caller cannot always tell
+        which they are looking at and the wrong guess leaves one behind.
+
+        Not a block. Their next message queues them again, which is what makes
+        a mistaken removal recoverable — and what makes removal alone
+        ineffective against somebody persistent.
+
+        Removing a ref that was never linked is 204, not 404: the caller asked
+        for a state and that state holds, and a 404 would let an admin probe
+        which provider ids are linked one request at a time.
+
+        The ref is a query parameter rather than a path segment because it is
+        provider-controlled text. A ref of `.` or `..` in a path is rewritten
+        by the router before any handler runs, and the standard path-escaping
+        functions leave dots alone — so such a sender could never be removed.
+      parameters:
+        - name: ref
+          in: query
+          required: true
+          description: The provider-side sender id, exactly as it was recorded
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        "204":
+          description: Removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /users:
     get:
       operationId: listUsers
@@ -548,6 +695,15 @@ components:
       in: path
       required: true
       description: The team
+      schema:
+        type: string
+        format: uuid
+
+    ChannelID:
+      name: channelID
+      in: path
+      required: true
+      description: The channel
       schema:
         type: string
         format: uuid
@@ -872,6 +1028,94 @@ components:
         next_cursor:
           type: string
           description: Absent on the last page
+
+    PendingSender:
+      type: object
+      required: [sender_ref, sender_name, seen_count, first_seen, last_seen]
+      properties:
+        sender_ref:
+          type: string
+          maxLength: 256
+          description: |
+            The provider's own id for this person, unique within the channel
+            rather than globally — Slack's ids repeat across workspaces, which
+            is why approval is per channel.
+        sender_name:
+          type: string
+          maxLength: 64
+          description: |
+            What they call themselves, which they typed. Control characters
+            are stripped and it is clipped on the way in, but two people may
+            still share a name — that is the reason approval matches on
+            `sender_ref` and shows this only as a hint.
+        seen_count:
+          type: integer
+          format: int32
+          description: How many messages they have sent that were dropped
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+
+    PendingSenderPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PendingSender"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    ChannelSender:
+      type: object
+      required: [sender_ref, user_id, created_at]
+      properties:
+        sender_ref:
+          type: string
+          maxLength: 256
+        user_id:
+          type: string
+          format: uuid
+          description: The user this sender speaks as
+        created_at:
+          type: string
+          format: date-time
+          description: When they were approved
+
+    ChannelSenderPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelSender"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    ApproveSenderRequest:
+      type: object
+      required: [sender_ref, user_id]
+      properties:
+        sender_ref:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: |
+            Taken from the pending queue, or supplied directly when the
+            provider id is already known.
+        user_id:
+          type: string
+          format: uuid
+          description: |
+            Who this sender speaks as. Must already be a member of the
+            channel's team.
 
     User:
       type: object

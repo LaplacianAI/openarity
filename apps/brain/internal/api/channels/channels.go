@@ -32,6 +32,12 @@ type Store interface {
 	GetChannel(ctx context.Context, id uuid.UUID) (db.Channel, error)
 	ListChannelsByTeam(ctx context.Context, arg db.ListChannelsByTeamParams) ([]db.Channel, error)
 	DeleteChannel(ctx context.Context, id uuid.UUID) error
+
+	ListPendingSenders(ctx context.Context, arg db.ListPendingSendersParams) ([]db.PendingSender, error)
+	ListChannelSenders(ctx context.Context, arg db.ListChannelSendersParams) ([]db.ChannelSender, error)
+	FindTeamMember(ctx context.Context, arg db.FindTeamMemberParams) (string, error)
+	ApproveSender(ctx context.Context, arg db.ApproveSenderParams) error
+	RemoveSender(ctx context.Context, arg db.RemoveSenderParams) error
 }
 
 type Secrets interface {
@@ -57,6 +63,13 @@ func New(logger *slog.Logger, s Store, sec Secrets, p Providers) *api.Router {
 	r.Get("/{id}/channels", h.list)
 	r.Post("/{id}/channels", h.create)
 	r.Delete("/{id}/channels/{channelID}", h.delete)
+
+	senders := "/{id}/channels/{channelID}/senders"
+	r.Get(senders+"/pending", h.listPending)
+	r.Get(senders, h.listSenders)
+	r.Post(senders, h.approve)
+	r.Delete(senders, h.removeSender)
+
 	return r
 }
 

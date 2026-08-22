@@ -82,6 +82,31 @@
 
     {
       "method": "GET",
+      "path": "/teams/{id}/channels/{channelID}/senders/pending",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/channels/{channelID}/senders",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/channels/{channelID}/senders",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/channels/{channelID}/senders",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+
+    {
+      "method": "GET",
       "path": "/users",
       "scope": "any_team",
       "permission": "user:read"
