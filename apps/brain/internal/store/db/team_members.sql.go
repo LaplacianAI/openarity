@@ -36,6 +36,26 @@ func (q *Queries) AddTeamMember(ctx context.Context, arg AddTeamMemberParams) (T
 	return i, err
 }
 
+const findTeamMember = `-- name: FindTeamMember :one
+SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2
+`
+
+type FindTeamMemberParams struct {
+	TeamID uuid.UUID
+	UserID uuid.UUID
+}
+
+// FindTeamMember answers a question about somebody other than the caller,
+// whose own memberships are already on the request. Approving a channel sender
+// needs it: the person being named has to be in the channel's team, or the
+// approval grants them a voice in a team they do not belong to.
+func (q *Queries) FindTeamMember(ctx context.Context, arg FindTeamMemberParams) (string, error) {
+	row := q.db.QueryRow(ctx, findTeamMember, arg.TeamID, arg.UserID)
+	var role string
+	err := row.Scan(&role)
+	return role, err
+}
+
 const listTeamMembers = `-- name: ListTeamMembers :many
 SELECT u.id, u.subject, u.email, tm.role
 FROM team_members tm

@@ -12,6 +12,39 @@ import (
 	"github.com/google/uuid"
 )
 
+const approveSender = `-- name: ApproveSender :exec
+WITH linked AS (
+    INSERT INTO channel_senders (channel_id, sender_ref, user_id)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (channel_id, sender_ref) DO UPDATE SET user_id = EXCLUDED.user_id
+)
+DELETE FROM pending_senders
+WHERE pending_senders.channel_id = $1
+  AND pending_senders.sender_ref = $2
+`
+
+type ApproveSenderParams struct {
+	ChannelID uuid.UUID
+	SenderRef string
+	UserID    uuid.UUID
+}
+
+// ApproveSender links a sender to a user and takes them out of the queue.
+//
+// One statement rather than two inside a transaction. Postgres runs a
+// statement atomically, and a data-modifying CTE executes to completion
+// whether or not the primary query reads its output — so the link and the
+// dequeue cannot come apart, and it is one round trip instead of four.
+//
+// They have to be atomic because nothing here retries. The gateway's writes
+// can be merely idempotent, since the provider sends again; an admin approves
+// once. A link left with its pending row in place shows the next admin work
+// that is already done, and they approve the same person twice.
+func (q *Queries) ApproveSender(ctx context.Context, arg ApproveSenderParams) error {
+	_, err := q.db.Exec(ctx, approveSender, arg.ChannelID, arg.SenderRef, arg.UserID)
+	return err
+}
+
 const countPendingSenders = `-- name: CountPendingSenders :one
 SELECT count(*) FROM pending_senders WHERE channel_id = $1
 `
@@ -211,6 +244,35 @@ func (q *Queries) RecordPendingSender(ctx context.Context, arg RecordPendingSend
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const removeSender = `-- name: RemoveSender :exec
+WITH unlinked AS (
+    DELETE FROM channel_senders
+    WHERE channel_senders.channel_id = $1
+      AND channel_senders.sender_ref = $2
+)
+DELETE FROM pending_senders
+WHERE pending_senders.channel_id = $1
+  AND pending_senders.sender_ref = $2
+`
+
+type RemoveSenderParams struct {
+	ChannelID uuid.UUID
+	SenderRef string
+}
+
+// RemoveSender is both "this person should not speak here any more" and "this
+// pending row is spam". One statement covers both, because the caller cannot
+// always tell which they are looking at and the wrong guess leaves a row
+// behind.
+//
+// It is not a block. Their next message queues them again, which is what makes
+// a mistaken removal recoverable — and a removal of somebody persistent
+// ineffective on its own.
+func (q *Queries) RemoveSender(ctx context.Context, arg RemoveSenderParams) error {
+	_, err := q.db.Exec(ctx, removeSender, arg.ChannelID, arg.SenderRef)
+	return err
 }
 
 const unlinkChannelSender = `-- name: UnlinkChannelSender :exec
