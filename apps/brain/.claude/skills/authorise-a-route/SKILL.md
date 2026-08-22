@@ -212,6 +212,12 @@ A **public** router is exempt. `NewPublicRouter` mounts outside authentication,
 so there is no caller to authorise, and its routes must **not** appear in
 `rbac.json` — they would be reported as unused and stop the boot.
 
+Everything on the **webhook listener** is in that category. A provider webhook
+has no caller at all: it proves a signature over the raw body against one
+channel's secret, so there is no user, no role and nothing to look up. Adding a
+`/hooks/...` row to `rbac.json` fails `serve` with *maps routes this server
+does not serve*, because the guard never sees those routes.
+
 ## Reading a denial
 
 | You got | It means |

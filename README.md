@@ -51,6 +51,14 @@ platform does:
 - Role-based authorisation. Roles and their permissions are rows, so adding a
   role is a migration rather than a release
 - A teams API — create a team, list them, and manage membership
+- An inbound gateway. A channel is a team's connection to one platform; its
+  webhook arrives on the public listener, is verified against that channel's
+  own signing secret, and becomes a normalised message whatever sent it
+- A generic webhook adapter anyone can integrate against today, and a
+  conformance suite a new adapter has to pass before it is trusted
+- Approval before anything is stored. A message from a sender nobody has linked
+  to a user is dropped; only their id and name are queued, so a stranger cannot
+  put text into your database by finding your URL
 
 `oa` is early too, but it is real:
 
@@ -73,11 +81,16 @@ platform does:
   parseable without a second tool
 - Teams and membership from the terminal — list, create, and add or remove a
   member, instead of a `psql` session against the brain's database
+- Channels — connect one, list them, disconnect it. The signing secret is
+  generated for you and shown once, or read from stdin if you have one already;
+  there is no `--secret` flag, because a command line is world-readable
 - Against a development brain it needs no setup: it finds the shared token in
   your shell, and only ever sends it to a loopback address
 
-Not built yet: the graph, the planner, the agent runtime, channel adapters, the
-dashboard.
+Not built yet: the graph, the planner, the agent runtime, the dashboard, and
+outbound replies — the brain can receive a message but cannot yet answer one.
+Slack, Discord and Telegram adapters are not written; the seam they plug into
+is, and `custom` is a working generic webhook in the meantime.
 
 ## Quick start
 
@@ -189,6 +202,31 @@ oa users list alice                           # one exact subject, with her id
 somebody needs `membership:write` in that team and nothing more. `oa users list`
 is for the other question — who is there at all — and needs `user:read` in some
 team.
+
+A channel is a team's connection to one platform. Creating one generates a
+signing secret and prints it once — it is written to the secret store and no
+endpoint can read it back:
+
+```sh
+oa channels create platform support --provider custom
+oa channels list platform
+oa channels delete platform support
+```
+
+The brain then serves `POST /hooks/custom/<channel-id>` on its webhook
+listener, and accepts a delivery only if it carries a fresh timestamp and an
+HMAC of the raw body under that secret. Nothing is stored until a sender has
+been approved.
+
+When the provider issues its own secret rather than accepting ours — Slack's
+Signing Secret, Meta's App Secret — pipe it in. There is deliberately no
+`--secret` flag: arguments are readable by every process on the machine through
+`ps`, and they land in shell history.
+
+```sh
+printf %s "$SLACK_SIGNING_SECRET" |
+    oa channels create platform slack --provider slack --secret-stdin
+```
 
 A list is one page per call. When more remain the response carries a cursor,
 and the table says how to use it:
