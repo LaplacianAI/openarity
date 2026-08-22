@@ -185,7 +185,7 @@ func survivesJunk(t *testing.T, p gateway.Provider) {
 		"json array":       []byte("[]"),
 		"json string":      []byte(`"a message"`),
 		"empty object":     []byte("{}"),
-		"null fields":      []byte(`{"event":null,"author":null,"conversation":null}`),
+		"null fields":      []byte(`{"event":null,"author":null,"session":null}`),
 		"wrong types":      []byte(`{"id":42,"text":[],"author":"nope"}`),
 		"deeply nested":    []byte(strings.Repeat(`{"a":`, 200) + "1" + strings.Repeat("}", 200)),
 		"huge number":      []byte(`{"size":` + strings.Repeat("9", 400) + `}`),

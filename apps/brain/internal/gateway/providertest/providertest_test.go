@@ -38,7 +38,7 @@ var body = []byte(`{
   "id": "m-1",
   "text": "what's our deploy status?",
   "author": { "ref": "u-1", "display_name": "Asha" },
-  "conversation": { "ref": "c-1", "kind": "direct" }
+  "session": { "ref": "c-1", "kind": "direct" }
 }`)
 
 func sign(secret, ts string, body []byte) string {
@@ -112,10 +112,10 @@ type payload struct {
 		Ref         string `json:"ref"`
 		DisplayName string `json:"display_name"`
 	} `json:"author"`
-	Conversation struct {
+	Session struct {
 		Ref  string `json:"ref"`
 		Kind string `json:"kind"`
-	} `json:"conversation"`
+	} `json:"session"`
 }
 
 func decode(b []byte) (payload, error) {
@@ -123,13 +123,13 @@ func decode(b []byte) (payload, error) {
 	if err := json.Unmarshal(b, &p); err != nil {
 		return p, fmt.Errorf("good: %w", err)
 	}
-	if p.ID == "" || p.Author.Ref == "" || p.Conversation.Ref == "" {
+	if p.ID == "" || p.Author.Ref == "" || p.Session.Ref == "" {
 		return p, errors.New("good: a required field is missing")
 	}
-	switch gateway.ConversationKind(p.Conversation.Kind) {
-	case gateway.ConversationDirect, gateway.ConversationGroup, gateway.ConversationThread:
+	switch gateway.SessionKind(p.Session.Kind) {
+	case gateway.SessionDirect, gateway.SessionGroup, gateway.SessionThread:
 	default:
-		return p, fmt.Errorf("good: unknown conversation kind %q", p.Conversation.Kind)
+		return p, fmt.Errorf("good: unknown conversation kind %q", p.Session.Kind)
 	}
 	return p, nil
 }
@@ -140,10 +140,10 @@ func (good) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
 		return gateway.Result{}, err
 	}
 	return gateway.Result{Messages: []gateway.Inbound{{
-		ExternalID:   p.ID,
-		Text:         p.Text,
-		Author:       gateway.Author{Ref: p.Author.Ref, DisplayName: p.Author.DisplayName},
-		Conversation: gateway.Conversation{Ref: p.Conversation.Ref, Kind: gateway.ConversationKind(p.Conversation.Kind)},
+		ExternalID: p.ID,
+		Text:       p.Text,
+		Author:     gateway.Author{Ref: p.Author.Ref, DisplayName: p.Author.DisplayName},
+		Session:    gateway.Session{Ref: p.Session.Ref, Kind: gateway.SessionKind(p.Session.Kind)},
 	}}}, nil
 }
 

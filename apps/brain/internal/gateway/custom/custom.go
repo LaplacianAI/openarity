@@ -40,16 +40,16 @@ type body struct {
 		IsBot       bool   `json:"is_bot"`
 	} `json:"author"`
 
-	Conversation struct {
-		Ref  string `json:"ref"`
-		Kind string `json:"kind"`
-	} `json:"conversation"`
-
 	Mentions []struct {
 		SenderRef   string `json:"sender_ref"`
 		DisplayName string `json:"display_name"`
 		IsUs        bool   `json:"is_us"`
 	} `json:"mentions"`
+
+	Session struct {
+		Ref  string `json:"ref"`
+		Kind string `json:"kind"`
+	} `json:"session"`
 }
 
 type provider struct{}
@@ -126,9 +126,9 @@ func (b body) inbound(sentAt time.Time) gateway.Inbound {
 			DisplayName: b.Author.DisplayName,
 			IsBot:       b.Author.IsBot,
 		},
-		Conversation: gateway.Conversation{
-			Ref:  b.Conversation.Ref,
-			Kind: gateway.ConversationKind(b.Conversation.Kind),
+		Session: gateway.Session{
+			Ref:  b.Session.Ref,
+			Kind: gateway.SessionKind(b.Session.Kind),
 		},
 		Mentions: mentions,
 		SentAt:   sentAt,

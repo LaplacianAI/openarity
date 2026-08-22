@@ -104,7 +104,8 @@ func (h *handler) hook(p Provider, rt Route) http.HandlerFunc {
 		}
 
 		if len(deliveries) > 0 {
-			if err := h.sink.Deliver(r.Context(), channel.ID, deliveries); err != nil {
+			if err := h.sink.Deliver(r.Context(),
+				Channel{ID: channel.ID, TeamID: channel.TeamID}, deliveries); err != nil {
 				h.logger.Error("gateway: deliver", "channel_id", channel.ID, "error", err)
 				http.Error(w, "try again", http.StatusInternalServerError)
 				return

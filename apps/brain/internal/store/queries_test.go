@@ -92,7 +92,11 @@ func dropReferencesTo(t *testing.T, s *Store, table string, keep ...string) {
 		WHERE c.confrelid = $1::regclass
 		  AND c.contype = 'f'
 		  AND c.conrelid <> $1::regclass
-		  AND NOT (c.conrelid::regclass::text = ANY($2::text[]))`, table, keep)
+		  -- coalesce, because a variadic with no arguments is a nil slice,
+		  -- which reaches Postgres as NULL. x = ANY(NULL) is NULL, NOT NULL
+		  -- is NULL, and NULL is not true — so the filter would quietly
+		  -- exclude every row and drop nothing at all.
+		  AND NOT (c.conrelid::regclass::text = ANY(coalesce($2::text[], '{}')))`, table, keep)
 	if err != nil {
 		t.Fatalf("find references to %s: %v", table, err)
 	}
@@ -110,8 +114,10 @@ func dropReferencesTo(t *testing.T, s *Store, table string, keep ...string) {
 		t.Fatalf("find references to %s: %v", table, err)
 	}
 
+	// IF EXISTS because CASCADE on one of these can take another in the list
+	// with it — channels reaches messages through sessions.
 	for _, name := range referencing {
-		exec(t, s, "DROP TABLE "+name+" CASCADE")
+		exec(t, s, "DROP TABLE IF EXISTS "+name+" CASCADE")
 	}
 }
 
@@ -306,11 +312,10 @@ func TestListTeamsReportsAScanFailure(t *testing.T) {
 	s := queryStore(t)
 
 	// A uuid column cannot be widened to text while anything references it.
-	// CASCADE rather than naming each table: every foreign key added later
-	// reaches teams through one of these, and a test that has to be edited
-	// for each new table is a test people start deleting.
-	exec(t, s, "DROP TABLE team_members CASCADE")
-	exec(t, s, "DROP TABLE channels CASCADE")
+	// Asked of the catalogue rather than listed here: sessions was the third
+	// table to break this test by referencing teams, and a test that needs
+	// editing for every new one is a test people start deleting.
+	dropReferencesTo(t, s, "teams")
 	exec(t, s, "ALTER TABLE teams ALTER COLUMN id TYPE text USING id::text")
 	exec(t, s, "INSERT INTO teams (id, name) VALUES ('not-a-uuid', 'broken')")
 

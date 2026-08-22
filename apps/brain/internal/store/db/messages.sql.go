@@ -12,41 +12,45 @@ import (
 	"github.com/google/uuid"
 )
 
-const countMessagesByChannel = `-- name: CountMessagesByChannel :one
-SELECT count(*) FROM messages WHERE channel_id = $1
+const countMessagesBySession = `-- name: CountMessagesBySession :one
+SELECT count(*) FROM messages WHERE session_id = $1
 `
 
-func (q *Queries) CountMessagesByChannel(ctx context.Context, channelID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countMessagesByChannel, channelID)
+func (q *Queries) CountMessagesBySession(ctx context.Context, sessionID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countMessagesBySession, sessionID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const insertMessage = `-- name: InsertMessage :execrows
-INSERT INTO messages (channel_id, user_id, external_id, conversation_ref, text, sent_at)
+INSERT INTO messages (channel_id, session_id, user_id, external_id, text, sent_at)
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (channel_id, external_id) DO NOTHING
 `
 
 type InsertMessageParams struct {
-	ChannelID       uuid.UUID
-	UserID          uuid.UUID
-	ExternalID      string
-	ConversationRef string
-	Text            string
-	SentAt          *time.Time
+	ChannelID  uuid.UUID
+	SessionID  uuid.UUID
+	UserID     uuid.UUID
+	ExternalID string
+	Text       string
+	SentAt     *time.Time
 }
 
 // InsertMessage reports the rows written, so a caller can tell a new message
 // from a replay without asking first. Both answers are a 200; the difference
 // is only whether anything downstream should run.
+//
+// The uniqueness is still per channel rather than per session: a provider's
+// message id is unique within its channel, and a retry that arrived after a
+// session closed would otherwise be stored twice under two sessions.
 func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (int64, error) {
 	result, err := q.db.Exec(ctx, insertMessage,
 		arg.ChannelID,
+		arg.SessionID,
 		arg.UserID,
 		arg.ExternalID,
-		arg.ConversationRef,
 		arg.Text,
 		arg.SentAt,
 	)
@@ -56,26 +60,26 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (i
 	return result.RowsAffected(), nil
 }
 
-const listMessagesByChannel = `-- name: ListMessagesByChannel :many
-SELECT id, channel_id, user_id, external_id, conversation_ref, text, sent_at, received_at FROM messages
-WHERE channel_id = $1
+const listMessagesBySession = `-- name: ListMessagesBySession :many
+SELECT id, channel_id, user_id, external_id, text, sent_at, received_at, session_id FROM messages
+WHERE session_id = $1
   AND (NOT $2::bool
    OR (received_at, id) < ($3::timestamptz, $4::uuid))
 ORDER BY received_at DESC, id DESC
 LIMIT $5
 `
 
-type ListMessagesByChannelParams struct {
-	ChannelID       uuid.UUID
+type ListMessagesBySessionParams struct {
+	SessionID       uuid.UUID
 	UseCursor       bool
 	AfterReceivedAt time.Time
 	AfterID         uuid.UUID
 	PageSize        int32
 }
 
-func (q *Queries) ListMessagesByChannel(ctx context.Context, arg ListMessagesByChannelParams) ([]Message, error) {
-	rows, err := q.db.Query(ctx, listMessagesByChannel,
-		arg.ChannelID,
+func (q *Queries) ListMessagesBySession(ctx context.Context, arg ListMessagesBySessionParams) ([]Message, error) {
+	rows, err := q.db.Query(ctx, listMessagesBySession,
+		arg.SessionID,
 		arg.UseCursor,
 		arg.AfterReceivedAt,
 		arg.AfterID,
@@ -93,10 +97,10 @@ func (q *Queries) ListMessagesByChannel(ctx context.Context, arg ListMessagesByC
 			&i.ChannelID,
 			&i.UserID,
 			&i.ExternalID,
-			&i.ConversationRef,
 			&i.Text,
 			&i.SentAt,
 			&i.ReceivedAt,
+			&i.SessionID,
 		); err != nil {
 			return nil, err
 		}

@@ -32,10 +32,10 @@ func TestAMessageWithNoOptionalFieldsIsWellFormed(t *testing.T) {
 	t.Parallel()
 
 	in := Inbound{
-		ExternalID:   "D04ABC:1755412345.123456",
-		Author:       Author{Ref: "U01AA"},
-		Conversation: Conversation{Ref: "D04ABC", Kind: ConversationDirect},
-		Text:         "what's our deploy status?",
+		ExternalID: "D04ABC:1755412345.123456",
+		Author:     Author{Ref: "U01AA"},
+		Session:    Session{Ref: "D04ABC", Kind: SessionDirect},
+		Text:       "what's our deploy status?",
 	}
 
 	if len(in.Mentions) != 0 {
@@ -57,9 +57,9 @@ func TestAMessageWithNoOptionalFieldsIsWellFormed(t *testing.T) {
 
 func valid() Inbound {
 	return Inbound{
-		ExternalID:   "m-1",
-		Author:       Author{Ref: "u-1"},
-		Conversation: Conversation{Ref: "c-1", Kind: ConversationDirect},
+		ExternalID: "m-1",
+		Author:     Author{Ref: "u-1"},
+		Session:    Session{Ref: "c-1", Kind: SessionDirect},
 	}
 }
 
@@ -79,14 +79,14 @@ func TestValidateRefusesAMessageTheHandlerCannotUse(t *testing.T) {
 	t.Parallel()
 
 	for name, damage := range map[string]func(*Inbound){
-		"no external id":      func(in *Inbound) { in.ExternalID = "" },
-		"no author ref":       func(in *Inbound) { in.Author.Ref = "" },
-		"no conversation ref": func(in *Inbound) { in.Conversation.Ref = "" },
-		"no conversation kind": func(in *Inbound) {
-			in.Conversation.Kind = ""
+		"no external id": func(in *Inbound) { in.ExternalID = "" },
+		"no author ref":  func(in *Inbound) { in.Author.Ref = "" },
+		"no session ref": func(in *Inbound) { in.Session.Ref = "" },
+		"no session kind": func(in *Inbound) {
+			in.Session.Kind = ""
 		},
-		"an invented conversation kind": func(in *Inbound) {
-			in.Conversation.Kind = "channel"
+		"an invented session kind": func(in *Inbound) {
+			in.Session.Kind = "channel"
 		},
 		"a mention of nobody": func(in *Inbound) {
 			in.Mentions = []Mention{{DisplayName: "Asha"}}
@@ -123,13 +123,13 @@ func TestValidateDoesNotRequireTheOptionalFields(t *testing.T) {
 
 // The kinds are compared, stored and rendered as these strings, so they are
 // not free to change once a channel exists.
-func TestTheConversationKindsAreStable(t *testing.T) {
+func TestTheSessionKindsAreStable(t *testing.T) {
 	t.Parallel()
 
-	for kind, want := range map[ConversationKind]string{
-		ConversationDirect: "direct",
-		ConversationGroup:  "group",
-		ConversationThread: "thread",
+	for kind, want := range map[SessionKind]string{
+		SessionDirect: "direct",
+		SessionGroup:  "group",
+		SessionThread: "thread",
 	} {
 		if string(kind) != want {
 			t.Errorf("kind = %q, want %q", kind, want)

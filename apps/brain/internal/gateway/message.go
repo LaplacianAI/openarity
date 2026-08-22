@@ -7,18 +7,22 @@ import (
 	"unicode/utf8"
 )
 
-type ConversationKind string
+type SessionKind string
 
 const (
-	ConversationDirect ConversationKind = "direct"
-	ConversationGroup  ConversationKind = "group"
-	ConversationThread ConversationKind = "thread"
+	SessionDirect SessionKind = "direct"
+	SessionGroup  SessionKind = "group"
+	SessionThread SessionKind = "thread"
 )
-const SenderRefMax = 256
 
-type Conversation struct {
+const (
+	SenderRefMax  = 256
+	SessionRefMax = 256
+)
+
+type Session struct {
 	Ref  string
-	Kind ConversationKind
+	Kind SessionKind
 }
 
 type Author struct {
@@ -47,8 +51,8 @@ type Enrichment struct {
 type Inbound struct {
 	ExternalID string
 
-	Author       Author
-	Conversation Conversation
+	Author  Author
+	Session Session
 
 	Text string
 
@@ -74,17 +78,20 @@ func (in Inbound) Validate() error {
 		return errors.New("no ExternalID, which is the idempotency key")
 	case in.Author.Ref == "":
 		return errors.New("no Author.Ref, so the sender cannot be resolved")
-	case in.Conversation.Ref == "":
-		return errors.New("no Conversation.Ref, so it belongs to no session")
+	case in.Session.Ref == "":
+		return errors.New("no Session.Ref, so it belongs to no conversation")
 	case utf8.RuneCountInString(in.Author.Ref) > SenderRefMax:
 		return fmt.Errorf("Author.Ref is %d characters, over the %d a sender ref may be",
 			utf8.RuneCountInString(in.Author.Ref), SenderRefMax)
+	case utf8.RuneCountInString(in.Session.Ref) > SessionRefMax:
+		return fmt.Errorf("Session.Ref is %d characters, over the %d a session ref may be",
+			utf8.RuneCountInString(in.Session.Ref), SessionRefMax)
 	}
 
-	switch in.Conversation.Kind {
-	case ConversationDirect, ConversationGroup, ConversationThread:
+	switch in.Session.Kind {
+	case SessionDirect, SessionGroup, SessionThread:
 	default:
-		return fmt.Errorf("conversation kind %q is not direct, group or thread", in.Conversation.Kind)
+		return fmt.Errorf("session kind %q is not direct, group or thread", in.Session.Kind)
 	}
 
 	for i, m := range in.Mentions {

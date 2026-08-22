@@ -57,10 +57,10 @@ func (f *fakeSenders) RecordPendingSender(_ context.Context, arg db.RecordPendin
 
 func message(ref, name string) Inbound {
 	return Inbound{
-		ExternalID:   "m-1",
-		Author:       Author{Ref: ref, DisplayName: name},
-		Conversation: Conversation{Ref: "c-1", Kind: ConversationDirect},
-		Text:         "what's our deploy status?",
+		ExternalID: "m-1",
+		Author:     Author{Ref: ref, DisplayName: name},
+		Session:    Session{Ref: "c-1", Kind: SessionDirect},
+		Text:       "what's our deploy status?",
 	}
 }
 
