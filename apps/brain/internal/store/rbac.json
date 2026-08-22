@@ -107,6 +107,22 @@
 
     {
       "method": "GET",
+      "path": "/teams/{id}/channels/{channelID}/sessions",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/sessions",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/sessions/{sessionID}/messages",
+      "scope": "member"
+    },
+
+    {
+      "method": "GET",
       "path": "/users",
       "scope": "any_team",
       "permission": "user:read"

@@ -6,6 +6,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/authconfig"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/channels"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/docs"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/sessions"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teams"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/users"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/whoami"
@@ -30,6 +31,7 @@ func newRouters(
 		teams.New(logger, dbStore, authorizer),
 		channels.New(logger, dbStore, secretWriter, registry),
 		users.New(logger, dbStore),
+		sessions.New(logger, dbStore),
 		authconfig.New(logger, cfg),
 	}
 

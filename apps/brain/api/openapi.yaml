@@ -35,6 +35,8 @@ tags:
     description: Teams and their membership
   - name: channels
     description: Where a team's messages arrive from
+  - name: sessions
+    description: Conversations, and what was said in them
   - name: users
     description: Finding a user's id
 
@@ -609,6 +611,114 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/channels/{channelID}/sessions:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ChannelID"
+    get:
+      operationId: listChannelSessions
+      tags: [sessions]
+      summary: List a channel's conversations
+      description: |
+        Membership in the team is the whole qualification — no permission. A
+        session is the conversation the team is already having in the
+        provider; requiring `channel:write` would mean an admin reads every
+        conversation on everybody else's behalf.
+
+        Most recently spoken in first.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/sessions:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listSessions
+      tags: [sessions]
+      summary: List every conversation in a team
+      description: |
+        Every session the team owns, whichever channel it arrived on — and
+        those that arrived on none. A session belongs to a team rather than to
+        a channel, because a channel is only one way one starts.
+
+        Most recently spoken in first.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/sessions/{sessionID}/messages:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: sessionID
+        in: path
+        required: true
+        description: The conversation
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listSessionMessages
+      tags: [sessions]
+      summary: Read a conversation
+      description: |
+        Every message here came from a sender somebody approved. A message
+        from anyone else was dropped before it was written, so this is not a
+        filtered view of what arrived — it is everything that was ever stored.
+
+        Ordered by `received_at`, newest first, and never by `sent_at`.
+        `sent_at` is the sender's clock: a provider with a wrong one, or
+        somebody setting it deliberately, would otherwise reorder a
+        conversation they do not own.
+
+        `text` is whatever a person typed. Render it as data.
+
+        A session in another team answers 404, not 403 — the caller was
+        authorised for the team they named, not for a session id they may have
+        guessed, and confirming it exists would let anyone walk the uuid space.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of messages, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /users:
     get:
       operationId: listUsers
@@ -1116,6 +1226,111 @@ components:
           description: |
             Who this sender speaks as. Must already be a member of the
             channel's team.
+
+    Session:
+      type: object
+      required: [id, kind, status, started_at, last_message_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The channel it arrived on, absent when it did not arrive on one —
+            a session started from the dashboard or the API has no webhook
+            behind it.
+        provider_ref:
+          type: string
+          maxLength: 256
+          description: |
+            The adapter's answer to "which conversation is this", and the whole
+            of session identity. What goes in it differs by platform and is the
+            adapter's decision: a Slack thread is `C123:1699999999.000100`, a
+            Slack direct message is `D01ABC`, WhatsApp is a phone number
+            because there is nothing else, and a custom webhook sends whatever
+            its own service calls an episode.
+        kind:
+          type: string
+          enum: [direct, group, thread]
+          description: |
+            How many people can speak, not what the provider calls the room.
+            Slack's `mpim` looks like a direct message and is a group.
+        status:
+          type: string
+          enum: [open, closed]
+          description: |
+            Always `open` today; nothing closes a session yet. It exists
+            because a provider gives you identity and never episode — a thread
+            ends on its own, a direct message never does — so an idle rule is
+            the only thing that can say where a conversation stopped.
+        started_at:
+          type: string
+          format: date-time
+        last_message_at:
+          type: string
+          format: date-time
+          description: The order these are listed in
+
+    SessionPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Session"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    Message:
+      type: object
+      required: [id, external_id, user_id, text, received_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        external_id:
+          type: string
+          description: |
+            The provider's own id for this message, unique within its channel
+            rather than globally. It is the idempotency key: a provider
+            retrying a delivery produces no second row.
+        user_id:
+          type: string
+          format: uuid
+          description: The approved user this sender speaks as
+        text:
+          type: string
+          description: |
+            As the provider sent it. Never rewritten, so what arrived is still
+            auditable after anything renders it.
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            When the sender says they sent it, absent whenever the provider did
+            not say. A clock nobody here controls, so nothing orders on it.
+        received_at:
+          type: string
+          format: date-time
+          description: When it reached us. This is the order.
+
+    MessagePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        next_cursor:
+          type: string
+          description: Absent on the last page
 
     User:
       type: object

@@ -467,6 +467,14 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"POST /teams/{id}/channels/{channelID}/senders":        "team channel:write",
 		"DELETE /teams/{id}/channels/{channelID}/senders":      "team channel:write",
 
+		// Reading is `member`, unlike the sender routes above. A session is
+		// the conversation the team is already having in the provider — the
+		// same words, in a second place. Requiring channel:write would mean
+		// an admin reads every conversation on everybody else's behalf.
+		"GET /teams/{id}/channels/{channelID}/sessions": "member",
+		"GET /teams/{id}/sessions":                      "member",
+		"GET /teams/{id}/sessions/{sessionID}/messages": "member",
+
 		"GET /users":  "any_team user:read",
 		"GET /whoami": "authenticated",
 	}
