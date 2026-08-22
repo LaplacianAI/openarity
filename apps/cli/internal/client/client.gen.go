@@ -190,8 +190,13 @@ type CreatedChannel struct {
 	// SigningSecret Present only when the server generated it, and only in this
 	// response. It is never returned again by any endpoint.
 	//
+	// A real one is `oawh_` followed by 32 random bytes in
+	// base64url. The example below is deliberately not that shape:
+	// an example that looks like a live credential is one a secret
+	// scanner reports and a reader copies.
 	//
-	// Examples: whsec_8Kd2mQ7pR4tXn1vB6yL0aZ3cE5gH9jS
+	//
+	// Examples: oawh_EXAMPLE-NOT-A-REAL-SECRET
 	SigningSecret *string            `json:"signing_secret,omitempty" yaml:"signing_secret,omitempty"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
 }

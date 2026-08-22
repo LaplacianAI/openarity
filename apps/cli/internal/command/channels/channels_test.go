@@ -190,7 +190,7 @@ func TestAUUIDTeamIsNotLookedUp(t *testing.T) {
 const createdWithSecret = `{
   "id": "` + channelID + `", "team_id": "` + teamID + `",
   "provider": "custom", "name": "support",
-  "signing_secret": "whsec_generated-by-the-brain"
+  "signing_secret": "oawh_generated-by-the-brain"
 }`
 
 const createdWithoutSecret = `{
@@ -232,7 +232,7 @@ func TestCreatePrintsAGeneratedSecret(t *testing.T) {
 		t.Fatalf("channels create: %v\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "whsec_generated-by-the-brain") {
+	if !strings.Contains(out, "oawh_generated-by-the-brain") {
 		t.Errorf("the generated secret was not shown, so it is lost:\n%s", out)
 	}
 	if !strings.Contains(out, "once") {

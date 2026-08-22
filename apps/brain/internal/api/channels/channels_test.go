@@ -637,6 +637,35 @@ func TestTheChannelIsGoneEvenIfItsSecretCannotBeDeleted(t *testing.T) {
 	}
 }
 
+// A prefix is a routing key for every secret scanner there is: a match is
+// reported to whoever owns the prefix. Borrowing another vendor's means our
+// leaks are reported to a company that cannot revoke them, and closed as a
+// false positive by someone who is right to close it. GitHub flagged our
+// own example as a Stripe credential once, which is how this was found.
+func TestTheSecretPrefixIsOursAndNobodyElses(t *testing.T) {
+	t.Parallel()
+
+	// Prefixes that belong to somebody else. The match is a substring one, so
+	// oa_whsec_ would be reported as Stripe's just as readily as whsec_.
+	for _, taken := range []string{
+		"whsec_",  // Stripe
+		"ghp_",    // GitHub
+		"sk_live", // Stripe
+		"xoxb-",   // Slack
+		"AKIA",    // AWS
+	} {
+		if strings.Contains(secretPrefix, taken) {
+			t.Errorf("secretPrefix %q contains %q, which is not ours", secretPrefix, taken)
+		}
+	}
+
+	// And it has to be there at all: an unprefixed secret cannot be recognised
+	// by a scanner, by a log filter, or by whoever pasted it somewhere.
+	if secretPrefix == "" {
+		t.Error("secretPrefix is empty, so a leaked secret looks like any other string")
+	}
+}
+
 // --- the secret never leaks ---
 
 // The one rule this package exists to keep. Every response body, on every
@@ -644,7 +673,7 @@ func TestTheChannelIsGoneEvenIfItsSecretCannotBeDeleted(t *testing.T) {
 func TestNoResponseEverRepeatsAStoredSecret(t *testing.T) {
 	t.Parallel()
 
-	const secret = "whsec-nobody-should-see-this"
+	const secret = "supplied-nobody-should-see-this"
 
 	teamID := uuid.New()
 	s := &fakeStore{}
