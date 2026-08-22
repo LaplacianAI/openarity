@@ -10,6 +10,42 @@ import (
 	"github.com/google/uuid"
 )
 
+type Channel struct {
+	ID        uuid.UUID
+	TeamID    uuid.UUID
+	Provider  string
+	Name      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type ChannelSender struct {
+	ChannelID uuid.UUID
+	SenderRef string
+	UserID    uuid.UUID
+	CreatedAt time.Time
+}
+
+type Message struct {
+	ID              uuid.UUID
+	ChannelID       uuid.UUID
+	UserID          uuid.UUID
+	ExternalID      string
+	ConversationRef string
+	Text            string
+	SentAt          *time.Time
+	ReceivedAt      time.Time
+}
+
+type PendingSender struct {
+	ChannelID  uuid.UUID
+	SenderRef  string
+	SenderName string
+	FirstSeen  time.Time
+	LastSeen   time.Time
+	SeenCount  int32
+}
+
 type Permission struct {
 	Name        string
 	Description string

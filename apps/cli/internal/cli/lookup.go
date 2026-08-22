@@ -92,3 +92,42 @@ func ResolveMember(
 		"gave up looking for %q after %d pages — pass their user id instead",
 		ref, maxLookupPages)
 }
+
+func ResolveChannel(
+	ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, ref string,
+) (uuid.UUID, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return uuid.Nil, errors.New("name a channel by name or id")
+	}
+	if id, err := uuid.Parse(ref); err == nil {
+		return id, nil
+	}
+
+	limit := lookupPageSize
+	var cursor *string
+
+	for range maxLookupPages {
+		page, err := Result(api.ListChannelsWithResponse(ctx, team,
+			&client.ListChannelsParams{Limit: &limit, Cursor: cursor}))
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("look up the channel %q: %w", ref, err)
+		}
+
+		for _, ch := range page.Items {
+			if ch.Name == ref {
+				return ch.ID, nil
+			}
+		}
+
+		if page.NextCursor == nil {
+			return uuid.Nil, fmt.Errorf(
+				"no channel named %q in that team — `oa channels list` shows them", ref)
+		}
+		cursor = page.NextCursor
+	}
+
+	return uuid.Nil, fmt.Errorf(
+		"gave up looking for a channel named %q after %d pages — pass its id instead",
+		ref, maxLookupPages)
+}

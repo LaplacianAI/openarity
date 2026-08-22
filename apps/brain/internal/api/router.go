@@ -87,3 +87,12 @@ func (r *Router) Register(mux *http.ServeMux, g RouteGuard) {
 		mux.HandleFunc(pattern, handler)
 	}
 }
+
+func (r *Router) Handle(method, pattern string, h http.HandlerFunc) {
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	default:
+		panic("api: router cannot serve method " + method)
+	}
+	r.handle(method, pattern, h)
+}

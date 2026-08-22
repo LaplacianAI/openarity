@@ -66,6 +66,20 @@
       "permission": "membership:write"
     },
 
+    { "method": "GET", "path": "/teams/{id}/channels", "scope": "member" },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/channels",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/channels/{channelID}",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+
     {
       "method": "GET",
       "path": "/users",

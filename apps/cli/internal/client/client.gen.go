@@ -118,11 +118,82 @@ type AuthConfig struct {
 // whether a shared token is even worth trying.
 type AuthConfigEnvironment string
 
+// Channel defines model for Channel.
+type Channel struct {
+	// ID The routing key in this channel's hook URL. Not a secret — what
+	// authenticates a webhook is its signature, never knowledge of the
+	// URL.
+	ID openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Name Unique within the team, case-insensitively
+	//
+	// Examples: support-tickets
+	Name string `json:"name" yaml:"name"`
+
+	// Provider The adapter that parses this channel's webhooks, lower case and
+	// matched exactly.
+	//
+	//
+	// Examples: custom
+	Provider string             `json:"provider" yaml:"provider"`
+	TeamID   openapi_types.UUID `json:"team_id" yaml:"team_id"`
+}
+
+// ChannelPage defines model for ChannelPage.
+type ChannelPage struct {
+	Items []Channel `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// CreateChannelRequest defines model for CreateChannelRequest.
+type CreateChannelRequest struct {
+	// Name Examples: support-tickets
+	Name string `json:"name" yaml:"name"`
+
+	// Provider Examples: custom
+	Provider string `json:"provider" yaml:"provider"`
+
+	// SigningSecret The provider's own signing secret, when the provider issues one.
+	// Omit it to have the server generate a strong one and return it
+	// once.
+	SigningSecret *string `json:"signing_secret,omitempty" yaml:"signing_secret,omitempty"`
+}
+
 // CreateTeamRequest defines model for CreateTeamRequest.
 type CreateTeamRequest struct {
 	// Name Trimmed before it is stored, and unique across teams. A name of
 	// only whitespace is a 400.
 	Name string `json:"name" yaml:"name"`
+}
+
+// CreatedChannel defines model for CreatedChannel.
+type CreatedChannel struct {
+	// ID The routing key in this channel's hook URL. Not a secret — what
+	// authenticates a webhook is its signature, never knowledge of the
+	// URL.
+	ID openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Name Unique within the team, case-insensitively
+	//
+	// Examples: support-tickets
+	Name string `json:"name" yaml:"name"`
+
+	// Provider The adapter that parses this channel's webhooks, lower case and
+	// matched exactly.
+	//
+	//
+	// Examples: custom
+	Provider string `json:"provider" yaml:"provider"`
+
+	// SigningSecret Present only when the server generated it, and only in this
+	// response. It is never returned again by any endpoint.
+	//
+	//
+	// Examples: whsec_8Kd2mQ7pR4tXn1vB6yL0aZ3cE5gH9jS
+	SigningSecret *string            `json:"signing_secret,omitempty" yaml:"signing_secret,omitempty"`
+	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
 }
 
 // Member defines model for Member.
@@ -274,6 +345,18 @@ type ListTeamsParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
 }
 
+// ListChannelsParams defines parameters for ListChannels.
+type ListChannelsParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
 // ListTeamMembersParams defines parameters for ListTeamMembers.
 type ListTeamMembersParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
@@ -304,6 +387,9 @@ type ListUsersParams struct {
 
 // CreateTeamJSONRequestBody defines body for CreateTeam for application/json ContentType.
 type CreateTeamJSONRequestBody = CreateTeamRequest
+
+// CreateChannelJSONRequestBody defines body for CreateChannel for application/json ContentType.
+type CreateChannelJSONRequestBody = CreateChannelRequest
 
 // AddTeamMemberJSONRequestBody defines body for AddTeamMember for application/json ContentType.
 type AddTeamMemberJSONRequestBody = AddMemberRequest
@@ -455,6 +541,66 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id} (the `GetTeam` operationId).
 	GetTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListChannels List a team's channels
+	//
+	// A read, so belonging to the team is enough. A channel id is not a
+	// secret — it is the routing key in that channel's own hook URL, and
+	// every member needs to know which channels exist.
+	//
+	// Corresponds with GET /teams/{id}/channels (the `ListChannels` operationId).
+	ListChannels(ctx context.Context, id TeamID, params *ListChannelsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateChannelWithBody Connect a channel
+	//
+	// Requires `channel:write` in this team.
+	//
+	// `provider` must name an adapter this build has. Refusing an unknown
+	// one here makes it a 400 now rather than a 404 on every webhook later,
+	// when nobody is watching.
+	//
+	// The signing secret is written to the secret store and never to
+	// Postgres, and no endpoint ever returns it again. Supply one when the
+	// provider issues it — Slack's Signing Secret, Meta's App Secret — and
+	// omit it otherwise: the server then generates one and echoes it in this
+	// response only, which is the last time anyone sees it.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/channels (the `CreateChannel` operationId).
+	CreateChannelWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateChannel Connect a channel
+	//
+	// Requires `channel:write` in this team.
+	//
+	// `provider` must name an adapter this build has. Refusing an unknown
+	// one here makes it a 400 now rather than a 404 on every webhook later,
+	// when nobody is watching.
+	//
+	// The signing secret is written to the secret store and never to
+	// Postgres, and no endpoint ever returns it again. Supply one when the
+	// provider issues it — Slack's Signing Secret, Meta's App Secret — and
+	// omit it otherwise: the server then generates one and echoes it in this
+	// response only, which is the last time anyone sees it.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/channels (the `CreateChannel` operationId).
+	CreateChannel(ctx context.Context, id TeamID, body CreateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteChannel Disconnect a channel
+	//
+	// Requires `channel:write` in this team. Its signing secret is deleted
+	// with it — Postgres cascades do not reach the secret store.
+	//
+	// A channel belonging to another team answers 404, not 403: the caller
+	// was authorised for the team they named, not for a channel they only
+	// guessed the id of, and confirming the id exists would let anyone walk
+	// the uuid space.
+	//
+	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
+	DeleteChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeamMembers List a team's members
 	//
@@ -671,6 +817,106 @@ func (c *Client) CreateTeam(ctx context.Context, body CreateTeamJSONRequestBody,
 // Corresponds with GET /teams/{id} (the `GetTeam` operationId).
 func (c *Client) GetTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTeamRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListChannels List a team's channels
+//
+// A read, so belonging to the team is enough. A channel id is not a
+// secret — it is the routing key in that channel's own hook URL, and
+// every member needs to know which channels exist.
+//
+// Corresponds with GET /teams/{id}/channels (the `ListChannels` operationId).
+func (c *Client) ListChannels(ctx context.Context, id TeamID, params *ListChannelsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListChannelsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateChannelWithBody Connect a channel
+//
+// Requires `channel:write` in this team.
+//
+// `provider` must name an adapter this build has. Refusing an unknown
+// one here makes it a 400 now rather than a 404 on every webhook later,
+// when nobody is watching.
+//
+// The signing secret is written to the secret store and never to
+// Postgres, and no endpoint ever returns it again. Supply one when the
+// provider issues it — Slack's Signing Secret, Meta's App Secret — and
+// omit it otherwise: the server then generates one and echoes it in this
+// response only, which is the last time anyone sees it.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/channels (the `CreateChannel` operationId).
+func (c *Client) CreateChannelWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateChannelRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateChannel Connect a channel
+//
+// Requires `channel:write` in this team.
+//
+// `provider` must name an adapter this build has. Refusing an unknown
+// one here makes it a 400 now rather than a 404 on every webhook later,
+// when nobody is watching.
+//
+// The signing secret is written to the secret store and never to
+// Postgres, and no endpoint ever returns it again. Supply one when the
+// provider issues it — Slack's Signing Secret, Meta's App Secret — and
+// omit it otherwise: the server then generates one and echoes it in this
+// response only, which is the last time anyone sees it.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/channels (the `CreateChannel` operationId).
+func (c *Client) CreateChannel(ctx context.Context, id TeamID, body CreateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateChannelRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteChannel Disconnect a channel
+//
+// Requires `channel:write` in this team. Its signing secret is deleted
+// with it — Postgres cascades do not reach the secret store.
+//
+// A channel belonging to another team answers 404, not 403: the caller
+// was authorised for the team they named, not for a channel they only
+// guessed the id of, and confirming the id exists would let anyone walk
+// the uuid space.
+//
+// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
+func (c *Client) DeleteChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteChannelRequest(c.Server, id, channelID)
 	if err != nil {
 		return nil, err
 	}
@@ -1035,6 +1281,167 @@ func NewGetTeamRequest(server string, id TeamID) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListChannelsRequest constructs an http.Request for the ListChannels method
+func NewListChannelsRequest(server string, id TeamID, params *ListChannelsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/channels", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateChannelRequest calls the generic CreateChannel builder with application/json body
+func NewCreateChannelRequest(server string, id TeamID, body CreateChannelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateChannelRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateChannelRequestWithBody constructs an http.Request for the CreateChannel method, with any body, and a specified content type
+func NewCreateChannelRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/channels", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteChannelRequest constructs an http.Request for the DeleteChannel method
+func NewDeleteChannelRequest(server string, id TeamID, channelID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "channelID", channelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/channels/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1436,6 +1843,70 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id} (the `GetTeam` operationId).
 	GetTeamWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamResponse, error)
 
+	// ListChannelsWithResponse List a team's channels
+	//
+	// A read, so belonging to the team is enough. A channel id is not a
+	// secret — it is the routing key in that channel's own hook URL, and
+	// every member needs to know which channels exist.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/channels (the `ListChannels` operationId).
+	ListChannelsWithResponse(ctx context.Context, id TeamID, params *ListChannelsParams, reqEditors ...RequestEditorFn) (*ListChannelsResponse, error)
+
+	// CreateChannelWithBodyWithResponse Connect a channel
+	//
+	// Requires `channel:write` in this team.
+	//
+	// `provider` must name an adapter this build has. Refusing an unknown
+	// one here makes it a 400 now rather than a 404 on every webhook later,
+	// when nobody is watching.
+	//
+	// The signing secret is written to the secret store and never to
+	// Postgres, and no endpoint ever returns it again. Supply one when the
+	// provider issues it — Slack's Signing Secret, Meta's App Secret — and
+	// omit it otherwise: the server then generates one and echoes it in this
+	// response only, which is the last time anyone sees it.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/channels (the `CreateChannel` operationId).
+	CreateChannelWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateChannelResponse, error)
+
+	// CreateChannelWithResponse Connect a channel
+	//
+	// Requires `channel:write` in this team.
+	//
+	// `provider` must name an adapter this build has. Refusing an unknown
+	// one here makes it a 400 now rather than a 404 on every webhook later,
+	// when nobody is watching.
+	//
+	// The signing secret is written to the secret store and never to
+	// Postgres, and no endpoint ever returns it again. Supply one when the
+	// provider issues it — Slack's Signing Secret, Meta's App Secret — and
+	// omit it otherwise: the server then generates one and echoes it in this
+	// response only, which is the last time anyone sees it.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/channels (the `CreateChannel` operationId).
+	CreateChannelWithResponse(ctx context.Context, id TeamID, body CreateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateChannelResponse, error)
+
+	// DeleteChannelWithResponse Disconnect a channel
+	//
+	// Requires `channel:write` in this team. Its signing secret is deleted
+	// with it — Postgres cascades do not reach the secret store.
+	//
+	// A channel belonging to another team answers 404, not 403: the caller
+	// was authorised for the team they named, not for a channel they only
+	// guessed the id of, and confirming the id exists would let anyone walk
+	// the uuid space.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
+	DeleteChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteChannelResponse, error)
+
 	// ListTeamMembersWithResponse List a team's members
 	//
 	// A read, so seeing the team is enough — no action is required.
@@ -1772,6 +2243,143 @@ func (r GetTeamResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetTeamResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListChannelsResponse401Headers the declared response headers of an HTTP 401 response for ListChannels
+type ListChannelsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListChannelsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ChannelPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListChannelsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListChannelsResponse) GetJSON200() *ChannelPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListChannelsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListChannelsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListChannelsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListChannelsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateChannelResponse401Headers the declared response headers of an HTTP 401 response for CreateChannel
+type CreateChannelResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CreatedChannel
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateChannelResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateChannelResponse) GetJSON201() *CreatedChannel {
+	return r.JSON201
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteChannelResponse401Headers the declared response headers of an HTTP 401 response for DeleteChannel
+type DeleteChannelResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DeleteChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DeleteChannelResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteChannelResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2130,6 +2738,94 @@ func (c *ClientWithResponses) GetTeamWithResponse(ctx context.Context, id TeamID
 	return ParseGetTeamResponse(rsp)
 }
 
+// ListChannelsWithResponse List a team's channels
+//
+// A read, so belonging to the team is enough. A channel id is not a
+// secret — it is the routing key in that channel's own hook URL, and
+// every member needs to know which channels exist.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/channels (the `ListChannels` operationId).
+func (c *ClientWithResponses) ListChannelsWithResponse(ctx context.Context, id TeamID, params *ListChannelsParams, reqEditors ...RequestEditorFn) (*ListChannelsResponse, error) {
+	rsp, err := c.ListChannels(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListChannelsResponse(rsp)
+}
+
+// CreateChannelWithBodyWithResponse Connect a channel
+//
+// Requires `channel:write` in this team.
+//
+// `provider` must name an adapter this build has. Refusing an unknown
+// one here makes it a 400 now rather than a 404 on every webhook later,
+// when nobody is watching.
+//
+// The signing secret is written to the secret store and never to
+// Postgres, and no endpoint ever returns it again. Supply one when the
+// provider issues it — Slack's Signing Secret, Meta's App Secret — and
+// omit it otherwise: the server then generates one and echoes it in this
+// response only, which is the last time anyone sees it.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/channels (the `CreateChannel` operationId).
+func (c *ClientWithResponses) CreateChannelWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateChannelResponse, error) {
+	rsp, err := c.CreateChannelWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateChannelResponse(rsp)
+}
+
+// CreateChannelWithResponse Connect a channel
+//
+// Requires `channel:write` in this team.
+//
+// `provider` must name an adapter this build has. Refusing an unknown
+// one here makes it a 400 now rather than a 404 on every webhook later,
+// when nobody is watching.
+//
+// The signing secret is written to the secret store and never to
+// Postgres, and no endpoint ever returns it again. Supply one when the
+// provider issues it — Slack's Signing Secret, Meta's App Secret — and
+// omit it otherwise: the server then generates one and echoes it in this
+// response only, which is the last time anyone sees it.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/channels (the `CreateChannel` operationId).
+func (c *ClientWithResponses) CreateChannelWithResponse(ctx context.Context, id TeamID, body CreateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateChannelResponse, error) {
+	rsp, err := c.CreateChannel(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateChannelResponse(rsp)
+}
+
+// DeleteChannelWithResponse Disconnect a channel
+//
+// Requires `channel:write` in this team. Its signing secret is deleted
+// with it — Postgres cascades do not reach the secret store.
+//
+// A channel belonging to another team answers 404, not 403: the caller
+// was authorised for the team they named, not for a channel they only
+// guessed the id of, and confirming the id exists would let anyone walk
+// the uuid space.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
+func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteChannelResponse, error) {
+	rsp, err := c.DeleteChannel(ctx, id, channelID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteChannelResponse(rsp)
+}
+
 // ListTeamMembersWithResponse List a team's members
 //
 // A read, so seeing the team is enough — no action is required.
@@ -2416,6 +3112,113 @@ func ParseGetTeamResponse(rsp *http.Response) (*GetTeamResponse, error) {
 	switch {
 	case rsp.StatusCode == 401:
 		var headers GetTeamResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListChannelsResponse parses an HTTP response from a ListChannelsWithResponse call
+func ParseListChannelsResponse(rsp *http.Response) (*ListChannelsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListChannelsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ChannelPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListChannelsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateChannelResponse parses an HTTP response from a CreateChannelWithResponse call
+func ParseCreateChannelResponse(rsp *http.Response) (*CreateChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CreatedChannel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateChannelResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteChannelResponse parses an HTTP response from a DeleteChannelWithResponse call
+func ParseDeleteChannelResponse(rsp *http.Response) (*DeleteChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DeleteChannelResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

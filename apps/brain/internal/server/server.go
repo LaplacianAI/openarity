@@ -31,10 +31,11 @@ type Router interface {
 }
 
 type Deps struct {
-	Checks   []Check
-	Verifier auth.Verifier
-	Resolver middleware.Resolver
-	Guard    api.RouteGuard
+	Checks         []Check
+	Verifier       auth.Verifier
+	Resolver       middleware.Resolver
+	Guard          api.RouteGuard
+	WebhookRouters []Router
 }
 
 type Check struct {
@@ -43,14 +44,15 @@ type Check struct {
 }
 
 type Server struct {
-	api      *http.Server
-	webhook  *http.Server
-	logger   *slog.Logger
-	verifier auth.Verifier
-	resolver middleware.Resolver
-	guard    api.RouteGuard
-	routers  []Router
-	checks   []Check
+	api            *http.Server
+	webhook        *http.Server
+	logger         *slog.Logger
+	verifier       auth.Verifier
+	resolver       middleware.Resolver
+	guard          api.RouteGuard
+	routers        []Router
+	webhookRouters []Router
+	checks         []Check
 }
 
 func New(cfg *config.Config, logger *slog.Logger, deps Deps, routers ...Router) *Server {
@@ -60,13 +62,19 @@ func New(cfg *config.Config, logger *slog.Logger, deps Deps, routers ...Router) 
 	if deps.Guard == nil {
 		panic("server.New: Deps.Guard is nil; Register would panic on the first route")
 	}
+	for _, r := range deps.WebhookRouters {
+		if !r.Public() {
+			panic("server.New: webhook router is not public; the webhook listener has no guard")
+		}
+	}
 	s := &Server{
-		logger:   logger,
-		checks:   deps.Checks,
-		verifier: deps.Verifier,
-		resolver: deps.Resolver,
-		guard:    deps.Guard,
-		routers:  routers,
+		logger:         logger,
+		checks:         deps.Checks,
+		verifier:       deps.Verifier,
+		resolver:       deps.Resolver,
+		guard:          deps.Guard,
+		routers:        routers,
+		webhookRouters: deps.WebhookRouters,
 	}
 	logRequests := middleware.LogRequests(logger)
 	s.api = newHTTPServer(cfg.APIBind, logRequests(s.apiHandler()))

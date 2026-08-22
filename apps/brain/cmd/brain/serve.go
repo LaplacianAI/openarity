@@ -53,8 +53,19 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 		return err
 	}
 
+	secretWriter, ok := secretStore.(secrets.Writer)
+	if !ok {
+		return fmt.Errorf("the secret store (%T) cannot write, so channels could never be created", secretStore)
+	}
+
+	registry, err := newRegistry()
+	if err != nil {
+		return err
+	}
+
 	authorizer := authz.New(dbStore, cfg.SuperAdmins)
-	routers := newRouters(cfg, logger, dbStore, authorizer)
+	routers := newRouters(cfg, logger, dbStore, authorizer, secretWriter, registry)
+	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry)
 
 	guard, err := newGuard(ctx, logger, dbStore, authorizer)
 	if err != nil {
@@ -72,10 +83,11 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 		cfg,
 		logger,
 		server.Deps{
-			Checks:   checks,
-			Verifier: verifier,
-			Resolver: dbStore,
-			Guard:    guard,
+			Checks:         checks,
+			Verifier:       verifier,
+			Resolver:       dbStore,
+			Guard:          guard,
+			WebhookRouters: webhookRouters,
 		},
 		routers...,
 	)
