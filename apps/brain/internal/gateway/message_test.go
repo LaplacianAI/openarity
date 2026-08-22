@@ -1,6 +1,9 @@
 package gateway
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Every field of an Inbound beyond the four an adapter must always fill is
 // optional, so the zero value has to be safe to read rather than something a
@@ -131,5 +134,56 @@ func TestTheConversationKindsAreStable(t *testing.T) {
 		if string(kind) != want {
 			t.Errorf("kind = %q, want %q", kind, want)
 		}
+	}
+}
+
+// A ref is stored exactly as sent, because it is an identity — clipping two
+// distinct refs to the same value would merge two people. So an absurd one is
+// refused rather than truncated. Without this a 1 MiB body is a 1 MiB ref,
+// fifty per channel, written by anyone who knows the URL.
+func TestARefLongerThanTheColumnAllowsIsRefused(t *testing.T) {
+	t.Parallel()
+
+	in := valid()
+	in.Author.Ref = strings.Repeat("u", SenderRefMax+1)
+
+	if err := in.Validate(); err == nil {
+		t.Error("a ref longer than the column allows was accepted")
+	}
+}
+
+func TestARefAtTheLimitIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	in := valid()
+	in.Author.Ref = strings.Repeat("u", SenderRefMax)
+
+	if err := in.Validate(); err != nil {
+		t.Errorf("a ref at the limit was refused: %v", err)
+	}
+}
+
+// Mentions carry refs too, and they are resolved against the same table.
+func TestAMentionRefIsBoundedAsWell(t *testing.T) {
+	t.Parallel()
+
+	in := valid()
+	in.Mentions = []Mention{{SenderRef: strings.Repeat("u", SenderRefMax+1)}}
+
+	if err := in.Validate(); err == nil {
+		t.Error("a mention with an unbounded ref was accepted")
+	}
+}
+
+// The limit counts characters, not bytes: the column is char_length, so a
+// ref of multi-byte characters that passes here must also fit there.
+func TestTheRefLimitCountsCharactersNotBytes(t *testing.T) {
+	t.Parallel()
+
+	in := valid()
+	in.Author.Ref = strings.Repeat("é", SenderRefMax)
+
+	if err := in.Validate(); err != nil {
+		t.Errorf("a ref of %d characters was refused: %v", SenderRefMax, err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 )
 
 type ConversationKind string
@@ -13,6 +14,7 @@ const (
 	ConversationGroup  ConversationKind = "group"
 	ConversationThread ConversationKind = "thread"
 )
+const SenderRefMax = 256
 
 type Conversation struct {
 	Ref  string
@@ -74,6 +76,9 @@ func (in Inbound) Validate() error {
 		return errors.New("no Author.Ref, so the sender cannot be resolved")
 	case in.Conversation.Ref == "":
 		return errors.New("no Conversation.Ref, so it belongs to no session")
+	case utf8.RuneCountInString(in.Author.Ref) > SenderRefMax:
+		return fmt.Errorf("Author.Ref is %d characters, over the %d a sender ref may be",
+			utf8.RuneCountInString(in.Author.Ref), SenderRefMax)
 	}
 
 	switch in.Conversation.Kind {
@@ -83,8 +88,12 @@ func (in Inbound) Validate() error {
 	}
 
 	for i, m := range in.Mentions {
-		if m.SenderRef == "" {
+		switch {
+		case m.SenderRef == "":
 			return fmt.Errorf("mention %d has no SenderRef", i)
+		case utf8.RuneCountInString(m.SenderRef) > SenderRefMax:
+			return fmt.Errorf("mention %d has a SenderRef of %d characters, over the %d allowed",
+				i, utf8.RuneCountInString(m.SenderRef), SenderRefMax)
 		}
 	}
 	return nil

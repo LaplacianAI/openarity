@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -345,6 +346,66 @@ func TestAnOversizedNameIsRefusedByTheDatabase(t *testing.T) {
 		ChannelID: ch.ID, SenderRef: "u-1", SenderName: strings.Repeat("a", 65), Cap: testCap,
 	})
 	wantPGCode(t, err, checkViolation, "a sender name over 64 characters")
+}
+
+// The Go constant and the column have to agree, and neither can prove it
+// alone: a test in internal/gateway that builds its input from SenderRefMax
+// passes whatever the constant says. This is the pair — exactly at the limit
+// is accepted, one past it is refused, and the value comes from the same
+// constant the gateway refuses with.
+func TestTheRefBoundMatchesWhatTheGatewayEnforces(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+
+	atLimit := strings.Repeat("u", gateway.SenderRefMax)
+	if _, err := s.RecordPendingSender(t.Context(), db.RecordPendingSenderParams{
+		ChannelID: ch.ID, SenderRef: atLimit, SenderName: "Asha", Cap: testCap,
+	}); err != nil {
+		t.Errorf("a ref of exactly SenderRefMax was refused by the column: %v", err)
+	}
+
+	_, err := s.RecordPendingSender(t.Context(), db.RecordPendingSenderParams{
+		ChannelID: ch.ID, SenderRef: strings.Repeat("u", gateway.SenderRefMax+1),
+		SenderName: "Asha", Cap: testCap,
+	})
+	wantPGCode(t, err, checkViolation, "a ref one character over SenderRefMax")
+}
+
+// char_length counts characters and len counts bytes. A ref of multi-byte
+// characters at the limit must fit, or the gateway accepts what the column
+// then rejects — and the rejection is a 500 on a webhook that retries.
+func TestTheRefBoundCountsCharactersInBothPlaces(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+
+	if _, err := s.RecordPendingSender(t.Context(), db.RecordPendingSenderParams{
+		ChannelID: ch.ID, SenderRef: strings.Repeat("é", gateway.SenderRefMax),
+		SenderName: "Asha", Cap: testCap,
+	}); err != nil {
+		t.Errorf("a ref of %d multi-byte characters was refused: %v", gateway.SenderRefMax, err)
+	}
+}
+
+// The approved side is bounded too. It is written by an admin rather than by
+// a webhook, but the value came from one.
+func TestAnOversizedRefIsRefusedOnTheApprovedSide(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+	userID := insertUser(t, s, "dev", "asha")
+
+	err := s.LinkChannelSender(t.Context(), db.LinkChannelSenderParams{
+		ChannelID: ch.ID, SenderRef: strings.Repeat("u", gateway.SenderRefMax+1), UserID: userID,
+	})
+	wantPGCode(t, err, checkViolation, "an approval for a ref over SenderRefMax")
 }
 
 func TestApprovingASenderTakesThemOutOfTheQueue(t *testing.T) {
