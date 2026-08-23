@@ -279,3 +279,92 @@ func deleteQuery(t *testing.T, script *clitest.Transcript) string {
 	t.Fatal("nothing was deleted")
 	return ""
 }
+
+// A pending sender is by definition somebody nobody has approved, reached
+// through a public hook. Their display name and their ref are both text they
+// chose, and this is the one command that puts both on a terminal.
+func TestSendersPendingNeutralisesHostileText(t *testing.T) {
+	routes := senderRoutes()
+	routes["GET /teams/{id}/channels/{channelID}/senders/pending"] = clitest.Reply{
+		Status: http.StatusOK,
+		Body: `{"items":[{"sender_ref":"U01\u001b[2JABC","sender_name":"Asha\u001b]0;pwned\u0007 Menon",
+		  "seen_count":3,"first_seen":"2026-08-20T09:15:00Z","last_seen":"2026-08-22T11:02:00Z"}]}`,
+	}
+	clitest.Routes(t, routes)
+
+	out, err := clitest.Execute(t, commands, "channels", "senders", "pending", "platform", "support")
+	if err != nil {
+		t.Fatalf("senders pending: %v\n%s", err, out)
+	}
+
+	for _, escape := range []string{"\x1b[2J", "\x1b]0;", "\x07"} {
+		if strings.Contains(out, escape) {
+			t.Errorf("%q reached the terminal:\n%q", escape, out)
+		}
+	}
+	// Neutralised, not dropped: an admin has to be able to read the ref in
+	// order to type it into `oa channels senders approve`.
+	for _, want := range []string{"U01", "ABC", "Asha", "Menon"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q was lost, so the row cannot be acted on:\n%s", want, out)
+		}
+	}
+}
+
+func TestSendersListNeutralisesAHostileRef(t *testing.T) {
+	routes := senderRoutes()
+	routes["GET /teams/{id}/channels/{channelID}/senders"] = clitest.Reply{
+		Status: http.StatusOK,
+		Body: `{"items":[{"sender_ref":"U01\u001b[2JABC","user_id":"` + userID + `",
+		  "created_at":"2026-08-22T12:00:00Z"}]}`,
+	}
+	clitest.Routes(t, routes)
+
+	out, err := clitest.Execute(t, commands, "channels", "senders", "list", "platform", "support")
+	if err != nil {
+		t.Fatalf("senders list: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "\x1b[2J") {
+		t.Errorf("an escape sequence reached the terminal:\n%q", out)
+	}
+}
+
+// The ref reaching these two came from argv, which looks like it makes it
+// trustworthy. It does not: an admin copies it out of the pending queue, so an
+// escape sequence takes one trip through their clipboard and lands on the
+// least-scrutinised output in the tool — the line that says it worked.
+func TestApproveNeutralisesTheRefItEchoes(t *testing.T) {
+	routes := senderRoutes()
+	routes["POST /teams/{id}/channels/{channelID}/senders"] = clitest.Reply{Status: http.StatusNoContent}
+	clitest.Routes(t, routes)
+
+	out, err := clitest.Execute(t, commands, "channels", "senders", "approve",
+		"platform", "support", "U01\x1b[2JABC", userID)
+	if err != nil {
+		t.Fatalf("senders approve: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "\x1b[2J") {
+		t.Errorf("an escape sequence reached the terminal:\n%q", out)
+	}
+	if !strings.Contains(out, "approved") {
+		t.Errorf("the confirmation is missing:\n%s", out)
+	}
+}
+
+func TestRemoveNeutralisesTheRefItEchoes(t *testing.T) {
+	routes := senderRoutes()
+	routes["DELETE /teams/{id}/channels/{channelID}/senders"] = clitest.Reply{Status: http.StatusNoContent}
+	clitest.Routes(t, routes)
+
+	out, err := clitest.Execute(t, commands, "channels", "senders", "remove",
+		"platform", "support", "U01\x1b[2JABC")
+	if err != nil {
+		t.Fatalf("senders remove: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "\x1b[2J") {
+		t.Errorf("an escape sequence reached the terminal:\n%q", out)
+	}
+	if !strings.Contains(out, "removed") {
+		t.Errorf("the confirmation is missing:\n%s", out)
+	}
+}

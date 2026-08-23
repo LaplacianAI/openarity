@@ -92,8 +92,8 @@ func newPendingCmd(opts *cli.Options) *cobra.Command {
 				More:       "oa channels senders pending " + args[0] + " " + args[1],
 				Row: func(table *printer.Table, s client.PendingSender) {
 					table.Row(
-						opts.Styles.Value.Render(s.SenderRef),
-						s.SenderName,
+						opts.Styles.Value.Render(strconv.QuoteToGraphic(s.SenderRef)),
+						strconv.QuoteToGraphic(s.SenderName),
 						opts.Styles.Muted.Render(itoa(s.SeenCount)),
 						opts.Styles.Muted.Render(s.LastSeen.Format(seenLayout)),
 					)
@@ -137,7 +137,7 @@ func newSendersListCmd(opts *cli.Options) *cobra.Command {
 				More:       "oa channels senders list " + args[0] + " " + args[1],
 				Row: func(table *printer.Table, s client.ChannelSender) {
 					table.Row(
-						opts.Styles.Value.Render(s.SenderRef),
+						opts.Styles.Value.Render(strconv.QuoteToGraphic(s.SenderRef)),
 						opts.Styles.Muted.Render(s.UserID.String()),
 						opts.Styles.Muted.Render(s.CreatedAt.Format(seenLayout)),
 					)
@@ -190,7 +190,7 @@ func newApproveCmd(opts *cli.Options) *cobra.Command {
 				printer.Options{
 					Table: func(table *printer.Table) {
 						table.Row(opts.Styles.OK.Render("approved"),
-							opts.Styles.Value.Render(ref),
+							opts.Styles.Value.Render(strconv.QuoteToGraphic(ref)),
 							opts.Styles.Muted.Render(user.String()))
 					},
 				})
@@ -231,7 +231,7 @@ func newRemoveSenderCmd(opts *cli.Options) *cobra.Command {
 				printer.Options{
 					Table: func(table *printer.Table) {
 						table.Row(opts.Styles.OK.Render("removed"),
-							opts.Styles.Value.Render(ref))
+							opts.Styles.Value.Render(strconv.QuoteToGraphic(ref)))
 					},
 				})
 		},
