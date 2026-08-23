@@ -93,6 +93,13 @@ These are deliberate, documented decisions rather than oversights:
   participant, and is treated as nobody's rather than everybody's. A member
   reading somebody else's direct session, or any response that distinguishes a
   hidden one from an absent one, is a bug.
+
+  A platform super admin reads every direct session, because `Can` answers yes
+  for one before it looks at any role — the same rule as every other
+  permission. That is deliberate rather than overlooked: an exception here
+  would make super admin mean something different per permission, and a
+  security property nobody can state is worse than a broad one everybody can.
+  Deployments that cannot accept it should configure no super admins.
 - **The brain stores a message exactly as it arrived; `oa` quotes it before
   printing.** Sanitising on write would put something nobody sent into the
   audit trail, so the text, the sender ref and the sender name are kept
