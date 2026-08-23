@@ -74,6 +74,8 @@ apps/cli/
     config/            oa config show|set|unset|path
     context/           oa context list|use|create|rename|delete
     teams/             oa teams list|create, oa teams members list|add|remove
+    channels/          oa channels list|create|delete, oa channels senders …
+    sessions/          oa sessions list|read — the conversations, and their messages
     users/             oa users list — who has logged in, and their id
     login/             oa login — the device flow, start to stored
     logout/            oa logout — discard this context's credential
@@ -282,6 +284,24 @@ is the test harness, well covered enough that counting it flatters the total.
 - **The generated client is committed.** CI regenerates it and fails if the
   result differs, which is what catches a spec change landing in the brain
   without the client being rebuilt.
+- **Anything a stranger typed is quoted before it reaches a terminal.**
+  `strconv.QuoteToGraphic`, inside the `Table` callback, on message text,
+  sender refs and sender names. A channel's hook URL is public by design —
+  that is the whole reason senders need approving — so those fields are bytes
+  an unauthenticated caller chose, and a terminal reads `\x1b[2J` as "clear
+  the screen". `QuoteToGraphic` rather than a hand-rolled filter because it
+  also covers the C1 controls, invalid UTF-8 and the Cf formatting runes, so a
+  right-to-left override cannot make a ref display in an order it is not
+  stored in; and because a quoted string cannot contain a newline, one message
+  can never become two rows. **Never in the view type** — `-o json` must carry
+  what arrived, and `json.Marshal` escapes it again anyway.
+
+  Taint follows the value, not the way it arrived. `oa channels senders
+  approve` quotes the ref it echoes even though that ref came from argv: an
+  admin copied it out of the pending queue, so the escape sequence takes one
+  trip through their clipboard and lands on the line that says "approved" —
+  the least-read output in the tool.
+
 - **oapi-codegen v2.8.0 handles OpenAPI 3.1.** Verified with a probe, not
   assumed. `client: true` generates both the raw `ClientInterface` and the typed
   `ClientWithResponses`; commands use the typed one.

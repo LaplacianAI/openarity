@@ -85,6 +85,14 @@ These are deliberate, documented decisions rather than oversights:
   provider-side id and display name are queued for approval, bounded to 50 per
   channel — the text they sent is never written anywhere. A message body from
   an unapproved sender reaching the database is a bug.
+- **The brain stores a message exactly as it arrived; `oa` quotes it before
+  printing.** Sanitising on write would put something nobody sent into the
+  audit trail, so the text, the sender ref and the sender name are kept
+  verbatim and escaped at the moment they reach a terminal — a terminal reads
+  `\x1b[2J` as "clear the screen" and `\x1b]0;…\x07` as "set the window
+  title". `-o json` is exempt on purpose: a script wants what arrived. An
+  escape sequence, a C1 control or a bidi override surviving into `oa`'s table
+  output is a bug.
 - **The service refuses to start with no authentication configured.** It fails
   closed rather than serving an open API, so a missing setting is an outage
   rather than an exposure.
