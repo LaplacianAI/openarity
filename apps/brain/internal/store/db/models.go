@@ -27,14 +27,14 @@ type ChannelSender struct {
 }
 
 type Message struct {
-	ID              uuid.UUID
-	ChannelID       uuid.UUID
-	UserID          uuid.UUID
-	ExternalID      string
-	ConversationRef string
-	Text            string
-	SentAt          *time.Time
-	ReceivedAt      time.Time
+	ID         uuid.UUID
+	ChannelID  uuid.UUID
+	UserID     uuid.UUID
+	ExternalID string
+	Text       string
+	SentAt     *time.Time
+	ReceivedAt time.Time
+	SessionID  uuid.UUID
 }
 
 type PendingSender struct {
@@ -66,6 +66,18 @@ type RoutePermission struct {
 	Path       string
 	Permission *string
 	Scope      string
+}
+
+type Session struct {
+	ID            uuid.UUID
+	TeamID        uuid.UUID
+	ChannelID     *uuid.UUID
+	ProviderRef   *string
+	Kind          string
+	Status        string
+	StartedAt     time.Time
+	LastMessageAt time.Time
+	UserID        *uuid.UUID
 }
 
 type Team struct {

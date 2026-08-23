@@ -288,6 +288,26 @@ reinstalled.
   mechanism: the adapter declares which secrets it needs and the handler
   fetches them, scoped to the channel in the URL. See
   `internal/gateway/CLAUDE.md`.
+- **A channel has sessions; a session has messages.** A session is one
+  conversation, and the adapter chooses what that means through `Session.Ref` —
+  a provider gives you identity, never episode. It belongs to a *team* rather
+  than to a channel, because a channel is only one way a session starts and
+  because a workspace or a sandbox will hang off it. `sessions` carries
+  `status` and `last_message_at` that nothing writes yet: a Slack thread ends
+  on its own, a direct message never does, and an idle sweep is the only thing
+  that can tell them apart. The partial unique index is what lets that land as
+  an UPDATE rather than a redesign. See `internal/gateway/CLAUDE.md`.
+- **A direct session belongs to one person; the check is a permission, not a
+  role.** `group` and `thread` sessions are the team's, `direct` is its
+  participant's, and `session:read_all` is what lets anyone else read one. The
+  handler asks `Can` for that permission rather than testing for `"admin"`,
+  because which role holds it is data in `rbac.json` — a role name in Go would
+  put that mapping back into a deploy.
+
+  This is the first row-level check in the API: the guard authorises reaching
+  the route, and the handler decides which rows come back. The two lists filter
+  in SQL, and the single-session read filters in Go, so both have to agree —
+  which is why the mutation pass breaks each independently.
 - **The reference adapter ships; it is not a fake.** `internal/gateway/custom`
   is a real generic webhook anyone can integrate against, and it runs the same
   `providertest` suite as every other adapter. A test double is written by the

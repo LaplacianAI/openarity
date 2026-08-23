@@ -455,6 +455,26 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"POST /teams/{id}/channels":               "team channel:write",
 		"DELETE /teams/{id}/channels/{channelID}": "team channel:write",
 
+		// Senders are all channel:write, including the reads. Approving a
+		// stranger grants them the right to instruct an agent as a named
+		// user, which is the same kind of act as connecting the channel —
+		// and the pending queue is only actionable by whoever can approve.
+		// It is also attacker-controlled text: anyone who finds the hook URL
+		// can put fifty display names of their choosing in front of whoever
+		// reads it, so it goes to the smallest audience that can act on it.
+		"GET /teams/{id}/channels/{channelID}/senders/pending": "team channel:write",
+		"GET /teams/{id}/channels/{channelID}/senders":         "team channel:write",
+		"POST /teams/{id}/channels/{channelID}/senders":        "team channel:write",
+		"DELETE /teams/{id}/channels/{channelID}/senders":      "team channel:write",
+
+		// Reading is `member`, unlike the sender routes above. A session is
+		// the conversation the team is already having in the provider — the
+		// same words, in a second place. Requiring channel:write would mean
+		// an admin reads every conversation on everybody else's behalf.
+		"GET /teams/{id}/channels/{channelID}/sessions": "member",
+		"GET /teams/{id}/sessions":                      "member",
+		"GET /teams/{id}/sessions/{sessionID}/messages": "member",
+
 		"GET /users":  "any_team user:read",
 		"GET /whoami": "authenticated",
 	}

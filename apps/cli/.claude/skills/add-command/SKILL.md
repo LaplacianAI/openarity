@@ -199,6 +199,19 @@ return opts.Out.Print(views, printer.Options{
   will catch it: the test writer is a buffer, so `Render` is a no-op there.
 - **An empty result still calls `Print`.** Returning early prints nothing, and
   `-o json` must emit `[]`.
+- **A field a stranger chose is wrapped in `strconv.QuoteToGraphic`.** Message
+  text, sender refs, sender names — anything that reached the brain through a
+  channel's hook, which is public by design. A terminal reads `\x1b[2J` as
+  "clear the screen", and this is the last place it can be stopped.
+
+  `QuoteToGraphic` rather than stripping the C0 range: it also covers the C1
+  controls, invalid UTF-8, and the Cf formatting runes, so a right-to-left
+  override cannot make text display in an order it is not stored in. And a
+  quoted string cannot contain a newline, so one row stays one row.
+
+  Inside the `Table` callback only — `-o json` must carry what arrived. And
+  ask what *chose* the value, not what it travelled through: a ref echoed back
+  from argv was copied out of a list of strangers, so it is still theirs.
 - **A command that changes something still prints.** `add` and `remove` answer
   204 with no body; they print a small view anyway, because a script needs to
   tell a command that succeeded from one that never ran.

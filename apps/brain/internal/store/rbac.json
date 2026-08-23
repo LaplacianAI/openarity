@@ -7,7 +7,7 @@
     "source of truth at runtime, so an enterprise creating its own roles and",
     "granting them from a dashboard needs no deploy. The loader reflects that:",
     "",
-    "  permissions  upserted. Never deleted — an enterprise may have granted",
+    "  permissions  upserted. Never deleted \u2014 an enterprise may have granted",
     "               one, and the foreign key would refuse anyway.",
     "  roles        only the ones named here are touched. A role created by an",
     "               operator is never modified or removed.",
@@ -19,15 +19,32 @@
     "protected route has no entry. A missing mapping is a crash naming the",
     "route, never a silently open endpoint."
   ],
-
   "permissions": [
-    { "name": "agent:write", "description": "Create and change agents" },
-    { "name": "tool:write", "description": "Create and change tools" },
-    { "name": "channel:write", "description": "Connect and configure channels" },
-    { "name": "membership:write", "description": "Add and remove team members" },
-    { "name": "user:read", "description": "Look people up by name or subject" }
+    {
+      "name": "agent:write",
+      "description": "Create and change agents"
+    },
+    {
+      "name": "tool:write",
+      "description": "Create and change tools"
+    },
+    {
+      "name": "channel:write",
+      "description": "Connect and configure channels"
+    },
+    {
+      "name": "session:read_all",
+      "description": "Read every conversation in a team, including direct ones"
+    },
+    {
+      "name": "membership:write",
+      "description": "Add and remove team members"
+    },
+    {
+      "name": "user:read",
+      "description": "Look people up by name or subject"
+    }
   ],
-
   "roles": [
     {
       "name": "admin",
@@ -36,6 +53,7 @@
         "agent:write",
         "tool:write",
         "channel:write",
+        "session:read_all",
         "membership:write",
         "user:read"
       ]
@@ -43,16 +61,33 @@
     {
       "name": "member",
       "description": "Create and change agents and tools within a team",
-      "permissions": ["agent:write", "tool:write"]
+      "permissions": [
+        "agent:write",
+        "tool:write"
+      ]
     }
   ],
-
   "routes": [
-    { "method": "POST", "path": "/teams", "scope": "super_admin" },
-    { "method": "GET", "path": "/teams", "scope": "authenticated" },
-    { "method": "GET", "path": "/teams/{id}", "scope": "member" },
-    { "method": "GET", "path": "/teams/{id}/members", "scope": "member" },
-
+    {
+      "method": "POST",
+      "path": "/teams",
+      "scope": "super_admin"
+    },
+    {
+      "method": "GET",
+      "path": "/teams",
+      "scope": "authenticated"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/members",
+      "scope": "member"
+    },
     {
       "method": "POST",
       "path": "/teams/{id}/members",
@@ -65,8 +100,11 @@
       "scope": "team",
       "permission": "membership:write"
     },
-
-    { "method": "GET", "path": "/teams/{id}/channels", "scope": "member" },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/channels",
+      "scope": "member"
+    },
     {
       "method": "POST",
       "path": "/teams/{id}/channels",
@@ -79,14 +117,55 @@
       "scope": "team",
       "permission": "channel:write"
     },
-
+    {
+      "method": "GET",
+      "path": "/teams/{id}/channels/{channelID}/senders/pending",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/channels/{channelID}/senders",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/channels/{channelID}/senders",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/channels/{channelID}/senders",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/channels/{channelID}/sessions",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/sessions",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/sessions/{sessionID}/messages",
+      "scope": "member"
+    },
     {
       "method": "GET",
       "path": "/users",
       "scope": "any_team",
       "permission": "user:read"
     },
-
-    { "method": "GET", "path": "/whoami", "scope": "authenticated" }
+    {
+      "method": "GET",
+      "path": "/whoami",
+      "scope": "authenticated"
+    }
   ]
 }

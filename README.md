@@ -88,9 +88,9 @@ platform does:
   your shell, and only ever sends it to a loopback address
 
 Not built yet: the graph, the planner, the agent runtime, the dashboard, and
-outbound replies — the brain can receive a message but cannot yet answer one.
-Slack, Discord and Telegram adapters are not written; the seam they plug into
-is, and `custom` is a working generic webhook in the meantime.
+outbound replies — the brain can hold a conversation's messages but cannot yet
+answer one. Slack, Discord and Telegram adapters are not written; the seam they
+plug into is, and `custom` is a working generic webhook in the meantime.
 
 ## Quick start
 
@@ -227,6 +227,30 @@ Signing Secret, Meta's App Secret — pipe it in. There is deliberately no
 printf %s "$SLACK_SIGNING_SECRET" |
     oa channels create platform slack --provider slack --secret-stdin
 ```
+
+Who may speak through a channel is a separate decision from connecting it. A
+sender nobody has approved gets their provider-side id recorded and their
+message dropped:
+
+```sh
+oa channels senders pending platform support
+oa channels senders approve platform support U01ABC alice
+oa channels senders remove platform support U01ABC
+```
+
+What they say lands in a session — one conversation, whichever channel it
+arrived on, and the thing an agent will later work inside:
+
+```sh
+oa sessions list platform
+oa sessions list platform --channel support
+oa sessions read platform 6f1b8f4e-6d2a-4d1e-9a1e-2b8f4e6d2a4d
+```
+
+Being in the team is the whole qualification to read one. Text and refs are
+quoted on their way to a terminal, because the hook URL is public and a
+terminal reads an escape sequence as an instruction; `-o json` carries them
+exactly as they arrived.
 
 A list is one page per call. When more remain the response carries a cursor,
 and the table says how to use it:

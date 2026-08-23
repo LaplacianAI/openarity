@@ -19,48 +19,73 @@ func insertMessage(t *testing.T, s *Store, arg db.InsertMessageParams) int64 {
 	return n
 }
 
-// seedInbox gives a test a channel and an approved sender, which is the only
-// state in which a message can exist at all.
-func seedInbox(t *testing.T, s *Store, channelName string) (db.Channel, uuid.UUID) {
+// seedInbox gives a test a channel, an open session and an approved sender,
+// which is the only state in which a message can exist at all.
+func seedInbox(t *testing.T, s *Store, name string) (db.Channel, db.Session, uuid.UUID) {
 	t.Helper()
 
-	team := mustCreate(t, s, "platform-"+channelName)
-	ch := mustCreateChannel(t, s, team.ID, "custom", channelName)
-	userID := insertUser(t, s, "dev", "asha-"+channelName)
-	return ch, userID
+	team := mustCreate(t, s, "platform-"+name)
+	ch := mustCreateChannel(t, s, team.ID, "custom", name)
+	userID := insertUser(t, s, "dev", "asha-"+name)
+	session := mustEnsureSession(t, s, team.ID, ch.ID, "c-"+name, "direct")
+	return ch, session, userID
 }
 
-func message(ch db.Channel, userID uuid.UUID, externalID, text string) db.InsertMessageParams {
-	return db.InsertMessageParams{
-		ChannelID:       ch.ID,
-		UserID:          userID,
-		ExternalID:      externalID,
-		ConversationRef: "c-1",
-		Text:            text,
+func mustEnsureSession(
+	t *testing.T, s *Store, teamID, channelID uuid.UUID, ref, kind string,
+) db.Session {
+	t.Helper()
+
+	session, err := s.EnsureSession(t.Context(), db.EnsureSessionParams{
+		TeamID: teamID, ChannelID: channelID, ProviderRef: ref, Kind: kind,
+	})
+	if err != nil {
+		t.Fatalf("EnsureSession(%q): %v", ref, err)
 	}
+	return session
+}
+
+func message(ch db.Channel, session db.Session, userID uuid.UUID, externalID, text string) db.InsertMessageParams {
+	return db.InsertMessageParams{
+		ChannelID:  ch.ID,
+		SessionID:  session.ID,
+		UserID:     userID,
+		ExternalID: externalID,
+		Text:       text,
+	}
+}
+
+func listMessages(t *testing.T, s *Store, sessionID uuid.UUID, size int32) []db.Message {
+	t.Helper()
+
+	rows, err := s.ListMessagesBySession(t.Context(), db.ListMessagesBySessionParams{
+		SessionID: sessionID, PageSize: size,
+	})
+	if err != nil {
+		t.Fatalf("ListMessagesBySession: %v", err)
+	}
+	return rows
 }
 
 func TestAMessageRoundTrips(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	ch, userID := seedInbox(t, s, "support")
+	ch, session, userID := seedInbox(t, s, "support")
 
-	if n := insertMessage(t, s, message(ch, userID, "m-1", "hello")); n != 1 {
+	if n := insertMessage(t, s, message(ch, session, userID, "m-1", "hello")); n != 1 {
 		t.Fatalf("wrote %d rows, want 1", n)
 	}
 
-	rows, err := s.ListMessagesByChannel(t.Context(), db.ListMessagesByChannelParams{
-		ChannelID: ch.ID, PageSize: 10,
-	})
-	if err != nil {
-		t.Fatalf("ListMessagesByChannel: %v", err)
-	}
+	rows := listMessages(t, s, session.ID, 10)
 	if len(rows) != 1 {
 		t.Fatalf("%d messages, want 1", len(rows))
 	}
 	if rows[0].Text != "hello" || rows[0].ExternalID != "m-1" || rows[0].UserID != userID {
 		t.Errorf("row = %+v", rows[0])
+	}
+	if rows[0].SessionID != session.ID {
+		t.Errorf("SessionID = %s, want %s", rows[0].SessionID, session.ID)
 	}
 	if rows[0].ReceivedAt.IsZero() {
 		t.Error("received_at was not defaulted")
@@ -76,12 +101,12 @@ func TestTheSameExternalIDTwiceInOneChannelIsOneRow(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	ch, userID := seedInbox(t, s, "support")
+	ch, session, userID := seedInbox(t, s, "support")
 
-	if n := insertMessage(t, s, message(ch, userID, "m-1", "hello")); n != 1 {
+	if n := insertMessage(t, s, message(ch, session, userID, "m-1", "hello")); n != 1 {
 		t.Fatalf("first write reported %d rows, want 1", n)
 	}
-	if n := insertMessage(t, s, message(ch, userID, "m-1", "hello again")); n != 0 {
+	if n := insertMessage(t, s, message(ch, session, userID, "m-1", "hello again")); n != 0 {
 		t.Errorf("a replay wrote %d rows, want 0", n)
 	}
 
@@ -98,16 +123,46 @@ func TestTheSameExternalIDTwiceInOneChannelIsOneRow(t *testing.T) {
 	}
 }
 
+// The uniqueness is per channel and not per session, which matters when a
+// session has been closed and reopened: a retry arriving afterwards must not
+// become a second copy under the new session.
+func TestAReplayIntoASecondSessionIsStillOneRow(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	ch, first, userID := seedInbox(t, s, "support")
+
+	insertMessage(t, s, message(ch, first, userID, "m-1", "hello"))
+
+	// Close it and open another for the same conversation, as an idle sweep
+	// eventually will.
+	if _, err := s.pool.Exec(t.Context(),
+		`UPDATE sessions SET status = 'closed' WHERE id = $1`, first.ID); err != nil {
+		t.Fatalf("close session: %v", err)
+	}
+	second := mustEnsureSession(t, s, ch.TeamID, ch.ID, *first.ProviderRef, "direct")
+	if second.ID == first.ID {
+		t.Fatal("a closed session was reused")
+	}
+
+	if n := insertMessage(t, s, message(ch, second, userID, "m-1", "hello")); n != 0 {
+		t.Errorf("a replay into the new session wrote %d rows, want 0", n)
+	}
+	if n := scalar[int](t, s, `SELECT count(*) FROM messages WHERE channel_id = $1`, ch.ID); n != 1 {
+		t.Errorf("%d copies of one message, want 1", n)
+	}
+}
+
 // Slack's ts is unique within a channel, not globally.
 func TestTheSameExternalIDInTwoChannelsIsTwoRows(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	first, firstUser := seedInbox(t, s, "one")
-	second, secondUser := seedInbox(t, s, "two")
+	firstCh, firstSession, firstUser := seedInbox(t, s, "one")
+	secondCh, secondSession, secondUser := seedInbox(t, s, "two")
 
-	insertMessage(t, s, message(first, firstUser, "m-1", "hello"))
-	insertMessage(t, s, message(second, secondUser, "m-1", "hello"))
+	insertMessage(t, s, message(firstCh, firstSession, firstUser, "m-1", "hello"))
+	insertMessage(t, s, message(secondCh, secondSession, secondUser, "m-1", "hello"))
 
 	if n := scalar[int](t, s, `SELECT count(*) FROM messages`); n != 2 {
 		t.Errorf("%d rows across two channels, want 2", n)
@@ -118,8 +173,8 @@ func TestDeletingAChannelDeletesItsMessages(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	ch, userID := seedInbox(t, s, "support")
-	insertMessage(t, s, message(ch, userID, "m-1", "hello"))
+	ch, session, userID := seedInbox(t, s, "support")
+	insertMessage(t, s, message(ch, session, userID, "m-1", "hello"))
 
 	if err := s.DeleteChannel(t.Context(), ch.ID); err != nil {
 		t.Fatalf("DeleteChannel: %v", err)
@@ -127,6 +182,27 @@ func TestDeletingAChannelDeletesItsMessages(t *testing.T) {
 
 	if n := scalar[int](t, s, `SELECT count(*) FROM messages`); n != 0 {
 		t.Errorf("%d messages survived their channel", n)
+	}
+	if n := scalar[int](t, s, `SELECT count(*) FROM sessions`); n != 0 {
+		t.Errorf("%d sessions survived their channel", n)
+	}
+}
+
+// A session going takes its messages with it, or they point at a conversation
+// nothing can name.
+func TestDeletingASessionDeletesItsMessages(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	ch, session, userID := seedInbox(t, s, "support")
+	insertMessage(t, s, message(ch, session, userID, "m-1", "hello"))
+
+	if _, err := s.pool.Exec(t.Context(), `DELETE FROM sessions WHERE id = $1`, session.ID); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+
+	if n := scalar[int](t, s, `SELECT count(*) FROM messages`); n != 0 {
+		t.Errorf("%d messages survived their session", n)
 	}
 }
 
@@ -136,8 +212,8 @@ func TestDeletingAUserDeletesTheirMessages(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	ch, userID := seedInbox(t, s, "support")
-	insertMessage(t, s, message(ch, userID, "m-1", "hello"))
+	ch, session, userID := seedInbox(t, s, "support")
+	insertMessage(t, s, message(ch, session, userID, "m-1", "hello"))
 
 	if _, err := s.pool.Exec(t.Context(), "DELETE FROM users WHERE id = $1", userID); err != nil {
 		t.Fatalf("delete user: %v", err)
@@ -150,19 +226,29 @@ func TestDeletingAUserDeletesTheirMessages(t *testing.T) {
 
 // A message with no external id could never be deduplicated, so every retry
 // would store it again.
-func TestAMessageNeedsAnExternalIDAndAConversation(t *testing.T) {
+func TestAMessageNeedsAnExternalID(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	ch, userID := seedInbox(t, s, "support")
+	ch, session, userID := seedInbox(t, s, "support")
 
-	for what, arg := range map[string]db.InsertMessageParams{
-		"no external id":      {ChannelID: ch.ID, UserID: userID, ExternalID: "", ConversationRef: "c-1"},
-		"no conversation ref": {ChannelID: ch.ID, UserID: userID, ExternalID: "m-1", ConversationRef: ""},
-	} {
-		_, err := s.InsertMessage(t.Context(), arg)
-		wantPGCode(t, err, checkViolation, "a message with "+what)
-	}
+	_, err := s.InsertMessage(t.Context(), message(ch, session, userID, "", "hello"))
+	wantPGCode(t, err, checkViolation, "a message with no external id")
+}
+
+// A message with no session belongs to no conversation, and nothing could
+// ever read it back.
+func TestAMessageNeedsASessionThatExists(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	ch, session, userID := seedInbox(t, s, "support")
+
+	arg := message(ch, session, userID, "m-1", "hello")
+	arg.SessionID = uuid.New()
+
+	_, err := s.InsertMessage(t.Context(), arg)
+	wantPGCode(t, err, foreignKeyViolation, "a message in a session that does not exist")
 }
 
 // A message from somebody who is not a user cannot exist: the approval flow
@@ -171,9 +257,9 @@ func TestAMessageNeedsAKnownSender(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	ch, _ := seedInbox(t, s, "support")
+	ch, session, _ := seedInbox(t, s, "support")
 
-	_, err := s.InsertMessage(t.Context(), message(ch, uuid.New(), "m-1", "hello"))
+	_, err := s.InsertMessage(t.Context(), message(ch, session, uuid.New(), "m-1", "hello"))
 	wantPGCode(t, err, foreignKeyViolation, "a message from a user that does not exist")
 }
 
@@ -181,11 +267,11 @@ func TestMessagesComeBackNewestFirst(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	ch, userID := seedInbox(t, s, "support")
+	ch, session, userID := seedInbox(t, s, "support")
 
 	now := time.Now()
 	for i, id := range []string{"oldest", "middle", "newest"} {
-		insertMessage(t, s, message(ch, userID, id, id))
+		insertMessage(t, s, message(ch, session, userID, id, id))
 		if _, err := s.pool.Exec(t.Context(),
 			"UPDATE messages SET received_at = $1 WHERE external_id = $2",
 			now.Add(time.Duration(i-3)*time.Hour), id); err != nil {
@@ -193,13 +279,7 @@ func TestMessagesComeBackNewestFirst(t *testing.T) {
 		}
 	}
 
-	rows, err := s.ListMessagesByChannel(t.Context(), db.ListMessagesByChannelParams{
-		ChannelID: ch.ID, PageSize: 10,
-	})
-	if err != nil {
-		t.Fatalf("ListMessagesByChannel: %v", err)
-	}
-
+	rows := listMessages(t, s, session.ID, 10)
 	want := []string{"newest", "middle", "oldest"}
 	for i := range want {
 		if rows[i].ExternalID != want[i] {
@@ -215,15 +295,15 @@ func TestOrderingIgnoresTheSendersClock(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	ch, userID := seedInbox(t, s, "support")
+	ch, session, userID := seedInbox(t, s, "support")
 
 	// Claimed to be from the future, but it arrived first.
-	early := message(ch, userID, "arrived-first", "first")
+	early := message(ch, session, userID, "arrived-first", "first")
 	future := time.Now().Add(24 * time.Hour)
 	early.SentAt = &future
 	insertMessage(t, s, early)
 
-	late := message(ch, userID, "arrived-second", "second")
+	late := message(ch, session, userID, "arrived-second", "second")
 	past := time.Now().Add(-24 * time.Hour)
 	late.SentAt = &past
 	insertMessage(t, s, late)
@@ -233,36 +313,28 @@ func TestOrderingIgnoresTheSendersClock(t *testing.T) {
 		t.Fatalf("backdate: %v", err)
 	}
 
-	rows, err := s.ListMessagesByChannel(t.Context(), db.ListMessagesByChannelParams{
-		ChannelID: ch.ID, PageSize: 10,
-	})
-	if err != nil {
-		t.Fatalf("ListMessagesByChannel: %v", err)
-	}
+	rows := listMessages(t, s, session.ID, 10)
 	if rows[0].ExternalID != "arrived-second" {
 		t.Errorf("order = %v, want the one that arrived last first — sent_at reordered the inbox",
 			externalIDs(rows))
 	}
 }
 
-func TestListMessagesShowsOnlyThatChannel(t *testing.T) {
+// Two conversations in one channel are two inboxes. Reading one must not show
+// the other, which is the whole reason a message points at a session.
+func TestListingShowsOnlyThatSession(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	mine, mineUser := seedInbox(t, s, "mine")
-	theirs, theirsUser := seedInbox(t, s, "theirs")
+	ch, mine, userID := seedInbox(t, s, "support")
+	theirs := mustEnsureSession(t, s, ch.TeamID, ch.ID, "c-other", "thread")
 
-	insertMessage(t, s, message(mine, mineUser, "m-1", "ours"))
-	insertMessage(t, s, message(theirs, theirsUser, "m-2", "theirs"))
+	insertMessage(t, s, message(ch, mine, userID, "m-1", "ours"))
+	insertMessage(t, s, message(ch, theirs, userID, "m-2", "theirs"))
 
-	rows, err := s.ListMessagesByChannel(t.Context(), db.ListMessagesByChannelParams{
-		ChannelID: mine.ID, PageSize: 10,
-	})
-	if err != nil {
-		t.Fatalf("ListMessagesByChannel: %v", err)
-	}
+	rows := listMessages(t, s, mine.ID, 10)
 	if len(rows) != 1 || rows[0].Text != "ours" {
-		t.Errorf("got %v, want only this channel's message", externalIDs(rows))
+		t.Errorf("got %v, want only this session's message", externalIDs(rows))
 	}
 }
 
@@ -270,11 +342,11 @@ func TestMessagesPageFromACursor(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	ch, userID := seedInbox(t, s, "support")
+	ch, session, userID := seedInbox(t, s, "support")
 
 	now := time.Now()
 	for i, id := range []string{"oldest", "middle", "newest"} {
-		insertMessage(t, s, message(ch, userID, id, id))
+		insertMessage(t, s, message(ch, session, userID, id, id))
 		if _, err := s.pool.Exec(t.Context(),
 			"UPDATE messages SET received_at = $1 WHERE external_id = $2",
 			now.Add(time.Duration(i-3)*time.Hour), id); err != nil {
@@ -282,19 +354,14 @@ func TestMessagesPageFromACursor(t *testing.T) {
 		}
 	}
 
-	first, err := s.ListMessagesByChannel(t.Context(), db.ListMessagesByChannelParams{
-		ChannelID: ch.ID, PageSize: 2,
-	})
-	if err != nil {
-		t.Fatalf("first page: %v", err)
-	}
+	first := listMessages(t, s, session.ID, 2)
 	if got := externalIDs(first); len(got) != 2 || got[0] != "newest" {
 		t.Fatalf("first page = %v", got)
 	}
 
 	last := first[len(first)-1]
-	second, err := s.ListMessagesByChannel(t.Context(), db.ListMessagesByChannelParams{
-		ChannelID:       ch.ID,
+	second, err := s.ListMessagesBySession(t.Context(), db.ListMessagesBySessionParams{
+		SessionID:       session.ID,
 		PageSize:        2,
 		UseCursor:       true,
 		AfterReceivedAt: last.ReceivedAt,

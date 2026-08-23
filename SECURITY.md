@@ -85,6 +85,29 @@ These are deliberate, documented decisions rather than oversights:
   provider-side id and display name are queued for approval, bounded to 50 per
   channel — the text they sent is never written anywhere. A message body from
   an unapproved sender reaching the database is a bug.
+- **A direct session is readable by its participant and by `session:read_all`.**
+  Group and thread sessions belong to the team; a direct one is a private
+  message to an agent, and every other member gets the same 404 they would get
+  for a session that does not exist — a 403 there would confirm the
+  conversation is real. A direct session whose participant was deleted has no
+  participant, and is treated as nobody's rather than everybody's. A member
+  reading somebody else's direct session, or any response that distinguishes a
+  hidden one from an absent one, is a bug.
+
+  A platform super admin reads every direct session, because `Can` answers yes
+  for one before it looks at any role — the same rule as every other
+  permission. That is deliberate rather than overlooked: an exception here
+  would make super admin mean something different per permission, and a
+  security property nobody can state is worse than a broad one everybody can.
+  Deployments that cannot accept it should configure no super admins.
+- **The brain stores a message exactly as it arrived; `oa` quotes it before
+  printing.** Sanitising on write would put something nobody sent into the
+  audit trail, so the text, the sender ref and the sender name are kept
+  verbatim and escaped at the moment they reach a terminal — a terminal reads
+  `\x1b[2J` as "clear the screen" and `\x1b]0;…\x07` as "set the window
+  title". `-o json` is exempt on purpose: a script wants what arrived. An
+  escape sequence, a C1 control or a bidi override surviving into `oa`'s table
+  output is a bug.
 - **The service refuses to start with no authentication configured.** It fails
   closed rather than serving an open API, so a missing setting is an outage
   rather than an exposure.

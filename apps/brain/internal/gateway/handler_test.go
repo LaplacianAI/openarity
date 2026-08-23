@@ -54,10 +54,10 @@ func newHookProvider() *hookProvider {
 
 func validInbound() Inbound {
 	return Inbound{
-		ExternalID:   "m-1",
-		Author:       Author{Ref: "u-1", DisplayName: "Asha"},
-		Conversation: Conversation{Ref: "c-1", Kind: ConversationDirect},
-		Text:         "what's our deploy status?",
+		ExternalID: "m-1",
+		Author:     Author{Ref: "u-1", DisplayName: "Asha"},
+		Session:    Session{Ref: "c-1", Kind: SessionDirect},
+		Text:       "what's our deploy status?",
 	}
 }
 
@@ -162,12 +162,12 @@ func (f *fakeSecrets) Get(_ context.Context, path, key string) (string, error) {
 type fakeSink struct {
 	err error
 
-	batches   [][]Delivery
-	channelID uuid.UUID
+	batches [][]Delivery
+	channel Channel
 }
 
-func (f *fakeSink) Deliver(_ context.Context, channelID uuid.UUID, msgs []Delivery) error {
-	f.channelID = channelID
+func (f *fakeSink) Deliver(_ context.Context, ch Channel, msgs []Delivery) error {
+	f.channel = ch
 	f.batches = append(f.batches, msgs)
 	return f.err
 }
@@ -277,8 +277,14 @@ func TestASignedDeliveryReachesTheSink(t *testing.T) {
 	if got[0].UserID != h.userID {
 		t.Errorf("UserID = %s, want the resolved sender %s", got[0].UserID, h.userID)
 	}
-	if h.sink.channelID != h.channelID {
-		t.Errorf("delivered to channel %s, want %s", h.sink.channelID, h.channelID)
+	if h.sink.channel.ID != h.channelID {
+		t.Errorf("delivered to channel %s, want %s", h.sink.channel.ID, h.channelID)
+	}
+
+	// The team travels with it. Without it the sink cannot write a session,
+	// and authorising one later would need a second lookup of the channel.
+	if h.sink.channel.TeamID != h.teamID {
+		t.Errorf("delivered with team %s, want %s", h.sink.channel.TeamID, h.teamID)
 	}
 }
 
@@ -679,7 +685,7 @@ func TestAnInvalidMessageIsNotResolved(t *testing.T) {
 	h := newHarness(t)
 
 	bad := validInbound()
-	bad.Conversation.Kind = "broadcast"
+	bad.Session.Kind = "broadcast"
 	h.provider.result = Result{Messages: []Inbound{bad}}
 
 	h.send(t, `{}`, true)

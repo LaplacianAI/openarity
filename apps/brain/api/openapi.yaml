@@ -35,6 +35,8 @@ tags:
     description: Teams and their membership
   - name: channels
     description: Where a team's messages arrive from
+  - name: sessions
+    description: Conversations, and what was said in them
   - name: users
     description: Finding a user's id
 
@@ -462,6 +464,274 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/channels/{channelID}/senders/pending:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ChannelID"
+    get:
+      operationId: listPendingSenders
+      tags: [channels]
+      summary: List senders waiting to be approved
+      description: |
+        Requires `channel:write` in this team — the same permission as
+        connecting the channel, because this queue is only actionable by
+        whoever can approve, and it holds text a stranger chose.
+
+        A sender the brain has never linked to a user has their provider-side
+        id and display name recorded here, bounded to 50 per channel, and
+        their message is dropped. Nothing they wrote is stored.
+
+        `sender_name` is attacker-controlled on every platform: it is whatever
+        the person typed into their profile. Control characters are stripped
+        and it is clipped to 64 characters on the way in, but it is still
+        theirs. Render it as data.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of pending senders, most recently first seen first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingSenderPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/channels/{channelID}/senders:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ChannelID"
+    get:
+      operationId: listChannelSenders
+      tags: [channels]
+      summary: List approved senders
+      description: |
+        Requires `channel:write` in this team. Who may speak to the agent
+        through this channel, and as whom.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of approved senders, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelSenderPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: approveChannelSender
+      tags: [channels]
+      summary: Approve a sender
+      description: |
+        Requires `channel:write` in this team. Links a provider-side sender to
+        a user and takes them out of the pending queue, in one statement.
+
+        This is what lets somebody instruct an agent as a named user, so it is
+        an admin act rather than a member one. `user_id` must already be a
+        member of this team — otherwise approving would be a way to give
+        somebody a voice in a team they do not belong to, needing only
+        `channel:write` rather than `membership:write`.
+
+        A `sender_ref` that was never pending is accepted: an admin who
+        already knows a provider id may link it before its owner has spoken.
+
+        Approving somebody already approved moves them to the new user, so
+        correcting a mistake is one call rather than a remove and an add.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveSenderRequest"
+      responses:
+        "204":
+          description: Approved
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: removeChannelSender
+      tags: [channels]
+      summary: Remove a sender, or dismiss a pending one
+      description: |
+        Requires `channel:write` in this team. Clears both the approval and
+        any pending row for that ref, because the caller cannot always tell
+        which they are looking at and the wrong guess leaves one behind.
+
+        Not a block. Their next message queues them again, which is what makes
+        a mistaken removal recoverable — and what makes removal alone
+        ineffective against somebody persistent.
+
+        Removing a ref that was never linked is 204, not 404: the caller asked
+        for a state and that state holds, and a 404 would let an admin probe
+        which provider ids are linked one request at a time.
+
+        The ref is a query parameter rather than a path segment because it is
+        provider-controlled text. A ref of `.` or `..` in a path is rewritten
+        by the router before any handler runs, and the standard path-escaping
+        functions leave dots alone — so such a sender could never be removed.
+      parameters:
+        - name: ref
+          in: query
+          required: true
+          description: The provider-side sender id, exactly as it was recorded
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        "204":
+          description: Removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/channels/{channelID}/sessions:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ChannelID"
+    get:
+      operationId: listChannelSessions
+      tags: [sessions]
+      summary: List a channel's conversations
+      description: |
+        Membership in the team is what reaches this route, and what it
+        returns depends on who is asking. A `group` or `thread` session is
+        the team's — it is the conversation they are already having in the
+        provider. A `direct` session is one person's, and appears only for
+        them or for a caller holding `session:read_all`.
+
+        Hidden means absent, not redacted: nothing here says how many
+        conversations were left out.
+
+        Most recently spoken in first.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/sessions:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listSessions
+      tags: [sessions]
+      summary: List every conversation in a team
+      description: |
+        Every session the team owns, whichever channel it arrived on — and
+        those that arrived on none. A session belongs to a team rather than to
+        a channel, because a channel is only one way one starts.
+
+        Direct sessions are filtered the same way as on the channel list: the
+        participant's own, plus everything if the caller holds
+        `session:read_all`.
+
+        Most recently spoken in first.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/sessions/{sessionID}/messages:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: sessionID
+        in: path
+        required: true
+        description: The conversation
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listSessionMessages
+      tags: [sessions]
+      summary: Read a conversation
+      description: |
+        Every message here came from a sender somebody approved. A message
+        from anyone else was dropped before it was written, so this is not a
+        filtered view of what arrived — it is everything that was ever stored.
+
+        Ordered by `received_at`, newest first, and never by `sent_at`.
+        `sent_at` is the sender's clock: a provider with a wrong one, or
+        somebody setting it deliberately, would otherwise reorder a
+        conversation they do not own.
+
+        `text` is whatever a person typed. Render it as data.
+
+        A session in another team answers 404, not 403 — the caller was
+        authorised for the team they named, not for a session id they may have
+        guessed, and confirming it exists would let anyone walk the uuid space.
+
+        Somebody else's `direct` session answers the same 404, with the same
+        body. A 403 there would confirm that a private conversation exists,
+        which is most of what it is private about. Reading one needs to be its
+        participant, or to hold `session:read_all` in the team.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of messages, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /users:
     get:
       operationId: listUsers
@@ -548,6 +818,15 @@ components:
       in: path
       required: true
       description: The team
+      schema:
+        type: string
+        format: uuid
+
+    ChannelID:
+      name: channelID
+      in: path
+      required: true
+      description: The channel
       schema:
         type: string
         format: uuid
@@ -869,6 +1148,213 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Channel"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    PendingSender:
+      type: object
+      required: [sender_ref, sender_name, seen_count, first_seen, last_seen]
+      properties:
+        sender_ref:
+          type: string
+          maxLength: 256
+          description: |
+            The provider's own id for this person, unique within the channel
+            rather than globally — Slack's ids repeat across workspaces, which
+            is why approval is per channel.
+        sender_name:
+          type: string
+          maxLength: 64
+          description: |
+            What they call themselves, which they typed. Control characters
+            are stripped and it is clipped on the way in, but two people may
+            still share a name — that is the reason approval matches on
+            `sender_ref` and shows this only as a hint.
+        seen_count:
+          type: integer
+          format: int32
+          description: How many messages they have sent that were dropped
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+
+    PendingSenderPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PendingSender"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    ChannelSender:
+      type: object
+      required: [sender_ref, user_id, created_at]
+      properties:
+        sender_ref:
+          type: string
+          maxLength: 256
+        user_id:
+          type: string
+          format: uuid
+          description: The user this sender speaks as
+        created_at:
+          type: string
+          format: date-time
+          description: When they were approved
+
+    ChannelSenderPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelSender"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    ApproveSenderRequest:
+      type: object
+      required: [sender_ref, user_id]
+      properties:
+        sender_ref:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: |
+            Taken from the pending queue, or supplied directly when the
+            provider id is already known.
+        user_id:
+          type: string
+          format: uuid
+          description: |
+            Who this sender speaks as. Must already be a member of the
+            channel's team.
+
+    Session:
+      type: object
+      required: [id, kind, status, started_at, last_message_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The channel it arrived on, absent when it did not arrive on one —
+            a session started from the dashboard or the API has no webhook
+            behind it.
+        provider_ref:
+          type: string
+          maxLength: 256
+          description: |
+            The adapter's answer to "which conversation is this", and the whole
+            of session identity. What goes in it differs by platform and is the
+            adapter's decision: a Slack thread is `C123:1699999999.000100`, a
+            Slack direct message is `D01ABC`, WhatsApp is a phone number
+            because there is nothing else, and a custom webhook sends whatever
+            its own service calls an episode.
+        user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Who a `direct` session is with, and absent for anything else — a
+            group names nobody on purpose, because several people speak in it.
+
+            It is also absent on a direct session whose participant has since
+            been deleted. That session is readable by `session:read_all` only:
+            absent means nobody, never everybody.
+        kind:
+          type: string
+          enum: [direct, group, thread]
+          description: |
+            How many people can speak, not what the provider calls the room.
+            Slack's `mpim` looks like a direct message and is a group.
+
+            It decides who may read the session: a `group` or `thread` is the
+            team's, a `direct` is one person's.
+        status:
+          type: string
+          enum: [open, closed]
+          description: |
+            Always `open` today; nothing closes a session yet. It exists
+            because a provider gives you identity and never episode — a thread
+            ends on its own, a direct message never does — so an idle rule is
+            the only thing that can say where a conversation stopped.
+        started_at:
+          type: string
+          format: date-time
+        last_message_at:
+          type: string
+          format: date-time
+          description: The order these are listed in
+
+    SessionPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Session"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    Message:
+      type: object
+      required: [id, external_id, user_id, text, received_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        external_id:
+          type: string
+          description: |
+            The provider's own id for this message, unique within its channel
+            rather than globally. It is the idempotency key: a provider
+            retrying a delivery produces no second row.
+        user_id:
+          type: string
+          format: uuid
+          description: The approved user this sender speaks as
+        text:
+          type: string
+          description: |
+            As the provider sent it. Never rewritten, so what arrived is still
+            auditable after anything renders it.
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            When the sender says they sent it, absent whenever the provider did
+            not say. A clock nobody here controls, so nothing orders on it.
+        received_at:
+          type: string
+          format: date-time
+          description: When it reached us. This is the order.
+
+    MessagePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
         next_cursor:
           type: string
           description: Absent on the last page

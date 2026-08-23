@@ -38,7 +38,13 @@ type fakeStore struct {
 	created  []db.CreateChannelParams
 	deleted  []uuid.UUID
 	listArgs []db.ListChannelsByTeamParams
+
+	senders senderState
 }
+
+// errAny stands in for any failure of ours. Which one never changes the
+// answer: the caller is told to try again and the detail goes to the log.
+var errAny = errors.New("connection reset by peer")
 
 func (f *fakeStore) CreateChannel(_ context.Context, arg db.CreateChannelParams) (db.Channel, error) {
 	f.created = append(f.created, arg)
@@ -163,6 +169,12 @@ func channelRoutes(t *testing.T) authz.Routes {
 	add("GET", "/teams/{id}/channels", "member", nil)
 	add("POST", "/teams/{id}/channels", "team", &write)
 	add("DELETE", "/teams/{id}/channels/{channelID}", "team", &write)
+
+	senders := "/teams/{id}/channels/{channelID}/senders"
+	add("GET", senders+"/pending", "team", &write)
+	add("GET", senders, "team", &write)
+	add("POST", senders, "team", &write)
+	add("DELETE", senders, "team", &write)
 	return rs
 }
 

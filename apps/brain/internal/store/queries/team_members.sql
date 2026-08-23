@@ -22,3 +22,10 @@ WHERE tm.team_id = sqlc.arg('team_id')
        OR (u.subject, u.id) > (sqlc.arg('after_subject')::text, sqlc.arg('after_id')::uuid))
 ORDER BY u.subject, u.id
 LIMIT sqlc.arg('page_size');
+
+-- FindTeamMember answers a question about somebody other than the caller,
+-- whose own memberships are already on the request. Approving a channel sender
+-- needs it: the person being named has to be in the channel's team, or the
+-- approval grants them a voice in a team they do not belong to.
+-- name: FindTeamMember :one
+SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2;

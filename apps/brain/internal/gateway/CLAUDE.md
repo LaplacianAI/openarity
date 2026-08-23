@@ -15,7 +15,7 @@ without being trusted at all.
 
 ```text
 internal/gateway/
-  message.go        Inbound, Result, Validate — the normalised contract
+  message.go        Inbound, Session, Result, Validate — the normalised contract
   provider.go       Provider, WebhookRequest, Credentials, Registry
   handler.go        the request path: route, verify, parse, resolve, deliver
   senders.go        ResolveSender, and the display-name cleaning
@@ -146,7 +146,7 @@ real.
 ## Validate belongs to Inbound
 
 `Inbound.Validate()` holds the rules the handler depends on: an `ExternalID`,
-an `Author.Ref`, a `Conversation.Ref`, a known `Kind`, and a `SenderRef` on
+an `Author.Ref`, a `Session.Ref`, a known `Kind`, and a `SenderRef` on
 every mention. Written once, because they are the same rules whoever produced
 the message.
 
@@ -181,11 +181,12 @@ Things that are easy to get wrong:
   Slack's `ts` repeats across channels — compose `channel:ts`. Getting this
   wrong means the second conversation's message is silently dropped as a
   replay.
-- **`Conversation.Ref` is the thread, not the channel, when there is a thread.**
-  Two threads running in one channel must not share a session, or the agent
-  reads two unrelated arguments as one.
-- **`ConversationKind` describes how many people can speak**, not what the
-  provider calls the room. Slack's `mpim` looks like a DM and is `group`.
+- **`Session.Ref` is the whole of session identity, and it is the adapter's to
+  choose.** Two threads running in one channel must not share a ref, or the
+  agent reads two unrelated arguments as one. A thread's ref includes its
+  parent — Slack's `1699999999.0001` is unique only inside one channel.
+- **`SessionKind` describes how many people can speak**, not what the provider
+  calls the room. Slack's `mpim` looks like a DM and is `group`.
 - **Refs are strings and are scoped by the channel.** Telegram sends numbers;
   they are still strings, because nothing does arithmetic on them. `U01AA` in
   one workspace has nothing to do with `U01AA` in another, which is why
@@ -197,6 +198,63 @@ Things that are easy to get wrong:
   typed by the person speaking. Clipping and control-character stripping happen
   once, where senders are recorded, because the gateway cannot know which
   adapters are trustworthy and must assume none are.
+
+## A channel has sessions; a session has messages
+
+`Session.Ref` answers "which conversation is this", and the adapter is the only
+thing that can answer it. Same ref, same conversation. New ref, new one.
+
+| platform | situation | ref | kind |
+| --- | --- | --- | --- |
+| Slack | DM with the bot | `D01ABC` | `direct` |
+| | a channel | `C01ABC` | `group` |
+| | a thread in it | `C01ABC:1699999999.0001` | `thread` |
+| | group DM (`mpim`) | `G01ABC` | `group` |
+| Telegram | private chat | `4471122` | `direct` |
+| | a forum topic | `-1001234567:42` | `thread` |
+| WhatsApp | anyone | the phone number | `direct` |
+| custom | whatever downstream sends | `ticket-4821` | its choice |
+
+`EnsureSession` is find-or-create and "somebody spoke" in one statement, so a
+message never arrives at a session that does not exist and the session's place
+in the list is always the last time it was used.
+
+**A provider gives you identity, never episode.** It tells you which room and
+which person; it does not tell you where one conversation stopped and the next
+began. Only a clock can, and only for the adapters that need it:
+
+- A **Slack thread** ends on its own — the ref stops being used.
+- A **Slack DM, a Telegram chat, an untreaded channel, any WhatsApp
+  conversation** never end. One ref, forever, which is a relationship rather
+  than a conversation.
+
+Three of Slack's four conversation types are in the second group. Threads are
+the exception that makes "one session per ref" look sufficient, and they are
+what you will test with.
+
+So `sessions` carries `status` and `last_message_at`, and nothing writes them
+yet. The unique index is partial — `WHERE status = 'open'` — which today means
+exactly one session per conversation and find-or-create is unambiguous. When an
+idle sweep lands, the same index lets the next message open a second row for
+the same ref, and `EnsureSession` does not change. That is the whole reason the
+columns are there before anything uses them.
+
+**A session belongs to a team, not to a channel.** A channel is one way a
+session starts; the dashboard and the API are others, and neither has a webhook
+behind it. It is also what a workspace or a sandbox will hang off, which is why
+it is a row with an id rather than a grouping derived from messages.
+
+`sessions.team_id` duplicates what `channels.team_id` already says whenever
+there is a channel. The database keeps them equal rather than trusting every
+writer: `channels` has a `UNIQUE (id, team_id)` for a composite foreign key to
+reference, so a session naming a team its channel is not in cannot be written.
+
+**`messages` still carries `channel_id`.** Not for convenience — the unique
+index that makes retries free is `(channel_id, external_id)`, because a
+provider's message id is unique within its channel and not within a session. A
+redelivery arriving after a session closed would otherwise be stored twice.
+Denormalise when a constraint needs the column, not when a query would find it
+handy.
 
 ## The conformance suite
 
@@ -217,9 +275,37 @@ same person, at the same time, with the same misunderstandings as the thing it
 validates, so it agrees with the suite by construction. A real second
 implementation with users is what proves the abstraction rather than the code.
 
+## Settled: who may read a direct session
+
+**Its participant, plus anyone holding `session:read_all` in the team.** A
+`group` or `thread` session stays readable by the whole team — a shared room is
+shared — and a `direct` one does not, because on every platform that is a
+private message: the person sent it to the agent, not to the room.
+
+The gateway is where the participant is recorded. `Deliver` sets
+`sessions.user_id` to the approved sender for a direct session and to nothing
+for any other kind, and nothing else writes that column — the API never creates
+a session. `EnsureSession` leaves it alone on conflict, so a second approved
+sender reaching the same conversation cannot take over somebody else's thread.
+
+Two things that look like details and are the whole rule:
+
+- **A group session naming a participant is refused by the database**, not just
+  avoided here. It would read as "this belongs to one person" while several
+  people speak in it.
+- **Null means nobody, never everybody.** `user_id` is `ON DELETE SET NULL`, so
+  deleting a person leaves their direct sessions with no participant. In SQL
+  `user_id = $viewer` is null there, and null is not true, so those rows fall
+  out of every non-moderator's list. Read the other way — "unset, so
+  unrestricted" — it would publish exactly the conversations that were private.
+
+A permission rather than a role, because which role holds it is data in
+`rbac.json`. A super admin passes it the way they pass every permission.
+
 ## Not here
 
-Outbound replies, attachment ingest, and socket transports. Slack Socket Mode
+Reading a session back. `internal/api/sessions` serves that; the gateway only
+writes. Outbound replies, attachment ingest, and socket transports. Slack Socket Mode
 and the Discord gateway are long-lived connections and `Provider` describes a
 request, so they need a second interface with a lifecycle.
 

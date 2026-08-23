@@ -1,6 +1,9 @@
 package gateway
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Every field of an Inbound beyond the four an adapter must always fill is
 // optional, so the zero value has to be safe to read rather than something a
@@ -29,10 +32,10 @@ func TestAMessageWithNoOptionalFieldsIsWellFormed(t *testing.T) {
 	t.Parallel()
 
 	in := Inbound{
-		ExternalID:   "D04ABC:1755412345.123456",
-		Author:       Author{Ref: "U01AA"},
-		Conversation: Conversation{Ref: "D04ABC", Kind: ConversationDirect},
-		Text:         "what's our deploy status?",
+		ExternalID: "D04ABC:1755412345.123456",
+		Author:     Author{Ref: "U01AA"},
+		Session:    Session{Ref: "D04ABC", Kind: SessionDirect},
+		Text:       "what's our deploy status?",
 	}
 
 	if len(in.Mentions) != 0 {
@@ -54,9 +57,9 @@ func TestAMessageWithNoOptionalFieldsIsWellFormed(t *testing.T) {
 
 func valid() Inbound {
 	return Inbound{
-		ExternalID:   "m-1",
-		Author:       Author{Ref: "u-1"},
-		Conversation: Conversation{Ref: "c-1", Kind: ConversationDirect},
+		ExternalID: "m-1",
+		Author:     Author{Ref: "u-1"},
+		Session:    Session{Ref: "c-1", Kind: SessionDirect},
 	}
 }
 
@@ -76,14 +79,14 @@ func TestValidateRefusesAMessageTheHandlerCannotUse(t *testing.T) {
 	t.Parallel()
 
 	for name, damage := range map[string]func(*Inbound){
-		"no external id":      func(in *Inbound) { in.ExternalID = "" },
-		"no author ref":       func(in *Inbound) { in.Author.Ref = "" },
-		"no conversation ref": func(in *Inbound) { in.Conversation.Ref = "" },
-		"no conversation kind": func(in *Inbound) {
-			in.Conversation.Kind = ""
+		"no external id": func(in *Inbound) { in.ExternalID = "" },
+		"no author ref":  func(in *Inbound) { in.Author.Ref = "" },
+		"no session ref": func(in *Inbound) { in.Session.Ref = "" },
+		"no session kind": func(in *Inbound) {
+			in.Session.Kind = ""
 		},
-		"an invented conversation kind": func(in *Inbound) {
-			in.Conversation.Kind = "channel"
+		"an invented session kind": func(in *Inbound) {
+			in.Session.Kind = "channel"
 		},
 		"a mention of nobody": func(in *Inbound) {
 			in.Mentions = []Mention{{DisplayName: "Asha"}}
@@ -120,16 +123,67 @@ func TestValidateDoesNotRequireTheOptionalFields(t *testing.T) {
 
 // The kinds are compared, stored and rendered as these strings, so they are
 // not free to change once a channel exists.
-func TestTheConversationKindsAreStable(t *testing.T) {
+func TestTheSessionKindsAreStable(t *testing.T) {
 	t.Parallel()
 
-	for kind, want := range map[ConversationKind]string{
-		ConversationDirect: "direct",
-		ConversationGroup:  "group",
-		ConversationThread: "thread",
+	for kind, want := range map[SessionKind]string{
+		SessionDirect: "direct",
+		SessionGroup:  "group",
+		SessionThread: "thread",
 	} {
 		if string(kind) != want {
 			t.Errorf("kind = %q, want %q", kind, want)
 		}
+	}
+}
+
+// A ref is stored exactly as sent, because it is an identity — clipping two
+// distinct refs to the same value would merge two people. So an absurd one is
+// refused rather than truncated. Without this a 1 MiB body is a 1 MiB ref,
+// fifty per channel, written by anyone who knows the URL.
+func TestARefLongerThanTheColumnAllowsIsRefused(t *testing.T) {
+	t.Parallel()
+
+	in := valid()
+	in.Author.Ref = strings.Repeat("u", SenderRefMax+1)
+
+	if err := in.Validate(); err == nil {
+		t.Error("a ref longer than the column allows was accepted")
+	}
+}
+
+func TestARefAtTheLimitIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	in := valid()
+	in.Author.Ref = strings.Repeat("u", SenderRefMax)
+
+	if err := in.Validate(); err != nil {
+		t.Errorf("a ref at the limit was refused: %v", err)
+	}
+}
+
+// Mentions carry refs too, and they are resolved against the same table.
+func TestAMentionRefIsBoundedAsWell(t *testing.T) {
+	t.Parallel()
+
+	in := valid()
+	in.Mentions = []Mention{{SenderRef: strings.Repeat("u", SenderRefMax+1)}}
+
+	if err := in.Validate(); err == nil {
+		t.Error("a mention with an unbounded ref was accepted")
+	}
+}
+
+// The limit counts characters, not bytes: the column is char_length, so a
+// ref of multi-byte characters that passes here must also fit there.
+func TestTheRefLimitCountsCharactersNotBytes(t *testing.T) {
+	t.Parallel()
+
+	in := valid()
+	in.Author.Ref = strings.Repeat("é", SenderRefMax)
+
+	if err := in.Validate(); err != nil {
+		t.Errorf("a ref of %d characters was refused: %v", SenderRefMax, err)
 	}
 }

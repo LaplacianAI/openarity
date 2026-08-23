@@ -11,21 +11,51 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
-// fakeMessages is the messages table as the Inbox sees it, including the one
-// behaviour the Inbox depends on and cannot check: the unique index on
-// (channel_id, external_id) absorbing a replay.
-type fakeMessages struct {
-	stored map[string]db.InsertMessageParams
-	err    error
+// inboxStore is the two tables as the Inbox sees them, including the two
+// behaviours it depends on and cannot check: the unique index on
+// (channel_id, external_id) absorbing a replay, and EnsureSession returning
+// the session that already exists for a ref.
+type inboxStore struct {
+	stored   map[string]db.InsertMessageParams
+	sessions map[string]db.Session
 
-	calls []db.InsertMessageParams
+	err        error
+	sessionErr error
+
+	calls        []db.InsertMessageParams
+	sessionCalls []db.EnsureSessionParams
 }
 
-func newFakeMessages() *fakeMessages {
-	return &fakeMessages{stored: map[string]db.InsertMessageParams{}}
+func newInboxStore() *inboxStore {
+	return &inboxStore{
+		stored:   map[string]db.InsertMessageParams{},
+		sessions: map[string]db.Session{},
+	}
 }
 
-func (f *fakeMessages) InsertMessage(_ context.Context, arg db.InsertMessageParams) (int64, error) {
+func (f *inboxStore) EnsureSession(_ context.Context, arg db.EnsureSessionParams) (db.Session, error) {
+	f.sessionCalls = append(f.sessionCalls, arg)
+	if f.sessionErr != nil {
+		return db.Session{}, f.sessionErr
+	}
+
+	key := arg.ChannelID.String() + "/" + arg.ProviderRef
+	if existing, seen := f.sessions[key]; seen {
+		// ON CONFLICT DO UPDATE: the same row, touched.
+		existing.LastMessageAt = time.Now()
+		f.sessions[key] = existing
+		return existing, nil
+	}
+
+	session := db.Session{
+		ID: uuid.New(), TeamID: arg.TeamID, ChannelID: &arg.ChannelID,
+		ProviderRef: &arg.ProviderRef, Kind: arg.Kind, Status: "open",
+	}
+	f.sessions[key] = session
+	return session, nil
+}
+
+func (f *inboxStore) InsertMessage(_ context.Context, arg db.InsertMessageParams) (int64, error) {
 	f.calls = append(f.calls, arg)
 	if f.err != nil {
 		return 0, f.err
@@ -43,11 +73,11 @@ func delivery(externalID, text string) Delivery {
 	return Delivery{
 		UserID: uuid.New(),
 		Inbound: Inbound{
-			ExternalID:   externalID,
-			Author:       Author{Ref: "u-1", DisplayName: "Asha"},
-			Conversation: Conversation{Ref: "c-1", Kind: ConversationDirect},
-			Text:         text,
-			SentAt:       time.Unix(1755412345, 0).UTC(),
+			ExternalID: externalID,
+			Author:     Author{Ref: "u-1", DisplayName: "Asha"},
+			Session:    Session{Ref: "c-1", Kind: SessionDirect},
+			Text:       text,
+			SentAt:     time.Unix(1755412345, 0).UTC(),
 		},
 	}
 }
@@ -55,22 +85,22 @@ func delivery(externalID, text string) Delivery {
 func TestDeliverWritesTheMessage(t *testing.T) {
 	t.Parallel()
 
-	m := newFakeMessages()
-	channelID := uuid.New()
+	store := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 	msg := delivery("m-1", "what's our deploy status?")
 
-	if err := NewInbox(m).Deliver(t.Context(), channelID, []Delivery{msg}); err != nil {
+	if err := NewInbox(store).Deliver(t.Context(), ch, []Delivery{msg}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
-	if len(m.calls) != 1 {
-		t.Fatalf("made %d inserts, want 1", len(m.calls))
+	if len(store.calls) != 1 {
+		t.Fatalf("made %d inserts, want 1", len(store.calls))
 	}
 
-	got := m.calls[0]
+	got := store.calls[0]
 	switch {
-	case got.ChannelID != channelID:
-		t.Errorf("ChannelID = %s, want %s", got.ChannelID, channelID)
+	case got.ChannelID != ch.ID:
+		t.Errorf("ChannelID = %s, want %s", got.ChannelID, ch.ID)
 	case got.UserID != msg.UserID:
 		t.Errorf("UserID = %s, want the resolved sender %s", got.UserID, msg.UserID)
 	case got.ExternalID != "m-1":
@@ -79,10 +109,17 @@ func TestDeliverWritesTheMessage(t *testing.T) {
 		t.Errorf("Text = %q", got.Text)
 	}
 
-	// The conversation and not the channel: two threads in one channel are two
-	// conversations, and storing the channel would merge them.
-	if got.ConversationRef != "c-1" {
-		t.Errorf("ConversationRef = %q, want the conversation c-1", got.ConversationRef)
+	// The message points at a session, and that session is the one the
+	// adapter's ref named. Storing the channel instead would merge two threads
+	// running in one room into a single conversation.
+	if len(store.sessionCalls) != 1 {
+		t.Fatalf("resolved %d sessions, want 1", len(store.sessionCalls))
+	}
+	if ref := store.sessionCalls[0].ProviderRef; ref != "c-1" {
+		t.Errorf("session ref = %q, want c-1", ref)
+	}
+	if got.SessionID != store.sessions[ch.ID.String()+"/c-1"].ID {
+		t.Error("the message was not stored against the session that was resolved")
 	}
 }
 
@@ -91,18 +128,18 @@ func TestDeliverWritesTheMessage(t *testing.T) {
 func TestDeliveringTheSameMessageTwiceLeavesOneRow(t *testing.T) {
 	t.Parallel()
 
-	m := newFakeMessages()
-	channelID := uuid.New()
+	store := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 	msg := delivery("m-1", "hi")
 
 	for range 2 {
-		if err := NewInbox(m).Deliver(t.Context(), channelID, []Delivery{msg}); err != nil {
+		if err := NewInbox(store).Deliver(t.Context(), ch, []Delivery{msg}); err != nil {
 			t.Fatalf("Deliver: %v", err)
 		}
 	}
 
-	if len(m.stored) != 1 {
-		t.Errorf("%d rows after two deliveries, want 1", len(m.stored))
+	if len(store.stored) != 1 {
+		t.Errorf("%d rows after two deliveries, want 1", len(store.stored))
 	}
 }
 
@@ -112,15 +149,15 @@ func TestDeliveringTheSameMessageTwiceLeavesOneRow(t *testing.T) {
 func TestAReplayIsNotAnError(t *testing.T) {
 	t.Parallel()
 
-	m := newFakeMessages()
-	channelID := uuid.New()
+	store := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 	msg := delivery("m-1", "hi")
 
-	inbox := NewInbox(m)
-	if err := inbox.Deliver(t.Context(), channelID, []Delivery{msg}); err != nil {
+	inbox := NewInbox(store)
+	if err := inbox.Deliver(t.Context(), ch, []Delivery{msg}); err != nil {
 		t.Fatalf("first delivery: %v", err)
 	}
-	if err := inbox.Deliver(t.Context(), channelID, []Delivery{msg}); err != nil {
+	if err := inbox.Deliver(t.Context(), ch, []Delivery{msg}); err != nil {
 		t.Errorf("a replay was reported as a failure: %v", err)
 	}
 }
@@ -130,35 +167,36 @@ func TestAReplayIsNotAnError(t *testing.T) {
 func TestTheSameExternalIDInTwoChannelsIsTwoRows(t *testing.T) {
 	t.Parallel()
 
-	m := newFakeMessages()
+	store := newInboxStore()
 	first, second := uuid.New(), uuid.New()
 	msg := delivery("m-1", "hi")
 
-	inbox := NewInbox(m)
+	inbox := NewInbox(store)
 	for _, channelID := range []uuid.UUID{first, second} {
-		if err := inbox.Deliver(t.Context(), channelID, []Delivery{msg}); err != nil {
+		if err := inbox.Deliver(t.Context(),
+			Channel{ID: channelID, TeamID: uuid.New()}, []Delivery{msg}); err != nil {
 			t.Fatalf("Deliver: %v", err)
 		}
 	}
 
-	if len(m.stored) != 2 {
-		t.Errorf("%d rows across two channels, want 2", len(m.stored))
+	if len(store.stored) != 2 {
+		t.Errorf("%d rows across two channels, want 2", len(store.stored))
 	}
 }
 
 func TestDeliverWritesEveryMessageInABatch(t *testing.T) {
 	t.Parallel()
 
-	m := newFakeMessages()
-	channelID := uuid.New()
+	store := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 
 	msgs := []Delivery{delivery("m-1", "first"), delivery("m-2", "second"), delivery("m-3", "third")}
-	if err := NewInbox(m).Deliver(t.Context(), channelID, msgs); err != nil {
+	if err := NewInbox(store).Deliver(t.Context(), ch, msgs); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
-	if len(m.stored) != 3 {
-		t.Errorf("%d rows for a batch of 3, want 3", len(m.stored))
+	if len(store.stored) != 3 {
+		t.Errorf("%d rows for a batch of 3, want 3", len(store.stored))
 	}
 }
 
@@ -167,13 +205,13 @@ func TestDeliverWritesEveryMessageInABatch(t *testing.T) {
 func TestDeliveringNothingIsNotAnError(t *testing.T) {
 	t.Parallel()
 
-	m := newFakeMessages()
+	store := newInboxStore()
 
-	if err := NewInbox(m).Deliver(t.Context(), uuid.New(), nil); err != nil {
+	if err := NewInbox(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, nil); err != nil {
 		t.Errorf("Deliver with no messages: %v", err)
 	}
-	if len(m.calls) != 0 {
-		t.Errorf("an empty batch made %d inserts", len(m.calls))
+	if len(store.calls) != 0 {
+		t.Errorf("an empty batch made %d inserts", len(store.calls))
 	}
 }
 
@@ -182,34 +220,34 @@ func TestDeliveringNothingIsNotAnError(t *testing.T) {
 func TestAMessageWithNoTimestampStoresNull(t *testing.T) {
 	t.Parallel()
 
-	m := newFakeMessages()
+	store := newInboxStore()
 	msg := delivery("m-1", "hi")
 	msg.SentAt = time.Time{}
 
-	if err := NewInbox(m).Deliver(t.Context(), uuid.New(), []Delivery{msg}); err != nil {
+	if err := NewInbox(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	if m.calls[0].SentAt != nil {
-		t.Errorf("SentAt = %v, want null", *m.calls[0].SentAt)
+	if store.calls[0].SentAt != nil {
+		t.Errorf("SentAt = %v, want null", *store.calls[0].SentAt)
 	}
 }
 
 func TestAMessageWithATimestampKeepsIt(t *testing.T) {
 	t.Parallel()
 
-	m := newFakeMessages()
+	store := newInboxStore()
 	want := time.Unix(1755412345, 0).UTC()
 	msg := delivery("m-1", "hi")
 	msg.SentAt = want
 
-	if err := NewInbox(m).Deliver(t.Context(), uuid.New(), []Delivery{msg}); err != nil {
+	if err := NewInbox(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	if m.calls[0].SentAt == nil {
+	if store.calls[0].SentAt == nil {
 		t.Fatal("SentAt was dropped")
 	}
-	if !m.calls[0].SentAt.Equal(want) {
-		t.Errorf("SentAt = %v, want %v", *m.calls[0].SentAt, want)
+	if !store.calls[0].SentAt.Equal(want) {
+		t.Errorf("SentAt = %v, want %v", *store.calls[0].SentAt, want)
 	}
 }
 
@@ -218,21 +256,21 @@ func TestAMessageWithATimestampKeepsIt(t *testing.T) {
 func TestEachMessageKeepsItsOwnTimestamp(t *testing.T) {
 	t.Parallel()
 
-	m := newFakeMessages()
+	store := newInboxStore()
 	first := delivery("m-1", "first")
 	first.SentAt = time.Unix(1000, 0).UTC()
 	second := delivery("m-2", "second")
 	second.SentAt = time.Unix(2000, 0).UTC()
 
-	if err := NewInbox(m).Deliver(t.Context(), uuid.New(), []Delivery{first, second}); err != nil {
+	if err := NewInbox(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{first, second}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
-	if m.calls[0].SentAt.Equal(*m.calls[1].SentAt) {
-		t.Errorf("both messages stored %v — the pointer aliases the loop variable", *m.calls[0].SentAt)
+	if store.calls[0].SentAt.Equal(*store.calls[1].SentAt) {
+		t.Errorf("both messages stored %v — the pointer aliases the loop variable", *store.calls[0].SentAt)
 	}
-	if !m.calls[0].SentAt.Equal(first.SentAt) {
-		t.Errorf("first stored %v, want %v", *m.calls[0].SentAt, first.SentAt)
+	if !store.calls[0].SentAt.Equal(first.SentAt) {
+		t.Errorf("first stored %v, want %v", *store.calls[0].SentAt, first.SentAt)
 	}
 }
 
@@ -241,16 +279,16 @@ func TestEachMessageKeepsItsOwnTimestamp(t *testing.T) {
 func TestAFailedWriteIsReported(t *testing.T) {
 	t.Parallel()
 
-	m := newFakeMessages()
-	m.err = errors.New("connection reset")
+	store := newInboxStore()
+	store.err = errors.New("connection reset")
 
-	err := NewInbox(m).Deliver(t.Context(), uuid.New(), []Delivery{delivery("m-1", "hi")})
+	err := NewInbox(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{delivery("m-1", "hi")})
 	if err == nil {
 		t.Fatal("a failed write was swallowed")
 	}
 	// The id is what somebody reading the log needs to find the message the
 	// provider will send again.
-	if !errors.Is(err, m.err) {
+	if !errors.Is(err, store.err) {
 		t.Errorf("the underlying error was not wrapped: %v", err)
 	}
 }
@@ -260,5 +298,183 @@ func TestAFailedWriteIsReported(t *testing.T) {
 func TestInboxIsASink(t *testing.T) {
 	t.Parallel()
 
-	var _ Sink = NewInbox(newFakeMessages())
+	var _ Sink = NewInbox(newInboxStore())
+}
+
+// --- sessions ---
+
+// The adapter decided what a conversation is; the inbox only records it. Two
+// messages naming the same ref are one session, which is what stops every
+// message becoming a conversation of its own.
+func TestTwoMessagesInOneConversationShareASession(t *testing.T) {
+	t.Parallel()
+
+	store := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	first, second := delivery("m-1", "hi"), delivery("m-2", "still here")
+	if err := NewInbox(store).Deliver(t.Context(), ch, []Delivery{first, second}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+
+	if len(store.sessions) != 1 {
+		t.Fatalf("%d sessions for one conversation, want 1", len(store.sessions))
+	}
+	if store.calls[0].SessionID != store.calls[1].SessionID {
+		t.Error("two messages in one conversation went to different sessions")
+	}
+}
+
+// And two refs are two sessions, even in the same channel — which is the whole
+// reason a session is not the channel.
+func TestTwoConversationsInOneChannelAreTwoSessions(t *testing.T) {
+	t.Parallel()
+
+	store := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	first := delivery("m-1", "about the deploy")
+	second := delivery("m-2", "unrelated")
+	second.Session.Ref = "c-2"
+
+	if err := NewInbox(store).Deliver(t.Context(), ch, []Delivery{first, second}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+
+	if len(store.sessions) != 2 {
+		t.Errorf("%d sessions for two conversations, want 2", len(store.sessions))
+	}
+	if store.calls[0].SessionID == store.calls[1].SessionID {
+		t.Error("two conversations were merged into one session")
+	}
+}
+
+// The kind is the adapter's answer to how many people can speak, and it is
+// what a visibility rule will eventually read. Dropping it here would make
+// every session look like a group one.
+func TestTheSessionCarriesItsKind(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []SessionKind{SessionDirect, SessionGroup, SessionThread} {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+
+			store := newInboxStore()
+			msg := delivery("m-1", "hi")
+			msg.Session.Kind = kind
+
+			if err := NewInbox(store).Deliver(t.Context(),
+				Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
+				t.Fatalf("Deliver: %v", err)
+			}
+
+			if got := store.sessionCalls[0].Kind; got != string(kind) {
+				t.Errorf("kind = %q, want %q", got, kind)
+			}
+		})
+	}
+}
+
+// The session is written to the channel's team, not to whatever team happens
+// to be handy. Getting this wrong puts a conversation in a team that cannot
+// see the channel it arrived on.
+func TestTheSessionBelongsToTheChannelsTeam(t *testing.T) {
+	t.Parallel()
+
+	store := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	if err := NewInbox(store).Deliver(t.Context(), ch, []Delivery{delivery("m-1", "hi")}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+
+	got := store.sessionCalls[0]
+	if got.TeamID != ch.TeamID {
+		t.Errorf("TeamID = %s, want %s", got.TeamID, ch.TeamID)
+	}
+	if got.ChannelID != ch.ID {
+		t.Errorf("ChannelID = %s, want %s", got.ChannelID, ch.ID)
+	}
+}
+
+// A session that cannot be resolved must not become a message with no
+// conversation. The handler answers 500 and the provider sends it again.
+func TestAFailedSessionStopsTheMessage(t *testing.T) {
+	t.Parallel()
+
+	store := newInboxStore()
+	store.sessionErr = errors.New("connection reset")
+
+	err := NewInbox(store).Deliver(t.Context(),
+		Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{delivery("m-1", "hi")})
+	if err == nil {
+		t.Fatal("a failed session was swallowed")
+	}
+	if len(store.calls) != 0 {
+		t.Error("the message was stored without a session")
+	}
+}
+
+// --- who a session belongs to ---
+
+// A direct session is private to one person, and the column the read queries
+// filter on is set here. Nowhere else can set it: the API never creates a
+// session, so this is the only writer.
+func TestADirectSessionRecordsItsParticipant(t *testing.T) {
+	store := newInboxStore()
+	inbox := NewInbox(store)
+
+	msg := Delivery{
+		Inbound: Inbound{
+			ExternalID: "m-1",
+			Author:     Author{Ref: "U-ASHA"},
+			Session:    Session{Ref: "D-ASHA", Kind: SessionDirect},
+			Text:       "quick one, privately",
+		},
+		UserID: uuid.New(),
+	}
+
+	if err := inbox.Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(store.sessionCalls) != 1 {
+		t.Fatalf("%d EnsureSession calls, want 1", len(store.sessionCalls))
+	}
+
+	got := store.sessionCalls[0].UserID
+	if got == nil {
+		t.Fatal("a direct session was stored with no participant, so nobody can read it")
+	}
+	if *got != msg.UserID {
+		t.Errorf("UserID = %s, want the approved sender %s", *got, msg.UserID)
+	}
+}
+
+// A group session names nobody on purpose: several people speak in it, so
+// recording one of them would be a fact that is not true — and the database
+// refuses it, which would turn every group message into a failed delivery.
+func TestAGroupSessionRecordsNoParticipant(t *testing.T) {
+	for _, kind := range []SessionKind{SessionGroup, SessionThread} {
+		t.Run(string(kind), func(t *testing.T) {
+			store := newInboxStore()
+			inbox := NewInbox(store)
+
+			msg := Delivery{
+				Inbound: Inbound{
+					ExternalID: "m-1",
+					Author:     Author{Ref: "U-ASHA"},
+					Session:    Session{Ref: "C-SUPPORT", Kind: kind},
+					Text:       "the deploy finished",
+				},
+				UserID: uuid.New(),
+			}
+
+			if err := inbox.Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
+				t.Fatalf("Deliver: %v", err)
+			}
+			if got := store.sessionCalls[0].UserID; got != nil {
+				t.Errorf("a %s session named %s as its participant", kind, *got)
+			}
+		})
+	}
 }

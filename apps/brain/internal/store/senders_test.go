@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -347,6 +348,66 @@ func TestAnOversizedNameIsRefusedByTheDatabase(t *testing.T) {
 	wantPGCode(t, err, checkViolation, "a sender name over 64 characters")
 }
 
+// The Go constant and the column have to agree, and neither can prove it
+// alone: a test in internal/gateway that builds its input from SenderRefMax
+// passes whatever the constant says. This is the pair — exactly at the limit
+// is accepted, one past it is refused, and the value comes from the same
+// constant the gateway refuses with.
+func TestTheRefBoundMatchesWhatTheGatewayEnforces(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+
+	atLimit := strings.Repeat("u", gateway.SenderRefMax)
+	if _, err := s.RecordPendingSender(t.Context(), db.RecordPendingSenderParams{
+		ChannelID: ch.ID, SenderRef: atLimit, SenderName: "Asha", Cap: testCap,
+	}); err != nil {
+		t.Errorf("a ref of exactly SenderRefMax was refused by the column: %v", err)
+	}
+
+	_, err := s.RecordPendingSender(t.Context(), db.RecordPendingSenderParams{
+		ChannelID: ch.ID, SenderRef: strings.Repeat("u", gateway.SenderRefMax+1),
+		SenderName: "Asha", Cap: testCap,
+	})
+	wantPGCode(t, err, checkViolation, "a ref one character over SenderRefMax")
+}
+
+// char_length counts characters and len counts bytes. A ref of multi-byte
+// characters at the limit must fit, or the gateway accepts what the column
+// then rejects — and the rejection is a 500 on a webhook that retries.
+func TestTheRefBoundCountsCharactersInBothPlaces(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+
+	if _, err := s.RecordPendingSender(t.Context(), db.RecordPendingSenderParams{
+		ChannelID: ch.ID, SenderRef: strings.Repeat("é", gateway.SenderRefMax),
+		SenderName: "Asha", Cap: testCap,
+	}); err != nil {
+		t.Errorf("a ref of %d multi-byte characters was refused: %v", gateway.SenderRefMax, err)
+	}
+}
+
+// The approved side is bounded too. It is written by an admin rather than by
+// a webhook, but the value came from one.
+func TestAnOversizedRefIsRefusedOnTheApprovedSide(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+	userID := insertUser(t, s, "dev", "asha")
+
+	err := s.LinkChannelSender(t.Context(), db.LinkChannelSenderParams{
+		ChannelID: ch.ID, SenderRef: strings.Repeat("u", gateway.SenderRefMax+1), UserID: userID,
+	})
+	wantPGCode(t, err, checkViolation, "an approval for a ref over SenderRefMax")
+}
+
 func TestApprovingASenderTakesThemOutOfTheQueue(t *testing.T) {
 	t.Parallel()
 
@@ -357,15 +418,10 @@ func TestApprovingASenderTakesThemOutOfTheQueue(t *testing.T) {
 
 	record(t, s, ch.ID, "u-1", "Asha")
 
-	if err := s.LinkChannelSender(t.Context(), db.LinkChannelSenderParams{
+	if err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
 		ChannelID: ch.ID, SenderRef: "u-1", UserID: userID,
 	}); err != nil {
-		t.Fatalf("LinkChannelSender: %v", err)
-	}
-	if err := s.DeletePendingSender(t.Context(), db.DeletePendingSenderParams{
-		ChannelID: ch.ID, SenderRef: "u-1",
-	}); err != nil {
-		t.Fatalf("DeletePendingSender: %v", err)
+		t.Fatalf("ApproveSender: %v", err)
 	}
 
 	if rows := pending(t, s, ch.ID); len(rows) != 0 {
@@ -373,6 +429,150 @@ func TestApprovingASenderTakesThemOutOfTheQueue(t *testing.T) {
 	}
 	if n := scalar[int](t, s, `SELECT count(*) FROM channel_senders WHERE channel_id = $1`, ch.ID); n != 1 {
 		t.Errorf("%d approvals, want 1", n)
+	}
+}
+
+// The link and the dequeue are one statement, so they cannot come apart.
+// Nothing retries an approval — an admin clicks once — and a link left with
+// its pending row in place shows the next admin work that is already done.
+//
+// The insert half is made to fail here, which is the only way to see that the
+// delete half did not happen anyway. A data-modifying CTE runs to completion
+// whether or not the primary query reads it, so "it will not have run" is not
+// something to assume.
+func TestAFailedApprovalLeavesTheQueueAlone(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+
+	record(t, s, ch.ID, "u-1", "Asha")
+
+	// A user id nothing references: the foreign key refuses the insert.
+	err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
+		ChannelID: ch.ID, SenderRef: "u-1", UserID: uuid.New(),
+	})
+	wantPGCode(t, err, foreignKeyViolation, "an approval naming a user that does not exist")
+
+	if rows := pending(t, s, ch.ID); len(rows) != 1 {
+		t.Errorf("%d senders queued, want the one the failed approval must not have removed", len(rows))
+	}
+	if n := scalar[int](t, s, `SELECT count(*) FROM channel_senders WHERE channel_id = $1`, ch.ID); n != 0 {
+		t.Errorf("%d approvals after a refused insert", n)
+	}
+}
+
+// Approving somebody already approved moves them to the new user rather than
+// failing, so correcting a mistaken approval is one command.
+func TestApprovingTwiceMovesTheSender(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+	first := insertUser(t, s, "dev", "asha")
+	second := insertUser(t, s, "dev", "bala")
+
+	for _, userID := range []uuid.UUID{first, second} {
+		if err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
+			ChannelID: ch.ID, SenderRef: "u-1", UserID: userID,
+		}); err != nil {
+			t.Fatalf("ApproveSender: %v", err)
+		}
+	}
+
+	got := scalar[uuid.UUID](t, s,
+		`SELECT user_id FROM channel_senders WHERE channel_id = $1 AND sender_ref = 'u-1'`, ch.ID)
+	if got != second {
+		t.Errorf("sender points at %s, want the second approval %s", got, second)
+	}
+}
+
+// One command for two situations: unapproving somebody, and clearing a
+// pending row that is spam. The caller cannot always tell which they have.
+func TestRemovingClearsBothSides(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+	userID := insertUser(t, s, "dev", "asha")
+
+	t.Run("an approved sender", func(t *testing.T) {
+		if err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
+			ChannelID: ch.ID, SenderRef: "approved", UserID: userID,
+		}); err != nil {
+			t.Fatalf("ApproveSender: %v", err)
+		}
+		if err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
+			ChannelID: ch.ID, SenderRef: "approved",
+		}); err != nil {
+			t.Fatalf("RemoveSender: %v", err)
+		}
+		if n := scalar[int](t, s,
+			`SELECT count(*) FROM channel_senders WHERE channel_id = $1 AND sender_ref = 'approved'`,
+			ch.ID); n != 0 {
+			t.Errorf("%d links survived removal", n)
+		}
+	})
+
+	t.Run("a pending row", func(t *testing.T) {
+		record(t, s, ch.ID, "spam", "Free Money")
+		if err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
+			ChannelID: ch.ID, SenderRef: "spam",
+		}); err != nil {
+			t.Fatalf("RemoveSender: %v", err)
+		}
+		if n := scalar[int](t, s,
+			`SELECT count(*) FROM pending_senders WHERE channel_id = $1 AND sender_ref = 'spam'`,
+			ch.ID); n != 0 {
+			t.Errorf("%d pending rows survived removal", n)
+		}
+	})
+}
+
+// Removing somebody who was never there is success. The caller asked for a
+// state and that state holds.
+func TestRemovingSomebodyWhoIsNotThereIsNotAnError(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+
+	if err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
+		ChannelID: ch.ID, SenderRef: "never-seen",
+	}); err != nil {
+		t.Errorf("RemoveSender for an unknown ref: %v", err)
+	}
+}
+
+// Removal is not a block: the next message queues them again. That is what
+// makes a mistaken removal recoverable, and it is also why removal alone does
+// not stop somebody persistent.
+func TestARemovedSenderCanQueueAgain(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+	userID := insertUser(t, s, "dev", "asha")
+
+	if err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
+		ChannelID: ch.ID, SenderRef: "u-1", UserID: userID,
+	}); err != nil {
+		t.Fatalf("ApproveSender: %v", err)
+	}
+	if err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
+		ChannelID: ch.ID, SenderRef: "u-1",
+	}); err != nil {
+		t.Fatalf("RemoveSender: %v", err)
+	}
+
+	record(t, s, ch.ID, "u-1", "Asha")
+	if rows := pending(t, s, ch.ID); len(rows) != 1 {
+		t.Errorf("%d senders queued after a removed sender spoke again, want 1", len(rows))
 	}
 }
 

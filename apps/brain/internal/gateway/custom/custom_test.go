@@ -37,7 +37,7 @@ const message = `{
   "text": "customer asked to change the delivery address",
   "sent_at": "2026-08-21T12:00:00Z",
   "author": { "ref": "agent-17", "display_name": "Asha", "is_bot": false },
-  "conversation": { "ref": "ticket-4821", "kind": "direct" }
+  "session": { "ref": "ticket-4821", "kind": "direct" }
 }`
 
 // The whole point of shipping this adapter rather than a test double: it runs
@@ -61,7 +61,7 @@ func TestParseReadsEveryField(t *testing.T) {
 	  "sent_at": "2026-08-21T12:00:00Z",
 	  "reply_to": "m-8",
 	  "author": { "ref": "u-1", "display_name": "Asha", "is_bot": false },
-	  "conversation": { "ref": "t-1", "kind": "thread" },
+	  "session": { "ref": "t-1", "kind": "thread" },
 	  "mentions": [
 	    { "sender_ref": "bot-0", "display_name": "openarity", "is_us": true },
 	    { "sender_ref": "u-2", "display_name": "Shri" }
@@ -89,8 +89,8 @@ func TestParseReadsEveryField(t *testing.T) {
 	if m.Author != (gateway.Author{Ref: "u-1", DisplayName: "Asha"}) {
 		t.Errorf("Author = %+v", m.Author)
 	}
-	if m.Conversation != (gateway.Conversation{Ref: "t-1", Kind: gateway.ConversationThread}) {
-		t.Errorf("Conversation = %+v", m.Conversation)
+	if m.Session != (gateway.Session{Ref: "t-1", Kind: gateway.SessionThread}) {
+		t.Errorf("Session = %+v", m.Session)
 	}
 	if want := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC); !m.SentAt.Equal(want) {
 		t.Errorf("SentAt = %v, want %v", m.SentAt, want)
@@ -116,7 +116,7 @@ func TestParseReadsEveryField(t *testing.T) {
 func TestAnOmittedSentAtBecomesWhenItArrived(t *testing.T) {
 	t.Parallel()
 
-	body := `{"id":"m-1","author":{"ref":"u-1"},"conversation":{"ref":"c-1","kind":"direct"}}`
+	body := `{"id":"m-1","author":{"ref":"u-1"},"session":{"ref":"c-1","kind":"direct"}}`
 
 	res, err := custom.New().Parse(request(t, body))
 	if err != nil {
@@ -135,11 +135,11 @@ func TestAMessageMissingARequiredFieldDoesNotValidate(t *testing.T) {
 	t.Parallel()
 
 	for name, body := range map[string]string{
-		"no id":               `{"author":{"ref":"u-1"},"conversation":{"ref":"c-1","kind":"direct"}}`,
-		"no author ref":       `{"id":"m-1","author":{},"conversation":{"ref":"c-1","kind":"direct"}}`,
-		"no conversation ref": `{"id":"m-1","author":{"ref":"u-1"},"conversation":{"kind":"direct"}}`,
-		"no kind":             `{"id":"m-1","author":{"ref":"u-1"},"conversation":{"ref":"c-1"}}`,
-		"unknown kind":        `{"id":"m-1","author":{"ref":"u-1"},"conversation":{"ref":"c-1","kind":"channel"}}`,
+		"no id":          `{"author":{"ref":"u-1"},"session":{"ref":"c-1","kind":"direct"}}`,
+		"no author ref":  `{"id":"m-1","author":{},"session":{"ref":"c-1","kind":"direct"}}`,
+		"no session ref": `{"id":"m-1","author":{"ref":"u-1"},"session":{"kind":"direct"}}`,
+		"no kind":        `{"id":"m-1","author":{"ref":"u-1"},"session":{"ref":"c-1"}}`,
+		"unknown kind":   `{"id":"m-1","author":{"ref":"u-1"},"session":{"ref":"c-1","kind":"channel"}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -163,7 +163,7 @@ func TestAMessageMissingARequiredFieldDoesNotValidate(t *testing.T) {
 func TestAnUnparseableSentAtIsRefused(t *testing.T) {
 	t.Parallel()
 
-	body := `{"id":"m-1","sent_at":"yesterday","author":{"ref":"u-1"},"conversation":{"ref":"c-1","kind":"direct"}}`
+	body := `{"id":"m-1","sent_at":"yesterday","author":{"ref":"u-1"},"session":{"ref":"c-1","kind":"direct"}}`
 
 	if _, err := custom.New().Parse(request(t, body)); err == nil {
 		t.Error("Parse accepted a sent_at that is not a timestamp")

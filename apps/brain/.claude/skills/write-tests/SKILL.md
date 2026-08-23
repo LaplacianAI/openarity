@@ -123,6 +123,42 @@ the lock from the test, then assert the operation blocks.
 If the operation is fast, goroutines never actually overlap and the race you
 meant to test never happens.
 
+### Put a compile gate in front of the mutation
+
+A mutation that does not compile prints `FAIL` from the build, and anything
+grepping for `FAIL` reads that as "the test caught it". It caught nothing —
+the test never ran. Removing a guard often removes the last use of a variable
+or an import, so this is the common case, not the rare one.
+
+```sh
+go build ./... || { echo "BUILD-FAIL"; }   # a distinct outcome, not a pass
+go test ./the/package -count=1
+```
+
+`-count=1` as well: the test cache will happily serve the result from before
+the mutation.
+
+### Two patterns that survive mutation and look tested
+
+Both escaped a first pass on the sessions work, and both are invisible in a
+coverage report because the lines *do* execute — just never with the value
+that matters.
+
+**A field with an absent and a present form, tested only absent.** The fixture
+for `sent_at` had no timestamp, so nilling the field changed nothing. A test
+asserting "absent stays absent" says nothing about whether a present one
+survives. Test both forms explicitly.
+
+**Two near-identical types, one tested.** Sessions and messages each have a
+cursor, ordering on different columns. The paging test covered the message
+cursor; breaking the session cursor changed no result. The lines in the
+untested one are still executed by its sibling's code path, so nothing reports
+a gap.
+
+The rule both give you: coverage says which lines ran, never which values
+reached them. For any nullable field and any pair of parallel types, write the
+second test.
+
 ## Step 8 — coverage
 
 - **Never delete error handling to raise a number.** When a branch is
