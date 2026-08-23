@@ -79,12 +79,35 @@ of this file gets `null`.
 
 | Path | Capability |
 | --- | --- |
-| `secret/data/teams/*` | `read` |
+| `secret/data/teams/+/channels/+` | `read`, `create`, `update` |
+| `secret/metadata/teams/+/channels/+` | `delete` |
 | `auth/token/renew-self` | `update` |
 
-No write, no delete, no `list`, and no `metadata/`. Reading requires knowing
-the path already; `list` on a KV path hands over every team id. Registering a
-channel writes a secret and will get its own role — the brain is a reader.
+`+` matches exactly one path segment. That is the restriction: the brain
+reaches a channel's secret in any team and nothing else under `teams/` — not a
+team-level secret, not a future `teams/<id>/tokens/*`, not a path one segment
+deeper. Verified against a running OpenBao rather than taken from the
+documentation.
+
+Two paths because KV v2 splits them. `Get` and `Put` go to `secret/data/…`;
+`Delete` goes to `secret/metadata/…`, and only the metadata delete removes
+every version — a disconnected channel's signing secret should not survive in
+history. Granting `delete` there grants neither `read` nor `list`, so version
+history stays closed.
+
+Still no `list`: reading requires knowing the path already, while `list` on a
+KV path hands over every team id.
+
+This policy used to be read-only, on the reasoning that registering a channel
+would get its own role. It will not while the brain is the thing serving
+`POST /teams/{id}/channels` — a second credential held by the same process is
+not a boundary, because the process holds both. The boundary is the path shape
+above, and who may ask for a write is RBAC's `channel:write` on the route.
+
+If channel registration ever moves out of the brain, the split becomes real
+and worth making. A shorter-lived alternative, if the threat model ever calls
+for it, is a token minted per write with a short TTL rather than one held for
+the process's lifetime.
 
 The common shortcut is a root token in an environment variable. That is what
 this exists to avoid.
