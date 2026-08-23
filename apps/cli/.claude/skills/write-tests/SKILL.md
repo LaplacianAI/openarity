@@ -191,8 +191,27 @@ against broken code:
 - A `settingViews` test passed with a setting listed twice, because nothing
   asserted the count.
 - A mutation that removed the last use of an import reported "survived",
-  because the harness read a build failure as silence. Check that the mutated
-  code still **compiles** before believing it passed.
+  because the harness read a build failure as silence. Put a compile gate in
+  front of the run and report it as its own outcome — a build failure prints
+  `FAIL` too, and anything grepping for `FAIL` reads that as "caught":
+
+  ```sh
+  go build ./... || { echo "BUILD-FAIL"; }   # not a pass
+  go test ./the/package -count=1             # the cache serves stale passes
+  ```
+
+Two more escaped the `oa sessions` work, and both look tested in a coverage
+report because the lines *do* run — just never with the value that matters:
+
+- **A field with an absent and a present form, tested only absent.** The
+  `sent_at` fixture had no timestamp, so nilling the field changed nothing.
+  "Absent stays absent" says nothing about whether a present one survives.
+- **Two near-identical types, one tested.** Sessions and messages each have a
+  cursor. The paging test covered the message one; breaking the session cursor
+  changed no result, because its lines are executed by the sibling path.
+
+Coverage says which lines ran, never which values reached them. For any
+nullable field and any pair of parallel types, write the second test.
 
 When a branch genuinely cannot be tested — `yaml.Encoder.Close` produces
 byte-identical output with and without it — say so in a comment and move on.

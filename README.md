@@ -88,9 +88,9 @@ platform does:
   your shell, and only ever sends it to a loopback address
 
 Not built yet: the graph, the planner, the agent runtime, the dashboard, and
-outbound replies — the brain can receive a message but cannot yet answer one.
-Slack, Discord and Telegram adapters are not written; the seam they plug into
-is, and `custom` is a working generic webhook in the meantime.
+outbound replies — the brain can hold a conversation's messages but cannot yet
+answer one. Slack, Discord and Telegram adapters are not written; the seam they
+plug into is, and `custom` is a working generic webhook in the meantime.
 
 ## Quick start
 
