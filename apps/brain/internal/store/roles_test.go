@@ -40,8 +40,10 @@ func TestSeededPermissions(t *testing.T) {
 	s := queryStore(t)
 
 	for role, want := range map[string][]string{
-		"admin":  {"agent:write", "channel:write", "membership:write",
-		"session:read_all", "tool:write", "user:read"},
+		"admin": {
+			"agent:write", "channel:write", "membership:write",
+			"session:read_all", "tool:write", "user:read",
+		},
 		"member": {"agent:write", "tool:write"},
 	} {
 		got, err := s.ListRolePermissions(t.Context(), role)
