@@ -31,7 +31,7 @@ func newRouters(
 		teams.New(logger, dbStore, authorizer),
 		channels.New(logger, dbStore, secretWriter, registry),
 		users.New(logger, dbStore),
-		sessions.New(logger, dbStore),
+		sessions.New(logger, dbStore, authorizer),
 		authconfig.New(logger, cfg),
 	}
 

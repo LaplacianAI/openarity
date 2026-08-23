@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -122,15 +123,33 @@ func trim[T any](rows []T, size int32) []T {
 	return rows
 }
 
-// Nothing here is team- or any_team-scoped: reading a conversation is
-// `member`, which the guard answers from the memberships already on the
-// request. Being asked either question is itself the failure.
-type fakeAuthz struct{ super bool }
+// No sessions route is team- or any_team-scoped: reaching one is `member`,
+// which the guard answers from the memberships already on the request.
+//
+// The handler asks a permission question of its own, though — session:read_all
+// decides whether a direct session belonging to somebody else is visible — so
+// Can answers instead of panicking, and records what it was asked so a test
+// can prove the handler asked about the right thing.
+type fakeAuthz struct {
+	super     bool
+	moderator bool
+	err       error
+
+	asked authz.Action
+	scope authz.Resource
+}
 
 func (f *fakeAuthz) IsSuperAdmin(*auth.User) bool { return f.super }
 
-func (f *fakeAuthz) Can(context.Context, *auth.User, authz.Action, authz.Resource) (bool, error) {
-	panic("a sessions route asked for a permission; reading is membership alone")
+func (f *fakeAuthz) Can(_ context.Context, _ *auth.User, a authz.Action, r authz.Resource) (bool, error) {
+	f.asked, f.scope = a, r
+	// The real Authorizer short-circuits a super admin before it looks at any
+	// role, so every permission answers yes for one. A fake that did not would
+	// let a test pass against production behaviour it does not have.
+	if f.super {
+		return true, nil
+	}
+	return f.moderator, f.err
 }
 
 func (f *fakeAuthz) CanInAnyTeam(context.Context, *auth.User, authz.Action) (bool, error) {
@@ -175,6 +194,13 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f.authz = &fakeAuthz{}
 	f.caller = memberOf(f.teamID, "member")
+
+	// The fixture's session is direct, so it has to belong to somebody or
+	// every read of it is a 404 now. It belongs to the caller, which is the
+	// ordinary case; the tests that care about a stranger reassign it.
+	f.userID = f.caller.ID
+	f.store.sessions[0].UserID = &f.caller.ID
+	f.store.messages[0].UserID = f.caller.ID
 	return f
 }
 
@@ -194,7 +220,7 @@ func (f *fixture) get(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store).Register(mux, api.NewGuard(routes(t), f.authz, discardLogger()))
+	New(discardLogger(), f.store, f.authz).Register(mux, api.NewGuard(routes(t), f.authz, discardLogger()))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 	if f.caller != nil {
@@ -424,6 +450,12 @@ func TestAnyMemberMayRead(t *testing.T) {
 
 			f := newFixture(t)
 			f.caller = memberOf(f.teamID, role)
+
+			// A group session: this is about which roles may reach the route,
+			// and the fixture's direct session belongs to somebody else once
+			// the caller is replaced, which is a different refusal.
+			f.store.sessions[0].Kind = "group"
+			f.store.sessions[0].UserID = nil
 
 			for _, path := range []string{f.channelSessions(), f.teamSessions(), f.sessionMessages()} {
 				if rec := f.get(t, path); rec.Code != http.StatusOK {
@@ -684,6 +716,148 @@ func TestEveryCursorCanBeEncoded(t *testing.T) {
 
 			if _, err := api.EncodeCursor(cursor); err != nil {
 				t.Errorf("a %s cursor no longer encodes: %v", name, err)
+			}
+		})
+	}
+}
+
+// --- a direct session belongs to one person ---
+
+// The rule this whole column exists for. A teammate is authorised for the
+// team and still must not read somebody's private conversation.
+func TestAForeignDirectSessionIsNotFound(t *testing.T) {
+	f := newFixture(t)
+
+	stranger := uuid.New()
+	f.store.sessions[0].UserID = &stranger
+
+	if rec := f.get(t, f.sessionMessages()); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 reading somebody else's direct session", rec.Code)
+	}
+}
+
+// 404 rather than 403, and the same 404 a session that does not exist gets.
+// A 403 would confirm the conversation is there, which is most of what it is
+// private about.
+func TestAForeignDirectSessionLooksLikeOneThatDoesNotExist(t *testing.T) {
+	f := newFixture(t)
+
+	missing := f.get(t, "/teams/"+f.teamID.String()+"/sessions/"+uuid.New().String()+"/messages")
+
+	stranger := uuid.New()
+	f.store.sessions[0].UserID = &stranger
+	foreign := f.get(t, f.sessionMessages())
+
+	if foreign.Code != missing.Code {
+		t.Errorf("foreign = %d, absent = %d; they must not be distinguishable",
+			foreign.Code, missing.Code)
+	}
+	if foreign.Body.String() != missing.Body.String() {
+		t.Errorf("bodies differ:\n foreign: %q\n absent:  %q",
+			foreign.Body.String(), missing.Body.String())
+	}
+}
+
+func TestAModeratorMayReadAForeignDirectSession(t *testing.T) {
+	f := newFixture(t)
+
+	stranger := uuid.New()
+	f.store.sessions[0].UserID = &stranger
+	f.authz.moderator = true
+
+	if rec := f.get(t, f.sessionMessages()); rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 for a moderator", rec.Code)
+	}
+}
+
+// The permission, not the role. Which role holds session:read_all is data in
+// rbac.json, and a handler asking about "admin" would put that back in code.
+func TestTheHandlerAsksForThePermissionInThatTeam(t *testing.T) {
+	f := newFixture(t)
+
+	stranger := uuid.New()
+	f.store.sessions[0].UserID = &stranger
+	f.get(t, f.sessionMessages())
+
+	if f.authz.asked != "session:read_all" {
+		t.Errorf("asked for %q, want session:read_all", f.authz.asked)
+	}
+	if f.authz.scope.TeamID != f.teamID {
+		t.Errorf("asked about team %s, want %s", f.authz.scope.TeamID, f.teamID)
+	}
+}
+
+// A permission store that is down must not open a private conversation. The
+// failure direction matters more than the failure.
+func TestAPermissionErrorHidesTheSession(t *testing.T) {
+	f := newFixture(t)
+
+	stranger := uuid.New()
+	f.store.sessions[0].UserID = &stranger
+	f.authz.moderator = true
+	f.authz.err = errors.New("permissions unavailable")
+
+	if rec := f.get(t, f.sessionMessages()); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 when the permission check fails", rec.Code)
+	}
+}
+
+// A direct session whose participant was deleted has no user_id. Null is
+// nobody: read as "unset, so unrestricted" it would publish exactly the
+// conversations that were private.
+func TestADirectSessionWithNoParticipantIsNotFound(t *testing.T) {
+	f := newFixture(t)
+
+	f.store.sessions[0].UserID = nil
+
+	if rec := f.get(t, f.sessionMessages()); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 when nobody owns the session", rec.Code)
+	}
+}
+
+// A group session is a shared room. Without this the check could refuse
+// everything and every test above would still pass.
+func TestAGroupSessionIsReadableByAnyMember(t *testing.T) {
+	f := newFixture(t)
+
+	f.store.sessions[0].Kind = "group"
+	f.store.sessions[0].UserID = nil
+
+	if rec := f.get(t, f.sessionMessages()); rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 for a group session", rec.Code)
+	}
+}
+
+// The lists filter in SQL rather than in Go, so what the handler owes is the
+// right parameters. A viewer of uuid.Nil would hide every direct session from
+// its own participant.
+func TestTheListsPassTheCallerAndTheirModeration(t *testing.T) {
+	for _, moderator := range []bool{false, true} {
+		t.Run(fmt.Sprintf("moderator=%v", moderator), func(t *testing.T) {
+			f := newFixture(t)
+			f.authz.moderator = moderator
+
+			if rec := f.get(t, f.teamSessions()); rec.Code != http.StatusOK {
+				t.Fatalf("team list: status = %d", rec.Code)
+			}
+			if rec := f.get(t, f.channelSessions()); rec.Code != http.StatusOK {
+				t.Fatalf("channel list: status = %d", rec.Code)
+			}
+
+			team := f.store.teamListArgs[0]
+			if team.Viewer != f.caller.ID {
+				t.Errorf("team viewer = %s, want the caller %s", team.Viewer, f.caller.ID)
+			}
+			if team.Moderator != moderator {
+				t.Errorf("team moderator = %v, want %v", team.Moderator, moderator)
+			}
+
+			channel := f.store.channelListArgs[0]
+			if channel.Viewer != f.caller.ID {
+				t.Errorf("channel viewer = %s, want the caller %s", channel.Viewer, f.caller.ID)
+			}
+			if channel.Moderator != moderator {
+				t.Errorf("channel moderator = %v, want %v", channel.Moderator, moderator)
 			}
 		})
 	}

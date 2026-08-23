@@ -77,6 +77,7 @@ type Session struct {
 	Status        string
 	StartedAt     time.Time
 	LastMessageAt time.Time
+	UserID        *uuid.UUID
 }
 
 type Team struct {

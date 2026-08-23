@@ -414,3 +414,67 @@ func TestAFailedSessionStopsTheMessage(t *testing.T) {
 		t.Error("the message was stored without a session")
 	}
 }
+
+// --- who a session belongs to ---
+
+// A direct session is private to one person, and the column the read queries
+// filter on is set here. Nowhere else can set it: the API never creates a
+// session, so this is the only writer.
+func TestADirectSessionRecordsItsParticipant(t *testing.T) {
+	store := newInboxStore()
+	inbox := NewInbox(store)
+
+	msg := Delivery{
+		Inbound: Inbound{
+			ExternalID: "m-1",
+			Author:     Author{Ref: "U-ASHA"},
+			Session:    Session{Ref: "D-ASHA", Kind: SessionDirect},
+			Text:       "quick one, privately",
+		},
+		UserID: uuid.New(),
+	}
+
+	if err := inbox.Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(store.sessionCalls) != 1 {
+		t.Fatalf("%d EnsureSession calls, want 1", len(store.sessionCalls))
+	}
+
+	got := store.sessionCalls[0].UserID
+	if got == nil {
+		t.Fatal("a direct session was stored with no participant, so nobody can read it")
+	}
+	if *got != msg.UserID {
+		t.Errorf("UserID = %s, want the approved sender %s", *got, msg.UserID)
+	}
+}
+
+// A group session names nobody on purpose: several people speak in it, so
+// recording one of them would be a fact that is not true — and the database
+// refuses it, which would turn every group message into a failed delivery.
+func TestAGroupSessionRecordsNoParticipant(t *testing.T) {
+	for _, kind := range []SessionKind{SessionGroup, SessionThread} {
+		t.Run(string(kind), func(t *testing.T) {
+			store := newInboxStore()
+			inbox := NewInbox(store)
+
+			msg := Delivery{
+				Inbound: Inbound{
+					ExternalID: "m-1",
+					Author:     Author{Ref: "U-ASHA"},
+					Session:    Session{Ref: "C-SUPPORT", Kind: kind},
+					Text:       "the deploy finished",
+				},
+				UserID: uuid.New(),
+			}
+
+			if err := inbox.Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
+				t.Fatalf("Deliver: %v", err)
+			}
+			if got := store.sessionCalls[0].UserID; got != nil {
+				t.Errorf("a %s session named %s as its participant", kind, *got)
+			}
+		})
+	}
+}

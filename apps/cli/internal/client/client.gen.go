@@ -387,6 +387,9 @@ type Session struct {
 
 	// Kind How many people can speak, not what the provider calls the room.
 	// Slack's `mpim` looks like a direct message and is a group.
+	//
+	// It decides who may read the session: a `group` or `thread` is the
+	// team's, a `direct` is one person's.
 	Kind SessionKind `json:"kind" yaml:"kind"`
 
 	// LastMessageAt The order these are listed in
@@ -406,10 +409,21 @@ type Session struct {
 	// ends on its own, a direct message never does — so an idle rule is
 	// the only thing that can say where a conversation stopped.
 	Status SessionStatus `json:"status" yaml:"status"`
+
+	// UserID Who a `direct` session is with, and absent for anything else — a
+	// group names nobody on purpose, because several people speak in it.
+	//
+	// It is also absent on a direct session whose participant has since
+	// been deleted. That session is readable by `session:read_all` only:
+	// absent means nobody, never everybody.
+	UserID *openapi_types.UUID `json:"user_id,omitempty" yaml:"user_id,omitempty"`
 }
 
 // SessionKind How many people can speak, not what the provider calls the room.
 // Slack's `mpim` looks like a direct message and is a group.
+//
+// It decides who may read the session: a `group` or `thread` is the
+// team's, a `direct` is one person's.
 type SessionKind string
 
 // SessionStatus Always `open` today; nothing closes a session yet. It exists
@@ -950,10 +964,14 @@ type ClientInterface interface {
 
 	// ListChannelSessions List a channel's conversations
 	//
-	// Membership in the team is the whole qualification — no permission. A
-	// session is the conversation the team is already having in the
-	// provider; requiring `channel:write` would mean an admin reads every
-	// conversation on everybody else's behalf.
+	// Membership in the team is what reaches this route, and what it
+	// returns depends on who is asking. A `group` or `thread` session is
+	// the team's — it is the conversation they are already having in the
+	// provider. A `direct` session is one person's, and appears only for
+	// them or for a caller holding `session:read_all`.
+	//
+	// Hidden means absent, not redacted: nothing here says how many
+	// conversations were left out.
 	//
 	// Most recently spoken in first.
 	//
@@ -1013,6 +1031,10 @@ type ClientInterface interface {
 	// those that arrived on none. A session belongs to a team rather than to
 	// a channel, because a channel is only one way one starts.
 	//
+	// Direct sessions are filtered the same way as on the channel list: the
+	// participant's own, plus everything if the caller holds
+	// `session:read_all`.
+	//
 	// Most recently spoken in first.
 	//
 	// Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
@@ -1034,6 +1056,11 @@ type ClientInterface interface {
 	// A session in another team answers 404, not 403 — the caller was
 	// authorised for the team they named, not for a session id they may have
 	// guessed, and confirming it exists would let anyone walk the uuid space.
+	//
+	// Somebody else's `direct` session answers the same 404, with the same
+	// body. A 403 there would confirm that a private conversation exists,
+	// which is most of what it is private about. Reading one needs to be its
+	// participant, or to hold `session:read_all` in the team.
 	//
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 	ListSessionMessages(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1460,10 +1487,14 @@ func (c *Client) ListPendingSenders(ctx context.Context, id TeamID, channelID Ch
 
 // ListChannelSessions List a channel's conversations
 //
-// Membership in the team is the whole qualification — no permission. A
-// session is the conversation the team is already having in the
-// provider; requiring `channel:write` would mean an admin reads every
-// conversation on everybody else's behalf.
+// Membership in the team is what reaches this route, and what it
+// returns depends on who is asking. A `group` or `thread` session is
+// the team's — it is the conversation they are already having in the
+// provider. A `direct` session is one person's, and appears only for
+// them or for a caller holding `session:read_all`.
+//
+// Hidden means absent, not redacted: nothing here says how many
+// conversations were left out.
 //
 // Most recently spoken in first.
 //
@@ -1573,6 +1604,10 @@ func (c *Client) RemoveTeamMember(ctx context.Context, id TeamID, userID openapi
 // those that arrived on none. A session belongs to a team rather than to
 // a channel, because a channel is only one way one starts.
 //
+// Direct sessions are filtered the same way as on the channel list: the
+// participant's own, plus everything if the caller holds
+// `session:read_all`.
+//
 // Most recently spoken in first.
 //
 // Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
@@ -1604,6 +1639,11 @@ func (c *Client) ListSessions(ctx context.Context, id TeamID, params *ListSessio
 // A session in another team answers 404, not 403 — the caller was
 // authorised for the team they named, not for a session id they may have
 // guessed, and confirming it exists would let anyone walk the uuid space.
+//
+// Somebody else's `direct` session answers the same 404, with the same
+// body. A 403 there would confirm that a private conversation exists,
+// which is most of what it is private about. Reading one needs to be its
+// participant, or to hold `session:read_all` in the team.
 //
 // Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 func (c *Client) ListSessionMessages(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3122,10 +3162,14 @@ type ClientWithResponsesInterface interface {
 
 	// ListChannelSessionsWithResponse List a channel's conversations
 	//
-	// Membership in the team is the whole qualification — no permission. A
-	// session is the conversation the team is already having in the
-	// provider; requiring `channel:write` would mean an admin reads every
-	// conversation on everybody else's behalf.
+	// Membership in the team is what reaches this route, and what it
+	// returns depends on who is asking. A `group` or `thread` session is
+	// the team's — it is the conversation they are already having in the
+	// provider. A `direct` session is one person's, and appears only for
+	// them or for a caller holding `session:read_all`.
+	//
+	// Hidden means absent, not redacted: nothing here says how many
+	// conversations were left out.
 	//
 	// Most recently spoken in first.
 	//
@@ -3191,6 +3235,10 @@ type ClientWithResponsesInterface interface {
 	// those that arrived on none. A session belongs to a team rather than to
 	// a channel, because a channel is only one way one starts.
 	//
+	// Direct sessions are filtered the same way as on the channel list: the
+	// participant's own, plus everything if the caller holds
+	// `session:read_all`.
+	//
 	// Most recently spoken in first.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -3214,6 +3262,11 @@ type ClientWithResponsesInterface interface {
 	// A session in another team answers 404, not 403 — the caller was
 	// authorised for the team they named, not for a session id they may have
 	// guessed, and confirming it exists would let anyone walk the uuid space.
+	//
+	// Somebody else's `direct` session answers the same 404, with the same
+	// body. A 403 there would confirm that a private conversation exists,
+	// which is most of what it is private about. Reading one needs to be its
+	// participant, or to hold `session:read_all` in the team.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -4540,10 +4593,14 @@ func (c *ClientWithResponses) ListPendingSendersWithResponse(ctx context.Context
 
 // ListChannelSessionsWithResponse List a channel's conversations
 //
-// Membership in the team is the whole qualification — no permission. A
-// session is the conversation the team is already having in the
-// provider; requiring `channel:write` would mean an admin reads every
-// conversation on everybody else's behalf.
+// Membership in the team is what reaches this route, and what it
+// returns depends on who is asking. A `group` or `thread` session is
+// the team's — it is the conversation they are already having in the
+// provider. A `direct` session is one person's, and appears only for
+// them or for a caller holding `session:read_all`.
+//
+// Hidden means absent, not redacted: nothing here says how many
+// conversations were left out.
 //
 // Most recently spoken in first.
 //
@@ -4639,6 +4696,10 @@ func (c *ClientWithResponses) RemoveTeamMemberWithResponse(ctx context.Context, 
 // those that arrived on none. A session belongs to a team rather than to
 // a channel, because a channel is only one way one starts.
 //
+// Direct sessions are filtered the same way as on the channel list: the
+// participant's own, plus everything if the caller holds
+// `session:read_all`.
+//
 // Most recently spoken in first.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -4668,6 +4729,11 @@ func (c *ClientWithResponses) ListSessionsWithResponse(ctx context.Context, id T
 // A session in another team answers 404, not 403 — the caller was
 // authorised for the team they named, not for a session id they may have
 // guessed, and confirming it exists would let anyone walk the uuid space.
+//
+// Somebody else's `direct` session answers the same 404, with the same
+// body. A 403 there would confirm that a private conversation exists,
+// which is most of what it is private about. Reading one needs to be its
+// participant, or to hold `session:read_all` in the team.
 //
 // Returns a wrapper object for the known response body format(s).
 //

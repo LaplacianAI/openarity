@@ -11,6 +11,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -22,13 +23,16 @@ type Store interface {
 	ListMessagesBySession(ctx context.Context, arg db.ListMessagesBySessionParams) ([]db.Message, error)
 }
 
+const readEveryConversation = authz.Action("session:read_all")
+
 type handler struct {
 	logger *slog.Logger
 	store  Store
+	authz  api.Authorizer
 }
 
-func New(logger *slog.Logger, s Store) *api.Router {
-	h := &handler{logger: logger, store: s}
+func New(logger *slog.Logger, s Store, a api.Authorizer) *api.Router {
+	h := &handler{logger: logger, store: s, authz: a}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/channels/{channelID}/sessions", h.listByChannel)
@@ -58,7 +62,12 @@ func (h *handler) listByChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := db.ListSessionsByChannelParams{ChannelID: &channelID, PageSize: limit + 1}
+	params := db.ListSessionsByChannelParams{
+		ChannelID: &channelID,
+		PageSize:  limit + 1,
+		Moderator: h.moderates(r, u, teamID),
+		Viewer:    u.ID,
+	}
 	if c, ok := h.cursor(w, r); !ok {
 		return
 	} else if c != nil {
@@ -88,7 +97,12 @@ func (h *handler) listByTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := db.ListSessionsByTeamParams{TeamID: teamID, PageSize: limit + 1}
+	params := db.ListSessionsByTeamParams{
+		TeamID:    teamID,
+		PageSize:  limit + 1,
+		Moderator: h.moderates(r, u, teamID),
+		Viewer:    u.ID,
+	}
 	if c, ok := h.cursor(w, r); !ok {
 		return
 	} else if c != nil {
@@ -113,10 +127,7 @@ func (h *handler) listMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID, ok := h.owned(w, r, "sessionID", func(id uuid.UUID) (uuid.UUID, error) {
-		row, err := h.store.GetSession(r.Context(), id)
-		return row.TeamID, err
-	}, teamID)
+	session, ok := h.visible(w, r, teamID)
 	if !ok {
 		return
 	}
@@ -126,7 +137,7 @@ func (h *handler) listMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := db.ListMessagesBySessionParams{SessionID: sessionID, PageSize: limit + 1}
+	params := db.ListMessagesBySessionParams{SessionID: session.ID, PageSize: limit + 1}
 	if raw := r.URL.Query().Get("cursor"); raw != "" {
 		var c messageCursor
 		if !api.DecodeCursor(w, raw, &c) {
@@ -225,4 +236,48 @@ func (h *handler) writeSessions(w http.ResponseWriter, u *auth.User, rows []db.S
 	}
 
 	api.WriteJSON(w, h.logger, http.StatusOK, page)
+}
+
+func (h *handler) visible(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) (db.Session, bool) {
+	u := api.Caller(r)
+
+	id, err := uuid.Parse(r.PathValue("sessionID"))
+	if err != nil {
+		http.Error(w, "sessionID must be a uuid", http.StatusBadRequest)
+		return db.Session{}, false
+	}
+
+	row, err := h.store.GetSession(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return db.Session{}, false
+	}
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read sessionID", err)
+		return db.Session{}, false
+	}
+
+	if row.TeamID != teamID {
+		http.Error(w, "not found", http.StatusNotFound)
+		return db.Session{}, false
+	}
+
+	if row.Kind == "direct" &&
+		(row.UserID == nil || *row.UserID != u.ID) &&
+		!h.moderates(r, u, teamID) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return db.Session{}, false
+	}
+
+	return row, true
+}
+
+func (h *handler) moderates(r *http.Request, u *auth.User, teamID uuid.UUID) bool {
+	ok, err := h.authz.Can(r.Context(), u, readEveryConversation, authz.Resource{TeamID: teamID})
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "failed to check "+string(readEveryConversation),
+			"error", err, "team_id", teamID)
+		return false
+	}
+	return ok
 }

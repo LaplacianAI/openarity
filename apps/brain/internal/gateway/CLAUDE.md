@@ -275,17 +275,32 @@ same person, at the same time, with the same misunderstandings as the thing it
 validates, so it agrees with the suite by construction. A real second
 implementation with users is what proves the abstraction rather than the code.
 
-## Open
+## Settled: who may read a direct session
 
-**A `direct` session is currently readable by anybody in the team.** On every
-platform that is a private message: the person sent it to the agent, not to the
-room. Nothing is exposed today — no endpoint reads a session back yet — and the
-data to fix it now exists, because `sessions.kind` is stored rather than being
-a string on a message nobody could group by.
+**Its participant, plus anyone holding `session:read_all` in the team.** A
+`group` or `thread` session stays readable by the whole team — a shared room is
+shared — and a `direct` one does not, because on every platform that is a
+private message: the person sent it to the agent, not to the room.
 
-The policy is the orchestrator's to define, since it owns conversation state.
-Decide it before the read endpoint ships: that endpoint is what would make the
-question real.
+The gateway is where the participant is recorded. `Deliver` sets
+`sessions.user_id` to the approved sender for a direct session and to nothing
+for any other kind, and nothing else writes that column — the API never creates
+a session. `EnsureSession` leaves it alone on conflict, so a second approved
+sender reaching the same conversation cannot take over somebody else's thread.
+
+Two things that look like details and are the whole rule:
+
+- **A group session naming a participant is refused by the database**, not just
+  avoided here. It would read as "this belongs to one person" while several
+  people speak in it.
+- **Null means nobody, never everybody.** `user_id` is `ON DELETE SET NULL`, so
+  deleting a person leaves their direct sessions with no participant. In SQL
+  `user_id = $viewer` is null there, and null is not true, so those rows fall
+  out of every non-moderator's list. Read the other way — "unset, so
+  unrestricted" — it would publish exactly the conversations that were private.
+
+A permission rather than a role, because which role holds it is data in
+`rbac.json`. A super admin passes it the way they pass every permission.
 
 ## Not here
 

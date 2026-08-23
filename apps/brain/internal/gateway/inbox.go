@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -34,6 +36,7 @@ func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error 
 			ChannelID:   ch.ID,
 			ProviderRef: m.Session.Ref,
 			Kind:        string(m.Session.Kind),
+			UserID:      participant(m),
 		})
 		if err != nil {
 			return fmt.Errorf("resolve session %q: %w", m.Session.Ref, err)
@@ -57,4 +60,11 @@ func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error 
 		}
 	}
 	return nil
+}
+
+func participant(m Delivery) *uuid.UUID {
+	if m.Session.Kind != SessionDirect {
+		return nil
+	}
+	return &m.UserID
 }

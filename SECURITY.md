@@ -85,6 +85,14 @@ These are deliberate, documented decisions rather than oversights:
   provider-side id and display name are queued for approval, bounded to 50 per
   channel — the text they sent is never written anywhere. A message body from
   an unapproved sender reaching the database is a bug.
+- **A direct session is readable by its participant and by `session:read_all`.**
+  Group and thread sessions belong to the team; a direct one is a private
+  message to an agent, and every other member gets the same 404 they would get
+  for a session that does not exist — a 403 there would confirm the
+  conversation is real. A direct session whose participant was deleted has no
+  participant, and is treated as nobody's rather than everybody's. A member
+  reading somebody else's direct session, or any response that distinguishes a
+  hidden one from an absent one, is a bug.
 - **The brain stores a message exactly as it arrived; `oa` quotes it before
   printing.** Sanitising on write would put something nobody sent into the
   audit trail, so the text, the sender ref and the sender name are kept

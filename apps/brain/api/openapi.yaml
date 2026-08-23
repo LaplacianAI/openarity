@@ -620,10 +620,14 @@ paths:
       tags: [sessions]
       summary: List a channel's conversations
       description: |
-        Membership in the team is the whole qualification — no permission. A
-        session is the conversation the team is already having in the
-        provider; requiring `channel:write` would mean an admin reads every
-        conversation on everybody else's behalf.
+        Membership in the team is what reaches this route, and what it
+        returns depends on who is asking. A `group` or `thread` session is
+        the team's — it is the conversation they are already having in the
+        provider. A `direct` session is one person's, and appears only for
+        them or for a caller holding `session:read_all`.
+
+        Hidden means absent, not redacted: nothing here says how many
+        conversations were left out.
 
         Most recently spoken in first.
       parameters:
@@ -654,6 +658,10 @@ paths:
         Every session the team owns, whichever channel it arrived on — and
         those that arrived on none. A session belongs to a team rather than to
         a channel, because a channel is only one way one starts.
+
+        Direct sessions are filtered the same way as on the channel list: the
+        participant's own, plus everything if the caller holds
+        `session:read_all`.
 
         Most recently spoken in first.
       parameters:
@@ -702,6 +710,11 @@ paths:
         A session in another team answers 404, not 403 — the caller was
         authorised for the team they named, not for a session id they may have
         guessed, and confirming it exists would let anyone walk the uuid space.
+
+        Somebody else's `direct` session answers the same 404, with the same
+        body. A 403 there would confirm that a private conversation exists,
+        which is most of what it is private about. Reading one needs to be its
+        participant, or to hold `session:read_all` in the team.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -1252,12 +1265,26 @@ components:
             Slack direct message is `D01ABC`, WhatsApp is a phone number
             because there is nothing else, and a custom webhook sends whatever
             its own service calls an episode.
+        user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Who a `direct` session is with, and absent for anything else — a
+            group names nobody on purpose, because several people speak in it.
+
+            It is also absent on a direct session whose participant has since
+            been deleted. That session is readable by `session:read_all` only:
+            absent means nobody, never everybody.
         kind:
           type: string
           enum: [direct, group, thread]
           description: |
             How many people can speak, not what the provider calls the room.
             Slack's `mpim` looks like a direct message and is a group.
+
+            It decides who may read the session: a `group` or `thread` is the
+            team's, a `direct` is one person's.
         status:
           type: string
           enum: [open, closed]

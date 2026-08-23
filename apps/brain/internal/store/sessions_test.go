@@ -189,8 +189,11 @@ func TestSessionsComeBackMostRecentFirst(t *testing.T) {
 	}
 	busy := mustEnsureSession(t, s, teamID, ch.ID, "busy", "direct")
 
+	// Moderator, because this is about ordering: without it the two direct
+	// sessions would be filtered out and the test would pass for the wrong
+	// reason the day ordering broke.
 	rows, err := s.ListSessionsByChannel(t.Context(), db.ListSessionsByChannelParams{
-		ChannelID: &ch.ID, PageSize: 10,
+		ChannelID: &ch.ID, PageSize: 10, Moderator: true,
 	})
 	if err != nil {
 		t.Fatalf("ListSessionsByChannel: %v", err)
@@ -211,9 +214,12 @@ func TestASessionCanExistWithoutAChannel(t *testing.T) {
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
+	// group, not direct: a direct session with no participant is visible to
+	// moderators only, and this test is about having no channel rather than
+	// about who may read it.
 	var id uuid.UUID
 	if err := s.pool.QueryRow(t.Context(),
-		`INSERT INTO sessions (team_id, kind) VALUES ($1, 'direct') RETURNING id`,
+		`INSERT INTO sessions (team_id, kind) VALUES ($1, 'group') RETURNING id`,
 		team.ID).Scan(&id); err != nil {
 		t.Fatalf("a session with no channel was refused: %v", err)
 	}
@@ -243,4 +249,201 @@ func TestARefWithoutAChannelIsRefused(t *testing.T) {
 		`INSERT INTO sessions (team_id, provider_ref, kind) VALUES ($1, 'orphan', 'direct')`,
 		team.ID)
 	wantPGCode(t, err, checkViolation, "a provider ref with no channel")
+}
+
+// --- who may see a direct session ---
+
+func mustCreateUser(t *testing.T, s *Store, subject string) uuid.UUID {
+	t.Helper()
+
+	var id uuid.UUID
+	if err := s.pool.QueryRow(t.Context(),
+		`INSERT INTO users (issuer, subject) VALUES ('https://idp', $1) RETURNING id`,
+		subject).Scan(&id); err != nil {
+		t.Fatalf("create user %q: %v", subject, err)
+	}
+	return id
+}
+
+func directSession(t *testing.T, s *Store, teamID, channelID uuid.UUID, ref string, user *uuid.UUID) db.Session {
+	t.Helper()
+
+	session, err := s.EnsureSession(t.Context(), db.EnsureSessionParams{
+		TeamID: teamID, ChannelID: channelID, ProviderRef: ref, Kind: "direct", UserID: user,
+	})
+	if err != nil {
+		t.Fatalf("EnsureSession(%q): %v", ref, err)
+	}
+	return session
+}
+
+func listForTeam(t *testing.T, s *Store, teamID, viewer uuid.UUID, moderator bool) []db.Session {
+	t.Helper()
+
+	rows, err := s.ListSessionsByTeam(t.Context(), db.ListSessionsByTeamParams{
+		TeamID: teamID, PageSize: 50, Viewer: viewer, Moderator: moderator,
+	})
+	if err != nil {
+		t.Fatalf("ListSessionsByTeam: %v", err)
+	}
+	return rows
+}
+
+func has(rows []db.Session, id uuid.UUID) bool {
+	for _, r := range rows {
+		if r.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// The whole point of the column: Asha's private conversation is hers, and a
+// teammate reading the same list must not see it at all — not a redacted row,
+// not a count, nothing.
+func TestADirectSessionIsListedOnlyForItsParticipant(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	ch, teamID := sessionFixture(t, s, "dm-visibility")
+
+	asha := mustCreateUser(t, s, "asha")
+	bala := mustCreateUser(t, s, "bala")
+	dm := directSession(t, s, teamID, ch.ID, "D-ASHA", &asha)
+
+	if !has(listForTeam(t, s, teamID, asha, false), dm.ID) {
+		t.Error("the participant cannot see their own direct session")
+	}
+	if has(listForTeam(t, s, teamID, bala, false), dm.ID) {
+		t.Error("a teammate can read somebody else's direct session")
+	}
+	if !has(listForTeam(t, s, teamID, bala, true), dm.ID) {
+		t.Error("a moderator cannot see a direct session")
+	}
+}
+
+// A shared room is shared. Without this the filter could hide everything and
+// the test above would still pass.
+func TestAGroupSessionIsListedForTheWholeTeam(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	ch, teamID := sessionFixture(t, s, "group-visibility")
+
+	bala := mustCreateUser(t, s, "bala")
+	group := mustEnsureSession(t, s, teamID, ch.ID, "C-SUPPORT", "group")
+
+	if !has(listForTeam(t, s, teamID, bala, false), group.ID) {
+		t.Error("a group session is hidden from a team member")
+	}
+}
+
+// user_id is ON DELETE SET NULL, so a deleted person leaves direct sessions
+// behind with no participant. Null has to mean nobody: read as "unset, so
+// unrestricted" it would publish exactly the conversations that were private.
+func TestADirectSessionWithNoParticipantIsModeratorOnly(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	ch, teamID := sessionFixture(t, s, "orphan-dm")
+
+	asha := mustCreateUser(t, s, "asha")
+	bala := mustCreateUser(t, s, "bala")
+	dm := directSession(t, s, teamID, ch.ID, "D-ASHA", &asha)
+
+	if _, err := s.pool.Exec(t.Context(), `DELETE FROM users WHERE id = $1`, asha); err != nil {
+		t.Fatalf("delete the participant: %v", err)
+	}
+
+	row, err := s.GetSession(t.Context(), dm.ID)
+	if err != nil {
+		t.Fatalf("the session went with the user: %v", err)
+	}
+	if row.UserID != nil {
+		t.Errorf("UserID = %v, want nil after the user was deleted", *row.UserID)
+	}
+	if has(listForTeam(t, s, teamID, bala, false), dm.ID) {
+		t.Error("an orphaned direct session is readable by the team")
+	}
+	if !has(listForTeam(t, s, teamID, bala, true), dm.ID) {
+		t.Error("an orphaned direct session is invisible even to a moderator")
+	}
+}
+
+// The channel list is a second query with the same rule, and a filter fixed
+// in one and forgotten in the other is the likely mistake.
+func TestTheChannelListHidesOtherPeoplesDirectSessions(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	ch, teamID := sessionFixture(t, s, "channel-dm")
+
+	asha := mustCreateUser(t, s, "asha")
+	bala := mustCreateUser(t, s, "bala")
+	dm := directSession(t, s, teamID, ch.ID, "D-ASHA", &asha)
+
+	byChannel := func(viewer uuid.UUID, moderator bool) []db.Session {
+		t.Helper()
+		rows, err := s.ListSessionsByChannel(t.Context(), db.ListSessionsByChannelParams{
+			ChannelID: &ch.ID, PageSize: 50, Viewer: viewer, Moderator: moderator,
+		})
+		if err != nil {
+			t.Fatalf("ListSessionsByChannel: %v", err)
+		}
+		return rows
+	}
+
+	if !has(byChannel(asha, false), dm.ID) {
+		t.Error("the participant cannot see their own direct session in the channel list")
+	}
+	if has(byChannel(bala, false), dm.ID) {
+		t.Error("the channel list leaks somebody else's direct session")
+	}
+	if !has(byChannel(bala, true), dm.ID) {
+		t.Error("a moderator cannot see a direct session in the channel list")
+	}
+}
+
+// A group session naming one participant would read as "this belongs to one
+// person" while several people speak in it. The database refuses rather than
+// trusting every writer.
+func TestAGroupSessionCannotNameAParticipant(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	ch, teamID := sessionFixture(t, s, "group-participant")
+	asha := mustCreateUser(t, s, "asha")
+
+	_, err := s.EnsureSession(t.Context(), db.EnsureSessionParams{
+		TeamID: teamID, ChannelID: ch.ID, ProviderRef: "C-SUPPORT", Kind: "group", UserID: &asha,
+	})
+	if err == nil {
+		t.Fatal("a group session was allowed to name a participant")
+	}
+	if !strings.Contains(err.Error(), "sessions_participant_only_when_direct") {
+		t.Errorf("refused by something else: %v", err)
+	}
+}
+
+// EnsureSession is find-or-create, and the find half must not move the
+// participant: a second approved sender reaching the same conversation would
+// otherwise take over somebody else's private thread.
+func TestEnsureSessionKeepsTheFirstParticipant(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	ch, teamID := sessionFixture(t, s, "participant-stays")
+
+	asha := mustCreateUser(t, s, "asha")
+	bala := mustCreateUser(t, s, "bala")
+
+	first := directSession(t, s, teamID, ch.ID, "D-ASHA", &asha)
+	second := directSession(t, s, teamID, ch.ID, "D-ASHA", &bala)
+
+	if first.ID != second.ID {
+		t.Fatalf("two sessions for one conversation: %s and %s", first.ID, second.ID)
+	}
+	if second.UserID == nil || *second.UserID != asha {
+		t.Errorf("UserID moved to %v, want it to stay with the first speaker", second.UserID)
+	}
 }
