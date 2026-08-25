@@ -41,6 +41,15 @@ make check  db=postgres          # or skip the setup and use what is there
 
 `host`, `port`, `user` and `sslmode` take overrides for a remote server.
 
+**`port` defaults to 5432, which is the trap.** With a Postgres installed on
+the machine as well as one in compose, `db=postgres` reaches the installed one
+and the suite tests a server nobody chose. Pass `port=15432` for the compose
+database. `internal/store` has a `TestMain` that refuses anything below
+Postgres 18 — the version `schema_test.go`'s `SQLSTATE 23001` needs — and names
+the address it reached, so this now fails loudly instead of surfacing as one
+baffling assertion. It is the only place that fails rather than skips, and only
+because a skip there would be the same silence in a different colour.
+
 There is no default `db`, and there must not be one. The skip triggers on the
 variable being **empty**, not on the server being unreachable — so a default
 would turn "no Postgres installed" from a skip into a wall of failures for

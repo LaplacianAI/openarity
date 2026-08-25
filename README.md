@@ -94,7 +94,9 @@ plug into is, and `custom` is a working generic webhook in the meantime.
 
 ## Quick start
 
-Requires Go 1.26.6 and a Postgres 13 or newer you can reach. CI runs against
+Requires Go 1.26.6 and a Postgres 13 or newer you can reach — 13 is where
+`gen_random_uuid()` became built-in, which the first migration needs. Running
+the *tests* needs 18; see [CONTRIBUTING.md](CONTRIBUTING.md). CI runs against
 Postgres 18.
 
 ```sh

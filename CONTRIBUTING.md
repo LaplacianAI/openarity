@@ -98,6 +98,10 @@ already has:
 make check db=postgres
 ```
 
+`db=` alone leaves `port` at 5432, so on a machine with Postgres installed
+*and* Postgres in compose it reaches the installed one. That has cost real
+hours here — see the version floor below.
+
 `host`, `port`, `user` and `sslmode` all have defaults and take overrides —
 `make check db=brain host=10.0.0.5 port=5433 user=alice`. Only `db` is
 required, and passing it is what switches these tests on. Exporting
@@ -110,6 +114,37 @@ being *empty*, not on the server being unreachable — so a default would turn
 CI always sets it from a Postgres service container, so these tests always run
 there. Each test creates its own schema and drops it afterwards, so pointing
 this at a scratch database is safe.
+
+### The tests need Postgres 18; the brain needs 13
+
+Two floors, and only one of them is about the product.
+
+The brain needs **13**, because the first migration calls `gen_random_uuid()`
+and 13 is where that became built-in — every migration applies and rolls back
+cleanly on 13 through 18, and fails on 12 with `SQLSTATE 42883`.
+
+The tests need **18**, because `schema_test.go` asserts `SQLSTATE 23001` for an
+`ON DELETE RESTRICT` refusal, and 18 is the first release that raises it. Every
+version from 13 to 17 reports the same refusal as `23503`, a plain foreign key
+violation. Nothing in `internal/api` reads a code that moved — the only one
+production matches on is `23505` — so this floor is the test suite's alone.
+
+`internal/store` refuses to run below it, before any test, naming the version
+*and the address it reached*:
+
+```text
+BRAIN_TEST_POSTGRES_DSN points at PostgreSQL 14.17 (Homebrew) on 127.0.0.1:5432.
+These tests need 18 or newer: schema_test.go asserts SQLSTATE 23001, and 18 is
+the first release that raises it. The brain itself runs on 13 or newer — this
+floor belongs to the test suite, not to the product.
+If a compose database is up, this is probably not it. Try:
+    make check db=openarity_test port=15432
+```
+
+It names the address because the failure it exists for was not a wrong
+assertion but a green run against a database nobody meant to use. It fails
+rather than skipping for the same reason: a skip would have been the same
+silence in a different colour.
 
 New database tests should follow `apps/brain/.claude/skills/test-with-postgres`.
 
