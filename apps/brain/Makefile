@@ -28,9 +28,16 @@ GOPLS_VERSION       := latest
 # The database has to exist — `make testdb db=name` creates it, and the tests
 # make their own schema inside it. `db=postgres` needs no setup at all.
 #
+# It has to be Postgres 18 or newer, which the brain itself does not require —
+# schema_test.go asserts a SQLSTATE that only 18 raises. internal/store refuses
+# an older server by name rather than skipping. Note that `port` defaults to
+# 5432 below: if there is a Postgres installed on this machine as well as one
+# in compose, `db=postgres` alone reaches the installed one.
+#
 #   make testdb db=openarity_test     # once per machine
 #   make check  db=openarity_test
 #   make check  db=postgres           # or just use the database that exists
+#   make check  db=openarity_test port=15432    # the compose database
 #   make check  db=brain host=10.0.0.5 port=5433 user=alice
 #
 # Or export BRAIN_TEST_POSTGRES_DSN yourself; anything passed here wins.

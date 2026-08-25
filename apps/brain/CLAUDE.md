@@ -224,6 +224,12 @@ like a coverage problem and is not one. `make cover` warns when the variable is
 unset for exactly this reason. Never read a coverage report that was produced
 without a database.
 
+**`db=postgres` leaves `port` at 5432, which is rarely the compose database.**
+On a machine with Postgres installed as well as running in compose, `make check
+db=postgres` reaches the installed one. `internal/store` now refuses a server
+below 18 and names the address it reached, so this fails loudly instead of
+producing one baffling assertion — but pass `port=` and it never comes up.
+
 **After a Go toolchain upgrade, run `make tools`.** Anything installed with
 `go install` is compiled against the Go present at the time, and both
 `golangci-lint` and `gopls` break with a version-mismatch error until
@@ -237,6 +243,14 @@ reinstalled.
 - **Postgres is truth, the graph is an index.** Nothing is written only to
   FalkorDB; every node has a Postgres row behind it and the graph is
   rebuildable at any time.
+- **The test suite's Postgres floor is 18; the brain's is 13.** Both measured,
+  not read off a changelog. 13 is where `gen_random_uuid()` became built-in, and
+  every migration applies and rolls back on 13 through 18. 18 is the first
+  release to raise `SQLSTATE 23001` for an `ON DELETE RESTRICT` refusal, which
+  `schema_test.go` asserts; 13 through 17 report it as `23503`. `internal/store`
+  has a `TestMain` that refuses below 18 rather than skipping — the bug it
+  exists for was a suite running green against a server nobody chose, and a
+  skip is that same silence in a different colour.
 - **Two listeners, one process.** The API binds loopback; webhooks bind
   publicly. The auth models are opposites — user credentials versus request
   signature — so they never share a listener. Signature verification needs the

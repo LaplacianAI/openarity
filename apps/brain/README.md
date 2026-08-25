@@ -13,7 +13,10 @@ make run        # sources .env if present, Ctrl-C to shut down gracefully
 make build      # compile into ./bin
 ```
 
-Requires Go 1.26.6 and a Postgres 13 or newer. CI runs against Postgres 18.
+Requires Go 1.26.6 and a Postgres 13 or newer — 13 is where `gen_random_uuid()`
+became built-in, which the first migration needs. Running the tests needs 18,
+for a reason that belongs to them and not to the brain; see [the gate](#the-gate).
+CI runs against Postgres 18.
 
 `make run` needs a database and a way to authenticate callers. The service
 refuses to start with no authentication configured rather than serving an open
@@ -60,6 +63,21 @@ when `BRAIN_TEST_POSTGRES_DSN` is empty, and `db=name` is what sets it. Without
 it, `serve`, `migrateUp` and every query read 0% and the total drops from 97.6%
 to 77.8% — which looks like a coverage problem and is not one. `make cover`
 warns when the variable is unset for exactly this reason.
+
+**The tests need Postgres 18, where the brain needs 13.** The schema tests
+assert `SQLSTATE 23001`, and 18 is the first release to raise it — 13 through
+17 report the same refusal as a plain foreign key violation, `23503`. The suite
+refuses to run below 18 and names the version and the address it reached:
+
+```text
+BRAIN_TEST_POSTGRES_DSN points at PostgreSQL 14.17 (Homebrew) on 127.0.0.1:5432.
+These tests need 18 or newer: schema_test.go asserts SQLSTATE 23001, and 18 is
+the first release that raises it. ...
+```
+
+Worth reading rather than skimming, because `db=postgres` defaults to port
+5432 — and on a machine with a Postgres installed as well as one in compose,
+that is the wrong one. Pass `port=` to reach the compose database.
 
 ```sh
 make cover db=postgres        # coverage, fails below the threshold
