@@ -1,4 +1,4 @@
-package secrets
+package static
 
 import (
 	"errors"
@@ -6,12 +6,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 )
 
 func TestStaticReturnsAStoredValue(t *testing.T) {
 	t.Parallel()
 
-	s := Static{"teams/a/channels/b": {"signing_secret": "s3cr3t"}}
+	s := store{"teams/a/channels/b": {"signing_secret": "s3cr3t"}}
 
 	got, err := s.Get(t.Context(), "teams/a/channels/b", "signing_secret")
 	if err != nil {
@@ -28,7 +30,7 @@ func TestStaticReturnsAStoredValue(t *testing.T) {
 func TestStaticFailsClosed(t *testing.T) {
 	t.Parallel()
 
-	s := Static{"teams/a/channels/b": {"signing_secret": "s3cr3t"}}
+	s := store{"teams/a/channels/b": {"signing_secret": "s3cr3t"}}
 
 	cases := map[string]struct{ path, key string }{
 		"unknown path": {"teams/x/channels/y", "signing_secret"},
@@ -41,8 +43,8 @@ func TestStaticFailsClosed(t *testing.T) {
 			t.Parallel()
 
 			got, err := s.Get(t.Context(), tc.path, tc.key)
-			if !errors.Is(err, ErrNotFound) {
-				t.Errorf("err = %v, want ErrNotFound", err)
+			if !errors.Is(err, secrets.ErrNotFound) {
+				t.Errorf("err = %v, want secrets.ErrNotFound", err)
 			}
 			if got != "" {
 				t.Errorf("value = %q, want empty alongside the error", got)
@@ -62,7 +64,7 @@ func TestPathFollowsTheHLDConvention(t *testing.T) {
 
 	want := "teams/11111111-1111-1111-1111-111111111111/" +
 		"channels/22222222-2222-2222-2222-222222222222"
-	if got := Path(team, KindChannel, channel); got != want {
+	if got := secrets.Path(team, secrets.KindChannel, channel); got != want {
 		t.Errorf("Path = %q, want %q", got, want)
 	}
 }
@@ -76,28 +78,28 @@ func TestTeamPathHasNoInstanceSegment(t *testing.T) {
 	team := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
 	want := "teams/11111111-1111-1111-1111-111111111111/channels"
-	if got := TeamPath(team, KindChannel); got != want {
+	if got := secrets.TeamPath(team, secrets.KindChannel); got != want {
 		t.Errorf("TeamPath = %q, want %q", got, want)
 	}
 }
 
-// Every Kind is listed in AllKinds, so a test can reach all of them and a
+// Every secrets.Kind is listed in secrets.AllKinds, so a test can reach all of them and a
 // new one cannot be added without being seen. Same discipline as
 // authz.AllActions.
 func TestAllKindsListsEveryConstant(t *testing.T) {
 	t.Parallel()
 
-	if len(AllKinds) == 0 {
-		t.Fatal("AllKinds is empty")
+	if len(secrets.AllKinds) == 0 {
+		t.Fatal("secrets.AllKinds is empty")
 	}
 
-	seen := map[Kind]bool{}
-	for _, k := range AllKinds {
+	seen := map[secrets.Kind]bool{}
+	for _, k := range secrets.AllKinds {
 		if k == "" {
-			t.Error("AllKinds contains an empty kind")
+			t.Error("secrets.AllKinds contains an empty kind")
 		}
 		if seen[k] {
-			t.Errorf("%q appears twice in AllKinds", k)
+			t.Errorf("%q appears twice in secrets.AllKinds", k)
 		}
 		seen[k] = true
 	}
@@ -109,7 +111,7 @@ func TestAllKindsListsEveryConstant(t *testing.T) {
 func TestKindsAreSafePathSegments(t *testing.T) {
 	t.Parallel()
 
-	for _, k := range AllKinds {
+	for _, k := range secrets.AllKinds {
 		s := string(k)
 		switch {
 		case strings.ContainsAny(s, "/."):
@@ -129,7 +131,19 @@ func TestPathIsUniquePerChannel(t *testing.T) {
 	a := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	b := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 
-	if Path(team, KindChannel, a) == Path(team, KindChannel, b) {
+	if secrets.Path(team, secrets.KindChannel, a) == secrets.Path(team, secrets.KindChannel, b) {
 		t.Error("two channels in one team share a secret path")
+	}
+}
+
+// The static store is deliberately not a secrets.Prober: a development brain with no OpenBao
+// has nothing to reach, and readiness skips it rather than reporting a
+// dependency that does not exist.
+func TestStaticIsNotAProber(t *testing.T) {
+	t.Parallel()
+
+	s := New()
+	if _, ok := s.(secrets.Prober); ok {
+		t.Error("the static store implements secrets.Prober — readiness would probe an in-memory map")
 	}
 }

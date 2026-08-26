@@ -87,6 +87,11 @@ apps/brain/
   internal/gateway/    a provider's webhook in, normalised messages out
     providertest/      the conformance suite every adapter runs
     <provider>/        one package per platform; custom is the reference
+  internal/secrets/    the port: Store, Writer, Prober, secret paths
+    openbao/           the AppRole client — the only thing that reaches OpenBao
+    static/            the in-process fallback, for a brain with no OpenBao
+  internal/objects/    the port: Store, Writer, object keys and team prefixes
+    inmemory/          the in-process fallback; attachments die with the process
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary
     rbac.json          the permissions, roles and route mappings we ship
@@ -240,6 +245,17 @@ reinstalled.
 - **Config is env-only.** No config files, no flags for the server, no Viper.
   Kubernetes injects env natively, and the config surface stays small because
   secrets live in Vault rather than here.
+- **A port package, one package per adapter.** `gateway` was the first to do
+  it and `secrets` and `objects` now match: the interface and its shared
+  helpers live in the parent, each implementation in its own subpackage
+  exporting only `New()`. The adapter type stays unexported, so there is one
+  way to construct it and no way for one adapter to reach into another's
+  internals — the compiler enforces what review otherwise has to.
+- **A constructor returns the narrowest useful interface.** `openbao.New` and
+  `inmemory.New` return the read-only `Store` even though both values also
+  implement `Writer`. `serve.go` has to assert for the writer and hand it to
+  exactly one router, which makes taking write access a visible line rather
+  than an ambient capability.
 - **Postgres is truth, the graph is an index.** Nothing is written only to
   FalkorDB; every node has a Postgres row behind it and the graph is
   rebuildable at any time.
@@ -274,7 +290,7 @@ reinstalled.
   streaming endpoints will need `http.NewResponseController(w).SetWriteDeadline`
   to opt out per route.
 - **Secrets are references.** A row or config field holds a Vault path, never a
-  value. Only `internal/secrets` imports a secret backend SDK.
+  value. Only `internal/secrets/openbao` reaches a secret backend.
 - **A write resolves the name it was given; it does not send the caller to a
   directory first.** `POST /teams/{id}/members` takes `user_id` or `subject`,
   because requiring the id would mean requiring `GET /users`, which needs

@@ -37,8 +37,8 @@ func TestNoAppRoleCredentialsGivesTheStaticStore(t *testing.T) {
 	t.Parallel()
 
 	store := newSecretStore(&config.Config{SecretsAddr: "http://localhost:8200"}, discardLogger())
-	if _, ok := store.(secrets.Static); !ok {
-		t.Errorf("store is %T, want secrets.Static", store)
+	if !isStatic(store) {
+		t.Errorf("store is %T, want the static store", store)
 	}
 }
 
@@ -57,15 +57,19 @@ func TestHalfAnAppRoleCredentialGivesTheStaticStore(t *testing.T) {
 			t.Parallel()
 
 			if store := newSecretStore(cfg, discardLogger()); !isStatic(store) {
-				t.Errorf("store is %T, want secrets.Static", store)
+				t.Errorf("store is %T, want the static store", store)
 			}
 		})
 	}
 }
 
+// Asked behaviourally rather than by concrete type, which the adapter
+// packages no longer export. Being a Prober is the difference that matters:
+// checkSecretStore probes what can be reached and skips what cannot, and
+// openbao compile-asserts that it is one while static asserts that it is not.
 func isStatic(s secrets.Store) bool {
-	_, ok := s.(secrets.Static)
-	return ok
+	_, ok := s.(secrets.Prober)
+	return !ok
 }
 
 // The in-memory store holds nothing, so a channel registered against it
@@ -90,7 +94,7 @@ func TestAppRoleCredentialsGiveAnOpenBaoStore(t *testing.T) {
 
 	store := newSecretStore(baoAt("http://localhost:8200"), discardLogger())
 
-	if _, ok := store.(secrets.Static); ok {
+	if isStatic(store) {
 		t.Fatal("credentials were set and the store is still the in-memory one")
 	}
 	if _, ok := store.(secrets.Prober); !ok {
