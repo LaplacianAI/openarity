@@ -112,6 +112,29 @@ the process's lifetime.
 The common shortcut is a root token in an environment variable. That is what
 this exists to avoid.
 
+### CI runs against this file
+
+`apps/brain/internal/secrets/policy_integration_test.go` reads
+`policy-brain.hcl` off disk, binds an AppRole to it, and drives the real store
+through it: register a channel, read the secret back, disconnect it. Then it
+asks for eight things the comments above claim are refused — a sibling kind of
+secret, a path below a channel, the team itself, two kinds of list, a soft
+delete, version history, and `sys/` — and requires a 403 for each.
+
+It exists because that check used to be missing, and the gap was not what it
+looked like. CI runs OpenBao in dev mode, which sounds like it would skip
+policy evaluation entirely; it does not — dev mode enforces policy normally
+and merely hands out a root token. The real gap was that every secrets test
+built its AppRole from a mount-wide fixture, so the file that ships was never
+loaded by anything until it reached a server. Restoring the read-only policy
+this document describes above now fails in CI with the same 403 it produced in
+staging.
+
+One consequence worth reading before editing the file: the `metadata` rule
+shadows any list grant at the parent path, because a LIST is checked with a
+trailing slash and `+` matches the empty segment that creates. The comments in
+the file carry the measurements.
+
 ## The seal ladder
 
 | Deployment | Seal | The key lives |

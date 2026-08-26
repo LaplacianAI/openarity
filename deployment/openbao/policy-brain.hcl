@@ -35,6 +35,20 @@ path "secret/data/teams/+/channels/+" {
 #
 # Only delete. Granting it does not grant read or list here — checked, not
 # assumed — so version history stays as closed as it was before.
+#
+# This rule also closes listing a second time, which is worth knowing before
+# anyone edits it. A LIST is checked against the path with a trailing slash,
+# and `+` matches the empty segment that creates — so this rule matches a list
+# of `teams/<id>/channels` and answers with delete-only. Adding a separate
+# `path "secret/metadata/teams/+/channels" { capabilities = ["list"] }` does
+# not open listing; this rule shadows it. Verified against this OpenBao:
+#
+#   list rule alone                      200
+#   list rule plus this one              403   <- shadowed
+#   "delete" changed to "delete","list"  200   <- the only way in
+#
+# Which is the real reason the deliberately-absent note below holds: listing is
+# refused by the shape of this rule, not only by the absence of a capability.
 path "secret/metadata/teams/+/channels/+" {
   capabilities = ["delete"]
 }
