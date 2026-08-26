@@ -80,8 +80,17 @@ func (a admin) do(method, path string, payload any) map[string]any {
 	return decoded.Data
 }
 
-// grantSecretMount is what the brain's own AppRole policy looks like: the
-// whole KV mount, nothing else.
+// grantSecretMount opens the whole KV mount. It is deliberately more
+// permissive than the policy the brain deploys with, because the tests below
+// are about the client — login, round trip, renewal, a denied mount — and a
+// tight policy would make them fail for reasons that have nothing to do with
+// what they check.
+//
+// It used to say it was what the brain's own policy looks like. That was true
+// once, stopped being true when the deployed policy gained its write
+// capability, and read as a verified claim the whole time. Whether the shipped
+// policy actually serves the brain is now asked directly, against the file, in
+// policy_integration_test.go — not inferred from this constant.
 const grantSecretMount = `path "secret/*" ` +
 	`{ capabilities = ["create","read","update","delete","list"] }`
 
