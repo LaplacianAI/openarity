@@ -57,7 +57,7 @@ func brainStore(t *testing.T) (reader Store, writer Writer, token, addr string) 
 	addr, root := liveBao(t)
 	roleID, secretID := appRole(t, addr, root, shippedPolicy(t))
 
-	reader = NewOpenBao(addr, roleID, secretID, "secret", nil)
+	reader = NewOpenBao(addr, roleID, secretID, "secret", liveClient)
 	writer, ok := reader.(Writer)
 	if !ok {
 		t.Fatalf("the OpenBao store no longer implements Writer, so registering "+
@@ -85,7 +85,7 @@ func login(t *testing.T, addr, roleID, secretID string) string {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := liveClient.Do(req)
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -118,7 +118,7 @@ func statusAs(t *testing.T, addr, token, method, path string) int {
 	}
 	req.Header.Set("X-Vault-Token", token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := liveClient.Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}

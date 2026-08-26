@@ -24,6 +24,43 @@ import (
 //	export BRAIN_TEST_SECRETS_ADDR=http://127.0.0.1:8200
 //	export BRAIN_TEST_SECRETS_TOKEN=dev-root
 
+// liveClient is what every request to a real OpenBao goes through, and its
+// transport is its own on purpose.
+//
+// httptest.Server.Close() calls CloseIdleConnections on http.DefaultTransport
+// — "assume most users of httptest.Server will be using the standard
+// transport, so help them out", in net/http's own words. The stub tests in
+// this package create and close httptest servers while these tests are talking
+// to a live server, and both were on the default transport. A connection
+// checked out of the pool in that window fails with "http: CloseIdleConnections
+// called", which net/http deliberately does not retry, and which reads as the
+// live server having gone away.
+//
+// It surfaced once in CI as TestDeniedPathIsUnavailableAgainstRealOpenBao
+// failing on a request that had nothing to do with what it was testing.
+var liveClient = &http.Client{
+	Timeout:   baoTimeout,
+	Transport: &http.Transport{},
+}
+
+// Pointing liveClient back at the default transport would restore the flake
+// and break nothing that runs in the normal case — the failure needs an
+// httptest server to close in exactly the wrong microsecond. This is the only
+// thing that would notice, and it needs no server of any kind.
+func TestLiveClientDoesNotShareTheDefaultTransport(t *testing.T) {
+	t.Parallel()
+
+	switch liveClient.Transport {
+	case nil:
+		t.Error("liveClient has no transport of its own, so it uses " +
+			"http.DefaultTransport — which httptest.Server.Close closes " +
+			"idle connections on, mid-request")
+	case http.DefaultTransport:
+		t.Error("liveClient shares http.DefaultTransport with the stub tests, " +
+			"so httptest.Server.Close will close its idle connections")
+	}
+}
+
 func liveBao(t *testing.T) (addr, root string) {
 	t.Helper()
 
@@ -62,7 +99,7 @@ func (a admin) do(method, path string, payload any) map[string]any {
 	req.Header.Set("X-Vault-Token", a.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := liveClient.Do(req)
 	if err != nil {
 		a.t.Fatalf("%s %s: %v", method, path, err)
 	}
@@ -143,7 +180,7 @@ func liveStore(t *testing.T) Store {
 
 	addr, root := liveBao(t)
 	roleID, secretID := appRole(t, addr, root, grantSecretMount)
-	return NewOpenBao(addr, roleID, secretID, "secret", nil)
+	return NewOpenBao(addr, roleID, secretID, "secret", liveClient)
 }
 
 // Every other test asserts a failure direction. Without this one, a Ping
@@ -153,7 +190,7 @@ func TestPingSucceedsAgainstRealOpenBao(t *testing.T) {
 
 	addr, _ := liveBao(t)
 
-	if err := asProber(t, NewOpenBao(addr, "", "", "secret", nil)).Ping(t.Context()); err != nil {
+	if err := asProber(t, NewOpenBao(addr, "", "", "secret", liveClient)).Ping(t.Context()); err != nil {
 		t.Fatalf("Ping against a live OpenBao: %v", err)
 	}
 }
@@ -166,7 +203,7 @@ func TestRoundTripAgainstRealOpenBao(t *testing.T) {
 
 	addr, root := liveBao(t)
 	roleID, secretID := appRole(t, addr, root, grantSecretMount)
-	store := NewOpenBao(addr, roleID, secretID, "secret", nil)
+	store := NewOpenBao(addr, roleID, secretID, "secret", liveClient)
 
 	path := Path(uuid.New(), KindChannel, uuid.New())
 
@@ -228,7 +265,7 @@ func TestDeniedPathIsUnavailableAgainstRealOpenBao(t *testing.T) {
 		map[string]any{"type": "kv", "options": map[string]string{"version": "2"}})
 
 	roleID, secretID := appRole(t, addr, root, grantSecretMount)
-	store := NewOpenBao(addr, roleID, secretID, "denied", nil)
+	store := NewOpenBao(addr, roleID, secretID, "denied", liveClient)
 
 	_, err := store.Get(t.Context(), "teams/a/channels/b", "k")
 	if !errors.Is(err, ErrUnavailable) {
@@ -251,7 +288,7 @@ func TestRenewsAgainstRealOpenBao(t *testing.T) {
 		"token_ttl":          "2s",
 		"secret_id_num_uses": 1,
 	})
-	store := NewOpenBao(addr, roleID, secretID, "secret", nil)
+	store := NewOpenBao(addr, roleID, secretID, "secret", liveClient)
 	path := Path(uuid.New(), KindChannel, uuid.New())
 
 	if err := asWriter(t, store).Put(t.Context(), path, "signing_secret", "s3cr3t"); err != nil {
