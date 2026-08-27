@@ -43,6 +43,21 @@ one-millisecond `ALTER` into a table-wide outage lasting as long as that query.
 With `lock_timeout` the migration fails fast, the Job retries, and nobody
 queues behind it. Failing is cheap. Blocking is not.
 
+## Step 0 — is the migration you want to change already merged?
+
+**A merged migration is a migration that has run.** `brain migrate up` records
+each file by name and never looks at it again, so editing one that has been
+applied leaves the file and the deployed schema disagreeing, silently and
+permanently. Nothing re-runs it, and nothing reports the difference.
+
+The test is `git log origin/main -- <the file>`. If it is there, the change is
+a **new** migration that alters what the old one created, whatever the old one
+said and however recently it merged.
+
+This nearly went wrong on `attachments`: the plan was to fold a column into
+the migration that created the table, and that migration had merged forty
+minutes earlier while the work was on another branch.
+
 ## Step 3 — write the Down
 
 ```sql
@@ -54,6 +69,30 @@ Not because production rollbacks are common — they are not. Because writing it
 forces you to notice when a change *cannot* be reversed, which is exactly when
 it needs a different plan. A `Down` you cannot write is a design review, not a
 formality.
+
+**Reverse what you replaced, not only what you added.** A migration that swaps
+one constraint for another has to put the original back:
+
+```sql
+-- +goose Up
+ALTER TABLE attachments DROP CONSTRAINT attachments_message_id_fkey;
+ALTER TABLE attachments ADD CONSTRAINT attachments_message_in_session
+    FOREIGN KEY (message_id, session_id) REFERENCES messages (id, session_id)
+    ON DELETE CASCADE;
+
+-- +goose Down
+ALTER TABLE attachments DROP CONSTRAINT attachments_message_in_session;
+ALTER TABLE attachments ADD CONSTRAINT attachments_message_id_fkey
+    FOREIGN KEY (message_id) REFERENCES messages (id) ON DELETE CASCADE;
+```
+
+Dropping the new one alone leaves the table with *no* reference where it had
+one — a rollback that loses an invariant rather than restoring it. Assert both
+directions by name:
+
+```sh
+psql -tAc "SELECT count(*) FROM pg_constraint WHERE conname='attachments_message_id_fkey'"
+```
 
 ## Step 4 — check the operation against this table
 
@@ -110,6 +149,42 @@ ALTER TABLE agents VALIDATE CONSTRAINT agents_name_not_null;
 
 Foreign keys work identically — `ADD CONSTRAINT ... NOT VALID`, then
 `VALIDATE CONSTRAINT` separately.
+
+## Step 5b — denormalise only when no index can express the access path
+
+A second copy of a fact is normally a trade: faster reads against the risk that
+the copies drift. Postgres can take the second half away, which changes the
+decision.
+
+A unique key on the source lets the copy be part of a **composite foreign
+key**, so a row that disagrees cannot be written:
+
+```sql
+ALTER TABLE messages ADD CONSTRAINT messages_id_session_key UNIQUE (id, session_id);
+
+ALTER TABLE attachments
+    ADD CONSTRAINT attachments_message_in_session
+        FOREIGN KEY (message_id, session_id) REFERENCES messages (id, session_id);
+```
+
+What is left is the bytes and the index. So the question is only whether the
+access path is real — and that is measurable, not a guess:
+
+```text
+SELECT a.* FROM attachments a JOIN messages m ON m.id = a.message_id
+WHERE m.session_id = $1;                        13.6 ms warm, 591 buffers
+
+SELECT * FROM attachments WHERE session_id = $1; 0.36 ms warm,  25 buffers
+```
+
+Seed a realistic corpus and `EXPLAIN (ANALYZE, BUFFERS)` both. Toy data proves
+nothing: with five attachments the planner inverted the join and answered in
+0.1 ms, which said only that five rows are cheap.
+
+The distinction worth keeping: denormalising because you expect load is a bet.
+Denormalising because **the schema cannot express the question** — no index
+covers "attachments in this session" through the join, so both sides are read
+in full — is a structural fact.
 
 ## Step 6 — indexes on a table with rows
 
@@ -201,7 +276,8 @@ Assert at least:
 ## Quick checklist
 
 - [ ] `SET lock_timeout = '3s'` if the table already exists
-- [ ] `Down` written, and it genuinely reverses
+- [ ] the migration being changed is not already merged — if it is, write a new one
+- [ ] `Down` written, and it genuinely reverses, including anything Up *replaced*
 - [ ] no volatile default on `ADD COLUMN`
 - [ ] index on a populated table uses `CONCURRENTLY` + `NO TRANSACTION` + `IF NOT EXISTS`
 - [ ] column change split into expand-contract steps
