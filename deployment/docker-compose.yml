@@ -120,11 +120,30 @@ services:
       OPENARITY_FALKOR_DB_URL: "redis://falkordb:6379"
       OPENARITY_REDIS_URL: "redis://redis:6379"
       OPENARITY_SECRETS_ADDR: "http://openbao:8200"
-      # Unset by default, which puts the brain on the in-memory secret store
-      # and logs a warning. Compose's OpenBao runs in dev mode with no AppRole
-      # configured; set these in .env once one exists.
+      # static by default: compose's OpenBao runs in dev mode with no AppRole
+      # configured, so there is nothing for the brain to authenticate with
+      # until `make bao-approle` mints one. Set the backend and both halves of
+      # the credential in .env together — naming openbao without them is a
+      # startup failure, deliberately.
+      #
+      # static is refused outside development, so a staging or production
+      # stack must set this. That is the point: it is the setting that decides
+      # whether secrets survive a deploy.
+      OPENARITY_SECRETS_BACKEND: ${OPENARITY_SECRETS_BACKEND:-static}
       OPENARITY_SECRETS_APPROLE_ID: ${OPENARITY_SECRETS_APPROLE_ID-}
       OPENARITY_SECRETS_APPROLE_SECRET: ${OPENARITY_SECRETS_APPROLE_SECRET-}
+      # memory by default, and refused outside development for the same
+      # reason. docker-compose.objects.yml brings a MinIO the brain reaches at
+      # minio:9000 — inside the network, so the host port it is published on
+      # does not matter here.
+      #
+      # The bucket and credentials are the same three variables MinIO itself
+      # reads, so one pair of values configures both ends.
+      OPENARITY_OBJECTS_BACKEND: ${OPENARITY_OBJECTS_BACKEND:-memory}
+      OPENARITY_OBJECTS_ENDPOINT: ${OPENARITY_OBJECTS_ENDPOINT:-http://minio:9000}
+      OPENARITY_OBJECTS_BUCKET: ${OBJECTS_BUCKET:-openarity}
+      OPENARITY_OBJECTS_ACCESS_KEY: ${OBJECTS_ACCESS_KEY-}
+      OPENARITY_OBJECTS_SECRET_KEY: ${OBJECTS_SECRET_KEY-}
       # development keeps this usable with no identity provider. Set it to
       # staging or production in .env and the dev token is refused outright,
       # so OIDC becomes mandatory rather than optional.

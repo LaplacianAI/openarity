@@ -345,7 +345,6 @@ variable prefixed `OPENARITY_`:
 | `OPENARITY_POSTGRES_DSN`   | see below                   | Relational store                 |
 | `OPENARITY_FALKOR_DB_URL`  | `redis://127.0.0.1:6380`    | Graph store — not used yet       |
 | `OPENARITY_REDIS_URL`      | `redis://127.0.0.1:6379`    | Cache and queues — not used yet  |
-| `OPENARITY_VAULT_ADDR`     | `http://localhost:8200`     | Secret store — not used yet      |
 | `OPENARITY_OMNI_ROUTE_URL` | `http://localhost:20128/v1` | Model router — not used yet      |
 | `OPENARITY_OIDC_ENABLED`   | `false`                     | Verify tokens against an IdP     |
 | `OPENARITY_OIDC_ISSUER`    | empty                       | Issuer URL, required if enabled  |
@@ -359,8 +358,48 @@ The Postgres default is:
 postgres://postgres:postgres@localhost:5432/openarity?sslmode=disable
 ```
 
-Secrets are never stored in Postgres or the graph. Rows hold Vault path
+Secrets are never stored in Postgres or the graph. Rows hold secret-store path
 references only.
+
+### Secrets and object storage
+
+Both pick an implementation by name. Nothing is inferred from which other
+settings happen to be set — a typo fails at startup listing the valid values,
+rather than falling back to a store that holds nothing and losing everything
+quietly.
+
+| Variable                           | Default                 | What it does                             |
+| ---------------------------------- | ----------------------- | ---------------------------------------- |
+| `OPENARITY_SECRETS_BACKEND`        | `static`                | `static`, `openbao`, `vault`             |
+| `OPENARITY_SECRETS_ADDR`           | `http://localhost:8200` | Where the secret store listens           |
+| `OPENARITY_SECRETS_APPROLE_ID`     | empty                   | AppRole id, required outside `static`    |
+| `OPENARITY_SECRETS_APPROLE_SECRET` | empty                   | AppRole secret                           |
+| `OPENARITY_SECRETS_KV_MOUNT`       | `secret`                | The KV v2 mount to read and write        |
+| `OPENARITY_OBJECTS_BACKEND`        | `memory`                | `memory`, `filesystem`, `s3`             |
+| `OPENARITY_OBJECTS_PATH`           | see below               | Where `filesystem` writes                |
+| `OPENARITY_OBJECTS_ENDPOINT`       | empty                   | Required by `s3`                         |
+| `OPENARITY_OBJECTS_REGION`         | `us-east-1`             | Sent by `s3`, ignored by most clones     |
+| `OPENARITY_OBJECTS_BUCKET`         | `openarity`             | The one bucket the brain uses            |
+| `OPENARITY_OBJECTS_ACCESS_KEY`     | empty                   | `s3` credential                          |
+| `OPENARITY_OBJECTS_SECRET_KEY`     | empty                   | `s3` credential                          |
+
+`OPENARITY_OBJECTS_PATH` defaults to `/var/lib/openarity/objects`.
+
+`static` and `memory` hold their contents in the process and lose them on
+restart. That is the point in development; outside it both are refused at
+startup, because a brain that starts and silently loses every attachment is
+worse than one that does not start.
+
+`openbao` and `vault` name the same adapter today — OpenBao is the fork of the
+last MPL-2.0 Vault, so the API and the KV v2 semantics are unchanged. They are
+two names because the two are developed separately now, and what sits behind
+one should be able to change without anybody editing their configuration.
+
+`s3` speaks the S3 API, which is a de-facto interface rather than a standard.
+MinIO, Garage, Ceph, SeaweedFS, Cloudflare R2, Backblaze B2 and Google Cloud
+Storage all serve it; only whole-object put, get and delete are used, which is
+the part every implementation actually serves. Nothing writes to the object
+store yet — attachments are not built.
 
 `OPENARITY_DEV_TOKEN` is a single shared secret compared in constant time. It
 exists so a development machine does not need an identity provider, and it has

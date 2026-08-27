@@ -16,6 +16,7 @@ make up         # dependencies only — the normal loop, brain on your machine
 make dev        # and the brain, built from your working tree
 make image      # and the brain, from the image CI published
 make staging    # image plus authentik: OIDC only, no development token
+make objects    # add MinIO and create the bucket — for the object store tests
 make ps         # what is running, and on which ports
 make logs       # follow the brain; make logs service=authentik-server
 make down       # stop everything, keeping the data
@@ -35,8 +36,9 @@ OPENARITY_DEV_TOKEN=letmein OPENARITY_SUPER_ADMINS=dev go run ./cmd/brain
 ```
 
 Ports match the defaults in `internal/config`, so nothing else needs setting.
-FalkorDB, Redis and Vault are running but unused — they are here so the day one
-of them is needed, it is configuration rather than archaeology.
+OpenBao holds the brain's secrets; FalkorDB and Redis are running but unused —
+they are here so the day one of them is needed, it is configuration rather than
+archaeology.
 
 If you already run Postgres or Redis on your machine, the published ports
 collide. Every one of them can be moved without editing the file:
@@ -53,6 +55,18 @@ OpenBao runs in dev mode here — in memory, unsealed, wiped on restart. For one
 that survives a reboot, `deployment/docker-compose.openbao.yml` is an overlay
 with file storage and a seal that opens itself. See
 [OPENBAO.md](OPENBAO.md).
+
+MinIO is not started by the everyday targets. Nothing writes attachments yet,
+so a store nobody uses is a container to remember to stop — `make objects` adds
+it when the object store tests need one:
+
+```sh
+cd deployment && make objects
+```
+
+It listens on 19000, with the console on 19001. Not 9000, which authentik
+already takes in this stack. `make objects` prints the four `BRAIN_TEST_S3_*`
+exports the live tests skip without.
 
 To run the brain in a container too:
 

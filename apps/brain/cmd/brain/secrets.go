@@ -15,19 +15,25 @@ import (
 const secretStoreTimeout = 5 * time.Second
 
 func newSecretStore(cfg *config.Config, logger *slog.Logger) secrets.Store {
-	if cfg.SecretsAppRoleID == "" || cfg.SecretsAppRoleSecret == "" {
-		logger.Warn("no OpenBao AppRole credentials; using an in-memory secret " +
-			"store, which holds nothing. Channels will not verify.")
+	switch cfg.SecretsBackend {
+	// One adapter for both: Vault is what OpenBao was forked from, so the API
+	// and the KV v2 semantics are unchanged.
+	case config.SecretsBackendOpenBao, config.SecretsBackendVault:
+		return openbao.New(
+			cfg.SecretsAddr,
+			cfg.SecretsAppRoleID,
+			cfg.SecretsAppRoleSecret,
+			cfg.SecretsKVMount,
+			nil,
+		)
+
+	case config.SecretsBackendStatic:
+		logger.Warn("SECRETS_BACKEND=static: secrets are held in this process " +
+			"and lost on restart. Channels will not verify.")
 		return static.New()
 	}
 
-	return openbao.New(
-		cfg.SecretsAddr,
-		cfg.SecretsAppRoleID,
-		cfg.SecretsAppRoleSecret,
-		cfg.SecretsKVMount,
-		nil,
-	)
+	return static.New()
 }
 
 func checkSecretStore(ctx context.Context, store secrets.Store) error {

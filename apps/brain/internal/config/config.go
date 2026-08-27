@@ -23,10 +23,11 @@ type Config struct {
 	RedisURL    string `env:"REDIS_URL" envDefault:"redis://127.0.0.1:6379"`
 
 	/* Secret Store Configuration */
-	SecretsAddr          string `env:"SECRETS_ADDR" envDefault:"http://localhost:8200"`
-	SecretsAppRoleID     string `env:"SECRETS_APPROLE_ID" envDefault:""`
-	SecretsAppRoleSecret string `env:"SECRETS_APPROLE_SECRET" envDefault:""`
-	SecretsKVMount       string `env:"SECRETS_KV_MOUNT" envDefault:"secret"`
+	SecretsBackend       SecretsBackend `env:"SECRETS_BACKEND" envDefault:"static"`
+	SecretsAddr          string         `env:"SECRETS_ADDR" envDefault:"http://localhost:8200"`
+	SecretsAppRoleID     string         `env:"SECRETS_APPROLE_ID" envDefault:""`
+	SecretsAppRoleSecret string         `env:"SECRETS_APPROLE_SECRET" envDefault:""`
+	SecretsKVMount       string         `env:"SECRETS_KV_MOUNT" envDefault:"secret"`
 
 	/* Model Router Configuration */
 	OmniRouteURL string `env:"OMNI_ROUTE_URL" envDefault:"http://localhost:20128/v1"`
@@ -37,12 +38,24 @@ type Config struct {
 	OIDCAudience string   `env:"OIDC_AUDIENCE" envDefault:"openarity"`
 	DevToken     string   `env:"DEV_TOKEN" envDefault:""`
 	SuperAdmins  []string `env:"SUPER_ADMINS" envDefault:""`
+
+	/* Object Storage Configuration */
+	ObjectsBackend   ObjectsBackend `env:"OBJECTS_BACKEND" envDefault:"memory"`
+	ObjectsPath      string         `env:"OBJECTS_PATH" envDefault:"/var/lib/openarity/objects"`
+	ObjectsEndpoint  string         `env:"OBJECTS_ENDPOINT" envDefault:""`
+	ObjectsRegion    string         `env:"OBJECTS_REGION" envDefault:"us-east-1"`
+	ObjectsBucket    string         `env:"OBJECTS_BUCKET" envDefault:"openarity"`
+	ObjectsAccessKey string         `env:"OBJECTS_ACCESS_KEY" envDefault:""`
+	ObjectsSecretKey string         `env:"OBJECTS_SECRET_KEY" envDefault:""`
 }
 
 func (c *Config) String() string {
 	return fmt.Sprintf(
 		"Config{Environment:%s LogLevel:%s APIBind:%s WebhookBind:%s "+
-			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s SecretsAddr:%s OmniRouteURL:%s}",
+			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s "+
+			"SecretsBackend:%s SecretsAddr:%s "+
+			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
+			"OmniRouteURL:%s}",
 		c.Environment,
 		c.LogLevel,
 		c.APIBind,
@@ -50,7 +63,12 @@ func (c *Config) String() string {
 		redactURL(c.PostgresDSN),
 		redactURL(c.FalkorDBURL),
 		redactURL(c.RedisURL),
+		c.SecretsBackend,
 		redactURL(c.SecretsAddr),
+		c.ObjectsBackend,
+		c.ObjectsPath,
+		redactURL(c.ObjectsEndpoint),
+		c.ObjectsBucket,
 		redactURL(c.OmniRouteURL),
 	)
 }

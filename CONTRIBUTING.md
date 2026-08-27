@@ -177,6 +177,27 @@ sees it. Dev mode keeps everything in memory, so a restart is a clean slate.
 rather not manage the container by hand. CI runs an OpenBao service container,
 so these tests always run there.
 
+## Tests that need an object store
+
+The same shape again. Tests in `internal/objects/s3` read
+`BRAIN_TEST_S3_ENDPOINT` and **skip** when it is unset;
+`BRAIN_TEST_S3_BUCKET`, `BRAIN_TEST_S3_ACCESS_KEY` and
+`BRAIN_TEST_S3_SECRET_KEY` fill in the rest.
+
+```sh
+cd deployment && make objects   # MinIO on 19000, bucket created
+```
+
+It prints the four exports. 19000 rather than MinIO's own 9000, because
+authentik already publishes 9000 in this stack.
+
+The other two object backends need nothing: `inmemory` and `filesystem` are
+tested with a `t.TempDir()` and always run. Only the S3 adapter has a belief
+about somebody else's API to check, and the belief worth checking is what a
+real store returns for a key that is not there — AWS answers with a typed
+`NoSuchKey`, several clones answer with a bare 404, and a stub can assert
+neither.
+
 ## Running the server
 
 Ports and addresses all have working defaults, and they match what

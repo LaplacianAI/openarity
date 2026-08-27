@@ -12,6 +12,11 @@ github.com/Shopify/goreferrer v0.0.0-20220729165902-8cddb4f5de06/go.mod h1:7erjK
 github.com/andybalholm/brotli v1.2.2/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/antlr4-go/antlr/v4 v4.13.1/go.mod h1:GKmUxMtwp6ZgGwZSva4eWPC5mS6vUAmOABFgjdkM7Nw=
 github.com/atotto/clipboard v0.1.4/go.mod h1:ZY9tmq7sm5xIbd9bOK4onWV4S6X0u6GY7Vn0Yu86PYI=
+github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.40/go.mod h1:vOD3CnPxAdkL6MWZeROkZsTlskklMFfgVFkHzx/oZpY=
+github.com/aws/aws-sdk-go-v2/service/signin v1.6.0/go.mod h1:qU5PxgQ4JiUOOMotzfO3+5oUda5W+8JDVKyLQqlrJik=
+github.com/aws/aws-sdk-go-v2/service/sso v1.34.0/go.mod h1:vu4OY6s8LJtT8BtYG2LD6BGSZMptkYn3o5hvCPB22jc=
+github.com/aws/aws-sdk-go-v2/service/ssooidc v1.39.0/go.mod h1:HjjZVhaBz0JBR/kbWKThmNDhFKS7y6EURuk493tJk9Y=
+github.com/aws/aws-sdk-go-v2/service/sts v1.46.0/go.mod h1:I+rwAf3spG5dITBaAo3xXRowk8kiOhtU1kYxfvCTC44=
 github.com/aymanbagabas/go-udiff v0.2.0/go.mod h1:RE4Ex0qsGkTAJoQdQQCA0uG+nAzJO/pI/QwceO5fgrA=
 github.com/aymanbagabas/go-udiff v0.3.1/go.mod h1:G0fsKmG+P6ylD0r6N/KgQD/nWzgfnl8ZBcNLgcbrw8E=
 github.com/aymerick/douceur v0.2.0/go.mod h1:wlT5vV2O3h55X9m7iVYN0TBM0NH/MmbLnd30/FjWUq4=

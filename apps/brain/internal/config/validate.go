@@ -9,7 +9,6 @@ import (
 	"strings"
 )
 
-// schemes
 var (
 	httpSchemes     = []string{"http", "https"}
 	redisSchemes    = []string{"redis", "rediss"}
@@ -100,11 +99,32 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("DEV_TOKEN must not be set outside development, got ENVIRONMENT=%s", c.Environment))
 	}
 
-	if c.Environment != EnvironmentDevelopment && c.SecretsAppRoleID == "" {
-		errs = append(errs, fmt.Errorf(
-			"SECRETS_APPROLE_ID and SECRETS_APPROLE_SECRET are required outside "+
-				"development, got ENVIRONMENT=%s: the secret store is a dependency, "+
-				"not a feature flag", c.Environment))
+	if c.Environment != EnvironmentDevelopment {
+		if c.SecretsBackend == SecretsBackendStatic {
+			errs = append(errs, fmt.Errorf(
+				"SECRETS_BACKEND=static is refused outside development, got "+
+					"ENVIRONMENT=%s: it holds secrets in the process and loses them "+
+					"on restart, so every channel stops verifying after a deploy",
+				c.Environment))
+		}
+		if c.ObjectsBackend == ObjectsBackendMemory {
+			errs = append(errs, fmt.Errorf(
+				"OBJECTS_BACKEND=memory is refused outside development, got "+
+					"ENVIRONMENT=%s: attachments would be lost on restart, silently — "+
+					"uploads and downloads both succeed until the process dies",
+				c.Environment))
+		}
+	}
+
+	switch c.SecretsBackend {
+	case SecretsBackendOpenBao, SecretsBackendVault:
+		if c.SecretsAppRoleID == "" {
+			errs = append(errs, fmt.Errorf(
+				"SECRETS_APPROLE_ID and SECRETS_APPROLE_SECRET are required when "+
+					"SECRETS_BACKEND=%s: the secret store is a dependency, not a "+
+					"feature flag", c.SecretsBackend))
+		}
+	case SecretsBackendStatic:
 	}
 
 	if (c.SecretsAppRoleID == "") != (c.SecretsAppRoleSecret == "") {
@@ -122,6 +142,32 @@ func (c *Config) Validate() error {
 			"SUPER_ADMINS must not contain \"dev\" when OIDC_ENABLED is true: "+
 				"it is the development token's subject, and an identity-provider "+
 				"account of the same name would match it"))
+	}
+
+	switch c.ObjectsBackend {
+	case ObjectsBackendS3:
+		if c.ObjectsEndpoint == "" {
+			errs = append(errs, fmt.Errorf(
+				"OBJECTS_ENDPOINT is required when OBJECTS_BACKEND=s3: message "+
+					"attachments have nowhere to go without it"))
+		}
+	case ObjectsBackendFilesystem:
+		// Nothing to require. OBJECTS_PATH carries a default, and an env var
+		// set to the empty string falls back to it — measured, not assumed —
+		// so the path is never empty and a check for it could never fire. An
+		// unreachable guard reads as protection and cannot be tested.
+	case ObjectsBackendMemory:
+		// Nothing to configure, and refused outside development above.
+	}
+
+	if (c.ObjectsAccessKey == "") != (c.ObjectsSecretKey == "") {
+		missing := "OBJECTS_ACCESS_KEY"
+		if c.ObjectsAccessKey != "" {
+			missing = "OBJECTS_SECRET_KEY"
+		}
+		errs = append(errs, fmt.Errorf(
+			"%s is required when the other half of the object store credential is set",
+			missing))
 	}
 
 	if len(errs) > 0 {

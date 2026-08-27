@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,7 @@ func capturingLogger() (*slog.Logger, *bytes.Buffer) {
 // baoAt returns a config pointing at addr with AppRole credentials set.
 func baoAt(addr string) *config.Config {
 	return &config.Config{
+		SecretsBackend:       config.SecretsBackendOpenBao,
 		SecretsAddr:          addr,
 		SecretsAppRoleID:     "role",
 		SecretsAppRoleSecret: "secret-id",
@@ -30,36 +32,15 @@ func baoAt(addr string) *config.Config {
 	}
 }
 
-// Without AppRole credentials there is no OpenBao session to have, so a
-// development brain gets the in-memory store rather than a client that fails
-// on first use.
-func TestNoAppRoleCredentialsGivesTheStaticStore(t *testing.T) {
+// The zero value of SecretsBackend is not a valid backend, and the default
+// from the environment is static — so a Config built in a test with neither
+// gets the in-memory store rather than a client that fails on first use.
+func TestNoBackendNamedGivesTheStaticStore(t *testing.T) {
 	t.Parallel()
 
 	store := newSecretStore(&config.Config{SecretsAddr: "http://localhost:8200"}, discardLogger())
 	if !isStatic(store) {
 		t.Errorf("store is %T, want the static store", store)
-	}
-}
-
-// Config validation rejects half a credential outside development, but in
-// development it is accepted and must not produce a store that cannot log in.
-func TestHalfAnAppRoleCredentialGivesTheStaticStore(t *testing.T) {
-	t.Parallel()
-
-	for name, cfg := range map[string]*config.Config{
-		"id only": {SecretsAddr: "http://localhost:8200", SecretsAppRoleID: "role"},
-		"secret only": {
-			SecretsAddr: "http://localhost:8200", SecretsAppRoleSecret: "secret-id",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			if store := newSecretStore(cfg, discardLogger()); !isStatic(store) {
-				t.Errorf("store is %T, want the static store", store)
-			}
-		})
 	}
 }
 
@@ -79,7 +60,10 @@ func TestTheStaticStoreSaysItHoldsNothing(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := capturingLogger()
-	newSecretStore(&config.Config{SecretsAddr: "http://localhost:8200"}, logger)
+	newSecretStore(&config.Config{
+		SecretsBackend: config.SecretsBackendStatic,
+		SecretsAddr:    "http://localhost:8200",
+	}, logger)
 
 	out := buf.String()
 	if !strings.Contains(out, `"level":"WARN"`) {
@@ -89,13 +73,13 @@ func TestTheStaticStoreSaysItHoldsNothing(t *testing.T) {
 
 // A real brain must get the OpenBao store. The concrete type is unexported,
 // following internal/auth, so the assertion is about what it can do.
-func TestAppRoleCredentialsGiveAnOpenBaoStore(t *testing.T) {
+func TestNamingOpenBaoGivesAnOpenBaoStore(t *testing.T) {
 	t.Parallel()
 
 	store := newSecretStore(baoAt("http://localhost:8200"), discardLogger())
 
 	if isStatic(store) {
-		t.Fatal("credentials were set and the store is still the in-memory one")
+		t.Fatal("SECRETS_BACKEND=openbao still produced the in-memory store")
 	}
 	if _, ok := store.(secrets.Prober); !ok {
 		t.Errorf("store is %T, want one that implements secrets.Prober", store)
@@ -192,5 +176,26 @@ func TestStartupErrorNamesTheSecretStore(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "secret store") {
 		t.Errorf("err = %q, want it to name the secret store", err)
+	}
+}
+
+// Vault and OpenBao name the same adapter today, because OpenBao was forked
+// from Vault and the KV v2 semantics are unchanged. Asserted rather than
+// assumed: the switch could easily gain a case that falls through to static,
+// and a deployment naming vault would then hold nothing and say nothing.
+func TestNamingVaultGivesTheSameStoreAsOpenBao(t *testing.T) {
+	t.Parallel()
+
+	cfg := baoAt("http://localhost:8200")
+	cfg.SecretsBackend = config.SecretsBackendVault
+
+	store := newSecretStore(cfg, discardLogger())
+	if isStatic(store) {
+		t.Fatal("SECRETS_BACKEND=vault produced the in-memory store")
+	}
+
+	openBao := newSecretStore(baoAt("http://localhost:8200"), discardLogger())
+	if got, want := fmt.Sprintf("%T", store), fmt.Sprintf("%T", openBao); got != want {
+		t.Errorf("vault produced %s, openbao produced %s", got, want)
 	}
 }
