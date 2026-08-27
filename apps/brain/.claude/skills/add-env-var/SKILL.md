@@ -24,8 +24,16 @@ half-wired setting that fails confusingly in production.
 - **Defaults must be valid.** `TestValidateAcceptsDefaults` asserts the whole
   default config passes `Validate()`. A default that fails validation means
   nobody can start the process without overriding something.
-- **Secrets do not live here.** Config holds a *reference* — a Vault path — not
-  a secret value. Values come from `SecretStore` at use time.
+- **Secrets do not live here**, with one exception. Config holds a *reference*
+  — a secret-store path — and values come from the `secrets.Store` at use
+  time. The exception is the credential the brain needs to reach a store
+  before it has one: `SECRETS_APPROLE_SECRET` and `OBJECTS_SECRET_KEY`. Those
+  are real secrets in the environment because there is nowhere earlier to put
+  them, and they are left out of `Config.String()` entirely rather than
+  redacted.
+- **A backend is named, not inferred.** If the setting selects which
+  implementation of a port to use, see the `add-a-backend` skill — the enum,
+  the per-backend validation and the `cmd/brain` switch come as a set.
 
 ## Step 1 — the struct field
 
