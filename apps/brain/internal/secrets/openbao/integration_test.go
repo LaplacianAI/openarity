@@ -1,4 +1,4 @@
-package secrets
+package openbao
 
 import (
 	"bytes"
@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 )
 
 // The stub in openbao_test.go encodes what this package believes OpenBao
@@ -175,12 +177,12 @@ func appRoleWith(
 	return roleID, secretID
 }
 
-func liveStore(t *testing.T) Store {
+func liveStore(t *testing.T) secrets.Store {
 	t.Helper()
 
 	addr, root := liveBao(t)
 	roleID, secretID := appRole(t, addr, root, grantSecretMount)
-	return NewOpenBao(addr, roleID, secretID, "secret", liveClient)
+	return New(addr, roleID, secretID, "secret", liveClient)
 }
 
 // Every other test asserts a failure direction. Without this one, a Ping
@@ -190,7 +192,7 @@ func TestPingSucceedsAgainstRealOpenBao(t *testing.T) {
 
 	addr, _ := liveBao(t)
 
-	if err := asProber(t, NewOpenBao(addr, "", "", "secret", liveClient)).Ping(t.Context()); err != nil {
+	if err := asProber(t, New(addr, "", "", "secret", liveClient)).Ping(t.Context()); err != nil {
 		t.Fatalf("Ping against a live OpenBao: %v", err)
 	}
 }
@@ -203,9 +205,9 @@ func TestRoundTripAgainstRealOpenBao(t *testing.T) {
 
 	addr, root := liveBao(t)
 	roleID, secretID := appRole(t, addr, root, grantSecretMount)
-	store := NewOpenBao(addr, roleID, secretID, "secret", liveClient)
+	store := New(addr, roleID, secretID, "secret", liveClient)
 
-	path := Path(uuid.New(), KindChannel, uuid.New())
+	path := secrets.Path(uuid.New(), secrets.KindChannel, uuid.New())
 
 	if err := asWriter(t, store).Put(t.Context(), path, "signing_secret", "s3cr3t"); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -223,8 +225,8 @@ func TestRoundTripAgainstRealOpenBao(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	if _, err := store.Get(t.Context(), path, "signing_secret"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Get after Delete: err = %v, want ErrNotFound", err)
+	if _, err := store.Get(t.Context(), path, "signing_secret"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Errorf("Get after Delete: err = %v, want secrets.ErrNotFound", err)
 	}
 
 	// The read above cannot tell a destroyed secret from a soft-deleted one:
@@ -234,7 +236,7 @@ func TestRoundTripAgainstRealOpenBao(t *testing.T) {
 	admin{t: t, addr: addr, token: root}.do(http.MethodPost,
 		"/v1/secret/undelete/"+path, map[string][]int{"versions": {1}})
 
-	if _, err := store.Get(t.Context(), path, "signing_secret"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.Get(t.Context(), path, "signing_secret"); !errors.Is(err, secrets.ErrNotFound) {
 		t.Errorf("undelete brought the secret back: Delete only soft-deleted it")
 	}
 }
@@ -245,10 +247,10 @@ func TestMissingSecretIsNotFoundAgainstRealOpenBao(t *testing.T) {
 	t.Parallel()
 
 	store := liveStore(t)
-	path := Path(uuid.New(), KindChannel, uuid.New())
+	path := secrets.Path(uuid.New(), secrets.KindChannel, uuid.New())
 
-	if _, err := store.Get(t.Context(), path, "signing_secret"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("err = %v, want ErrNotFound", err)
+	if _, err := store.Get(t.Context(), path, "signing_secret"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Errorf("err = %v, want secrets.ErrNotFound", err)
 	}
 }
 
@@ -265,13 +267,13 @@ func TestDeniedPathIsUnavailableAgainstRealOpenBao(t *testing.T) {
 		map[string]any{"type": "kv", "options": map[string]string{"version": "2"}})
 
 	roleID, secretID := appRole(t, addr, root, grantSecretMount)
-	store := NewOpenBao(addr, roleID, secretID, "denied", liveClient)
+	store := New(addr, roleID, secretID, "denied", liveClient)
 
 	_, err := store.Get(t.Context(), "teams/a/channels/b", "k")
-	if !errors.Is(err, ErrUnavailable) {
-		t.Errorf("err = %v, want ErrUnavailable", err)
+	if !errors.Is(err, secrets.ErrUnavailable) {
+		t.Errorf("err = %v, want secrets.ErrUnavailable", err)
 	}
-	if errors.Is(err, ErrNotFound) {
+	if errors.Is(err, secrets.ErrNotFound) {
 		t.Error("a denial was reported as a missing secret")
 	}
 }
@@ -288,8 +290,8 @@ func TestRenewsAgainstRealOpenBao(t *testing.T) {
 		"token_ttl":          "2s",
 		"secret_id_num_uses": 1,
 	})
-	store := NewOpenBao(addr, roleID, secretID, "secret", liveClient)
-	path := Path(uuid.New(), KindChannel, uuid.New())
+	store := New(addr, roleID, secretID, "secret", liveClient)
+	path := secrets.Path(uuid.New(), secrets.KindChannel, uuid.New())
 
 	if err := asWriter(t, store).Put(t.Context(), path, "signing_secret", "s3cr3t"); err != nil {
 		t.Fatalf("Put: %v", err)

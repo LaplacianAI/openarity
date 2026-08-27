@@ -114,7 +114,7 @@ this exists to avoid.
 
 ### CI runs against this file
 
-`apps/brain/internal/secrets/policy_integration_test.go` reads
+`apps/brain/internal/secrets/openbao/policy_integration_test.go` reads
 `policy-brain.hcl` off disk, binds an AppRole to it, and drives the real store
 through it: register a channel, read the secret back, disconnect it. Then it
 asks for eight things the comments above claim are refused — a sibling kind of

@@ -8,6 +8,8 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets/openbao"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets/static"
 )
 
 const secretStoreTimeout = 5 * time.Second
@@ -16,10 +18,10 @@ func newSecretStore(cfg *config.Config, logger *slog.Logger) secrets.Store {
 	if cfg.SecretsAppRoleID == "" || cfg.SecretsAppRoleSecret == "" {
 		logger.Warn("no OpenBao AppRole credentials; using an in-memory secret " +
 			"store, which holds nothing. Channels will not verify.")
-		return secrets.Static{}
+		return static.New()
 	}
 
-	return secrets.NewOpenBao(
+	return openbao.New(
 		cfg.SecretsAddr,
 		cfg.SecretsAppRoleID,
 		cfg.SecretsAppRoleSecret,

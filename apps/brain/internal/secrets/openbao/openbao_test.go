@@ -1,4 +1,4 @@
-package secrets
+package openbao
 
 import (
 	"encoding/json"
@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 )
 
 const (
@@ -148,30 +150,30 @@ func answering(status int, body string) http.HandlerFunc {
 	}
 }
 
-func newTestBao(t *testing.T, stub *baoStub) Store {
+func newTestBao(t *testing.T, stub *baoStub) secrets.Store {
 	t.Helper()
-	return NewOpenBao(stub.URL, "role", "secret-id", "secret", stub.Client())
+	return New(stub.URL, "role", "secret-id", "secret", stub.Client())
 }
 
-// The constructor returns Store, so reaching the write and probe halves means
-// asserting. A bare s.(Writer) would panic rather than fail, and errcheck
+// The constructor returns secrets.Store, so reaching the write and probe halves means
+// asserting. A bare s.(secrets.Writer) would panic rather than fail, and errcheck
 // rejects the single-value form for exactly that reason.
-func asWriter(t *testing.T, s Store) Writer {
+func asWriter(t *testing.T, s secrets.Store) secrets.Writer {
 	t.Helper()
 
-	w, ok := s.(Writer)
+	w, ok := s.(secrets.Writer)
 	if !ok {
-		t.Fatalf("%T does not implement Writer", s)
+		t.Fatalf("%T does not implement secrets.Writer", s)
 	}
 	return w
 }
 
-func asProber(t *testing.T, s Store) Prober {
+func asProber(t *testing.T, s secrets.Store) secrets.Prober {
 	t.Helper()
 
-	p, ok := s.(Prober)
+	p, ok := s.(secrets.Prober)
 	if !ok {
-		t.Fatalf("%T does not implement Prober", s)
+		t.Fatalf("%T does not implement secrets.Prober", s)
 	}
 	return p
 }
@@ -236,10 +238,10 @@ func TestOpenBaoMapsStatusCodesToSentinels(t *testing.T) {
 		body   string
 		want   error
 	}{
-		{"absent", http.StatusNotFound, `{"errors":[]}`, ErrNotFound},
-		{"denied", http.StatusForbidden, `{"errors":["permission denied"]}`, ErrUnavailable},
-		{"sealed", http.StatusServiceUnavailable, `{"errors":["Vault is sealed"]}`, ErrUnavailable},
-		{"broken", http.StatusInternalServerError, `{"errors":["internal error"]}`, ErrUnavailable},
+		{"absent", http.StatusNotFound, `{"errors":[]}`, secrets.ErrNotFound},
+		{"denied", http.StatusForbidden, `{"errors":["permission denied"]}`, secrets.ErrUnavailable},
+		{"sealed", http.StatusServiceUnavailable, `{"errors":["Vault is sealed"]}`, secrets.ErrUnavailable},
+		{"broken", http.StatusInternalServerError, `{"errors":["internal error"]}`, secrets.ErrUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -265,8 +267,8 @@ func TestOpenBaoMissingKeyIsNotFound(t *testing.T) {
 
 	stub := newStub(t, answering(http.StatusOK, `{"data":{"data":{"other":"v"}}}`))
 
-	if _, err := newTestBao(t, stub).Get(t.Context(), "teams/a/channels/b", "k"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("err = %v, want ErrNotFound", err)
+	if _, err := newTestBao(t, stub).Get(t.Context(), "teams/a/channels/b", "k"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Errorf("err = %v, want secrets.ErrNotFound", err)
 	}
 }
 
@@ -282,9 +284,9 @@ func TestOpenBaoLoginFailureIsUnavailable(t *testing.T) {
 		}))
 	t.Cleanup(srv.Close)
 
-	store := NewOpenBao(srv.URL, "role", "wrong", "secret", srv.Client())
-	if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); !errors.Is(err, ErrUnavailable) {
-		t.Errorf("err = %v, want ErrUnavailable", err)
+	store := New(srv.URL, "role", "wrong", "secret", srv.Client())
+	if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); !errors.Is(err, secrets.ErrUnavailable) {
+		t.Errorf("err = %v, want secrets.ErrUnavailable", err)
 	}
 }
 
@@ -297,9 +299,9 @@ func TestOpenBaoUnreachableIsUnavailable(t *testing.T) {
 	addr := srv.URL
 	srv.Close()
 
-	store := NewOpenBao(addr, "role", "secret-id", "secret", client)
-	if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); !errors.Is(err, ErrUnavailable) {
-		t.Errorf("err = %v, want ErrUnavailable", err)
+	store := New(addr, "role", "secret-id", "secret", client)
+	if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); !errors.Is(err, secrets.ErrUnavailable) {
+		t.Errorf("err = %v, want secrets.ErrUnavailable", err)
 	}
 }
 
@@ -346,8 +348,8 @@ func TestOpenBaoPingMapsHealth(t *testing.T) {
 			stub := newStub(t, answering(tc.status, `{}`))
 
 			err := asProber(t, newTestBao(t, stub)).Ping(t.Context())
-			if tc.wantErr && !errors.Is(err, ErrUnavailable) {
-				t.Errorf("err = %v, want ErrUnavailable", err)
+			if tc.wantErr && !errors.Is(err, secrets.ErrUnavailable) {
+				t.Errorf("err = %v, want secrets.ErrUnavailable", err)
 			}
 			if !tc.wantErr && err != nil {
 				t.Errorf("Ping: %v", err)
@@ -432,11 +434,11 @@ func TestOpenBaoWriteFailuresAreErrors(t *testing.T) {
 	stub := newStub(t, answering(http.StatusForbidden, `{"errors":["permission denied"]}`))
 	writer := asWriter(t, newTestBao(t, stub))
 
-	if err := writer.Put(t.Context(), "teams/a/channels/b", "k", "v"); !errors.Is(err, ErrUnavailable) {
-		t.Errorf("Put err = %v, want ErrUnavailable", err)
+	if err := writer.Put(t.Context(), "teams/a/channels/b", "k", "v"); !errors.Is(err, secrets.ErrUnavailable) {
+		t.Errorf("Put err = %v, want secrets.ErrUnavailable", err)
 	}
-	if err := writer.Delete(t.Context(), "teams/a/channels/b"); !errors.Is(err, ErrUnavailable) {
-		t.Errorf("Delete err = %v, want ErrUnavailable", err)
+	if err := writer.Delete(t.Context(), "teams/a/channels/b"); !errors.Is(err, secrets.ErrUnavailable) {
+		t.Errorf("Delete err = %v, want secrets.ErrUnavailable", err)
 	}
 }
 
@@ -448,7 +450,7 @@ func TestOpenBaoToleratesATrailingSlashOnTheAddress(t *testing.T) {
 
 	stub := newStub(t, answering(http.StatusOK, `{"data":{"data":{"k":"v"}}}`))
 
-	store := NewOpenBao(stub.URL+"/", "role", "secret-id", "secret", stub.Client())
+	store := New(stub.URL+"/", "role", "secret-id", "secret", stub.Client())
 	if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -465,25 +467,13 @@ func TestOpenBaoToleratesATrailingSlashOnTheAddress(t *testing.T) {
 func TestNewOpenBaoSatisfiesEveryInterface(t *testing.T) {
 	t.Parallel()
 
-	store := NewOpenBao("http://127.0.0.1:8200", "r", "s", "secret", nil)
+	store := New("http://127.0.0.1:8200", "r", "s", "secret", nil)
 
-	if _, ok := store.(Writer); !ok {
-		t.Errorf("%T does not implement Writer", store)
+	if _, ok := store.(secrets.Writer); !ok {
+		t.Errorf("%T does not implement secrets.Writer", store)
 	}
-	if _, ok := store.(Prober); !ok {
-		t.Errorf("%T does not implement Prober", store)
-	}
-}
-
-// Static is deliberately not a Prober: a development brain with no OpenBao
-// has nothing to reach, and readiness skips it rather than reporting a
-// dependency that does not exist.
-func TestStaticIsNotAProber(t *testing.T) {
-	t.Parallel()
-
-	var store Store = Static{}
-	if _, ok := store.(Prober); ok {
-		t.Error("Static implements Prober — readiness would probe an in-memory map")
+	if _, ok := store.(secrets.Prober); !ok {
+		t.Errorf("%T does not implement secrets.Prober", store)
 	}
 }
 
@@ -494,8 +484,8 @@ func TestOpenBaoNonJSONBodyIsUnavailable(t *testing.T) {
 
 	stub := newStub(t, answering(http.StatusOK, `<html>gateway timeout</html>`))
 
-	if _, err := newTestBao(t, stub).Get(t.Context(), "teams/a/channels/b", "k"); !errors.Is(err, ErrUnavailable) {
-		t.Errorf("err = %v, want ErrUnavailable", err)
+	if _, err := newTestBao(t, stub).Get(t.Context(), "teams/a/channels/b", "k"); !errors.Is(err, secrets.ErrUnavailable) {
+		t.Errorf("err = %v, want secrets.ErrUnavailable", err)
 	}
 }
 
@@ -511,9 +501,9 @@ func TestOpenBaoLoginWithoutATokenIsUnavailable(t *testing.T) {
 		}))
 	t.Cleanup(srv.Close)
 
-	store := NewOpenBao(srv.URL, "role", "secret-id", "secret", srv.Client())
-	if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); !errors.Is(err, ErrUnavailable) {
-		t.Errorf("err = %v, want ErrUnavailable", err)
+	store := New(srv.URL, "role", "secret-id", "secret", srv.Client())
+	if _, err := store.Get(t.Context(), "teams/a/channels/b", "k"); !errors.Is(err, secrets.ErrUnavailable) {
+		t.Errorf("err = %v, want secrets.ErrUnavailable", err)
 	}
 }
 

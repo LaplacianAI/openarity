@@ -1,4 +1,4 @@
-package secrets
+package openbao
 
 import (
 	"bytes"
@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 )
 
 // The policy that ships, tested as it ships.
@@ -34,7 +36,7 @@ func shippedPolicy(t *testing.T) string {
 	t.Helper()
 
 	// From apps/brain/internal/secrets to the repository root.
-	path := filepath.Join("..", "..", "..", "..", "deployment", "openbao", "policy-brain.hcl")
+	path := filepath.Join("..", "..", "..", "..", "..", "deployment", "openbao", "policy-brain.hcl")
 
 	hcl, err := os.ReadFile(path) //nolint:gosec // a fixed path inside the repository
 	if err != nil {
@@ -48,19 +50,19 @@ func shippedPolicy(t *testing.T) string {
 // interfaces cannot express a list or a soft delete, and those are two of the
 // things the policy must refuse.
 //
-// Reading and writing are separate interfaces here — Store is read-only and
-// Writer adds Put and Delete — so this asserts its way to both rather than
+// Reading and writing are separate interfaces here — secrets.Store is read-only and
+// secrets.Writer adds Put and Delete — so this asserts its way to both rather than
 // returning one and having each caller repeat it.
-func brainStore(t *testing.T) (reader Store, writer Writer, token, addr string) {
+func brainStore(t *testing.T) (reader secrets.Store, writer secrets.Writer, token, addr string) {
 	t.Helper()
 
 	addr, root := liveBao(t)
 	roleID, secretID := appRole(t, addr, root, shippedPolicy(t))
 
-	reader = NewOpenBao(addr, roleID, secretID, "secret", liveClient)
-	writer, ok := reader.(Writer)
+	reader = New(addr, roleID, secretID, "secret", liveClient)
+	writer, ok := reader.(secrets.Writer)
 	if !ok {
-		t.Fatalf("the OpenBao store no longer implements Writer, so registering "+
+		t.Fatalf("the OpenBao store no longer implements secrets.Writer, so registering "+
 			"a channel cannot be tested through it: %T", reader)
 	}
 	return reader, writer, login(t, addr, roleID, secretID), addr
@@ -140,7 +142,7 @@ func TestTheShippedPolicyServesTheStore(t *testing.T) {
 	// Path rather than a hand-built string, so that moving where channel
 	// secrets live moves this test with it instead of leaving it green
 	// against a path nothing uses.
-	path := Path(uuid.New(), KindChannel, uuid.New())
+	path := secrets.Path(uuid.New(), secrets.KindChannel, uuid.New())
 
 	if err := writer.Put(t.Context(), path, "signing_secret", "s3cret"); err != nil {
 		t.Fatalf("registering a channel: %v", err)
@@ -160,8 +162,8 @@ func TestTheShippedPolicyServesTheStore(t *testing.T) {
 
 	// Deletion is on the metadata path precisely so that no version survives.
 	// A soft delete would leave this readable at ?version=1.
-	if _, err := reader.Get(t.Context(), path, "signing_secret"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("after delete, err = %v, want ErrNotFound", err)
+	if _, err := reader.Get(t.Context(), path, "signing_secret"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Errorf("after delete, err = %v, want secrets.ErrNotFound", err)
 	}
 }
 
