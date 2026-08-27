@@ -256,7 +256,9 @@ func (c carries) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
 	return res, nil
 }
 
-func (carries) FetchAttachment(context.Context, string, gateway.Credentials) ([]byte, error) {
+func (carries) FetchAttachment(
+	context.Context, gateway.WebhookRequest, string, gateway.Credentials,
+) ([]byte, error) {
 	return []byte("\x89PNG\r\n\x1a\n"), nil
 }
 
@@ -270,7 +272,9 @@ func (refsNoFetcher) FetchAttachment() {}
 // reads as a working feature.
 type fetcherNoRefs struct{ good }
 
-func (fetcherNoRefs) FetchAttachment(context.Context, string, gateway.Credentials) ([]byte, error) {
+func (fetcherNoRefs) FetchAttachment(
+	context.Context, gateway.WebhookRequest, string, gateway.Credentials,
+) ([]byte, error) {
 	return nil, nil
 }
 

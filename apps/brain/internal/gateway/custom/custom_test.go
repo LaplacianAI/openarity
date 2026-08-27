@@ -1,6 +1,7 @@
 package custom_test
 
 import (
+	"bytes"
 	"net/http"
 	"strconv"
 	"strings"
@@ -40,6 +41,28 @@ const message = `{
   "session": { "ref": "ticket-4821", "kind": "direct" }
 }`
 
+// A delivery carrying two files, one named and one relying on its index.
+var withAttachments = `{
+  "id": "order-4821-photo",
+  "text": "here is the label",
+  "sent_at": "2026-08-21T12:00:00Z",
+  "author": { "ref": "agent-17", "display_name": "Asha", "is_bot": false },
+  "session": { "ref": "ticket-4821", "kind": "direct" },
+  "attachments": [
+    {
+      "id": "label",
+      "filename": "label.png",
+      "media_type": "image/png",
+      "content_base64": "iVBORw0KGgpib2R5IGJ5dGVz"
+    },
+    {
+      "filename": "notes.txt",
+      "media_type": "text/plain",
+      "content_base64": "anVzdCBzb21lIHdvcmRz"
+    }
+  ]
+}`
+
 // The whole point of shipping this adapter rather than a test double: it runs
 // the same suite every other adapter will, so the suite is proven against
 // something real before Slack or Telegram depends on it.
@@ -50,10 +73,7 @@ func TestCustomPassesTheConformanceSuite(t *testing.T) {
 		WantExternalID:    "order-4821-note",
 		EnforcesFreshness: true,
 
-		// The reference adapter has no attachments yet. Declared rather than
-		// left blank, so the day it grows them this line is what has to
-		// change — an omission would simply stop checking.
-		CarriesNoAttachments: true,
+		AttachmentRequest: request(t, withAttachments),
 	})
 }
 
@@ -252,5 +272,131 @@ func TestTheAdapterDeclaresOneRouteAndOneKey(t *testing.T) {
 	}
 	if keys := p.Keys(); len(keys) != 1 || keys[0] != gateway.KeySigning {
 		t.Errorf("Keys() = %v, want just the signing secret", keys)
+	}
+}
+
+// Parse names attachments; FetchAttachment resolves them. The two halves are
+// tested together because a ref that Parse produces and FetchAttachment
+// cannot find is the failure mode that compiles.
+func TestAttachmentsRoundTripThroughTheirRefs(t *testing.T) {
+	t.Parallel()
+
+	req := request(t, withAttachments)
+
+	res, err := custom.New().Parse(req)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	got := res.Messages[0].Attachments
+	if len(got) != 2 {
+		t.Fatalf("parsed %d attachments, want 2", len(got))
+	}
+
+	fetcher, ok := custom.New().(gateway.Fetcher)
+	if !ok {
+		t.Fatal("custom no longer implements gateway.Fetcher")
+	}
+
+	for name, tc := range map[string]struct {
+		index int
+		ref   string
+		want  []byte
+	}{
+		"named by its id":           {0, "label", []byte("\x89PNG\r\n\x1a\nbody bytes")},
+		"falling back to its index": {1, "#1", []byte("just some words")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if got[tc.index].Ref != tc.ref {
+				t.Fatalf("Ref = %q, want %q", got[tc.index].Ref, tc.ref)
+			}
+
+			body, err := fetcher.FetchAttachment(t.Context(), req, tc.ref, nil)
+			if err != nil {
+				t.Fatalf("FetchAttachment(%q): %v", tc.ref, err)
+			}
+			if !bytes.Equal(body, tc.want) {
+				t.Errorf("FetchAttachment(%q) = %q, want %q", tc.ref, body, tc.want)
+			}
+		})
+	}
+}
+
+// ClaimedSize is arithmetic on the encoded length, so it never requires
+// decoding — a message with four large files must cost nothing to look at.
+func TestParseDoesNotDecodeToReportASize(t *testing.T) {
+	t.Parallel()
+
+	res, err := custom.New().Parse(request(t, withAttachments))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	for i, a := range res.Messages[0].Attachments {
+		if a.ClaimedSize <= 0 {
+			t.Errorf("attachment %d claims %d bytes", i, a.ClaimedSize)
+		}
+		// DecodedLen rounds up to the padded length, so it is an upper bound
+		// rather than the exact figure. Close enough to refuse a fetch with,
+		// which is all it is for.
+		if a.ClaimedSize > 64 {
+			t.Errorf("attachment %d claims %d bytes for a small fixture", i, a.ClaimedSize)
+		}
+	}
+}
+
+// The two ways a ref can fail to resolve, both of which reach the handler as
+// an error rather than as empty bytes it would happily store.
+func TestFetchAttachmentRefusesWhatItCannotResolve(t *testing.T) {
+	t.Parallel()
+
+	fetcher, ok := custom.New().(gateway.Fetcher)
+	if !ok {
+		t.Fatal("custom no longer implements gateway.Fetcher")
+	}
+
+	badBase64 := `{
+	  "id": "m-1",
+	  "author": { "ref": "a" },
+	  "session": { "ref": "s", "kind": "direct" },
+	  "attachments": [{ "id": "broken", "content_base64": "not base64 !!" }]
+	}`
+
+	for name, tc := range map[string]struct {
+		body, ref, wants string
+	}{
+		"a ref that is not in the delivery": {withAttachments, "nope", "no attachment"},
+		"content that is not base64":        {badBase64, "broken", "not base64"},
+		"an empty ref":                      {withAttachments, "", "no attachment"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			body, err := fetcher.FetchAttachment(t.Context(), request(t, tc.body), tc.ref, nil)
+			if err == nil {
+				t.Fatalf("FetchAttachment(%q) returned %d bytes and no error", tc.ref, len(body))
+			}
+			if !strings.Contains(err.Error(), tc.wants) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.wants)
+			}
+			if body != nil {
+				t.Errorf("FetchAttachment returned %d bytes alongside the error", len(body))
+			}
+		})
+	}
+}
+
+// A message with no attachments produces none, rather than an empty non-nil
+// slice the handler would iterate over for nothing.
+func TestAMessageWithoutAttachmentsHasNone(t *testing.T) {
+	t.Parallel()
+
+	res, err := custom.New().Parse(request(t, message))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := res.Messages[0].Attachments; got != nil {
+		t.Errorf("Attachments = %v, want nil", got)
 	}
 }
