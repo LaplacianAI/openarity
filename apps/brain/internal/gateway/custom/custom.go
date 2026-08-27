@@ -1,8 +1,10 @@
 package custom
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -50,6 +52,15 @@ type body struct {
 		Ref  string `json:"ref"`
 		Kind string `json:"kind"`
 	} `json:"session"`
+
+	Attachments []attachment `json:"attachments"`
+}
+
+type attachment struct {
+	ID            string `json:"id"`
+	Filename      string `json:"filename"`
+	MediaType     string `json:"media_type"`
+	ContentBase64 string `json:"content_base64"`
 }
 
 type provider struct{}
@@ -104,7 +115,35 @@ func (provider) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
 		sentAt = parsed
 	}
 
+	if err := b.refConflict(); err != nil {
+		return gateway.Result{}, err
+	}
+
 	return gateway.Result{Messages: []gateway.Inbound{b.inbound(sentAt)}}, nil
+}
+
+func (provider) FetchAttachment(
+	_ context.Context, req gateway.WebhookRequest, ref string, _ gateway.Credentials,
+) ([]byte, error) {
+	var b body
+	if err := json.Unmarshal(req.Body, &b); err != nil {
+		return nil, fmt.Errorf("custom: %w", err)
+	}
+	if err := b.refConflict(); err != nil {
+		return nil, err
+	}
+
+	for i, a := range b.Attachments {
+		if a.ref(i) != ref {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(a.ContentBase64)
+		if err != nil {
+			return nil, fmt.Errorf("custom: attachment %s is not base64: %w", ref, err)
+		}
+		return raw, nil
+	}
+	return nil, fmt.Errorf("custom: no attachment %s in this delivery", ref)
 }
 
 func (b body) inbound(sentAt time.Time) gateway.Inbound {
@@ -114,6 +153,16 @@ func (b body) inbound(sentAt time.Time) gateway.Inbound {
 			SenderRef:   m.SenderRef,
 			DisplayName: m.DisplayName,
 			IsUs:        m.IsUs,
+		})
+	}
+
+	var attachments []gateway.Attachment
+	for i, a := range b.Attachments {
+		attachments = append(attachments, gateway.Attachment{
+			Ref:              a.ref(i),
+			ClaimedFilename:  a.Filename,
+			ClaimedMediaType: a.MediaType,
+			ClaimedSize:      int64(base64.StdEncoding.DecodedLen(len(a.ContentBase64))),
 		})
 	}
 
@@ -130,7 +179,27 @@ func (b body) inbound(sentAt time.Time) gateway.Inbound {
 			Ref:  b.Session.Ref,
 			Kind: gateway.SessionKind(b.Session.Kind),
 		},
-		Mentions: mentions,
-		SentAt:   sentAt,
+		Mentions:    mentions,
+		Attachments: attachments,
+		SentAt:      sentAt,
 	}
+}
+
+func (b body) refConflict() error {
+	seen := make(map[string]int, len(b.Attachments))
+	for i, a := range b.Attachments {
+		ref := a.ref(i)
+		if first, dup := seen[ref]; dup {
+			return fmt.Errorf("custom: attachments %d and %d share the ref %q", first, i, ref)
+		}
+		seen[ref] = i
+	}
+	return nil
+}
+
+func (a attachment) ref(i int) string {
+	if a.ID != "" {
+		return a.ID
+	}
+	return "#" + strconv.Itoa(i)
 }

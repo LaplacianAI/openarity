@@ -34,6 +34,18 @@ type Fixtures struct {
 	// stale delivery. Slack and Discord do; Telegram sends a bare shared
 	// token with no timestamp at all, and cannot.
 	EnforcesFreshness bool
+
+	// AttachmentRequest is a valid, signed delivery carrying a message with
+	// at least one attachment. Recorded from the provider like Request is —
+	// attachment payloads are where adapters differ most, and a constructed
+	// one tests the adapter against the author's memory of the format.
+	AttachmentRequest gateway.WebhookRequest
+
+	// CarriesNoAttachments declares that this provider has no concept of one.
+	// Required when AttachmentRequest is empty, so that "there are none" and
+	// "nobody wrote the fixture" are different answers rather than the same
+	// silence.
+	CarriesNoAttachments bool
 }
 
 // Run drives the whole contract. A passing adapter is one the handler can use
@@ -45,6 +57,7 @@ func Run(t *testing.T, p gateway.Provider, f Fixtures) {
 	t.Run("refuses a forgery", func(t *testing.T) { refusesForgery(t, p, f) })
 	t.Run("survives junk", func(t *testing.T) { survivesJunk(t, p) })
 	t.Run("produces usable messages", func(t *testing.T) { produces(t, p, f) })
+	t.Run("names its attachments", func(t *testing.T) { attachments(t, p, f) })
 }
 
 func declares(t *testing.T, p gateway.Provider, f Fixtures) {
@@ -257,4 +270,85 @@ func produces(t *testing.T, p gateway.Provider, f Fixtures) {
 			t.Error("Parse mutated Body; the handler still needs it for logging and replay")
 		}
 	})
+}
+
+// An adapter names attachments; it never fetches them. Downloading needs a
+// credential and a network call, so the adapter returns a Ref and the handler
+// — which already resolved Keys() into Credentials — decides whether and when.
+//
+// What this suite cannot check is what FetchAttachment returns: that needs the
+// provider's own server. It checks the half that is checkable, which is that
+// every ref is resolvable in principle.
+func attachments(t *testing.T, p gateway.Provider, f Fixtures) {
+	t.Helper()
+
+	_, fetches := p.(gateway.Fetcher)
+
+	if f.CarriesNoAttachments {
+		if len(f.AttachmentRequest.Body) > 0 {
+			t.Error("CarriesNoAttachments is set and an AttachmentRequest was given; " +
+				"one of them is wrong")
+		}
+
+		// Implementing Fetcher while claiming to have no attachments is dead
+		// code that reads as a working feature — the shape this whole suite
+		// exists to catch.
+		if fetches {
+			t.Error("the provider implements gateway.Fetcher but declares that it " +
+				"carries no attachments, so nothing can ever call it")
+		}
+		return
+	}
+
+	if len(f.AttachmentRequest.Body) == 0 {
+		t.Fatal("no AttachmentRequest, and CarriesNoAttachments is not set. " +
+			"Give a recorded delivery with an attachment, or say the provider has none")
+	}
+
+	res, err := p.Parse(f.AttachmentRequest)
+	if err != nil {
+		t.Fatalf("Parse on the attachment fixture: %v", err)
+	}
+
+	var found []gateway.Attachment
+	for i, m := range res.Messages {
+		if err := m.Validate(); err != nil {
+			t.Errorf("message %d is not one the handler can use: %v", i, err)
+		}
+		found = append(found, m.Attachments...)
+	}
+	if len(found) == 0 {
+		t.Fatal("the attachment fixture parsed to no attachments, so this case is " +
+			"passing without exercising anything")
+	}
+
+	// Ref is the only field the handler trusts, and the only one it cannot
+	// work without. Everything else is what the provider claimed.
+	//
+	// Unique within the delivery, because FetchAttachment is given a ref and
+	// nothing else. Two attachments sharing one means the second resolves to
+	// the first one's bytes, stored under the second one's filename — which
+	// looks exactly like a successful ingest.
+	seen := make(map[string]int, len(found))
+	for i, a := range found {
+		if a.Ref == "" {
+			t.Errorf("attachment %d has no Ref, so nothing can fetch it", i)
+		} else if first, dup := seen[a.Ref]; dup {
+			t.Errorf("attachments %d and %d share the ref %q, so one of them "+
+				"cannot be fetched", first, i, a.Ref)
+		} else {
+			seen[a.Ref] = i
+		}
+
+		if a.ClaimedSize < 0 {
+			t.Errorf("attachment %d claims a size of %d", i, a.ClaimedSize)
+		}
+	}
+
+	// Refs with no way to resolve them is broken by construction: it compiles,
+	// it parses, and it fails on the first real message.
+	if !fetches {
+		t.Error("the provider produces attachments but does not implement " +
+			"gateway.Fetcher, so their refs can never be resolved")
+	}
 }

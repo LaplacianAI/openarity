@@ -41,7 +41,9 @@ type Provider interface {
 }
 
 type Fetcher interface {
-	FetchAttachment(ctx context.Context, ref string, creds Credentials) ([]byte, error)
+	FetchAttachment(
+		ctx context.Context, req WebhookRequest, ref string, creds Credentials,
+	) ([]byte, error)
 }
 
 type Registry map[string]Provider

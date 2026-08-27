@@ -38,10 +38,10 @@ type Mention struct {
 }
 
 type Attachment struct {
-	Ref       string
-	Filename  string
-	MediaType string
-	Size      int64
+	Ref              string
+	ClaimedFilename  string
+	ClaimedMediaType string
+	ClaimedSize      int64
 }
 
 type Enrichment struct {
