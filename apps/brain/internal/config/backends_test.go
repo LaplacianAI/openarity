@@ -184,6 +184,28 @@ func TestABackendRequiresItsOwnSettings(t *testing.T) {
 	}
 }
 
+// vault and openbao are one adapter, so they need the same credential. The
+// rule named only openbao when vault was added, which let a deployment name
+// vault, start, and fail at the first secret it read — the failure this whole
+// design exists to move to startup, arriving late anyway.
+func TestVaultNeedsAnAppRoleJustAsOpenBaoDoes(t *testing.T) {
+	t.Parallel()
+
+	for _, backend := range []SecretsBackend{SecretsBackendOpenBao, SecretsBackendVault} {
+		t.Run(string(backend), func(t *testing.T) {
+			t.Parallel()
+
+			_, err := load(map[string]string{"OPENARITY_SECRETS_BACKEND": string(backend)})
+			if err == nil {
+				t.Fatalf("load accepted SECRETS_BACKEND=%s with no AppRole", backend)
+			}
+			if !strings.Contains(err.Error(), "SECRETS_APPROLE_ID") {
+				t.Errorf("the error does not name SECRETS_APPROLE_ID: %v", err)
+			}
+		})
+	}
+}
+
 // A setting for a backend that is not selected is ignored rather than
 // validated. Leaving an old OBJECTS_ENDPOINT behind while switching to a
 // volume is untidy, not an error, and refusing it would make switching

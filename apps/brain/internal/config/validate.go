@@ -116,11 +116,15 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	if c.SecretsBackend == SecretsBackendOpenBao && c.SecretsAppRoleID == "" {
-		errs = append(errs, fmt.Errorf(
-			"SECRETS_APPROLE_ID and SECRETS_APPROLE_SECRET are required when "+
-				"SECRETS_BACKEND=openbao: the secret store is a dependency, not a "+
-				"feature flag"))
+	switch c.SecretsBackend {
+	case SecretsBackendOpenBao, SecretsBackendVault:
+		if c.SecretsAppRoleID == "" {
+			errs = append(errs, fmt.Errorf(
+				"SECRETS_APPROLE_ID and SECRETS_APPROLE_SECRET are required when "+
+					"SECRETS_BACKEND=%s: the secret store is a dependency, not a "+
+					"feature flag", c.SecretsBackend))
+		}
+	case SecretsBackendStatic:
 	}
 
 	if (c.SecretsAppRoleID == "") != (c.SecretsAppRoleSecret == "") {
