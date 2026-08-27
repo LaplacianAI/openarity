@@ -99,11 +99,28 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("DEV_TOKEN must not be set outside development, got ENVIRONMENT=%s", c.Environment))
 	}
 
-	if c.Environment != EnvironmentDevelopment && c.SecretsAppRoleID == "" {
+	if c.Environment != EnvironmentDevelopment {
+		if c.SecretsBackend == SecretsBackendStatic {
+			errs = append(errs, fmt.Errorf(
+				"SECRETS_BACKEND=static is refused outside development, got "+
+					"ENVIRONMENT=%s: it holds secrets in the process and loses them "+
+					"on restart, so every channel stops verifying after a deploy",
+				c.Environment))
+		}
+		if c.ObjectsBackend == ObjectsBackendMemory {
+			errs = append(errs, fmt.Errorf(
+				"OBJECTS_BACKEND=memory is refused outside development, got "+
+					"ENVIRONMENT=%s: attachments would be lost on restart, silently — "+
+					"uploads and downloads both succeed until the process dies",
+				c.Environment))
+		}
+	}
+
+	if c.SecretsBackend == SecretsBackendOpenBao && c.SecretsAppRoleID == "" {
 		errs = append(errs, fmt.Errorf(
-			"SECRETS_APPROLE_ID and SECRETS_APPROLE_SECRET are required outside "+
-				"development, got ENVIRONMENT=%s: the secret store is a dependency, "+
-				"not a feature flag", c.Environment))
+			"SECRETS_APPROLE_ID and SECRETS_APPROLE_SECRET are required when "+
+				"SECRETS_BACKEND=openbao: the secret store is a dependency, not a "+
+				"feature flag"))
 	}
 
 	if (c.SecretsAppRoleID == "") != (c.SecretsAppRoleSecret == "") {
@@ -123,10 +140,20 @@ func (c *Config) Validate() error {
 				"account of the same name would match it"))
 	}
 
-	if c.Environment != EnvironmentDevelopment && c.ObjectsEndpoint == "" {
-		errs = append(errs, fmt.Errorf(
-			"OBJECTS_ENDPOINT is required outside development, got ENVIRONMENT=%s: "+
-				"message attachments have nowhere to go without it", c.Environment))
+	switch c.ObjectsBackend {
+	case ObjectsBackendS3:
+		if c.ObjectsEndpoint == "" {
+			errs = append(errs, fmt.Errorf(
+				"OBJECTS_ENDPOINT is required when OBJECTS_BACKEND=s3: message "+
+					"attachments have nowhere to go without it"))
+		}
+	case ObjectsBackendFilesystem:
+		// Nothing to require. OBJECTS_PATH carries a default, and an env var
+		// set to the empty string falls back to it — measured, not assumed —
+		// so the path is never empty and a check for it could never fire. An
+		// unreachable guard reads as protection and cannot be tested.
+	case ObjectsBackendMemory:
+		// Nothing to configure, and refused outside development above.
 	}
 
 	if (c.ObjectsAccessKey == "") != (c.ObjectsSecretKey == "") {

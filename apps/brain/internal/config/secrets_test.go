@@ -17,6 +17,8 @@ func prodEnv(environment Environment, extra map[string]string) map[string]string
 		"OPENARITY_ENVIRONMENT":      string(environment),
 		"OPENARITY_OIDC_ENABLED":     "true",
 		"OPENARITY_OIDC_ISSUER":      "https://auth.example.com/application/o/openarity/",
+		"OPENARITY_SECRETS_BACKEND":  "openbao",
+		"OPENARITY_OBJECTS_BACKEND":  "s3",
 		"OPENARITY_OBJECTS_ENDPOINT": "http://minio:9000",
 	}, extra)
 }

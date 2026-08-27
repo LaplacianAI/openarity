@@ -316,6 +316,7 @@ func TestRunRefusesToServeWithASealedSecretStore(t *testing.T) {
 	apiBind := freeAddr(t)
 	baseServeEnv(t, dsn, apiBind)
 	t.Setenv("OPENARITY_SECRETS_ADDR", baoAddr)
+	t.Setenv("OPENARITY_SECRETS_BACKEND", "openbao")
 	t.Setenv("OPENARITY_SECRETS_APPROLE_ID", "role")
 	t.Setenv("OPENARITY_SECRETS_APPROLE_SECRET", "secret-id")
 
@@ -361,6 +362,7 @@ func TestReadinessFollowsTheSecretStore(t *testing.T) {
 	apiBind := freeAddr(t)
 	baseServeEnv(t, dsn, apiBind)
 	t.Setenv("OPENARITY_SECRETS_ADDR", baoAddr)
+	t.Setenv("OPENARITY_SECRETS_BACKEND", "openbao")
 	t.Setenv("OPENARITY_SECRETS_APPROLE_ID", "role")
 	t.Setenv("OPENARITY_SECRETS_APPROLE_SECRET", "secret-id")
 

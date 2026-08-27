@@ -247,6 +247,14 @@ reinstalled.
 - **Config is env-only.** No config files, no flags for the server, no Viper.
   Kubernetes injects env natively, and the config surface stays small because
   secrets live in Vault rather than here.
+- **Every pluggable subsystem names its backend in env.** `SECRETS_BACKEND` is
+  static or openbao; `OBJECTS_BACKEND` is memory, filesystem or s3. Never
+  inferred from which settings happen to be filled in — that works for two
+  options where one is clearly "not configured", and breaks at three, where
+  "endpoint set" and "path set" can both be true, both false, or disagree. The
+  enum's `UnmarshalText` turns a typo into a boot failure listing the valid
+  values, rather than a silent fall back to the store that holds nothing. The
+  in-memory fallback of each is refused outside development.
 - **A port package, one package per adapter.** `gateway` was the first to do
   it and `secrets` and `objects` now match: the interface and its shared
   helpers live in the parent, each implementation in its own subpackage

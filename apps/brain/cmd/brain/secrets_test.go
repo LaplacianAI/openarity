@@ -23,6 +23,7 @@ func capturingLogger() (*slog.Logger, *bytes.Buffer) {
 // baoAt returns a config pointing at addr with AppRole credentials set.
 func baoAt(addr string) *config.Config {
 	return &config.Config{
+		SecretsBackend:       config.SecretsBackendOpenBao,
 		SecretsAddr:          addr,
 		SecretsAppRoleID:     "role",
 		SecretsAppRoleSecret: "secret-id",
@@ -30,36 +31,15 @@ func baoAt(addr string) *config.Config {
 	}
 }
 
-// Without AppRole credentials there is no OpenBao session to have, so a
-// development brain gets the in-memory store rather than a client that fails
-// on first use.
-func TestNoAppRoleCredentialsGivesTheStaticStore(t *testing.T) {
+// The zero value of SecretsBackend is not a valid backend, and the default
+// from the environment is static — so a Config built in a test with neither
+// gets the in-memory store rather than a client that fails on first use.
+func TestNoBackendNamedGivesTheStaticStore(t *testing.T) {
 	t.Parallel()
 
 	store := newSecretStore(&config.Config{SecretsAddr: "http://localhost:8200"}, discardLogger())
 	if !isStatic(store) {
 		t.Errorf("store is %T, want the static store", store)
-	}
-}
-
-// Config validation rejects half a credential outside development, but in
-// development it is accepted and must not produce a store that cannot log in.
-func TestHalfAnAppRoleCredentialGivesTheStaticStore(t *testing.T) {
-	t.Parallel()
-
-	for name, cfg := range map[string]*config.Config{
-		"id only": {SecretsAddr: "http://localhost:8200", SecretsAppRoleID: "role"},
-		"secret only": {
-			SecretsAddr: "http://localhost:8200", SecretsAppRoleSecret: "secret-id",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			if store := newSecretStore(cfg, discardLogger()); !isStatic(store) {
-				t.Errorf("store is %T, want the static store", store)
-			}
-		})
 	}
 }
 
@@ -79,7 +59,10 @@ func TestTheStaticStoreSaysItHoldsNothing(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := capturingLogger()
-	newSecretStore(&config.Config{SecretsAddr: "http://localhost:8200"}, logger)
+	newSecretStore(&config.Config{
+		SecretsBackend: config.SecretsBackendStatic,
+		SecretsAddr:    "http://localhost:8200",
+	}, logger)
 
 	out := buf.String()
 	if !strings.Contains(out, `"level":"WARN"`) {
@@ -89,13 +72,13 @@ func TestTheStaticStoreSaysItHoldsNothing(t *testing.T) {
 
 // A real brain must get the OpenBao store. The concrete type is unexported,
 // following internal/auth, so the assertion is about what it can do.
-func TestAppRoleCredentialsGiveAnOpenBaoStore(t *testing.T) {
+func TestNamingOpenBaoGivesAnOpenBaoStore(t *testing.T) {
 	t.Parallel()
 
 	store := newSecretStore(baoAt("http://localhost:8200"), discardLogger())
 
 	if isStatic(store) {
-		t.Fatal("credentials were set and the store is still the in-memory one")
+		t.Fatal("SECRETS_BACKEND=openbao still produced the in-memory store")
 	}
 	if _, ok := store.(secrets.Prober); !ok {
 		t.Errorf("store is %T, want one that implements secrets.Prober", store)

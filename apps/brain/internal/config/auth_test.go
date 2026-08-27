@@ -79,8 +79,10 @@ func TestNoDevTokenIsValidInEveryEnvironment(t *testing.T) {
 			// development. Supplying them keeps this test about the DEV_TOKEN
 			// rule rather than about whichever requirement was added most
 			// recently.
+			env["OPENARITY_SECRETS_BACKEND"] = "openbao"
 			env["OPENARITY_SECRETS_APPROLE_ID"] = "role-abc"
 			env["OPENARITY_SECRETS_APPROLE_SECRET"] = "approlesecret"
+			env["OPENARITY_OBJECTS_BACKEND"] = "s3"
 			env["OPENARITY_OBJECTS_ENDPOINT"] = "http://minio:9000"
 		}
 
