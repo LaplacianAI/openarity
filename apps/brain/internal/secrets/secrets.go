@@ -10,16 +10,19 @@ import (
 var (
 	ErrNotFound    = errors.New("secret not found")
 	ErrUnavailable = errors.New("secret store unavailable")
+	ErrExists      = errors.New("secret already exists")
 )
 
 type Kind string
 
 const (
-	KindChannel Kind = "channels"
+	KindChannel     Kind = "channels"
+	KindAttachments Kind = "attachments"
 )
 
 var AllKinds = []Kind{
 	KindChannel,
+	KindAttachments,
 }
 
 type Store interface {
@@ -29,6 +32,10 @@ type Store interface {
 type Writer interface {
 	Put(ctx context.Context, path, key, value string) error
 	Delete(ctx context.Context, path string) error
+}
+
+type Creator interface {
+	Create(ctx context.Context, path, key, value string) error
 }
 
 type Prober interface {
