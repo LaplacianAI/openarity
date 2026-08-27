@@ -8,6 +8,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects/filesystem"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects/inmemory"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects/s3"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 )
 
 func newObjectStore(cfg *config.Config, logger *slog.Logger) (objects.Store, error) {
@@ -31,4 +32,20 @@ func newObjectStore(cfg *config.Config, logger *slog.Logger) (objects.Store, err
 	}
 
 	return inmemory.New(), nil
+}
+
+func newAttachmentStore(
+	cfg *config.Config, secretStore secrets.Store, logger *slog.Logger,
+) (*objects.Encrypted, error) {
+	inner, err := newObjectStore(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	keys, err := secrets.NewDataKeys(secretStore, objects.KeySize)
+	if err != nil {
+		return nil, err
+	}
+
+	return objects.NewEncrypted(inner, keys)
 }

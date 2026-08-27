@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -41,6 +42,22 @@ type hookProvider struct {
 	sawCreds Credentials
 
 	verifiedBody []byte
+
+	// bodies is what FetchAttachment resolves a ref to. The stub implements
+	// Fetcher unconditionally, because the handler asks the provider for
+	// attachments on every delivery and an adapter that produces refs it
+	// cannot resolve is providertest's problem, not the handler's.
+	bodies map[string][]byte
+}
+
+func (p *hookProvider) FetchAttachment(
+	_ context.Context, _ WebhookRequest, ref string, _ Credentials,
+) ([]byte, error) {
+	body, ok := p.bodies[ref]
+	if !ok {
+		return nil, errors.New("no such attachment")
+	}
+	return body, nil
 }
 
 func newHookProvider() *hookProvider {
@@ -49,6 +66,7 @@ func newHookProvider() *hookProvider {
 		routes: []Route{{Method: http.MethodPost}},
 		keys:   []string{KeySigning},
 		result: Result{Messages: []Inbound{validInbound()}},
+		bodies: map[string][]byte{},
 	}
 }
 
@@ -187,6 +205,7 @@ type harness struct {
 	store    *fakeStore
 	secrets  *fakeSecrets
 	sink     *fakeSink
+	objects  *fakeObjects
 	mux      *http.ServeMux
 
 	channelID uuid.UUID
@@ -210,6 +229,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	h.secrets = &fakeSecrets{values: map[string]string{KeySigning: testSecret}}
 	h.sink = &fakeSink{}
+	h.objects = newFakeObjects()
 
 	h.mount(t)
 	return h
@@ -226,7 +246,8 @@ func (h *harness) mount(t *testing.T) {
 	}
 
 	h.mux = http.NewServeMux()
-	New(discardLogger(), h.store, h.secrets, registry, h.sink).Register(h.mux, nil)
+	ingest := NewIngest(h.objects, discardLogger())
+	New(discardLogger(), h.store, h.secrets, registry, h.sink, ingest).Register(h.mux, nil)
 }
 
 func (h *harness) path() string {
@@ -803,7 +824,8 @@ func TestTheGatewayRouterIsPublic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	if r := New(discardLogger(), h.store, h.secrets, registry, h.sink); !r.Public() {
+	ingest := NewIngest(h.objects, discardLogger())
+	if r := New(discardLogger(), h.store, h.secrets, registry, h.sink, ingest); !r.Public() {
 		t.Error("the gateway router is not public, so registering it needs a guard it will never have")
 	}
 }
@@ -831,4 +853,149 @@ func (b *watchedBody) Read(p []byte) (int, error) {
 	n := copy(p, b.data[b.pos:])
 	b.pos += n
 	return n, nil
+}
+
+// The whole path, end to end: a signed delivery naming a file arrives, the
+// handler resolves it against the provider, and the sink is handed bytes that
+// were measured rather than claimed.
+func TestAnAttachmentIsFetchedBeforeItIsDelivered(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.provider.bodies["f-1"] = pngBytes
+
+	in := validInbound()
+	in.Attachments = []Attachment{{
+		Ref:              "f-1",
+		ClaimedFilename:  "label.png",
+		ClaimedMediaType: "application/pdf",
+		ClaimedSize:      1,
+	}}
+	h.provider.result = Result{Messages: []Inbound{in}}
+
+	if rec := h.send(t, `{"id":"m-1"}`, true); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+
+	got := h.sink.delivered()
+	if len(got) != 1 || len(got[0].Files) != 1 {
+		t.Fatalf("delivered %+v", got)
+	}
+
+	f := got[0].Files[0]
+	if f.MediaType != "image/png" {
+		t.Errorf("MediaType = %q; the provider's claim of application/pdf survived", f.MediaType)
+	}
+	if f.SizeBytes != int64(len(pngBytes)) {
+		t.Errorf("SizeBytes = %d, want %d", f.SizeBytes, len(pngBytes))
+	}
+	if _, stored := h.objects.put[f.ObjectKey]; !stored {
+		t.Errorf("the sink was told about %s, which was never written", f.ObjectKey)
+	}
+
+	// The claim still travels alongside, so a log line can say what the
+	// provider said it was sending.
+	if len(got[0].Attachments) != 1 || got[0].Attachments[0].ClaimedMediaType != "application/pdf" {
+		t.Errorf("the claim did not survive: %+v", got[0].Attachments)
+	}
+}
+
+// The object is written under the channel's team, which is the team whose key
+// seals it. Taking it from anywhere else would seal a file with a key its
+// readers do not hold.
+func TestAnAttachmentIsStoredUnderTheChannelsTeam(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.provider.bodies["f-1"] = pngBytes
+
+	in := validInbound()
+	in.Attachments = []Attachment{{Ref: "f-1", ClaimedFilename: "label.png"}}
+	h.provider.result = Result{Messages: []Inbound{in}}
+
+	h.send(t, `{"id":"m-1"}`, true)
+
+	if len(h.objects.teams) != 1 || h.objects.teams[0] != h.teamID {
+		t.Fatalf("Put was called for teams %v, want [%s]", h.objects.teams, h.teamID)
+	}
+	if got := h.sink.delivered(); len(got) == 1 && len(got[0].Files) == 1 {
+		if !objects.InTeam(got[0].Files[0].ObjectKey, h.teamID) {
+			t.Errorf("key %q is not inside team %s", got[0].Files[0].ObjectKey, h.teamID)
+		}
+	}
+}
+
+// A file the provider cannot produce must not cost the message. The provider
+// would replay the same failure on every retry, so a 500 here is an endpoint
+// that eventually gets disabled.
+func TestAMessageArrivesEvenWhenItsFileDoesNot(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+
+	in := validInbound()
+	in.Attachments = []Attachment{{Ref: "gone", ClaimedFilename: "label.png"}}
+	h.provider.result = Result{Messages: []Inbound{in}}
+
+	rec := h.send(t, `{"id":"m-1"}`, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — a missing file is not a retryable failure", rec.Code)
+	}
+
+	got := h.sink.delivered()
+	if len(got) != 1 {
+		t.Fatalf("delivered %d messages, want 1", len(got))
+	}
+	if len(got[0].Files) != 0 {
+		t.Errorf("Files = %+v, want none", got[0].Files)
+	}
+	if got[0].Text != in.Text {
+		t.Errorf("the message did not survive its attachment: %+v", got[0])
+	}
+}
+
+// A sender who is not approved never reaches the sink, so their files must
+// never reach the bucket either. Fetching before resolving would store bytes
+// for a stranger and leave them with no row naming them.
+func TestAnUnapprovedSendersFileIsNeverFetched(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.provider.bodies["f-1"] = pngBytes
+
+	in := validInbound()
+	in.Author.Ref = "nobody"
+	in.Attachments = []Attachment{{Ref: "f-1", ClaimedFilename: "label.png"}}
+	h.provider.result = Result{Messages: []Inbound{in}}
+
+	if rec := h.send(t, `{"id":"m-1"}`, true); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	if len(h.objects.put) != 0 {
+		t.Errorf("stored %d objects for a sender who was never approved", len(h.objects.put))
+	}
+	if got := h.sink.delivered(); len(got) != 0 {
+		t.Errorf("delivered %+v", got)
+	}
+}
+
+// A message the adapter produced badly is dropped in resolve, so its files
+// must not be fetched either.
+func TestAnInvalidMessagesFileIsNeverFetched(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.provider.bodies["f-1"] = pngBytes
+
+	in := validInbound()
+	in.ExternalID = ""
+	in.Attachments = []Attachment{{Ref: "f-1", ClaimedFilename: "label.png"}}
+	h.provider.result = Result{Messages: []Inbound{in}}
+
+	h.send(t, `{"id":"m-1"}`, true)
+
+	if len(h.objects.put) != 0 {
+		t.Errorf("stored %d objects for a message that never validated", len(h.objects.put))
+	}
 }

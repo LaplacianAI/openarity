@@ -301,6 +301,39 @@ for a provider whose bytes arrive inside the delivery, where the ref means
 nothing without the body it came in. That is what `custom` exposed and three
 downloading adapters would have agreed to get wrong together.
 
+**Fetching happens inline, between resolve and the write.**
+
+```text
+Parse -> resolve (drops strangers) -> fetch (network) -> Deliver (write)
+```
+
+Both boundaries are load-bearing. *After* resolve, because resolve is what
+drops an unapproved sender and a message that failed `Validate` — fetching
+before it lets a stranger who was never approved for the channel make us
+download and store bytes under a team's key, objects no row will ever name.
+*Before* the write, because a download must not hold a row lock open.
+
+It is bounded by `fetchBudget`, two seconds for the whole delivery and one for
+a single file. Those numbers come from the ack window rather than from what a
+download needs: Slack allows three seconds. Sized this way, inline fetching
+cannot blow an ack — and a file that does not fit is dropped with a log line,
+which is the signal that the provider needs a queue rather than a bigger
+constant. Raising them past the ack window trades a lost file for a lost
+message and an endpoint the provider eventually disables.
+
+**A failed fetch is a log line; a failed row is an error.** They look
+symmetrical and are not. A file that 404s would 404 on every retry, so the
+message is stored without it and the answer is 200. By the time a row is being
+written the bytes are already in the bucket, so a failure there has to be a 500
+— answering 200 leaves an object nothing names and a message nobody has. The
+replay skip is what makes that retry safe.
+
+**A replay writes nothing, and that is not only about the message.** The fetch
+step has no memory: a redelivery downloads the same file again and stores it
+under a fresh object key. Without the skip, that second key gets a row and the
+first object is orphaned — and deleting the message later cascades the row away
+and leaves the bytes forever.
+
 **A ref is unique within one delivery.** `FetchAttachment` gets a ref and
 nothing else, so two attachments sharing one means the second resolves to the
 first one's bytes and is stored under the second one's filename — an ingest
@@ -362,11 +395,10 @@ writes. Outbound replies, and socket transports. Slack Socket Mode and the
 Discord gateway are long-lived connections and `Provider` describes a request,
 so they need a second interface with a lifecycle.
 
-Attachment *ingest* is also not here yet — the seam is. Nothing calls
-`FetchAttachment`, sniffs what comes back, seals it, or writes an `attachments`
-row. What that wiring needs settling first is whether the handler fetches
-inline, inside the seconds a provider allows before it retries, or acknowledges
-and fetches afterwards — which needs a queue that does not exist.
+The queue. Ingest is inline, which is correct for a provider whose bytes arrive
+in the delivery and is bounded by the ack window for everyone else. A provider
+with remote files and a three-second window will not fit, and the
+"attachment budget exhausted" log line is what says so.
 
 When outbound lands it is a `Replier` interface alongside `Fetcher`, not a
 method on `Provider` — an adapter for a plain incoming webhook has nowhere to

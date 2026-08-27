@@ -14,6 +14,7 @@ type Channel struct {
 type Delivery struct {
 	Inbound
 	UserID uuid.UUID
+	Files  []Stored
 }
 
 type Sink interface {

@@ -1,14 +1,21 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets/static"
 )
 
 func objectsAt(backend config.ObjectsBackend, cfg *config.Config) *config.Config {
@@ -200,5 +207,140 @@ func TestADurableObjectBackendIsSilent(t *testing.T) {
 
 	if out := buf.String(); strings.Contains(out, `"level":"WARN"`) {
 		t.Errorf("a durable object store warned at startup: %s", out)
+	}
+}
+
+// readOnlySecrets is a store that cannot create. It exists because every store
+// that ships can, so nothing else in the suite reaches the refusal.
+type readOnlySecrets struct{}
+
+func (readOnlySecrets) Get(context.Context, string, string) (string, error) {
+	return "", secrets.ErrNotFound
+}
+
+// A team key is generated on first use, and two concurrent first uploads race
+// for it. A store that overwrites instead of refusing lets both writers win,
+// and the loser's attachments are sealed under a key nothing holds. Refusing
+// at boot is the only place that failure is visible.
+func TestAttachmentsRefuseASecretStoreThatCannotCreate(t *testing.T) {
+	t.Parallel()
+
+	_, err := newAttachmentStore(
+		&config.Config{ObjectsBackend: config.ObjectsBackendMemory},
+		readOnlySecrets{}, discardLogger())
+	if err == nil {
+		t.Fatal("newAttachmentStore accepted a secret store that cannot create a key")
+	}
+	if !strings.Contains(err.Error(), "create") {
+		t.Errorf("err = %v, want it to say what the store cannot do", err)
+	}
+}
+
+// The store everything above the wiring is given encrypts. Asserting it
+// returns an *objects.Encrypted would pass against a type that had lost its
+// key source, so this reads the file the filesystem backend wrote.
+func TestWhatIsWiredUpEncryptsBeforeItWrites(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	at, err := newAttachmentStore(&config.Config{
+		ObjectsBackend: config.ObjectsBackendFilesystem,
+		ObjectsPath:    root,
+	}, static.New(), discardLogger())
+	if err != nil {
+		t.Fatalf("newAttachmentStore: %v", err)
+	}
+
+	team := uuid.New()
+	plaintext := []byte("the quick brown fox")
+	key := objects.TeamPrefix(team) + "objects/" + uuid.New().String()
+
+	if err := at.Put(t.Context(), team, key, plaintext); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(root, "teams", "*", "objects", "*"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("Glob found %v, %v", matches, err)
+	}
+	onDisk, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("read %s: %v", matches[0], err)
+	}
+
+	if bytes.Contains(onDisk, plaintext) {
+		t.Fatal("the plaintext is on disk; nothing encrypted it on the way through")
+	}
+	if len(onDisk) != len(plaintext)+12+16 {
+		t.Errorf("%d bytes on disk for a %d byte file, want a 12-byte nonce and "+
+			"a 16-byte tag around it", len(onDisk), len(plaintext))
+	}
+
+	got, err := at.Get(t.Context(), team, key)
+	if err != nil || !bytes.Equal(got, plaintext) {
+		t.Errorf("Get = %q, %v — it did not come back", got, err)
+	}
+}
+
+// The team is what selects the key, so another team's read must fail rather
+// than return bytes.
+func TestAnotherTeamCannotReadWhatWasWired(t *testing.T) {
+	t.Parallel()
+
+	at, err := newAttachmentStore(
+		&config.Config{ObjectsBackend: config.ObjectsBackendMemory},
+		static.New(), discardLogger())
+	if err != nil {
+		t.Fatalf("newAttachmentStore: %v", err)
+	}
+
+	mine, theirs := uuid.New(), uuid.New()
+	key := objects.TeamPrefix(mine) + "objects/" + uuid.New().String()
+	if err := at.Put(t.Context(), mine, key, []byte("private")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	body, err := at.Get(t.Context(), theirs, key)
+	if err == nil {
+		t.Fatalf("another team read %q", body)
+	}
+	if body != nil {
+		t.Errorf("returned %d bytes alongside the refusal", len(body))
+	}
+}
+
+// KeySize is what makes this AES-256 rather than AES-128. aes.NewCipher
+// accepts 16, 24 and 32 bytes, so a smaller key is not an error anywhere — it
+// encrypts, decrypts and round-trips exactly like the right one. The only
+// place the difference is visible is the key itself.
+func TestTheTeamKeyIsTwoHundredAndFiftySixBits(t *testing.T) {
+	t.Parallel()
+
+	secretStore := static.New()
+	at, err := newAttachmentStore(
+		&config.Config{ObjectsBackend: config.ObjectsBackendMemory},
+		secretStore, discardLogger())
+	if err != nil {
+		t.Fatalf("newAttachmentStore: %v", err)
+	}
+
+	team := uuid.New()
+	key := objects.TeamPrefix(team) + "objects/" + uuid.New().String()
+	if err := at.Put(t.Context(), team, key, []byte("anything")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	encoded, err := secretStore.Get(t.Context(),
+		secrets.TeamPath(team, secrets.KindAttachments), "data_key")
+	if err != nil {
+		t.Fatalf("the team key is not where the read path will look for it: %v", err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("the stored key is not base64: %v", err)
+	}
+	if len(raw) != 32 {
+		t.Errorf("the team key is %d bytes, want 32 — %d bytes is still valid AES, "+
+			"just a weaker one, so nothing else in the suite would notice", len(raw), len(raw))
 	}
 }

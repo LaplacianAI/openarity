@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,9 @@ type inboxStore struct {
 	stored   map[string]db.InsertMessageParams
 	ids      map[string]uuid.UUID
 	sessions map[string]db.Session
+
+	attachments   []db.CreateAttachmentParams
+	attachmentErr error
 
 	err        error
 	sessionErr error
@@ -76,6 +80,20 @@ func (f *inboxStore) InsertMessage(_ context.Context, arg db.InsertMessageParams
 	f.stored[key] = arg
 	f.ids[key] = id
 	return id, nil
+}
+
+func (f *inboxStore) CreateAttachment(
+	_ context.Context, arg db.CreateAttachmentParams,
+) (db.Attachment, error) {
+	f.attachments = append(f.attachments, arg)
+	if f.attachmentErr != nil {
+		return db.Attachment{}, f.attachmentErr
+	}
+	return db.Attachment{
+		ID: uuid.New(), MessageID: arg.MessageID, SessionID: arg.SessionID,
+		ObjectKey: arg.ObjectKey, KeyVersion: arg.KeyVersion,
+		MediaType: arg.MediaType, SizeBytes: arg.SizeBytes, Filename: arg.Filename,
+	}, nil
 }
 
 func delivery(externalID, text string) Delivery {
@@ -485,5 +503,155 @@ func TestAGroupSessionRecordsNoParticipant(t *testing.T) {
 				t.Errorf("a %s session named %s as its participant", kind, *got)
 			}
 		})
+	}
+}
+
+func stored(key, filename string) Stored {
+	return Stored{
+		ObjectKey: key,
+		MediaType: "image/png",
+		SizeBytes: 33,
+		Filename:  filename,
+	}
+}
+
+func TestAnAttachmentIsWrittenAgainstItsMessageAndSession(t *testing.T) {
+	t.Parallel()
+
+	f := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	d := delivery("m-1", "here is the label")
+	d.Files = []Stored{stored("teams/x/objects/one", "label.png")}
+
+	if err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{d}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+
+	if len(f.attachments) != 1 {
+		t.Fatalf("wrote %d attachment rows, want 1", len(f.attachments))
+	}
+	got := f.attachments[0]
+
+	// The pair is a foreign key onto messages (id, session_id), so a row that
+	// names the wrong one of either is refused by the database. Asserting both
+	// here is what makes that refusal impossible to reach.
+	wantMessage := f.ids[ch.ID.String()+"/m-1"]
+	if got.MessageID != wantMessage {
+		t.Errorf("MessageID = %s, want the id the insert returned, %s",
+			got.MessageID, wantMessage)
+	}
+	wantSession := f.sessions[ch.ID.String()+"/c-1"].ID
+	if got.SessionID != wantSession {
+		t.Errorf("SessionID = %s, want %s", got.SessionID, wantSession)
+	}
+
+	if got.ObjectKey != "teams/x/objects/one" || got.Filename != "label.png" {
+		t.Errorf("row = %+v", got)
+	}
+	if got.MediaType != "image/png" || got.SizeBytes != 33 {
+		t.Errorf("the measured values did not survive: %+v", got)
+	}
+	if got.KeyVersion != 1 {
+		t.Errorf("KeyVersion = %d, want 1 — a read has to know which key sealed it",
+			got.KeyVersion)
+	}
+}
+
+// The whole reason the replay skip exists. Without it a provider retrying a
+// delivery stores the same photo again under a new object key, and the first
+// one is orphaned in the bucket with no row naming it.
+func TestAReplayWritesNoAttachments(t *testing.T) {
+	t.Parallel()
+
+	f := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	d := delivery("m-1", "here is the label")
+	d.Files = []Stored{stored("teams/x/objects/one", "label.png")}
+
+	inbox := NewInbox(f)
+	if err := inbox.Deliver(t.Context(), ch, []Delivery{d}); err != nil {
+		t.Fatalf("first delivery: %v", err)
+	}
+
+	// The same message again, carrying a second copy of the file as it would
+	// if the fetch step ran twice.
+	replay := delivery("m-1", "here is the label")
+	replay.Files = []Stored{stored("teams/x/objects/two", "label.png")}
+
+	if err := inbox.Deliver(t.Context(), ch, []Delivery{replay}); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if len(f.attachments) != 1 {
+		t.Fatalf("%d attachment rows after a replay, want 1: %+v",
+			len(f.attachments), f.attachments)
+	}
+	if f.attachments[0].ObjectKey != "teams/x/objects/one" {
+		t.Errorf("the replay's object won: %+v", f.attachments[0])
+	}
+}
+
+func TestAMessageWithNoFilesWritesNoAttachments(t *testing.T) {
+	t.Parallel()
+
+	f := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	if err := NewInbox(f).Deliver(t.Context(), ch,
+		[]Delivery{delivery("m-1", "just words")}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(f.attachments) != 0 {
+		t.Errorf("wrote %+v", f.attachments)
+	}
+}
+
+func TestEveryFileOnAMessageBecomesARow(t *testing.T) {
+	t.Parallel()
+
+	f := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	d := delivery("m-1", "three files")
+	d.Files = []Stored{
+		stored("teams/x/objects/one", "a.png"),
+		stored("teams/x/objects/two", "b.png"),
+		stored("teams/x/objects/three", "c.png"),
+	}
+
+	if err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{d}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(f.attachments) != 3 {
+		t.Fatalf("wrote %d rows, want 3", len(f.attachments))
+	}
+	for i, want := range []string{"a.png", "b.png", "c.png"} {
+		if f.attachments[i].Filename != want {
+			t.Errorf("row %d is %q, want %q", i, f.attachments[i].Filename, want)
+		}
+	}
+}
+
+// The object is already in the bucket by the time the row is written, so a
+// failure here has to be a 500 the provider will retry. Answering 200 leaves
+// bytes nothing names and a message nobody has.
+func TestAFailedAttachmentWriteIsReported(t *testing.T) {
+	t.Parallel()
+
+	f := newInboxStore()
+	f.attachmentErr = errors.New("constraint violated")
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	d := delivery("m-1", "here is the label")
+	d.Files = []Stored{stored("teams/x/objects/one", "label.png")}
+
+	err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{d})
+	if err == nil {
+		t.Fatal("Deliver reported success after the attachment write failed")
+	}
+	if !strings.Contains(err.Error(), "teams/x/objects/one") {
+		t.Errorf("err = %v, want it to name the object", err)
 	}
 }

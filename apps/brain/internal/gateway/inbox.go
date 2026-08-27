@@ -20,9 +20,14 @@ type Sessions interface {
 	EnsureSession(ctx context.Context, arg db.EnsureSessionParams) (db.Session, error)
 }
 
+type AttachmentRows interface {
+	CreateAttachment(ctx context.Context, arg db.CreateAttachmentParams) (db.Attachment, error)
+}
+
 type InboxStore interface {
 	Sessions
 	Messages
+	AttachmentRows
 }
 
 type Inbox struct {
@@ -50,21 +55,34 @@ func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error 
 			sentAt = &at
 		}
 
-		// No row means this channel has seen the external id before. The
-		// provider is retrying because an earlier answer did not reach it, so
-		// everything below has already run for this message.
-		if _, err := i.store.InsertMessage(ctx, db.InsertMessageParams{
+		messageID, err := i.store.InsertMessage(ctx, db.InsertMessageParams{
 			ChannelID:  ch.ID,
 			SessionID:  session.ID,
 			UserID:     m.UserID,
 			ExternalID: m.ExternalID,
 			Text:       m.Text,
 			SentAt:     sentAt,
-		}); err != nil {
+		})
+		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
 			return fmt.Errorf("store message %q: %w", m.ExternalID, err)
+		}
+
+		for _, f := range m.Files {
+			if _, err := i.store.CreateAttachment(ctx, db.CreateAttachmentParams{
+				MessageID:  messageID,
+				SessionID:  session.ID,
+				ObjectKey:  f.ObjectKey,
+				KeyVersion: 1,
+				MediaType:  f.MediaType,
+				SizeBytes:  f.SizeBytes,
+				Filename:   f.Filename,
+			}); err != nil {
+				return fmt.Errorf("store attachment %q of %q: %w",
+					f.ObjectKey, m.ExternalID, err)
+			}
 		}
 	}
 	return nil
