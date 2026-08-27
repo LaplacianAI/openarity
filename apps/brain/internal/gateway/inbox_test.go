@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -17,6 +18,7 @@ import (
 // the session that already exists for a ref.
 type inboxStore struct {
 	stored   map[string]db.InsertMessageParams
+	ids      map[string]uuid.UUID
 	sessions map[string]db.Session
 
 	err        error
@@ -29,6 +31,7 @@ type inboxStore struct {
 func newInboxStore() *inboxStore {
 	return &inboxStore{
 		stored:   map[string]db.InsertMessageParams{},
+		ids:      map[string]uuid.UUID{},
 		sessions: map[string]db.Session{},
 	}
 }
@@ -55,18 +58,24 @@ func (f *inboxStore) EnsureSession(_ context.Context, arg db.EnsureSessionParams
 	return session, nil
 }
 
-func (f *inboxStore) InsertMessage(_ context.Context, arg db.InsertMessageParams) (int64, error) {
+func (f *inboxStore) InsertMessage(_ context.Context, arg db.InsertMessageParams) (uuid.UUID, error) {
 	f.calls = append(f.calls, arg)
 	if f.err != nil {
-		return 0, f.err
+		return uuid.Nil, f.err
 	}
 
+	// DO NOTHING returns no row, and pgx reports that as ErrNoRows rather than
+	// as a zero id. A fake that returned uuid.Nil instead would let a caller
+	// that never checks the error look like it works.
 	key := arg.ChannelID.String() + "/" + arg.ExternalID
 	if _, seen := f.stored[key]; seen {
-		return 0, nil // ON CONFLICT DO NOTHING
+		return uuid.Nil, pgx.ErrNoRows
 	}
+
+	id := uuid.New()
 	f.stored[key] = arg
-	return 1, nil
+	f.ids[key] = id
+	return id, nil
 }
 
 func delivery(externalID, text string) Delivery {

@@ -2,16 +2,18 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 type Messages interface {
-	InsertMessage(ctx context.Context, arg db.InsertMessageParams) (int64, error)
+	InsertMessage(ctx context.Context, arg db.InsertMessageParams) (uuid.UUID, error)
 }
 
 type Sessions interface {
@@ -48,6 +50,9 @@ func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error 
 			sentAt = &at
 		}
 
+		// No row means this channel has seen the external id before. The
+		// provider is retrying because an earlier answer did not reach it, so
+		// everything below has already run for this message.
 		if _, err := i.store.InsertMessage(ctx, db.InsertMessageParams{
 			ChannelID:  ch.ID,
 			SessionID:  session.ID,
@@ -56,6 +61,9 @@ func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error 
 			Text:       m.Text,
 			SentAt:     sentAt,
 		}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
 			return fmt.Errorf("store message %q: %w", m.ExternalID, err)
 		}
 	}
