@@ -19,8 +19,11 @@ COMPOSE := docker compose -f docker-compose.yml
 #   bucket. PROFILE opts the brain and its migrate step in — without it the
 #   stack is dependencies only.
 #
-#   OBJECTS is left out of the everyday targets on purpose. Attachments are not
-#   built yet, and a store nothing writes to is a container to remember to stop.
+#   OBJECTS is left out of the everyday local targets on purpose. Attachments
+#   are not built yet, and a store nothing writes to is a container to remember
+#   to stop. staging includes it: OBJECTS_BACKEND=memory is refused outside
+#   development, so a staging brain needs a real store to point at or it does
+#   not start.
 #
 #   A target that omits BAO defines `openbao` in dev mode, so running one
 #   while the real OpenBao is up asks compose to replace it. up, dev and image
@@ -86,9 +89,9 @@ image:
 #
 # It refuses to start without OPENARITY_SECRETS_APPROLE_ID and _SECRET, which
 # is the point. See OPENBAO.md; `make bao-approle` prints them.
-## staging: published image, authentik, and the real OpenBao — needs an AppRole
+## staging: published image, authentik, real OpenBao and MinIO — needs .env
 staging:
-	$(COMPOSE) $(OIDC) $(IMAGE) $(BAO) $(PROFILE) up -d
+	$(COMPOSE) $(OIDC) $(IMAGE) $(BAO) $(OBJECTS) $(PROFILE) up -d
 
 ## restart: recreate every running container, keeping volumes
 restart:
@@ -100,12 +103,12 @@ pull:
 
 ## ps: what is running, and on which ports
 ps:
-	@$(COMPOSE) $(OIDC) $(IMAGE) $(PROFILE) ps
+	@$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) ps
 
 ## logs: follow the brain — `make logs service=authentik-server` for another
 logs: service ?= brain
 logs:
-	$(COMPOSE) $(OIDC) $(IMAGE) $(PROFILE) logs -f $(service)
+	$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) logs -f $(service)
 
 ## down: stop everything. Volumes survive, so data does too
 down:
