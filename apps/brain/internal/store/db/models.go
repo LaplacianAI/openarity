@@ -10,6 +10,17 @@ import (
 	"github.com/google/uuid"
 )
 
+type Attachment struct {
+	ID         uuid.UUID
+	MessageID  uuid.UUID
+	ObjectKey  string
+	KeyVersion int32
+	MediaType  string
+	SizeBytes  int64
+	Filename   string
+	CreatedAt  time.Time
+}
+
 type Channel struct {
 	ID        uuid.UUID
 	TeamID    uuid.UUID
