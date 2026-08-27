@@ -127,10 +127,14 @@ jobs:
             curl -sf http://localhost:9000/minio/health/live > /dev/null && break
             sleep 1
           done
+          # MC_HOST_<alias> rather than `mc alias set`, because the image's
+          # entrypoint is mc itself: anything after the image name is an mc
+          # subcommand, so `sh -c ...` reached it as `mc sh` and it said so.
+          # The alias in the environment needs no shell and no second command.
           docker run --rm --network host \
+            -e MC_HOST_ci=http://openarity:openarity-ci-secret@localhost:9000 \
             minio/mc:RELEASE.2025-08-13T08-35-41Z \
-            sh -c "mc alias set ci http://localhost:9000 openarity openarity-ci-secret \
-                   && mc mb --ignore-existing ci/openarity"
+            mb --ignore-existing ci/openarity
 
       - uses: actions/setup-go@v7
         with:

@@ -58,15 +58,12 @@ services:
       minio:
         condition: service_healthy
     environment:
-      OBJECTS_BUCKET: ${OBJECTS_BUCKET:-openarity}
-      OBJECTS_ACCESS_KEY: ${OBJECTS_ACCESS_KEY:-openarity}
-      OBJECTS_SECRET_KEY: ${OBJECTS_SECRET_KEY:-openarity-dev-secret}
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 $$OBJECTS_ACCESS_KEY $$OBJECTS_SECRET_KEY &&
-      mc mb --ignore-existing local/$$OBJECTS_BUCKET &&
-      echo 'bucket ready: '$$OBJECTS_BUCKET
-      "
+      # MC_HOST_<alias> is how mc takes a target from the environment. The
+      # image's entrypoint is mc itself, so `command:` here is a list of mc
+      # arguments — reaching for a shell to run `mc alias set` first is what
+      # made this fail in CI, where the entrypoint was not overridden.
+      MC_HOST_local: http://${OBJECTS_ACCESS_KEY:-openarity}:${OBJECTS_SECRET_KEY:-openarity-dev-secret}@minio:9000
+    command: mb --ignore-existing local/${OBJECTS_BUCKET:-openarity}
     restart: "no"
 
 volumes:
