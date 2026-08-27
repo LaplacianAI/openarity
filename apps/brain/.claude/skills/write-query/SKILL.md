@@ -24,14 +24,63 @@ SELECT * FROM teams ORDER BY created_at DESC;
 DELETE FROM teams WHERE id = $1;
 ```
 
-| Annotation | Returns             | Missing row              |
-| ---------- | ------------------- | ------------------------ |
-| `:one`     | `(T, error)`        | `pgx.ErrNoRows`          |
-| `:many`    | `([]T, error)`      | empty slice, `nil` error |
-| `:exec`    | `error`             | `nil` — no error         |
+| Annotation  | Returns             | Missing row              |
+| ----------- | ------------------- | ------------------------ |
+| `:one`      | `(T, error)`        | `pgx.ErrNoRows`          |
+| `:many`     | `([]T, error)`      | empty slice, `nil` error |
+| `:exec`     | `error`             | `nil` — no error         |
+| `:execrows` | `(int64, error)`    | `0` — no error           |
 
-That last row surprises people: `DELETE` matching nothing is not a failure in
+The `:exec` row surprises people: `DELETE` matching nothing is not a failure in
 SQL. A caller that needs "did it exist" has to read first.
+
+### An upsert that has to return the row it did not write
+
+`:execrows` answers "did anything happen"; it cannot answer "which row". The
+moment a caller needs the id — a child row to hang off it, an event to emit —
+`ON CONFLICT DO NOTHING` looks like a problem, because it returns no row at
+all and `:one` becomes `pgx.ErrNoRows`.
+
+The usual fix is a `DO UPDATE` that changes nothing so the row is always
+returned, and it has a cost that does not show up in a test:
+
+```sql
+ON CONFLICT (channel_id, external_id)
+DO UPDATE SET external_id = EXCLUDED.external_id   -- a no-op, and not free
+RETURNING id;
+```
+
+Postgres is MVCC, so an `UPDATE` writes a **new row version** whether or not
+any value changed. Measured on 18.6, 200 conflicting inserts of a single row:
+
+```text
+DO UPDATE   heap 16 kB      (200 dead tuples for 200 no-op writes)
+DO NOTHING  heap 8192 bytes (nothing written at all)
+```
+
+`(xmax = 0) AS inserted` in the `RETURNING` distinguishes a real insert from
+the no-op update, so the information is recoverable — but you have paid for a
+write to get it.
+
+Ask instead **whether the caller needs the id on the conflicting path at all.**
+Usually the conflict *is* the answer: a webhook replay has nothing new to
+attach, an idempotent job has already run. Then `DO NOTHING ... RETURNING id`
+is exactly right, and `ErrNoRows` is not an error to handle but the second
+answer to the question:
+
+```go
+	messageID, err := q.InsertMessage(ctx, arg)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue        // already delivered; nothing below applies
+		}
+		return fmt.Errorf(...)
+	}
+```
+
+Reach for `DO UPDATE` only when the conflicting path genuinely has work to do.
+Say which it is in the query comment, because the next reader will see
+`DO NOTHING` with `:one` and assume it is a bug.
 
 Prefer `RETURNING *` on an insert. It costs nothing and hands back the
 defaulted columns — `id`, `created_at` — so the caller never re-reads. With

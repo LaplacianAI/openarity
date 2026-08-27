@@ -161,13 +161,34 @@ Two traps:
   that starts and silently loses every attachment is worse than one that does
   not start.
 
-## Step 5 — wire it in `cmd/brain`
+## Step 5 — wire it in `cmd/brain`, and check that `serve` calls it
 
 `cmd/brain/objects.go` and `cmd/brain/secrets.go` each hold one constructor
 switching on the enum. A backend that loses data warns at `WARN` and says so
 in words an operator will act on — `lost on restart`, not `in-memory store`.
 A durable backend says nothing: a warning printed on every start is a warning
 nobody reads by the third deploy.
+
+**Then follow the constructor upward until you reach `serve`.** `newObjectStore`
+was written with its adapters, its enum, its validation and its wiring tests
+across four pull requests, and `serve.go` never called it. Everything was
+green the whole time: `unused` assumes an exported identifier has a caller in
+another package, and a `main`-package constructor exercised only by its own
+tests looks exactly like one in use.
+
+```sh
+grep -rn "newObjectStore" cmd/brain/ | grep -v _test.go
+```
+
+One line — the definition — means the subsystem does not exist at runtime. The
+wiring tests in step 6 all pass in that state, because they call the
+constructor themselves.
+
+This is the same failure the `add-middleware` skill's step 4 exists for, and it
+has now happened in two packages. The general form: **a test that calls the
+thing under test cannot tell you whether production does.** For anything that
+must run at boot, the assertion belongs on the boot path — build the real
+`serve` dependencies and check the subsystem is among them.
 
 ## Step 6 — the tests that matter
 
@@ -191,6 +212,8 @@ failure:
    `store`.
 3. **A misconfigured backend fails at startup**, not at first attachment.
 4. **The lossy backend warns; the durable ones are silent.**
+5. **Something on the boot path constructs it.** The four above pass against a
+   backend nothing uses. This is the one that fails when step 5 was skipped.
 
 And in `internal/config`: every value parses, an unknown value is refused with
 the bad value *and* the valid list in the message, and the backend name
