@@ -338,6 +338,22 @@ reinstalled.
   An SVG carrying a script sniffs as `text/plain`, and a PNG with markup
   appended still sniffs as `image/png` — both inert only while served as what
   they sniffed to.
+- **An attachment's team comes through its session, never through its
+  channel.** `sessions.team_id` is the authoritative copy and always present;
+  `sessions.channel_id` is nullable, because the dashboard and the API start
+  sessions with no channel behind them. A composite foreign key keeps the two
+  team ids equal whenever there is a channel, so joining through sessions is
+  never wrong and is sometimes the only join that answers. `GetAttachmentWithTeam`
+  returns the team in the same round trip as the row, so authorisation never
+  needs a second one.
+- **`attachments.key_version` exists before rotation does.** A read has to know
+  which key sealed an object, and adding the column now costs nothing while
+  adding it later means a migration over every attachment ever stored. Every
+  row is version 1 today.
+- **Deleting an attachment row does not delete its object.** A Postgres cascade
+  does not reach a bucket. Until the reaper exists that is a known leak rather
+  than an oversight, and `CountAttachmentsByObjectKey` is what will make the
+  reaper safe — two rows can name one object once identical files share one.
 - **`MaxAttachment` is a constant, and not only for politeness.** `gcm.Seal`
   panics rather than erroring above `(2^32-2)*16` bytes, and an attachment is
   held whole in memory twice while it is sealed. A test asserts the constant

@@ -151,6 +151,27 @@ What the query tests here are built to catch:
 Then break the query — remove the `ORDER BY`, swap `q` for `s` — and confirm
 the test fails. If it still passes, it is measuring nothing.
 
+### Mutate the SQL without changing the generated signature
+
+sqlc derives the Go parameters from the SQL, so deleting a `WHERE` clause
+deletes an argument and every call site stops compiling. That is a build
+failure, not a caught mutation — the test never ran, and anything grepping for
+`FAIL` will read it as success.
+
+Keep the parameter and destroy the filter instead:
+
+```sql
+WHERE message_id = $1                    -- the query
+WHERE (message_id = $1) IS NOT NULL      -- always true, still one argument
+```
+
+The same trick covers a filter you want neutralised anywhere: compare it and
+throw the comparison away. For an `ORDER BY` or a `LIMIT` there is no
+signature to preserve, so delete those outright.
+
+Regenerate between the mutation and the test — `make generate` — or the
+committed Go still holds the original query and the mutation is invisible.
+
 ## Step 7 — verify
 
 ```sh
