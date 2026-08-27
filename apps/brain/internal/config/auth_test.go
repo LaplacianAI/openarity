@@ -75,11 +75,13 @@ func TestNoDevTokenIsValidInEveryEnvironment(t *testing.T) {
 	} {
 		env := map[string]string{"OPENARITY_ENVIRONMENT": string(envName)}
 		if envName != EnvironmentDevelopment {
-			// The secret store is mandatory outside development. Supplying it
-			// keeps this test about the DEV_TOKEN rule rather than about
-			// whichever requirement was added most recently.
+			// The secret store and the object store are both mandatory outside
+			// development. Supplying them keeps this test about the DEV_TOKEN
+			// rule rather than about whichever requirement was added most
+			// recently.
 			env["OPENARITY_SECRETS_APPROLE_ID"] = "role-abc"
 			env["OPENARITY_SECRETS_APPROLE_SECRET"] = "approlesecret"
+			env["OPENARITY_OBJECTS_ENDPOINT"] = "http://minio:9000"
 		}
 
 		if _, err := load(env); err != nil {

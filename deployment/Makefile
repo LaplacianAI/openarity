@@ -15,8 +15,12 @@ COMPOSE := docker compose -f docker-compose.yml
 #   IMAGE runs the published image instead of building one, which is the
 #   difference between testing what CI produced and testing your own tree.
 #   OIDC adds authentik. BAO swaps the in-memory OpenBao for the one with file
-#   storage and a seal that opens itself. PROFILE opts the brain and its
-#   migrate step in — without it the stack is dependencies only.
+#   storage and a seal that opens itself. OBJECTS adds MinIO and creates the
+#   bucket. PROFILE opts the brain and its migrate step in — without it the
+#   stack is dependencies only.
+#
+#   OBJECTS is left out of the everyday targets on purpose. Attachments are not
+#   built yet, and a store nothing writes to is a container to remember to stop.
 #
 #   A target that omits BAO defines `openbao` in dev mode, so running one
 #   while the real OpenBao is up asks compose to replace it. up, dev and image
@@ -25,6 +29,7 @@ COMPOSE := docker compose -f docker-compose.yml
 IMAGE   := -f docker-compose.image.yml
 OIDC    := -f docker-compose.authentik.yml
 BAO     := -f docker-compose.openbao.yml
+OBJECTS := -f docker-compose.objects.yml
 PROFILE := --profile brain
 
 # The bootstrap has to reach a running OpenBao before its AppRole exists, and
@@ -51,6 +56,18 @@ help:
 ## up: dependencies only — Postgres, Redis, FalkorDB, OpenBao in dev mode
 up:
 	$(COMPOSE) up -d
+
+## objects: add MinIO and create the bucket — for the object store tests
+#
+# The live tests in internal/objects/s3 skip unless they are pointed at a
+# store, which this prints the settings for.
+objects:
+	$(COMPOSE) $(OBJECTS) up -d minio minio-bucket
+	@printf '\n%s\n%s\n%s\n%s\n\n' \
+	  "export BRAIN_TEST_S3_ENDPOINT=http://127.0.0.1:19000" \
+	  "export BRAIN_TEST_S3_BUCKET=$${OBJECTS_BUCKET:-openarity}" \
+	  "export BRAIN_TEST_S3_ACCESS_KEY=$${OBJECTS_ACCESS_KEY:-openarity}" \
+	  "export BRAIN_TEST_S3_SECRET_KEY=$${OBJECTS_SECRET_KEY:-openarity-dev-secret}"
 
 ## dev: dependencies and the brain, built from your working tree
 dev:
@@ -92,14 +109,14 @@ logs:
 
 ## down: stop everything. Volumes survive, so data does too
 down:
-	$(COMPOSE) $(OIDC) $(IMAGE) $(PROFILE) down --remove-orphans
+	$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) down --remove-orphans
 
 # Named destroy rather than `clean`: it deletes the databases, authentik's
 # configuration and every secret in OpenBao. There is no undo and nothing
 # warns you, so the target says what it does.
 ## destroy: down, and delete every volume — databases, authentik, OpenBao
 destroy:
-	$(COMPOSE) $(OIDC) $(IMAGE) $(PROFILE) down --remove-orphans --volumes
+	$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) down --remove-orphans --volumes
 
 # ---------------------------------------------------------------------------
 # A real OpenBao. See OPENBAO.md — these three run once, in this order, and

@@ -91,6 +91,7 @@ apps/brain/
     openbao/           the AppRole client — the only thing that reaches OpenBao
     static/            the in-process fallback, for a brain with no OpenBao
   internal/objects/    the port: Store, Writer, object keys and team prefixes
+    s3/                the S3 API — MinIO, Ceph, R2, GCS, AWS
     filesystem/        a volume, for a single-host deployment with no S3
     inmemory/          the in-process fallback; attachments die with the process
   internal/store/      Postgres: pool, migrations, queries

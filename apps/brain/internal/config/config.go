@@ -37,12 +37,20 @@ type Config struct {
 	OIDCAudience string   `env:"OIDC_AUDIENCE" envDefault:"openarity"`
 	DevToken     string   `env:"DEV_TOKEN" envDefault:""`
 	SuperAdmins  []string `env:"SUPER_ADMINS" envDefault:""`
+
+	/* Object Storage Configuration */
+	ObjectsEndpoint  string `env:"OBJECTS_ENDPOINT" envDefault:""`
+	ObjectsRegion    string `env:"OBJECTS_REGION" envDefault:"us-east-1"`
+	ObjectsBucket    string `env:"OBJECTS_BUCKET" envDefault:"openarity"`
+	ObjectsAccessKey string `env:"OBJECTS_ACCESS_KEY" envDefault:""`
+	ObjectsSecretKey string `env:"OBJECTS_SECRET_KEY" envDefault:""`
 }
 
 func (c *Config) String() string {
 	return fmt.Sprintf(
 		"Config{Environment:%s LogLevel:%s APIBind:%s WebhookBind:%s "+
-			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s SecretsAddr:%s OmniRouteURL:%s}",
+			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s SecretsAddr:%s "+
+			"ObjectsEndpoint:%s ObjectsBucket:%s OmniRouteURL:%s}",
 		c.Environment,
 		c.LogLevel,
 		c.APIBind,
@@ -51,6 +59,8 @@ func (c *Config) String() string {
 		redactURL(c.FalkorDBURL),
 		redactURL(c.RedisURL),
 		redactURL(c.SecretsAddr),
+		redactURL(c.ObjectsEndpoint),
+		c.ObjectsBucket,
 		redactURL(c.OmniRouteURL),
 	)
 }

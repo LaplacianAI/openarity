@@ -9,10 +9,15 @@ import (
 // configured and no dev token, since a dev token outside development is
 // refused on its own.
 func prodEnv(environment Environment, extra map[string]string) map[string]string {
+	// The object store endpoint is part of a valid non-development config now,
+	// the same way OIDC is. A test that wants it absent deletes it — see
+	// TestAnEndpointIsRequiredOutsideDevelopment — rather than every other
+	// test having to remember to supply it.
 	return mergeEnv(map[string]string{
-		"OPENARITY_ENVIRONMENT":  string(environment),
-		"OPENARITY_OIDC_ENABLED": "true",
-		"OPENARITY_OIDC_ISSUER":  "https://auth.example.com/application/o/openarity/",
+		"OPENARITY_ENVIRONMENT":      string(environment),
+		"OPENARITY_OIDC_ENABLED":     "true",
+		"OPENARITY_OIDC_ISSUER":      "https://auth.example.com/application/o/openarity/",
+		"OPENARITY_OBJECTS_ENDPOINT": "http://minio:9000",
 	}, extra)
 }
 

@@ -9,7 +9,6 @@ import (
 	"strings"
 )
 
-// schemes
 var (
 	httpSchemes     = []string{"http", "https"}
 	redisSchemes    = []string{"redis", "rediss"}
@@ -122,6 +121,22 @@ func (c *Config) Validate() error {
 			"SUPER_ADMINS must not contain \"dev\" when OIDC_ENABLED is true: "+
 				"it is the development token's subject, and an identity-provider "+
 				"account of the same name would match it"))
+	}
+
+	if c.Environment != EnvironmentDevelopment && c.ObjectsEndpoint == "" {
+		errs = append(errs, fmt.Errorf(
+			"OBJECTS_ENDPOINT is required outside development, got ENVIRONMENT=%s: "+
+				"message attachments have nowhere to go without it", c.Environment))
+	}
+
+	if (c.ObjectsAccessKey == "") != (c.ObjectsSecretKey == "") {
+		missing := "OBJECTS_ACCESS_KEY"
+		if c.ObjectsAccessKey != "" {
+			missing = "OBJECTS_SECRET_KEY"
+		}
+		errs = append(errs, fmt.Errorf(
+			"%s is required when the other half of the object store credential is set",
+			missing))
 	}
 
 	if len(errs) > 0 {
