@@ -192,7 +192,7 @@ cp "$bak" "$file"
 mutations stacking on one another and produced a confident, wrong result
 before anyone noticed the file had never been put back.
 
-### Two patterns that survive mutation and look tested
+### Three patterns that survive mutation and look tested
 
 Both escaped a first pass on the sessions work, and both are invisible in a
 coverage report because the lines *do* execute — just never with the value
@@ -209,9 +209,35 @@ cursor; breaking the session cursor changed no result. The lines in the
 untested one are still executed by its sibling's code path, so nothing reports
 a gap.
 
-The rule both give you: coverage says which lines ran, never which values
-reached them. For any nullable field and any pair of parallel types, write the
-second test.
+**A list tested only inward.** The attachment allow list was first tested by
+asserting that `Allowed("application/x-msdownload")` is false. `DetectContentType`
+never returns that string, so the assertion held whatever the list contained —
+it would have passed with every executable permitted. Measured, a Windows
+executable sniffs as `application/octet-stream`, and the original test never
+mentions it.
+
+Test a list **outward** as well: for every entry, produce the input that
+reaches it.
+
+```go
+for mediaType := range allowed {
+	body, ok := samples[mediaType]
+	if !ok {
+		t.Fatalf("%q is permitted but nothing here produces it", mediaType)
+	}
+	if got := Sniff(body); !strings.HasPrefix(got, mediaType) { ... }
+}
+```
+
+An unreachable entry now fails by name. This applies to anything matched
+against another component's output — media types, error codes, status strings,
+enum values from a driver. Reachability is the property the list actually
+needs, and it is the one nobody checks, because a dead entry looks exactly
+like a working one.
+
+The rule all three give you: coverage says which lines ran, never which values
+reached them. For any nullable field, any pair of parallel types, and any list
+matched against something else's output, write the second test.
 
 ## Step 8 — coverage
 

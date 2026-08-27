@@ -93,6 +93,7 @@ apps/brain/
     static/            the in-process fallback, for a brain with no OpenBao
   internal/objects/    the port: Store, Writer, object keys and team prefixes
     encrypt.go         AES-256-GCM over any backend — a layer, not a backend
+    sniff.go           what a file is, and whether it may be stored
     s3/                the S3 API — MinIO, Ceph, R2, GCS, AWS
     filesystem/        a volume, for a single-host deployment with no S3
     inmemory/          the in-process fallback; attachments die with the process
@@ -328,6 +329,20 @@ reinstalled.
   check and the write as one operation: `cas=0` in OpenBao, one lock in the
   static store. The loser reads the winner's key rather than retrying, because
   retrying returns `ErrExists` forever.
+- **An attachment's type comes from its bytes, and the list says what is
+  permitted rather than what is not.** A provider's declared content type is
+  attacker-influenced; a deny list is a list of the attacks already known.
+  Both halves are needed and only one lives here: sniffing at write time is a
+  claim the read path has to keep, by serving the recorded type with
+  `X-Content-Type-Options: nosniff` and never a type derived from a filename.
+  An SVG carrying a script sniffs as `text/plain`, and a PNG with markup
+  appended still sniffs as `image/png` — both inert only while served as what
+  they sniffed to.
+- **`MaxAttachment` is a constant, and not only for politeness.** `gcm.Seal`
+  panics rather than erroring above `(2^32-2)*16` bytes, and an attachment is
+  held whole in memory twice while it is sealed. A test asserts the constant
+  stays under both ceilings, so raising it carelessly fails instead of
+  crashing. Promoting it to configuration would need a validated ceiling.
 - **The policy grants `update` on the attachment key path, and that is not
   redundant next to `create`.** Without it the loser of that race is refused by
   the policy (403) rather than by check-and-set (400), and cannot tell "somebody
