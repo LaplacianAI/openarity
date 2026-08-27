@@ -16,7 +16,9 @@ const secretStoreTimeout = 5 * time.Second
 
 func newSecretStore(cfg *config.Config, logger *slog.Logger) secrets.Store {
 	switch cfg.SecretsBackend {
-	case config.SecretsBackendOpenBao:
+	// One adapter for both: Vault is what OpenBao was forked from, so the API
+	// and the KV v2 semantics are unchanged.
+	case config.SecretsBackendOpenBao, config.SecretsBackendVault:
 		return openbao.New(
 			cfg.SecretsAddr,
 			cfg.SecretsAppRoleID,

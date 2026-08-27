@@ -31,12 +31,14 @@ func TestBackendDefaults(t *testing.T) {
 func TestEveryBackendValueParses(t *testing.T) {
 	t.Parallel()
 
-	for _, backend := range []SecretsBackend{SecretsBackendStatic, SecretsBackendOpenBao} {
+	for _, backend := range []SecretsBackend{
+		SecretsBackendStatic, SecretsBackendOpenBao, SecretsBackendVault,
+	} {
 		t.Run("secrets/"+string(backend), func(t *testing.T) {
 			t.Parallel()
 
 			environ := map[string]string{"OPENARITY_SECRETS_BACKEND": string(backend)}
-			if backend == SecretsBackendOpenBao {
+			if backend != SecretsBackendStatic {
 				environ["OPENARITY_SECRETS_APPROLE_ID"] = "role-abc"
 				environ["OPENARITY_SECRETS_APPROLE_SECRET"] = "approlesecret"
 			}
@@ -81,7 +83,7 @@ func TestAnUnknownBackendIsRefusedByName(t *testing.T) {
 
 	for name, tc := range map[string]struct{ key, value, wants string }{
 		"secrets, wrong case": {"OPENARITY_SECRETS_BACKEND", "OpenBao", "openbao"},
-		"secrets, invented":   {"OPENARITY_SECRETS_BACKEND", "consul", "openbao"},
+		"secrets, invented":   {"OPENARITY_SECRETS_BACKEND", "consul", "vault"},
 		"objects, wrong case": {"OPENARITY_OBJECTS_BACKEND", "S3", "s3"},
 		"objects, invented":   {"OPENARITY_OBJECTS_BACKEND", "gcs", "filesystem"},
 	} {

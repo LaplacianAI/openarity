@@ -28,15 +28,24 @@ type SecretsBackend string
 const (
 	SecretsBackendStatic  SecretsBackend = "static"
 	SecretsBackendOpenBao SecretsBackend = "openbao"
+
+	// An alias today: OpenBao was forked from Vault, so the API and the KV v2
+	// semantics are identical and one adapter serves both. A name of its own
+	// because they are separately developed now — Vault moved to the BUSL, and
+	// Vault Enterprise has namespaces that OpenBao has no equivalent of. When
+	// something diverges, the adapter behind this name changes and nobody's
+	// configuration does.
+	SecretsBackendVault SecretsBackend = "vault"
 )
 
 func (b *SecretsBackend) UnmarshalText(text []byte) error {
 	switch v := SecretsBackend(text); v {
-	case SecretsBackendStatic, SecretsBackendOpenBao:
+	case SecretsBackendStatic, SecretsBackendOpenBao, SecretsBackendVault:
 		*b = v
 		return nil
 	default:
-		return fmt.Errorf("invalid secrets backend: %s (want static or openbao)", v)
+		return fmt.Errorf(
+			"invalid secrets backend: %s (want static, openbao or vault)", v)
 	}
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -175,5 +176,26 @@ func TestStartupErrorNamesTheSecretStore(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "secret store") {
 		t.Errorf("err = %q, want it to name the secret store", err)
+	}
+}
+
+// Vault and OpenBao name the same adapter today, because OpenBao was forked
+// from Vault and the KV v2 semantics are unchanged. Asserted rather than
+// assumed: the switch could easily gain a case that falls through to static,
+// and a deployment naming vault would then hold nothing and say nothing.
+func TestNamingVaultGivesTheSameStoreAsOpenBao(t *testing.T) {
+	t.Parallel()
+
+	cfg := baoAt("http://localhost:8200")
+	cfg.SecretsBackend = config.SecretsBackendVault
+
+	store := newSecretStore(cfg, discardLogger())
+	if isStatic(store) {
+		t.Fatal("SECRETS_BACKEND=vault produced the in-memory store")
+	}
+
+	openBao := newSecretStore(baoAt("http://localhost:8200"), discardLogger())
+	if got, want := fmt.Sprintf("%T", store), fmt.Sprintf("%T", openBao); got != want {
+		t.Errorf("vault produced %s, openbao produced %s", got, want)
 	}
 }

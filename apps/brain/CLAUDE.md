@@ -248,7 +248,7 @@ reinstalled.
   Kubernetes injects env natively, and the config surface stays small because
   secrets live in Vault rather than here.
 - **Every pluggable subsystem names its backend in env.** `SECRETS_BACKEND` is
-  static or openbao; `OBJECTS_BACKEND` is memory, filesystem or s3. Never
+  static, openbao or vault; `OBJECTS_BACKEND` is memory, filesystem or s3. Never
   inferred from which settings happen to be filled in — that works for two
   options where one is clearly "not configured", and breaks at three, where
   "endpoint set" and "path set" can both be true, both false, or disagree. The
