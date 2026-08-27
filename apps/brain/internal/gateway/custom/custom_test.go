@@ -49,6 +49,11 @@ func TestCustomPassesTheConformanceSuite(t *testing.T) {
 		Request:           request(t, message),
 		WantExternalID:    "order-4821-note",
 		EnforcesFreshness: true,
+
+		// The reference adapter has no attachments yet. Declared rather than
+		// left blank, so the day it grows them this line is what has to
+		// change — an omission would simply stop checking.
+		CarriesNoAttachments: true,
 	})
 }
 
