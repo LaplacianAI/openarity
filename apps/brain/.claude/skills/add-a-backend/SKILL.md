@@ -8,10 +8,12 @@ description: Add a new implementation behind one of the brain's storage ports �
 Two ports, each with a package per implementation:
 
 ```text
-internal/secrets/secrets.go            Store, Writer, Prober, Path, TeamPath
+internal/secrets/secrets.go            Store, Writer, Creator, Prober, Path, TeamPath
+  datakeys.go                          DataKeys — a team's key, created once
   openbao/openbao.go                   package openbao,    New()
   static/static.go                     package static,     New()
 internal/objects/objects.go            Store, Writer, ErrNotFound, TeamPrefix, InTeam
+  encrypt.go                           Encrypted — a layer, not a backend
   s3/s3.go                             package s3,         New(Config)
   filesystem/filesystem.go             package filesystem, New(root)
   inmemory/inmemory.go                 package inmemory,   New()
@@ -28,6 +30,33 @@ adapter except `cmd/brain`.
 and exactly one exists. So it is an enum plus a switch, not a registry. Do not
 "make it consistent" — a registry here would let a typo select nothing and the
 process start anyway, which is the failure this design exists to prevent.
+
+## Step 0 — is it a backend at all?
+
+A subdirectory of a port means **one package per backend**. The test is whether
+somebody selects it by name:
+
+```sh
+OPENARITY_OBJECTS_BACKEND=s3          # a backend
+OPENARITY_OBJECTS_BACKEND=encrypted   # not a thing, and never will be
+```
+
+Encryption wraps whichever backend was selected, so it is a file in the port
+package — `internal/objects/encrypt.go` — and not a fourth directory beside
+`s3`. Filing it as an adapter would have said it was a fourth choice.
+
+Two consequences of getting this right, both mechanical:
+
+- A layer inside the port can take the port's own interfaces and assert for
+  the ones it needs. `NewEncrypted(inner Store, keys KeySource)` needs no
+  import and no re-export. A wrapper outside the package it wraps grows a
+  shadow copy of that package's interfaces within a week.
+- A layer may declare an interface for what it needs, but must not import a
+  subsystem to name a type. `objects` declares a one-method `KeySource`; the
+  implementation lives in `secrets`, because a data key is a secret-store
+  concern and the port should not depend on OpenBao to compile.
+
+If it *is* a backend, carry on.
 
 ## Step 1 — decide whether you are adding an adapter or changing the port
 
@@ -83,6 +112,15 @@ a typo:
 ```go
 return fmt.Errorf("invalid objects backend %q: want memory, filesystem or s3", s)
 ```
+
+An adapter may also implement an **optional** interface, which is how a
+capability that not every backend can honour gets expressed. `secrets.Prober`
+is one; `secrets.Creator` — write only if absent — is the other, and it is
+optional rather than part of `Writer` for a reason worth copying: a backend
+without the primitive would have to fake it, and a faked compare-and-swap is
+exactly the silent race the interface exists to prevent. The consumer type
+asserts at construction and refuses to build, so "this backend cannot do it"
+is a startup error naming the backend.
 
 **Two names for one adapter is allowed and sometimes right.** `openbao` and
 `vault` both build the OpenBao adapter: OpenBao is the fork of the last
