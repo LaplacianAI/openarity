@@ -420,6 +420,36 @@ reinstalled.
   In `custom` the collision has two routes: two equal ids, and an id equal to
   another attachment's `#<index>` fallback, so the check is on the computed ref
   rather than on the id.
+- **Attachments are fetched inline, and the ack window is what sizes the
+  budget.** Two seconds for a delivery and one for a file, because Slack allows
+  three to answer a webhook — not because that is what a download needs. Inline
+  is then safe by construction: it cannot blow an ack. A file that does not fit
+  is dropped with a log line, and that line is the trigger for building the
+  queue rather than for raising the constant. Ack-first is the better design
+  and needs a durable queue; building one to store a photo is the wrong order.
+- **A failed fetch loses the file; a failed row loses the request.** A file
+  that 404s would 404 on every retry, so the message is stored without it and
+  the provider gets a 200. A row that will not write happens *after* the bytes
+  reached the bucket, so it is a 500 — a 200 there leaves an object nothing
+  names and a message nobody has.
+- **`InsertMessage` returns an id and `ErrNoRows` means replay.** Attachments
+  hang off a message id, and the obvious way to always get one back —
+  `ON CONFLICT DO UPDATE SET external_id = EXCLUDED.external_id` — writes a new
+  row version even when nothing changed: 200 replays of one row took the heap
+  from 8 kB to 16 kB on 18.6. Replays are the hot case on a webhook. `DO
+  NOTHING ... RETURNING id` gives the id when there is work and nothing when
+  there is not, which is exactly the question the caller is asking.
+- **The object key is a fresh id, never a hash of the content.** Content
+  addressing would let identical files share an object, which is what
+  `CountAttachmentsByObjectKey` anticipates — but it also tells anyone who can
+  list the bucket that two teams hold the same file, and lets them confirm a
+  guessed file is present by hashing it. That is the property the encryption
+  exists to remove.
+- **A filename is cleaned where the sender is not trusted, which is always.**
+  Directory components are stripped, control characters become spaces, and the
+  result is clipped to the 512 the column allows. The name is only ever echoed
+  in a `Content-Disposition`, but a value that still looks like a path invites
+  the first caller that joins it onto one.
 - **A channel adapter receives values, never capabilities.** It gets a
   `gateway.WebhookRequest` rather than the `*http.Request`, `Credentials`
   rather than `secrets.Store`, and a `ReceivedAt` rather than the clock. So it

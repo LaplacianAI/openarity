@@ -81,6 +81,26 @@ These are deliberate, documented decisions rather than oversights:
   is written to the secret store, and no endpoint reads it back — the API
   returns it only in the response that created it. An API response, log line or
   error message containing one afterwards is a bug.
+- **An attachment's type comes from its bytes, and the sender's claim is never
+  stored.** A file arriving on a webhook is sniffed after it is fetched and
+  refused unless the sniffed type is on an allow list; the filename is stripped
+  of directory components and control characters, and the size is measured
+  rather than believed. A stored `media_type` that came from what the sender
+  said, or a filename that still contains a path, is a bug. Note that an SVG
+  carrying a script sniffs as `text/plain` and is therefore stored — it is
+  inert only while served as the type recorded for it, so a read path that
+  serves an attachment as anything but its recorded type, or without
+  `X-Content-Type-Options: nosniff`, is a bug. There is no such route yet.
+- **An attachment is encrypted before it leaves the process, under a key the
+  object store never sees.** AES-256-GCM under a per-team key held in the
+  secret store at `teams/<team_id>/attachments`, with the object's key as
+  additional data so one attachment's bytes cannot be copied onto another's
+  key. A plaintext attachment in the bucket is a bug, and so is a key in
+  Postgres, in a log line or in an API response.
+- **An unapproved sender's attachment is never fetched.** Attachments are
+  resolved after the sender is checked, so a stranger cannot make the brain
+  download and store bytes. An object written for a message that was dropped is
+  a bug.
 - **A message from an unrecognised sender is dropped, not stored.** Only their
   provider-side id and display name are queued for approval, bounded to 50 per
   channel — the text they sent is never written anywhere. A message body from

@@ -192,11 +192,10 @@ cp "$bak" "$file"
 mutations stacking on one another and produced a confident, wrong result
 before anyone noticed the file had never been put back.
 
-### Three patterns that survive mutation and look tested
+### Five patterns that survive mutation and look tested
 
-Both escaped a first pass on the sessions work, and both are invisible in a
-coverage report because the lines *do* execute — just never with the value
-that matters.
+Every one escaped a first pass, and every one is invisible in a coverage
+report because the lines *do* execute — just never in the state that matters.
 
 **A field with an absent and a present form, tested only absent.** The fixture
 for `sent_at` had no timestamp, so nilling the field changed nothing. A test
@@ -235,9 +234,49 @@ enum values from a driver. Reachability is the property the list actually
 needs, and it is the one nobody checks, because a dead entry looks exactly
 like a working one.
 
-The rule all three give you: coverage says which lines ran, never which values
-reached them. For any nullable field, any pair of parallel types, and any list
-matched against something else's output, write the second test.
+**A fixture that trips two guards at once.** The attachment size limit was
+tested with `bytes.Repeat([]byte{0}, MaxAttachment+1)`. Removing the size
+check left the test green: all-zero bytes sniff as `application/octet-stream`,
+so the *allow list* refused the file instead. The test had never exercised the
+guard it was named after — it certified the pair, and either one holding was
+enough.
+
+When several checks stand between an input and a result, the fixture has to
+**pass every one of them except the guard under test**. Here that meant a real
+PNG that was only too big: on the allow list, so nothing but the size check
+stood in its way.
+
+The smell is a mutation sweep where one guard comes back MISSED and the input
+is something crude — zeros, an empty string, a nil. Crude inputs fail early
+checks for free.
+
+**A weaker-but-legal value.** `objects.KeySize` → `16` came back MISSED, and
+not because a test was lazy. `aes.NewCipher` accepts 16, 24 and 32 bytes, so a
+16-byte key is not an error — it is AES-128. It encrypts, decrypts,
+round-trips, and produces output indistinguishable from the right thing. There
+is no behaviour to observe.
+
+This is the one case where you must assert a **value** rather than an effect:
+
+```go
+	encoded, err := secretStore.Get(ctx, secrets.TeamPath(team, secrets.KindAttachments), "data_key")
+	raw, _ := base64.StdEncoding.DecodeString(encoded)
+	if len(raw) != 32 {
+		t.Errorf("the team key is %d bytes, want 32 — still valid AES, "+
+			"just a weaker one, so nothing else in the suite would notice", len(raw))
+	}
+```
+
+Anywhere a parameter has a range of legal values that differ only in strength,
+a downgrade is silent by construction: key sizes, KDF iterations, TLS minimum
+versions, nonce and salt lengths, bcrypt cost. Behavioural tests cannot see it.
+Find the one place the value is observable and assert the number.
+
+The rule all five give you: coverage says which lines ran, never which values
+reached them or which guard did the work. For any nullable field, any pair of
+parallel types, any list matched against something else's output, any input
+that could trip more than one check, and any security parameter with a legal
+weaker setting — write the second test.
 
 ## Step 8 — coverage
 

@@ -1,22 +1,46 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
-func insertMessage(t *testing.T, s *Store, arg db.InsertMessageParams) int64 {
+// insertMessage is for the tests that need the message to exist. A replay
+// returns no row, which pgx reports as ErrNoRows — so this fataling on any
+// error also fatals on a duplicate, which is what a caller expecting a write
+// wants.
+func insertMessage(t *testing.T, s *Store, arg db.InsertMessageParams) uuid.UUID {
 	t.Helper()
 
-	n, err := s.InsertMessage(t.Context(), arg)
+	id, err := s.InsertMessage(t.Context(), arg)
 	if err != nil {
 		t.Fatalf("InsertMessage(%q): %v", arg.ExternalID, err)
 	}
-	return n
+	if id == uuid.Nil {
+		t.Fatalf("InsertMessage(%q) returned the nil uuid", arg.ExternalID)
+	}
+	return id
+}
+
+// replayMessage is the other half: it asserts the write was absorbed, and
+// that nothing came back to attach anything to.
+func replayMessage(t *testing.T, s *Store, arg db.InsertMessageParams) {
+	t.Helper()
+
+	id, err := s.InsertMessage(t.Context(), arg)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("a replay of %q returned id %s, err %v; want ErrNoRows",
+			arg.ExternalID, id, err)
+	}
+	if id != uuid.Nil {
+		t.Errorf("a replay returned id %s alongside the error", id)
+	}
 }
 
 // seedInbox gives a test a channel, an open session and an approved sender,
@@ -73,9 +97,7 @@ func TestAMessageRoundTrips(t *testing.T) {
 	s := queryStore(t)
 	ch, session, userID := seedInbox(t, s, "support")
 
-	if n := insertMessage(t, s, message(ch, session, userID, "m-1", "hello")); n != 1 {
-		t.Fatalf("wrote %d rows, want 1", n)
-	}
+	id := insertMessage(t, s, message(ch, session, userID, "m-1", "hello"))
 
 	rows := listMessages(t, s, session.ID, 10)
 	if len(rows) != 1 {
@@ -86,6 +108,13 @@ func TestAMessageRoundTrips(t *testing.T) {
 	}
 	if rows[0].SessionID != session.ID {
 		t.Errorf("SessionID = %s, want %s", rows[0].SessionID, session.ID)
+	}
+
+	// The id the insert reported is the id the row has. An attachment is
+	// written against it in the same request, so a wrong one is a foreign key
+	// violation at best and somebody else's message at worst.
+	if rows[0].ID != id {
+		t.Errorf("InsertMessage returned %s, the row is %s", id, rows[0].ID)
 	}
 	if rows[0].ReceivedAt.IsZero() {
 		t.Error("received_at was not defaulted")
@@ -103,12 +132,8 @@ func TestTheSameExternalIDTwiceInOneChannelIsOneRow(t *testing.T) {
 	s := queryStore(t)
 	ch, session, userID := seedInbox(t, s, "support")
 
-	if n := insertMessage(t, s, message(ch, session, userID, "m-1", "hello")); n != 1 {
-		t.Fatalf("first write reported %d rows, want 1", n)
-	}
-	if n := insertMessage(t, s, message(ch, session, userID, "m-1", "hello again")); n != 0 {
-		t.Errorf("a replay wrote %d rows, want 0", n)
-	}
+	insertMessage(t, s, message(ch, session, userID, "m-1", "hello"))
+	replayMessage(t, s, message(ch, session, userID, "m-1", "hello again"))
 
 	if n := scalar[int](t, s, `SELECT count(*) FROM messages WHERE channel_id = $1`, ch.ID); n != 1 {
 		t.Errorf("%d rows after a replay, want 1", n)
@@ -145,9 +170,7 @@ func TestAReplayIntoASecondSessionIsStillOneRow(t *testing.T) {
 		t.Fatal("a closed session was reused")
 	}
 
-	if n := insertMessage(t, s, message(ch, second, userID, "m-1", "hello")); n != 0 {
-		t.Errorf("a replay into the new session wrote %d rows, want 0", n)
-	}
+	replayMessage(t, s, message(ch, second, userID, "m-1", "hello"))
 	if n := scalar[int](t, s, `SELECT count(*) FROM messages WHERE channel_id = $1`, ch.ID); n != 1 {
 		t.Errorf("%d copies of one message, want 1", n)
 	}

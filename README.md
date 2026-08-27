@@ -398,8 +398,14 @@ one should be able to change without anybody editing their configuration.
 `s3` speaks the S3 API, which is a de-facto interface rather than a standard.
 MinIO, Garage, Ceph, SeaweedFS, Cloudflare R2, Backblaze B2 and Google Cloud
 Storage all serve it; only whole-object put, get and delete are used, which is
-the part every implementation actually serves. Nothing writes to the object
-store yet — attachments are not built.
+the part every implementation actually serves.
+
+A webhook carrying a file writes here: the gateway fetches it, decides its type
+from the bytes rather than from what the sender claimed, encrypts it under a
+per-team AES-256-GCM key held in the secret store, and writes a row naming the
+object. The store never holds a key and never holds a plaintext, so reading one
+team's attachments needs the bucket *and* that team's key. Serving them back is
+not built — there is no route that returns an attachment yet.
 
 `OPENARITY_DEV_TOKEN` is a single shared secret compared in constant time. It
 exists so a development machine does not need an identity provider, and it has

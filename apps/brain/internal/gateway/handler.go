@@ -38,10 +38,13 @@ type handler struct {
 	store   Store
 	secrets Secrets
 	sink    Sink
+	ingest  *Ingest
 }
 
-func New(logger *slog.Logger, s Store, sec Secrets, reg Registry, sink Sink) *api.Router {
-	h := &handler{logger: logger, store: s, secrets: sec, sink: sink}
+func New(
+	logger *slog.Logger, s Store, sec Secrets, reg Registry, sink Sink, ingest *Ingest,
+) *api.Router {
+	h := &handler{logger: logger, store: s, secrets: sec, sink: sink, ingest: ingest}
 
 	r := api.NewPublicRouter("/hooks")
 	for _, name := range slices.Sorted(maps.Keys(reg)) {
@@ -101,6 +104,11 @@ func (h *handler) hook(p Provider, rt Route) http.HandlerFunc {
 			h.logger.Error("gateway: resolve senders", "channel_id", channel.ID, "error", err)
 			http.Error(w, "try again", http.StatusInternalServerError)
 			return
+		}
+
+		for i := range deliveries {
+			deliveries[i].Files = h.ingest.Fetch(r.Context(),
+				p, req, creds, channel.TeamID, deliveries[i].Attachments)
 		}
 
 		if len(deliveries) > 0 {

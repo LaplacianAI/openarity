@@ -34,7 +34,7 @@ func TestTheRegistryCarriesTheCompiledInAdapters(t *testing.T) {
 func TestTheGatewayIsMountedOnTheWebhookListener(t *testing.T) {
 	t.Parallel()
 
-	routers := newWebhookRouters(discardLogger(), nil, nil, testRegistry(t))
+	routers := newWebhookRouters(discardLogger(), nil, nil, testRegistry(t), nil)
 	if len(routers) == 0 {
 		t.Fatal("newWebhookRouters returned nothing")
 	}
@@ -58,7 +58,7 @@ func TestTheGatewayIsMountedOnTheWebhookListener(t *testing.T) {
 func TestEveryWebhookRouterIsPublic(t *testing.T) {
 	t.Parallel()
 
-	for _, r := range newWebhookRouters(discardLogger(), nil, nil, testRegistry(t)) {
+	for _, r := range newWebhookRouters(discardLogger(), nil, nil, testRegistry(t), nil) {
 		if !r.Public() {
 			t.Errorf("%T is not public", r)
 		}
