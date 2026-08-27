@@ -230,13 +230,26 @@ func TestRolesRollBackRestoresTheCheck(t *testing.T) {
 	// assuming it is the newest. Every migration added after it would
 	// otherwise break this test for a reason that has nothing to do with
 	// roles.
-	for range 10 {
-		if !tableExists(t, s, "roles") {
-			break
+	//
+	// The bound is the number of migrations that exist rather than a number
+	// somebody picked. It was 10, and the eleventh migration after roles made
+	// this fail with three assertions about roles surviving a rollback that
+	// had simply run out of turns.
+	files, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatalf("reading the migrations: %v", err)
+	}
+
+	rolledBack := 0
+	for tableExists(t, s, "roles") {
+		if rolledBack == len(files) {
+			t.Fatalf("rolled back %d times and roles still exists, which is every "+
+				"migration there is", rolledBack)
 		}
 		if err := s.Rollback(t.Context()); err != nil {
 			t.Fatalf("Rollback: %v", err)
 		}
+		rolledBack++
 	}
 
 	for _, table := range []string{"roles", "role_permissions"} {
@@ -246,7 +259,7 @@ func TestRolesRollBackRestoresTheCheck(t *testing.T) {
 	}
 
 	var def string
-	err := s.pool.QueryRow(t.Context(), `
+	err = s.pool.QueryRow(t.Context(), `
 		SELECT pg_get_constraintdef(c.oid)
 		FROM pg_constraint c
 		JOIN pg_class t ON t.oid = c.conrelid
