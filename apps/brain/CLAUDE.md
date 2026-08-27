@@ -346,6 +346,20 @@ reinstalled.
   never wrong and is sometimes the only join that answers. `GetAttachmentWithTeam`
   returns the team in the same round trip as the row, so authorisation never
   needs a second one.
+- **`attachments` carries `session_id` as well as `message_id`, and the pair is
+  a foreign key.** The copy is redundant and cannot drift: `messages` has a
+  unique key on `(id, session_id)`, so an attachment naming a session its
+  message is not in is refused by the database rather than by whoever
+  remembered. Same mechanism as `sessions.team_id` against `channels.team_id`.
+
+  It is there because "every attachment in this session" is what an agent asks
+  to build context — a message can name a file that arrived twenty messages
+  ago — and no index can express that through the join. Measured on 200
+  sessions, 209k messages and 21k attachments: 13.6 ms warm through `messages`
+  against 0.36 ms through the column, because the join reads every message in
+  the session *and* every attachment in the database to return a few hundred.
+  Denormalising on a guess about load is suspicious; denormalising because the
+  schema cannot express the access path is not.
 - **`attachments.key_version` exists before rotation does.** A read has to know
   which key sealed an object, and adding the column now costs nothing while
   adding it later means a migration over every attachment ever stored. Every

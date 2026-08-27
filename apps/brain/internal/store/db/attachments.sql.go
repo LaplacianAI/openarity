@@ -26,13 +26,16 @@ func (q *Queries) CountAttachmentsByObjectKey(ctx context.Context, objectKey str
 }
 
 const createAttachment = `-- name: CreateAttachment :one
-INSERT INTO attachments (message_id, object_key, key_version, media_type, size_bytes, filename)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at
+INSERT INTO attachments (
+    message_id, session_id, object_key, key_version, media_type, size_bytes, filename
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id
 `
 
 type CreateAttachmentParams struct {
 	MessageID  uuid.UUID
+	SessionID  uuid.UUID
 	ObjectKey  string
 	KeyVersion int32
 	MediaType  string
@@ -43,6 +46,7 @@ type CreateAttachmentParams struct {
 func (q *Queries) CreateAttachment(ctx context.Context, arg CreateAttachmentParams) (Attachment, error) {
 	row := q.db.QueryRow(ctx, createAttachment,
 		arg.MessageID,
+		arg.SessionID,
 		arg.ObjectKey,
 		arg.KeyVersion,
 		arg.MediaType,
@@ -59,12 +63,13 @@ func (q *Queries) CreateAttachment(ctx context.Context, arg CreateAttachmentPara
 		&i.SizeBytes,
 		&i.Filename,
 		&i.CreatedAt,
+		&i.SessionID,
 	)
 	return i, err
 }
 
 const getAttachmentWithTeam = `-- name: GetAttachmentWithTeam :one
-SELECT a.id, a.message_id, a.object_key, a.key_version, a.media_type, a.size_bytes, a.filename, a.created_at, s.team_id
+SELECT a.id, a.message_id, a.object_key, a.key_version, a.media_type, a.size_bytes, a.filename, a.created_at, a.session_id, s.team_id
 FROM attachments a
 JOIN messages m ON m.id = a.message_id
 JOIN sessions s ON s.id = m.session_id
@@ -97,13 +102,14 @@ func (q *Queries) GetAttachmentWithTeam(ctx context.Context, id uuid.UUID) (GetA
 		&i.Attachment.SizeBytes,
 		&i.Attachment.Filename,
 		&i.Attachment.CreatedAt,
+		&i.Attachment.SessionID,
 		&i.TeamID,
 	)
 	return i, err
 }
 
 const listAttachmentsByMessage = `-- name: ListAttachmentsByMessage :many
-SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at FROM attachments
+SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id FROM attachments
 WHERE message_id = $1
 ORDER BY created_at, id
 `
@@ -126,6 +132,48 @@ func (q *Queries) ListAttachmentsByMessage(ctx context.Context, messageID uuid.U
 			&i.SizeBytes,
 			&i.Filename,
 			&i.CreatedAt,
+			&i.SessionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAttachmentsBySession = `-- name: ListAttachmentsBySession :many
+SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id FROM attachments
+WHERE session_id = $1
+ORDER BY created_at, id
+`
+
+// Everything a session has accumulated, which is what an agent reads to
+// answer "the file I sent earlier" — a message can name one that arrived
+// twenty messages ago. Straight off attachments.session_id rather than
+// through messages: no index can express that join, so it reads every message
+// in the session and every attachment in the database to return a few.
+func (q *Queries) ListAttachmentsBySession(ctx context.Context, sessionID uuid.UUID) ([]Attachment, error) {
+	rows, err := q.db.Query(ctx, listAttachmentsBySession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Attachment
+	for rows.Next() {
+		var i Attachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.MessageID,
+			&i.ObjectKey,
+			&i.KeyVersion,
+			&i.MediaType,
+			&i.SizeBytes,
+			&i.Filename,
+			&i.CreatedAt,
+			&i.SessionID,
 		); err != nil {
 			return nil, err
 		}

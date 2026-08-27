@@ -19,6 +19,7 @@ type Attachment struct {
 	SizeBytes  int64
 	Filename   string
 	CreatedAt  time.Time
+	SessionID  uuid.UUID
 }
 
 type Channel struct {

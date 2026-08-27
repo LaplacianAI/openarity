@@ -14,7 +14,7 @@ import (
 // seedMessage gives a test a message to hang attachments from, and the team
 // that message belongs to. Every attachment needs both: one to reference, and
 // one to check the read path's join answers correctly.
-func seedMessage(t *testing.T, s *Store, name string) (messageID, teamID uuid.UUID) {
+func seedMessage(t *testing.T, s *Store, name string) (messageID, sessionID, teamID uuid.UUID) {
 	t.Helper()
 
 	ch, session, userID := seedInbox(t, s, name)
@@ -24,12 +24,13 @@ func seedMessage(t *testing.T, s *Store, name string) (messageID, teamID uuid.UU
 	if len(rows) != 1 {
 		t.Fatalf("seeded %d messages, want 1", len(rows))
 	}
-	return rows[0].ID, session.TeamID
+	return rows[0].ID, session.ID, session.TeamID
 }
 
-func attachment(messageID uuid.UUID, key string) db.CreateAttachmentParams {
+func attachment(messageID, sessionID uuid.UUID, key string) db.CreateAttachmentParams {
 	return db.CreateAttachmentParams{
 		MessageID:  messageID,
+		SessionID:  sessionID,
 		ObjectKey:  key,
 		KeyVersion: 1,
 		MediaType:  "image/png",
@@ -61,10 +62,10 @@ func constraintName(err error) string {
 func TestAttachmentRoundTrips(t *testing.T) {
 	s := queryStore(t)
 
-	messageID, _ := seedMessage(t, s, "round-trip")
+	messageID, sessionID, _ := seedMessage(t, s, "round-trip")
 	key := "teams/" + uuid.NewString() + "/objects/abc"
 
-	row := mustCreateAttachment(t, s, attachment(messageID, key))
+	row := mustCreateAttachment(t, s, attachment(messageID, sessionID, key))
 
 	if row.ObjectKey != key {
 		t.Errorf("ObjectKey = %q, want %q", row.ObjectKey, key)
@@ -89,8 +90,8 @@ func TestAttachmentRoundTrips(t *testing.T) {
 func TestGetAttachmentWithTeamReturnsTheOwningTeam(t *testing.T) {
 	s := queryStore(t)
 
-	messageID, teamID := seedMessage(t, s, "with-team")
-	created := mustCreateAttachment(t, s, attachment(messageID, "teams/x/objects/abc"))
+	messageID, sessionID, teamID := seedMessage(t, s, "with-team")
+	created := mustCreateAttachment(t, s, attachment(messageID, sessionID, "teams/x/objects/abc"))
 
 	got, err := s.GetAttachmentWithTeam(t.Context(), created.ID)
 	if err != nil {
@@ -150,7 +151,7 @@ func TestAnAttachmentOnAChannellessSessionStillResolvesItsTeam(t *testing.T) {
 		t.Fatalf("inserting a message with no channel: %v", err)
 	}
 
-	created := mustCreateAttachment(t, s, attachment(messageID, "teams/x/objects/abc"))
+	created := mustCreateAttachment(t, s, attachment(messageID, sessionID, "teams/x/objects/abc"))
 
 	got, err := s.GetAttachmentWithTeam(t.Context(), created.ID)
 	if err != nil {
@@ -205,14 +206,14 @@ func TestASessionsTeamCannotDisagreeWithItsChannels(t *testing.T) {
 func TestListAttachmentsByMessage(t *testing.T) {
 	s := queryStore(t)
 
-	messageID, _ := seedMessage(t, s, "list")
+	messageID, sessionID, _ := seedMessage(t, s, "list")
 	for _, key := range []string{"teams/x/objects/a", "teams/x/objects/b"} {
-		mustCreateAttachment(t, s, attachment(messageID, key))
+		mustCreateAttachment(t, s, attachment(messageID, sessionID, key))
 	}
 
 	// A second message's attachment must not appear in the first's list.
-	otherID, _ := seedMessage(t, s, "list-other")
-	mustCreateAttachment(t, s, attachment(otherID, "teams/x/objects/c"))
+	otherID, otherSession, _ := seedMessage(t, s, "list-other")
+	mustCreateAttachment(t, s, attachment(otherID, otherSession, "teams/x/objects/c"))
 
 	rows, err := s.ListAttachmentsByMessage(t.Context(), messageID)
 	if err != nil {
@@ -234,13 +235,13 @@ func TestListAttachmentsByMessage(t *testing.T) {
 func TestCountAttachmentsByObjectKey(t *testing.T) {
 	s := queryStore(t)
 
-	first, _ := seedMessage(t, s, "count-a")
-	second, _ := seedMessage(t, s, "count-b")
+	first, firstSession, _ := seedMessage(t, s, "count-a")
+	second, secondSession, _ := seedMessage(t, s, "count-b")
 	shared := "teams/x/objects/shared"
 
-	mustCreateAttachment(t, s, attachment(first, shared))
-	mustCreateAttachment(t, s, attachment(second, shared))
-	mustCreateAttachment(t, s, attachment(first, "teams/x/objects/lonely"))
+	mustCreateAttachment(t, s, attachment(first, firstSession, shared))
+	mustCreateAttachment(t, s, attachment(second, secondSession, shared))
+	mustCreateAttachment(t, s, attachment(first, firstSession, "teams/x/objects/lonely"))
 
 	for key, want := range map[string]int64{
 		shared:                   2,
@@ -262,8 +263,8 @@ func TestCountAttachmentsByObjectKey(t *testing.T) {
 func TestDeletingAMessageRemovesItsAttachmentRows(t *testing.T) {
 	s := queryStore(t)
 
-	messageID, _ := seedMessage(t, s, "cascade")
-	created := mustCreateAttachment(t, s, attachment(messageID, "teams/x/objects/abc"))
+	messageID, sessionID, _ := seedMessage(t, s, "cascade")
+	created := mustCreateAttachment(t, s, attachment(messageID, sessionID, "teams/x/objects/abc"))
 
 	if _, err := s.pool.Exec(t.Context(), `DELETE FROM messages WHERE id = $1`, messageID); err != nil {
 		t.Fatalf("deleting the message: %v", err)
@@ -281,7 +282,7 @@ func TestDeletingAMessageRemovesItsAttachmentRows(t *testing.T) {
 func TestTheDatabaseRefusesWhatTheColumnsCannotMean(t *testing.T) {
 	s := queryStore(t)
 
-	messageID, _ := seedMessage(t, s, "constraints")
+	messageID, sessionID, _ := seedMessage(t, s, "constraints")
 
 	for name, tc := range map[string]struct {
 		mutate func(*db.CreateAttachmentParams)
@@ -311,13 +312,19 @@ func TestTheDatabaseRefusesWhatTheColumnsCannotMean(t *testing.T) {
 			func(a *db.CreateAttachmentParams) { a.MediaType = strings.Repeat("a", 256) },
 			"attachments_media_type_bounded",
 		},
+		// The composite key replaced the single-column reference, so this is
+		// the constraint that refuses an unknown message now.
 		"a message that does not exist": {
 			func(a *db.CreateAttachmentParams) { a.MessageID = uuid.New() },
-			"attachments_message_id_fkey",
+			"attachments_message_in_session",
+		},
+		"a session the message is not in": {
+			func(a *db.CreateAttachmentParams) { a.SessionID = uuid.New() },
+			"attachments_message_in_session",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			arg := attachment(messageID, "teams/x/objects/"+uuid.NewString())
+			arg := attachment(messageID, sessionID, "teams/x/objects/"+uuid.NewString())
 			tc.mutate(&arg)
 
 			_, err := s.CreateAttachment(t.Context(), arg)
@@ -337,12 +344,86 @@ func TestTheDatabaseRefusesWhatTheColumnsCannotMean(t *testing.T) {
 func TestAnEmptyFilenameIsAllowed(t *testing.T) {
 	s := queryStore(t)
 
-	messageID, _ := seedMessage(t, s, "no-filename")
+	messageID, sessionID, _ := seedMessage(t, s, "no-filename")
 
-	arg := attachment(messageID, "teams/x/objects/unnamed")
+	arg := attachment(messageID, sessionID, "teams/x/objects/unnamed")
 	arg.Filename = ""
 
 	if _, err := s.CreateAttachment(t.Context(), arg); err != nil {
 		t.Errorf("CreateAttachment with no filename: %v", err)
+	}
+}
+
+// session_id is a second copy of a fact the message already carries, and it
+// earns its place by being an access path no join can express: asking for a
+// session's attachments through messages reads every message in the session
+// and every attachment in the database. Measured on 200 sessions, 209k
+// messages and 21k attachments, one session's attachments took 13.6 ms warm
+// through the join and 0.36 ms through this column.
+//
+// The copy cannot drift. This is the test that says so rather than the
+// comment.
+func TestAnAttachmentCannotClaimAnotherSessionThanItsMessage(t *testing.T) {
+	s := queryStore(t)
+
+	messageID, sessionID, _ := seedMessage(t, s, "no-drift")
+	_, elsewhere, _ := seedMessage(t, s, "elsewhere")
+
+	created := mustCreateAttachment(t, s, attachment(messageID, sessionID, "teams/x/objects/abc"))
+
+	_, err := s.pool.Exec(t.Context(),
+		`UPDATE attachments SET session_id = $1 WHERE id = $2`, elsewhere, created.ID)
+	if err == nil {
+		t.Fatal("an attachment was moved to a session its message is not in")
+	}
+	if name := constraintName(err); name != "attachments_message_in_session" {
+		t.Errorf("refused by %q, want attachments_message_in_session: %v", name, err)
+	}
+
+	// And it is still the session it was written with.
+	got, err := s.ListAttachmentsBySession(t.Context(), sessionID)
+	if err != nil {
+		t.Fatalf("ListAttachmentsBySession: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != created.ID {
+		t.Errorf("the session holds %d attachments, want the one written", len(got))
+	}
+}
+
+// The query the column exists for: everything a session has accumulated,
+// across every message in it.
+func TestListAttachmentsBySession(t *testing.T) {
+	s := queryStore(t)
+
+	ch, session, userID := seedInbox(t, s, "by-session")
+
+	// Two messages in one session, each with a file, plus a third message
+	// with none — the agent asking "the file I sent earlier" spans them.
+	for _, ext := range []string{"ext-1", "ext-2", "ext-3"} {
+		insertMessage(t, s, message(ch, session, userID, ext, "hello"))
+	}
+	rows := listMessages(t, s, session.ID, 10)
+	if len(rows) != 3 {
+		t.Fatalf("seeded %d messages, want 3", len(rows))
+	}
+	for _, m := range rows[:2] {
+		mustCreateAttachment(t, s, attachment(m.ID, session.ID, "teams/x/objects/"+m.ExternalID))
+	}
+
+	// A second session's attachment must not appear.
+	otherID, otherSession, _ := seedMessage(t, s, "by-session-other")
+	mustCreateAttachment(t, s, attachment(otherID, otherSession, "teams/x/objects/other"))
+
+	got, err := s.ListAttachmentsBySession(t.Context(), session.ID)
+	if err != nil {
+		t.Fatalf("ListAttachmentsBySession: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d attachments, want 2", len(got))
+	}
+	for _, a := range got {
+		if a.SessionID != session.ID {
+			t.Errorf("attachment %s belongs to session %s", a.ID, a.SessionID)
+		}
 	}
 }
