@@ -528,7 +528,7 @@ func TestEncryptedIsSafeUnderConcurrentUse(t *testing.T) {
 
 			team := uuid.New()
 			key := objectKey(team, fmt.Sprintf("obj-%d", i))
-			body := fmt.Appendf(nil, "file number %d", i)
+			body := []byte(fmt.Sprintf("file number %d", i))
 
 			if err := e.Put(context.Background(), team, key, body); err != nil {
 				t.Errorf("Put: %v", err)

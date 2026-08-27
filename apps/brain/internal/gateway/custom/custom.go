@@ -115,6 +115,10 @@ func (provider) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
 		sentAt = parsed
 	}
 
+	if err := b.refConflict(); err != nil {
+		return gateway.Result{}, err
+	}
+
 	return gateway.Result{Messages: []gateway.Inbound{b.inbound(sentAt)}}, nil
 }
 
@@ -124,6 +128,9 @@ func (provider) FetchAttachment(
 	var b body
 	if err := json.Unmarshal(req.Body, &b); err != nil {
 		return nil, fmt.Errorf("custom: %w", err)
+	}
+	if err := b.refConflict(); err != nil {
+		return nil, err
 	}
 
 	for i, a := range b.Attachments {
@@ -176,6 +183,18 @@ func (b body) inbound(sentAt time.Time) gateway.Inbound {
 		Attachments: attachments,
 		SentAt:      sentAt,
 	}
+}
+
+func (b body) refConflict() error {
+	seen := make(map[string]int, len(b.Attachments))
+	for i, a := range b.Attachments {
+		ref := a.ref(i)
+		if first, dup := seen[ref]; dup {
+			return fmt.Errorf("custom: attachments %d and %d share the ref %q", first, i, ref)
+		}
+		seen[ref] = i
+	}
+	return nil
 }
 
 func (a attachment) ref(i int) string {

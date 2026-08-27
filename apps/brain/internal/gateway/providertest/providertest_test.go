@@ -268,6 +268,22 @@ type refsNoFetcher struct{ carries }
 
 func (refsNoFetcher) FetchAttachment() {}
 
+// duplicateRefs names two attachments by one ref. FetchAttachment is given a
+// ref and nothing else, so the second file resolves to the first one's bytes
+// under the second one's filename — an ingest that succeeds and is wrong.
+type duplicateRefs struct{ carries }
+
+func (d duplicateRefs) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
+	res, err := d.carries.Parse(req)
+	if err != nil || len(res.Messages) == 0 {
+		return res, err
+	}
+	second := res.Messages[0].Attachments[0]
+	second.ClaimedFilename = "receipt.pdf"
+	res.Messages[0].Attachments = append(res.Messages[0].Attachments, second)
+	return res, nil
+}
+
 // fetcherNoRefs is the opposite: a Fetcher nothing will ever call, which
 // reads as a working feature.
 type fetcherNoRefs struct{ good }
@@ -288,13 +304,21 @@ var brokenAdapters = map[string]gateway.Provider{
 	"a message with no author":      noAuthor{},
 	"attachments with no Fetcher":   refsNoFetcher{},
 	"a Fetcher nothing can call":    fetcherNoRefs{},
+	"two attachments share a ref":   duplicateRefs{},
+}
+
+// needsAttachmentFixture names the broken adapters whose failure is about
+// attachments, and so cannot be reached from the baseline fixture.
+var needsAttachmentFixture = map[string]bool{
+	"attachments with no Fetcher": true,
+	"two attachments share a ref": true,
 }
 
 // fixturesFor gives the attachment cases the fixture their failure needs.
 // Everything else runs against the baseline, which declares no attachments.
 func fixturesFor(name string) providertest.Fixtures {
 	f := fixtures()
-	if name == "attachments with no Fetcher" {
+	if needsAttachmentFixture[name] {
 		f.CarriesNoAttachments = false
 		f.AttachmentRequest = f.Request
 	}

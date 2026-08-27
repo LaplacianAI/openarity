@@ -400,3 +400,56 @@ func TestAMessageWithoutAttachmentsHasNone(t *testing.T) {
 		t.Errorf("Attachments = %v, want nil", got)
 	}
 }
+
+// A ref is the only thing FetchAttachment is given, so two attachments sharing
+// one is not a cosmetic problem: the second file resolves to the first one's
+// bytes, and gets stored under the second one's filename and media type. That
+// ingest succeeds. Nothing downstream can tell it went wrong.
+//
+// Both shapes are reachable from a body a stranger wrote: two identical ids,
+// and an id that collides with the index form another attachment falls back to.
+func TestParseRefusesAmbiguousAttachmentRefs(t *testing.T) {
+	t.Parallel()
+
+	twoSameIDs := `{
+	  "id": "m-1",
+	  "author": { "ref": "a" },
+	  "session": { "ref": "s", "kind": "direct" },
+	  "attachments": [
+	    { "id": "same", "filename": "invoice.pdf", "content_base64": "b25l" },
+	    { "id": "same", "filename": "receipt.pdf", "content_base64": "dHdv" }
+	  ]
+	}`
+
+	// The second attachment has no id, so it falls back to "#1" — which the
+	// first one claimed outright.
+	idCollidesWithIndex := `{
+	  "id": "m-1",
+	  "author": { "ref": "a" },
+	  "session": { "ref": "s", "kind": "direct" },
+	  "attachments": [
+	    { "id": "#1", "filename": "invoice.pdf", "content_base64": "b25l" },
+	    { "filename": "receipt.pdf", "content_base64": "dHdv" }
+	  ]
+	}`
+
+	for name, body := range map[string]string{
+		"two attachments with the same id":  twoSameIDs,
+		"an id that collides with an index": idCollidesWithIndex,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			res, err := custom.New().Parse(request(t, body))
+			if err == nil {
+				t.Fatalf("Parse accepted %d messages from an ambiguous delivery", len(res.Messages))
+			}
+			if !strings.Contains(err.Error(), "ref") {
+				t.Errorf("err = %v, want it to name the ambiguous ref", err)
+			}
+			if len(res.Messages) != 0 {
+				t.Errorf("Parse returned %d messages alongside the error", len(res.Messages))
+			}
+		})
+	}
+}

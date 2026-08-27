@@ -324,10 +324,22 @@ func attachments(t *testing.T, p gateway.Provider, f Fixtures) {
 
 	// Ref is the only field the handler trusts, and the only one it cannot
 	// work without. Everything else is what the provider claimed.
+	//
+	// Unique within the delivery, because FetchAttachment is given a ref and
+	// nothing else. Two attachments sharing one means the second resolves to
+	// the first one's bytes, stored under the second one's filename — which
+	// looks exactly like a successful ingest.
+	seen := make(map[string]int, len(found))
 	for i, a := range found {
 		if a.Ref == "" {
 			t.Errorf("attachment %d has no Ref, so nothing can fetch it", i)
+		} else if first, dup := seen[a.Ref]; dup {
+			t.Errorf("attachments %d and %d share the ref %q, so one of them "+
+				"cannot be fetched", first, i, a.Ref)
+		} else {
+			seen[a.Ref] = i
 		}
+
 		if a.ClaimedSize < 0 {
 			t.Errorf("attachment %d claims a size of %d", i, a.ClaimedSize)
 		}
