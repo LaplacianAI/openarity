@@ -395,6 +395,31 @@ reinstalled.
   `role_permissions.action` and `route_permissions.permission` are foreign keys
   onto `permissions`, so a typo is a rejected write rather than a grant that
   silently means nothing.
+- **An adapter names attachments; it never fetches them.** `Parse` is pure and
+  offline, so a payload that carries a file carries a `Ref` and the claimed
+  filename, type and size — every one of them attacker-chosen, which is why
+  they are spelled `Claimed`. Downloading needs a credential and a network
+  call, so it happens afterwards through the optional `Fetcher` interface,
+  after the handler has already resolved `Keys()`. Optional because a provider
+  with no concept of an attachment has nothing to implement, and a stub
+  returning `nil, nil` is indistinguishable from an empty file.
+- **`FetchAttachment` is given the request, not only the ref.** The obvious
+  signature takes a ref and a credential, which is enough for Slack — its refs
+  are file ids you hand back to its API. It is not enough for a provider whose
+  bytes arrive inside the delivery itself, where the ref means nothing without
+  the body it came in. That only surfaced because `custom` ships: three
+  adapters that all download from a server would have agreed on the narrower
+  signature and been wrong together.
+- **A ref is unique within a delivery, and the suite enforces it.**
+  `FetchAttachment` is given a ref and nothing else, so two attachments sharing
+  one means the second resolves to the first one's bytes and is stored under
+  the second one's filename and media type. That ingest returns success and
+  nothing downstream can tell. Both halves were individually correct — `Parse`
+  produced valid refs, `FetchAttachment` resolved one it was handed — so the
+  contract between them had to be written down before anything could check it.
+  In `custom` the collision has two routes: two equal ids, and an id equal to
+  another attachment's `#<index>` fallback, so the check is on the computed ref
+  rather than on the id.
 - **A channel adapter receives values, never capabilities.** It gets a
   `gateway.WebhookRequest` rather than the `*http.Request`, `Credentials`
   rather than `secrets.Store`, and a `ReceivedAt` rather than the clock. So it

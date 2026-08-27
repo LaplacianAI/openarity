@@ -80,7 +80,7 @@ surfacing as an intermittent handler failure three tasks away.
 Consequences that follow from purity:
 
 - **`Attachment` holds a `Ref`, not bytes.** Fetching happens afterwards,
-  through the optional `Fetcher` interface.
+  through the optional `Fetcher` interface. See below.
 - **`Enrichment` is where deferred work goes.** It is defined by a constraint,
   not a category: everything `Parse` was forbidden from doing. Substitutions
   that need `channel_senders`, a place name that needs geocoding.
@@ -256,12 +256,65 @@ redelivery arriving after a session closed would otherwise be stored twice.
 Denormalise when a constraint needs the column, not when a query would find it
 handy.
 
+## Attachments are named here and fetched later
+
+`Parse` cannot download, so an attachment it produces is a `Ref` plus what the
+provider claimed about the file:
+
+```go
+type Attachment struct {
+	Ref              string
+	ClaimedFilename  string
+	ClaimedMediaType string
+	ClaimedSize      int64
+}
+```
+
+Three of those four fields are chosen by whoever sent the message, and the
+names say so. The ingest path re-derives the type from the bytes it actually
+received and enforces `objects.MaxAttachment` against the bytes it actually
+counted — `ClaimedMediaType` and `ClaimedSize` are a hint for logging and an
+early cheap refusal, never the value that gets stored.
+
+`Ref` is the exception: it is the only field the handler trusts, because it is
+the only one it cannot work without.
+
+**Fetching is a separate, optional interface.**
+
+```go
+type Fetcher interface {
+	FetchAttachment(
+		ctx context.Context, req WebhookRequest, ref string, creds Credentials,
+	) ([]byte, error)
+}
+```
+
+Optional rather than a `Provider` method, for the reason at the bottom of this
+file: a provider with no concept of an attachment has nothing to implement, and
+a stub returning `nil, nil` is a missing feature that reads as an empty file.
+`providertest` checks both directions — refs with no `Fetcher`, and a `Fetcher`
+nothing will ever call.
+
+**It takes the request, not only the ref.** A ref alone is enough for Slack,
+whose refs are file ids you hand back to its API with a token. It is not enough
+for a provider whose bytes arrive inside the delivery, where the ref means
+nothing without the body it came in. That is what `custom` exposed and three
+downloading adapters would have agreed to get wrong together.
+
+**A ref is unique within one delivery.** `FetchAttachment` gets a ref and
+nothing else, so two attachments sharing one means the second resolves to the
+first one's bytes and is stored under the second one's filename — an ingest
+that succeeds and is wrong. The suite asserts uniqueness; adapters that build a
+ref with a fallback have to check the *computed* ref, because an id can collide
+with another attachment's fallback form.
+
 ## The conformance suite
 
 `providertest.Run(t, p, fixtures)` is an adapter's whole test file. It asserts
 what the handler assumes and cannot check for itself: six ways of refusing a
 forgery, fifteen hostile bodies through `Parse` without a panic, determinism,
-and that neither `Verify` nor `Parse` mutates the body.
+that neither `Verify` nor `Parse` mutates the body, and that attachments are
+named in a way something can resolve.
 
 Its own tests break a correct adapter one property at a time and require the
 suite to notice each break. Because the suite reports through `*testing.T`, the
@@ -305,9 +358,15 @@ A permission rather than a role, because which role holds it is data in
 ## Not here
 
 Reading a session back. `internal/api/sessions` serves that; the gateway only
-writes. Outbound replies, attachment ingest, and socket transports. Slack Socket Mode
-and the Discord gateway are long-lived connections and `Provider` describes a
-request, so they need a second interface with a lifecycle.
+writes. Outbound replies, and socket transports. Slack Socket Mode and the
+Discord gateway are long-lived connections and `Provider` describes a request,
+so they need a second interface with a lifecycle.
+
+Attachment *ingest* is also not here yet — the seam is. Nothing calls
+`FetchAttachment`, sniffs what comes back, seals it, or writes an `attachments`
+row. What that wiring needs settling first is whether the handler fetches
+inline, inside the seconds a provider allows before it retries, or acknowledges
+and fetches afterwards — which needs a queue that does not exist.
 
 When outbound lands it is a `Replier` interface alongside `Fetcher`, not a
 method on `Provider` — an adapter for a plain incoming webhook has nowhere to
