@@ -87,10 +87,12 @@ apps/brain/
   internal/gateway/    a provider's webhook in, normalised messages out
     providertest/      the conformance suite every adapter runs
     <provider>/        one package per platform; custom is the reference
-  internal/secrets/    the port: Store, Writer, Prober, secret paths
+  internal/secrets/    the port: Store, Writer, Creator, Prober, secret paths
+    datakeys.go        a team's data key, generated once and never replaced
     openbao/           the AppRole client — the only thing that reaches OpenBao
     static/            the in-process fallback, for a brain with no OpenBao
   internal/objects/    the port: Store, Writer, object keys and team prefixes
+    encrypt.go         AES-256-GCM over any backend — a layer, not a backend
     s3/                the S3 API — MinIO, Ceph, R2, GCS, AWS
     filesystem/        a volume, for a single-host deployment with no S3
     inmemory/          the in-process fallback; attachments die with the process
@@ -301,6 +303,37 @@ reinstalled.
   to opt out per route.
 - **Secrets are references.** A row or config field holds a Vault path, never a
   value. Only `internal/secrets/openbao` reaches a secret backend.
+- **Attachments are encrypted before they leave the process.** AES-256-GCM
+  under a per-team key held at `teams/<team_id>/attachments`, so the object
+  store holds `nonce || ciphertext || tag` and never a key, and reading one
+  team's files needs OpenBao *and* that team's key. Encryption is a layer over
+  whichever backend `OBJECTS_BACKEND` selected, not a fourth backend — it lives
+  in `internal/objects/encrypt.go` rather than beside `s3`, because nothing
+  sets `OBJECTS_BACKEND=encrypted`.
+- **The team is a parameter, never parsed out of the object key.** The key is a
+  string on a database row, so deriving the decryption key from it would let a
+  tampered row choose which key is used. Taking the team from the authenticated
+  route makes `objects.InTeam` a check rather than a derivation, and every
+  refusal is asserted to have changed nothing.
+- **The object's key is GCM's additional data.** Additional data is bound, not
+  encrypted — it costs nothing and stops somebody with write access to the
+  bucket copying one attachment's bytes onto another's key, which without it
+  decrypts perfectly: same team, same key, valid tag, and a person served a
+  file the row did not name. It forecloses renaming an object, which we do not
+  do, and which would fail at the first read rather than silently.
+- **A key is decided once, and everyone else agrees with the decision.** A
+  team's key is generated on first use, so two concurrent first uploads race.
+  `Put` cannot settle it — KV v2 overwrites, so both writers succeed and the
+  loser's data is sealed under a key nothing holds. `secrets.Creator` is the
+  check and the write as one operation: `cas=0` in OpenBao, one lock in the
+  static store. The loser reads the winner's key rather than retrying, because
+  retrying returns `ErrExists` forever.
+- **The policy grants `update` on the attachment key path, and that is not
+  redundant next to `create`.** Without it the loser of that race is refused by
+  the policy (403) rather than by check-and-set (400), and cannot tell "somebody
+  beat me" from "the policy is wrong". A root token returns 400 either way, so
+  no test using a convenient credential can see this — the policy test builds
+  its AppRole from the file that ships.
 - **A write resolves the name it was given; it does not send the caller to a
   directory first.** `POST /teams/{id}/members` takes `user_id` or `subject`,
   because requiring the id would mean requiring `GET /users`, which needs

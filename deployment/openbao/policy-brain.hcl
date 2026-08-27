@@ -53,6 +53,34 @@ path "secret/metadata/teams/+/channels/+" {
   capabilities = ["delete"]
 }
 
+# A team's attachment key lives at teams/<team_id>/attachments — one key per
+# team, generated the first time that team stores something, and used to
+# encrypt every attachment before it reaches the object store. The object
+# store holds ciphertext and never the key; this path holds the key and never
+# a file.
+#
+# `update` looks redundant next to `create` and is not. The brain writes this
+# key with check-and-set at version 0, which means "only if absent" — the
+# thing that makes two concurrent first-uploads for one team safe. Without
+# `update` the loser of that race is refused by the *policy* rather than by
+# check-and-set, and the difference is what the brain sees:
+#
+#   read, create           second write   403 permission denied
+#   read, create, update   second write   400 check-and-set parameter did not match
+#
+# Only the second is distinguishable from a misconfigured policy, and only the
+# second lets the loser re-read the winner's key instead of failing the
+# upload. Verified against this OpenBao with a token holding each policy in
+# turn; a root token returns 400 either way, so this is not something a
+# dev-mode test can tell you.
+#
+# Granting `update` does not open overwriting in practice: the key source is
+# handed secrets.Creator and secrets.Store, never secrets.Writer, so the code
+# that reaches this path has no method that writes without check-and-set.
+path "secret/data/teams/+/attachments" {
+  capabilities = ["read", "create", "update"]
+}
+
 # Renewing its own token is how the brain avoids logging in on every read.
 # The default policy already grants this, so it is redundant today — and it is
 # what keeps renewal working the day the role sets token_no_default_policy.

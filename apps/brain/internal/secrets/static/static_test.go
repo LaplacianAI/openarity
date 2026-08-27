@@ -1,8 +1,12 @@
 package static
 
 import (
+	"context"
 	"errors"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -13,7 +17,9 @@ import (
 func TestStaticReturnsAStoredValue(t *testing.T) {
 	t.Parallel()
 
-	s := store{"teams/a/channels/b": {"signing_secret": "s3cr3t"}}
+	s := &store{values: map[string]map[string]string{
+		"teams/a/channels/b": {"signing_secret": "s3cr3t"},
+	}}
 
 	got, err := s.Get(t.Context(), "teams/a/channels/b", "signing_secret")
 	if err != nil {
@@ -30,7 +36,9 @@ func TestStaticReturnsAStoredValue(t *testing.T) {
 func TestStaticFailsClosed(t *testing.T) {
 	t.Parallel()
 
-	s := store{"teams/a/channels/b": {"signing_secret": "s3cr3t"}}
+	s := &store{values: map[string]map[string]string{
+		"teams/a/channels/b": {"signing_secret": "s3cr3t"},
+	}}
 
 	cases := map[string]struct{ path, key string }{
 		"unknown path": {"teams/x/channels/y", "signing_secret"},
@@ -145,5 +153,103 @@ func TestStaticIsNotAProber(t *testing.T) {
 	s := New()
 	if _, ok := s.(secrets.Prober); ok {
 		t.Error("the static store implements secrets.Prober — readiness would probe an in-memory map")
+	}
+}
+
+// asCreator is the checked form of the type assertion. Unchecked, a store
+// that stopped implementing Creator would panic here rather than say which
+// interface it dropped — and errcheck refuses the unchecked form anyway.
+func asCreator(t *testing.T, s secrets.Store) secrets.Creator {
+	t.Helper()
+
+	c, ok := s.(secrets.Creator)
+	if !ok {
+		t.Fatalf("store is %T, want one that implements secrets.Creator", s)
+	}
+	return c
+}
+
+// Create is what makes a per-team key safe to generate lazily. Put cannot do
+// this job: it overwrites, so two callers generating a key for the same team
+// both succeed and the loser's data is sealed under a key nothing holds.
+func TestCreateRefusesToReplaceWhatIsThere(t *testing.T) {
+	t.Parallel()
+
+	s := New()
+	creator := asCreator(t, s)
+	path, key := "teams/a/attachments", "data_key"
+
+	if err := creator.Create(t.Context(), path, key, "first"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	err := creator.Create(t.Context(), path, key, "second")
+	if !errors.Is(err, secrets.ErrExists) {
+		t.Fatalf("err = %v, want secrets.ErrExists", err)
+	}
+
+	// The refusal has to have changed nothing. An error alongside a write
+	// that happened anyway is worse than either on its own.
+	got, err := s.Get(t.Context(), path, key)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != "first" {
+		t.Errorf("Get = %q, want the first value to have survived", got)
+	}
+}
+
+// The race this exists for, run for real. Without the lock around the check
+// and the write, more than one caller writes and -race reports it; without
+// the check, every caller succeeds and the last one wins.
+func TestOnlyOneConcurrentCreateWins(t *testing.T) {
+	t.Parallel()
+
+	s := New()
+	creator := asCreator(t, s)
+	path, key := "teams/a/attachments", "data_key"
+
+	const writers = 16
+	var (
+		wg    sync.WaitGroup
+		won   atomic.Int64
+		exist atomic.Int64
+	)
+
+	start := make(chan struct{})
+	for i := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+
+			switch err := creator.Create(context.Background(), path, key, strconv.Itoa(i)); {
+			case err == nil:
+				won.Add(1)
+			case errors.Is(err, secrets.ErrExists):
+				exist.Add(1)
+			default:
+				t.Errorf("Create: %v", err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if won.Load() != 1 {
+		t.Errorf("%d writers succeeded, want exactly 1", won.Load())
+	}
+	if exist.Load() != writers-1 {
+		t.Errorf("%d writers saw ErrExists, want %d", exist.Load(), writers-1)
+	}
+
+	// And the surviving value is a value somebody actually wrote, rather than
+	// a torn mix of two.
+	got, err := s.Get(t.Context(), path, key)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if n, err := strconv.Atoi(got); err != nil || n < 0 || n >= writers {
+		t.Errorf("Get = %q, want one of the values written", got)
 	}
 }

@@ -114,6 +114,9 @@ Break the thing, run the test, put it back. Real examples from this repo:
 | pass the pool instead of the transaction   | three transaction tests        |
 | delete `defer tx.Rollback`                 | connection-release test        |
 | remove `WithSessionLocker`                 | migration lock test            |
+| pass `nil` as GCM's additional data        | moved-bytes test               |
+| make the nonce a constant                  | fresh-nonce test               |
+| have the race loser keep its own key       | the *deterministic* key test   |
 
 That last one is the cautionary tale: the original version raced two goroutines
 and **passed with the locker removed**, because the migration finished before
@@ -122,6 +125,37 @@ the lock from the test, then assert the operation blocks.
 
 If the operation is fast, goroutines never actually overlap and the race you
 meant to test never happens.
+
+**It happened a second time**, on the per-team key work, which is why this is
+a pattern rather than an anecdote. Sixteen goroutines raced to create one key;
+the winner wrote almost immediately, so the other fifteen found the key on
+their opening read and never reached the branch under test. Mutating that
+branch left the test green — the single-threaded fixture caught it.
+
+The fix is the same both times: **do not ask the scheduler for the
+interleaving, impose it.** Either hold the resource from the test, or put a
+barrier in the fake so every caller is held at the same point:
+
+```go
+var seen atomic.Int64
+release := make(chan struct{})
+store.onGet = func() {
+	switch n := seen.Add(1); {
+	case n == callers:
+		close(release)   // the last reader frees everyone
+	case n < callers:
+		<-release
+	}
+}
+```
+
+Now all sixteen see no key and all sixteen reach `Create`. Keep the
+deterministic test too: it is the one that will still be honest on a
+single-core CI runner.
+
+If you cannot say which line each goroutine is on when the interesting thing
+happens, the test will pass on a machine where it never happens — which is
+most machines, most of the time.
 
 ### Put a compile gate in front of the mutation
 
@@ -137,6 +171,26 @@ go test ./the/package -count=1
 
 `-count=1` as well: the test cache will happily serve the result from before
 the mutation.
+
+### And a no-op gate behind it
+
+A scripted mutation whose pattern does not match leaves the file untouched,
+and an untouched file passes. That reads identically to "no test caught it"
+and to "the guard is fine" depending on which you were hoping for. Diff
+against the backup before believing any result:
+
+```sh
+cp "$file" "$bak"
+python3 -c "$mutation"
+diff -q "$file" "$bak" >/dev/null && { echo "NO-OP"; }   # the pattern missed
+go build ./... || { echo "BUILD-FAIL"; }
+go test ./the/package -count=1 -run "$pattern"
+cp "$bak" "$file"
+```
+
+**Verify the restore, too.** A sweep whose backup path was wrong left
+mutations stacking on one another and produced a confident, wrong result
+before anyone noticed the file had never been put back.
 
 ### Two patterns that survive mutation and look tested
 

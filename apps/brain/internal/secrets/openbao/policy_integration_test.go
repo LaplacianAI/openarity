@@ -200,6 +200,12 @@ func TestTheShippedPolicyRefusesEverythingElse(t *testing.T) {
 		"the version history of a channel": {
 			http.MethodGet, secret + "/metadata/teams/" + team + "/channels/" + channel,
 		},
+		"below the attachments key, because + is not greedy": {
+			http.MethodGet, secret + "/data/teams/" + team + "/attachments/" + channel,
+		},
+		"the version history of a team's attachment key": {
+			http.MethodGet, secret + "/metadata/teams/" + team + "/attachments",
+		},
 		"administering OpenBao": {
 			http.MethodGet, "/v1/sys/policies/acl",
 		},
@@ -215,6 +221,57 @@ func TestTheShippedPolicyRefusesEverythingElse(t *testing.T) {
 	}
 }
 
+// Generating a team's attachment key, under the policy that ships.
+//
+// The second Create is the whole test, and it is the reason `update` is in
+// that rule. Check-and-set at version 0 is what makes two concurrent first
+// uploads for one team safe: the loser must be told the key exists so it can
+// read the winner's, rather than generating a second key and sealing data
+// nothing can open.
+//
+// Whether the loser can tell depends on the policy, not on the client:
+//
+//	read, create           403 permission denied           -> ErrUnavailable
+//	read, create, update   400 check-and-set … not match   -> ErrExists
+//
+// A root token returns 400 under either, so every test in this package that
+// builds its AppRole from grantSecretMount would pass against the broken
+// policy. This one cannot.
+func TestTheShippedPolicyLetsATeamKeyBeCreatedOnce(t *testing.T) {
+	t.Parallel()
+
+	reader, _, _, _ := brainStore(t)
+
+	creator, ok := reader.(secrets.Creator)
+	if !ok {
+		t.Fatalf("the OpenBao store no longer implements secrets.Creator, so a "+
+			"team key cannot be generated through it: %T", reader)
+	}
+
+	path := secrets.TeamPath(uuid.New(), secrets.KindAttachments)
+
+	if err := creator.Create(t.Context(), path, "data_key", "first"); err != nil {
+		t.Fatalf("generating a team key: %v", err)
+	}
+
+	err := creator.Create(t.Context(), path, "data_key", "second")
+	if !errors.Is(err, secrets.ErrExists) {
+		t.Fatalf("the second Create returned %v, want secrets.ErrExists — the "+
+			"policy is refusing check-and-set rather than check-and-set refusing "+
+			"the write, so a losing writer cannot recover", err)
+	}
+
+	// And the refusal changed nothing, which is what lets the loser recover
+	// by reading rather than by retrying.
+	got, err := reader.Get(t.Context(), path, "data_key")
+	if err != nil {
+		t.Fatalf("reading the key back: %v", err)
+	}
+	if got != "first" {
+		t.Errorf("data_key = %q, want the first key to have survived", got)
+	}
+}
+
 // The reason the file is read rather than copied. If it moves, this says so
 // instead of the tests above quietly falling back to something permissive.
 func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
@@ -224,6 +281,7 @@ func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
 	for _, want := range []string{
 		`path "secret/data/teams/+/channels/+"`,
 		`path "secret/metadata/teams/+/channels/+"`,
+		`path "secret/data/teams/+/attachments"`,
 	} {
 		if !strings.Contains(hcl, want) {
 			t.Errorf("policy-brain.hcl no longer contains %s — the tests above are\n"+

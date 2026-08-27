@@ -232,6 +232,39 @@ func (s *store) Put(ctx context.Context, path, key, value string) error {
 	return s.write(ctx, http.MethodPost, s.dataURL(path), payload)
 }
 
+func (s *store) Create(ctx context.Context, path, key, value string) error {
+	payload, err := json.Marshal(map[string]any{
+		"data":    map[string]string{key: value},
+		"options": map[string]int{"cas": 0},
+	})
+	if err != nil {
+		return fmt.Errorf("%w: %w", secrets.ErrUnavailable, err)
+	}
+
+	tok, err := s.authToken(ctx)
+	if err != nil {
+		return err
+	}
+
+	status, body, err := s.do(ctx, http.MethodPost, s.dataURL(path), tok, payload)
+	if err != nil {
+		return err
+	}
+
+	switch status {
+	case http.StatusOK, http.StatusNoContent:
+		return nil
+	case http.StatusBadRequest:
+		if bytes.Contains(body, []byte("check-and-set parameter did not match")) {
+			return fmt.Errorf("%w: %s", secrets.ErrExists, path)
+		}
+	default:
+		return fmt.Errorf("%w: create returned %d", secrets.ErrUnavailable, status)
+	}
+
+	return nil
+}
+
 func (s *store) Delete(ctx context.Context, path string) error {
 	return s.write(ctx, http.MethodDelete, s.metadataURL(path), nil)
 }

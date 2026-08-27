@@ -81,6 +81,7 @@ of this file gets `null`.
 | --- | --- |
 | `secret/data/teams/+/channels/+` | `read`, `create`, `update` |
 | `secret/metadata/teams/+/channels/+` | `delete` |
+| `secret/data/teams/+/attachments` | `read`, `create`, `update` |
 | `auth/token/renew-self` | `update` |
 
 `+` matches exactly one path segment. That is the restriction: the brain
@@ -88,6 +89,31 @@ reaches a channel's secret in any team and nothing else under `teams/` — not a
 team-level secret, not a future `teams/<id>/tokens/*`, not a path one segment
 deeper. Verified against a running OpenBao rather than taken from the
 documentation.
+
+The attachments path holds one key per team, generated the first time that team
+stores something and used to encrypt every attachment before it reaches the
+object store. It is a leaf rather than a directory, which is why it has no
+trailing `+`.
+
+**`update` on that path is not redundant next to `create`, and removing it
+breaks concurrent uploads.** The brain writes the key with check-and-set at
+version 0 — "only if absent" — which is what makes two simultaneous first
+uploads for one team safe. Without `update` the loser of that race is refused
+by the policy rather than by check-and-set, and the two look different to the
+brain:
+
+| Capabilities | Second write | The brain sees |
+| --- | --- | --- |
+| `read`, `create` | `403 permission denied` | the store is unavailable |
+| `read`, `create`, `update` | `400 check-and-set parameter did not match` | the key exists — read it |
+
+Only the second lets the loser use the winner's key instead of failing the
+upload. A **root token returns 400 under either**, so this is not something a
+dev-mode check can tell you; the policy test binds an AppRole to this file.
+
+Granting `update` does not open overwriting in practice. The code that reaches
+this path is handed `secrets.Creator` and `secrets.Store`, never
+`secrets.Writer`, so it has no method that writes without check-and-set.
 
 Two paths because KV v2 splits them. `Get` and `Put` go to `secret/data/…`;
 `Delete` goes to `secret/metadata/…`, and only the metadata delete removes
