@@ -24,10 +24,14 @@ type AttachmentRows interface {
 	CreateAttachment(ctx context.Context, arg db.CreateAttachmentParams) (db.Attachment, error)
 }
 
-type InboxStore interface {
+type Queries interface {
 	Sessions
 	Messages
 	AttachmentRows
+}
+
+type InboxStore interface {
+	InTx(ctx context.Context, fn func(Queries) error) error
 }
 
 type Inbox struct {
@@ -38,53 +42,63 @@ func NewInbox(s InboxStore) *Inbox { return &Inbox{store: s} }
 
 func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error {
 	for _, m := range msgs {
-		session, err := i.store.EnsureSession(ctx, db.EnsureSessionParams{
-			TeamID:      ch.TeamID,
-			ChannelID:   ch.ID,
-			ProviderRef: m.Session.Ref,
-			Kind:        string(m.Session.Kind),
-			UserID:      participant(m),
-		})
-		if err != nil {
-			return fmt.Errorf("resolve session %q: %w", m.Session.Ref, err)
-		}
-
-		var sentAt *time.Time
-		if !m.SentAt.IsZero() {
-			at := m.SentAt
-			sentAt = &at
-		}
-
-		messageID, err := i.store.InsertMessage(ctx, db.InsertMessageParams{
-			ChannelID:  ch.ID,
-			SessionID:  session.ID,
-			UserID:     m.UserID,
-			ExternalID: m.ExternalID,
-			Text:       m.Text,
-			SentAt:     sentAt,
-		})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				continue
-			}
-			return fmt.Errorf("store message %q: %w", m.ExternalID, err)
-		}
-
-		for _, f := range m.Files {
-			if _, err := i.store.CreateAttachment(ctx, db.CreateAttachmentParams{
-				MessageID:  messageID,
-				SessionID:  session.ID,
-				ObjectKey:  f.ObjectKey,
-				KeyVersion: 1,
-				MediaType:  f.MediaType,
-				SizeBytes:  f.SizeBytes,
-				Filename:   f.Filename,
-			}); err != nil {
-				return fmt.Errorf("store attachment %q of %q: %w",
-					f.ObjectKey, m.ExternalID, err)
-			}
+		if err := i.store.InTx(ctx, func(q Queries) error {
+			return deliverOne(ctx, q, ch, m)
+		}); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) error {
+	session, err := q.EnsureSession(ctx, db.EnsureSessionParams{
+		TeamID:      ch.TeamID,
+		ChannelID:   ch.ID,
+		ProviderRef: m.Session.Ref,
+		Kind:        string(m.Session.Kind),
+		UserID:      participant(m),
+	})
+	if err != nil {
+		return fmt.Errorf("resolve session %q: %w", m.Session.Ref, err)
+	}
+
+	var sentAt *time.Time
+	if !m.SentAt.IsZero() {
+		at := m.SentAt
+		sentAt = &at
+	}
+
+	messageID, err := q.InsertMessage(ctx, db.InsertMessageParams{
+		ChannelID:  ch.ID,
+		SessionID:  session.ID,
+		UserID:     m.UserID,
+		ExternalID: m.ExternalID,
+		Text:       m.Text,
+		SentAt:     sentAt,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("store message %q: %w", m.ExternalID, err)
+	}
+
+	for _, f := range m.Files {
+		if _, err := q.CreateAttachment(ctx, db.CreateAttachmentParams{
+			MessageID:  messageID,
+			SessionID:  session.ID,
+			ObjectKey:  f.ObjectKey,
+			KeyVersion: 1,
+			MediaType:  f.MediaType,
+			SizeBytes:  f.SizeBytes,
+			Filename:   f.Filename,
+		}); err != nil {
+			return fmt.Errorf("store attachment %q of %q: %w",
+				f.ObjectKey, m.ExternalID, err)
+		}
+	}
+
 	return nil
 }
 

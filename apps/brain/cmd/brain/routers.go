@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/authconfig"
@@ -16,6 +17,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/server"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 func newRouters(
@@ -49,10 +51,16 @@ func newWebhookRouters(
 	registry gateway.Registry,
 	attachments gateway.Objects,
 ) []server.Router {
-	sink := gateway.NewInbox(dbStore)
+	sink := gateway.NewInbox(inbox{dbStore})
 	ingest := gateway.NewIngest(attachments, logger)
 
 	return []server.Router{
 		gateway.New(logger, dbStore, secretStore, registry, sink, ingest),
 	}
+}
+
+type inbox struct{ *store.Store }
+
+func (i inbox) InTx(ctx context.Context, fn func(gateway.Queries) error) error {
+	return i.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
 }
