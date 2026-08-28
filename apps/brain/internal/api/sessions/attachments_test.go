@@ -110,13 +110,18 @@ func TestGettingAnAttachmentServesWhatWasRecorded(t *testing.T) {
 		t.Errorf("body = %q, want the stored bytes", rec.Body)
 	}
 
+	// rec.Result().Header, never rec.Header(). The recorder's live map keeps a
+	// header set after the first Write, which never reached the wire — so the
+	// lenient form passes against a handler that writes the body first and
+	// sets its headers afterwards. Measured: the live map says "nosniff", the
+	// result says "".
 	for header, want := range map[string]string{
 		"Content-Type":           "image/png",
 		"X-Content-Type-Options": "nosniff",
 		"Content-Length":         strconv.Itoa(len(body)),
 		"Cache-Control":          "private, no-store",
 	} {
-		if got := rec.Header().Get(header); got != want {
+		if got := rec.Result().Header.Get(header); got != want {
 			t.Errorf("%s = %q, want %q", header, got, want)
 		}
 	}
@@ -142,11 +147,11 @@ func TestTheServedTypeComesFromTheRowAndNotTheFilename(t *testing.T) {
 			row := seedAttachment(f, tc.filename, tc.mediaType, []byte("bytes"))
 
 			rec := f.get(t, f.attachmentAt(row.ID))
-			if got := rec.Header().Get("Content-Type"); got != tc.want {
+			if got := rec.Result().Header.Get("Content-Type"); got != tc.want {
 				t.Errorf("Content-Type = %q, want %q — it followed the filename",
 					got, tc.want)
 			}
-			if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			if got := rec.Result().Header.Get("X-Content-Type-Options"); got != "nosniff" {
 				t.Errorf("X-Content-Type-Options = %q; without it the browser "+
 					"may sniff past the recorded type", got)
 			}
@@ -181,7 +186,7 @@ func TestWhatRendersInPlaceAndWhatDownloads(t *testing.T) {
 			row := seedAttachment(f, "file.bin", mediaType, []byte("bytes"))
 
 			rec := f.get(t, f.attachmentAt(row.ID))
-			got := rec.Header().Get("Content-Disposition")
+			got := rec.Result().Header.Get("Content-Disposition")
 			if !strings.HasPrefix(got, want) {
 				t.Errorf("Content-Disposition = %q, want it to start %q", got, want)
 			}
@@ -209,7 +214,7 @@ func TestTheFilenameSurvivesTheHeader(t *testing.T) {
 			row := seedAttachment(f, tc.filename, "image/png", []byte("bytes"))
 
 			rec := f.get(t, f.attachmentAt(row.ID))
-			if got := rec.Header().Get("Content-Disposition"); got != tc.want {
+			if got := rec.Result().Header.Get("Content-Disposition"); got != tc.want {
 				t.Errorf("Content-Disposition = %q, want %q", got, tc.want)
 			}
 		})

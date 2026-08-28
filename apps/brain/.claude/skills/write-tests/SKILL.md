@@ -192,7 +192,7 @@ cp "$bak" "$file"
 mutations stacking on one another and produced a confident, wrong result
 before anyone noticed the file had never been put back.
 
-### Five patterns that survive mutation and look tested
+### Six patterns that survive mutation and look tested
 
 Every one escaped a first pass, and every one is invisible in a coverage
 report because the lines *do* execute — just never in the state that matters.
@@ -250,6 +250,24 @@ The smell is a mutation sweep where one guard comes back MISSED and the input
 is something crude — zeros, an empty string, a nil. Crude inputs fail early
 checks for free.
 
+**An assertion on a lenient view of the result.** Five header assertions used
+`rec.Header()`, which is the recorder's *live* map — it keeps a header set
+after the first `Write`, which never reached the wire. Measured against a
+handler that writes the body first:
+
+```text
+rec.Header():        "nosniff"
+rec.Result().Header: ""
+```
+
+Every one of them passed against a response whose headers never left the
+process. `rec.Result().Header` is what the client would have seen.
+
+The wider shape: a test harness often exposes both the *state* the code touched
+and the *output* it produced, and they diverge exactly when ordering is wrong.
+Assert on the output. This applies to any recorder, buffer or spy that offers a
+"what was set" view alongside a "what was sent" one.
+
 **A weaker-but-legal value.** `objects.KeySize` → `16` came back MISSED, and
 not because a test was lazy. `aes.NewCipher` accepts 16, 24 and 32 bytes, so a
 16-byte key is not an error — it is AES-128. It encrypts, decrypts,
@@ -272,11 +290,12 @@ a downgrade is silent by construction: key sizes, KDF iterations, TLS minimum
 versions, nonce and salt lengths, bcrypt cost. Behavioural tests cannot see it.
 Find the one place the value is observable and assert the number.
 
-The rule all five give you: coverage says which lines ran, never which values
-reached them or which guard did the work. For any nullable field, any pair of
-parallel types, any list matched against something else's output, any input
-that could trip more than one check, and any security parameter with a legal
-weaker setting — write the second test.
+The rule all six give you: coverage says which lines ran, never which values
+reached them, which guard did the work, or whether the result left the process.
+For any nullable field, any pair of parallel types, any list matched against
+something else's output, any input that could trip more than one check, any
+security parameter with a legal weaker setting, and any harness offering both
+"what was set" and "what was sent" — write the second test.
 
 ## Step 8 — coverage
 
