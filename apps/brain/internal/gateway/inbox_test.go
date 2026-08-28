@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +40,23 @@ func newInboxStore() *inboxStore {
 		ids:      map[string]uuid.UUID{},
 		sessions: map[string]db.Session{},
 	}
+}
+
+// InTx models the one thing Deliver relies on: nothing the function wrote
+// survives if it returns an error. A fake that just called fn would make every
+// partial-write test pass while the real store rolled back and the fake did
+// not.
+func (f *inboxStore) InTx(_ context.Context, fn func(Queries) error) error {
+	stored := maps.Clone(f.stored)
+	ids := maps.Clone(f.ids)
+	sessions := maps.Clone(f.sessions)
+	attachments := slices.Clone(f.attachments)
+
+	if err := fn(f); err != nil {
+		f.stored, f.ids, f.sessions, f.attachments = stored, ids, sessions, attachments
+		return err
+	}
+	return nil
 }
 
 func (f *inboxStore) EnsureSession(_ context.Context, arg db.EnsureSessionParams) (db.Session, error) {
@@ -85,10 +104,13 @@ func (f *inboxStore) InsertMessage(_ context.Context, arg db.InsertMessageParams
 func (f *inboxStore) CreateAttachment(
 	_ context.Context, arg db.CreateAttachmentParams,
 ) (db.Attachment, error) {
-	f.attachments = append(f.attachments, arg)
+	// Record the write, not the attempt. A fake that appends first makes a
+	// failed insert look like a stored row, and every assertion about what
+	// was written silently counts it.
 	if f.attachmentErr != nil {
 		return db.Attachment{}, f.attachmentErr
 	}
+	f.attachments = append(f.attachments, arg)
 	return db.Attachment{
 		ID: uuid.New(), MessageID: arg.MessageID, SessionID: arg.SessionID,
 		ObjectKey: arg.ObjectKey, KeyVersion: arg.KeyVersion,
@@ -653,5 +675,50 @@ func TestAFailedAttachmentWriteIsReported(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "teams/x/objects/one") {
 		t.Errorf("err = %v, want it to name the object", err)
+	}
+}
+
+// The message and its attachment rows are one unit. Without a transaction the
+// message commits first, and a failure on the attachment leaves it there — so
+// the provider's retry finds the external id already present, takes the replay
+// path, and never writes the file. The message is permanently textless and the
+// object is orphaned in the bucket.
+//
+// The replay skip is what makes a retry safe for a message. This is the window
+// where it makes one unsafe for a file.
+func TestARetryAfterAFailedAttachmentStillStoresIt(t *testing.T) {
+	t.Parallel()
+
+	f := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	d := delivery("m-1", "here is the label")
+	d.Files = []Stored{stored("teams/x/objects/one", "label.png")}
+
+	inbox := NewInbox(f)
+
+	f.attachmentErr = errors.New("connection reset")
+	if err := inbox.Deliver(t.Context(), ch, []Delivery{d}); err == nil {
+		t.Fatal("Deliver reported success after the attachment write failed")
+	}
+
+	// The provider retries, as it must after a 500.
+	f.attachmentErr = nil
+	if err := inbox.Deliver(t.Context(), ch, []Delivery{d}); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	if len(f.stored) != 1 {
+		t.Errorf("%d messages after the retry, want 1", len(f.stored))
+	}
+	written := 0
+	for _, a := range f.attachments {
+		if a.ObjectKey == "teams/x/objects/one" {
+			written++
+		}
+	}
+	if written != 1 {
+		t.Fatalf("the attachment was written %d times across both attempts; "+
+			"the retry has to complete what the first attempt could not", written)
 	}
 }
