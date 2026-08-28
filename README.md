@@ -404,8 +404,12 @@ A webhook carrying a file writes here: the gateway fetches it, decides its type
 from the bytes rather than from what the sender claimed, encrypts it under a
 per-team AES-256-GCM key held in the secret store, and writes a row naming the
 object. The store never holds a key and never holds a plaintext, so reading one
-team's attachments needs the bucket *and* that team's key. Serving them back is
-not built — there is no route that returns an attachment yet.
+team's attachments needs the bucket *and* that team's key.
+
+Reading one back goes through the brain rather than through a URL to the
+bucket, because the bucket holds ciphertext under a key it does not have. The
+response carries the type recorded when the file arrived, under
+`X-Content-Type-Options: nosniff` — never a type guessed from the filename.
 
 `OPENARITY_DEV_TOKEN` is a single shared secret compared in constant time. It
 exists so a development machine does not need an identity provider, and it has

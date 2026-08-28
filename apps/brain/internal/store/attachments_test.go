@@ -2,10 +2,12 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -381,10 +383,7 @@ func TestAnAttachmentCannotClaimAnotherSessionThanItsMessage(t *testing.T) {
 	}
 
 	// And it is still the session it was written with.
-	got, err := s.ListAttachmentsBySession(t.Context(), sessionID)
-	if err != nil {
-		t.Fatalf("ListAttachmentsBySession: %v", err)
-	}
+	got := listAttachments(t, s, sessionID, 10)
 	if len(got) != 1 || got[0].ID != created.ID {
 		t.Errorf("the session holds %d attachments, want the one written", len(got))
 	}
@@ -414,10 +413,7 @@ func TestListAttachmentsBySession(t *testing.T) {
 	otherID, otherSession, _ := seedMessage(t, s, "by-session-other")
 	mustCreateAttachment(t, s, attachment(otherID, otherSession, "teams/x/objects/other"))
 
-	got, err := s.ListAttachmentsBySession(t.Context(), session.ID)
-	if err != nil {
-		t.Fatalf("ListAttachmentsBySession: %v", err)
-	}
+	got := listAttachments(t, s, session.ID, 10)
 	if len(got) != 2 {
 		t.Fatalf("got %d attachments, want 2", len(got))
 	}
@@ -425,5 +421,104 @@ func TestListAttachmentsBySession(t *testing.T) {
 		if a.SessionID != session.ID {
 			t.Errorf("attachment %s belongs to session %s", a.ID, a.SessionID)
 		}
+	}
+}
+
+func listAttachments(t *testing.T, s *Store, sessionID uuid.UUID, size int32) []db.Attachment {
+	t.Helper()
+
+	rows, err := s.ListAttachmentsBySession(t.Context(), db.ListAttachmentsBySessionParams{
+		SessionID: sessionID,
+		PageSize:  size,
+	})
+	if err != nil {
+		t.Fatalf("ListAttachmentsBySession: %v", err)
+	}
+	return rows
+}
+
+// Paging on created_at alone would drop or repeat a row whenever two files
+// share a timestamp, which every multi-file delivery produces: they are
+// written in one request, and created_at defaults to now(), which is the
+// transaction's start time and identical for all of them.
+func TestAttachmentPagingIsStableWhenTimestampsTie(t *testing.T) {
+	s := queryStore(t)
+
+	messageID, sessionID, _ := seedMessage(t, s, "paging")
+	for i := range 5 {
+		mustCreateAttachment(t, s,
+			attachment(messageID, sessionID, fmt.Sprintf("teams/x/objects/p-%d", i)))
+	}
+
+	// Each insert above was its own transaction, so now() gave each row a
+	// different microsecond. Force the tie the query has to survive: a single
+	// delivery writing several files inside one transaction gets one
+	// created_at for all of them, because now() is the transaction's start.
+	if _, err := s.pool.Exec(t.Context(),
+		`UPDATE attachments SET created_at = now() WHERE session_id = $1`, sessionID); err != nil {
+		t.Fatalf("flatten timestamps: %v", err)
+	}
+	same := scalar[int](t, s,
+		`SELECT count(DISTINCT created_at) FROM attachments WHERE session_id = $1`, sessionID)
+	if same != 1 {
+		t.Fatalf("%d distinct timestamps; the tie this test needs did not happen", same)
+	}
+
+	var seen []uuid.UUID
+	params := db.ListAttachmentsBySessionParams{SessionID: sessionID, PageSize: 2}
+	for range 5 {
+		page, err := s.ListAttachmentsBySession(t.Context(), params)
+		if err != nil {
+			t.Fatalf("page: %v", err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, a := range page {
+			seen = append(seen, a.ID)
+		}
+		last := page[len(page)-1]
+		params.UseCursor = true
+		params.AfterCreatedAt = last.CreatedAt
+		params.AfterID = last.ID
+	}
+
+	if len(seen) != 5 {
+		t.Fatalf("paged %d rows, want 5 — a tie was dropped or repeated: %v", len(seen), seen)
+	}
+	unique := map[uuid.UUID]bool{}
+	for _, id := range seen {
+		if unique[id] {
+			t.Errorf("%s came back on two pages", id)
+		}
+		unique[id] = true
+	}
+}
+
+// The bytes route asks for one attachment inside a session it has already
+// proven the caller may read. An id from another session is a missing row.
+func TestGetAttachmentInSessionIsScopedToIt(t *testing.T) {
+	s := queryStore(t)
+
+	messageID, sessionID, _ := seedMessage(t, s, "scoped")
+	created := mustCreateAttachment(t, s,
+		attachment(messageID, sessionID, "teams/x/objects/scoped"))
+
+	got, err := s.GetAttachmentInSession(t.Context(), db.GetAttachmentInSessionParams{
+		ID: created.ID, SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("GetAttachmentInSession: %v", err)
+	}
+	if got.ID != created.ID || got.ObjectKey != created.ObjectKey {
+		t.Errorf("row = %+v, want %+v", got, created)
+	}
+
+	_, otherSession, _ := seedMessage(t, s, "scoped-other")
+	_, err = s.GetAttachmentInSession(t.Context(), db.GetAttachmentInSessionParams{
+		ID: created.ID, SessionID: otherSession,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("reading it through another session returned %v, want ErrNoRows", err)
 	}
 }

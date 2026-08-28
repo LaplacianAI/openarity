@@ -90,7 +90,19 @@ These are deliberate, documented decisions rather than oversights:
   carrying a script sniffs as `text/plain` and is therefore stored — it is
   inert only while served as the type recorded for it, so a read path that
   serves an attachment as anything but its recorded type, or without
-  `X-Content-Type-Options: nosniff`, is a bug. There is no such route yet.
+  `X-Content-Type-Options: nosniff`, is a bug.
+- **An attachment is served by the brain, never by a URL to the bucket.**
+  `GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID}` returns the
+  recorded `media_type` under `nosniff`, and `Content-Disposition: inline` only
+  for `image/png`, `image/jpeg`, `image/gif`, `image/webp` and `text/plain` —
+  each inert as itself. PDFs download, because a same-origin PDF runs
+  JavaScript in every major viewer. A signed or public URL to an attachment is
+  a bug, and so is an `inline` disposition on anything outside that list.
+- **An attachment is readable by exactly whoever may read its session.** There
+  is no separate attachment permission, so a file in somebody else's `direct`
+  session answers the same 404 the session does, and an attachment id belonging
+  to another conversation answers 404 rather than serving. An attachment
+  readable by someone who cannot read the conversation it arrived in is a bug.
 - **An attachment is encrypted before it leaves the process, under a key the
   object store never sees.** AES-256-GCM under a per-team key held in the
   secret store at `teams/<team_id>/attachments`, with the object's key as

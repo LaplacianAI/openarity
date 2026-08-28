@@ -732,6 +732,120 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/sessions/{sessionID}/attachments:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: sessionID
+        in: path
+        required: true
+        description: The conversation
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listSessionAttachments
+      tags: [sessions]
+      summary: List the files in a conversation
+      description: |
+        Every file that arrived in this conversation, across every message in
+        it — which is what an agent reads to answer "the one I sent earlier".
+
+        `media_type` and `size_bytes` are what the brain measured from the
+        bytes it received, never what the sender claimed. `filename` is the
+        sender's, cleaned: directory components and control characters are
+        removed, and it is bounded. Treat it as a label, never as a path.
+
+        No object key is returned. The bytes are reached through the route
+        below and nowhere else.
+
+        Visibility is the session's. Somebody else's `direct` session answers
+        404 here for the same reason it does for messages.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of attachments, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/sessions/{sessionID}/attachments/{attachmentID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: sessionID
+        in: path
+        required: true
+        description: The conversation
+        schema:
+          type: string
+          format: uuid
+      - name: attachmentID
+        in: path
+        required: true
+        description: The file
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getSessionAttachment
+      tags: [sessions]
+      summary: Download a file
+      description: |
+        The bytes, decrypted on the way out. The brain proxies them rather than
+        redirecting: the object store holds ciphertext under a per-team key it
+        does not have, so there is no URL that would serve anything readable.
+
+        `Content-Type` is the type recorded when the file arrived, sent with
+        `X-Content-Type-Options: nosniff`. It is never derived from the
+        filename. A file is only inert as the type it was recorded as — an SVG
+        carrying a script is stored as `text/plain`, and stays harmless because
+        that is what it is served as.
+
+        `Content-Disposition` is `inline` for `image/png`, `image/jpeg`,
+        `image/gif`, `image/webp` and `text/plain`, which a browser can display
+        without executing anything. Everything else downloads, including PDFs:
+        a same-origin PDF runs JavaScript in every major viewer.
+
+        An attachment id belonging to another conversation answers 404, the
+        same as one that does not exist.
+      responses:
+        "200":
+          description: |
+            The file. The body is the bytes; everything about them is in the
+            headers.
+          headers:
+            Content-Disposition:
+              description: inline for the types listed above, otherwise attachment
+              schema:
+                type: string
+            X-Content-Type-Options:
+              description: Always nosniff
+              schema:
+                type: string
+            Cache-Control:
+              description: Always `private, no-store`
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /users:
     get:
       operationId: listUsers
@@ -1355,6 +1469,49 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Message"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    Attachment:
+      type: object
+      required: [id, message_id, filename, media_type, size_bytes, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+          description: The message this file arrived with
+        filename:
+          type: string
+          description: |
+            What the sender called it, with directory components and control
+            characters removed and the length bounded. A label, not a path, and
+            possibly empty — some providers send no name at all.
+        media_type:
+          type: string
+          description: |
+            Decided from the bytes when the file arrived, never from the
+            filename and never from what the sender claimed. This is the exact
+            value the download route sends as Content-Type.
+        size_bytes:
+          type: integer
+          format: int64
+          description: Measured, not claimed
+        created_at:
+          type: string
+          format: date-time
+
+    AttachmentPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Attachment"
         next_cursor:
           type: string
           description: Absent on the last page

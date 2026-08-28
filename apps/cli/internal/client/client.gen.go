@@ -148,6 +148,36 @@ type ApproveSenderRequest struct {
 	UserID openapi_types.UUID `json:"user_id" yaml:"user_id"`
 }
 
+// Attachment defines model for Attachment.
+type Attachment struct {
+	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
+
+	// Filename What the sender called it, with directory components and control
+	// characters removed and the length bounded. A label, not a path, and
+	// possibly empty — some providers send no name at all.
+	Filename string             `json:"filename" yaml:"filename"`
+	ID       openapi_types.UUID `json:"id" yaml:"id"`
+
+	// MediaType Decided from the bytes when the file arrived, never from the
+	// filename and never from what the sender claimed. This is the exact
+	// value the download route sends as Content-Type.
+	MediaType string `json:"media_type" yaml:"media_type"`
+
+	// MessageID The message this file arrived with
+	MessageID openapi_types.UUID `json:"message_id" yaml:"message_id"`
+
+	// SizeBytes Measured, not claimed
+	SizeBytes int64 `json:"size_bytes" yaml:"size_bytes"`
+}
+
+// AttachmentPage defines model for AttachmentPage.
+type AttachmentPage struct {
+	Items []Attachment `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
 // AuthConfig defines model for AuthConfig.
 type AuthConfig struct {
 	// DevTokenAccepted True only when a development token is configured *and* the
@@ -622,6 +652,18 @@ type ListSessionsParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
 }
 
+// ListSessionAttachmentsParams defines parameters for ListSessionAttachments.
+type ListSessionAttachmentsParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
 // ListSessionMessagesParams defines parameters for ListSessionMessages.
 type ListSessionMessagesParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
@@ -1039,6 +1081,48 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
 	ListSessions(ctx context.Context, id TeamID, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSessionAttachments List the files in a conversation
+	//
+	// Every file that arrived in this conversation, across every message in
+	// it — which is what an agent reads to answer "the one I sent earlier".
+	//
+	// `media_type` and `size_bytes` are what the brain measured from the
+	// bytes it received, never what the sender claimed. `filename` is the
+	// sender's, cleaned: directory components and control characters are
+	// removed, and it is bounded. Treat it as a label, never as a path.
+	//
+	// No object key is returned. The bytes are reached through the route
+	// below and nowhere else.
+	//
+	// Visibility is the session's. Somebody else's `direct` session answers
+	// 404 here for the same reason it does for messages.
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID}/attachments (the `ListSessionAttachments` operationId).
+	ListSessionAttachments(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionAttachmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSessionAttachment Download a file
+	//
+	// The bytes, decrypted on the way out. The brain proxies them rather than
+	// redirecting: the object store holds ciphertext under a per-team key it
+	// does not have, so there is no URL that would serve anything readable.
+	//
+	// `Content-Type` is the type recorded when the file arrived, sent with
+	// `X-Content-Type-Options: nosniff`. It is never derived from the
+	// filename. A file is only inert as the type it was recorded as — an SVG
+	// carrying a script is stored as `text/plain`, and stays harmless because
+	// that is what it is served as.
+	//
+	// `Content-Disposition` is `inline` for `image/png`, `image/jpeg`,
+	// `image/gif`, `image/webp` and `text/plain`, which a browser can display
+	// without executing anything. Everything else downloads, including PDFs:
+	// a same-origin PDF runs JavaScript in every major viewer.
+	//
+	// An attachment id belonging to another conversation answers 404, the
+	// same as one that does not exist.
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID} (the `GetSessionAttachment` operationId).
+	GetSessionAttachment(ctx context.Context, id TeamID, sessionID openapi_types.UUID, attachmentID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSessionMessages Read a conversation
 	//
@@ -1613,6 +1697,68 @@ func (c *Client) RemoveTeamMember(ctx context.Context, id TeamID, userID openapi
 // Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
 func (c *Client) ListSessions(ctx context.Context, id TeamID, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSessionsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSessionAttachments List the files in a conversation
+//
+// Every file that arrived in this conversation, across every message in
+// it — which is what an agent reads to answer "the one I sent earlier".
+//
+// `media_type` and `size_bytes` are what the brain measured from the
+// bytes it received, never what the sender claimed. `filename` is the
+// sender's, cleaned: directory components and control characters are
+// removed, and it is bounded. Treat it as a label, never as a path.
+//
+// No object key is returned. The bytes are reached through the route
+// below and nowhere else.
+//
+// Visibility is the session's. Somebody else's `direct` session answers
+// 404 here for the same reason it does for messages.
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID}/attachments (the `ListSessionAttachments` operationId).
+func (c *Client) ListSessionAttachments(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionAttachmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSessionAttachmentsRequest(c.Server, id, sessionID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSessionAttachment Download a file
+//
+// The bytes, decrypted on the way out. The brain proxies them rather than
+// redirecting: the object store holds ciphertext under a per-team key it
+// does not have, so there is no URL that would serve anything readable.
+//
+// `Content-Type` is the type recorded when the file arrived, sent with
+// `X-Content-Type-Options: nosniff`. It is never derived from the
+// filename. A file is only inert as the type it was recorded as — an SVG
+// carrying a script is stored as `text/plain`, and stays harmless because
+// that is what it is served as.
+//
+// `Content-Disposition` is `inline` for `image/png`, `image/jpeg`,
+// `image/gif`, `image/webp` and `text/plain`, which a browser can display
+// without executing anything. Everything else downloads, including PDFs:
+// a same-origin PDF runs JavaScript in every major viewer.
+//
+// An attachment id belonging to another conversation answers 404, the
+// same as one that does not exist.
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID} (the `GetSessionAttachment` operationId).
+func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID openapi_types.UUID, attachmentID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSessionAttachmentRequest(c.Server, id, sessionID, attachmentID)
 	if err != nil {
 		return nil, err
 	}
@@ -2685,6 +2831,134 @@ func NewListSessionsRequest(server string, id TeamID, params *ListSessionsParams
 	return req, nil
 }
 
+// NewListSessionAttachmentsRequest constructs an http.Request for the ListSessionAttachments method
+func NewListSessionAttachmentsRequest(server string, id TeamID, sessionID openapi_types.UUID, params *ListSessionAttachmentsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "sessionID", sessionID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/sessions/%s/attachments", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetSessionAttachmentRequest constructs an http.Request for the GetSessionAttachment method
+func NewGetSessionAttachmentRequest(server string, id TeamID, sessionID openapi_types.UUID, attachmentID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "sessionID", sessionID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "attachmentID", attachmentID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/sessions/%s/attachments/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSessionMessagesRequest constructs an http.Request for the ListSessionMessages method
 func NewListSessionMessagesRequest(server string, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams) (*http.Request, error) {
 	var err error
@@ -3245,6 +3519,52 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
 	ListSessionsWithResponse(ctx context.Context, id TeamID, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*ListSessionsResponse, error)
+
+	// ListSessionAttachmentsWithResponse List the files in a conversation
+	//
+	// Every file that arrived in this conversation, across every message in
+	// it — which is what an agent reads to answer "the one I sent earlier".
+	//
+	// `media_type` and `size_bytes` are what the brain measured from the
+	// bytes it received, never what the sender claimed. `filename` is the
+	// sender's, cleaned: directory components and control characters are
+	// removed, and it is bounded. Treat it as a label, never as a path.
+	//
+	// No object key is returned. The bytes are reached through the route
+	// below and nowhere else.
+	//
+	// Visibility is the session's. Somebody else's `direct` session answers
+	// 404 here for the same reason it does for messages.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID}/attachments (the `ListSessionAttachments` operationId).
+	ListSessionAttachmentsWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionAttachmentsParams, reqEditors ...RequestEditorFn) (*ListSessionAttachmentsResponse, error)
+
+	// GetSessionAttachmentWithResponse Download a file
+	//
+	// The bytes, decrypted on the way out. The brain proxies them rather than
+	// redirecting: the object store holds ciphertext under a per-team key it
+	// does not have, so there is no URL that would serve anything readable.
+	//
+	// `Content-Type` is the type recorded when the file arrived, sent with
+	// `X-Content-Type-Options: nosniff`. It is never derived from the
+	// filename. A file is only inert as the type it was recorded as — an SVG
+	// carrying a script is stored as `text/plain`, and stays harmless because
+	// that is what it is served as.
+	//
+	// `Content-Disposition` is `inline` for `image/png`, `image/jpeg`,
+	// `image/gif`, `image/webp` and `text/plain`, which a browser can display
+	// without executing anything. Everything else downloads, including PDFs:
+	// a same-origin PDF runs JavaScript in every major viewer.
+	//
+	// An attachment id belonging to another conversation answers 404, the
+	// same as one that does not exist.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID} (the `GetSessionAttachment` operationId).
+	GetSessionAttachmentWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, attachmentID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetSessionAttachmentResponse, error)
 
 	// ListSessionMessagesWithResponse Read a conversation
 	//
@@ -4105,6 +4425,104 @@ func (r ListSessionsResponse) ContentType() string {
 	return ""
 }
 
+// ListSessionAttachmentsResponse401Headers the declared response headers of an HTTP 401 response for ListSessionAttachments
+type ListSessionAttachmentsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListSessionAttachmentsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AttachmentPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListSessionAttachmentsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSessionAttachmentsResponse) GetJSON200() *AttachmentPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSessionAttachmentsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSessionAttachmentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSessionAttachmentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSessionAttachmentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetSessionAttachmentResponse200Headers the declared response headers of an HTTP 200 response for GetSessionAttachment
+type GetSessionAttachmentResponse200Headers struct {
+	CacheControl        *string
+	ContentDisposition  *string
+	XContentTypeOptions *string
+}
+
+// GetSessionAttachmentResponse401Headers the declared response headers of an HTTP 401 response for GetSessionAttachment
+type GetSessionAttachmentResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetSessionAttachmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetSessionAttachmentResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetSessionAttachmentResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSessionAttachmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSessionAttachmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSessionAttachmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSessionAttachmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListSessionMessagesResponse401Headers the declared response headers of an HTTP 401 response for ListSessionMessages
 type ListSessionMessagesResponse401Headers struct {
 	WWWAuthenticate *string
@@ -4711,6 +5129,64 @@ func (c *ClientWithResponses) ListSessionsWithResponse(ctx context.Context, id T
 		return nil, err
 	}
 	return ParseListSessionsResponse(rsp)
+}
+
+// ListSessionAttachmentsWithResponse List the files in a conversation
+//
+// Every file that arrived in this conversation, across every message in
+// it — which is what an agent reads to answer "the one I sent earlier".
+//
+// `media_type` and `size_bytes` are what the brain measured from the
+// bytes it received, never what the sender claimed. `filename` is the
+// sender's, cleaned: directory components and control characters are
+// removed, and it is bounded. Treat it as a label, never as a path.
+//
+// No object key is returned. The bytes are reached through the route
+// below and nowhere else.
+//
+// Visibility is the session's. Somebody else's `direct` session answers
+// 404 here for the same reason it does for messages.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID}/attachments (the `ListSessionAttachments` operationId).
+func (c *ClientWithResponses) ListSessionAttachmentsWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionAttachmentsParams, reqEditors ...RequestEditorFn) (*ListSessionAttachmentsResponse, error) {
+	rsp, err := c.ListSessionAttachments(ctx, id, sessionID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSessionAttachmentsResponse(rsp)
+}
+
+// GetSessionAttachmentWithResponse Download a file
+//
+// The bytes, decrypted on the way out. The brain proxies them rather than
+// redirecting: the object store holds ciphertext under a per-team key it
+// does not have, so there is no URL that would serve anything readable.
+//
+// `Content-Type` is the type recorded when the file arrived, sent with
+// `X-Content-Type-Options: nosniff`. It is never derived from the
+// filename. A file is only inert as the type it was recorded as — an SVG
+// carrying a script is stored as `text/plain`, and stays harmless because
+// that is what it is served as.
+//
+// `Content-Disposition` is `inline` for `image/png`, `image/jpeg`,
+// `image/gif`, `image/webp` and `text/plain`, which a browser can display
+// without executing anything. Everything else downloads, including PDFs:
+// a same-origin PDF runs JavaScript in every major viewer.
+//
+// An attachment id belonging to another conversation answers 404, the
+// same as one that does not exist.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID} (the `GetSessionAttachment` operationId).
+func (c *ClientWithResponses) GetSessionAttachmentWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, attachmentID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetSessionAttachmentResponse, error) {
+	rsp, err := c.GetSessionAttachment(ctx, id, sessionID, attachmentID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSessionAttachmentResponse(rsp)
 }
 
 // ListSessionMessagesWithResponse Read a conversation
@@ -5375,6 +5851,98 @@ func ParseListSessionsResponse(rsp *http.Response) (*ListSessionsResponse, error
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ListSessionsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListSessionAttachmentsResponse parses an HTTP response from a ListSessionAttachmentsWithResponse call
+func ParseListSessionAttachmentsResponse(rsp *http.Response) (*ListSessionAttachmentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSessionAttachmentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AttachmentPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListSessionAttachmentsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetSessionAttachmentResponse parses an HTTP response from a GetSessionAttachmentWithResponse call
+func ParseGetSessionAttachmentResponse(rsp *http.Response) (*GetSessionAttachmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSessionAttachmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetSessionAttachmentResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		if values := rsp.Header.Values("Content-Disposition"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Disposition", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentDisposition = &value
+		}
+		if values := rsp.Header.Values("X-Content-Type-Options"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Content-Type-Options", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XContentTypeOptions = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers GetSessionAttachmentResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

@@ -379,6 +379,34 @@ reinstalled.
   beat me" from "the policy is wrong". A root token returns 400 either way, so
   no test using a convenient credential can see this — the policy test builds
   its AppRole from the file that ships.
+- **An attachment has no permission of its own.** It is reached through the
+  session that holds it and uses that session's check — the same `visible` the
+  message route uses. An `attachment:read` permission could be granted to a
+  role without `session:read`, and then somebody who cannot open a private
+  conversation could still read the file sent in it. Deriving the check makes
+  that combination unrepresentable rather than merely unconfigured. The rule
+  generalises: a permission for a child resource is a bug when the child is
+  only reachable through its parent.
+- **The read path serves the recorded type and nothing else.** `Content-Type`
+  is `attachments.media_type` exactly, with `X-Content-Type-Options: nosniff`,
+  never a type derived from the filename. Sniffing at write time is a claim;
+  this is what makes it true. An SVG carrying a script sniffs as `text/plain`
+  and is inert only while it is served as that.
+- **`Content-Disposition: inline` is an allow list, and PDF is not on it.**
+  Only `image/png`, `image/jpeg`, `image/gif`, `image/webp` and `text/plain`
+  render in place, because each is inert as itself under nosniff. A same-origin
+  PDF runs JavaScript in every major viewer, and a zip gains nothing from
+  opening. Everything else downloads.
+- **The brain proxies the bytes; there is no signed URL.** The object store
+  holds ciphertext under a key it does not have, so a URL to it would serve
+  something unreadable. Decryption happens in the process that already knows
+  which team the caller was allowed to read, and the team comes from the
+  session rather than from the object key — a string on a row.
+- **A refusal has to do nothing, not merely answer nothing.** `visible` writes
+  its 404 and returns; a handler that ignored its second return value would
+  still answer 404, because the status is already committed and `WriteHeader`
+  only fires once. The assertion that catches it is that the queries never ran.
+  Status codes cannot detect work done after a refusal.
 - **A write resolves the name it was given; it does not send the caller to a
   directory first.** `POST /teams/{id}/members` takes `user_id` or `subject`,
   because requiring the id would mean requiring `GET /users`, which needs

@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -15,9 +16,6 @@ const countAttachmentsByObjectKey = `-- name: CountAttachmentsByObjectKey :one
 SELECT count(*) FROM attachments WHERE object_key = $1
 `
 
-// Deletion asks this before removing an object: another row pointing at the
-// same key means the bytes are still somebody's. Always 1 today, and not
-// always 1 once identical files share an object.
 func (q *Queries) CountAttachmentsByObjectKey(ctx context.Context, objectKey string) (int64, error) {
 	row := q.db.QueryRow(ctx, countAttachmentsByObjectKey, objectKey)
 	var count int64
@@ -53,6 +51,41 @@ func (q *Queries) CreateAttachment(ctx context.Context, arg CreateAttachmentPara
 		arg.SizeBytes,
 		arg.Filename,
 	)
+	var i Attachment
+	err := row.Scan(
+		&i.ID,
+		&i.MessageID,
+		&i.ObjectKey,
+		&i.KeyVersion,
+		&i.MediaType,
+		&i.SizeBytes,
+		&i.Filename,
+		&i.CreatedAt,
+		&i.SessionID,
+	)
+	return i, err
+}
+
+const getAttachmentInSession = `-- name: GetAttachmentInSession :one
+SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id FROM attachments
+WHERE id = $1 AND session_id = $2
+`
+
+type GetAttachmentInSessionParams struct {
+	ID        uuid.UUID
+	SessionID uuid.UUID
+}
+
+// Deletion asks this before removing an object: another row pointing at the
+// same key means the bytes are still somebody's. Always 1 today, and not
+// always 1 once identical files share an object.
+//
+// The bytes route's scope check, done in SQL rather than in Go. The handler
+// has already resolved the session and proven the caller may read it; naming
+// the session here means an attachment from another conversation is a missing
+// row rather than a comparison somebody has to remember to write.
+func (q *Queries) GetAttachmentInSession(ctx context.Context, arg GetAttachmentInSessionParams) (Attachment, error) {
+	row := q.db.QueryRow(ctx, getAttachmentInSession, arg.ID, arg.SessionID)
 	var i Attachment
 	err := row.Scan(
 		&i.ID,
@@ -147,16 +180,37 @@ func (q *Queries) ListAttachmentsByMessage(ctx context.Context, messageID uuid.U
 const listAttachmentsBySession = `-- name: ListAttachmentsBySession :many
 SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id FROM attachments
 WHERE session_id = $1
-ORDER BY created_at, id
+  AND (NOT $2::bool
+   OR (created_at, id) < ($3::timestamptz, $4::uuid))
+ORDER BY created_at DESC, id DESC
+LIMIT $5
 `
+
+type ListAttachmentsBySessionParams struct {
+	SessionID      uuid.UUID
+	UseCursor      bool
+	AfterCreatedAt time.Time
+	AfterID        uuid.UUID
+	PageSize       int32
+}
 
 // Everything a session has accumulated, which is what an agent reads to
 // answer "the file I sent earlier" — a message can name one that arrived
 // twenty messages ago. Straight off attachments.session_id rather than
 // through messages: no index can express that join, so it reads every message
 // in the session and every attachment in the database to return a few.
-func (q *Queries) ListAttachmentsBySession(ctx context.Context, sessionID uuid.UUID) ([]Attachment, error) {
-	rows, err := q.db.Query(ctx, listAttachmentsBySession, sessionID)
+//
+// Ordered newest first and paged on (created_at, id), matching messages and
+// sessions: a page boundary has to be a total order, and created_at repeats
+// when several files arrive on one delivery.
+func (q *Queries) ListAttachmentsBySession(ctx context.Context, arg ListAttachmentsBySessionParams) ([]Attachment, error) {
+	rows, err := q.db.Query(ctx, listAttachmentsBySession,
+		arg.SessionID,
+		arg.UseCursor,
+		arg.AfterCreatedAt,
+		arg.AfterID,
+		arg.PageSize,
+	)
 	if err != nil {
 		return nil, err
 	}

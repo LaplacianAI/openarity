@@ -475,6 +475,15 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"GET /teams/{id}/sessions":                      "member",
 		"GET /teams/{id}/sessions/{sessionID}/messages": "member",
 
+		// Attachments are the session's, on purpose. There is deliberately no
+		// attachment:read permission: a role holding one without session:read
+		// could read the file sent in a private conversation it may not open.
+		// Deriving the check from the session — the same `visible` the message
+		// route uses — makes that combination unrepresentable rather than
+		// merely unconfigured.
+		"GET /teams/{id}/sessions/{sessionID}/attachments":                "member",
+		"GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID}": "member",
+
 		"GET /users":  "any_team user:read",
 		"GET /whoami": "authenticated",
 	}
