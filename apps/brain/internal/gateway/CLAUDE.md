@@ -390,8 +390,10 @@ A permission rather than a role, because which role holds it is data in
 
 ## Not here
 
-Reading a session back. `internal/api/sessions` serves that; the gateway only
-writes. Outbound replies, and socket transports. Slack Socket Mode and the
+Reading a session back, or an attachment. `internal/api/sessions` serves both;
+the gateway only writes. The promise this package makes by sniffing — that the
+recorded `media_type` is what a reader is given — is kept there, by serving it
+exactly and under `nosniff`. Outbound replies, and socket transports. Slack Socket Mode and the
 Discord gateway are long-lived connections and `Provider` describes a request,
 so they need a second interface with a lifecycle.
 

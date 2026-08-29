@@ -69,7 +69,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	}
 
 	authorizer := authz.New(dbStore, cfg.SuperAdmins)
-	routers := newRouters(cfg, logger, dbStore, authorizer, secretWriter, registry)
+	routers := newRouters(cfg, logger, dbStore, authorizer, secretWriter, registry, attachments)
 	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry, attachments)
 
 	guard, err := newGuard(ctx, logger, dbStore, authorizer)

@@ -51,7 +51,7 @@ func servedRoutes(t *testing.T, environment config.Environment) []string {
 	cfg := &config.Config{Environment: environment}
 
 	routes := slices.Clone(probeRoutes)
-	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil) {
+	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil) {
 		p, ok := r.(patterned)
 		if !ok {
 			t.Fatalf("%T does not expose Patterns, so it cannot be checked against the spec", r)
@@ -193,7 +193,7 @@ func TestOnlyDeclaredRoutesArePublic(t *testing.T) {
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
 	allowed := slices.Concat(devOnlyRoutes, publicRoutes)
 
-	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil) {
+	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil) {
 		if !r.Public() {
 			continue
 		}
@@ -238,7 +238,7 @@ func TestEveryRouterExposesItsPatterns(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
-	routers := newRouters(cfg, discardLogger(), nil, nil, nil, nil)
+	routers := newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil)
 
 	if len(routers) == 0 {
 		t.Fatal("newRouters returned nothing")

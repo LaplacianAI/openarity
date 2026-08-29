@@ -27,6 +27,15 @@ type message struct {
 	ReceivedAt time.Time  `json:"received_at"`
 }
 
+type attachment struct {
+	ID        uuid.UUID `json:"id"`
+	MessageID uuid.UUID `json:"message_id"`
+	Filename  string    `json:"filename"`
+	MediaType string    `json:"media_type"`
+	SizeBytes int64     `json:"size_bytes"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type sessionCursor struct {
 	LastMessageAt time.Time `json:"l"`
 	ID            uuid.UUID `json:"i"`
@@ -35,4 +44,9 @@ type sessionCursor struct {
 type messageCursor struct {
 	ReceivedAt time.Time `json:"r"`
 	ID         uuid.UUID `json:"i"`
+}
+
+type attachmentCursor struct {
+	CreatedAt time.Time `json:"c"`
+	ID        uuid.UUID `json:"i"`
 }

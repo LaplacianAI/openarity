@@ -33,14 +33,30 @@ WHERE a.id = $1;
 -- through messages: no index can express that join, so it reads every message
 -- in the session and every attachment in the database to return a few.
 --
+-- Ordered newest first and paged on (created_at, id), matching messages and
+-- sessions: a page boundary has to be a total order, and created_at repeats
+-- when several files arrive on one delivery.
+--
 -- name: ListAttachmentsBySession :many
 SELECT * FROM attachments
-WHERE session_id = $1
-ORDER BY created_at, id;
+WHERE session_id = sqlc.arg('session_id')
+  AND (NOT sqlc.arg('use_cursor')::bool
+   OR (created_at, id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('page_size');
 
 -- Deletion asks this before removing an object: another row pointing at the
 -- same key means the bytes are still somebody's. Always 1 today, and not
 -- always 1 once identical files share an object.
 --
+-- The bytes route's scope check, done in SQL rather than in Go. The handler
+-- has already resolved the session and proven the caller may read it; naming
+-- the session here means an attachment from another conversation is a missing
+-- row rather than a comparison somebody has to remember to write.
+--
+-- name: GetAttachmentInSession :one
+SELECT * FROM attachments
+WHERE id = $1 AND session_id = $2;
+
 -- name: CountAttachmentsByObjectKey :one
 SELECT count(*) FROM attachments WHERE object_key = $1;

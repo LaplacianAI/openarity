@@ -158,6 +158,16 @@
     },
     {
       "method": "GET",
+      "path": "/teams/{id}/sessions/{sessionID}/attachments",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/sessions/{sessionID}/attachments/{attachmentID}",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
       "path": "/users",
       "scope": "any_team",
       "permission": "user:read"

@@ -19,6 +19,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -39,9 +40,76 @@ type fakeStore struct {
 	sessionErr error
 	listErr    error
 
-	listArgs        []db.ListMessagesBySessionParams
-	channelListArgs []db.ListSessionsByChannelParams
-	teamListArgs    []db.ListSessionsByTeamParams
+	attachments   []db.Attachment
+	attachmentErr error
+
+	listArgs           []db.ListMessagesBySessionParams
+	channelListArgs    []db.ListSessionsByChannelParams
+	teamListArgs       []db.ListSessionsByTeamParams
+	attachmentListArgs []db.ListAttachmentsBySessionParams
+	getAttachmentArgs  []db.GetAttachmentInSessionParams
+}
+
+func (f *fakeStore) ListAttachmentsBySession(
+	_ context.Context, arg db.ListAttachmentsBySessionParams,
+) ([]db.Attachment, error) {
+	f.attachmentListArgs = append(f.attachmentListArgs, arg)
+	if f.attachmentErr != nil {
+		return nil, f.attachmentErr
+	}
+
+	var out []db.Attachment
+	for _, a := range f.attachments {
+		if a.SessionID != arg.SessionID {
+			continue
+		}
+		out = append(out, a)
+		if int32(len(out)) == arg.PageSize {
+			break
+		}
+	}
+	return out, nil
+}
+
+// Scoped on both, like the SQL. A fake that matched on the id alone would let
+// a handler that forgot the session pass.
+func (f *fakeStore) GetAttachmentInSession(
+	_ context.Context, arg db.GetAttachmentInSessionParams,
+) (db.Attachment, error) {
+	f.getAttachmentArgs = append(f.getAttachmentArgs, arg)
+	if f.attachmentErr != nil {
+		return db.Attachment{}, f.attachmentErr
+	}
+	for _, a := range f.attachments {
+		if a.ID == arg.ID && a.SessionID == arg.SessionID {
+			return a, nil
+		}
+	}
+	return db.Attachment{}, pgx.ErrNoRows
+}
+
+// fakeObjects is the bucket. It records the team it was asked for, because the
+// team is what selects the decryption key and taking it from the wrong place
+// is the failure this whole path is shaped to prevent.
+type fakeObjects struct {
+	bodies map[string][]byte
+	err    error
+
+	teams []uuid.UUID
+	keys  []string
+}
+
+func (f *fakeObjects) Get(_ context.Context, teamID uuid.UUID, key string) ([]byte, error) {
+	f.teams = append(f.teams, teamID)
+	f.keys = append(f.keys, key)
+	if f.err != nil {
+		return nil, f.err
+	}
+	body, ok := f.bodies[key]
+	if !ok {
+		return nil, objects.ErrNotFound
+	}
+	return body, nil
 }
 
 func (f *fakeStore) GetChannel(_ context.Context, id uuid.UUID) (db.Channel, error) {
@@ -165,6 +233,7 @@ type fixture struct {
 	userID    uuid.UUID
 	store     *fakeStore
 	authz     *fakeAuthz
+	objects   *fakeObjects
 	caller    *auth.User
 }
 
@@ -192,6 +261,7 @@ func newFixture(t *testing.T) *fixture {
 			ReceivedAt: time.Unix(1755412345, 0).UTC(),
 		}},
 	}
+	f.objects = &fakeObjects{bodies: map[string][]byte{}}
 	f.authz = &fakeAuthz{}
 	f.caller = memberOf(f.teamID, "member")
 
@@ -212,6 +282,10 @@ func (f *fixture) teamSessions() string {
 	return "/teams/" + f.teamID.String() + "/sessions"
 }
 
+func (f *fixture) sessionAttachments() string {
+	return "/teams/" + f.teamID.String() + "/sessions/" + f.sessionID.String() + "/attachments"
+}
+
 func (f *fixture) sessionMessages() string {
 	return "/teams/" + f.teamID.String() + "/sessions/" + f.sessionID.String() + "/messages"
 }
@@ -220,7 +294,8 @@ func (f *fixture) get(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store, f.authz).Register(mux, api.NewGuard(routes(t), f.authz, discardLogger()))
+	New(discardLogger(), f.store, f.authz, f.objects).
+		Register(mux, api.NewGuard(routes(t), f.authz, discardLogger()))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 	if f.caller != nil {
@@ -242,6 +317,8 @@ func routes(t *testing.T) authz.Routes {
 		"/teams/{id}/channels/{channelID}/sessions",
 		"/teams/{id}/sessions",
 		"/teams/{id}/sessions/{sessionID}/messages",
+		"/teams/{id}/sessions/{sessionID}/attachments",
+		"/teams/{id}/sessions/{sessionID}/attachments/{attachmentID}",
 	} {
 		if err := rs.Add("GET", path, "member", nil); err != nil {
 			t.Fatalf("Add %s: %v", path, err)

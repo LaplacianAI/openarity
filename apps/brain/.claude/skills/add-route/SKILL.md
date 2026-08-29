@@ -148,6 +148,44 @@ type response struct {
 
 Write it with `api.WriteJSON(w, h.logger, http.StatusOK, resp)`.
 
+## Step 2c — a route that returns bytes
+
+Some routes answer with a file rather than JSON. The response contract is then
+the *headers*, and every one of them is a decision:
+
+```go
+	w.Header().Set("Content-Type", row.MediaType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", disposition(row.MediaType, row.Filename))
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.Header().Set("Cache-Control", "private, no-store")
+
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+```
+
+- **Set every header before the first `Write`.** `net/http` flushes the header
+  block on the first byte and silently discards anything set afterwards — no
+  error, no panic, no log. Worse, `http.DetectContentType` fills in a
+  `Content-Type` for you, so the response still looks plausible while the type
+  you decided on never left the process.
+- **The type comes from the stored record, never from the filename**, and it
+  goes out with `nosniff`. Whatever decided the type at write time only means
+  something if the read repeats it exactly.
+- **`Content-Disposition` is an allow list, not a deny list.** Name the types
+  that may render in place; everything else downloads. `application/pdf` is not
+  on ours, because a same-origin PDF runs JavaScript in every major viewer.
+- **Build the header with `mime.FormatMediaType`.** It quotes when it must,
+  escapes embedded quotes, and switches to RFC 2231 `filename*=` for non-ASCII
+  — three specs, none of which you will get right by hand. Its one wrong answer
+  is `""`, which becomes `filename=""`; omit the parameter instead.
+- **`gosec` G705 will flag the write**, because the bytes came from a stranger.
+  That is the route's purpose, so the answer is a `//nolint` that names the
+  mitigation, not a smaller feature. See the `fix-lint` skill.
+
+Tests assert on `rec.Result().Header`, never `rec.Header()`. See the last
+section of this file for why.
+
 ## Step 2b — every list route returns a page
 
 Never a bare JSON array. `api.Page[T]` is the shape:
@@ -401,11 +439,30 @@ Break each guard and confirm the matching test fails, then restore:
 | change a `member` route to `team` | the 404-not-403 test |
 | return 403 instead of 500 on a read error | the read-failure test |
 | register the route on the public mux | the unauthorised test |
+| ignore the second return of a `visible`-style check | the forbidden test |
+| write the body before setting any header | the header tests |
 | add a field to the response struct | the contracted-fields test |
 | change `r.Get` to `r.Post` | the wrong-method test |
 | resolve the reference before reading `api.Caller` | the probe test |
 | prefer the id when both forms are given | the exactly-one test |
 | return the first row instead of 409 | the ambiguity test |
+
+The `visible` row is the one that will surprise you. A handler that ignores a
+refusal still answers the refusal's status, because the check already wrote it
+and `WriteHeader` only fires once — so it goes on to query the database and
+serialise a body nobody can change the status of, and the test asserting 404
+passes. **A status code cannot detect work done after a refusal.** Assert that
+the collaborators were never called:
+
+```go
+	if len(f.store.attachmentListArgs) != 0 {
+		t.Errorf("the list ran for a stranger: %v", f.store.attachmentListArgs)
+	}
+```
+
+The rule this gives you: "the refusal changed nothing" has to be checked as
+*did nothing*, on the fakes, because the visible outcome is already committed
+before the damage happens.
 
 **A mutation that does not compile proves nothing.** Deleting a branch usually
 leaves a variable unused, and a build failure reads as "caught" if you are only
@@ -428,6 +485,17 @@ will not start, which is the design. Confirm it once, then move on.
   routing conflict should fail the boot, not leave one route shadowed.
 - **`httptest.ResponseRecorder.Header()` is the live map**, so a header set too
   late to reach the wire still appears there. Assert on `rec.Result().Header`.
+  Measured, on a handler that writes the body before setting its headers:
+
+  ```text
+  rec.Header():        "nosniff"
+  rec.Result().Header: ""
+  ```
+
+  This has now bitten twice, and the second time was on the route where the
+  headers *are* the security control. Five assertions used the lenient form and
+  every one of them passed against a handler whose headers never left the
+  process.
 - **A domain package that authorised itself.** `users` and `teams` each carried
   their own `Can` call and their own `Authorizer` interface, which meant every
   new route had to remember to add one. Both are gone; the guard does it, and

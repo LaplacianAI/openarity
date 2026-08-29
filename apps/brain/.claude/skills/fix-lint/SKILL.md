@@ -78,6 +78,32 @@ Rules:
 If the same suppression appears three times, it belongs in `.golangci.yml`
 `exclusions` with a comment, not scattered.
 
+**A nolint on one linter does not cover the others on that line.** `w.Write`
+returns `(int, error)`, so dropping the assignment to satisfy `gosec` trades a
+G705 for an `errcheck` failure. Suppress the one that fires and keep the code
+the others want:
+
+```go
+	_, _ = w.Write(body) //nolint:gosec // G705: mitigated by the headers above
+```
+
+**Where the finding is real but the feature is the point**, the reason has to
+say what stands in for the fix. `gosec` G705 flags writing bytes a stranger
+supplied — which is exactly what a download route does — so the comment names
+the mitigation rather than denying the taint:
+
+```go
+	// G705 flags writing bytes a stranger supplied, which is exactly what this
+	// route is for, so the answer is the three headers above rather than not
+	// writing them. The type is the one sniffed from these bytes at write
+	// time, nosniff stops a browser looking past it, and inline is reserved
+	// for types that render without executing. gosec cannot see any of that.
+	_, _ = w.Write(body) //nolint:gosec // G705: mitigated by the headers above
+```
+
+A suppression whose reason is "false positive" is not a reason. If you cannot
+name the control that makes it safe, it is not safe yet.
+
 ## Step 4 — changing the configuration
 
 Adding or loosening a linter is a decision, not a fix. Before changing

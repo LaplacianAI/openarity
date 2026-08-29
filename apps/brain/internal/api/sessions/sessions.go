@@ -21,23 +21,29 @@ type Store interface {
 	ListSessionsByChannel(ctx context.Context, arg db.ListSessionsByChannelParams) ([]db.Session, error)
 	ListSessionsByTeam(ctx context.Context, arg db.ListSessionsByTeamParams) ([]db.Session, error)
 	ListMessagesBySession(ctx context.Context, arg db.ListMessagesBySessionParams) ([]db.Message, error)
+	ListAttachmentsBySession(ctx context.Context, arg db.ListAttachmentsBySessionParams) ([]db.Attachment, error)
+	GetAttachmentInSession(ctx context.Context, arg db.GetAttachmentInSessionParams) (db.Attachment, error)
 }
 
 const readEveryConversation = authz.Action("session:read_all")
 
 type handler struct {
-	logger *slog.Logger
-	store  Store
-	authz  api.Authorizer
+	logger  *slog.Logger
+	store   Store
+	authz   api.Authorizer
+	objects Objects
 }
 
-func New(logger *slog.Logger, s Store, a api.Authorizer) *api.Router {
-	h := &handler{logger: logger, store: s, authz: a}
+func New(logger *slog.Logger, s Store, a api.Authorizer, o Objects) *api.Router {
+	h := &handler{logger: logger, store: s, authz: a, objects: o}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/channels/{channelID}/sessions", h.listByChannel)
 	r.Get("/{id}/sessions", h.listByTeam)
 	r.Get("/{id}/sessions/{sessionID}/messages", h.listMessages)
+
+	r.Get("/{id}/sessions/{sessionID}/attachments", h.listAttachments)
+	r.Get("/{id}/sessions/{sessionID}/attachments/{attachmentID}", h.getAttachment)
 	return r
 }
 

@@ -27,13 +27,14 @@ func newRouters(
 	authorizer *authz.Authorizer,
 	secretWriter secrets.Writer,
 	registry gateway.Registry,
+	attachments sessions.Objects,
 ) []server.Router {
 	routers := []server.Router{
 		whoami.New(logger),
 		teams.New(logger, dbStore, authorizer),
 		channels.New(logger, dbStore, secretWriter, registry),
 		users.New(logger, dbStore),
-		sessions.New(logger, dbStore, authorizer),
+		sessions.New(logger, dbStore, authorizer, attachments),
 		authconfig.New(logger, cfg),
 	}
 
