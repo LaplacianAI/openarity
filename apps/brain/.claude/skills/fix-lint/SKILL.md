@@ -104,6 +104,37 @@ the mitigation rather than denying the taint:
 A suppression whose reason is "false positive" is not a reason. If you cannot
 name the control that makes it safe, it is not safe yet.
 
+### `nilerr` on a deliberate nil
+
+`nilerr` fires when a function returns nil having seen a non-nil error, which
+is right almost always and wrong for a cancellation:
+
+```text
+reaper.go:112:2: error is not nil (line 101) but it returns nil (nilerr)
+```
+
+A stopped sweep is not a failed one, so nil is correct. The fix is not a
+suppression — it is that the linter is reading a scope you did not mean. Two
+shapes settle it:
+
+- **Move the loop into its own function**, so the `err` from a call inside it
+  is not in scope at the outer return. This usually reads better anyway: the
+  caller becomes "do the work, then report".
+- **Ask the context with `select`, not with `ctx.Err()`.** `if ctx.Err() != nil
+  { return nil }` binds an error and looks like swallowing one; the channel
+  form has no error in it at all:
+
+  ```go
+  select {
+  case <-ctx.Done():
+      return nil
+  default:
+  }
+  ```
+
+Both leave the behaviour identical and the linter quiet, which is the test of
+whether a restructure was the right answer or a workaround.
+
 ## Step 4 — changing the configuration
 
 Adding or loosening a linter is a decision, not a fix. Before changing

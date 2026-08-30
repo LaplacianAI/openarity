@@ -103,6 +103,42 @@ migration is written.
 Commit the generated files **in the same commit** as the `.sql` change. CI runs
 `make generate-check`, which regenerates and fails if the result differs.
 
+### A nullable aggregate becomes `interface{}`
+
+`min`, `max` and `sum` return null over no rows, and sqlc types that as
+`interface{}` — which compiles, and hands the caller something it has to
+assert:
+
+```sql
+-- name: DeletedObjectBacklog :one
+SELECT count(*) AS outstanding, min(deleted_at) AS oldest FROM deleted_objects;
+```
+
+```go
+type DeletedObjectBacklogRow struct {
+	Outstanding int64
+	Oldest      interface{}   // no
+}
+```
+
+Casting it — `min(deleted_at)::timestamptz` — makes sqlc believe it cannot be
+null, and the scan then fails on the empty table, which is the ordinary case.
+
+Ask for the row instead of the aggregate, and carry the count on it with a
+window function:
+
+```sql
+-- name: DeletedObjectBacklog :many
+SELECT count(*) OVER () AS outstanding, deleted_at AS oldest
+FROM deleted_objects
+ORDER BY deleted_at
+LIMIT 1;
+```
+
+`:many` returning nought or one row, both fields typed, one round trip. The
+empty backlog is an empty slice rather than a null nobody typed. **When an
+aggregate wants to be nullable, return the row it came from.**
+
 ## Step 3 — types
 
 `sqlc.yaml` maps `uuid` to `uuid.UUID` and `timestamptz` to `time.Time`.
@@ -220,6 +256,24 @@ signature to preserve, so delete those outright.
 
 Regenerate between the mutation and the test — `make generate` — or the
 committed Go still holds the original query and the mutation is invisible.
+
+## Step 6b — a query only its own tests call
+
+`unused` cannot see this: every sqlc query is an exported method on `*Queries`,
+so it always looks used. `GetAttachmentWithTeam` was written to join for a team
+id, kept its tests when a column made the join unnecessary, and was called by
+nothing else for a whole change.
+
+```sh
+grep -rn "GetAttachmentWithTeam" internal/ cmd/ | grep -v _test.go | grep -v db/
+```
+
+One line — the generated method — means the query is dead. Delete it and adapt
+the tests to whatever answers the question now; a query kept "because it has
+tests" is tests keeping code alive rather than the other way round.
+
+Worth running over any query whose reason for existing was removed by the same
+change.
 
 ## Step 7 — verify
 
