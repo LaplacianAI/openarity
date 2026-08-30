@@ -89,6 +89,7 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) error {
 			MessageID:  messageID,
 			SessionID:  session.ID,
 			ObjectKey:  f.ObjectKey,
+			TeamID:     ch.TeamID,
 			KeyVersion: 1,
 			MediaType:  f.MediaType,
 			SizeBytes:  f.SizeBytes,

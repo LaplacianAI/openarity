@@ -16,6 +16,10 @@ const countAttachmentsByObjectKey = `-- name: CountAttachmentsByObjectKey :one
 SELECT count(*) FROM attachments WHERE object_key = $1
 `
 
+// The sweeper asks this before removing an object: another row pointing at the
+// same key means the bytes are still somebody's, and the tombstone is dropped
+// rather than acted on. Always 1 today, and not always 1 once identical files
+// share one.
 func (q *Queries) CountAttachmentsByObjectKey(ctx context.Context, objectKey string) (int64, error) {
 	row := q.db.QueryRow(ctx, countAttachmentsByObjectKey, objectKey)
 	var count int64
@@ -25,15 +29,17 @@ func (q *Queries) CountAttachmentsByObjectKey(ctx context.Context, objectKey str
 
 const createAttachment = `-- name: CreateAttachment :one
 INSERT INTO attachments (
-    message_id, session_id, object_key, key_version, media_type, size_bytes, filename
+    message_id, session_id, team_id,
+    object_key, key_version, media_type, size_bytes, filename
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id
 `
 
 type CreateAttachmentParams struct {
 	MessageID  uuid.UUID
 	SessionID  uuid.UUID
+	TeamID     uuid.UUID
 	ObjectKey  string
 	KeyVersion int32
 	MediaType  string
@@ -45,6 +51,7 @@ func (q *Queries) CreateAttachment(ctx context.Context, arg CreateAttachmentPara
 	row := q.db.QueryRow(ctx, createAttachment,
 		arg.MessageID,
 		arg.SessionID,
+		arg.TeamID,
 		arg.ObjectKey,
 		arg.KeyVersion,
 		arg.MediaType,
@@ -62,12 +69,13 @@ func (q *Queries) CreateAttachment(ctx context.Context, arg CreateAttachmentPara
 		&i.Filename,
 		&i.CreatedAt,
 		&i.SessionID,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const getAttachmentInSession = `-- name: GetAttachmentInSession :one
-SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id FROM attachments
+SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id FROM attachments
 WHERE id = $1 AND session_id = $2
 `
 
@@ -76,10 +84,6 @@ type GetAttachmentInSessionParams struct {
 	SessionID uuid.UUID
 }
 
-// Deletion asks this before removing an object: another row pointing at the
-// same key means the bytes are still somebody's. Always 1 today, and not
-// always 1 once identical files share an object.
-//
 // The bytes route's scope check, done in SQL rather than in Go. The handler
 // has already resolved the session and proven the caller may read it; naming
 // the session here means an attachment from another conversation is a missing
@@ -97,52 +101,13 @@ func (q *Queries) GetAttachmentInSession(ctx context.Context, arg GetAttachmentI
 		&i.Filename,
 		&i.CreatedAt,
 		&i.SessionID,
-	)
-	return i, err
-}
-
-const getAttachmentWithTeam = `-- name: GetAttachmentWithTeam :one
-SELECT a.id, a.message_id, a.object_key, a.key_version, a.media_type, a.size_bytes, a.filename, a.created_at, a.session_id, s.team_id
-FROM attachments a
-JOIN messages m ON m.id = a.message_id
-JOIN sessions s ON s.id = m.session_id
-WHERE a.id = $1
-`
-
-type GetAttachmentWithTeamRow struct {
-	Attachment Attachment
-	TeamID     uuid.UUID
-}
-
-// The read path's only query. It returns the team in the same round trip that
-// fetches the row, so authorisation never needs a second one — and the team is
-// what selects the key that opens the object.
-//
-// Through sessions, not through channels. A session carries its own team and
-// always has one; its channel_id is nullable, because the dashboard and the
-// API start sessions with no channel behind them. Joining through channels
-// would return no row for those, and an attachment that exists would read as
-// one that does not.
-func (q *Queries) GetAttachmentWithTeam(ctx context.Context, id uuid.UUID) (GetAttachmentWithTeamRow, error) {
-	row := q.db.QueryRow(ctx, getAttachmentWithTeam, id)
-	var i GetAttachmentWithTeamRow
-	err := row.Scan(
-		&i.Attachment.ID,
-		&i.Attachment.MessageID,
-		&i.Attachment.ObjectKey,
-		&i.Attachment.KeyVersion,
-		&i.Attachment.MediaType,
-		&i.Attachment.SizeBytes,
-		&i.Attachment.Filename,
-		&i.Attachment.CreatedAt,
-		&i.Attachment.SessionID,
 		&i.TeamID,
 	)
 	return i, err
 }
 
 const listAttachmentsByMessage = `-- name: ListAttachmentsByMessage :many
-SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id FROM attachments
+SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id FROM attachments
 WHERE message_id = $1
 ORDER BY created_at, id
 `
@@ -166,6 +131,7 @@ func (q *Queries) ListAttachmentsByMessage(ctx context.Context, messageID uuid.U
 			&i.Filename,
 			&i.CreatedAt,
 			&i.SessionID,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -178,7 +144,7 @@ func (q *Queries) ListAttachmentsByMessage(ctx context.Context, messageID uuid.U
 }
 
 const listAttachmentsBySession = `-- name: ListAttachmentsBySession :many
-SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id FROM attachments
+SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id FROM attachments
 WHERE session_id = $1
   AND (NOT $2::bool
    OR (created_at, id) < ($3::timestamptz, $4::uuid))
@@ -228,6 +194,7 @@ func (q *Queries) ListAttachmentsBySession(ctx context.Context, arg ListAttachme
 			&i.Filename,
 			&i.CreatedAt,
 			&i.SessionID,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}

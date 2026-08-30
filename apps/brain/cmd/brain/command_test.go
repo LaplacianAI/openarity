@@ -144,3 +144,22 @@ func TestParseReturnsAZeroCommandOnError(t *testing.T) {
 		t.Errorf("error returned a usable command: %+v", cmd)
 	}
 }
+
+// The error a typo produces has to list what is actually accepted. It is the
+// only place a person learns the command names, and it is a string nothing
+// else checks — `brain reapp` said "want serve or migrate" for a while after
+// reap existed, which reads as "reap is not a thing" rather than as a typo.
+func TestTheUnknownCommandErrorNamesEveryCommand(t *testing.T) {
+	t.Parallel()
+
+	_, err := parse([]string{"nonsense"})
+	if err == nil {
+		t.Fatal("parse accepted a command that does not exist")
+	}
+
+	for _, name := range []commandName{commandServe, commandMigrate, commandReap} {
+		if !strings.Contains(err.Error(), string(name)) {
+			t.Errorf("%q is a command and the error does not mention it: %v", name, err)
+		}
+	}
+}

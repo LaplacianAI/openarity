@@ -60,6 +60,8 @@ func execute(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbSto
 		return serve(ctx, cfg, logger, dbStore)
 	case commandMigrate:
 		return migrate(ctx, logger, dbStore, cmd.direction)
+	case commandReap:
+		return reap(ctx, cfg, logger, dbStore)
 	default:
 		return fmt.Errorf("unhandled command %q", cmd.name)
 	}

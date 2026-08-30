@@ -546,7 +546,7 @@ func TestADuplicateNameIsAConflict(t *testing.T) {
 
 // --- deleting ---
 
-func TestDeleteRemovesTheChannelAndItsSecret(t *testing.T) {
+func TestDeleteRemovesTheChannelAndLeavesItsSecretToTheReaper(t *testing.T) {
 	t.Parallel()
 
 	teamID := uuid.New()
@@ -564,11 +564,14 @@ func TestDeleteRemovesTheChannelAndItsSecret(t *testing.T) {
 		t.Errorf("deleted %v, want %s", s.deleted, ch.ID)
 	}
 
-	// A Postgres cascade does not reach the secret store, so the delete has
-	// to be explicit or a disconnected channel leaves live credentials behind.
-	want := secrets.Path(teamID, secrets.KindChannel, ch.ID)
-	if len(sec.deleted) != 1 || sec.deleted[0] != want {
-		t.Errorf("deleted secrets %v, want [%s]", sec.deleted, want)
+	// The handler no longer touches the secret store. A trigger records the
+	// path in the same transaction as the row and `brain reap` destroys it,
+	// which is the only version that survives a failure — this used to be a
+	// best-effort delete with a log line where the error went, and a team
+	// cascade never reached it at all.
+	if len(sec.deleted) != 0 {
+		t.Errorf("the handler deleted %v; that is the reaper's, and doing it "+
+			"here cannot be made atomic with the row", sec.deleted)
 	}
 }
 

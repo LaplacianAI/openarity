@@ -73,6 +73,7 @@ apps/brain/
     command.go         argument parsing — pure, no dependencies
     serve.go           the serve role
     migrate.go         the migrate role
+    reap.go            the reap role
     logger.go          newLogger()
   internal/config/     configuration: load, validate, redact
   internal/server/     the two listeners: build, run, shut down; mounts Routers
@@ -97,6 +98,7 @@ apps/brain/
     s3/                the S3 API — MinIO, Ceph, R2, GCS, AWS
     filesystem/        a volume, for a single-host deployment with no S3
     inmemory/          the in-process fallback; attachments die with the process
+  internal/reaper/     the sweep: one loop, one Effect per outside system
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary
     rbac.json          the permissions, roles and route mappings we ship
@@ -364,10 +366,64 @@ reinstalled.
   which key sealed an object, and adding the column now costs nothing while
   adding it later means a migration over every attachment ever stored. Every
   row is version 1 today.
-- **Deleting an attachment row does not delete its object.** A Postgres cascade
-  does not reach a bucket. Until the reaper exists that is a known leak rather
-  than an oversight, and `CountAttachmentsByObjectKey` is what will make the
-  reaper safe — two rows can name one object once identical files share one.
+- **What Postgres cannot include in a transaction gets a tombstone, not a
+  best-effort call.** A cascade does not reach a bucket or a secret store, and
+  the two writes can never both be atomic. What is atomic is recording the
+  intent: a trigger writes a row to `deleted_objects` or `deleted_secrets` in
+  the same transaction that removes the row it belonged to, and `brain reap`
+  converges the other system afterwards. A transactional outbox, which makes an
+  erasure something that has been *recorded* rather than something that was
+  attempted. `internal/reaper` is the loop; each destination is an `Effect`.
+- **The tombstone is written by a trigger, because a cascade never runs our
+  SQL.** Deleting a team removes its attachments through channels, sessions and
+  messages without any Go code seeing a row — and deleting a team is the
+  commonest reason an erasure is owed. An outbox written by our own delete
+  statements would catch nothing. The triggers are statement-level with
+  transition tables, so deleting a team with ten thousand attachments is one
+  insert rather than ten thousand invocations.
+- **The effect happens first, the tombstone is cleared second.** A crash
+  between them repeats the effect, which every effect tolerates: deleting an
+  absent object or an absent secret is a no-op everywhere. Clearing first and
+  crashing loses the record while the data survives, which is the original bug
+  with extra steps. Destroy the record of work last.
+- **A tombstone holds no personal data and has no foreign key.** Two uuids and
+  a path. A filename in there would make it a list of the files people asked to
+  have deleted, kept because they asked. A reference to `teams` would cascade
+  away the record of the work still to do, at the exact moment the work is
+  owed.
+- **The alarm is the age of the oldest tombstone, never the count.** Nine
+  hundred a minute old is a busy delete; one a day old is a sweep failing every
+  run. Nothing else about a deleted row looks different depending on whether
+  the other system caught up, so this is the only signal there is — and `brain
+  reap` exits non-zero on it, because a failed job is seen and a log line is
+  not.
+- **A secret is destroyed by the sweep, not by the handler that deleted the
+  row.** `DELETE /teams/{id}/channels/{channelID}` used to delete the signing
+  secret itself and log when it failed, which left a live credential behind
+  with a log line in front of it — and left every channel's secret behind when
+  a *team* was deleted, because a cascade never reaches a handler.
+- **Destroying a team's key is the half of an erasure that does not wait.**
+  Secrets sweep before objects: once `teams/<id>/attachments` is gone every
+  object of that team is undecryptable, including copies in bucket backups no
+  sweep can reach. In OpenBao this is a delete of the *metadata* path — the
+  data path only hides the latest version, and a secret somebody can undelete
+  is a secret that was not erased.
+- **`attachments.team_id` exists because a trigger cannot join for it.**
+  Measured: during a team cascade the `sessions` row is already gone when the
+  attachments trigger fires, so the tombstone would lose the one field the
+  sweep cannot work without. Third copy of that fact and the same mechanism as
+  the other two — a composite foreign key onto `sessions (id, team_id)` means
+  it cannot drift.
+- **Two tombstone tables, not one with a `kind` column.** They carry different
+  columns today and would carry different constraints tomorrow, and a shared
+  table forces the stricter of two sets of rules onto both. The *loop* is
+  shared; the tables are not.
+- **The sweep has no ordering and must not grow one.** `FOR UPDATE SKIP LOCKED`
+  hands different rows to different sweepers in any order, which is safe only
+  because deletes commute. An outbox for something that does not commute —
+  outbound replies to one thread — needs a partition key and one worker per
+  partition, and would be a second mechanism sharing a word rather than a third
+  `Effect`.
 - **`MaxAttachment` is a constant, and not only for politeness.** `gcm.Seal`
   panics rather than erroring above `(2^32-2)*16` bytes, and an attachment is
   held whole in memory twice while it is sealed. A test asserts the constant

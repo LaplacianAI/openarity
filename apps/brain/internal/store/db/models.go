@@ -20,6 +20,7 @@ type Attachment struct {
 	Filename   string
 	CreatedAt  time.Time
 	SessionID  uuid.UUID
+	TeamID     uuid.UUID
 }
 
 type Channel struct {
@@ -36,6 +37,22 @@ type ChannelSender struct {
 	SenderRef string
 	UserID    uuid.UUID
 	CreatedAt time.Time
+}
+
+type DeletedObject struct {
+	ObjectKey     string
+	TeamID        uuid.UUID
+	DeletedAt     time.Time
+	Attempts      int32
+	LastAttemptAt *time.Time
+}
+
+type DeletedSecret struct {
+	Path          string
+	TeamID        uuid.UUID
+	DeletedAt     time.Time
+	Attempts      int32
+	LastAttemptAt *time.Time
 }
 
 type Message struct {
