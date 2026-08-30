@@ -251,12 +251,6 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := secrets.Path(teamID, secrets.KindChannel, channelID)
-	if err := h.secrets.Delete(r.Context(), path); err != nil {
-		h.logger.Error("channel deleted but its secret remains",
-			"subject", u.Subject, "channel_id", channelID, "path", path, "error", err)
-	}
-
 	w.WriteHeader(http.StatusNoContent)
 }
 

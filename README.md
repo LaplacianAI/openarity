@@ -113,6 +113,16 @@ export OPENARITY_SUPER_ADMINS=dev
 go run ./cmd/brain               # serve; Ctrl-C to shut down
 ```
 
+`brain reap` is the third command, and a deployment needs it on a schedule.
+Deleting a team, a channel or a person removes their rows; it cannot remove the
+attachment bytes in the object store or the secrets in the vault, because
+Postgres has no transaction that spans them. Each deletion records what it owes
+instead, and `reap` completes it — destroying a deleted team's key first, which
+makes every one of its attachments unreadable immediately. It is idempotent and
+safe to run twice at once, exits non-zero when an erasure has been outstanding
+for a day, and a deployment that never runs it never erases anything outside
+Postgres.
+
 Every other setting has a working default. The service refuses to start with no
 authentication configured rather than serving an open API — set
 `OPENARITY_DEV_TOKEN` for development, or `OPENARITY_OIDC_ENABLED` and

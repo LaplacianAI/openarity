@@ -98,6 +98,17 @@ These are deliberate, documented decisions rather than oversights:
   each inert as itself. PDFs download, because a same-origin PDF runs
   JavaScript in every major viewer. A signed or public URL to an attachment is
   a bug, and so is an `inline` disposition on anything outside that list.
+- **Deleting a row records the erasure it owes; `brain reap` completes it.**
+  A cascade cannot reach the object store or the secret store, so a trigger
+  writes a tombstone in the same transaction and a scheduled sweep converges
+  the other system. Deleting a team destroys the key its attachments were
+  sealed under, which makes every one of them undecryptable whether or not the
+  bytes have been collected yet. An attachment's bytes, a channel's signing
+  secret, or a team's key still readable after the sweep has run and reported a
+  clear backlog is a bug — as is a delete that leaves no tombstone at all.
+  Erasure that has not completed is visible as a non-zero exit from `reap` and
+  as an `ERROR` log naming the oldest outstanding item; a deployment that never
+  runs `reap` never erases anything outside Postgres.
 - **An attachment is readable by exactly whoever may read its session.** There
   is no separate attachment permission, so a file in somebody else's `direct`
   session answers the same 404 the session does, and an attachment id belonging
