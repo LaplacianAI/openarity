@@ -186,6 +186,101 @@ Denormalising because **the schema cannot express the question** — no index
 covers "attachments in this session" through the join, so both sides are read
 in full — is a structural fact.
 
+## Step 5c — triggers and functions
+
+A trigger is the only thing that sees a cascade. **A cascade never runs your
+SQL**: deleting a team removes its attachments through channels, sessions and
+messages without any Go code, and without any query in `queries/`, seeing a
+row. Anything that must happen on every delete — an outbox row, an audit
+entry — written as a Go statement catches only the deletes somebody remembered
+to route through it, which is never the ones that matter.
+
+### goose needs to be told where the statement ends
+
+goose splits a migration on semicolons, and a function body is full of them.
+Without the markers it applies half a function and fails with a syntax error
+that names a line you did not write:
+
+```sql
+-- +goose StatementBegin
+CREATE FUNCTION attachments_record_deleted_object() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO deleted_objects (object_key, team_id)
+    SELECT object_key, team_id FROM deleted_rows
+    ON CONFLICT (object_key) DO NOTHING;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+```
+
+One pair per function. `CREATE TRIGGER` itself is a single statement and needs
+none.
+
+### Statement-level with a transition table, not FOR EACH ROW
+
+```sql
+CREATE TRIGGER attachments_tombstone_deleted_objects
+    AFTER DELETE ON attachments
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION attachments_record_deleted_object();
+```
+
+`REFERENCING OLD TABLE` gives the function a relation holding every row the
+statement removed, so deleting a team with ten thousand attachments is one
+`INSERT ... SELECT` rather than ten thousand invocations. Postgres 10 and
+later; the floor here is 13, so it is always available.
+
+`FOR EACH ROW` is right only when the work genuinely cannot be expressed
+against a set.
+
+### What the trigger can still see
+
+**Nothing above it in the cascade.** Measured on 18.6: during `DELETE FROM
+teams` the `sessions` row is already gone when the `attachments` trigger fires,
+so a join to recover `sessions.team_id` returns null.
+
+```text
+--- after DELETE team: tombstone rows ---
+    object_key    | team_lost
+ obj-team-cascade | t
+```
+
+If the trigger needs a value from a parent, that value has to be **on the row
+it is triggering off**, which is a denormalisation forced by the mechanism
+rather than chosen for speed — see step 5b, and give it a composite foreign key
+so it cannot drift.
+
+Prove it rather than reasoning about it. Cascade order is not something to hold
+in your head, and a fifteen-line probe against a scratch database settles it.
+
+### Values a trigger builds must be tested against the Go that reads them
+
+A trigger that composes a string — a secret path, a cache key, a topic name —
+is a second spelling of a format Go already owns, and nothing connects them:
+
+```go
+func TestTheTriggersSpellSecretPathsTheWayGoDoes(t *testing.T)
+```
+
+Change either side and everything written afterwards is orphaned under a name
+nothing looks for. This test is the only thing that fails.
+
+### Down drops in reverse dependency order
+
+```sql
+DROP TRIGGER attachments_tombstone_deleted_objects ON attachments;
+DROP FUNCTION attachments_record_deleted_object();
+DROP TABLE deleted_objects;
+```
+
+Trigger, then function, then whatever the function wrote to. A `DROP TABLE`
+first leaves a function referencing a table that is gone — which Postgres
+allows, because plpgsql bodies are not resolved until they run, so it fails
+later and somewhere else.
+
 ## Step 6 — indexes on a table with rows
 
 ```sql
@@ -272,6 +367,22 @@ Assert at least:
 2. **Down reverses it** — run Up, Down, Up again. A `Down` that does not
    actually reverse fails on the second Up, and only that sequence catches it.
 3. **Up is idempotent** — running it twice applies zero the second time.
+
+## Step 9b — what a trigger owes its tests
+
+Beyond the usual apply-and-roll-back:
+
+1. **Every route that reaches it.** A trigger on `attachments` fires from a
+   team delete, a channel delete, a session delete, a message delete and a user
+   delete — five different cascades, one trigger, and a test per route because
+   each is a different path.
+2. **A bulk delete.** One statement removing twenty-five rows must produce
+   twenty-five effects, which is what proves the transition table is being read
+   rather than the last row.
+3. **The values it composed**, against the Go that reads them.
+4. **Mutate the trigger, not just the table.** `WHEN (false)` on the trigger
+   compiles and applies, and is the cleanest way to confirm the tests notice it
+   is gone. Removing an `ON CONFLICT DO NOTHING` is the other one worth doing.
 
 ## Quick checklist
 

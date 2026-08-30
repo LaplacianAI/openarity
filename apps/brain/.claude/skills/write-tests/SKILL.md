@@ -192,7 +192,7 @@ cp "$bak" "$file"
 mutations stacking on one another and produced a confident, wrong result
 before anyone noticed the file had never been put back.
 
-### Six patterns that survive mutation and look tested
+### Seven patterns that survive mutation and look tested
 
 Every one escaped a first pass, and every one is invisible in a coverage
 report because the lines *do* execute — just never in the state that matters.
@@ -268,6 +268,34 @@ and the *output* it produced, and they diverge exactly when ordering is wrong.
 Assert on the output. This applies to any recorder, buffer or spy that offers a
 "what was set" view alongside a "what was sent" one.
 
+**A fake more permissive than the thing it stands for.** Twice in one change,
+and both times the mutation came back MISSED against a fake that answered where
+Postgres would have refused.
+
+A fake that ignores its context answers on one a shutdown has already closed:
+
+```go
+func (f *fakeStore) Backlog(ctx context.Context) (int64, time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, time.Time{}, err     // a real query does this
+	}
+```
+
+A fake that records the attempt rather than the write makes a failed insert
+look like a stored row:
+
+```go
+	if f.attachmentErr != nil {
+		return db.Attachment{}, f.attachmentErr
+	}
+	f.attachments = append(f.attachments, arg)   // after the error, not before
+```
+
+The rule: **a fake owes you every refusal the real thing makes**, not only its
+happy path. Cancellation, uniqueness, ordering, "no rows" — each one it does
+not model is a guard no test of yours can check. Write the refusals first; they
+are what the tests are for.
+
 **A weaker-but-legal value.** `objects.KeySize` → `16` came back MISSED, and
 not because a test was lazy. `aes.NewCipher` accepts 16, 24 and 32 bytes, so a
 16-byte key is not an error — it is AES-128. It encrypts, decrypts,
@@ -290,12 +318,13 @@ a downgrade is silent by construction: key sizes, KDF iterations, TLS minimum
 versions, nonce and salt lengths, bcrypt cost. Behavioural tests cannot see it.
 Find the one place the value is observable and assert the number.
 
-The rule all six give you: coverage says which lines ran, never which values
+The rule all seven give you: coverage says which lines ran, never which values
 reached them, which guard did the work, or whether the result left the process.
 For any nullable field, any pair of parallel types, any list matched against
 something else's output, any input that could trip more than one check, any
 security parameter with a legal weaker setting, and any harness offering both
-"what was set" and "what was sent" — write the second test.
+"what was set" and "what was sent", and any refusal the real dependency makes
+that your fake does not — write the second test.
 
 ## Step 8 — coverage
 
