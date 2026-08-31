@@ -259,9 +259,15 @@ refuses to start rather than accept tokens it cannot verify.
 ## Erasure
 
 `brain reap` completes the deletions Postgres cannot finish on its own — the
-attachment bytes in the object store and the secrets in the vault. Nothing in
-these files schedules it, so a deployment built from them erases nothing
-outside Postgres until something runs it:
+attachment bytes in the object store and the secrets in the vault.
+
+The `worker` service runs it on a schedule, and it belongs to the `brain`
+profile, so `make dev`, `make image` and `make staging` all start one. It
+sweeps every fifteen minutes and replays the ticks it missed while it was down.
+In Kubernetes that is `k8s/worker.yaml`.
+
+The one-shot command still works and needs none of that, which is exactly why
+it is kept:
 
 ```sh
 docker compose -f docker-compose.yml run --rm --no-deps brain reap
@@ -272,11 +278,9 @@ docker compose -f docker-compose.yml run --rm --no-deps brain reap
 two things owning the schema, fifteen minutes apart. In a running deployment
 Postgres is already up and the schema is already applied.
 
-Fifteen minutes from a host `cron` or a systemd timer is the shape for a single
-host; a Kubernetes `CronJob` is the shape for a cluster, and its defaults are
-wrong in four places. [SCHEDULING.md](SCHEDULING.md) has both, the settings to
-change, and what a Temporal deployment costs if you would rather it drove the
-sweep.
+[SCHEDULING.md](SCHEDULING.md) covers both routes, the four Kubernetes
+`CronJob` defaults that are wrong if you would rather the cluster owned the
+clock, and what the durable runtime costs.
 
 ## Kubernetes
 

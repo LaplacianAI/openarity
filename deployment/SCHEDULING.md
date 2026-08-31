@@ -6,191 +6,148 @@ Postgres has no transaction that spans them. Each deletion records what it owes
 instead — a tombstone written by a trigger, in the same transaction that
 removed the row — and `brain reap` completes it.
 
-A deployment that never runs `reap` never erases anything outside Postgres.
-This file is how to make sure it runs, and why the answer is not the same on a
-2 GB VPS as it is in an enterprise cluster.
+A deployment that never runs it never erases anything outside Postgres. This
+file is how to make sure something does.
 
-## The three tiers
+## Two ways, and the default is the first
 
-| Tier | Scheduler | What it costs |
+| | What runs | Owns the clock |
 | --- | --- | --- |
-| Personal, one host | `ticker` — in process, inside `brain worker` | nothing |
-| Kubernetes | `external` — a `CronJob` runs `brain reap` | nothing |
-| Enterprise | `temporal` — a Temporal Schedule fires the sweep | two databases, four services, +16 MB |
+| `brain worker` | a long-lived process, in every compose target and the k8s manifests | itself |
+| `brain reap` | one sweep, then exits | your `cron`, systemd timer, or a Kubernetes `CronJob` |
 
-**Today only the middle row exists.** `brain reap` is built and tested; a host
-`cron`, a systemd timer or a Kubernetes `CronJob` drives it. `brain worker` and
-`OPENARITY_SCHEDULER` are the decided shape, not shipped code — this file is
-the record of that decision and the measurements behind it, written before the
-implementation so the implementation is argued rather than assumed.
+`brain worker` is what the deployment files here run. It sweeps every fifteen
+minutes, and **replays the ticks it missed while it was down** rather than
+skipping them — the one thing a `CronJob` cannot do, because
+`startingDeadlineSeconds` can only skip.
 
-`brain reap` stays a standalone one-shot command in every tier. That is
-deliberate: the scheduler integration can be wrong without erasure stopping,
-because the command can always be run by hand or from a host `cron`. A hard
-dependency that can strand a legal obligation deserves a manual path beside it,
-and here that path is the code we already ship.
+`brain reap` stays a standalone command that needs none of that. Erasure is a
+legal obligation, so it should not be reachable only through the durable
+runtime: if the worker is misconfigured or the library disappoints, the command
+still works, by hand or from cron. Both run the same `reaper.SweepAll`, so the
+fallback cannot drift from the thing it backs up.
 
-## Why this is a seam and OIDC is not
-
-The brain speaks OIDC, so authentik is a reference deployment rather than a
-requirement — swap in Dex, Okta or Entra by changing one environment variable
-and the brain never knows. That works because OIDC is a *specification*.
-
-There is no specification for scheduling or durable execution, and the
-candidates do not agree on a model:
-
-- **River** — `Work(ctx, job) error`. Runs to completion; a failure retries
-  from the top.
-- **Temporal** — workflow code must be deterministic and replayable; side
-  effects live in activities.
-- **DBOS** — annotated functions with Postgres checkpoints.
-- **Restate** — journaling through `ctx.run()`.
-
-An interface all four satisfy collapses to "run this function," which discards
-the replay that was the reason to pick Temporal at all. So the seam is ours:
-a small `Scheduler` port with adapters we write and a conformance kit, on the
-pattern of `internal/gateway`, rather than a thin wrapper over a standard that
-does not exist.
-
-## What the tiers cost, measured
-
-Memory, `docker stats` against a running local stack:
-
-```text
-redis                  12.85 MiB   (running, unused by the brain)
-openbao                35.94 MiB
-falkordb               86.24 MiB   (running, unused by the brain)
-minio                 104.4  MiB
-authentik-postgresql  240.5  MiB
-postgres              334    MiB
-authentik-worker      376.2  MiB
-authentik-server      504.9  MiB
+```sh
+docker compose -f docker-compose.yml run --rm --no-deps brain reap
 ```
 
-On a 2 GB host that leaves roughly 660 MB for a lean core — OS and Docker,
-Postgres, OpenBao, the brain. A Temporal cluster on top fits only in the sense
-that the arithmetic works: it does not leave headroom, and Postgres would be
-serving the application and Temporal's per-event writes at once.
+`--no-deps` is not optional on a schedule: the `brain` service depends on
+`migrate` completing, so without it every sweep re-runs migrations.
 
-Note also that authentik alone is 1,122 MB across three containers. A 2 GB
-deployment is using a hosted issuer or a single-binary one long before Temporal
-is the thing ruling it out.
+## What the worker actually does
 
-Binary, built with the flags in `deployment/Dockerfile` — linux/amd64,
-`-trimpath -ldflags="-s -w"`, CGO off:
+It hosts **jobs**. A job registers its workflows before the durable runtime
+launches — DBOS builds its registries in memory and reads them at `Launch` —
+and returns the schedules it wants installed after, because installing one
+needs a running scheduler. The reaper is the first job; agent runs will be the
+second.
 
-```text
-without the Temporal SDK   14,573,730 bytes
-with it                    30,953,634 bytes   (+16.4 MB, 2.12x)
+Three behaviours worth knowing before operating it:
 
-module graph (go list -m all)   112 -> 150
-```
-
-The SDK brings gRPC and protobuf, neither of which the brain links today. The
-megabytes are cheap; the 38 extra modules in the build graph are the part worth
-weighing, because they are 38 more things to track for advisories. If that
-becomes the deciding factor, a `//go:build temporal` tag drops the SDK from a
-default build — worth doing to working code, not designing around in advance.
-
-## Temporal, if you run it
-
-Three deployment shapes, only one of which is for production:
-
-| | What runs | Persistence | Production |
-| --- | --- | --- | --- |
-| `temporal server start-dev` | one process, Web UI, default namespace | in-memory SQLite, or `--db-filename` | no |
-| `temporalio/auto-setup` | all services in one process, schema auto-init | your Postgres | no |
-| `temporalio/server` | frontend, history, matching, worker | Postgres, MySQL or Cassandra; schema applied by hand | yes |
-
-Temporal's own compose repository says so directly: those setups "do not use
-Temporal Server directly — they utilize an `auto-setup` script," and points at
-`temporalio/server` for production with dependencies managed separately.
-
-Things worth knowing before committing to it:
-
-- **It needs two databases of its own** — Executions and Visibility. Not tables
-  in ours; its own schema, its own migration tool, its own upgrade cycle. The
-  documentation recommends keeping the two apart, because large visibility
-  scans otherwise block writes to the workflow tables.
-- **Elasticsearch is optional** since Server v1.20 — advanced visibility works
-  on Postgres. It is also the memory-hungry part of the default stack, so
-  leaving it out is most of the saving.
-- **Every workflow event is a persisted write** — roughly 5 ms p50 on Postgres,
-  around 500 events/sec per connection. That is the mechanism rather than a
-  flaw, and it is irrelevant at our volumes: a sweep every fifteen minutes is a
-  handful of events a day.
-- **Only the Temporal parts of the Helm chart are production-ready.** Its
-  bundled Cassandra, Elasticsearch, Prometheus and Grafana are development
-  configurations.
-
-The cost is a floor, not a slope: two databases and four services are the same
-price for one workflow a day as for a million an hour. That is why the reaper
-alone does not justify it and an agent runtime would.
-
-## Kubernetes, where the defaults are wrong
-
-A `CronJob` running `brain reap` needs four settings changed:
-
-- **`backoffLimit: 0`.** The default is 6. `reap` exits non-zero when an
-  erasure has been outstanding for a day, which no retry can fix — and the
-  claim query leases for five minutes, so a retry inside that window claims
-  nothing and does nothing. The next schedule is the retry.
-- **`concurrencyPolicy: Forbid`.** Overlap is safe — the claim uses `FOR UPDATE
-  SKIP LOCKED` — so this is not correctness. It stops runs piling up when the
-  object store is hanging.
-- **`startingDeadlineSeconds`.** Left unset, a controller outage past 100
-  missed schedules stops the `CronJob` scheduling permanently.
-- **`failedJobsHistoryLimit`** above its default of 1, so a failure is still
-  readable the next morning.
-
-Migrations stay in the Deployment's init container and are not repeated in the
-`CronJob`. Two things owning the schema means a rollback can leave a schedule
-running against a version the application no longer expects. The cost is that
-on a fresh install the `CronJob` may fire before the Deployment has migrated
-and fail once, which the next tick clears.
+- **It sweeps once at startup.** That proves every dependency the reaper needs
+  — the secret store can delete, the object store exists — before the process
+  calls itself healthy. It also means a fresh deployment does not sit idle for
+  a full interval, since a schedule installed for the first time has no missed
+  ticks to backfill.
+- **An overdue erasure does not stop it starting.** Refusing would deadlock the
+  only thing that can clear the backlog: the alarm would block its own cure. It
+  logs at `ERROR` naming the oldest outstanding item and carries on.
+- **Two replicas are safe and unnecessary.** The sweep claims with `FOR UPDATE
+  SKIP LOCKED`, so a second divides the backlog rather than duplicating it, and
+  no leader election is involved. There is nothing here to scale for.
 
 ## The interval
 
-Fifteen minutes. Sized against the 24-hour threshold at which `reap` calls an
-erasure overdue — 96 attempts before the alarm — rather than against load. An
-empty sweep is two queries per effect; the real per-run cost is process start,
-a Postgres connection, and an AppRole login.
+Fifteen minutes, as a constant in `internal/reaper/job.go` rather than
+configuration — the same treatment `MaxAttachment` gets, with a test that
+parses it. It is sized against the twenty-four hours at which an erasure is
+called overdue: ninety-six attempts before the alarm. Not against load, because
+an empty sweep is two queries per effect.
 
-The alarm is the age of the oldest tombstone, never the count. Nine hundred a
-minute old is a busy delete; one a day old is a sweep failing every run.
-
-## What was considered and not chosen
-
-- **River** — a Postgres job queue with `InsertTx`, which is the transactional
-  enqueue an agent runtime will need. It retries from the top rather than
-  checkpointing, so it does not solve the expensive half. 21 modules.
-- **asynq** — Redis-backed, so it cannot join a Postgres transaction. Adopting
-  it for the agent runtime would reintroduce exactly the dual write the
-  tombstones exist to remove. Redis running unused in compose is not a hint
-  about this.
-- **robfig/cron** — the ecosystem default and unmaintained: last release
-  v3.0.0 in 2019, with 116 issues and 57 pull requests open. `netresearch/go-cron`
-  is an actively maintained drop-in if cron *expressions* are ever wanted; a
-  duration is the right knob for "without undue delay."
-- **go-co-op/gocron** — maintained, and its headline feature is distributed
-  locking so replicas do not double-fire. `SKIP LOCKED` already gives us that.
-- **ofelia** — schedules by talking to `/var/run/docker.sock`. Mounting a
-  root-equivalent socket to schedule an erasure job is the wrong trade.
-- **supercronic** — a crontab-compatible runner built for containers, and the
-  closest thing to a no-code answer for compose. It logs a failed job and keeps
-  going, which trades away the property the exit code was chosen for.
-
-A shell loop in the container is not an option either: the image is
-`gcr.io/distroless/static-debian12`, which has no shell.
+The cron expression carries **six fields**, not the familiar five. DBOS builds
+its parser with seconds enabled, so `*/15 * * * *` is refused outright:
 
 ```text
-docker run --entrypoint /bin/sh ghcr.io/laplacianai/openarity-brain:latest
-stat /bin/sh: no such file or directory
+"*/15 * * * *"     REJECTED: expected exactly 6 fields, found 5
+"0 */15 * * * *"   ok, next two: 03:15:00  03:30:00
 ```
+
+A test parses the constant with the same parser DBOS builds, so a well-meaning
+"fix" to the five-field form fails in CI rather than at worker start.
+
+## If you would rather the platform owned the clock
+
+Delete `k8s/worker.yaml`, run `brain reap` from a `CronJob`, and change four
+defaults:
+
+- **`backoffLimit: 0`.** The default is 6. `reap` exits non-zero when an
+  erasure has been outstanding for a day, which no retry can fix — and the
+  claim leases for five minutes, so a retry inside that window claims nothing.
+  The next schedule is the retry.
+- **`concurrencyPolicy: Forbid`.** Overlap is safe; this stops runs piling up
+  when the object store is hanging.
+- **`startingDeadlineSeconds`.** Unset, a controller outage past 100 missed
+  schedules stops the `CronJob` scheduling permanently.
+- **`failedJobsHistoryLimit`** above its default of 1, so a failure is still
+  readable the next morning.
+
+You lose backfill and gain a failed Job, which is a louder signal than a log
+line. That is the real trade between the two routes.
+
+Either way, migrations stay in the brain Deployment's init container. Two
+things owning the schema means a rollback can leave a schedule or a worker
+running against a version the server no longer expects.
+
+## The alarm
+
+The age of the oldest tombstone, never the count. Nine hundred a minute old is
+a busy delete; one a day old is a sweep failing every run.
+
+How that surfaces depends on which route you took:
+
+```text
+brain reap    non-zero exit, and a failed Job if a CronJob ran it
+brain worker  an ERROR log naming the oldest item, and the restart count
+```
+
+The worker's signal is weaker, and closing that gap means giving it a `/readyz`
+that goes unhealthy on an overdue backlog. Not built yet.
+
+## Why DBOS, and not Temporal
+
+The full comparison with its measurements is `Tech Design/HLD-V1/Background-Work.md`
+in the ideation repository. The short version, measured on one machine:
+
+```text
+                      binary cost    extra process    extra database
+DBOS                    +1.88 MB          none             none
+Temporal               +18.26 MB      4 services         2 databases
+```
+
+```text
+temporal server start-dev   idle 110.0 MB   peak 258.4 MB
+DBOS (whole application)    idle  12.5 MB   peak  25.6 MB
+```
+
+Temporal is a good engine whose floor is too high for a deployment we want to
+keep possible: authentik alone is 1,122 MB across three containers, and Airbyte
+— which ships Temporal built in — asks for 8 GB minimum. DBOS is a library. It
+runs inside the process that already exists, against the Postgres that already
+exists, and adds eleven tables in a schema of its own.
+
+That last point is worth stating plainly: **`brain migrate up` is no longer the
+only thing that changes the database.** DBOS creates and migrates its own
+schema at `Launch`.
+
+Held against it, and recorded rather than buried: the Go SDK is v1.2.0, the
+project is backed by one vendor, and no project in the survey uses it yet —
+Airbyte and AutoKitteh ship Temporal, while Grafana, Gitea, Mattermost and
+Sourcegraph hand-roll a periodic runner. If it disappoints, the fallback is
+`brain reap` from a `CronJob`, which is why that path is kept working.
 
 ## The tombstones are an outbox, not a queue
 
-Worth stating plainly, because the difference decides what can be built on top.
+Worth stating, because it decides what can be built on top.
 
 A broker's row means "this happened, whoever cares should look." A queue's row
 means "run this job with these arguments." A tombstone means "Postgres has
@@ -201,16 +158,7 @@ count. No payload, no job type, no dead-letter table, no routing — the row *is
 the instruction, and it has exactly one consumer forever. That is what makes
 deletes commute, `SKIP LOCKED` safe without a leader, and a replay free.
 
-So an agent runtime cannot be built on it. When one arrives it will need a real
-queue, and two requirements are already knowable from code that exists:
-
-- **It must enqueue inside the transaction that writes the message.** A message
-  and its attachments already commit together under `InTx`. "Message stored but
-  run never enqueued" is the same dual write in a new place.
-- **A crash mid-run must not re-pay the tokens.** This is the requirement no
-  Postgres job queue meets and durable execution exists for — though the
-  comparable open-source agent runtimes make the *ledger* durable and let the
-  run be re-runnable instead, which is a defensible answer and a cheaper one.
-
-Temporal cannot satisfy the first: starting a workflow is an RPC, not a row in
-our transaction. It sits behind an outbox rather than replacing one.
+So an agent runtime cannot be built on it. When one arrives it becomes a second
+job on this worker, with its own durable workflow, and two requirements that
+are already knowable: it must enqueue inside the transaction that writes the
+message, and a crash mid-run must not re-pay the tokens.

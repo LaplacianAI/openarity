@@ -13,6 +13,55 @@
 
 name: openarity
 
+# Everything the brain reads that is not about listening. Hoisted so the
+# worker cannot drift from the server: a setting added to one and not the
+# other is silent — the worker keeps running and simply stops erasing
+# whatever the missing setting pointed at.
+#
+# x- keys are ignored by compose; << merges the map into a service.
+x-brain-env: &brain-env
+  OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/openarity?sslmode=disable"
+  OPENARITY_FALKOR_DB_URL: "redis://falkordb:6379"
+  OPENARITY_REDIS_URL: "redis://redis:6379"
+  OPENARITY_SECRETS_ADDR: "http://openbao:8200"
+  # static by default: compose's OpenBao runs in dev mode with no AppRole
+  # configured, so there is nothing for the brain to authenticate with
+  # until `make bao-approle` mints one. Set the backend and both halves of
+  # the credential in .env together — naming openbao without them is a
+  # startup failure, deliberately.
+  #
+  # static is refused outside development, so a staging or production
+  # stack must set this. That is the point: it is the setting that decides
+  # whether secrets survive a deploy.
+  OPENARITY_SECRETS_BACKEND: ${OPENARITY_SECRETS_BACKEND:-static}
+  OPENARITY_SECRETS_APPROLE_ID: ${OPENARITY_SECRETS_APPROLE_ID-}
+  OPENARITY_SECRETS_APPROLE_SECRET: ${OPENARITY_SECRETS_APPROLE_SECRET-}
+  # memory by default, and refused outside development for the same
+  # reason. docker-compose.objects.yml brings a MinIO the brain reaches at
+  # minio:9000 — inside the network, so the host port it is published on
+  # does not matter here.
+  #
+  # The bucket and credentials are the same three variables MinIO itself
+  # reads, so one pair of values configures both ends.
+  OPENARITY_OBJECTS_BACKEND: ${OPENARITY_OBJECTS_BACKEND:-memory}
+  OPENARITY_OBJECTS_ENDPOINT: ${OPENARITY_OBJECTS_ENDPOINT:-http://minio:9000}
+  OPENARITY_OBJECTS_BUCKET: ${OBJECTS_BUCKET:-openarity}
+  OPENARITY_OBJECTS_ACCESS_KEY: ${OBJECTS_ACCESS_KEY-}
+  OPENARITY_OBJECTS_SECRET_KEY: ${OBJECTS_SECRET_KEY-}
+  # development keeps this usable with no identity provider. Set it to
+  # staging or production in .env and the dev token is refused outright,
+  # so OIDC becomes mandatory rather than optional.
+  OPENARITY_ENVIRONMENT: ${OPENARITY_ENVIRONMENT:-development}
+  # A shared token by default, so the stack is usable with no identity
+  # provider. Set these to point at a real one — see the README. The
+  # single-dash form is deliberate: an empty OPENARITY_DEV_TOKEN must turn
+  # the token off rather than fall back to the default.
+  OPENARITY_DEV_TOKEN: ${OPENARITY_DEV_TOKEN-letmein}
+  OPENARITY_SUPER_ADMINS: ${OPENARITY_SUPER_ADMINS-dev}
+  OPENARITY_OIDC_ENABLED: ${OPENARITY_OIDC_ENABLED:-false}
+  OPENARITY_OIDC_ISSUER: ${OPENARITY_OIDC_ISSUER-}
+  OPENARITY_OIDC_AUDIENCE: ${OPENARITY_OIDC_AUDIENCE:-openarity}
+
 services:
   postgres:
     image: postgres:18-alpine
@@ -114,52 +163,40 @@ services:
       context: ..
       dockerfile: deployment/Dockerfile
     environment:
+      <<: *brain-env
       OPENARITY_API_BIND: "0.0.0.0:21120"
       OPENARITY_WEBHOOK_BIND: "0.0.0.0:21121"
-      OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/openarity?sslmode=disable"
-      OPENARITY_FALKOR_DB_URL: "redis://falkordb:6379"
-      OPENARITY_REDIS_URL: "redis://redis:6379"
-      OPENARITY_SECRETS_ADDR: "http://openbao:8200"
-      # static by default: compose's OpenBao runs in dev mode with no AppRole
-      # configured, so there is nothing for the brain to authenticate with
-      # until `make bao-approle` mints one. Set the backend and both halves of
-      # the credential in .env together — naming openbao without them is a
-      # startup failure, deliberately.
-      #
-      # static is refused outside development, so a staging or production
-      # stack must set this. That is the point: it is the setting that decides
-      # whether secrets survive a deploy.
-      OPENARITY_SECRETS_BACKEND: ${OPENARITY_SECRETS_BACKEND:-static}
-      OPENARITY_SECRETS_APPROLE_ID: ${OPENARITY_SECRETS_APPROLE_ID-}
-      OPENARITY_SECRETS_APPROLE_SECRET: ${OPENARITY_SECRETS_APPROLE_SECRET-}
-      # memory by default, and refused outside development for the same
-      # reason. docker-compose.objects.yml brings a MinIO the brain reaches at
-      # minio:9000 — inside the network, so the host port it is published on
-      # does not matter here.
-      #
-      # The bucket and credentials are the same three variables MinIO itself
-      # reads, so one pair of values configures both ends.
-      OPENARITY_OBJECTS_BACKEND: ${OPENARITY_OBJECTS_BACKEND:-memory}
-      OPENARITY_OBJECTS_ENDPOINT: ${OPENARITY_OBJECTS_ENDPOINT:-http://minio:9000}
-      OPENARITY_OBJECTS_BUCKET: ${OBJECTS_BUCKET:-openarity}
-      OPENARITY_OBJECTS_ACCESS_KEY: ${OBJECTS_ACCESS_KEY-}
-      OPENARITY_OBJECTS_SECRET_KEY: ${OBJECTS_SECRET_KEY-}
-      # development keeps this usable with no identity provider. Set it to
-      # staging or production in .env and the dev token is refused outright,
-      # so OIDC becomes mandatory rather than optional.
-      OPENARITY_ENVIRONMENT: ${OPENARITY_ENVIRONMENT:-development}
-      # A shared token by default, so the stack is usable with no identity
-      # provider. Set these to point at a real one — see the README. The
-      # single-dash form is deliberate: an empty OPENARITY_DEV_TOKEN must turn
-      # the token off rather than fall back to the default.
-      OPENARITY_DEV_TOKEN: ${OPENARITY_DEV_TOKEN-letmein}
-      OPENARITY_SUPER_ADMINS: ${OPENARITY_SUPER_ADMINS-dev}
-      OPENARITY_OIDC_ENABLED: ${OPENARITY_OIDC_ENABLED:-false}
-      OPENARITY_OIDC_ISSUER: ${OPENARITY_OIDC_ISSUER-}
-      OPENARITY_OIDC_AUDIENCE: ${OPENARITY_OIDC_AUDIENCE:-openarity}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${API_PORT:-21120}:21120"
       - "${BIND_ADDR:-127.0.0.1}:${WEBHOOK_PORT:-21121}:21121"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # The clock. Nothing else in this file runs `brain reap`, so without this a
+  # stack erases nothing outside Postgres — the rows go, the attachment bytes
+  # and the vault keys stay.
+  #
+  # No ports: it serves nothing. One replica is not a constraint — the sweep
+  # claims with FOR UPDATE SKIP LOCKED, so two would divide the work rather
+  # than duplicate it — it is simply all this needs.
+  #
+  # restart: unless-stopped is the visible signal here. An overdue erasure
+  # deliberately does not stop the worker starting, because refusing would
+  # block the only thing that can clear it, so a rising restart count and the
+  # ERROR line are what an operator has. A CronJob running `brain reap` gets a
+  # failed Job instead, which is louder; see SCHEDULING.md.
+  worker:
+    profiles: ["brain"]
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    command: ["worker"]
+    environment:
+      <<: *brain-env
     depends_on:
       postgres:
         condition: service_healthy
