@@ -38,11 +38,15 @@ func closedStore(t *testing.T) *store.Store {
 func TestExecuteRejectsAnUnknownCommand(t *testing.T) {
 	t.Parallel()
 
-	err := execute(t.Context(), &config.Config{}, quietLogger(), nil, command{name: "worker"})
+	// A name that is not a command, and must stay that way. This used to say
+	// "worker", which stopped being unknown the moment the role existed — and
+	// the test then dispatched into the worker with a nil store and panicked
+	// rather than failing with anything readable.
+	err := execute(t.Context(), &config.Config{}, quietLogger(), nil, command{name: "nonsense"})
 	if err == nil {
 		t.Fatal("execute accepted an unknown command")
 	}
-	if !strings.Contains(err.Error(), "worker") {
+	if !strings.Contains(err.Error(), "nonsense") {
 		t.Errorf("execute error %q does not name the command", err)
 	}
 }
