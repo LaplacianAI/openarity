@@ -272,6 +272,50 @@ func TestTheShippedPolicyLetsATeamKeyBeCreatedOnce(t *testing.T) {
 	}
 }
 
+// Destroying a deleted team's key, under the policy that ships. This is the
+// call `brain reap` makes for the tombstone the team cascade writes, and it is
+// the half of an erasure that does not wait for the object sweep: once the key
+// is gone every attachment that team stored is undecryptable, including the
+// copies in bucket backups no sweeper reaches.
+//
+// Nothing covered this before. internal/reaper stands a fake in for the store,
+// and a fake says yes to every path; the denial test above asserts a metadata
+// *read* of this path is refused, which is correct and left the delete
+// untested in both directions. Measured under the policy as it shipped:
+//
+//	DELETE metadata/teams/<t>/channels/<c>   204
+//	DELETE metadata/teams/<t>/attachments    403
+//
+// So channel secrets were erased, every deleted team's key was not, the
+// tombstone was never cleared, and after a day reap exited non-zero forever.
+func TestTheShippedPolicyDestroysADeletedTeamsKey(t *testing.T) {
+	t.Parallel()
+
+	reader, writer, _, _ := brainStore(t)
+
+	creator, ok := reader.(secrets.Creator)
+	if !ok {
+		t.Fatalf("the OpenBao store no longer implements secrets.Creator, so a "+
+			"team key cannot be generated to destroy: %T", reader)
+	}
+
+	path := secrets.TeamPath(uuid.New(), secrets.KindAttachments)
+	if err := creator.Create(t.Context(), path, "data_key", "sealed"); err != nil {
+		t.Fatalf("generating a team key: %v", err)
+	}
+
+	if err := writer.Delete(t.Context(), path); err != nil {
+		t.Fatalf("destroying a deleted team's key: %v\nEvery attachment that team "+
+			"stored stays decryptable and the tombstone is never cleared", err)
+	}
+
+	// metadata, not data: a soft delete would leave this readable at ?version=1,
+	// which is retention wearing an erasure's name.
+	if _, err := reader.Get(t.Context(), path, "data_key"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Errorf("after destroying the key, err = %v, want secrets.ErrNotFound", err)
+	}
+}
+
 // The reason the file is read rather than copied. If it moves, this says so
 // instead of the tests above quietly falling back to something permissive.
 func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
@@ -282,6 +326,7 @@ func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
 		`path "secret/data/teams/+/channels/+"`,
 		`path "secret/metadata/teams/+/channels/+"`,
 		`path "secret/data/teams/+/attachments"`,
+		`path "secret/metadata/teams/+/attachments"`,
 	} {
 		if !strings.Contains(hcl, want) {
 			t.Errorf("policy-brain.hcl no longer contains %s — the tests above are\n"+
