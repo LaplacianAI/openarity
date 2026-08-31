@@ -256,6 +256,28 @@ step before anyone else uses this stack.
 unreachable then is a failed boot rather than a degraded service — the brain
 refuses to start rather than accept tokens it cannot verify.
 
+## Erasure
+
+`brain reap` completes the deletions Postgres cannot finish on its own — the
+attachment bytes in the object store and the secrets in the vault. Nothing in
+these files schedules it, so a deployment built from them erases nothing
+outside Postgres until something runs it:
+
+```sh
+docker compose -f docker-compose.yml run --rm --no-deps brain reap
+```
+
+`--no-deps` is not optional on a schedule. The `brain` service depends on the
+`migrate` service completing, so without it every sweep re-runs migrations —
+two things owning the schema, fifteen minutes apart. In a running deployment
+Postgres is already up and the schema is already applied.
+
+Fifteen minutes from a host `cron` or a systemd timer is the shape for a single
+host; a Kubernetes `CronJob` is the shape for a cluster, and its defaults are
+wrong in four places. [SCHEDULING.md](SCHEDULING.md) has both, the settings to
+change, and what a Temporal deployment costs if you would rather it drove the
+sweep.
+
 ## Kubernetes
 
 ```sh

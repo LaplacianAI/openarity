@@ -121,7 +121,8 @@ instead, and `reap` completes it — destroying a deleted team's key first, whic
 makes every one of its attachments unreadable immediately. It is idempotent and
 safe to run twice at once, exits non-zero when an erasure has been outstanding
 for a day, and a deployment that never runs it never erases anything outside
-Postgres.
+Postgres. [deployment/SCHEDULING.md](deployment/SCHEDULING.md) is how to run it
+on a schedule, and why the answer differs on a 2 GB host and in a cluster.
 
 Every other setting has a working default. The service refuses to start with no
 authentication configured rather than serving an open API — set

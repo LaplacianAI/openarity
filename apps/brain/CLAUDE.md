@@ -424,6 +424,25 @@ reinstalled.
   outbound replies to one thread — needs a partition key and one worker per
   partition, and would be a second mechanism sharing a word rather than a third
   `Effect`.
+- **The tombstones are an outbox, not a queue, and nothing may be built on them
+  as if they were.** A queue row means "run this job with these arguments"; a
+  tombstone means "Postgres has committed a change another system has not caught
+  up to yet." `deleted_objects` holds a key, a team id, a timestamp and an
+  attempt count — no payload, no job type, no dead-letter table, no routing, one
+  consumer forever. That is exactly what makes replay free and `SKIP LOCKED`
+  safe, and exactly why an agent runtime cannot sit on it. When one arrives it
+  needs a real queue with two properties: it enqueues inside the transaction
+  that writes the message, and a crash mid-run does not re-pay the tokens. No
+  Postgres job queue has the second; Temporal cannot have the first, because
+  starting a workflow is an RPC rather than a row — it sits behind an outbox
+  rather than replacing one. `deployment/SCHEDULING.md` carries the measurements.
+- **The scheduler is a seam because scheduling has no specification.** Auth is a
+  port over OIDC, so authentik is swappable for Dex or Okta by changing one
+  variable. River, Temporal, DBOS and Restate agree on no model at all, and an
+  interface all four satisfy collapses to "run this function" — which discards
+  the replay that was the reason to want Temporal. So the adapters are ours, on
+  the `internal/gateway` pattern, and the heavy option is never mandatory: a
+  2 GB host runs a ticker, a cluster runs what it already operates.
 - **`MaxAttachment` is a constant, and not only for politeness.** `gcm.Seal`
   panics rather than erroring above `(2^32-2)*16` bytes, and an attachment is
   held whole in memory twice while it is sealed. A test asserts the constant
