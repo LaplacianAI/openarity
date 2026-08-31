@@ -82,6 +82,7 @@ of this file gets `null`.
 | `secret/data/teams/+/channels/+` | `read`, `create`, `update` |
 | `secret/metadata/teams/+/channels/+` | `delete` |
 | `secret/data/teams/+/attachments` | `read`, `create`, `update` |
+| `secret/metadata/teams/+/attachments` | `delete` |
 | `auth/token/renew-self` | `update` |
 
 `+` matches exactly one path segment. That is the restriction: the brain
@@ -94,6 +95,22 @@ The attachments path holds one key per team, generated the first time that team
 stores something and used to encrypt every attachment before it reaches the
 object store. It is a leaf rather than a directory, which is why it has no
 trailing `+`.
+
+The `metadata` rule beside it is what lets `brain reap` destroy a deleted
+team's key, which is the half of an erasure that does not wait for the object
+sweep: once the key is gone every attachment that team stored is undecryptable,
+including the copies in bucket backups no sweeper reaches. It shipped missing,
+and the effect was measurable rather than theoretical — channel secrets were
+erased and team keys were not:
+
+```text
+DELETE metadata/teams/<t>/channels/<c>   204
+DELETE metadata/teams/<t>/attachments    403
+```
+
+The tombstone was then never cleared, so `reap` exited non-zero on every run
+after a day while the key sat there. `TestTheShippedPolicyDestroysADeletedTeamsKey`
+drives the delete through the real store under this file.
 
 **`update` on that path is not redundant next to `create`, and removing it
 breaks concurrent uploads.** The brain writes the key with check-and-set at

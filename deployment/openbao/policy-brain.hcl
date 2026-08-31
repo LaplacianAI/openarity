@@ -81,6 +81,28 @@ path "secret/data/teams/+/attachments" {
   capabilities = ["read", "create", "update"]
 }
 
+# Destroying a deleted team's key, which is the half of an erasure that does
+# not wait for the object sweep: once this key is gone every attachment that
+# team ever stored is undecryptable, including the copies in bucket backups no
+# sweeper can reach.
+#
+# `brain reap` deletes this path from the tombstone `teams_record_deleted_
+# secret()` writes during the cascade. Without this rule that call is 403 on
+# every run, the tombstone is never cleared, and after a day reap exits
+# non-zero forever while the key sits there. Measured against this OpenBao
+# under the shipped policy before the rule existed:
+#
+#   DELETE metadata/teams/<t>/channels/<c>   204
+#   DELETE metadata/teams/<t>/attachments    403   <- the key survives the team
+#
+# metadata, not data, for the same reason as the channel rule above: a delete
+# on data/ hides the latest version and leaves it recoverable, which is not
+# erasure. Only delete is granted, so version history stays as closed as the
+# "deliberately absent" note below says it is.
+path "secret/metadata/teams/+/attachments" {
+  capabilities = ["delete"]
+}
+
 # Renewing its own token is how the brain avoids logging in on every read.
 # The default policy already grants this, so it is redundant today — and it is
 # what keeps renewal working the day the role sets token_no_default_policy.
@@ -93,7 +115,7 @@ path "auth/token/renew-self" {
 #   list        a list on a KV path returns every team id. Read requires
 #               knowing the path already; list hands over the map.
 #   metadata read  version history is as good as the value for anything that
-#               was ever written, so the delete above is the only thing
+#               was ever written, so the two deletes above are the only things
 #               granted on that path.
 #   sys/*, auth/*  the brain never administers OpenBao. Creating roles,
 #               writing policies and unsealing are operator actions.
