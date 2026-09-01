@@ -21,3 +21,7 @@ type Spec struct {
 	Tools    []Tool
 	MaxSteps int
 }
+
+func System(prompt string) []Content {
+	return []Content{{Type: ContentText, Text: prompt, Cacheable: true}}
+}

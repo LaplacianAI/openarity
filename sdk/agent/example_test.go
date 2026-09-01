@@ -56,11 +56,9 @@ func Example() {
 	// ceiling. The tool's Invoke is a closure the brain built over an MCP
 	// server and a team's credential; here it is a stub.
 	spec := agent.Spec{
-		Model: agent.ModelRef{Name: "anthropic/claude-opus-5", MaxTokens: 1024},
-		Loop:  agent.LoopReAct,
-		System: []agent.Content{
-			{Type: agent.ContentText, Text: "You are a helpful agent.", Cacheable: true},
-		},
+		Model:  agent.ModelRef{Name: "anthropic/claude-opus-5", MaxTokens: 1024},
+		Loop:   agent.LoopReAct,
+		System: agent.System("You are a helpful agent."),
 		Tools: []agent.Tool{{
 			Name:        "count_issues",
 			Description: "Count open issues in a repository",

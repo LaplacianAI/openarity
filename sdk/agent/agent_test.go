@@ -126,3 +126,35 @@ func TestEveryEventTypeSatisfiesTheInterface(t *testing.T) {
 		}
 	}
 }
+
+// The system prompt is the part that does not change within a session, so it is
+// the whole cached prefix. A helper that forgot the breakpoint would make every
+// turn pay for the prompt again, and nothing but the bill would say so.
+func TestSystemMarksItsBlockCacheable(t *testing.T) {
+	t.Parallel()
+
+	got := System("you are a terse assistant")
+	if len(got) != 1 {
+		t.Fatalf("System returned %d blocks, want 1", len(got))
+	}
+	if got[0].Type != ContentText {
+		t.Errorf("Type = %q, want text", got[0].Type)
+	}
+	if got[0].Text != "you are a terse assistant" {
+		t.Errorf("Text = %q", got[0].Text)
+	}
+	if !got[0].Cacheable {
+		t.Error("the system prompt is not a cache breakpoint, so every turn pays for it again")
+	}
+}
+
+// An empty prompt still produces a block rather than nothing. A caller that
+// passes "" gets an empty system message, which is visible; returning nil would
+// silently drop the field and look like the prompt was never set.
+func TestSystemWithNoPromptStillReturnsABlock(t *testing.T) {
+	t.Parallel()
+
+	if got := System(""); len(got) != 1 {
+		t.Fatalf("System(\"\") returned %d blocks, want 1", len(got))
+	}
+}

@@ -71,13 +71,9 @@ func run(ctx context.Context) error {
 	// which loop, which tools, and a ceiling. The tool's closure would reach an
 	// MCP server under a team's credential; here it counts to three.
 	spec := agent.Spec{
-		Model: agent.ModelRef{Name: model, MaxTokens: 1024},
-		Loop:  agent.LoopReAct,
-		System: []agent.Content{{
-			Type:      agent.ContentText,
-			Text:      "You are a terse assistant. Use the tools you are given.",
-			Cacheable: true,
-		}},
+		Model:    agent.ModelRef{Name: model, MaxTokens: 1024},
+		Loop:     agent.LoopReAct,
+		System:   agent.System("You are a terse assistant. Use the tools you are given."),
 		Tools:    []agent.Tool{countIssues()},
 		MaxSteps: 5,
 	}
