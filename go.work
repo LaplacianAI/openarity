@@ -3,4 +3,5 @@ go 1.26.6
 use (
 	./apps/brain
 	./apps/cli
+	./sdk/agent
 )
