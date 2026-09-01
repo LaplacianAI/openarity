@@ -47,6 +47,7 @@ present at the time, and breaks with a version-mismatch error until reinstalled.
 apps/brain/        the Go backend
 apps/cli/          oa, the command-line client
 sdk/agent/         the agent loop, as a library
+  examples/        runnable agents; `make example` runs every one of them
 deployment/        manifests
 go.work            ties every Go module in the repository together
 ```
@@ -82,6 +83,12 @@ or the core package links a provider SDK. Everything outside that module
 arrives through an interface, and nothing but this check stops somebody
 importing `openai-go` for one convenient type and making `ModelClient`
 decorative.
+
+Adding a reasoning pattern or a runnable example there has a skill each:
+`sdk/agent/.claude/skills/add-a-loop` and `.../add-an-example`. Both record
+traps that cost a debugging session the first time — dispatching a tool call
+from a turn that was truncated at `MaxTokens`, and a stub gateway that repeats
+its usage on every chunk so the run reports five times the tokens it spent.
 
 Run the brain's **with a database**. The coverage floor is 70%, and with the
 Postgres tests skipping the suite lands close enough to it that an unrelated

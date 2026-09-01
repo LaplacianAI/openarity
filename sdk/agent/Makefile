@@ -18,10 +18,12 @@ COVER_MIN     := 95
 GOLANGCI_VERSION    := v2.12.2
 GOVULNCHECK_VERSION := latest
 
-# examples is a demonstration binary, not library code. Counting it measures
-# how thoroughly the demo is tested, which is not a number anyone acts on —
-# the same reasoning that excludes the generated client in apps/cli.
-COVER_PKGS = $(shell $(GO) list ./... | grep -v '/examples$$' | paste -sd, -)
+# examples is demonstration code, not library code. Counting it measures how
+# thoroughly the demos are tested, which is not a number anyone acts on — the
+# same reasoning that excludes the generated client in apps/cli. The pattern
+# has no anchor because the examples are now a tree: examples/gateway is a
+# package too, and an anchored /examples$ would have counted it silently.
+COVER_PKGS = $(shell $(GO) list ./... | grep -v '/examples' | paste -sd, -)
 
 .DEFAULT_GOAL := help
 
@@ -110,12 +112,19 @@ vuln:
 build:
 	$(GO) build ./...
 
-## example: run the example against a stub gateway, or a real one via the environment
+## example: run every example against a stub gateway, or a real one via the environment
 #
 #   OPENARITY_MODELS_BASE_URL=http://127.0.0.1:14000/v1 \
 #   OPENARITY_MODELS_API_KEY=sk-… make example
+#
+# Discovered rather than listed, so a new example under examples/ is run by CI
+# the moment it exists rather than the moment somebody remembers this file.
 example:
-	$(GO) run ./examples
+	@for dir in $$($(GO) list ./examples/... | grep -v '/gateway$$'); do \
+	  echo "=== $$dir ==="; \
+	  $(GO) run $$dir || exit 1; \
+	  echo; \
+	done
 
 ## check: everything CI runs
 check: tidy-check fmt-check vet lint boundary build cover vuln

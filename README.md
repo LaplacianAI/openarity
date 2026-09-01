@@ -7,9 +7,10 @@
 An open-source agent platform where agents, tools, skills and learnings are a
 knowledge graph, not a list.
 
-> **Early.** There is no release, no agent runtime and no stable API yet. What
-> exists is the service skeleton described below. The design is still moving —
-> open an issue before building anything substantial on top of it.
+> **Early.** There is no release and no stable API yet. What exists is the
+> service skeleton described below and an agent loop the brain does not call
+> yet. The design is still moving — open an issue before building anything
+> substantial on top of it.
 
 ## The idea
 
@@ -29,7 +30,8 @@ without special cases.
 
 ## What works today
 
-Two things run: the `brain` service, and `oa`, the CLI that talks to it.
+Three things run: the `brain` service, `oa`, the CLI that talks to it, and
+`sdk/agent`, the loop a run happens inside.
 
 The brain is production-shaped, but it does not yet do anything an agent
 platform does:
@@ -87,9 +89,31 @@ platform does:
 - Against a development brain it needs no setup: it finds the shared token in
   your shell, and only ever sends it to a loopback address
 
-Not built yet: the graph, the planner, the agent runtime, the dashboard, and
-outbound replies — the brain can hold a conversation's messages but cannot yet
-answer one. Slack, Discord and Telegram adapters are not written; the seam they
+`sdk/agent` is the loop, as a library. It receives a fully resolved spec and
+decides nothing:
+
+- ReAct today, streaming or not, behind a registry so a deployment can add its
+  own pattern without changing the library
+- Any gateway speaking OpenAI chat completions — LiteLLM, OmniRoute, or a
+  provider directly. The brain passes a base URL and a key per run; nothing
+  about a provider reaches the loop
+- Tools whose implementation is a closure the brain built, so an MCP server and
+  a team's credential stay on the brain's side of the boundary
+- Skills, loaded the way Claude Code loads them: every skill spends its
+  description in the prompt, and only the one the model asks for spends its
+  body. All of them arrive through a single tool, so offering sixty skills
+  costs one entry in the tool list
+- Text, images and files as input, and a `cache_control` breakpoint on the
+  parts of a prompt that do not change between turns
+
+Which tools and skills a run may see is decided by the brain against its graph.
+That is an authorisation decision, and a separate Go module is what stops it
+leaking into the library: `sdk/agent` *cannot* import `apps/brain/internal`.
+
+Not built yet: the graph, the planner, the dashboard, and outbound replies —
+the brain can hold a conversation's messages but cannot yet answer one. The
+agent loop exists as a library and runs end to end against a real gateway, but
+nothing in the brain calls it, so no message reaches a model. Slack, Discord and Telegram adapters are not written; the seam they
 plug into is, and `custom` is a working generic webhook in the meantime.
 
 ## Quick start
@@ -477,7 +501,7 @@ apps/cli/       oa, the command-line client
 sdk/agent/      the agent loop, as a library
   loops/        the reasoning patterns — ReAct today, code mode later
   models/       clients for anything speaking OpenAI chat completions
-  examples/     a runnable agent, against a stub gateway or a real one
+  examples/     runnable agents, against a stub gateway or a real one
 deployment/     manifests
 go.work         ties every Go module in the repository together
 ```
