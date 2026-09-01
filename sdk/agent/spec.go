@@ -19,6 +19,7 @@ type Spec struct {
 	Loop     LoopType
 	System   []Content
 	Tools    []Tool
+	Skills   []Skill
 	MaxSteps int
 }
 

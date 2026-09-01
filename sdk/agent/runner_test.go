@@ -377,3 +377,165 @@ func TestAnUnregisteredLoopNeverReachesTheFactory(t *testing.T) {
 		t.Errorf("the factory was called %d times for a run that could not happen", n)
 	}
 }
+
+// The loop must not have to know skills exist. By the time it sees the Spec,
+// they are a tool and a block of system prompt like any other.
+func TestSkillsReachTheLoopAsAToolAndAListing(t *testing.T) {
+	t.Parallel()
+
+	spec, err := withSkills(Spec{
+		System: System("You are a terse assistant."),
+		Tools:  []Tool{{Name: "count_issues"}},
+		Skills: []Skill{{
+			Name:        "pdf-forms",
+			Description: "Fill in the fields of a PDF form",
+			Body:        func(context.Context) (string, error) { return "instructions", nil },
+		}},
+	})
+	if err != nil {
+		t.Fatalf("withSkills: %v", err)
+	}
+
+	if len(spec.Tools) != 2 {
+		t.Fatalf("the loop sees %d tools, want the caller's plus the skill tool", len(spec.Tools))
+	}
+	if spec.Tools[0].Name != "count_issues" {
+		t.Errorf("the caller's tool moved to %q", spec.Tools[0].Name)
+	}
+	if spec.Tools[1].Name != SkillToolName {
+		t.Errorf("the skill tool is named %q, want %q", spec.Tools[1].Name, SkillToolName)
+	}
+
+	if len(spec.System) != 2 {
+		t.Fatalf("the loop sees %d system blocks, want the caller's plus the listing", len(spec.System))
+	}
+	if !strings.Contains(spec.System[1].Text, "pdf-forms") {
+		t.Errorf("the listing does not name the skill:\n%s", spec.System[1].Text)
+	}
+}
+
+// The caller's system prompt is the same for every team in the deployment and
+// caches once; the listing differs per team. Prepending the listing would put
+// the per-team block at the front and no team would share a prefix again.
+func TestTheListingGoesAfterTheCallersSystemPrompt(t *testing.T) {
+	t.Parallel()
+
+	spec, err := withSkills(Spec{
+		System: System("You are a terse assistant."),
+		Skills: []Skill{{
+			Name: "pdf-forms", Description: "Fill PDFs",
+			Body: func(context.Context) (string, error) { return "x", nil },
+		}},
+	})
+	if err != nil {
+		t.Fatalf("withSkills: %v", err)
+	}
+	if spec.System[0].Text != "You are a terse assistant." {
+		t.Errorf("the first block is %q, want the caller's prompt", spec.System[0].Text)
+	}
+}
+
+// append into spare capacity writes into the caller's array. A Spec reused for
+// a second run would come back carrying the first run's skill tool.
+func TestARunDoesNotEditTheSpecItWasGiven(t *testing.T) {
+	t.Parallel()
+
+	tools := make([]Tool, 1, 4)
+	tools[0] = Tool{Name: "count_issues"}
+	system := make([]Content, 1, 4)
+	system[0] = Content{Type: ContentText, Text: "You are a terse assistant."}
+
+	original := Spec{
+		System: system,
+		Tools:  tools,
+		Skills: []Skill{{
+			Name: "pdf-forms", Description: "Fill PDFs",
+			Body: func(context.Context) (string, error) { return "x", nil },
+		}},
+	}
+
+	if _, err := withSkills(original); err != nil {
+		t.Fatalf("withSkills: %v", err)
+	}
+
+	if len(original.Tools) != 1 || len(original.System) != 1 {
+		t.Fatal("the caller's slices grew")
+	}
+	// Reach past the length the caller holds: with a shared array the skill
+	// tool is sitting there, waiting for the caller's own next append.
+	if got := tools[:2][1].Name; got != "" {
+		t.Errorf("the skill tool was written into the caller's array at index 1 as %q", got)
+	}
+	if got := system[:2][1].Text; got != "" {
+		t.Errorf("the listing was written into the caller's array at index 1")
+	}
+}
+
+// Nothing is added when nothing was offered. An empty listing would spend
+// prompt on a heading with no skills under it, and the tool's enum would be
+// empty, which some gateways reject outright.
+func TestARunWithNoSkillsIsLeftUntouched(t *testing.T) {
+	t.Parallel()
+
+	spec, err := withSkills(Spec{
+		System: System("You are a terse assistant."),
+		Tools:  []Tool{{Name: "count_issues"}},
+	})
+	if err != nil {
+		t.Fatalf("withSkills: %v", err)
+	}
+	if len(spec.Tools) != 1 || len(spec.System) != 1 {
+		t.Errorf("a run with no skills got %d tools and %d system blocks, want 1 and 1",
+			len(spec.Tools), len(spec.System))
+	}
+}
+
+// Two tools under one name and the loop dispatches by whichever it finds
+// first, which is a map iteration away from being different next run.
+func TestACallersToolNamedSkillIsRefused(t *testing.T) {
+	t.Parallel()
+
+	_, err := withSkills(Spec{
+		Tools: []Tool{{Name: SkillToolName}},
+		Skills: []Skill{{
+			Name: "pdf-forms", Description: "Fill PDFs",
+			Body: func(context.Context) (string, error) { return "x", nil },
+		}},
+	})
+	if err == nil {
+		t.Fatal("a tool clashing with the skill tool was accepted")
+	}
+	if !strings.Contains(err.Error(), SkillToolName) {
+		t.Errorf("err = %v, want it to name the clash", err)
+	}
+}
+
+// A malformed skill list is a wiring mistake, and saying so should not need a
+// connection to a gateway first.
+func TestABadSkillListIsRefusedBeforeTheClientIsBuilt(t *testing.T) {
+	t.Parallel()
+
+	dialled := false
+	runner, err := New(func(Endpoint) (ModelClient, error) {
+		dialled = true
+		return nil, nil
+	}, &fakeLoop{name: LoopReAct})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = runner.Run(t.Context(), Spec{
+		Loop: LoopReAct,
+		Skills: []Skill{
+			{Name: "pdf-forms", Description: "Fill PDFs", Body: func(context.Context) (string, error) { return "x", nil }},
+			{Name: "pdf-forms", Description: "Something else", Body: func(context.Context) (string, error) { return "y", nil }},
+		},
+	}, nil, Endpoint{BaseURL: "http://litellm:4000/v1"}, nil)
+
+	if err == nil {
+		t.Fatal("a duplicate skill name was accepted")
+	}
+	if dialled {
+		t.Error("the runner opened a connection to report a mistake in the spec")
+	}
+}

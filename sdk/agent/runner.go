@@ -48,6 +48,11 @@ func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 			spec.Loop, strings.Join(r.registered(), ", "))
 	}
 
+	spec, err := withSkills(spec)
+	if err != nil {
+		return Result{}, err
+	}
+
 	client, err := r.clientFor(endpoint)
 	if err != nil {
 		return Result{}, fmt.Errorf("connecting to %s: %w", endpoint.BaseURL, err)
@@ -59,6 +64,28 @@ func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 		Model:    client,
 		Events:   events,
 	})
+}
+
+func withSkills(spec Spec) (Spec, error) {
+	if len(spec.Skills) == 0 {
+		return spec, nil
+	}
+
+	for _, t := range spec.Tools {
+		if t.Name == SkillToolName {
+			return Spec{}, fmt.Errorf("a tool is already named %q, which is the name skills arrive under", SkillToolName)
+		}
+	}
+
+	tool, listing, err := skillTool(spec.Skills)
+	if err != nil {
+		return Spec{}, err
+	}
+
+	spec.Tools = append(slices.Clone(spec.Tools), tool)
+	spec.System = append(slices.Clone(spec.System), listing)
+
+	return spec, nil
 }
 
 func (r *Runner) registered() []string {
