@@ -1,0 +1,51 @@
+# LiteLLM's configuration.
+#
+# Nothing here is a secret. Credentials are read from the environment at
+# startup, so this file is safe to commit — and a missing key fails the call
+# rather than the boot, since LiteLLM does not validate provider keys until
+# something uses one.
+
+model_list:
+  # Every model, every provider, with nothing enumerated.
+  #
+  # Listing models would throw away the reason to run LiteLLM at all: the brain
+  # sends ModelRef.Name straight through, so `anthropic/claude-opus-5` and
+  # `openai/gpt-5` and `gemini/gemini-3-pro` all route on the prefix using
+  # whichever key is in the environment. A new model on an existing provider
+  # needs no change here and no restart.
+  #
+  # The dashboard is the other way in: providers, keys, aliases and fallback
+  # chains added at http://127.0.0.1:14000/ui are stored in Postgres and
+  # outlive the container, so this file stays the floor rather than the ceiling.
+  - model_name: "*"
+    litellm_params:
+      model: "*"
+
+  # An entry is only needed where the wildcard cannot reach: anything wanting
+  # its own api_base, its own credential, or a name that is not the model's.
+  # A local Ollama is the common case — host.docker.internal resolves from
+  # inside the container on macOS and Windows; on Linux add an extra_hosts
+  # entry to the service.
+  #
+  # - model_name: local/qwen3
+  #   litellm_params:
+  #     model: openai/qwen3
+  #     api_base: http://host.docker.internal:11434/v1
+  #     api_key: unused
+
+general_settings:
+  # The master key is the only credential when no database is attached, and the
+  # key that mints the others when one is. It has no default on purpose.
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+  # Without this there are no virtual keys, no per-team budgets, no spend
+  # tracking and no dashboard persistence — which is most of the reason to run
+  # LiteLLM rather than talk to a provider directly.
+  database_url: os.environ/DATABASE_URL
+
+litellm_settings:
+  # Parameters a provider does not understand are dropped rather than rejected.
+  # The brain sends one request shape to every model, so without this a field
+  # Anthropic accepts and a local model does not turns into a failed call
+  # instead of an ignored field.
+  drop_params: true

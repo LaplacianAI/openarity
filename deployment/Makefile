@@ -29,7 +29,15 @@ COMPOSE := docker compose -f docker-compose.yml
 #   while the real OpenBao is up asks compose to replace it. up, dev and image
 #   are the fast local loop and use dev mode deliberately; `make bao` is the
 #   same loop against the real one.
-IMAGE   := -f docker-compose.image.yml
+#   LITELLM and OMNIROUTE are the two model gateways, and they are
+#   alternatives rather than a pair: each publishes a gateway the brain reaches
+#   at one URL, so running both means choosing which one that URL names. They
+#   are deliberately absent from down, ps and destroy — their :? guards would
+#   make stopping the stack require both sets of credentials, which is the same
+#   trap $(BAO) already documents.
+IMAGE     := -f docker-compose.image.yml
+LITELLM   := -f docker-compose.litellm.yml
+OMNIROUTE := -f docker-compose.omniroute.yml
 OIDC    := -f docker-compose.authentik.yml
 BAO     := -f docker-compose.openbao.yml
 OBJECTS := -f docker-compose.objects.yml
@@ -71,6 +79,41 @@ objects:
 	  "export BRAIN_TEST_S3_BUCKET=$${OBJECTS_BUCKET:-openarity}" \
 	  "export BRAIN_TEST_S3_ACCESS_KEY=$${OBJECTS_ACCESS_KEY:-openarity}" \
 	  "export BRAIN_TEST_S3_SECRET_KEY=$${OBJECTS_SECRET_KEY:-openarity-dev-secret}"
+
+# ---------------------------------------------------------------------------
+# Model gateways. Both answer OpenAI chat completions, so the brain speaks one
+# protocol either way and the choice is a URL rather than a code path.
+#
+#             image      idle RAM   boot    database
+#   litellm    1.2 GB      968 MB   ~40s    its own Postgres
+#   omniroute  4.14 GB     648 MB   ~15s    none, SQLite in a volume
+#
+# Neither is in the default stack. The brain's own image is 14 MB, and either
+# of these is the largest thing in the deployment by a wide margin.
+
+## litellm: add the LiteLLM gateway and its dashboard — needs .env
+litellm:
+	$(COMPOSE) $(LITELLM) up -d litellm-postgresql litellm
+	@printf '\n%s\n%s\n\n' \
+	  "dashboard  http://127.0.0.1:$${LITELLM_PORT:-14000}/ui" \
+	  "gateway    http://127.0.0.1:$${LITELLM_PORT:-14000}/v1"
+
+## litellm-down: stop LiteLLM and its Postgres, keeping the volume
+litellm-down:
+	$(COMPOSE) $(LITELLM) stop litellm litellm-postgresql
+
+## omniroute: add the OmniRoute gateway and its dashboard — needs .env
+omniroute:
+	$(COMPOSE) $(OMNIROUTE) up -d omniroute
+	@printf '\n%s\n%s\n\n' \
+	  "dashboard  http://127.0.0.1:$${OMNIROUTE_PORT:-20128}/dashboard" \
+	  "gateway    http://127.0.0.1:$${OMNIROUTE_PORT:-20128}/v1"
+
+## omniroute-down: stop OmniRoute, keeping its volume
+omniroute-down:
+	$(COMPOSE) $(OMNIROUTE) stop omniroute
+
+# ---------------------------------------------------------------------------
 
 ## dev: dependencies and the brain, built from your working tree
 dev:
