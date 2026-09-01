@@ -28,6 +28,16 @@ type fakeEffect struct {
 	forgetErr  error
 	backlogErr error
 
+	// name and oldest exist for SweepAll's tests: several effects in one sweep
+	// have to be distinguishable, and an overdue backlog needs a timestamp the
+	// happy path never produces.
+	name   string
+	oldest time.Time
+
+	// order is shared between the effects of one SweepAll, so the sequence
+	// across them is observable rather than inferred from timestamps.
+	order *[]string
+
 	claims  []time.Time
 	batches []int32
 	did     []string
@@ -53,11 +63,19 @@ func newFakeEffect(refs ...string) *fakeEffect {
 	return e
 }
 
-func (*fakeEffect) Name() string { return "fake" }
+func (e *fakeEffect) Name() string {
+	if e.name != "" {
+		return e.name
+	}
+	return "fake"
+}
 
 func (e *fakeEffect) Claim(_ context.Context, retryBefore time.Time, batch int32) ([]Item, error) {
 	e.claims = append(e.claims, retryBefore)
 	e.batches = append(e.batches, batch)
+	if e.order != nil {
+		*e.order = append(*e.order, e.Name())
+	}
 	if e.claimErr != nil {
 		return nil, e.claimErr
 	}
@@ -116,7 +134,11 @@ func (e *fakeEffect) Backlog(ctx context.Context) (int64, time.Time, error) {
 	if len(e.pending) == 0 {
 		return 0, time.Time{}, nil
 	}
-	return int64(len(e.pending)), time.Now(), nil
+	oldest := e.oldest
+	if oldest.IsZero() {
+		oldest = time.Now()
+	}
+	return int64(len(e.pending)), oldest, nil
 }
 
 func TestASweepAppliesAndForgets(t *testing.T) {

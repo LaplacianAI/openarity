@@ -192,7 +192,7 @@ cp "$bak" "$file"
 mutations stacking on one another and produced a confident, wrong result
 before anyone noticed the file had never been put back.
 
-### Seven patterns that survive mutation and look tested
+### Nine patterns that survive mutation and look tested
 
 Every one escaped a first pass, and every one is invisible in a coverage
 report because the lines *do* execute — just never in the state that matters.
@@ -318,13 +318,66 @@ a downgrade is silent by construction: key sizes, KDF iterations, TLS minimum
 versions, nonce and salt lengths, bcrypt cost. Behavioural tests cannot see it.
 Find the one place the value is observable and assert the number.
 
-The rule all seven give you: coverage says which lines ran, never which values
+**A structural test that searches wider than what it claims to check.** A test
+walked `cmd/brain`'s AST asserting every `commandName` constant appears in a
+case clause, so a command that `parse` accepts but `execute` has no case for
+would fail it. It read case clauses *anywhere in the package*, with a comment
+justifying that — scoping to `execute` by name would let a rename silently
+disable it. Deleting the `commandWorker` case from `execute` left it green,
+because `parse` has a case for the same constant.
+
+The searching is the whole test, so a search one node too wide is a test of
+nothing:
+
+```go
+// Wrong: any case clause in the package counts.
+ast.Inspect(file, func(n ast.Node) bool {
+	clause, isCase := n.(*ast.CaseClause)
+	...
+})
+
+// Right: the switch identified by what it switches on, plus a fatal if no
+// such switch exists — so a rename fails loudly instead of disabling this.
+ast.Inspect(file, func(n ast.Node) bool {
+	sw, isSwitch := n.(*ast.SwitchStmt)
+	if !isSwitch || !switchesOnCommandName(sw.Tag) {
+		return true
+	}
+	found = true
+	...
+})
+if !found {
+	t.Fatal("no switch on a parsed command's name was found, " +
+		"so nothing below was actually checked")
+}
+```
+
+Any test that finds its subject by scanning — an AST walk, a `filepath.Walk`,
+a route table, a reflect over struct tags — owes two things: a predicate narrow
+enough that only the real subject matches, and a failure when the search finds
+nothing. Without the second, every narrowing is one edit away from a test that
+passes because it examined an empty set.
+
+**A negative fixture that becomes valid.** Two tests used `"worker"` as a
+stand-in for a command that does not exist — one asserting `parse` rejects it,
+one asserting `execute` refuses it. Adding a `worker` role turned both into
+tests of the opposite thing: the first failed, and the second dispatched into
+the real worker with a nil store and panicked.
+
+A fixture chosen to be *invalid* is a claim about the future, and the good ones
+cannot come true: `"nonsense"`, `"workers"`, a pluralised or misspelled form of
+a real name. Never a word from the roadmap. The same applies to unused ports,
+reserved paths, and "an id nobody will ever have".
+
+The rule all nine give you: coverage says which lines ran, never which values
 reached them, which guard did the work, or whether the result left the process.
 For any nullable field, any pair of parallel types, any list matched against
 something else's output, any input that could trip more than one check, any
-security parameter with a legal weaker setting, and any harness offering both
-"what was set" and "what was sent", and any refusal the real dependency makes
-that your fake does not — write the second test.
+security parameter with a legal weaker setting, any harness offering both
+"what was set" and "what was sent", any refusal the real dependency makes that
+your fake does not, any test that finds its own subject by searching, and any
+fixture that is a placeholder for something that does not exist yet — write the
+second test.
 
 ## Step 8 — coverage
 

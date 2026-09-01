@@ -66,10 +66,10 @@ func TestParseRejectsUnknownCommands(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"migrat", "up"},
-		{"Serve"},  // case matters
-		{"--help"}, // no flag parsing exists
-		{""},       // an empty argument is not "no argument"
-		{"worker"}, // not a role yet
+		{"Serve"},   // case matters
+		{"--help"},  // no flag parsing exists
+		{""},        // an empty argument is not "no argument"
+		{"workers"}, // a role's name, pluralised, is not that role
 	} {
 		cmd, err := parse(args)
 		if err == nil {
@@ -157,7 +157,7 @@ func TestTheUnknownCommandErrorNamesEveryCommand(t *testing.T) {
 		t.Fatal("parse accepted a command that does not exist")
 	}
 
-	for _, name := range []commandName{commandServe, commandMigrate, commandReap} {
+	for _, name := range []commandName{commandServe, commandMigrate, commandReap, commandWorker} {
 		if !strings.Contains(err.Error(), string(name)) {
 			t.Errorf("%q is a command and the error does not mention it: %v", name, err)
 		}

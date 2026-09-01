@@ -42,6 +42,11 @@ break it, explains, and reviews.**
   gets, and the five tests a route owes. Use it
   every time; a route registered on the wrong mux passes every test written
   about its body.
+- **`add-a-background-job`** — anything that runs on a schedule or off a queue
+  rather than on a request. Covers where a `Job` lives, the two phases the
+  durable runtime forces on it, names that are stored state, the six-field
+  cron, and the tests that catch a job which registers cleanly and never fires.
+  Read it before adding work to `brain worker`.
 - **`write-migration`** — every schema change. Covers the goose file format,
   `lock_timeout`, expand-contract for column changes, batched backfills, and
   when an index needs `CONCURRENTLY`. Use it every time: the migration that
@@ -73,7 +78,8 @@ apps/brain/
     command.go         argument parsing — pure, no dependencies
     serve.go           the serve role
     migrate.go         the migrate role
-    reap.go            the reap role
+    reap.go            the reap role, and newEffects for both it and the worker
+    worker.go          the worker role
     logger.go          newLogger()
   internal/config/     configuration: load, validate, redact
   internal/server/     the two listeners: build, run, shut down; mounts Routers
@@ -99,6 +105,8 @@ apps/brain/
     filesystem/        a volume, for a single-host deployment with no S3
     inmemory/          the in-process fallback; attachments die with the process
   internal/reaper/     the sweep: one loop, one Effect per outside system
+    job.go             the reaper as background work: SweepAll, and its Job
+  internal/worker/     the background process: a registry of Jobs, and Run
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary
     rbac.json          the permissions, roles and route mappings we ship
@@ -424,6 +432,39 @@ reinstalled.
   outbound replies to one thread — needs a partition key and one worker per
   partition, and would be a second mechanism sharing a word rather than a third
   `Effect`.
+- **A job registers in one phase and is scheduled in another, because the
+  runtime says so.** DBOS builds its workflow and queue registries in memory
+  and reads them at `Launch`, so declaring has to happen before; installing a
+  schedule needs a running scheduler, so that has to happen after. `Job` is
+  `Name()` plus `Register(dbos.Context) ([]dbos.ScheduleSpec, error)` — it
+  declares, and hands back what it wants scheduled. `internal/worker` knows the
+  interface and no job; `cmd/brain/worker.go` is the index, one line each.
+  Structural typing means a domain never imports `internal/worker` back.
+- **A job lives with its module, not in a jobs package.** `internal/reaper/job.go`
+  today, `internal/runtime/job.go` when agent runs land. A separate package
+  would have to import every domain and call into it, so each would export its
+  guts to one consumer — and the "see every background job in one place"
+  argument is already answered by the `worker.New(...)` call. Same answer
+  `internal/api/<domain>` and `internal/gateway/<provider>` already got.
+- **`ApplySchedules`, never `CreateSchedule`.** The second is not idempotent:
+  a worker restarting against its own schedule gets `duplicate key value
+  violates unique constraint "workflow_schedules_schedule_name_key"`. Measured,
+  and it only appears on the second run — the first deploy looks fine.
+- **The worker sweeps once at startup, and an overdue backlog does not stop
+  it.** The startup sweep proves the secret store can delete and the object
+  store exists before the process calls itself healthy, and covers the interval
+  a newly installed schedule has no missed ticks to backfill. But `ErrOverdue`
+  must not be fatal there: refusing to start would deadlock the only thing that
+  can clear the backlog. Same error, opposite handling from `brain reap`, whose
+  exit code *is* its report.
+- **`brain migrate up` is no longer the only thing that changes the database.**
+  DBOS creates and migrates its own schema — eleven tables under `dbos` — at
+  `Launch`. That is the price of a library instead of a cluster, and it is
+  worth knowing before debugging a schema diff.
+- **The cron expression has six fields.** DBOS builds its parser with seconds
+  enabled, so `*/15 * * * *` is refused with "expected exactly 6 fields, found
+  5". A test parses the constant with the same parser, because the refusal
+  would otherwise land at worker start rather than in CI.
 - **The tombstones are an outbox, not a queue, and nothing may be built on them
   as if they were.** A queue row means "run this job with these arguments"; a
   tombstone means "Postgres has committed a change another system has not caught

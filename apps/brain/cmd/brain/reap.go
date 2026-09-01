@@ -11,63 +11,36 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 )
 
-func reap(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore *store.Store) error {
+func newEffects(
+	ctx context.Context, cfg *config.Config,
+	logger *slog.Logger, dbStore *store.Store,
+) ([]reaper.Effect, error) {
 	secretStore := newSecretStore(cfg, logger)
 	if err := checkSecretStore(ctx, secretStore); err != nil {
-		return err
+		return nil, err
 	}
 
 	secretWriter, ok := secretStore.(secrets.Writer)
 	if !ok {
-		return fmt.Errorf("the secret store (%T) cannot delete, so a deleted "+
+		return nil, fmt.Errorf("the secret store (%T) cannot delete, so a deleted "+
 			"team's key would outlive it", secretStore)
 	}
 
 	attachments, err := newAttachmentStore(cfg, secretStore, logger)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	effects := []reaper.Effect{
+	return []reaper.Effect{
 		reaper.Secrets(dbStore, secretWriter),
 		reaper.Objects(dbStore, attachments),
-	}
-
-	var overdue []string
-	for _, effect := range effects {
-		res, err := reaper.New(effect, logger).Sweep(ctx)
-		if err != nil {
-			return err
-		}
-
-		logger.Info("Swept",
-			"effect", res.Effect,
-			"applied", res.Applied,
-			"superseded", res.Superseded,
-			"failed", res.Failed,
-			"outstanding", res.Outstanding,
-		)
-
-		if res.Overdue() {
-			overdue = append(overdue,
-				fmt.Sprintf("%s: %d outstanding, oldest %s",
-					res.Effect, res.Outstanding, res.Oldest))
-		}
-	}
-
-	if len(overdue) > 0 {
-		return fmt.Errorf("%w: %s", reaper.ErrOverdue, joinLines(overdue))
-	}
-	return nil
+	}, nil
 }
 
-func joinLines(lines []string) string {
-	out := ""
-	for i, line := range lines {
-		if i > 0 {
-			out += "; "
-		}
-		out += line
+func reap(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore *store.Store) error {
+	effects, err := newEffects(ctx, cfg, logger, dbStore)
+	if err != nil {
+		return err
 	}
-	return out
+	return reaper.SweepAll(ctx, logger, effects...)
 }

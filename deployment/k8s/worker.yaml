@@ -1,0 +1,90 @@
+# The clock.
+#
+# Nothing else in these manifests runs `brain reap`, so without this a cluster
+# erases nothing outside Postgres: the rows go, the attachment bytes and the
+# vault keys stay. A deployment that never runs it never completes an erasure.
+#
+# A Deployment rather than a CronJob, deliberately. The worker owns its own
+# schedule and replays ticks missed while it was down, which a CronJob cannot
+# do — startingDeadlineSeconds can only skip. If you would rather the cluster
+# owned the clock, delete this and run `brain reap` from a CronJob instead;
+# SCHEDULING.md has the four defaults that need changing for that.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: brain-worker
+  labels:
+    app.kubernetes.io/name: brain-worker
+    app.kubernetes.io/part-of: openarity
+spec:
+  # One is enough, and more is safe. The sweep claims with FOR UPDATE SKIP
+  # LOCKED, so a second replica divides the backlog rather than duplicating it
+  # and needs no leader election. There is simply nothing here to scale for.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: brain-worker
+  strategy:
+    # Recreate, not RollingUpdate. Two workers overlapping is harmless, but the
+    # rollout has nothing to keep available — no traffic reaches this — so
+    # stopping the old one first keeps the logs readable during a deploy.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: brain-worker
+        app.kubernetes.io/part-of: openarity
+      annotations:
+        checksum/config: "replace-with-a-hash-of-configmap.yaml"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+
+      # No migrate init container here, on purpose. The schema has one owner —
+      # the brain Deployment — and two things applying migrations means a
+      # rollback can leave a worker running against a version the server no
+      # longer expects. This pod starts against whatever schema is there; if it
+      # is too old the worker fails at boot and says so.
+      containers:
+        - name: worker
+          image: ghcr.io/laplacianai/openarity-brain:latest
+          args: ["worker"]
+          envFrom:
+            - configMapRef:
+                name: brain-config
+            - secretRef:
+                name: brain-secrets
+
+          # No probes. The worker serves no HTTP, and the honest health signal
+          # for it is the age of the oldest tombstone rather than whether the
+          # process is alive — a worker can be perfectly alive and erasing
+          # nothing. Until it exposes that, the signals are the ERROR log
+          # naming the oldest outstanding item and the restart count.
+          #
+          # An exec probe on the process would report "running", which is the
+          # question nobody needs answered.
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              # Measured: the durable runtime idles around 12 MB of Go heap and
+              # peaks near 26 MB driving a thousand workflows. 256Mi is room to
+              # be wrong rather than a sizing.
+              memory: 256Mi
+
+      # A sweep in flight holds a lease on what it claimed; letting it finish
+      # means the next run does not wait out the retry window for rows this one
+      # had already started.
+      terminationGracePeriodSeconds: 60

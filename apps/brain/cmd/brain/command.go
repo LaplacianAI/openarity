@@ -11,6 +11,7 @@ const (
 	commandServe   commandName = "serve"
 	commandMigrate commandName = "migrate"
 	commandReap    commandName = "reap"
+	commandWorker  commandName = "worker"
 )
 
 type direction string
@@ -39,8 +40,11 @@ func parse(args []string) (command, error) {
 		return parseMigrate(args[1:])
 	case commandReap:
 		return command{name: commandReap}, nil
+	case commandWorker:
+		return command{name: commandWorker}, nil
 	default:
-		return command{}, fmt.Errorf("unknown command %q, want serve, migrate or reap", args[0])
+		return command{}, fmt.Errorf(
+			"unknown command %q, want serve, migrate, reap or worker", args[0])
 	}
 }
 
