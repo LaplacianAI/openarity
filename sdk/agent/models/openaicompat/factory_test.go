@@ -87,17 +87,34 @@ func TestAnEndpointWithNoURLIsRefused(t *testing.T) {
 	}
 }
 
-// The cache key is derived from the credential, and must not be the credential.
-// A map somebody prints while debugging should not hand over a working key.
-func TestTheCacheKeyDoesNotContainTheApiKey(t *testing.T) {
+// Two teams on one gateway have one URL and different virtual keys. Keying on
+// the URL alone would have them evict each other's client on every alternating
+// call — a cache that makes things slower than having none.
+func TestTwoCredentialsOnOneGatewayGetTwoClients(t *testing.T) {
 	t.Parallel()
 
-	key := cacheKey(agent.Endpoint{BaseURL: "http://litellm:4000/v1", APIKey: "sk-super-secret"})
-	if strings.Contains(key, "sk-super-secret") {
-		t.Errorf("the cache key carries the credential in plain text: %q", key)
+	build := Factory()
+	url := "http://litellm:4000/v1"
+
+	a, err := build(agent.Endpoint{BaseURL: url, APIKey: "sk-team-a"})
+	if err != nil {
+		t.Fatalf("build: %v", err)
 	}
-	if !strings.Contains(key, "http://litellm:4000/v1") {
-		t.Errorf("the cache key does not identify the gateway: %q", key)
+	b, err := build(agent.Endpoint{BaseURL: url, APIKey: "sk-team-b"})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if a == b {
+		t.Fatal("two teams shared a client, so one would present the other's credential")
+	}
+
+	// And neither evicted the other.
+	again, err := build(agent.Endpoint{BaseURL: url, APIKey: "sk-team-a"})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if again != a {
+		t.Error("the second team's client evicted the first, so every call rebuilds")
 	}
 }
 

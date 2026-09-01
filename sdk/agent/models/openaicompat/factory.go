@@ -1,8 +1,6 @@
 package openaicompat
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"sync"
 
@@ -12,9 +10,18 @@ import (
 )
 
 func Factory(opts ...option.RequestOption) agent.ClientFactory {
+	// Keyed by the Endpoint itself. It is two strings, so it is comparable and
+	// Go will use it as a map key directly — which beats concatenating the URL
+	// and the credential into one, both because there is no delimiter to get
+	// wrong and because hashing a secret to avoid holding it here would be
+	// theatre: the client built from it holds the same string.
+	//
+	// The credential has to be part of the key. Two teams on one gateway have
+	// one URL and different virtual keys, and keying on the URL alone would
+	// have them evict each other's client on every alternating call.
 	var (
 		mu      sync.Mutex
-		clients = map[string]*Client{}
+		clients = map[agent.Endpoint]*Client{}
 	)
 
 	return func(e agent.Endpoint) (agent.ModelClient, error) {
@@ -22,21 +29,14 @@ func Factory(opts ...option.RequestOption) agent.ClientFactory {
 			return nil, errors.New("the endpoint has no base URL")
 		}
 
-		key := cacheKey(e)
-
 		mu.Lock()
 		defer mu.Unlock()
 
-		if c, ok := clients[key]; ok {
+		if c, ok := clients[e]; ok {
 			return c, nil
 		}
 		c := New(e.BaseURL, e.APIKey, opts...)
-		clients[key] = c
+		clients[e] = c
 		return c, nil
 	}
-}
-
-func cacheKey(e agent.Endpoint) string {
-	sum := sha256.Sum256([]byte(e.APIKey))
-	return e.BaseURL + "\x00" + hex.EncodeToString(sum[:8])
 }
