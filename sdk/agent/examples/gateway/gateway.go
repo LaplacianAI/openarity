@@ -127,7 +127,7 @@ func stub(script []Turn) http.Handler {
 			// Past the script the stub stops rather than repeating its last
 			// turn, which would loop until MaxSteps and look like a bug in the
 			// loop rather than a script that ran out.
-			send(chunk(`{"role":"assistant","content":"the script ended"}`, "stop"))
+			send(chunk(delta{Role: "assistant", Content: "the script ended"}, "stop"))
 			return
 		}
 		send(turnChunks(script[n])...)
@@ -137,22 +137,28 @@ func stub(script []Turn) http.Handler {
 func turnChunks(t Turn) []string {
 	if t.ToolName == "" {
 		return []string{
-			chunk(`{"role":"assistant","content":`+quote(t.Text)+`}`, ""),
-			chunk(`{}`, "stop"),
+			chunk(delta{Role: "assistant", Content: t.Text}, ""),
+			chunk(delta{}, "stop"),
 		}
 	}
 
 	// Arguments arrive in fragments, which is the case the accumulator exists
 	// for: nothing is dispatchable until the last one lands. Splitting them
 	// here is what makes the example exercise that rather than assert it.
-	out := []string{
-		chunk(`{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":`+
-			quote(t.ToolName)+`,"arguments":""}}]}`, ""),
-	}
+	out := []string{chunk(delta{
+		Role: "assistant",
+		ToolCalls: []toolCall{{
+			ID: "call_1", Type: "function",
+			Function: function{Name: t.ToolName},
+		}},
+	}, "")}
+
 	for _, part := range split(t.ToolArgs, 3) {
-		out = append(out, chunk(`{"tool_calls":[{"index":0,"function":{"arguments":`+quote(part)+`}}]}`, ""))
+		out = append(out, chunk(delta{
+			ToolCalls: []toolCall{{Function: function{Arguments: part}}},
+		}, ""))
 	}
-	return append(out, chunk(`{}`, "tool_calls"))
+	return append(out, chunk(delta{}, "tool_calls"))
 }
 
 // split cuts a string into at most n pieces, on bytes, because that is what a
@@ -169,29 +175,73 @@ func split(s string, n int) []string {
 	return out
 }
 
-func chunk(delta, finish string) string {
-	choice := `{"index":0,"delta":` + delta
-	if finish != "" {
-		choice += `,"finish_reason":"` + finish + `"`
+// The wire types are declared rather than assembled from string fragments.
+// Scripted text carries quotes and braces — a skill's arguments are themselves
+// JSON — and a stub that concatenates its way to a chunk emits one the client
+// cannot parse the first time somebody scripts an apostrophe.
+type (
+	completionChunk struct {
+		ID      string   `json:"id"`
+		Object  string   `json:"object"`
+		Model   string   `json:"model"`
+		Choices []choice `json:"choices"`
+		Usage   *usage   `json:"usage,omitempty"`
 	}
-	choice += "}"
 
-	body := `{"id":"chatcmpl-stub","object":"chat.completion.chunk","model":"stub","choices":[` + choice + `]`
+	choice struct {
+		Index        int    `json:"index"`
+		Delta        delta  `json:"delta"`
+		FinishReason string `json:"finish_reason,omitempty"`
+	}
+
+	delta struct {
+		Role      string     `json:"role,omitempty"`
+		Content   string     `json:"content,omitempty"`
+		ToolCalls []toolCall `json:"tool_calls,omitempty"`
+	}
+
+	toolCall struct {
+		Index    int      `json:"index"`
+		ID       string   `json:"id,omitempty"`
+		Type     string   `json:"type,omitempty"`
+		Function function `json:"function"`
+	}
+
+	// Arguments has no omitempty: the first fragment of a tool call carries an
+	// empty string, and a client reading the field's absence as "no arguments"
+	// would dispatch before any of them arrived.
+	function struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments"`
+	}
+
+	usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	}
+)
+
+func chunk(d delta, finish string) string {
+	c := completionChunk{
+		ID:      "chatcmpl-stub",
+		Object:  "chat.completion.chunk",
+		Model:   "stub",
+		Choices: []choice{{Delta: d, FinishReason: finish}},
+	}
 
 	// Usage rides the final chunk only. A gateway repeating it on every chunk
 	// would have the accumulator sum them, and the run would report five times
 	// the tokens it actually spent — worth getting right here, because an
 	// example is where somebody learns what to expect.
 	if finish != "" {
-		body += `,"usage":{"prompt_tokens":90,"completion_tokens":12,"total_tokens":102}`
+		c.Usage = &usage{PromptTokens: 90, CompletionTokens: 12, TotalTokens: 102}
 	}
-	return body + "}"
-}
 
-// quote produces a JSON string. The scripted text contains braces and quotes —
-// a skill's arguments are themselves JSON — so building it by hand is how the
-// stub ends up emitting a chunk the client cannot parse.
-func quote(s string) string {
-	b, _ := json.Marshal(s)
+	b, err := json.Marshal(c)
+	if err != nil {
+		// Unreachable: every field is a string, an int or a slice of them.
+		panic(err)
+	}
 	return string(b)
 }
