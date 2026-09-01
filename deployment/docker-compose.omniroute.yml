@@ -1,0 +1,72 @@
+# OmniRoute as the model gateway, with its dashboard.
+#
+# The alternative to the LiteLLM overlay, answering the same endpoint. Run one
+# or the other — both publish a gateway the brain reaches at a single URL, and
+# starting both means deciding which one OPENARITY_MODELS_BASE_URL points at.
+#
+#   cd deployment
+#   cp .env.example .env                        # then fill in the OmniRoute block
+#   docker compose -f docker-compose.yml -f docker-compose.omniroute.yml up -d
+#
+# This file brings the gateway and nothing else — the brain's settings live in
+# x-brain-env in docker-compose.yml. When the brain reads them, the values are:
+#
+#   OPENARITY_MODELS_BASE_URL=http://omniroute:20128/v1
+#   OPENARITY_MODELS_API_KEY=<a key issued in the dashboard>
+#
+# Dashboard at http://127.0.0.1:20128/dashboard — providers, routing, keys and
+# call logs, signed in with the password below.
+#
+# Measured before choosing between them:
+#
+#            image     idle RAM   boot    database
+#   LiteLLM  1.2 GB     968 MB    ~40s    Postgres, for keys and budgets
+#   OmniRoute 4.14 GB   648 MB    ~15s    none — SQLite in its own volume
+#
+# So OmniRoute is one container against LiteLLM's two and lighter in memory,
+# and three and a half times the size on disk. Neither is in the default stack:
+# the brain's own image is 14 MB, and either of these is the largest thing in
+# the deployment by a wide margin.
+#
+# Both expose /v1/chat/completions and /v1/messages. Only LiteLLM has a native
+# Anthropic passthrough at /anthropic/v1/messages — OmniRoute returns 404 there
+# — so anything needing Anthropic beta headers wants the other overlay.
+
+name: openarity
+
+services:
+  omniroute:
+    image: diegosouzapw/omniroute:latest
+    environment:
+      # The dashboard password. The image defaults it to CHANGEME and logs a
+      # warning nobody reads, so it is required here instead.
+      INITIAL_PASSWORD: ${OMNIROUTE_PASSWORD:?set OMNIROUTE_PASSWORD in deployment/.env}
+
+      # Provider credentials. Configured through the dashboard as well, but
+      # setting them here means a rebuilt container comes back working rather
+      # than back at the setup screen.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY-}
+
+      # Two background syncs that reach the internet daily for leaderboard and
+      # pricing data. Off by default here: a self-hosted gateway phoning out on
+      # a timer is a surprise, and neither affects routing.
+      ARENA_ELO_SYNC_ENABLED: "false"
+      PRICING_SYNC_ENABLED: "false"
+    volumes:
+      # Everything durable lives here: SQLite for state and logs, LowDB for
+      # configuration, and two secrets the image generates on first run
+      # (STORAGE_ENCRYPTION_KEY and API_KEY_SECRET). Delete this volume and
+      # every issued API key stops working.
+      - omniroute-data:/app/data
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${OMNIROUTE_PORT:-20128}:20128"
+    # No healthcheck. /health returns 404 and /v1/models answers 401 without a
+    # key, so a correct probe has to accept a status curl and wget both treat
+    # as failure — and which of the two this image even ships is unverified.
+    # An untested healthcheck is worse than none: it leaves a working container
+    # permanently "starting" and blocks anything that waits on it.
+    restart: unless-stopped
+
+volumes:
+  omniroute-data:

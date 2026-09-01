@@ -1,0 +1,101 @@
+# LiteLLM as the model gateway, with its dashboard.
+#
+# The brain speaks one protocol to models: OpenAI chat completions. LiteLLM
+# answers it and routes to Anthropic, OpenAI, Bedrock, Vertex, Ollama or
+# anything else on the model name's prefix, so the choice of provider stops
+# being a code path and becomes a key in the environment.
+#
+# litellm/config.yaml enumerates nothing — it proxies every model with a
+# wildcard, and the dashboard is where a provider needing more than a key gets
+# added at runtime.
+#
+#   cd deployment
+#   cp .env.example .env                        # then fill in the LiteLLM block
+#   docker compose -f docker-compose.yml -f docker-compose.litellm.yml up -d
+#
+# This file brings the gateway and nothing else. The brain's settings live in
+# x-brain-env in docker-compose.yml, the same way the authentik overlay leaves
+# the OIDC settings there — an overlay that edited the brain would mean two
+# files to read to know how it is configured. When the brain reads them, the
+# values are:
+#
+#   OPENARITY_MODELS_BASE_URL=http://litellm:4000/v1
+#   OPENARITY_MODELS_API_KEY=<a virtual key minted in the dashboard>
+#
+# Dashboard at http://127.0.0.1:14000/ui — virtual keys, per-team budgets,
+# rate limits and spend, signed in with UI_USERNAME and UI_PASSWORD.
+#
+# Measured before choosing it: 1.2 GB image, ~968 MB resident at idle, roughly
+# 40 seconds to boot. It is the smaller of the two gateways on disk and the
+# larger in memory. Neither belongs in the default stack, and neither fits
+# comfortably on a 2 GB machine alongside Postgres — the brain itself is 14 MB.
+#
+# LiteLLM keeps its own Postgres here, the same shape as the authentik overlay:
+# it can be deleted without touching the brain's data, and a gateway sharing the
+# brain's database makes two things that must be migrated in step.
+
+name: openarity
+
+services:
+  litellm-postgresql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${LITELLM_PG_PASS:?set LITELLM_PG_PASS in deployment/.env}
+    volumes:
+      - litellm-database:/var/lib/postgresql/data
+    healthcheck:
+      # -U and -d are not optional: without them pg_isready checks the "root"
+      # database as the "root" user and reports healthy while the real one is
+      # still being created.
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      DATABASE_URL: "postgresql://litellm:${LITELLM_PG_PASS:?set LITELLM_PG_PASS in deployment/.env}@litellm-postgresql:5432/litellm"
+
+      # The master key is the root credential: it authenticates calls and mints
+      # every virtual key. No default, for the same reason authentik's secret
+      # has none — a gateway with a shipped password is worse than one that
+      # refuses to start.
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in deployment/.env}
+
+      # Dashboard sign-in. Separate from the master key so somebody can be
+      # shown the spend without being handed the credential that mints keys.
+      UI_USERNAME: ${LITELLM_UI_USERNAME:-admin}
+      UI_PASSWORD: ${LITELLM_UI_PASSWORD:?set LITELLM_UI_PASSWORD in deployment/.env}
+
+      # Provider credentials, read by config.yaml through os.environ. Single
+      # dash: an unset key must stay unset rather than become the string
+      # "os.environ/ANTHROPIC_API_KEY".
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY-}
+
+      # Stops LiteLLM reporting usage to its authors.
+      LITELLM_DONT_SHOW_FEEDBACK_BOX: "true"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${LITELLM_PORT:-14000}:4000"
+    depends_on:
+      litellm-postgresql:
+        condition: service_healthy
+    # No healthcheck yet. /health/liveliness is the endpoint to use — /health
+    # calls every configured provider, so a stack with no provider key reports
+    # unhealthy while the proxy is fine — but whether this image ships curl is
+    # unverified, and a probe that always fails leaves the container stuck
+    # "starting" and blocks anything waiting on it.
+    #
+    # Measured: roughly 40 seconds to a first response, which is Python import
+    # time rather than configuration. Any start_period has to clear that.
+    restart: unless-stopped
+
+volumes:
+  litellm-database:

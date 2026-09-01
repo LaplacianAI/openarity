@@ -23,6 +23,7 @@ jobs:
     outputs:
       brain: ${{ steps.filter.outputs.brain }}
       cli: ${{ steps.filter.outputs.cli }}
+      sdk: ${{ steps.filter.outputs.sdk }}
 
     steps:
       - uses: actions/checkout@v7
@@ -35,6 +36,11 @@ jobs:
           filters: |
             brain:
               - 'apps/brain/**'
+              - 'go.work'
+              - 'go.work.sum'
+              - '.github/workflows/ci.yml'
+            sdk:
+              - 'sdk/**'
               - 'go.work'
               - 'go.work.sum'
               - '.github/workflows/ci.yml'
@@ -247,6 +253,79 @@ jobs:
             go tool cover -func=coverage.out | tail -20
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Known vulnerabilities
+        run: make vuln
+
+  # The agent loop, as a library. No services: it reaches nothing, and every
+  # test that touches HTTP stands up its own httptest server rather than
+  # waiting on a container.
+  sdk:
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/agent
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: sdk/agent/go.mod
+          cache-dependency-path: sdk/agent/go.sum
+
+      # Same reasoning as the other two: the Makefile is the only place a tool
+      # version is written down, so CI and a developer machine cannot drift.
+      - name: Install tools
+        run: |
+          make tools
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Dependencies are tidy
+        run: make tidy-check
+
+      - name: Formatting and import order
+        run: make fmt-check
+
+      - name: Vet
+        run: make vet
+
+      - name: Lint
+        run: make lint
+
+      # The check no other job has. This module exists so a loop cannot reach a
+      # store, a grant or a provider SDK; the compiler enforces the first two by
+      # itself, and nothing but this stops somebody importing openai-go into the
+      # loop for one convenient type and quietly making ModelClient decorative.
+      - name: The core packages link no provider SDK
+        run: make boundary
+
+      - name: Build
+        run: make build
+
+      # Race detector on; fails below the threshold set in the Makefile. The
+      # examples binary is excluded there — counting it measures how thoroughly
+      # the demo is tested.
+      - name: Test and coverage
+        run: make cover
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo '### sdk/agent coverage'
+            echo '```'
+            go tool cover -func=coverage.out | tail -20
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The example is the only thing that drives the runner, a loop and the
+      # client together against a real HTTP server. It runs offline against an
+      # in-process stub, so CI needs no key and no gateway.
+      - name: The example still runs
+        run: make example
 
       - name: Known vulnerabilities
         run: make vuln
