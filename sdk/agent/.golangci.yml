@@ -1,0 +1,82 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose # unclosed HTTP response bodies — leaks connections
+    - errorlint # %w vs %v, errors.Is/As misuse
+    - exhaustive # a new enum value must break every switch that ignores it
+    - gocritic
+    - gosec
+    - misspell
+    - nilerr # returning nil when err is non-nil
+    - noctx # HTTP requests without a context
+    - revive
+    - unconvert
+    - unparam
+
+  settings:
+    exhaustive:
+      # a default: clause does NOT excuse a missing case — the point is that
+      # adding an enum value breaks every switch that ignores it
+      default-signifies-exhaustive: false
+
+    errcheck:
+      check-type-assertions: true
+
+    revive:
+      rules:
+        # Initialisms keep one case: URL not Url, DSN not Dsn, API not Api.
+        - name: var-naming
+        - name: exported
+          # Off, as in apps/brain. This module is published and every exported
+          # identifier does carry a doc comment; enforcing it as a lint would
+          # only mean the build fails on the comment rather than the code, and
+          # the review that catches a missing one reads better than a rule that
+          # cannot tell a useful comment from a restatement of the name.
+          disabled: true
+
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # ToolCall and ToolCallEvent happen to share a layout. Converting between
+      # them would read as if a telemetry event is a tool call, and would make
+      # adding a field to one a change to the other — the literal says which
+      # fields are being copied and why.
+      - linters: [staticcheck]
+        text: "S1016"
+
+      # An interface assertion is the point of the declaration; omitting the
+      # type omits the assertion.
+      - path: _test\.go
+        linters: [staticcheck]
+        text: "QF1011"
+      # Test files may take shortcuts that production code may not.
+      - path: _test\.go
+        linters:
+          - gosec
+          - unparam
+          - revive
+
+      # The example is a demonstration, and reads better without a doc comment
+      # on every helper it defines to keep the interesting part short.
+      - path: examples/
+        linters:
+          - revive
+
+formatters:
+  enable:
+    - gofumpt # stricter gofmt
+    - gci # deterministic import grouping and order
+  settings:
+    gofumpt:
+      extra-rules: true
+    gci:
+      sections:
+        - standard # stdlib
+        - default # third party
+        - prefix(github.com/LaplacianAI/openarity) # our own

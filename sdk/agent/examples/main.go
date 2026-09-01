@@ -32,15 +32,21 @@ import (
 )
 
 func main() {
-	// Signal handling because a streaming run holds an open connection, and
-	// Ctrl-C should close it rather than orphan it.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	if err := run(ctx); err != nil {
+	// os.Exit skips deferred calls, so the signal handler is released here
+	// rather than in a defer that would never run on the failing path.
+	if err := attempt(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// attempt owns the signal handler so main can exit non-zero without leaking it.
+// Ctrl-C matters here because a streaming run holds an open connection.
+func attempt() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return run(ctx)
 }
 
 func run(ctx context.Context) error {

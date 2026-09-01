@@ -26,11 +26,16 @@ make check
 cd ../cli
 make tools
 make check
+
+cd ../../sdk/agent
+make tools
+make check
 ```
 
 Each module installs its own tooling, because each pins its own versions. The
 brain needs `golangci-lint`, `govulncheck`, `gopls` and `goose`; the CLI needs
-`golangci-lint`, `govulncheck` and `oapi-codegen`. Rerun `make tools` after a Go
+`golangci-lint`, `govulncheck` and `oapi-codegen`; `sdk/agent` needs the first
+two and nothing else. Rerun `make tools` after a Go
 upgrade — anything installed with `go install` is compiled against the Go
 present at the time, and breaks with a version-mismatch error until reinstalled.
 
@@ -41,14 +46,18 @@ present at the time, and breaks with a version-mismatch error until reinstalled.
 ```text
 apps/brain/        the Go backend
 apps/cli/          oa, the command-line client
+sdk/agent/         the agent loop, as a library
 deployment/        manifests
 go.work            ties every Go module in the repository together
 ```
 
 `apps/dashboard` is planned and not here yet.
 
-Each app is **its own Go module**, tied together by `go.work` at the root. Run
-`make` from inside the app directory, not from the repository root. `go build
+Each app is **its own Go module**, tied together by `go.work` at the root, and
+so is `sdk/agent` — being a separate module is what makes it unable to import
+`apps/brain/internal`, which is the rule that keeps an agent loop from
+persisting or authorising anything. Run `make` from inside the module
+directory, not from the repository root. `go build
 ./...` at the root builds every Go module in the workspace and ignores
 directories with no Go files, so the dashboard's toolchain never collides with
 Go's.
@@ -60,12 +69,19 @@ Run the gate in every module you touched.
 ```sh
 cd apps/brain && make check db=postgres
 cd apps/cli   && make check
+cd sdk/agent  && make check
 ```
 
 That is `tidy-check`, `generate-check`, `fmt-check`, `vet`, `lint`, `build` and
 the tests — the same steps `.github/workflows/ci.yml` runs, in the same order,
-as two jobs named `brain` and `cli`. CI adds `cover` and `vuln` on top. If it
-passes locally it passes there.
+as three jobs named `brain`, `cli` and `sdk`. CI adds `cover` and `vuln` on top.
+If it passes locally it passes there.
+
+`sdk/agent` has one step the others do not: `boundary`, which fails if the loop
+or the core package links a provider SDK. Everything outside that module
+arrives through an interface, and nothing but this check stops somebody
+importing `openai-go` for one convenient type and making `ModelClient`
+decorative.
 
 Run the brain's **with a database**. The coverage floor is 70%, and with the
 Postgres tests skipping the suite lands close enough to it that an unrelated

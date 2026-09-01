@@ -474,6 +474,10 @@ apps/cli/       oa, the command-line client
   cmd/oa/       the commands
   internal/     config, contexts, credentials, output formats
   internal/client/  generated from the brain's spec by oapi-codegen
+sdk/agent/      the agent loop, as a library
+  loops/        the reasoning patterns — ReAct today, code mode later
+  models/       clients for anything speaking OpenAI chat completions
+  examples/     a runnable agent, against a stub gateway or a real one
 deployment/     manifests
 go.work         ties every Go module in the repository together
 ```
@@ -486,7 +490,14 @@ migration. The CLI's client is generated *from* it, and CI fails if the
 committed client and the spec disagree.
 
 Each app is its own Go module, so `apps/brain/internal/` is unreachable from
-`apps/cli/` by construction. Nothing is shared but the spec. The dashboard will
+`apps/cli/` by construction. Nothing is shared but the spec.
+
+`sdk/agent` is a module for the same reason and a stronger one: it runs an
+agent's loop and must never persist, authorise or select anything. Being a
+separate module means it *cannot* import `apps/brain/internal`, so that is the
+compiler's rule rather than a convention someone relaxes under deadline. It is
+not under `apps/` because that directory means "has a main, ships as a
+container", and a library has neither. The dashboard will
 join them; channel clients that ship through an app store get their own
 repositories.
 

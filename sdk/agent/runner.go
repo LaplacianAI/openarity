@@ -40,7 +40,8 @@ func New(clientFor ClientFactory, loops ...Loop) (*Runner, error) {
 }
 
 func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
-	endpoint Endpoint, events chan<- Event) (Result, error) {
+	endpoint Endpoint, events chan<- Event,
+) (Result, error) {
 	loop, ok := r.loops[spec.Loop]
 	if !ok {
 		return Result{}, fmt.Errorf("no loop named %q is registered; this runner has %s",

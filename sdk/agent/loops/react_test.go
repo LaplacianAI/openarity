@@ -125,7 +125,7 @@ func ask(s string) []agent.Message {
 }
 
 // tool builds a Tool whose Invoke records that it ran.
-func tool(name string, out string, err error, ran *bool) agent.Tool {
+func tool(name, out string, err error, ran *bool) agent.Tool {
 	return agent.Tool{
 		Name:   name,
 		Schema: json.RawMessage(`{"type":"object"}`),
