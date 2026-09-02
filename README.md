@@ -178,6 +178,68 @@ curl -s -H 'Authorization: Bearer letmein' \
 
 `brain migrate down` rolls the last migration back.
 
+## Using the agent library
+
+`sdk/agent` is a separate Go module and depends on nothing else in this
+repository. Install it into your own project without the brain, the CLI or a
+database:
+
+```sh
+go get github.com/LaplacianAI/openarity/sdk/agent
+```
+
+Needs Go 1.26.6. It pulls one direct dependency,
+`github.com/openai/openai-go/v3`.
+
+A whole agent, against any gateway speaking OpenAI chat completions:
+
+```go
+runner, err := agent.New(openaicompat.Factory(), patterns.ReAct())
+if err != nil {
+	return err
+}
+
+spec := agent.Spec{
+	Model:    agent.ModelRef{Name: "gpt-4o-mini"},
+	Pattern:  agent.PatternReAct,
+	System:   agent.System("You are a helpful assistant. Answer in a sentence or two."),
+	MaxSteps: 4,
+	Tools: []agent.Tool{{
+		Name:        "clock",
+		Description: "The current time, as an RFC 3339 timestamp.",
+		Schema:      json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		Invoke: func(context.Context, json.RawMessage) (string, error) {
+			return time.Now().Format(time.RFC3339), nil
+		},
+	}},
+}
+
+msgs := []agent.Message{{
+	Role:    agent.RoleUser,
+	Content: []agent.Content{{Type: agent.ContentText, Text: "What time is it?"}},
+}}
+
+endpoint := agent.Endpoint{
+	BaseURL: os.Getenv("OPENAI_BASE_URL"),
+	APIKey:  os.Getenv("OPENAI_API_KEY"),
+}
+
+result, err := runner.Run(ctx, spec, msgs, endpoint, nil)
+```
+
+`Run` takes the conversation so far and returns it extended, so multi-turn
+memory is the caller's slice — the library persists nothing. The last argument
+is a `chan<- agent.Event`; pass `nil` if you do not want to watch the run.
+
+There is no tagged release yet, so `go get` resolves to a pseudo-version of
+`main`. Pin the commit you tested against until one exists.
+
+Reference documentation is on
+[pkg.go.dev](https://pkg.go.dev/github.com/LaplacianAI/openarity/sdk/agent).
+Runnable programs are in [`sdk/agent/examples/`](sdk/agent/examples/) — they
+run against a stub gateway with no credentials, or against a real one if you
+set `OPENARITY_MODELS_BASE_URL`.
+
 ## The CLI
 
 `oa` talks to a brain over the same HTTP API. Against a development brain it
