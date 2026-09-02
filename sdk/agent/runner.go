@@ -42,6 +42,11 @@ func New(clientFor ClientFactory, patterns ...Pattern) (*Runner, error) {
 func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 	endpoint Endpoint, events chan<- Event,
 ) (Result, error) {
+	if spec.Pattern == "" {
+		return Result{}, fmt.Errorf("the spec names no pattern; set Spec.Pattern to one of: %s",
+			strings.Join(r.registered(), ", "))
+	}
+
 	pattern, ok := r.patterns[spec.Pattern]
 	if !ok {
 		return Result{}, fmt.Errorf("no pattern named %q is registered; this runner has %s",
