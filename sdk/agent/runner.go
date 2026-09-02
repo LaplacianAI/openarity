@@ -58,12 +58,23 @@ func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 		return Result{}, fmt.Errorf("connecting to %s: %w", endpoint.BaseURL, err)
 	}
 
-	return pattern.Run(ctx, Input{
+	// Wrapped so no pattern has to do its own accounting. A pattern written
+	// outside this module gets the right number without knowing to try.
+	counter := &countingClient{inner: client}
+
+	result, err := pattern.Run(ctx, Input{
 		Spec:     spec,
 		Messages: msgs,
-		Model:    client,
+		Model:    counter,
 		Events:   events,
 	})
+
+	// Set after the pattern returns and on the error path too: what a run that
+	// failed half way spent is still owed. This is the authoritative figure —
+	// a pattern may total its own for anyone calling it directly, but the
+	// count taken at the client is the one that cannot miss a call.
+	result.Usage = counter.spent()
+	return result, err
 }
 
 func withSkills(spec Spec) (Spec, error) {

@@ -53,3 +53,9 @@ type Endpoint struct {
 }
 
 type ClientFactory func(Endpoint) (ModelClient, error)
+
+func (u *Usage) Add(other Usage) {
+	u.InputTokens += other.InputTokens
+	u.OutputTokens += other.OutputTokens
+	u.CachedInputTokens += other.CachedInputTokens
+}

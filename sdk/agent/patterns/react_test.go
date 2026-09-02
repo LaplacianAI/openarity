@@ -389,34 +389,30 @@ func TestTheCallersHistoryIsNotMutated(t *testing.T) {
 	}
 }
 
+// Usage is totalled by the Runner at the model client, so a run's figure
+// cannot miss a call whatever the pattern did or forgot to do.
 func TestUsageIsSummedAcrossSteps(t *testing.T) {
 	t.Parallel()
 
-	m := &fakeModel{turns: []turn{
+	model := &fakeModel{turns: []turn{
 		{resp: agent.Response{
-			Message: calling("lookup", `{}`), Finish: agent.FinishToolCalls,
-			Usage: agent.Usage{InputTokens: 100, OutputTokens: 10, CachedInputTokens: 80},
+			Message: calling("count", `{}`), Finish: agent.FinishToolCalls,
+			Usage: agent.Usage{InputTokens: 10, OutputTokens: 4, CachedInputTokens: 1},
 		}},
 		{resp: agent.Response{
-			Message: text("done"), Finish: agent.FinishStop,
-			Usage: agent.Usage{InputTokens: 130, OutputTokens: 5, CachedInputTokens: 100},
+			Message: text("3"), Finish: agent.FinishStop,
+			Usage: agent.Usage{InputTokens: 20, OutputTokens: 6, CachedInputTokens: 2},
 		}},
 	}}
 
-	got, err := ReAct().Run(t.Context(), agent.Input{
-		Spec: spec(tool("lookup", "x", nil, nil)), Messages: ask("go"), Model: m,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	want := agent.Usage{InputTokens: 230, OutputTokens: 15, CachedInputTokens: 180}
+	got := through(t, ReAct(), spec(tool("count", "3", nil, nil)), ask("how many?"), model)
+
+	want := agent.Usage{InputTokens: 30, OutputTokens: 10, CachedInputTokens: 3}
 	if got.Usage != want {
 		t.Errorf("Usage = %+v, want %+v", got.Usage, want)
 	}
 }
 
-// A nil Events channel is the normal case for a batch run and must not be a
-// special case at any call site.
 func TestNilEventsIsNotAnError(t *testing.T) {
 	t.Parallel()
 
@@ -582,4 +578,24 @@ func TestACompleteFailureNamesItsStep(t *testing.T) {
 	if len(got.Messages) == 0 {
 		t.Error("the history up to the failure was thrown away")
 	}
+}
+
+// through runs a pattern the way the brain does, so Result.Usage is filled in
+// by the count the Runner takes at the model client. A pattern run directly
+// reports none: accounting is deliberately not a pattern's job, because a
+// pattern written outside this module would forget it.
+func through(t *testing.T, p agent.Pattern, s agent.Spec, msgs []agent.Message, model agent.ModelClient) agent.Result {
+	t.Helper()
+
+	r, err := agent.New(func(agent.Endpoint) (agent.ModelClient, error) { return model, nil }, p)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	s.Pattern = p.Name()
+
+	result, err := r.Run(t.Context(), s, msgs, agent.Endpoint{BaseURL: "http://gateway"}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	return result
 }

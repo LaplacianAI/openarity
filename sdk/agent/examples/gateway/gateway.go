@@ -24,6 +24,9 @@ type Turn struct {
 	Text     string
 	ToolName string
 	ToolArgs string
+
+	// count, when set, is incremented as this turn is served.
+	count *atomic.Int32
 }
 
 // Answer scripts a turn that ends the run.
@@ -122,6 +125,10 @@ func stub(script []Turn) http.Handler {
 		turn := Turn{Text: "the script ended"}
 		if n := int(calls.Add(1)) - 1; n < len(script) {
 			turn = script[n]
+		}
+
+		if turn.count != nil {
+			turn.count.Add(1)
 		}
 
 		if !req.Stream {
@@ -301,4 +308,17 @@ func completion(t Turn) string {
 		panic(err)
 	}
 	return string(b)
+}
+
+// Counted returns the script with a counter attached to each turn, so an
+// example can report how many times the model was asked. The count is taken
+// here rather than from Result.Steps because a step means something different
+// in each pattern, and what a comparison is about is model calls.
+func Counted(turns *atomic.Int32, script ...Turn) []Turn {
+	out := make([]Turn, len(script))
+	for i, t := range script {
+		t.count = turns
+		out[i] = t
+	}
+	return out
 }
