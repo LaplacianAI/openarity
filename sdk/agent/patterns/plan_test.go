@@ -3,6 +3,7 @@ package patterns
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -441,4 +442,31 @@ func TestRenumberOnANilChannelIsANoOp(t *testing.T) {
 		t.Error("a nil output produced a channel to forward into")
 	}
 	drain()
+}
+
+// Both phases carry the conversation. The planning call needs it to know what
+// is being asked; the acting call needs it for the same reason plus the plan.
+func TestPlanCarriesTheConversationIntoBothPhases(t *testing.T) {
+	t.Parallel()
+
+	prior := history()
+	model := &fakeModel{turns: []turn{
+		answered(text("1. Count the brain's issues.")),
+		answered(text("3")),
+	}}
+
+	if _, err := Plan().Run(t.Context(), agent.Input{
+		Spec: planSpec(), Messages: prior, Model: model,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(model.calls) != 2 {
+		t.Fatalf("the model was called %d times, want 2", len(model.calls))
+	}
+	for i, call := range model.calls {
+		t.Run(fmt.Sprintf("call %d", i), func(t *testing.T) {
+			assertCarries(t, call, prior)
+		})
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -867,5 +868,33 @@ func TestABadReferenceInsideAnArrayFailsTheStep(t *testing.T) {
 	}
 	if !strings.Contains(string(got), `["filled","plain"]`) {
 		t.Errorf("substitute() = %s", got)
+	}
+}
+
+// Both phases carry the conversation. The planning call cannot plan without
+// knowing what was asked, and the solving call answers the question rather
+// than the evidence.
+func TestReWOOCarriesTheConversationIntoBothPhases(t *testing.T) {
+	t.Parallel()
+
+	prior := history()
+	model := &fakeModel{turns: []turn{
+		submitted(`[{"tool":"count","args":{"repo":"brain"},"why":"a"}]`),
+		answered(text("3")),
+	}}
+
+	if _, err := ReWOO().Run(t.Context(), agent.Input{
+		Spec: rewooSpec(tool("count", "brain has 3 open issues", nil, nil)), Messages: prior, Model: model,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(model.calls) != 2 {
+		t.Fatalf("the model was called %d times, want 2", len(model.calls))
+	}
+	for i, call := range model.calls {
+		t.Run(fmt.Sprintf("call %d", i), func(t *testing.T) {
+			assertCarries(t, call, prior)
+		})
 	}
 }
