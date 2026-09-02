@@ -4,6 +4,7 @@ type LoopType string
 
 const (
 	LoopReAct  LoopType = "react"
+	LoopPlan   LoopType = "plan"
 	LoopCode   LoopType = "code"
 	LoopCustom LoopType = "custom"
 )

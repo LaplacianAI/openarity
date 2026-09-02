@@ -8,6 +8,7 @@ package gateway
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -105,7 +106,30 @@ func summarise(s string) string {
 func stub(script []Turn) http.Handler {
 	var calls atomic.Int32
 
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A real gateway answers both shapes on one path, keyed on the request.
+		// A stub that only streamed would make a non-streaming loop look broken
+		// with an error about content types rather than about the loop.
+		var req struct {
+			Stream bool `json:"stream"`
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+
+		// Past the script the stub stops rather than repeating its last turn,
+		// which would loop until MaxSteps and read as a bug in the loop rather
+		// than a script that ran out.
+		turn := Turn{Text: "the script ended"}
+		if n := int(calls.Add(1)) - 1; n < len(script) {
+			turn = script[n]
+		}
+
+		if !req.Stream {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, completion(turn))
+			return
+		}
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -122,15 +146,7 @@ func stub(script []Turn) http.Handler {
 			flusher.Flush()
 		}
 
-		n := int(calls.Add(1)) - 1
-		if n >= len(script) {
-			// Past the script the stub stops rather than repeating its last
-			// turn, which would loop until MaxSteps and look like a bug in the
-			// loop rather than a script that ran out.
-			send(chunk(delta{Role: "assistant", Content: "the script ended"}, "stop"))
-			return
-		}
-		send(turnChunks(script[n])...)
+		send(turnChunks(turn)...)
 	})
 }
 
@@ -241,6 +257,47 @@ func chunk(d delta, finish string) string {
 	b, err := json.Marshal(c)
 	if err != nil {
 		// Unreachable: every field is a string, an int or a slice of them.
+		panic(err)
+	}
+	return string(b)
+}
+
+// completion renders one turn as a non-streaming response. The wire shape
+// differs from a chunk in exactly one place — "message" rather than "delta" —
+// which is why it reuses the same types.
+func completion(t Turn) string {
+	m := delta{Role: "assistant", Content: t.Text}
+	finish := "stop"
+
+	if t.ToolName != "" {
+		// Whole, not fragmented: a non-streaming response has no chunks to
+		// split across, and arriving in one piece is the difference the
+		// streaming path exists to handle.
+		m = delta{Role: "assistant", ToolCalls: []toolCall{{
+			ID: "call_1", Type: "function",
+			Function: function{Name: t.ToolName, Arguments: t.ToolArgs},
+		}}}
+		finish = "tool_calls"
+	}
+
+	type completionChoice struct {
+		Index        int    `json:"index"`
+		Message      delta  `json:"message"`
+		FinishReason string `json:"finish_reason"`
+	}
+
+	b, err := json.Marshal(struct {
+		ID      string             `json:"id"`
+		Object  string             `json:"object"`
+		Model   string             `json:"model"`
+		Choices []completionChoice `json:"choices"`
+		Usage   usage              `json:"usage"`
+	}{
+		ID: "chatcmpl-stub", Object: "chat.completion", Model: "stub",
+		Choices: []completionChoice{{Message: m, FinishReason: finish}},
+		Usage:   usage{PromptTokens: 90, CompletionTokens: 12, TotalTokens: 102},
+	})
+	if err != nil {
 		panic(err)
 	}
 	return string(b)
