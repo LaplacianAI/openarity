@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Openarity">
+  <title>Openarity</title>
+  <!-- K5: five nodes, every pair joined - the smallest non-planar graph
+       (Kuratowski). The smallest graph that cannot be flattened, for a
+       platform whose point is that capability is not a flat list.
+
+       Drawn as a square with a hub, not on a circle. Every drawing of K5 has
+       to cross somewhere; a circular one puts the crossings in a pentagram,
+       which reads as an occult symbol rather than a network. Here the two
+       long diagonals bow around the hub - the crossing is still there, it
+       just is not a star.
+
+       The bow is perpendicular to each diagonal rather than vertical. A
+       vertical offset of the same size leaves only 1/sqrt(2) of it as real
+       clearance, and the hub is swallowed.
+
+       The theme switch is inside the file rather than currentColor: an SVG
+       embedded with <img> is a separate document and inherits no colour, so
+       a currentColor mark renders black - on GitHub in dark mode, that is
+       black on black. See BRAND.md. -->
+  <style>
+    .mark { fill: #0B6A5C; stroke: #0B6A5C; }
+    @media (prefers-color-scheme: dark) {
+      .mark { fill: #5FD3BC; stroke: #5FD3BC; }
+    }
+  </style>
+  <path class="mark" d="M13 13H51M51 13V51M51 51H13M13 51V13M13 13L32 32M51 13L32 32M51 51L32 32M13 51L32 32M13 13Q19.27 44.73 51 51M51 13Q44.73 44.73 13 51" fill="none" stroke-width="2.2" stroke-linecap="round"/>
+  <g class="mark" stroke="none"><circle cx="13" cy="13" r="4.2"/><circle cx="51" cy="13" r="4.2"/><circle cx="51" cy="51" r="4.2"/><circle cx="13" cy="51" r="4.2"/><circle cx="32" cy="32" r="5.2"/></g>
+</svg>

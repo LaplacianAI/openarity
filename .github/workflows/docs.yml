@@ -1,0 +1,101 @@
+name: docs
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Same reasoning as ci.yml: the filter is a job rather than an `on: paths`
+  # clause, because a job skipped by `if:` still reports a conclusion and a job
+  # that never runs leaves a required check pending forever.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      site: ${{ steps.filter.outputs.site }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            site:
+              - 'site/**'
+              # The snippet check compiles the module README too, so a change
+              # to the library that breaks it has to fail here rather than on
+              # the next documentation pull request.
+              - 'sdk/agent/**'
+              - '.github/workflows/docs.yml'
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.site == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Hugo's .GitInfo reads the log, and a shallow clone has none.
+          fetch-depth: 0
+
+      # Go before Hugo: the theme is a Hugo module, which is a Go module, so
+      # `hugo build` shells out to the go command to fetch it.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: sdk/agent/go.mod
+
+      - name: Install Hugo
+        env:
+          HUGO_VERSION: 0.165.0
+        run: |
+          curl -sSL -o hugo.deb \
+            "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb"
+          sudo dpkg -i hugo.deb
+
+      # The pages claim their Go snippet is what runs. This compiles it against
+      # the working tree, so a rename in sdk/agent fails here instead of
+      # publishing a page that cannot compile.
+      - name: The quoted programs compile
+        run: ./site/scripts/check-snippets.sh
+
+      - name: Build
+        working-directory: site
+        env:
+          # A pull request preview is not published, so the canonical base URL
+          # is right in both cases.
+          HUGO_ENVIRONMENT: production
+        run: make build
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/public
+
+  # Publishing is push-to-main only. A pull request builds the site and proves
+  # the snippets compile; it does not deploy.
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/deploy-pages@v5
+        id: deployment

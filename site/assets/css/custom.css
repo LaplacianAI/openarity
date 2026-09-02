@@ -1,0 +1,47 @@
+/* Spectral, from BRAND.md. The accent is stated as hex there and as HSL here
+   because Hextra derives its whole primary ramp from a hue, a saturation and a
+   lightness; giving it the hex would recolour links and leave every shade
+   around them the theme's default blue. */
+
+:root {
+  --primary-hue: 171deg;
+  --primary-saturation: 81%;
+  --primary-lightness: 26%;
+
+  --spectral-bg: #FBF7EF;
+  --spectral-surface: #F2ECE0;
+  --spectral-text: #2E3A3D;
+  --spectral-muted: #5F6763;
+}
+
+.dark {
+  --primary-hue: 168deg;
+  --primary-saturation: 57%;
+  --primary-lightness: 60%;
+
+  --spectral-bg: #1A2023;
+  --spectral-surface: #232B2F;
+  --spectral-text: #D9D3C7;
+  --spectral-muted: #8A9391;
+}
+
+body {
+  background-color: var(--spectral-bg);
+  color: var(--spectral-text);
+}
+
+/* Hextra's chrome is white above and grey below. Both are cold, and a warm
+   page between two cold bands reads as a mistake rather than a palette, so each
+   is pinned to a Spectral neutral. These are the theme's own classes, so its
+   Tailwind utilities lose on specificity rather than to !important. */
+.hextra-nav-container-blur {
+  background-color: var(--spectral-bg);
+}
+
+.hextra-footer {
+  background-color: var(--spectral-surface);
+}
+
+code {
+  background-color: var(--spectral-surface);
+}
