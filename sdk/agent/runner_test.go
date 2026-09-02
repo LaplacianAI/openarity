@@ -176,6 +176,45 @@ func TestAnUnregisteredLoopIsRefusedAndSaysWhatExists(t *testing.T) {
 	}
 }
 
+// A Spec with no pattern is a field somebody forgot, not a pattern somebody
+// misspelled. The lookup would refuse it either way; the difference is whether
+// the error sends the reader to the right line.
+func TestASpecWithNoPatternSaysTheFieldIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	factory := &fakeFactory{}
+	r, err := New(factory.build, &fakePattern{name: PatternReAct}, &fakePattern{name: PatternPlan})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = r.Run(t.Context(), Spec{MaxSteps: 1}, nil, Endpoint{BaseURL: "http://gateway/v1"}, nil)
+	if err == nil {
+		t.Fatal("Run accepted a Spec that names no pattern")
+	}
+
+	// Names the field, so the fix is obvious, and lists what it could be set
+	// to, because the reader may not know what this runner holds.
+	if !strings.Contains(err.Error(), "Spec.Pattern") {
+		t.Errorf("the error does not name the field: %v", err)
+	}
+	for _, want := range []string{"plan", "react"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not offer %q: %v", want, err)
+		}
+	}
+
+	// The old message read as a failed lookup for a pattern called "". If that
+	// wording comes back, this test should say so rather than pass.
+	if strings.Contains(err.Error(), `named ""`) {
+		t.Errorf("the error still reads as a lookup failure: %v", err)
+	}
+
+	if n := len(factory.endpoints()); n != 0 {
+		t.Errorf("the factory was called %d times for a run that could not happen", n)
+	}
+}
+
 // Go randomises map iteration, so an unsorted list makes a test asserting this
 // message flap rather than fail.
 func TestTheRegisteredListIsStable(t *testing.T) {
