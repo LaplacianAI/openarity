@@ -7,6 +7,7 @@ protocol, so the loop, the accumulator and the tool dispatch are all real.
 ```sh
 go run ./examples/tools
 go run ./examples/skills
+go run ./examples/custom
 ```
 
 Or run every one of them:
@@ -19,6 +20,7 @@ make example
 | ---------- | -------------------------------------------------------------------- |
 | `tools`    | one turn, one tool, streaming — read this first                       |
 | `skills`   | two skills offered, one opened, and the body of the other never read  |
+| `custom`   | a loop implemented outside the SDK, delegating to the shipped one     |
 | `gateway`  | not an example: the stub and the printing the others share            |
 
 ## Against a real gateway
