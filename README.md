@@ -7,6 +7,9 @@
 An open-source agent platform where agents, tools, skills and learnings are a
 knowledge graph, not a list.
 
+**[laplacianai.github.io/openarity](https://laplacianai.github.io/openarity)** —
+the argument for a graph, the harness around a run, and the docs.
+
 > **Early.** There is no release and no stable API yet. What exists is the
 > service skeleton described below and an agent loop the brain does not call
 > yet. The design is still moving — open an issue before building anything
