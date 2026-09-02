@@ -360,6 +360,44 @@ Subject in the imperative, no trailing period, under about 72 characters. Put
 
 There is no CLA and no sign-off requirement.
 
+## Releasing `sdk/agent`
+
+`sdk/agent` is the only module anyone installs from here, and it is a module in
+a subdirectory, so **the tag carries the path**:
+
+```sh
+git switch main && git pull
+git tag -a sdk/agent/v0.2.0 -m "sdk/agent v0.2.0"
+git push origin sdk/agent/v0.2.0
+```
+
+A bare `v0.2.0` tags the repository root, which has no `go.mod` and which
+nobody imports. `go get` would keep resolving a pseudo-version and nothing
+would say why.
+
+The proxy indexes a version only once somebody asks for it, so ask:
+
+```sh
+GOPROXY=https://proxy.golang.org \
+  go list -m github.com/LaplacianAI/openarity/sdk/agent@v0.2.0
+```
+
+That is also what publishes the pkg.go.dev page.
+
+**A published version is immutable.** Once the proxy has served it, moving the
+tag does not move the module — the original bytes keep being served, and anyone
+who fetched the first one starts seeing checksum mismatches. Never re-tag a
+number that has been fetched; release the next one.
+
+While the module is `v0`, nothing about the API is promised. Say what changed in
+the release notes anyway; `v0` is a licence to break things, not to do it
+quietly.
+
+Three places state the current version — the root `README.md`, `sdk/agent/README.md`
+and `site/content/docs/agent-sdk/install.md`. Update all three in the same pull
+request as the tag, or the docs tell people to pin something older than what
+`@latest` gives them.
+
 ## Reporting bugs and security issues
 
 Bugs go in [issues](https://github.com/LaplacianAI/openarity/issues).
