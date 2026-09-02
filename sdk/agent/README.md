@@ -18,8 +18,9 @@ Needs Go 1.26.6. Nothing else from this repository comes with it, and there is
 no database, no server and no configuration file to set up. The only direct
 dependency is `github.com/openai/openai-go/v3`.
 
-There is no tagged release yet, so `go get` resolves to a pseudo-version of
-`main`. Pin the commit you tested against until one exists.
+`go get` resolves to `v0.1.0`. It is a `v0`, so nothing about the API is
+promised yet — pin the version rather than tracking `@latest`, and read what
+changed before moving.
 
 ## A whole agent
 

@@ -255,8 +255,9 @@ result, err := runner.Run(ctx, spec, msgs, endpoint, nil)
 memory is the caller's slice — the library persists nothing. The last argument
 is a `chan<- agent.Event`; pass `nil` if you do not want to watch the run.
 
-There is no tagged release yet, so `go get` resolves to a pseudo-version of
-`main`. Pin the commit you tested against until one exists.
+`go get` resolves to `v0.1.0`. It is a `v0`, so nothing about the API is
+promised yet — pin the version rather than tracking `@latest`, and read what
+changed before moving.
 
 Reference documentation is on
 [pkg.go.dev](https://pkg.go.dev/github.com/LaplacianAI/openarity/sdk/agent).

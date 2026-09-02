@@ -12,8 +12,9 @@ the whole tree a consumer inherits is that and four `tidwall` packages it pulls
 in turn.
 
 {{< callout type="warning" >}}
-There is no tagged release yet, so `go get` resolves to a pseudo-version of
-`main`. Pin the commit you tested against until one exists.
+`go get` resolves to `v0.1.0`. It is a `v0`, so nothing about the API is
+promised yet — pin the version rather than tracking `@latest`, and read what
+changed before moving.
 {{< /callout >}}
 
 ## A whole agent
