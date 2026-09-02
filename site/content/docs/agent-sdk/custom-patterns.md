@@ -217,9 +217,49 @@ func main() {
 }
 ```
 
-Register it alongside the shipped ones and select it with `Spec.Pattern`. A
-name the runner does not hold is refused by name, listing the ones it has —
-never silently defaulted.
+## Registering and selecting are different jobs
+
+`Name()` is the key that goes **into** the registry. `Spec.Pattern` is the key
+you look up **with**. They hold the same string and answer different questions,
+which is worth spelling out because the redundancy looks accidental and is not.
+
+```text
+agent.New(factory, ReAct(), Plan(), Critique())   once, at startup
+    byName[p.Name()] = p                          "which pattern is this?"
+
+Runner.Run(ctx, spec, …)                          once per run
+    r.patterns[spec.Pattern]                      "which one does this run want?"
+```
+
+They have different owners and different lifetimes. **Registration is a
+deployment decision**: which reasoning shapes this process permits, fixed when
+it starts. **Selection is a task decision**: which one this particular run gets.
+One agent can answer a cheap lookup with ReAct and a dependent chain with
+ReWOO, from the same runner, because only the spec changed.
+
+That also means the spec can be **data**. `pattern: "rewoo"` is a column, or a
+field in a JSON body; a `Pattern` is a Go value holding closures and cannot come
+out of a database row. The registry is the one place that turns the first into
+the second. Remove it and every caller has to do that mapping itself — you have
+not deleted the registry, you have copied it.
+
+The registry is therefore also an allowlist. Asking for something unregistered
+is refused before anything else happens:
+
+```text
+err:               no pattern named "rewoo" is registered; this runner has react
+gateway reached:   0 times
+```
+
+The lookup is the first statement in `Run` — before skills are folded in and
+before the client is built — so a mismatch costs nothing and reaches nothing.
+Leaving `Spec.Pattern` empty is refused the same way, with a message that names
+the field rather than reporting a failed lookup for a pattern called `""`.
+
+The honest cost of selecting by string is that this is a **runtime** failure.
+`agent.PatternReWOO` compiles perfectly against a runner that never registered
+it. That is the price of the caller holding a name instead of a value, and it
+is why the error lists what *is* registered instead of only saying no.
 
 ## A wrapper, which is usually what you want
 
