@@ -806,3 +806,192 @@ func TestACacheableUserBlockCarriesCacheControl(t *testing.T) {
 		t.Fatalf("a cacheable user block lost its breakpoint:\n%s", raw)
 	}
 }
+
+// idChunk is chunk with the completion id spelled out, because the bugs below
+// are about a gateway that changes it part-way through a response.
+func idChunk(id string, delta map[string]any, finish string, usage map[string]any) string {
+	choice := map[string]any{"index": 0, "delta": delta}
+	if finish != "" {
+		choice["finish_reason"] = finish
+	}
+	body := map[string]any{
+		"id": id, "object": "chat.completion.chunk", "model": "probe",
+		"choices": []any{choice},
+	}
+	if usage != nil {
+		body["usage"] = usage
+	}
+	out, _ := json.Marshal(body)
+	return string(out)
+}
+
+// A gateway that renumbers between the content and the trailing usage makes
+// openai-go's accumulator discard everything it held. Before this was tracked
+// separately the run came back with an empty answer, no tokens, and nothing
+// that looked like a failure — which is worse than an error, because a caller
+// stores it as the agent's reply.
+func TestAnAnswerSurvivesTheCompletionIdChangingMidStream(t *testing.T) {
+	t.Parallel()
+
+	c, _ := serve(t, sse(t,
+		idChunk("a", map[string]any{"role": "assistant", "content": "the answer"}, "", nil),
+		idChunk("a", map[string]any{}, "stop", nil),
+		idChunk("z", map[string]any{}, "", map[string]any{
+			"prompt_tokens": 90, "completion_tokens": 12,
+		}),
+	))
+
+	s, err := c.Stream(t.Context(), probeRequest())
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	defer s.Close()
+
+	text, final := drain(t, s)
+	if text != "the answer" {
+		t.Errorf("deltas = %q", text)
+	}
+	if final == nil {
+		t.Fatal("no final response")
+	}
+	if got := final.Message.Text(); got != "the answer" {
+		t.Errorf("final text = %q, want what the deltas carried", got)
+	}
+	if final.Usage.InputTokens != 90 || final.Usage.OutputTokens != 12 {
+		t.Errorf("Usage = %+v, want the trailing chunk's", final.Usage)
+	}
+}
+
+// Half a reply is worse than none: nothing about it looks wrong, and it is
+// stored as what the agent said. So what the chunks carried is preferred over
+// what the accumulator ended up holding, rather than used only as a fallback.
+func TestTheWholeAnswerSurvivesWhenTheIdChangesPartWayThrough(t *testing.T) {
+	t.Parallel()
+
+	c, _ := serve(t, sse(t,
+		idChunk("a", map[string]any{"role": "assistant", "content": "first half"}, "", nil),
+		idChunk("b", map[string]any{"content": " and second"}, "", nil),
+		idChunk("b", map[string]any{}, "stop", map[string]any{
+			"prompt_tokens": 90, "completion_tokens": 12,
+		}),
+	))
+
+	s, err := c.Stream(t.Context(), probeRequest())
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	defer s.Close()
+
+	_, final := drain(t, s)
+	if final == nil {
+		t.Fatal("no final response")
+	}
+	if got := final.Message.Text(); got != "first half and second" {
+		t.Errorf("final text = %q, want the whole answer", got)
+	}
+}
+
+// A lost finish reason converts to FinishStop, and a turn truncated at
+// MaxTokens then looks like a turn that finished — which is exactly the guard
+// the loop uses to refuse dispatching a half-written tool call.
+func TestATruncatedTurnStaysTruncatedWhenTheAccumulatorLosesIt(t *testing.T) {
+	t.Parallel()
+
+	c, _ := serve(t, sse(t,
+		idChunk("a", map[string]any{"role": "assistant", "content": "half a sen"}, "", nil),
+		idChunk("a", map[string]any{}, "length", nil),
+		idChunk("z", map[string]any{}, "", map[string]any{
+			"prompt_tokens": 90, "completion_tokens": 1024,
+		}),
+	))
+
+	s, err := c.Stream(t.Context(), probeRequest())
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	defer s.Close()
+
+	_, final := drain(t, s)
+	if final == nil {
+		t.Fatal("no final response")
+	}
+	if final.Finish != agent.FinishLength {
+		t.Errorf("Finish = %q, want length — a truncated turn that reads as finished is dispatched", final.Finish)
+	}
+}
+
+// Tool call arguments arrive as fragments that mean nothing until they are
+// whole, and reassembling them is the one job the accumulator keeps.
+func TestToolCallsAreStillAssembledByTheAccumulator(t *testing.T) {
+	t.Parallel()
+
+	c, _ := serve(t, sse(t,
+		chunk(map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_1", "type": "function",
+			"function": map[string]any{"name": "count", "arguments": ""},
+		}}}, ""),
+		chunk(map[string]any{"tool_calls": []any{map[string]any{
+			"index": 0, "function": map[string]any{"arguments": `{"re`},
+		}}}, ""),
+		chunk(map[string]any{"tool_calls": []any{map[string]any{
+			"index": 0, "function": map[string]any{"arguments": `po":"x"}`},
+		}}}, ""),
+		chunk(map[string]any{}, "tool_calls"),
+	))
+
+	s, err := c.Stream(t.Context(), probeRequest())
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	defer s.Close()
+
+	_, final := drain(t, s)
+	if final == nil {
+		t.Fatal("no final response")
+	}
+	if len(final.Message.ToolCalls) != 1 {
+		t.Fatalf("%d tool calls, want 1", len(final.Message.ToolCalls))
+	}
+	call := final.Message.ToolCalls[0]
+	if call.Name != "count" || string(call.Arguments) != `{"repo":"x"}` {
+		t.Errorf("call = %s(%s), want the fragments joined", call.Name, call.Arguments)
+	}
+	if final.Finish != agent.FinishToolCalls {
+		t.Errorf("Finish = %q, want tool_calls", final.Finish)
+	}
+}
+
+// A stream that carried nothing at all is still a failure. Salvaging what the
+// chunks held must not turn an empty response into an empty answer that looks
+// deliberate.
+func TestAStreamThatCarriedNothingIsStillRefused(t *testing.T) {
+	t.Parallel()
+
+	c, _ := serve(t, sse(t,
+		`{"id":"a","object":"chat.completion.chunk","model":"probe","choices":[]}`,
+	))
+
+	s, err := c.Stream(t.Context(), probeRequest())
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	defer s.Close()
+
+	for s.Next() {
+		if ev := s.Event(); ev.Final != nil {
+			t.Fatal("a stream that carried nothing produced a final response")
+		}
+	}
+	if s.Err() == nil {
+		t.Error("a stream that carried nothing was accepted")
+	}
+}
+
+// probeRequest is the smallest request the streaming tests need: what they are
+// about is what comes back, not what went out.
+func probeRequest() agent.Request {
+	return agent.Request{
+		Model:    agent.ModelRef{Name: "probe"},
+		Messages: []agent.Message{userSays("go")},
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -389,34 +390,30 @@ func TestTheCallersHistoryIsNotMutated(t *testing.T) {
 	}
 }
 
+// Usage is totalled by the Runner at the model client, so a run's figure
+// cannot miss a call whatever the pattern did or forgot to do.
 func TestUsageIsSummedAcrossSteps(t *testing.T) {
 	t.Parallel()
 
-	m := &fakeModel{turns: []turn{
+	model := &fakeModel{turns: []turn{
 		{resp: agent.Response{
-			Message: calling("lookup", `{}`), Finish: agent.FinishToolCalls,
-			Usage: agent.Usage{InputTokens: 100, OutputTokens: 10, CachedInputTokens: 80},
+			Message: calling("count", `{}`), Finish: agent.FinishToolCalls,
+			Usage: agent.Usage{InputTokens: 10, OutputTokens: 4, CachedInputTokens: 1},
 		}},
 		{resp: agent.Response{
-			Message: text("done"), Finish: agent.FinishStop,
-			Usage: agent.Usage{InputTokens: 130, OutputTokens: 5, CachedInputTokens: 100},
+			Message: text("3"), Finish: agent.FinishStop,
+			Usage: agent.Usage{InputTokens: 20, OutputTokens: 6, CachedInputTokens: 2},
 		}},
 	}}
 
-	got, err := ReAct().Run(t.Context(), agent.Input{
-		Spec: spec(tool("lookup", "x", nil, nil)), Messages: ask("go"), Model: m,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	want := agent.Usage{InputTokens: 230, OutputTokens: 15, CachedInputTokens: 180}
+	got := through(t, ReAct(), spec(tool("count", "3", nil, nil)), ask("how many?"), model)
+
+	want := agent.Usage{InputTokens: 30, OutputTokens: 10, CachedInputTokens: 3}
 	if got.Usage != want {
 		t.Errorf("Usage = %+v, want %+v", got.Usage, want)
 	}
 }
 
-// A nil Events channel is the normal case for a batch run and must not be a
-// special case at any call site.
 func TestNilEventsIsNotAnError(t *testing.T) {
 	t.Parallel()
 
@@ -581,5 +578,96 @@ func TestACompleteFailureNamesItsStep(t *testing.T) {
 	}
 	if len(got.Messages) == 0 {
 		t.Error("the history up to the failure was thrown away")
+	}
+}
+
+// through runs a pattern the way the brain does, so Result.Usage is filled in
+// by the count the Runner takes at the model client. A pattern run directly
+// reports none: accounting is deliberately not a pattern's job, because a
+// pattern written outside this module would forget it.
+func through(t *testing.T, p agent.Pattern, s agent.Spec, msgs []agent.Message, model agent.ModelClient) agent.Result {
+	t.Helper()
+
+	r, err := agent.New(func(agent.Endpoint) (agent.ModelClient, error) { return model, nil }, p)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	s.Pattern = p.Name()
+
+	result, err := r.Run(t.Context(), s, msgs, agent.Endpoint{BaseURL: "http://gateway"}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	return result
+}
+
+// history is a conversation that already happened: a question, the answer, a
+// tool the assistant called and what it returned. The brain loads this from
+// Postgres and hands it over; nothing in the SDK stores it.
+func history() []agent.Message {
+	return []agent.Message{
+		{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "how many issues in cli?"}}},
+		calling("count", `{"repo":"cli"}`),
+		{Role: agent.RoleTool, ToolCallID: "call_1", Content: []agent.Content{{Type: agent.ContentText, Text: "cli has 0 open issues"}}},
+		{Role: agent.RoleAssistant, Content: []agent.Content{{Type: agent.ContentText, Text: "none"}}},
+		{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "and brain?"}}},
+	}
+}
+
+// assertCarries checks that a request opens with the conversation it was given,
+// in order. A pattern that dropped or reordered it would answer a question
+// nobody asked, and every assertion about the new turn would still pass.
+func assertCarries(t *testing.T, req agent.Request, prior []agent.Message) {
+	t.Helper()
+
+	if len(req.Messages) < len(prior) {
+		t.Fatalf("the request carried %d messages, want at least the %d it was given",
+			len(req.Messages), len(prior))
+	}
+	for i, want := range prior {
+		got := req.Messages[i]
+		if got.Role != want.Role || got.Text() != want.Text() {
+			t.Errorf("message %d is %s %q, want %s %q", i, got.Role, got.Text(), want.Role, want.Text())
+		}
+		if got.ToolCallID != want.ToolCallID {
+			t.Errorf("message %d answers call %q, want %q", i, got.ToolCallID, want.ToolCallID)
+		}
+		if len(got.ToolCalls) != len(want.ToolCalls) {
+			t.Errorf("message %d carries %d tool calls, want %d", i, len(got.ToolCalls), len(want.ToolCalls))
+		}
+	}
+}
+
+func TestReActCarriesTheConversationItWasGiven(t *testing.T) {
+	t.Parallel()
+
+	prior := history()
+	model := &fakeModel{turns: []turn{
+		answered(calling("count", `{"repo":"brain"}`)),
+		answered(text("3")),
+	}}
+
+	result, err := ReAct().Run(t.Context(), agent.Input{
+		Spec: spec(tool("count", "brain has 3 open issues", nil, nil)), Messages: prior, Model: model,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Every turn, not only the first: a pattern that rebuilt the transcript
+	// from its own state would lose the history on the second call.
+	for i, call := range model.calls {
+		t.Run(fmt.Sprintf("call %d", i), func(t *testing.T) {
+			assertCarries(t, call, prior)
+		})
+	}
+
+	// And what comes back is the whole conversation, for the brain to store.
+	if len(result.Messages) != len(prior)+3 {
+		t.Errorf("Result.Messages holds %d, want the %d it was given plus the three this run added",
+			len(result.Messages), len(prior))
+	}
+	if len(prior) != 5 {
+		t.Error("the caller's slice was modified")
 	}
 }

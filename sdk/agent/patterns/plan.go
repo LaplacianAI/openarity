@@ -71,9 +71,6 @@ func (l plan) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 	drain()
 
 	result.Steps++
-	result.Usage.InputTokens += resp.Usage.InputTokens
-	result.Usage.OutputTokens += resp.Usage.OutputTokens
-	result.Usage.CachedInputTokens += resp.Usage.CachedInputTokens
 
 	return result, err
 }

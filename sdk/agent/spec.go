@@ -5,6 +5,7 @@ type PatternName string
 const (
 	PatternReAct  PatternName = "react"
 	PatternPlan   PatternName = "plan"
+	PatternReWOO  PatternName = "rewoo"
 	PatternCode   PatternName = "code"
 	PatternCustom PatternName = "custom"
 )

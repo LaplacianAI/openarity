@@ -3,6 +3,7 @@ package patterns
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -200,10 +201,11 @@ func TestATruncatedPlanStopsTheRun(t *testing.T) {
 	if len(model.calls) != 1 {
 		t.Error("the run kept going after a truncated plan")
 	}
-	// What happened is still reported: a caller retrying with a bigger ceiling
-	// needs to see how much the attempt cost.
-	if result.Steps != 1 || result.Usage.OutputTokens != 5 {
-		t.Errorf("result = %+v, want the plan's step and tokens", result)
+	// What happened is still reported. The tokens are the Runner's to fill in —
+	// it does so on the error path too — so what this pattern owes is the step
+	// count a caller retrying with a bigger ceiling needs.
+	if result.Steps != 1 {
+		t.Errorf("Steps = %d, want the plan's one step", result.Steps)
 	}
 }
 
@@ -284,12 +286,10 @@ func TestThePlansTokensAreCounted(t *testing.T) {
 		}},
 	}}
 
-	result, err := Plan().Run(t.Context(), agent.Input{
-		Spec: planSpec(), Messages: ask("hello"), Model: model,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	// Through the Runner, because the count is taken at the model client. The
+	// planning call is the one a naive total would miss: it happens before the
+	// pattern this one delegates to has started.
+	result := through(t, Plan(), planSpec(), ask("hello"), model)
 
 	want := agent.Usage{InputTokens: 30, OutputTokens: 10, CachedInputTokens: 5}
 	if result.Usage != want {
@@ -442,4 +442,31 @@ func TestRenumberOnANilChannelIsANoOp(t *testing.T) {
 		t.Error("a nil output produced a channel to forward into")
 	}
 	drain()
+}
+
+// Both phases carry the conversation. The planning call needs it to know what
+// is being asked; the acting call needs it for the same reason plus the plan.
+func TestPlanCarriesTheConversationIntoBothPhases(t *testing.T) {
+	t.Parallel()
+
+	prior := history()
+	model := &fakeModel{turns: []turn{
+		answered(text("1. Count the brain's issues.")),
+		answered(text("3")),
+	}}
+
+	if _, err := Plan().Run(t.Context(), agent.Input{
+		Spec: planSpec(), Messages: prior, Model: model,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(model.calls) != 2 {
+		t.Fatalf("the model was called %d times, want 2", len(model.calls))
+	}
+	for i, call := range model.calls {
+		t.Run(fmt.Sprintf("call %d", i), func(t *testing.T) {
+			assertCarries(t, call, prior)
+		})
+	}
 }

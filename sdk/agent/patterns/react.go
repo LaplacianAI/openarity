@@ -44,9 +44,6 @@ func (l react) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 		}
 
 		result.Steps = step
-		result.Usage.InputTokens += resp.Usage.InputTokens
-		result.Usage.OutputTokens += resp.Usage.OutputTokens
-		result.Usage.CachedInputTokens += resp.Usage.CachedInputTokens
 		in.Emit(ctx, agent.UsageEvent{Model: in.Spec.Model.Name, Usage: resp.Usage})
 
 		msgs = append(msgs, resp.Message)

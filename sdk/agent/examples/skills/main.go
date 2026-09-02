@@ -96,7 +96,7 @@ func attempt() error {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		gateway.Report(events)
+		_, _ = gateway.Report(events)
 	}()
 
 	result, err := runner.Run(ctx, spec, msgs, endpoint, events)
