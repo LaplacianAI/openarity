@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -74,6 +75,15 @@ type stream struct {
 	raw *ssestream.Stream[openai.ChatCompletionChunk]
 	acc openai.ChatCompletionAccumulator
 
+	// Tracked from the chunks alongside the accumulator rather than trusting
+	// it alone. The accumulator discards what it holds when a chunk's id
+	// changes mid-stream, and a gateway that renumbers — some do, between the
+	// content and the trailing usage chunk — would otherwise hand back an
+	// empty answer, no tokens, and no sign anything went wrong.
+	text   strings.Builder
+	usage  agent.Usage
+	finish string
+
 	cur  agent.StreamEvent
 	err  error
 	done bool
@@ -87,6 +97,7 @@ func (s *stream) Next() bool {
 	for s.raw.Next() {
 		chunk := s.raw.Current()
 		s.acc.AddChunk(chunk)
+		s.observe(chunk)
 
 		// Chunks carrying only tool-call fragments or usage produce no delta.
 		// Skipping them rather than emitting empty events keeps a consumer from
@@ -102,15 +113,63 @@ func (s *stream) Next() bool {
 		return false
 	}
 
+	// An error here is not always fatal. The accumulator having nothing usable
+	// matters only if the chunks had nothing either; when they carried an
+	// answer, that answer is what the caller is owed, and repair rebuilds it
+	// from the zero response fromCompletion returned.
 	final, err := fromCompletion(s.acc.ChatCompletion)
-	if err != nil {
+	if err != nil && s.text.Len() == 0 && s.finish == "" {
 		s.err = err
 		return false
 	}
+	s.repair(&final)
 
 	s.cur = agent.StreamEvent{Final: &final}
 	s.done = true
 	return true
+}
+
+// observe records what each chunk carried, so nothing depends on the
+// accumulator still holding it at the end.
+func (s *stream) observe(chunk openai.ChatCompletionChunk) {
+	if u := usageOf(chunk.Usage); u != (agent.Usage{}) {
+		s.usage = u
+	}
+	if len(chunk.Choices) == 0 {
+		return
+	}
+
+	choice := chunk.Choices[0]
+	s.text.WriteString(choice.Delta.Content)
+	if choice.FinishReason != "" {
+		s.finish = choice.FinishReason
+	}
+}
+
+// repair replaces whatever the accumulator lost. What was tracked here is
+// preferred rather than used as a fallback: the accumulator can come back with
+// part of an answer as easily as none of it, and half a reply is worse than an
+// empty one because nothing about it looks wrong.
+//
+// The accumulator is still what assembles tool calls, whose arguments arrive
+// as fragments that mean nothing until they are whole.
+func (s *stream) repair(final *agent.Response) {
+	final.Message.Role = agent.RoleAssistant
+	if s.text.Len() > 0 {
+		final.Message.Content = []agent.Content{{Type: agent.ContentText, Text: s.text.String()}}
+	}
+	if s.usage != (agent.Usage{}) {
+		final.Usage = s.usage
+	}
+	// Defence rather than a fixed bug: the accumulator was measured to keep the
+	// finish reason across an id change even though it loses the text and the
+	// usage. Kept because the chunks are authoritative and it costs nothing,
+	// and because losing it is the worst of the three — no reason at all
+	// converts to FinishStop, so a turn truncated at MaxTokens would read as a
+	// turn that finished, and the loop would dispatch its half-written call.
+	if s.finish != "" {
+		final.Finish = finishReason(s.finish)
+	}
 }
 
 func (s *stream) Event() agent.StreamEvent { return s.cur }
@@ -339,12 +398,16 @@ func fromCompletion(c openai.ChatCompletion) (agent.Response, error) {
 	return agent.Response{
 		Message: msg,
 		Finish:  finishReason(choice.FinishReason),
-		Usage: agent.Usage{
-			InputTokens:       int(c.Usage.PromptTokens),
-			OutputTokens:      int(c.Usage.CompletionTokens),
-			CachedInputTokens: int(c.Usage.PromptTokensDetails.CachedTokens),
-		},
+		Usage:   usageOf(c.Usage),
 	}, nil
+}
+
+func usageOf(u openai.CompletionUsage) agent.Usage {
+	return agent.Usage{
+		InputTokens:       int(u.PromptTokens),
+		OutputTokens:      int(u.CompletionTokens),
+		CachedInputTokens: int(u.PromptTokensDetails.CachedTokens),
+	}
 }
 
 // finishReason maps the wire's vocabulary onto ours.

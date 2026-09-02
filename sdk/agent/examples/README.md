@@ -51,11 +51,23 @@ tokens   270 in (0 cached), 36 out
 bodies   commit-style read 1 time(s), pdf-forms read 0 time(s)
 ```
 
-`rewoo` runs one task twice and prints the difference: four model calls under
-ReAct against two under ReWOO, for the same three tool calls. The token figures
-come from a stub that bills a flat rate per turn, so read the turn count rather
-than the tokens — against a real gateway the saving is larger, because ReAct
-re-sends every earlier result on every later turn.
+`rewoo` runs one task twice. The task is a chain — find the latest release, then
+count what was filed since it — because that is the case where the two patterns
+differ. Independent calls are not: a current model asks for those together in
+one turn, so ReAct pays one model call for all of them and ReWOO saves nothing.
+
+```text
+         turns  tools  tokens
+react    3      2      939 in, 36 out
+rewoo    2      2      819 in, 24 out
+
+input tokens on the last turn: react 378, rewoo 295.
+```
+
+The stub prices a request by its size, so those numbers measure the context each
+turn carried rather than a flat rate. ReWOO pays for its tool catalogue up front
+and still comes out ahead, because ReAct re-sends everything before it on every
+turn.
 
 `custom` wraps `patterns.Plan()` in a deployment's own spending rule. The ceiling
 is enforced by watching `UsageEvent` as the run happens rather than by adding

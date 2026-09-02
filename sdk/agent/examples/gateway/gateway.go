@@ -18,23 +18,30 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
-// A Turn is one scripted model response for the stub gateway. Either it calls a
-// tool or it answers; a real turn can do both, but no example needs that yet.
+// A Turn is one scripted model response for the stub gateway. Either it asks
+// for tools or it answers; a real turn can do both, but no example needs that.
 type Turn struct {
-	Text     string
-	ToolName string
-	ToolArgs string
+	Text  string
+	Calls []Call
+}
 
-	// count, when set, is incremented as this turn is served.
-	count *atomic.Int32
+// A Call is one tool the scripted turn asks for.
+type Call struct {
+	Name string
+	Args string
 }
 
 // Answer scripts a turn that ends the run.
 func Answer(text string) Turn { return Turn{Text: text} }
 
-// ToolCall scripts a turn that asks for a tool. Skills arrive this way too:
+// ToolCall scripts a turn asking for one tool. Skills arrive this way too:
 // ToolCall(agent.SkillToolName, `{"name":"commit-style"}`).
-func ToolCall(name, args string) Turn { return Turn{ToolName: name, ToolArgs: args} }
+func ToolCall(name, args string) Turn { return Turn{Calls: []Call{{Name: name, Args: args}}} }
+
+// ToolCalls scripts a turn asking for several tools at once, which is what a
+// current model does with calls that do not depend on each other. Scripting
+// them one per turn measures a model generation that has passed.
+func ToolCalls(calls ...Call) Turn { return Turn{Calls: calls} }
 
 // Model is the model to ask for, from the environment or a default that suits
 // whichever gateway is in use.
@@ -64,9 +71,15 @@ func Resolve(script ...Turn) (agent.Endpoint, func()) {
 	return agent.Endpoint{BaseURL: srv.URL, APIKey: "sk-stub"}, srv.Close
 }
 
-// Report prints a run as it happens. A dashboard or a channel adapter reads the
-// same channel; this is the smallest consumer that shows every kind of event.
-func Report(events <-chan agent.Event) {
+// Report prints a run as it happens and returns how many times the model was
+// asked and what the last of those calls carried in. A dashboard or a channel adapter reads the same channel; this is the
+// smallest consumer that shows every kind of event.
+//
+// Model calls are counted here rather than at the stub, because a real gateway
+// never reaches the stub — and rather than from Result.Steps, because a step
+// means something different in each pattern. Every pattern emits exactly one
+// UsageEvent per model call.
+func Report(events <-chan agent.Event) (modelCalls, lastInput int) {
 	for e := range events {
 		switch ev := e.(type) {
 		case agent.StepEvent:
@@ -82,9 +95,12 @@ func Report(events <-chan agent.Event) {
 			}
 			fmt.Printf("\n  ← %s: %s (%s)", ev.Name, summarise(ev.Output), ev.Duration.Round(time.Microsecond))
 		case agent.UsageEvent:
+			modelCalls++
+			lastInput = ev.Usage.InputTokens
 			fmt.Printf("\n  [%d in, %d out]", ev.Usage.InputTokens, ev.Usage.OutputTokens)
 		}
 	}
+	return modelCalls, lastInput
 }
 
 // Summary prints what a run cost. Cached input is here because it is the number
@@ -127,13 +143,19 @@ func stub(script []Turn) http.Handler {
 			turn = script[n]
 		}
 
-		if turn.count != nil {
-			turn.count.Add(1)
+		// Priced off the request rather than a flat rate, so a comparison
+		// between two patterns measures the context each one carries instead
+		// of only how many turns it took. Four bytes to a token is close
+		// enough for English prose and JSON.
+		spent := usage{
+			PromptTokens:     len(body) / 4,
+			CompletionTokens: 12,
 		}
+		spent.TotalTokens = spent.PromptTokens + spent.CompletionTokens
 
 		if !req.Stream {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, completion(turn))
+			fmt.Fprint(w, completion(turn, spent))
 			return
 		}
 
@@ -153,35 +175,38 @@ func stub(script []Turn) http.Handler {
 			flusher.Flush()
 		}
 
-		send(turnChunks(turn)...)
+		send(turnChunks(turn, spent)...)
 	})
 }
 
-func turnChunks(t Turn) []string {
-	if t.ToolName == "" {
+func turnChunks(t Turn, spent usage) []string {
+	if len(t.Calls) == 0 {
 		return []string{
-			chunk(delta{Role: "assistant", Content: t.Text}, ""),
-			chunk(delta{}, "stop"),
+			chunk(delta{Role: "assistant", Content: t.Text}, "", nil),
+			chunk(delta{}, "stop", &spent),
 		}
 	}
+
+	opening := delta{Role: "assistant"}
+	for i, c := range t.Calls {
+		opening.ToolCalls = append(opening.ToolCalls, toolCall{
+			Index: i, ID: fmt.Sprintf("call_%d", i+1), Type: "function",
+			Function: function{Name: c.Name},
+		})
+	}
+	out := []string{chunk(opening, "", nil)}
 
 	// Arguments arrive in fragments, which is the case the accumulator exists
 	// for: nothing is dispatchable until the last one lands. Splitting them
 	// here is what makes the example exercise that rather than assert it.
-	out := []string{chunk(delta{
-		Role: "assistant",
-		ToolCalls: []toolCall{{
-			ID: "call_1", Type: "function",
-			Function: function{Name: t.ToolName},
-		}},
-	}, "")}
-
-	for _, part := range split(t.ToolArgs, 3) {
-		out = append(out, chunk(delta{
-			ToolCalls: []toolCall{{Function: function{Arguments: part}}},
-		}, ""))
+	for i, c := range t.Calls {
+		for _, part := range split(c.Args, 3) {
+			out = append(out, chunk(delta{
+				ToolCalls: []toolCall{{Index: i, Function: function{Arguments: part}}},
+			}, "", nil))
+		}
 	}
-	return append(out, chunk(delta{}, "tool_calls"))
+	return append(out, chunk(delta{}, "tool_calls", &spent))
 }
 
 // split cuts a string into at most n pieces, on bytes, because that is what a
@@ -245,20 +270,17 @@ type (
 	}
 )
 
-func chunk(d delta, finish string) string {
+// chunk renders one SSE chunk. Usage rides the final one only: a gateway
+// repeating it on every chunk would have the accumulator sum them, and the run
+// would report five times the tokens it actually spent — worth getting right
+// here, because an example is where somebody learns what to expect.
+func chunk(d delta, finish string, spent *usage) string {
 	c := completionChunk{
 		ID:      "chatcmpl-stub",
 		Object:  "chat.completion.chunk",
 		Model:   "stub",
 		Choices: []choice{{Delta: d, FinishReason: finish}},
-	}
-
-	// Usage rides the final chunk only. A gateway repeating it on every chunk
-	// would have the accumulator sum them, and the run would report five times
-	// the tokens it actually spent — worth getting right here, because an
-	// example is where somebody learns what to expect.
-	if finish != "" {
-		c.Usage = &usage{PromptTokens: 90, CompletionTokens: 12, TotalTokens: 102}
+		Usage:   spent,
 	}
 
 	b, err := json.Marshal(c)
@@ -272,18 +294,21 @@ func chunk(d delta, finish string) string {
 // completion renders one turn as a non-streaming response. The wire shape
 // differs from a chunk in exactly one place — "message" rather than "delta" —
 // which is why it reuses the same types.
-func completion(t Turn) string {
+func completion(t Turn, spent usage) string {
 	m := delta{Role: "assistant", Content: t.Text}
 	finish := "stop"
 
-	if t.ToolName != "" {
+	if len(t.Calls) > 0 {
 		// Whole, not fragmented: a non-streaming response has no chunks to
 		// split across, and arriving in one piece is the difference the
 		// streaming path exists to handle.
-		m = delta{Role: "assistant", ToolCalls: []toolCall{{
-			ID: "call_1", Type: "function",
-			Function: function{Name: t.ToolName, Arguments: t.ToolArgs},
-		}}}
+		m = delta{Role: "assistant"}
+		for i, c := range t.Calls {
+			m.ToolCalls = append(m.ToolCalls, toolCall{
+				Index: i, ID: fmt.Sprintf("call_%d", i+1), Type: "function",
+				Function: function{Name: c.Name, Arguments: c.Args},
+			})
+		}
 		finish = "tool_calls"
 	}
 
@@ -302,23 +327,10 @@ func completion(t Turn) string {
 	}{
 		ID: "chatcmpl-stub", Object: "chat.completion", Model: "stub",
 		Choices: []completionChoice{{Message: m, FinishReason: finish}},
-		Usage:   usage{PromptTokens: 90, CompletionTokens: 12, TotalTokens: 102},
+		Usage:   spent,
 	})
 	if err != nil {
 		panic(err)
 	}
 	return string(b)
-}
-
-// Counted returns the script with a counter attached to each turn, so an
-// example can report how many times the model was asked. The count is taken
-// here rather than from Result.Steps because a step means something different
-// in each pattern, and what a comparison is about is model calls.
-func Counted(turns *atomic.Int32, script ...Turn) []Turn {
-	out := make([]Turn, len(script))
-	for i, t := range script {
-		t.count = turns
-		out[i] = t
-	}
-	return out
 }

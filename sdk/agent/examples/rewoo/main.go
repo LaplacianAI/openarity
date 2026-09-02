@@ -1,10 +1,20 @@
 // Command rewoo runs the same task twice, once with ReAct and once with ReWOO,
 // and prints what each cost.
 //
-// The point is the model-call count. ReAct pays one turn per tool; ReWOO pays
-// two whatever the plan holds, because the tools run with no model involved.
-// With three repositories to count that is four turns against two, and the gap
-// widens with every step a task needs.
+// The task is a chain: find the latest release, then count what has been filed
+// since it. The second call needs the first one's answer, which is the case
+// where the two patterns genuinely differ.
+//
+// Independent calls are not that case. A current model asks for those together
+// in one turn, so ReAct pays one model call for all of them and ReWOO saves
+// nothing — the comparison in the ReWOO paper assumes one call per turn, which
+// measures a model generation that has passed.
+//
+// A chain cannot be batched. ReAct has to see each answer before it can ask the
+// next question, and every turn re-sends everything before it. ReWOO writes the
+// whole chain down first, with #E1 standing in for what it cannot know yet, and
+// still pays two calls. The stub prices a request by its size, so the token
+// columns measure this rather than asserting it.
 //
 //	go run ./examples/rewoo
 //
@@ -40,25 +50,24 @@ func attempt() error {
 
 	fmt.Printf("model    %s\n", gateway.Model())
 
-	// ReAct: one turn per tool, then one to answer. Four in total.
+	// One turn per link in the chain, because ReAct cannot ask the second
+	// question until it has the first answer.
 	react, err := compare(ctx, "react", patterns.ReActStreaming(),
-		gateway.ToolCall("count_issues", `{"repo":"brain"}`),
-		gateway.ToolCall("count_issues", `{"repo":"cli"}`),
-		gateway.ToolCall("count_issues", `{"repo":"sdk"}`),
-		gateway.Answer("brain 3, cli 0, sdk 1."),
+		gateway.ToolCall("latest_release", `{"repo":"brain"}`),
+		gateway.ToolCall("issues_since", `{"repo":"brain","tag":"v0.4.1"}`),
+		gateway.Answer("7 issues have been filed since v0.4.1."),
 	)
 	if err != nil {
 		return err
 	}
 
-	// ReWOO: the plan names all three calls at once, they run without the
-	// model, and one turn answers from what they returned.
+	// ReWOO writes the chain down before anything runs. It cannot know the tag,
+	// so it writes #E1 where the tag goes and the loop fills it in.
 	rewoo, err := compare(ctx, "rewoo", patterns.ReWOOStreaming(),
 		gateway.ToolCall(patterns.PlanToolName, `{"steps":[`+
-			`{"tool":"count_issues","args":{"repo":"brain"},"why":"count the brain"},`+
-			`{"tool":"count_issues","args":{"repo":"cli"},"why":"count the cli"},`+
-			`{"tool":"count_issues","args":{"repo":"sdk"},"why":"count the sdk"}]}`),
-		gateway.Answer("brain 3, cli 0, sdk 1."),
+			`{"tool":"latest_release","args":{"repo":"brain"},"why":"find the tag to count from"},`+
+			`{"tool":"issues_since","args":{"repo":"brain","tag":"#E1"},"why":"count what came after it"}]}`),
+		gateway.Answer("7 issues have been filed since v0.4.1."),
 	)
 	if err != nil {
 		return err
@@ -70,29 +79,33 @@ func attempt() error {
 			r.name, r.turns, r.tools, r.usage.InputTokens, r.usage.OutputTokens)
 	}
 
-	// Reported as measured rather than asserted in the prose above, because a
-	// stub gateway bills a flat rate per turn and a real one does not.
 	fmt.Printf("\nreact made %d model calls for %d tool calls; rewoo made %d for %d.\n",
 		react.turns, react.tools, rewoo.turns, rewoo.tools)
+	fmt.Printf("input tokens on the last turn: react %d, rewoo %d.\n",
+		react.lastInput, rewoo.lastInput)
 	return nil
 }
 
 type run struct {
-	name   string
-	turns  int
-	tools  int
-	usage  agent.Usage
-	answer string
+	name  string
+	turns int
+	tools int
+	usage agent.Usage
+
+	// lastInput is what the final turn had to carry. It is the number the
+	// comparison is actually about: ReAct's grows with every tool result,
+	// ReWOO's does not.
+	lastInput int
+	answer    string
 }
 
-// compare runs one pattern against a scripted gateway and counts what it did.
-// Turns are counted at the gateway rather than taken from Result.Steps: a step
-// means something different in each pattern, and the number this example is
-// about is how often the model was asked.
+// compare runs one pattern and counts what it did. Model calls are counted from
+// the events rather than taken from Result.Steps, because a step means
+// something different in each pattern and the number this example is about is
+// how often the model was asked. Counting them at the stub would report zero
+// against a real gateway, which the stub never sees.
 func compare(ctx context.Context, name string, p agent.Pattern, script ...gateway.Turn) (run, error) {
-	var turns atomic.Int32
-
-	endpoint, shutdown := gateway.Resolve(gateway.Counted(&turns, script...)...)
+	endpoint, shutdown := gateway.Resolve(script...)
 	defer shutdown()
 
 	runner, err := agent.New(openaicompat.Factory(), p)
@@ -105,7 +118,7 @@ func compare(ctx context.Context, name string, p agent.Pattern, script ...gatewa
 		Model:    agent.ModelRef{Name: gateway.Model(), MaxTokens: 1024},
 		Pattern:  p.Name(),
 		System:   agent.System("You are a terse assistant. Use the tools you are given."),
-		Tools:    []agent.Tool{countIssues(&tools)},
+		Tools:    []agent.Tool{latestRelease(&tools), issuesSince(&tools)},
 		MaxSteps: 8,
 	}
 
@@ -113,7 +126,7 @@ func compare(ctx context.Context, name string, p agent.Pattern, script ...gatewa
 		Role: agent.RoleUser,
 		Content: []agent.Content{{
 			Type: agent.ContentText,
-			Text: "How many open issues do brain, cli and sdk have?",
+			Text: "How many issues have been filed against brain since its latest release?",
 		}},
 	}}
 
@@ -121,9 +134,10 @@ func compare(ctx context.Context, name string, p agent.Pattern, script ...gatewa
 
 	events := make(chan agent.Event, 64)
 	done := make(chan struct{})
+	var turns, lastInput int
 	go func() {
 		defer close(done)
-		gateway.Report(events)
+		turns, lastInput = gateway.Report(events)
 	}()
 
 	result, err := runner.Run(ctx, spec, msgs, endpoint, events)
@@ -135,20 +149,20 @@ func compare(ctx context.Context, name string, p agent.Pattern, script ...gatewa
 	fmt.Println()
 
 	return run{
-		name:   name,
-		turns:  int(turns.Load()),
-		tools:  int(tools.Load()),
-		usage:  result.Usage,
-		answer: strings.TrimSpace(result.Output),
+		name:      name,
+		turns:     turns,
+		lastInput: lastInput,
+		tools:     int(tools.Load()),
+		usage:     result.Usage,
+		answer:    strings.TrimSpace(result.Output),
 	}, nil
 }
 
-func countIssues(calls *atomic.Int32) agent.Tool {
-	counts := map[string]string{"brain": "3", "cli": "0", "sdk": "1"}
-
+// latestRelease is the first link: nothing else can be asked until it answers.
+func latestRelease(calls *atomic.Int32) agent.Tool {
 	return agent.Tool{
-		Name:        "count_issues",
-		Description: "Count the open issues in a repository. Use when asked how many issues exist.",
+		Name:        "latest_release",
+		Description: "The tag of a repository's most recent release.",
 		Schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {"repo": {"type": "string", "description": "the repository name"}},
@@ -163,12 +177,39 @@ func countIssues(calls *atomic.Int32) agent.Tool {
 			if err := json.Unmarshal(args, &in); err != nil {
 				return "", fmt.Errorf("could not read the arguments: %w", err)
 			}
+			return "v0.4.1", nil
+		},
+	}
+}
 
-			n, ok := counts[in.Repo]
-			if !ok {
-				return "", fmt.Errorf("no repository named %q", in.Repo)
+// issuesSince is the second link. Its tag argument is what ReWOO writes as #E1
+// and the loop substitutes once the first step has run.
+func issuesSince(calls *atomic.Int32) agent.Tool {
+	return agent.Tool{
+		Name:        "issues_since",
+		Description: "How many issues were filed against a repository after a given release tag.",
+		Schema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"repo": {"type": "string", "description": "the repository name"},
+				"tag":  {"type": "string", "description": "the release tag to count from"}
+			},
+			"required": ["repo", "tag"]
+		}`),
+		Invoke: func(_ context.Context, args json.RawMessage) (string, error) {
+			calls.Add(1)
+
+			var in struct {
+				Repo string `json:"repo"`
+				Tag  string `json:"tag"`
 			}
-			return fmt.Sprintf("%s has %s open issues", in.Repo, n), nil
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", fmt.Errorf("could not read the arguments: %w", err)
+			}
+			if in.Tag == "" {
+				return "", fmt.Errorf("no tag was given, so there is nothing to count from")
+			}
+			return fmt.Sprintf("7 issues filed against %s since %s", in.Repo, in.Tag), nil
 		},
 	}
 }
