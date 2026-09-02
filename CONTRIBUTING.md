@@ -48,6 +48,7 @@ apps/brain/        the Go backend
 apps/cli/          oa, the command-line client
 sdk/agent/         the agent loop, as a library
   examples/        runnable agents; `make example` runs every one of them
+site/              the documentation site, built with Hugo
 deployment/        manifests
 go.work            ties every Go module in the repository together
 ```
@@ -71,6 +72,7 @@ Run the gate in every module you touched.
 cd apps/brain && make check db=postgres
 cd apps/cli   && make check
 cd sdk/agent  && make check
+cd site       && make check
 ```
 
 That is `tidy-check`, `generate-check`, `fmt-check`, `vet`, `lint`, `build` and
@@ -85,10 +87,17 @@ importing `openai-go` for one convenient type and making `ModelClient`
 decorative.
 
 Adding a reasoning pattern or a runnable example there has a skill each:
-`sdk/agent/.claude/skills/add-a-loop` and `.../add-an-example`. Both record
+`sdk/agent/.claude/skills/add-a-pattern` and `.../add-an-example`. Both record
 traps that cost a debugging session the first time — dispatching a tool call
 from a turn that was truncated at `MaxTokens`, and a stub gateway that repeats
 its usage on every chunk so the run reports five times the tokens it spent.
+
+`site` needs [Hugo extended](https://gohugo.io/installation/) and nothing else;
+its theme is a Hugo module, so the Go toolchain fetches it on first build.
+`make serve` renders at `http://localhost:1313` as you write, and `make check`
+compiles every Go program the documentation quotes against the working tree —
+a rename in `sdk/agent` fails there rather than publishing a page that cannot
+compile.
 
 Run the brain's **with a database**. The coverage floor is 70%, and with the
 Postgres tests skipping the suite lands close enough to it that an unrelated

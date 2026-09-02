@@ -1,0 +1,74 @@
+baseURL = "https://laplacianai.github.io/openarity/"
+title = "Openarity"
+defaultContentLanguage = "en"
+locale = "en-GB"
+
+# Hextra ships as a Hugo module rather than a submodule, so the theme is a
+# version in go.mod and `hugo mod get -u` is how it is upgraded.
+module.imports = [{ path = "github.com/imfing/hextra" }]
+
+enableGitInfo = true
+enableRobotsTXT = true
+
+[markup.highlight]
+noClasses = false          # emit classes, so the palette below drives code too
+lineNos = false
+
+[markup.goldmark.renderer]
+unsafe = true              # the landing page is HTML in Markdown
+
+[params]
+description = "An agent platform whose authority comes from a graph, not a flat list of permissions."
+
+[params.navbar]
+# The wordmark already says Openarity; printing the title beside it says it twice.
+displayTitle = false
+
+[params.navbar.logo]
+path = "images/logo-wordmark.svg"
+width = 145
+height = 40
+
+# Follows the reader's OS setting until they choose otherwise, and remembers
+# the choice.
+[params.theme]
+default = "system"
+displayToggle = true
+
+[params.footer]
+displayCopyright = false
+displayPoweredBy = false
+
+[params.editURL]
+enable = false
+
+[[menu.main]]
+name = "Docs"
+pageRef = "/docs"
+weight = 1
+
+[[menu.main]]
+name = "Agent SDK"
+pageRef = "/docs/agent-sdk"
+weight = 2
+
+[[menu.main]]
+name = "Search"
+weight = 8
+[menu.main.params]
+type = "search"
+
+# In the navbar as well as the footer. The footer copy is where Hextra puts it
+# by default, which is below the fold on every page that is longer than a screen.
+[[menu.main]]
+name = "Theme"
+weight = 8.5
+[menu.main.params]
+type = "theme-toggle"
+
+[[menu.main]]
+name = "GitHub"
+url = "https://github.com/LaplacianAI/openarity"
+weight = 9
+[menu.main.params]
+icon = "github"

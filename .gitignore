@@ -16,3 +16,12 @@ deployment/openbao/keys/
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
+
+# Hugo
+site/public/
+site/resources/
+site/.hugo_build.lock
+site/_vendor/
+
+# Playwright MCP scratch output
+.playwright-mcp/
