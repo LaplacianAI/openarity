@@ -1,11 +1,18 @@
 ---
 title: Documentation
-next: /docs/platform
+next: /docs/why-a-graph
 ---
 
-Openarity is two things that ship separately, so the documentation is split the
-same way. Nothing in the SDK section assumes you run the platform, and nothing
-in the platform section assumes you have read the SDK.
+Start with the argument, then the parts that exist.
+
+{{< cards >}}
+  {{< card link="why-a-graph" title="Why a graph" icon="share" subtitle="Why capability selection is a relationship problem, and where a graph does not help." >}}
+  {{< card link="the-harness" title="The harness" icon="shield-check" subtitle="Identity, action boundaries, spend, erasure — and what is not built." >}}
+  {{< card link="surfaces" title="Surfaces" icon="template" subtitle="One graph, more than one way in. Direction, not documentation." >}}
+{{< /cards >}}
+
+Then the two things that run today. Neither section assumes you have read the
+other.
 
 {{< cards >}}
   {{< card link="platform" title="Platform" icon="server" subtitle="The brain, the CLI and the gateway — running Openarity itself." >}}

@@ -17,16 +17,37 @@ knowledge graph, not a list.
 Most agent frameworks pick tools by ranking a flat list. Openarity picks by
 traversing relationships.
 
-Agents, tools, skills and past learnings are stored as a knowledge graph, and
-the orchestrator uses agentic graph RAG to decide what a task needs — which
-agent, which tools, which skills, which learnings from previous runs. What a
-tool *relates to* is the signal: the skills that use it, the learnings derived
-from it, the agents that hold it.
+The flat list is measurably failing. [RAG-MCP](https://arxiv.org/abs/2505.03275)
+watched tool-selection accuracy fall to **13.62%** as the pool grew; retrieving
+tools by embedding first lifted it to **43.13%** and halved prompt tokens. That
+is the fix the field has settled on, and the same paper reports its precision
+degrading as the registry scales into the thousands — because what separates two
+similar tools is not in their descriptions. It is what they connect to: the
+skills that use them, the learnings derived from them, the agents that hold
+them, the team whose credential they spend.
+
+So agents, tools, skills and past learnings are a graph, and selection is a
+walk. This is **graph engineering** rather than GraphRAG: a knowledge graph
+models what a system knows, and this one models what it *is* — with edges of
+authority and provenance, so asking what a run *may* do and what it *can* do is
+the same traversal.
+
+Around the run sits the harness an organisation needs to allow it near anything
+real: identity, roles that are rows rather than constants, spend counted where
+the calls happen, and deletion that destroys a team's key before its bytes. The
+boundaries are structural — the agent loop is a separate Go module, so it
+*cannot* import the brain's internals, and a CI check fails if it links a
+provider SDK at all.
 
 A planner turns a request into a workflow with branches, loops and retries.
 Channels — Slack, Discord, Telegram, webhooks — are pluggable and all normalise
 into one message format, so every channel works with every part of the system
 without special cases.
+
+The graph is what makes more than one surface worth building on it: Code, Work,
+Knowledge, Design and a mobile client are views onto the same nodes, so a
+learning earned in one is capability in every other with nothing to integrate.
+**None of that is built** — see what is, below.
 
 ## What works today
 

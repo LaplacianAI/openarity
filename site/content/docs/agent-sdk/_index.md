@@ -1,6 +1,6 @@
 ---
 title: Agent SDK
-weight: 2
+weight: 5
 next: /docs/agent-sdk/install
 ---
 

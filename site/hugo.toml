@@ -29,6 +29,12 @@ path = "images/logo-wordmark.svg"
 width = 145
 height = 40
 
+# Follows the reader's OS setting until they choose otherwise, and remembers
+# the choice.
+[params.theme]
+default = "system"
+displayToggle = true
+
 [params.footer]
 displayCopyright = false
 displayPoweredBy = false
@@ -51,6 +57,14 @@ name = "Search"
 weight = 8
 [menu.main.params]
 type = "search"
+
+# In the navbar as well as the footer. The footer copy is where Hextra puts it
+# by default, which is below the fold on every page that is longer than a screen.
+[[menu.main]]
+name = "Theme"
+weight = 8.5
+[menu.main.params]
+type = "theme-toggle"
 
 [[menu.main]]
 name = "GitHub"
