@@ -20,7 +20,7 @@ make example
 | ---------- | -------------------------------------------------------------------- |
 | `tools`    | one turn, one tool, streaming — read this first                       |
 | `skills`   | two skills offered, one opened, and the body of the other never read  |
-| `custom`   | a loop implemented outside the SDK, delegating to the shipped one     |
+| `custom`   | a wrapper loop written outside the SDK, enforcing a token ceiling     |
 | `gateway`  | not an example: the stub and the printing the others share            |
 
 ## Against a real gateway
@@ -49,6 +49,11 @@ which port each one listens on.
 tokens   270 in (0 cached), 36 out
 bodies   commit-style read 1 time(s), pdf-forms read 0 time(s)
 ```
+
+`custom` wraps `loops.Plan()` in a deployment's own spending rule. The ceiling
+is enforced by watching `UsageEvent` as the run happens rather than by adding
+up afterwards, when the tokens are already spent — so it cuts the run mid-flight
+and overshoots by at most one step.
 
 The last line is the point of the `skills` example. Both skills spent their
 description in the prompt; only the one the model asked for spent its body, and

@@ -92,8 +92,9 @@ platform does:
 `sdk/agent` is the loop, as a library. It receives a fully resolved spec and
 decides nothing:
 
-- ReAct today, streaming or not, behind a registry so a deployment can add its
-  own pattern without changing the library
+- ReAct and plan-then-act, streaming or not, behind a registry so a deployment
+  can add its own pattern — or wrap a shipped one in its own policy — without
+  changing the library
 - Any gateway speaking OpenAI chat completions — LiteLLM, OmniRoute, or a
   provider directly. The brain passes a base URL and a key per run; nothing
   about a provider reaches the loop
@@ -499,7 +500,7 @@ apps/cli/       oa, the command-line client
   internal/     config, contexts, credentials, output formats
   internal/client/  generated from the brain's spec by oapi-codegen
 sdk/agent/      the agent loop, as a library
-  loops/        the reasoning patterns — ReAct today, code mode later
+  loops/        the reasoning patterns — ReAct and plan-then-act, code mode later
   models/       clients for anything speaking OpenAI chat completions
   examples/     runnable agents, against a stub gateway or a real one
 deployment/     manifests

@@ -1,10 +1,13 @@
 // Command custom implements a loop of its own, outside the SDK.
 //
-// The pattern is plan-then-act: one cheap call with no tools to get a plan,
-// then the shipped ReAct loop to carry it out. It is here to show two things
-// a deployment needs and neither of which requires touching sdk/agent — that
-// agent.Loop is an ordinary interface anyone can satisfy, and that a custom
-// loop can delegate to a shipped one rather than reimplementing it.
+// The loop here is a wrapper: it takes any other loop and enforces this
+// deployment's token ceiling on top of it. That is deliberately not something
+// sdk/agent should ship — a spending rule belongs to whoever pays the bill,
+// and it changes when they change their mind. What the SDK ships is the
+// interface that lets you write one.
+//
+// A pattern from the literature, like plan-then-act, is a different matter:
+// that one is loops.Plan(), and this example uses it as the wrapped loop.
 //
 //	go run ./examples/custom
 //
@@ -26,114 +29,89 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent/models/openaicompat"
 )
 
-// LoopPlanAct is this deployment's own name for its own pattern. A LoopType is
-// a string, so nothing in the SDK has to learn about it — the brain puts this
-// in Spec.Loop and the runner finds it in the registry like any other.
-const LoopPlanAct agent.LoopType = "plan-act"
+// ErrOverBudget is what this deployment returns when a run costs more than it
+// is allowed to. A caller can tell it apart from a model failure, which matters
+// because one is worth retrying and the other is not.
+var ErrOverBudget = errors.New("the run passed its token ceiling")
 
-type planAct struct{}
+// Budgeted wraps any loop and stops the run once it has spent more than
+// maxTokens. It keeps the wrapped loop's name, so the brain still asks for
+// "plan" or "react" and this deployment's policy applies underneath — nothing
+// about the Spec has to know the wrapper is there.
+func Budgeted(inner agent.Loop, maxTokens int) agent.Loop {
+	return budgeted{inner: inner, max: maxTokens}
+}
 
-func (planAct) Name() agent.LoopType { return LoopPlanAct }
+type budgeted struct {
+	inner agent.Loop
+	max   int
+}
 
-func (l planAct) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
-	// The same refusals every loop makes. MaxSteps is two here rather than one
-	// because the plan spends a step before any work happens, and a ceiling of
-	// one would buy a plan and nothing to carry it out.
-	if in.Model == nil {
-		return agent.Result{}, errors.New("no ModelClient was given, so there is nothing to call")
-	}
-	if in.Spec.MaxSteps < 2 {
-		return agent.Result{}, fmt.Errorf("%w: plan-act needs at least two", agent.ErrNoMaxSteps)
-	}
+func (b budgeted) Name() agent.LoopType { return b.inner.Name() }
 
-	in.Emit(ctx, agent.StepEvent{Step: 1})
+func (b budgeted) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
+	// The ceiling is enforced by watching the run rather than by inspecting it
+	// afterwards, because afterwards the tokens are already spent. UsageEvent
+	// is emitted per step, so cancelling on the step that crosses the line
+	// costs at most one step of overshoot.
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 
-	// Phase one: no tools on the request at all. The model cannot act even if
-	// it wants to, which is what makes this a plan rather than a first step.
-	plan, err := in.Model.Complete(ctx, agent.Request{
-		Model:    in.Spec.Model,
-		System:   append(in.Spec.System, planning),
-		Messages: in.Messages,
-	})
-	if err != nil {
-		return agent.Result{}, fmt.Errorf("planning: %w", err)
-	}
-	// Emitted the way the shipped loops emit it. A phase that spends a step and
-	// a model call while showing nothing reads as a stall to whoever is
-	// watching the run.
-	if text := plan.Message.Text(); text != "" {
-		in.Emit(ctx, agent.TextEvent{Delta: text})
-	}
-	in.Emit(ctx, agent.UsageEvent{Model: in.Spec.Model.Name, Usage: plan.Usage})
+	watched, spent, drain := watch(ctx, in.Events, b.max, stop)
+	in.Events = watched
 
-	// The plan joins the transcript as the assistant's own words, so phase two
-	// reads it as something it said rather than something it was told.
-	msgs := append(append([]agent.Message{}, in.Messages...), plan.Message)
-
-	// Phase two is the shipped loop, unchanged. Its ceiling is what is left
-	// after the plan, because MaxSteps is the caller's whole budget for the
-	// run and not a per-phase allowance.
-	spec := in.Spec
-	spec.MaxSteps--
-
-	events, drain := renumber(ctx, in.Events, 1)
-	result, err := loops.ReAct().Run(ctx, agent.Input{
-		Spec:     spec,
-		Messages: msgs,
-		Model:    in.Model,
-		Events:   events,
-	})
+	result, err := b.inner.Run(ctx, in)
 	drain()
 
-	// The plan's step and tokens are this loop's to report. ReAct counted only
-	// what it did, and a caller reading Steps should see the whole run.
-	result.Steps++
-	result.Usage.InputTokens += plan.Usage.InputTokens
-	result.Usage.OutputTokens += plan.Usage.OutputTokens
-	result.Usage.CachedInputTokens += plan.Usage.CachedInputTokens
-
+	// Checked after the run rather than trusting the error, because a
+	// cancelled loop reports context.Canceled and says nothing about why.
+	if spent() > b.max {
+		return result, fmt.Errorf("%w: %d tokens against a ceiling of %d",
+			ErrOverBudget, spent(), b.max)
+	}
 	return result, err
 }
 
-// planning is appended to whatever system prompt the brain resolved, rather
-// than replacing it. A loop that overwrote it would drop the agent's identity
-// and every guideline the deployment set.
-var planning = agent.Content{
-	Type: agent.ContentText,
-	Text: "First, write a short numbered plan for what you will do. Do not do it yet.",
-}
-
-// renumber forwards an inner loop's events with its step numbers shifted, so a
-// run that spent one step planning and two acting reads as 1, 2, 3 rather than
-// 1, then 1 again. Without it the two loops both start counting at one and the
-// transcript looks like a retry.
-func renumber(ctx context.Context, out chan<- agent.Event, offset int) (chan agent.Event, func()) {
-	if out == nil {
-		return nil, func() {}
-	}
-
+// watch forwards events untouched while adding up what the run has spent, and
+// calls stop the moment it passes the ceiling.
+func watch(ctx context.Context, out chan<- agent.Event, max int, stop func()) (chan agent.Event, func() int, func()) {
 	in := make(chan agent.Event, 64)
 	done := make(chan struct{})
+	total := make(chan int, 1)
+	total <- 0
 
 	go func() {
 		defer close(done)
+		spent := 0
 		for e := range in {
-			if s, ok := e.(agent.StepEvent); ok {
-				e = agent.StepEvent{Step: s.Step + offset}
+			if u, ok := e.(agent.UsageEvent); ok {
+				spent += u.Usage.InputTokens + u.Usage.OutputTokens
+				<-total
+				total <- spent
+				if spent > max {
+					fmt.Printf("\n  ! %d tokens spent against a ceiling of %d — stopping", spent, max)
+					stop()
+				}
 			}
-			// The same bargain agent.Input.Emit makes: a consumer that stopped
-			// reading must not be able to wedge a loop mid-run.
+			if out == nil {
+				continue
+			}
 			select {
 			case out <- e:
 			case <-ctx.Done():
-				return
+				// Keep draining rather than returning: the loop is still
+				// emitting, and a forwarder that stopped reading would wedge
+				// the very run this is trying to end.
 			}
 		}
 	}()
 
-	// Closing is the caller's job and must happen before the inner result is
-	// used, or the last events race the summary that is printed after them.
-	return in, func() { close(in); <-done }
+	spent := func() int {
+		n := <-total
+		total <- n
+		return n
+	}
+	return in, spent, func() { close(in); <-done }
 }
 
 func main() {
@@ -156,17 +134,19 @@ func attempt() error {
 
 	fmt.Printf("gateway  %s\nmodel    %s\n\n", endpoint.BaseURL, gateway.Model())
 
-	// Registered alongside the shipped loops, by name. New refuses two loops
-	// claiming one name and says which two, so a clash is a startup error
-	// rather than whichever the map happened to hold.
-	runner, err := agent.New(openaicompat.Factory(), loops.ReAct(), planAct{})
+	// The wrapper registers under the name it wraps. Ask for "plan" and this
+	// deployment's ceiling comes with it.
+	runner, err := agent.New(openaicompat.Factory(),
+		loops.ReAct(),
+		Budgeted(loops.PlanStreaming(), 150),
+	)
 	if err != nil {
 		return err
 	}
 
 	spec := agent.Spec{
 		Model:    agent.ModelRef{Name: gateway.Model(), MaxTokens: 1024},
-		Loop:     LoopPlanAct,
+		Loop:     agent.LoopPlan,
 		System:   agent.System("You are a terse assistant. Use the tools you are given."),
 		Tools:    []agent.Tool{countIssues()},
 		MaxSteps: 5,
@@ -188,10 +168,15 @@ func attempt() error {
 	close(events)
 	<-done
 
-	if err != nil {
+	// An over-budget run is reported, not hidden: what it managed before the
+	// ceiling is still worth printing, and so is the reason it stopped.
+	if err != nil && !errors.Is(err, ErrOverBudget) {
 		return err
 	}
 	gateway.Summary(result)
+	if err != nil {
+		fmt.Printf("stopped  %v\n", err)
+	}
 	return nil
 }
 
