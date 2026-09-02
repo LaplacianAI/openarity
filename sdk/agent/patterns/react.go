@@ -1,4 +1,4 @@
-package loops
+package patterns
 
 import (
 	"context"
@@ -11,13 +11,13 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
-func ReAct() agent.Loop { return react{} }
+func ReAct() agent.Pattern { return react{} }
 
-func ReActStreaming() agent.Loop { return react{stream: true} }
+func ReActStreaming() agent.Pattern { return react{stream: true} }
 
 type react struct{ stream bool }
 
-func (react) Name() agent.LoopType { return agent.LoopReAct }
+func (react) Name() agent.PatternName { return agent.PatternReAct }
 
 func (l react) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 	if in.Model == nil {

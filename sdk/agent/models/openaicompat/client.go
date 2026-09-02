@@ -3,7 +3,7 @@
 //
 // It is the only package in this module with a third-party dependency, and that
 // is the point — agent.ModelClient is what keeps openai-go's types out of the
-// loop, the Spec and the brain.
+// pattern, the Spec and the brain.
 package openaicompat
 
 import (
@@ -69,7 +69,7 @@ func (c *Client) Stream(ctx context.Context, req agent.Request) (agent.Stream, e
 // Tool calls arrive as fragments — the name in one chunk, the arguments JSON
 // split across many more — and nothing can be dispatched until the last one
 // lands. The accumulator does that reassembly, which is why this package exists
-// rather than the loop parsing SSE itself.
+// rather than the pattern parsing SSE itself.
 type stream struct {
 	raw *ssestream.Stream[openai.ChatCompletionChunk]
 	acc openai.ChatCompletionAccumulator
@@ -365,7 +365,7 @@ func finishReason(reason string) agent.FinishReason {
 	}
 }
 
-// The compiler is what keeps this honest: the loop only ever sees the
+// the compiler is what keeps this honest: the pattern only ever sees the
 // interface, so a signature drifting here is a build failure rather than a
 // runtime surprise.
 var _ agent.ModelClient = (*Client)(nil)

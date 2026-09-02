@@ -10,42 +10,42 @@ import (
 
 type Runner struct {
 	clientFor ClientFactory
-	loops     map[LoopType]Loop
+	patterns  map[PatternName]Pattern
 }
 
-func New(clientFor ClientFactory, loops ...Loop) (*Runner, error) {
+func New(clientFor ClientFactory, patterns ...Pattern) (*Runner, error) {
 	if clientFor == nil {
 		return nil, errors.New("no ClientFactory was given, so no run could ever reach a model")
 	}
-	if len(loops) == 0 {
-		return nil, errors.New("no loops were registered, so every run would be refused")
+	if len(patterns) == 0 {
+		return nil, errors.New("no patterns were registered, so every run would be refused")
 	}
 
-	byName := make(map[LoopType]Loop, len(loops))
-	for _, l := range loops {
+	byName := make(map[PatternName]Pattern, len(patterns))
+	for _, l := range patterns {
 		if l == nil {
-			return nil, errors.New("a nil Loop was registered")
+			return nil, errors.New("a nil Pattern was registered")
 		}
 		name := l.Name()
 		if name == "" {
 			return nil, fmt.Errorf("a %T registered under an empty name", l)
 		}
 		if existing, taken := byName[name]; taken {
-			return nil, fmt.Errorf("%T and %T both claim the loop name %q", existing, l, name)
+			return nil, fmt.Errorf("%T and %T both claim the pattern name %q", existing, l, name)
 		}
 		byName[name] = l
 	}
 
-	return &Runner{clientFor: clientFor, loops: byName}, nil
+	return &Runner{clientFor: clientFor, patterns: byName}, nil
 }
 
 func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 	endpoint Endpoint, events chan<- Event,
 ) (Result, error) {
-	loop, ok := r.loops[spec.Loop]
+	pattern, ok := r.patterns[spec.Pattern]
 	if !ok {
-		return Result{}, fmt.Errorf("no loop named %q is registered; this runner has %s",
-			spec.Loop, strings.Join(r.registered(), ", "))
+		return Result{}, fmt.Errorf("no pattern named %q is registered; this runner has %s",
+			spec.Pattern, strings.Join(r.registered(), ", "))
 	}
 
 	spec, err := withSkills(spec)
@@ -58,7 +58,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 		return Result{}, fmt.Errorf("connecting to %s: %w", endpoint.BaseURL, err)
 	}
 
-	return loop.Run(ctx, Input{
+	return pattern.Run(ctx, Input{
 		Spec:     spec,
 		Messages: msgs,
 		Model:    client,
@@ -89,8 +89,8 @@ func withSkills(spec Spec) (Spec, error) {
 }
 
 func (r *Runner) registered() []string {
-	names := make([]string, 0, len(r.loops))
-	for name := range r.loops {
+	names := make([]string, 0, len(r.patterns))
+	for name := range r.patterns {
 		names = append(names, string(name))
 	}
 	slices.Sort(names)

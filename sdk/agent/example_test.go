@@ -13,12 +13,12 @@ import (
 	"sync/atomic"
 
 	"github.com/LaplacianAI/openarity/sdk/agent"
-	"github.com/LaplacianAI/openarity/sdk/agent/loops"
 	"github.com/LaplacianAI/openarity/sdk/agent/models/openaicompat"
+	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
 )
 
 // Example wires everything the way the brain will: a Runner built once with the
-// loops it knows and a client factory, then a run carrying a fully resolved
+// patterns it knows and a client factory, then a run carrying a fully resolved
 // Spec and nothing but a URL and a key for the endpoint.
 //
 // Each package is tested on its own elsewhere. This is the one that fails if
@@ -46,19 +46,19 @@ func Example() {
 	defer gateway.Close()
 
 	// Wired once, at startup.
-	runner, err := agent.New(openaicompat.Factory(), loops.ReAct())
+	runner, err := agent.New(openaicompat.Factory(), patterns.ReAct())
 	if err != nil {
 		fmt.Println("wiring:", err)
 		return
 	}
 
-	// Resolved by the brain: which model, which loop, which tools, and a
+	// Resolved by the brain: which model, which pattern, which tools, and a
 	// ceiling. The tool's Invoke is a closure the brain built over an MCP
 	// server and a team's credential; here it is a stub.
 	spec := agent.Spec{
-		Model:  agent.ModelRef{Name: "anthropic/claude-opus-5", MaxTokens: 1024},
-		Loop:   agent.LoopReAct,
-		System: agent.System("You are a helpful agent."),
+		Model:   agent.ModelRef{Name: "anthropic/claude-opus-5", MaxTokens: 1024},
+		Pattern: agent.PatternReAct,
+		System:  agent.System("You are a helpful agent."),
 		Tools: []agent.Tool{{
 			Name:        "count_issues",
 			Description: "Count open issues in a repository",

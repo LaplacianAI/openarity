@@ -108,8 +108,8 @@ func stub(script []Turn) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// A real gateway answers both shapes on one path, keyed on the request.
-		// A stub that only streamed would make a non-streaming loop look broken
-		// with an error about content types rather than about the loop.
+		// A stub that only streamed would make a non-streaming pattern look broken
+		// with an error about content types rather than about the pattern.
 		var req struct {
 			Stream bool `json:"stream"`
 		}
@@ -117,7 +117,7 @@ func stub(script []Turn) http.Handler {
 		_ = json.Unmarshal(body, &req)
 
 		// Past the script the stub stops rather than repeating its last turn,
-		// which would loop until MaxSteps and read as a bug in the loop rather
+		// which would loop until MaxSteps and read as a bug in the pattern rather
 		// than a script that ran out.
 		turn := Turn{Text: "the script ended"}
 		if n := int(calls.Add(1)) - 1; n < len(script) {

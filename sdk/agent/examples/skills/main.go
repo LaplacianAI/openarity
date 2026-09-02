@@ -20,8 +20,8 @@ import (
 
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/examples/gateway"
-	"github.com/LaplacianAI/openarity/sdk/agent/loops"
 	"github.com/LaplacianAI/openarity/sdk/agent/models/openaicompat"
+	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
 )
 
 func main() {
@@ -47,7 +47,7 @@ func attempt() error {
 
 	fmt.Printf("gateway  %s\nmodel    %s\n\n", endpoint.BaseURL, gateway.Model())
 
-	runner, err := agent.New(openaicompat.Factory(), loops.ReActStreaming())
+	runner, err := agent.New(openaicompat.Factory(), patterns.ReActStreaming())
 	if err != nil {
 		return err
 	}
@@ -58,9 +58,9 @@ func attempt() error {
 	var commitReads, pdfReads atomic.Int32
 
 	spec := agent.Spec{
-		Model:  agent.ModelRef{Name: gateway.Model(), MaxTokens: 1024},
-		Loop:   agent.LoopReAct,
-		System: agent.System("You are a terse assistant. Load a skill before doing work it covers."),
+		Model:   agent.ModelRef{Name: gateway.Model(), MaxTokens: 1024},
+		Pattern: agent.PatternReAct,
+		System:  agent.System("You are a terse assistant. Load a skill before doing work it covers."),
 		// Skills, not Tools. They cost one tool between them however many
 		// there are, which is the whole reason they are a separate field.
 		Skills: []agent.Skill{

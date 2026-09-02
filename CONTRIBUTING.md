@@ -78,7 +78,7 @@ the tests — the same steps `.github/workflows/ci.yml` runs, in the same order,
 as three jobs named `brain`, `cli` and `sdk`. CI adds `cover` and `vuln` on top.
 If it passes locally it passes there.
 
-`sdk/agent` has one step the others do not: `boundary`, which fails if the loop
+`sdk/agent` has one step the others do not: `boundary`, which fails if a pattern
 or the core package links a provider SDK. Everything outside that module
 arrives through an interface, and nothing but this check stops somebody
 importing `openai-go` for one convenient type and making `ModelClient`

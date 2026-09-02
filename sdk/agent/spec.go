@@ -1,12 +1,12 @@
 package agent
 
-type LoopType string
+type PatternName string
 
 const (
-	LoopReAct  LoopType = "react"
-	LoopPlan   LoopType = "plan"
-	LoopCode   LoopType = "code"
-	LoopCustom LoopType = "custom"
+	PatternReAct  PatternName = "react"
+	PatternPlan   PatternName = "plan"
+	PatternCode   PatternName = "code"
+	PatternCustom PatternName = "custom"
 )
 
 type ModelRef struct {
@@ -17,7 +17,7 @@ type ModelRef struct {
 
 type Spec struct {
 	Model    ModelRef
-	Loop     LoopType
+	Pattern  PatternName
 	System   []Content
 	Tools    []Tool
 	Skills   []Skill

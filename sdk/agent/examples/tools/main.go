@@ -1,7 +1,7 @@
 // Command tools runs one agent turn that calls a tool.
 //
 // This is the smaller of the two examples and the one to read first: a spec the
-// brain resolved, a streaming loop, and a tool whose closure would reach an MCP
+// brain resolved, a streaming pattern, and a tool whose closure would reach an MCP
 // server under a team's credential.
 //
 //	go run ./examples/tools
@@ -19,8 +19,8 @@ import (
 
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/examples/gateway"
-	"github.com/LaplacianAI/openarity/sdk/agent/loops"
 	"github.com/LaplacianAI/openarity/sdk/agent/models/openaicompat"
+	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
 )
 
 func main() {
@@ -47,14 +47,14 @@ func attempt() error {
 
 	// Wired once. A real deployment does this at startup and keeps the Runner
 	// for the life of the process.
-	runner, err := agent.New(openaicompat.Factory(), loops.ReActStreaming())
+	runner, err := agent.New(openaicompat.Factory(), patterns.ReActStreaming())
 	if err != nil {
 		return err
 	}
 
 	spec := agent.Spec{
 		Model:    agent.ModelRef{Name: gateway.Model(), MaxTokens: 1024},
-		Loop:     agent.LoopReAct,
+		Pattern:  agent.PatternReAct,
 		System:   agent.System("You are a terse assistant. Use the tools you are given."),
 		Tools:    []agent.Tool{countIssues()},
 		MaxSteps: 5,
@@ -65,7 +65,7 @@ func attempt() error {
 		Content: []agent.Content{{Type: agent.ContentText, Text: "How many open issues does openarity have?"}},
 	}}
 
-	// Events are consumed on their own goroutine. The loop never blocks on a
+	// Events are consumed on their own goroutine. The pattern never blocks on a
 	// slow reader — Emit gives up when the context is done — but a reader that
 	// never starts would still see nothing.
 	events := make(chan agent.Event, 64)

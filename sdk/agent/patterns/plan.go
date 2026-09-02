@@ -1,4 +1,4 @@
-package loops
+package patterns
 
 import (
 	"context"
@@ -9,13 +9,13 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
-func Plan() agent.Loop { return plan{} }
+func Plan() agent.Pattern { return plan{} }
 
-func PlanStreaming() agent.Loop { return plan{stream: true} }
+func PlanStreaming() agent.Pattern { return plan{stream: true} }
 
 type plan struct{ stream bool }
 
-func (plan) Name() agent.LoopType { return agent.LoopPlan }
+func (plan) Name() agent.PatternName { return agent.PatternPlan }
 
 var ErrPlanCalledATool = errors.New("the planning turn called a tool, but the planning request offered none")
 
@@ -29,7 +29,7 @@ func (l plan) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 		return agent.Result{}, errors.New("no ModelClient was given, so there is nothing to call")
 	}
 	if in.Spec.MaxSteps < 2 {
-		return agent.Result{}, fmt.Errorf("%w: this loop plans before it acts, so it needs at least two", agent.ErrNoMaxSteps)
+		return agent.Result{}, fmt.Errorf("%w: this pattern plans before it acts, so it needs at least two", agent.ErrNoMaxSteps)
 	}
 
 	in.Emit(ctx, agent.StepEvent{Step: 1})

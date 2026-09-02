@@ -1,12 +1,12 @@
 ---
 name: add-an-example
-description: Add a runnable example under sdk/agent/examples. Use when demonstrating a loop, a skill, a model client, or any SDK feature that only proves itself by running.
+description: Add a runnable example under sdk/agent/examples. Use when demonstrating a pattern, a skill, a model client, or any SDK feature that only proves itself by running.
 ---
 
 # Add an example to `sdk/agent/examples`
 
 Examples in this module are not illustrations. They are the only thing that
-runs the loop, the SSE accumulator, the model client and the tool dispatch
+runs the pattern, the SSE accumulator, the model client and the tool dispatch
 together, and CI runs every one of them on every push.
 
 ## Step 1 — the layout
@@ -41,7 +41,7 @@ the model's judgement is scripted.
 
 Script one `Turn` per model response, in order. Past the end the stub answers
 "the script ended" rather than repeating itself — a repeating stub loops to
-`MaxSteps` and reads as a bug in the loop.
+`MaxSteps` and reads as a bug in the pattern.
 
 If the stub cannot express what you need, extend `gateway`, do not fork it. A
 second stub is a second thing to keep speaking the protocol correctly.

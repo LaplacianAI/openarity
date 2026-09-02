@@ -504,7 +504,7 @@ func TestStreamingYieldsDeltasThenAFinalResponse(t *testing.T) {
 	}
 }
 
-// The reason this package exists rather than the loop parsing SSE: a tool call
+// The reason this package exists rather than the pattern parsing SSE: a tool call
 // arrives split across chunks, and dispatching before the last fragment lands
 // runs something the model never finished asking for.
 func TestAToolCallSplitAcrossChunksIsReassembled(t *testing.T) {
@@ -668,7 +668,7 @@ func TestStreamRefusesABadRequestBeforeConnecting(t *testing.T) {
 }
 
 // A stream that carried no choices at all accumulates into nothing. Reporting
-// it as a finished turn would hand the loop an empty assistant message.
+// it as a finished turn would hand the pattern an empty assistant message.
 func TestAStreamWithNoChoicesIsReported(t *testing.T) {
 	t.Parallel()
 

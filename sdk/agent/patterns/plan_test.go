@@ -1,4 +1,4 @@
-package loops
+package patterns
 
 import (
 	"context"
@@ -11,18 +11,18 @@ import (
 
 func planSpec(tools ...agent.Tool) agent.Spec {
 	s := spec(tools...)
-	s.Loop = agent.LoopPlan
+	s.Pattern = agent.PatternPlan
 	return s
 }
 
 func TestPlanAnswersItsOwnName(t *testing.T) {
 	t.Parallel()
 
-	if got := Plan().Name(); got != agent.LoopPlan {
-		t.Errorf("Name() = %q, want %q", got, agent.LoopPlan)
+	if got := Plan().Name(); got != agent.PatternPlan {
+		t.Errorf("Name() = %q, want %q", got, agent.PatternPlan)
 	}
-	if got := PlanStreaming().Name(); got != agent.LoopPlan {
-		t.Errorf("streaming Name() = %q, want %q", got, agent.LoopPlan)
+	if got := PlanStreaming().Name(); got != agent.PatternPlan {
+		t.Errorf("streaming Name() = %q, want %q", got, agent.PatternPlan)
 	}
 }
 
@@ -124,7 +124,7 @@ func TestThePlanJoinsTheTranscript(t *testing.T) {
 	}
 }
 
-// MaxSteps is the caller's whole budget. A per-phase allowance lets this loop
+// MaxSteps is the caller's whole budget. A per-phase allowance lets this pattern
 // quietly cost twice what the brain asked for.
 func TestThePlanSpendsAStepFromTheCallersBudget(t *testing.T) {
 	t.Parallel()
@@ -135,7 +135,7 @@ func TestThePlanSpendsAStepFromTheCallersBudget(t *testing.T) {
 	// A model that never stops calling tools: the run ends by exhausting the
 	// ceiling, and where it stops is the measurement.
 	model := &fakeModel{turns: []turn{
-		answered(text("1. Loop forever.")),
+		answered(text("1. Pattern forever.")),
 		answered(calling("count", `{}`)),
 		answered(calling("count", `{}`)),
 		answered(calling("count", `{}`)),
@@ -226,7 +226,7 @@ func TestAPlanningTurnThatCalledAToolIsRefused(t *testing.T) {
 	}
 }
 
-// Both loops count their own steps from one. Unrenumbered the transcript reads
+// Both patterns count their own steps from one. Unrenumbered the transcript reads
 // 1, 1, 2 and looks like a retry rather than progress.
 func TestStepsAreNumberedAcrossBothPhases(t *testing.T) {
 	t.Parallel()
@@ -269,7 +269,7 @@ func TestStepsAreNumberedAcrossBothPhases(t *testing.T) {
 	}
 }
 
-// The plan's tokens are this loop's to report. ReAct counted only what it did.
+// The plan's tokens are this pattern's to report. ReAct counted only what it did.
 func TestThePlansTokensAreCounted(t *testing.T) {
 	t.Parallel()
 
