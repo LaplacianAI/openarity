@@ -1,4 +1,4 @@
-package loops
+package patterns
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
-// fakeModel returns canned turns in order. Everything the loop decides —
+// fakeModel returns canned turns in order. Everything the pattern decides —
 // whether to dispatch, what to append, when to stop — happens between these
 // turns, so a fake is enough to drive every branch without a network.
 type fakeModel struct {
@@ -37,7 +37,7 @@ type turn struct {
 func (m *fakeModel) Complete(_ context.Context, req agent.Request) (agent.Response, error) {
 	m.calls = append(m.calls, req)
 	if len(m.turns) == 0 {
-		return agent.Response{}, errors.New("the loop asked for more turns than the fake has")
+		return agent.Response{}, errors.New("the pattern asked for more turns than the fake has")
 	}
 	t := m.turns[0]
 	m.turns = m.turns[1:]
@@ -47,7 +47,7 @@ func (m *fakeModel) Complete(_ context.Context, req agent.Request) (agent.Respon
 func (m *fakeModel) Stream(_ context.Context, req agent.Request) (agent.Stream, error) {
 	m.calls = append(m.calls, req)
 	if len(m.turns) == 0 {
-		return nil, errors.New("the loop asked for more turns than the fake has")
+		return nil, errors.New("the pattern asked for more turns than the fake has")
 	}
 	t := m.turns[0]
 	m.turns = m.turns[1:]
@@ -111,7 +111,7 @@ func answered(msg agent.Message) turn {
 func spec(tools ...agent.Tool) agent.Spec {
 	return agent.Spec{
 		Model:    agent.ModelRef{Name: "probe"},
-		Loop:     agent.LoopReAct,
+		Pattern:  agent.PatternReAct,
 		Tools:    tools,
 		MaxSteps: 5,
 	}
@@ -385,7 +385,7 @@ func TestTheCallersHistoryIsNotMutated(t *testing.T) {
 		t.Fatalf("the caller's slice grew to %d", len(msgs))
 	}
 	if got := msgs[:cap(msgs)][1]; got.Role != "" {
-		t.Errorf("the loop wrote %q into the caller's spare capacity", got.Role)
+		t.Errorf("the pattern wrote %q into the caller's spare capacity", got.Role)
 	}
 }
 
@@ -465,7 +465,7 @@ func TestEveryStageOfARunIsReported(t *testing.T) {
 }
 
 // The streaming path must reach the same Result as the unary one — a caller
-// that only wants the answer should not care which loop ran.
+// that only wants the answer should not care which pattern ran.
 func TestStreamingEmitsDeltasAndReachesTheSameResult(t *testing.T) {
 	t.Parallel()
 
@@ -515,10 +515,10 @@ func TestAStreamWithNoFinalEventIsRefused(t *testing.T) {
 func TestBothReActConstructorsAnswerTheSameName(t *testing.T) {
 	t.Parallel()
 
-	if ReAct().Name() != agent.LoopReAct {
+	if ReAct().Name() != agent.PatternReAct {
 		t.Errorf("ReAct is named %q", ReAct().Name())
 	}
-	if ReActStreaming().Name() != agent.LoopReAct {
+	if ReActStreaming().Name() != agent.PatternReAct {
 		t.Errorf("ReActStreaming is named %q", ReActStreaming().Name())
 	}
 }

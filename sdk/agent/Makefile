@@ -67,17 +67,17 @@ test:
 
 ## boundary: fail if the core packages link a third-party dependency
 #
-# The whole reason sdk/agent is a separate module is that a loop must not be
+# The whole reason sdk/agent is a separate module is that a pattern must not be
 # able to reach a store, a grant or a provider SDK. Three of those the compiler
 # enforces on its own — this module cannot import apps/brain/internal at all.
 # The fourth it does not: nothing stops somebody importing openai-go into the
-# loop for one convenient type, and after that ModelClient is decorative.
+# pattern for one convenient type, and after that ModelClient is decorative.
 #
 # go list -deps is the real linked set, not the module graph. openai-go pulls
 # the AWS and Azure SDKs into go.mod and links none of them, so counting
 # requirements would fail on a dependency that costs nothing.
 boundary:
-	@for pkg in . ./loops; do \
+	@for pkg in . ./patterns; do \
 	  n=$$($(GO) list -deps $$pkg | grep -c 'openai/openai-go' || true); \
 	  if [ "$$n" != "0" ]; then \
 	    echo "$$pkg links $$n openai-go packages; the model client belongs behind ModelClient"; \

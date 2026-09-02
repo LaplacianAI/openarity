@@ -31,7 +31,7 @@ without special cases.
 ## What works today
 
 Three things run: the `brain` service, `oa`, the CLI that talks to it, and
-`sdk/agent`, the loop a run happens inside.
+`sdk/agent`, the reasoning patterns a run happens inside.
 
 The brain is production-shaped, but it does not yet do anything an agent
 platform does:
@@ -89,7 +89,7 @@ platform does:
 - Against a development brain it needs no setup: it finds the shared token in
   your shell, and only ever sends it to a loopback address
 
-`sdk/agent` is the loop, as a library. It receives a fully resolved spec and
+`sdk/agent` is the agent loop, as a library. It receives a fully resolved spec and
 decides nothing:
 
 - ReAct and plan-then-act, streaming or not, behind a registry so a deployment
@@ -97,7 +97,7 @@ decides nothing:
   changing the library
 - Any gateway speaking OpenAI chat completions — LiteLLM, OmniRoute, or a
   provider directly. The brain passes a base URL and a key per run; nothing
-  about a provider reaches the loop
+  about a provider reaches the pattern
 - Tools whose implementation is a closure the brain built, so an MCP server and
   a team's credential stay on the brain's side of the boundary
 - Skills, loaded the way Claude Code loads them: every skill spends its
@@ -500,7 +500,7 @@ apps/cli/       oa, the command-line client
   internal/     config, contexts, credentials, output formats
   internal/client/  generated from the brain's spec by oapi-codegen
 sdk/agent/      the agent loop, as a library
-  loops/        the reasoning patterns — ReAct and plan-then-act, code mode later
+  patterns/     the reasoning patterns — ReAct and plan-then-act, code mode later
   models/       clients for anything speaking OpenAI chat completions
   examples/     runnable agents, against a stub gateway or a real one
 deployment/     manifests

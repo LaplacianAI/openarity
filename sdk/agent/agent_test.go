@@ -51,7 +51,7 @@ func TestTextOnAMessageWithNoContent(t *testing.T) {
 }
 
 // A nil Events channel is the normal case for a batch run, and must not be a
-// special case at any call site inside a loop.
+// special case at any call site inside a pattern.
 func TestEmitOnANilChannelIsANoOp(t *testing.T) {
 	t.Parallel()
 
@@ -84,7 +84,7 @@ func TestEmitDelivers(t *testing.T) {
 	}
 }
 
-// A consumer that stopped reading must not be able to wedge a loop holding an
+// A consumer that stopped reading must not be able to wedge a pattern holding an
 // unfinished tool call. Without the ctx.Done arm this blocks forever.
 func TestEmitGivesUpWhenTheContextIsCancelled(t *testing.T) {
 	t.Parallel()
@@ -108,7 +108,7 @@ func TestEmitGivesUpWhenTheContextIsCancelled(t *testing.T) {
 	}
 }
 
-// The sealed interface is what stops an event describing a run this loop never
+// The sealed interface is what stops an event describing a run this pattern never
 // performed. Nothing outside the package can satisfy it, and everything inside
 // that claims to be an Event must actually be one.
 func TestEveryEventTypeSatisfiesTheInterface(t *testing.T) {

@@ -2,7 +2,7 @@
 
 Each runs end to end with nothing installed: with no `OPENARITY_MODELS_BASE_URL`
 set they start a stub gateway in-process that speaks the OpenAI streaming
-protocol, so the loop, the accumulator and the tool dispatch are all real.
+protocol, so the pattern, the accumulator and the tool dispatch are all real.
 
 ```sh
 go run ./examples/tools
@@ -20,7 +20,7 @@ make example
 | ---------- | -------------------------------------------------------------------- |
 | `tools`    | one turn, one tool, streaming — read this first                       |
 | `skills`   | two skills offered, one opened, and the body of the other never read  |
-| `custom`   | a wrapper loop written outside the SDK, enforcing a token ceiling     |
+| `custom`   | a wrapper pattern written outside the SDK, enforcing a token ceiling     |
 | `gateway`  | not an example: the stub and the printing the others share            |
 
 ## Against a real gateway
@@ -50,7 +50,7 @@ tokens   270 in (0 cached), 36 out
 bodies   commit-style read 1 time(s), pdf-forms read 0 time(s)
 ```
 
-`custom` wraps `loops.Plan()` in a deployment's own spending rule. The ceiling
+`custom` wraps `patterns.Plan()` in a deployment's own spending rule. The ceiling
 is enforced by watching `UsageEvent` as the run happens rather than by adding
 up afterwards, when the tokens are already spent — so it cuts the run mid-flight
 and overshoots by at most one step.

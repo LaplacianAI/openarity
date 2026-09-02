@@ -1,13 +1,13 @@
-// Command custom implements a loop of its own, outside the SDK.
+// Command custom implements a pattern of its own, outside the SDK.
 //
-// The loop here is a wrapper: it takes any other loop and enforces this
+// The pattern here is a wrapper: it takes any other pattern and enforces this
 // deployment's token ceiling on top of it. That is deliberately not something
 // sdk/agent should ship — a spending rule belongs to whoever pays the bill,
 // and it changes when they change their mind. What the SDK ships is the
 // interface that lets you write one.
 //
 // A pattern from the literature, like plan-then-act, is a different matter:
-// that one is loops.Plan(), and this example uses it as the wrapped loop.
+// that one is patterns.Plan(), and this example uses it as the wrapped pattern.
 //
 //	go run ./examples/custom
 //
@@ -25,8 +25,8 @@ import (
 
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/examples/gateway"
-	"github.com/LaplacianAI/openarity/sdk/agent/loops"
 	"github.com/LaplacianAI/openarity/sdk/agent/models/openaicompat"
+	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
 )
 
 // ErrOverBudget is what this deployment returns when a run costs more than it
@@ -34,20 +34,20 @@ import (
 // because one is worth retrying and the other is not.
 var ErrOverBudget = errors.New("the run passed its token ceiling")
 
-// Budgeted wraps any loop and stops the run once it has spent more than
-// maxTokens. It keeps the wrapped loop's name, so the brain still asks for
+// Budgeted wraps any pattern and stops the run once it has spent more than
+// maxTokens. It keeps the wrapped pattern's name, so the brain still asks for
 // "plan" or "react" and this deployment's policy applies underneath — nothing
 // about the Spec has to know the wrapper is there.
-func Budgeted(inner agent.Loop, maxTokens int) agent.Loop {
+func Budgeted(inner agent.Pattern, maxTokens int) agent.Pattern {
 	return budgeted{inner: inner, max: maxTokens}
 }
 
 type budgeted struct {
-	inner agent.Loop
+	inner agent.Pattern
 	max   int
 }
 
-func (b budgeted) Name() agent.LoopType { return b.inner.Name() }
+func (b budgeted) Name() agent.PatternName { return b.inner.Name() }
 
 func (b budgeted) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 	// The ceiling is enforced by watching the run rather than by inspecting it
@@ -99,7 +99,7 @@ func watch(ctx context.Context, out chan<- agent.Event, max int, stop func()) (c
 			select {
 			case out <- e:
 			case <-ctx.Done():
-				// Keep draining rather than returning: the loop is still
+				// Keep draining rather than returning: the pattern is still
 				// emitting, and a forwarder that stopped reading would wedge
 				// the very run this is trying to end.
 			}
@@ -137,8 +137,8 @@ func attempt() error {
 	// The wrapper registers under the name it wraps. Ask for "plan" and this
 	// deployment's ceiling comes with it.
 	runner, err := agent.New(openaicompat.Factory(),
-		loops.ReAct(),
-		Budgeted(loops.PlanStreaming(), 150),
+		patterns.ReAct(),
+		Budgeted(patterns.PlanStreaming(), 150),
 	)
 	if err != nil {
 		return err
@@ -146,7 +146,7 @@ func attempt() error {
 
 	spec := agent.Spec{
 		Model:    agent.ModelRef{Name: gateway.Model(), MaxTokens: 1024},
-		Loop:     agent.LoopPlan,
+		Pattern:  agent.PatternPlan,
 		System:   agent.System("You are a terse assistant. Use the tools you are given."),
 		Tools:    []agent.Tool{countIssues()},
 		MaxSteps: 5,

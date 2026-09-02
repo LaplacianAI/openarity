@@ -9,20 +9,20 @@ import (
 	"testing"
 )
 
-// fakeLoop records what it was handed. Everything the Runner decides — which
-// loop, what reaches it, how a clash is reported — happens before any loop runs,
+// fakePattern records what it was handed. Everything the Runner decides — which
+// pattern, what reaches it, how a clash is reported — happens before any pattern runs,
 // so a fake that only records is enough.
-type fakeLoop struct {
-	name LoopType
+type fakePattern struct {
+	name PatternName
 	err  error
 
 	mu   sync.Mutex
 	sawn []Input
 }
 
-func (l *fakeLoop) Name() LoopType { return l.name }
+func (l *fakePattern) Name() PatternName { return l.name }
 
-func (l *fakeLoop) Run(_ context.Context, in Input) (Result, error) {
+func (l *fakePattern) Run(_ context.Context, in Input) (Result, error) {
 	l.mu.Lock()
 	l.sawn = append(l.sawn, in)
 	l.mu.Unlock()
@@ -32,16 +32,16 @@ func (l *fakeLoop) Run(_ context.Context, in Input) (Result, error) {
 	return Result{Output: string(l.name), Steps: 1}, nil
 }
 
-func (l *fakeLoop) calls() []Input {
+func (l *fakePattern) calls() []Input {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return append([]Input(nil), l.sawn...)
 }
 
-type nilNameLoop struct{}
+type nilNamePattern struct{}
 
-func (nilNameLoop) Name() LoopType                             { return "" }
-func (nilNameLoop) Run(context.Context, Input) (Result, error) { return Result{}, nil }
+func (nilNamePattern) Name() PatternName                          { return "" }
+func (nilNamePattern) Run(context.Context, Input) (Result, error) { return Result{}, nil }
 
 // fakeFactory records the endpoints it was asked for and hands back one client.
 type fakeFactory struct {
@@ -83,18 +83,18 @@ func TestARunnerWithNoLoopsIsRefused(t *testing.T) {
 
 	_, err := New(clients())
 	if err == nil {
-		t.Fatal("New accepted a runner with no loops")
+		t.Fatal("New accepted a runner with no patterns")
 	}
-	if !strings.Contains(err.Error(), "no loops") {
-		t.Errorf("err = %v, want it to say no loops were registered", err)
+	if !strings.Contains(err.Error(), "no patterns") {
+		t.Errorf("err = %v, want it to say no patterns were registered", err)
 	}
 }
 
 func TestANilLoopIsRefused(t *testing.T) {
 	t.Parallel()
 
-	if _, err := New(clients(), &fakeLoop{name: "react"}, nil); err == nil {
-		t.Fatal("New accepted a nil Loop")
+	if _, err := New(clients(), &fakePattern{name: "react"}, nil); err == nil {
+		t.Fatal("New accepted a nil Pattern")
 	}
 }
 
@@ -103,9 +103,9 @@ func TestANilLoopIsRefused(t *testing.T) {
 func TestALoopWithNoNameIsRefused(t *testing.T) {
 	t.Parallel()
 
-	_, err := New(clients(), nilNameLoop{})
+	_, err := New(clients(), nilNamePattern{})
 	if err == nil {
-		t.Fatal("New accepted a loop with no name")
+		t.Fatal("New accepted a pattern with no name")
 	}
 	if !strings.Contains(err.Error(), "empty name") {
 		t.Errorf("err = %v, want it to say the name was empty", err)
@@ -113,21 +113,21 @@ func TestALoopWithNoNameIsRefused(t *testing.T) {
 }
 
 // The last registration wins in a map, so without this the loser is
-// constructed, looks wired, and simply never runs. Two authored loops both
+// constructed, looks wired, and simply never runs. Two authored patterns both
 // named "custom" are the case this catches.
 func TestTwoLoopsCannotClaimTheSameName(t *testing.T) {
 	t.Parallel()
 
-	_, err := New(clients(), &fakeLoop{name: "custom"}, &fakeLoop{name: "custom"})
+	_, err := New(clients(), &fakePattern{name: "custom"}, &fakePattern{name: "custom"})
 	if err == nil {
-		t.Fatal("New accepted two loops claiming one name")
+		t.Fatal("New accepted two patterns claiming one name")
 	}
 	if !strings.Contains(err.Error(), `"custom"`) {
-		t.Errorf("the clash error does not name the loop: %v", err)
+		t.Errorf("the clash error does not name the pattern: %v", err)
 	}
 	// Both claimants, because knowing there is a clash without knowing who is
 	// in it means reading every registration to find out.
-	if strings.Count(err.Error(), "fakeLoop") != 2 {
+	if strings.Count(err.Error(), "fakePattern") != 2 {
 		t.Errorf("the clash error does not name both claimants: %v", err)
 	}
 }
@@ -135,39 +135,39 @@ func TestTwoLoopsCannotClaimTheSameName(t *testing.T) {
 func TestRunDispatchesToTheNamedLoop(t *testing.T) {
 	t.Parallel()
 
-	react := &fakeLoop{name: LoopReAct}
-	code := &fakeLoop{name: LoopCode}
+	react := &fakePattern{name: PatternReAct}
+	code := &fakePattern{name: PatternCode}
 	r, err := New(clients(), react, code)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	got, err := r.Run(t.Context(), Spec{Loop: LoopCode, MaxSteps: 1}, nil, Endpoint{BaseURL: "http://gateway/v1"}, nil)
+	got, err := r.Run(t.Context(), Spec{Pattern: PatternCode, MaxSteps: 1}, nil, Endpoint{BaseURL: "http://gateway/v1"}, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if got.Output != string(LoopCode) {
-		t.Errorf("Output = %q, want the code loop to have run", got.Output)
+	if got.Output != string(PatternCode) {
+		t.Errorf("Output = %q, want the code pattern to have run", got.Output)
 	}
 	if len(react.calls()) != 0 {
-		t.Error("the react loop ran for a spec that named code")
+		t.Error("the react pattern ran for a spec that named code")
 	}
 }
 
-// An unregistered loop must fail loudly rather than fall through to whatever is
-// registered — a config naming a loop nobody built should not look like it
+// An unregistered pattern must fail loudly rather than fall through to whatever is
+// registered — a config naming a pattern nobody built should not look like it
 // worked.
 func TestAnUnregisteredLoopIsRefusedAndSaysWhatExists(t *testing.T) {
 	t.Parallel()
 
-	r, err := New(clients(), &fakeLoop{name: LoopReAct}, &fakeLoop{name: LoopCode})
+	r, err := New(clients(), &fakePattern{name: PatternReAct}, &fakePattern{name: PatternCode})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, err = r.Run(t.Context(), Spec{Loop: "reflexion", MaxSteps: 1}, nil, Endpoint{BaseURL: "http://gateway/v1"}, nil)
+	_, err = r.Run(t.Context(), Spec{Pattern: "reflexion", MaxSteps: 1}, nil, Endpoint{BaseURL: "http://gateway/v1"}, nil)
 	if err == nil {
-		t.Fatal("Run accepted a loop nobody registered")
+		t.Fatal("Run accepted a pattern nobody registered")
 	}
 	for _, want := range []string{"reflexion", "react", "code"} {
 		if !strings.Contains(err.Error(), want) {
@@ -181,7 +181,7 @@ func TestAnUnregisteredLoopIsRefusedAndSaysWhatExists(t *testing.T) {
 func TestTheRegisteredListIsStable(t *testing.T) {
 	t.Parallel()
 
-	r, err := New(clients(), &fakeLoop{name: "zebra"}, &fakeLoop{name: "alpha"}, &fakeLoop{name: "mike"})
+	r, err := New(clients(), &fakePattern{name: "zebra"}, &fakePattern{name: "alpha"}, &fakePattern{name: "mike"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -203,15 +203,15 @@ func TestTheRegisteredListIsStable(t *testing.T) {
 func TestTheEndpointReachesTheFactoryAndTheClientReachesTheLoop(t *testing.T) {
 	t.Parallel()
 
-	loop := &fakeLoop{name: LoopReAct}
+	pattern := &fakePattern{name: PatternReAct}
 	factory := &fakeFactory{}
-	r, err := New(factory.build, loop)
+	r, err := New(factory.build, pattern)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
 	events := make(chan Event, 1)
-	spec := Spec{Loop: LoopReAct, Model: ModelRef{Name: "opus"}, MaxSteps: 4}
+	spec := Spec{Pattern: PatternReAct, Model: ModelRef{Name: "opus"}, MaxSteps: 4}
 	msgs := []Message{{Role: RoleUser, Content: []Content{{Type: ContentText, Text: "hi"}}}}
 	endpoint := Endpoint{BaseURL: "http://litellm:4000/v1", APIKey: "sk-team-a"}
 
@@ -227,16 +227,16 @@ func TestTheEndpointReachesTheFactoryAndTheClientReachesTheLoop(t *testing.T) {
 		t.Errorf("the factory was given %+v, want %+v", asked[0], endpoint)
 	}
 
-	calls := loop.calls()
+	calls := pattern.calls()
 	if len(calls) != 1 {
-		t.Fatalf("the loop ran %d times, want 1", len(calls))
+		t.Fatalf("the pattern ran %d times, want 1", len(calls))
 	}
 	in := calls[0]
 	if in.Model == nil {
-		t.Error("the loop was given no client")
+		t.Error("the pattern was given no client")
 	}
 	if in.Events == nil {
-		t.Error("the loop was not given the events channel")
+		t.Error("the pattern was not given the events channel")
 	}
 	if in.Spec.Model.Name != "opus" || in.Spec.MaxSteps != 4 {
 		t.Errorf("the spec did not arrive intact: %+v", in.Spec)
@@ -250,23 +250,23 @@ func TestALoopsErrorIsReturnedUnwrapped(t *testing.T) {
 	t.Parallel()
 
 	boom := errors.New("the model refused")
-	r, err := New(clients(), &fakeLoop{name: LoopReAct, err: boom})
+	r, err := New(clients(), &fakePattern{name: PatternReAct, err: boom})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	if _, err := r.Run(t.Context(), Spec{Loop: LoopReAct}, nil, Endpoint{BaseURL: "http://gateway/v1"}, nil); !errors.Is(err, boom) {
-		t.Fatalf("err = %v, want the loop's own error", err)
+	if _, err := r.Run(t.Context(), Spec{Pattern: PatternReAct}, nil, Endpoint{BaseURL: "http://gateway/v1"}, nil); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the pattern's own error", err)
 	}
 }
 
-// One Runner serves every agent in the process, and loops hold no per-run
-// state. Under -race this is what catches a loop that quietly grows a field.
+// One Runner serves every agent in the process, and patterns hold no per-run
+// state. Under -race this is what catches a pattern that quietly grows a field.
 func TestOneRunnerServesManyAgentsAtOnce(t *testing.T) {
 	t.Parallel()
 
-	react := &fakeLoop{name: LoopReAct}
-	code := &fakeLoop{name: LoopCode}
+	react := &fakePattern{name: PatternReAct}
+	code := &fakePattern{name: PatternCode}
 	r, err := New(clients(), react, code)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -281,14 +281,14 @@ func TestOneRunnerServesManyAgentsAtOnce(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			// Alternating loops and distinct specs: the same loop value serves
-			// two different agents while a third agent switches loops.
-			loop := LoopReAct
+			// Alternating patterns and distinct specs: the same pattern value serves
+			// two different agents while a third agent switches patterns.
+			pattern := PatternReAct
 			if i%3 == 0 {
-				loop = LoopCode
+				pattern = PatternCode
 			}
 			spec := Spec{
-				Loop:     loop,
+				Pattern:  pattern,
 				Model:    ModelRef{Name: fmt.Sprintf("model-%d", i)},
 				MaxSteps: i + 1,
 			}
@@ -304,10 +304,10 @@ func TestOneRunnerServesManyAgentsAtOnce(t *testing.T) {
 		t.Errorf("a concurrent run failed: %v", err)
 	}
 	if total := len(react.calls()) + len(code.calls()); total != runs {
-		t.Errorf("%d runs reached a loop, want %d", total, runs)
+		t.Errorf("%d runs reached a pattern, want %d", total, runs)
 	}
 
-	// Every run kept its own spec: a loop sharing state would show up as two
+	// Every run kept its own spec: a pattern sharing state would show up as two
 	// runs seeing the same model name.
 	seen := map[string]bool{}
 	for _, in := range append(react.calls(), code.calls()...) {
@@ -323,7 +323,7 @@ func TestOneRunnerServesManyAgentsAtOnce(t *testing.T) {
 func TestARunnerWithNoFactoryIsRefused(t *testing.T) {
 	t.Parallel()
 
-	_, err := New(nil, &fakeLoop{name: LoopReAct})
+	_, err := New(nil, &fakePattern{name: PatternReAct})
 	if err == nil {
 		t.Fatal("New accepted a runner with no ClientFactory")
 	}
@@ -339,12 +339,12 @@ func TestAFactoryFailureNamesTheEndpoint(t *testing.T) {
 
 	boom := errors.New("connection refused")
 	factory := &fakeFactory{err: boom}
-	r, err := New(factory.build, &fakeLoop{name: LoopReAct})
+	r, err := New(factory.build, &fakePattern{name: PatternReAct})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, err = r.Run(t.Context(), Spec{Loop: LoopReAct},
+	_, err = r.Run(t.Context(), Spec{Pattern: PatternReAct},
 		nil, Endpoint{BaseURL: "http://litellm:4000/v1", APIKey: "sk-x"}, nil)
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the factory's own error", err)
@@ -358,27 +358,27 @@ func TestAFactoryFailureNamesTheEndpoint(t *testing.T) {
 	}
 }
 
-// An unregistered loop must be refused before a connection is opened — there is
+// An unregistered pattern must be refused before a connection is opened — there is
 // nothing to connect for.
 func TestAnUnregisteredLoopNeverReachesTheFactory(t *testing.T) {
 	t.Parallel()
 
 	factory := &fakeFactory{}
-	r, err := New(factory.build, &fakeLoop{name: LoopReAct})
+	r, err := New(factory.build, &fakePattern{name: PatternReAct})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	if _, err := r.Run(t.Context(), Spec{Loop: "reflexion"},
+	if _, err := r.Run(t.Context(), Spec{Pattern: "reflexion"},
 		nil, Endpoint{BaseURL: "http://gateway/v1"}, nil); err == nil {
-		t.Fatal("Run accepted a loop nobody registered")
+		t.Fatal("Run accepted a pattern nobody registered")
 	}
 	if n := len(factory.endpoints()); n != 0 {
 		t.Errorf("the factory was called %d times for a run that could not happen", n)
 	}
 }
 
-// The loop must not have to know skills exist. By the time it sees the Spec,
+// The pattern must not have to know skills exist. By the time it sees the Spec,
 // they are a tool and a block of system prompt like any other.
 func TestSkillsReachTheLoopAsAToolAndAListing(t *testing.T) {
 	t.Parallel()
@@ -397,7 +397,7 @@ func TestSkillsReachTheLoopAsAToolAndAListing(t *testing.T) {
 	}
 
 	if len(spec.Tools) != 2 {
-		t.Fatalf("the loop sees %d tools, want the caller's plus the skill tool", len(spec.Tools))
+		t.Fatalf("the pattern sees %d tools, want the caller's plus the skill tool", len(spec.Tools))
 	}
 	if spec.Tools[0].Name != "count_issues" {
 		t.Errorf("the caller's tool moved to %q", spec.Tools[0].Name)
@@ -407,7 +407,7 @@ func TestSkillsReachTheLoopAsAToolAndAListing(t *testing.T) {
 	}
 
 	if len(spec.System) != 2 {
-		t.Fatalf("the loop sees %d system blocks, want the caller's plus the listing", len(spec.System))
+		t.Fatalf("the pattern sees %d system blocks, want the caller's plus the listing", len(spec.System))
 	}
 	if !strings.Contains(spec.System[1].Text, "pdf-forms") {
 		t.Errorf("the listing does not name the skill:\n%s", spec.System[1].Text)
@@ -490,7 +490,7 @@ func TestARunWithNoSkillsIsLeftUntouched(t *testing.T) {
 	}
 }
 
-// Two tools under one name and the loop dispatches by whichever it finds
+// Two tools under one name and the pattern dispatches by whichever it finds
 // first, which is a map iteration away from being different next run.
 func TestACallersToolNamedSkillIsRefused(t *testing.T) {
 	t.Parallel()
@@ -519,13 +519,13 @@ func TestABadSkillListIsRefusedBeforeTheClientIsBuilt(t *testing.T) {
 	runner, err := New(func(Endpoint) (ModelClient, error) {
 		dialled = true
 		return nil, nil
-	}, &fakeLoop{name: LoopReAct})
+	}, &fakePattern{name: PatternReAct})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
 	_, err = runner.Run(t.Context(), Spec{
-		Loop: LoopReAct,
+		Pattern: PatternReAct,
 		Skills: []Skill{
 			{Name: "pdf-forms", Description: "Fill PDFs", Body: func(context.Context) (string, error) { return "x", nil }},
 			{Name: "pdf-forms", Description: "Something else", Body: func(context.Context) (string, error) { return "y", nil }},

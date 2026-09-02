@@ -214,7 +214,7 @@ func TestABodyIsNotReadUntilTheSkillIsLoaded(t *testing.T) {
 	}
 }
 
-// A loaded body is still in the messages the loop is accumulating. Sending it
+// A loaded body is still in the messages the pattern is accumulating. Sending it
 // again pays for it twice and tells the model nothing it does not have.
 func TestLoadingASkillTwiceDoesNotSendTheBodyAgain(t *testing.T) {
 	t.Parallel()
@@ -357,7 +357,7 @@ func TestASkillWithNoNameIsRefused(t *testing.T) {
 	}
 }
 
-// A loop is free to dispatch several tool calls from one turn concurrently.
+// A pattern is free to dispatch several tool calls from one turn concurrently.
 // Under -race this catches the already-loaded map losing its lock.
 func TestTheSkillToolIsSafeForConcurrentUse(t *testing.T) {
 	t.Parallel()

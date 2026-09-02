@@ -12,8 +12,8 @@ var (
 	ErrIncompleteStream = errors.New("the stream ended without a final response")
 )
 
-type Loop interface {
-	Name() LoopType
+type Pattern interface {
+	Name() PatternName
 	Run(ctx context.Context, in Input) (Result, error)
 }
 
