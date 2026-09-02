@@ -48,7 +48,8 @@ apps/brain/        the Go backend
 apps/cli/          oa, the command-line client
 sdk/agent/         the agent loop, as a library
   examples/        runnable agents; `make example` runs every one of them
-site/              the documentation site, built with Hugo
+site/              the documentation site, built with Hugo and published
+                   to https://laplacianai.github.io/openarity
 deployment/        manifests
 go.work            ties every Go module in the repository together
 ```
