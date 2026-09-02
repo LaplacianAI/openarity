@@ -82,26 +82,10 @@ rewoo    2      2      819 in, 24 out
 
 ## Writing your own
 
-`Pattern` is an interface, so a pattern is anything with a name and a `Run`:
+`Pattern` is an interface, so a pattern is anything with a name and a `Run`.
+The usual shape is not a new loop but a **wrapper** — take a shipped pattern,
+apply your deployment's rule around it, and keep its name so nothing about the
+spec has to know the wrapper is there.
 
-```go
-type Pattern interface {
-	Name() PatternName
-	Run(ctx context.Context, in Input) (Result, error)
-}
-```
-
-`Input.Model` is the only handle a pattern has on the outside world, and it is
-already wrapped in the counter, so usage is correct whether or not the pattern
-thinks about it.
-
-The most useful shape is a wrapper rather than a new loop — take a shipped
-pattern, enforce your own policy around it, register that under a name of your
-own. [`examples/custom`](https://github.com/LaplacianAI/openarity/tree/main/sdk/agent/examples/custom)
-does exactly that with a token ceiling.
-
-Register it like any other:
-
-```go
-runner, err := agent.New(openaicompat.Factory(), patterns.ReAct(), myPattern{})
-```
+That is the extension point the library exists for, and it has a page of its
+own: [Writing a pattern](../custom-patterns).
