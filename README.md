@@ -212,8 +212,8 @@ database:
 go get github.com/LaplacianAI/openarity/sdk/agent
 ```
 
-Needs Go 1.26.6. It pulls one direct dependency,
-`github.com/openai/openai-go/v3`.
+Needs Go 1.26.6. The core links one dependency, `github.com/openai/openai-go/v3`.
+Importing `tools/mcp` adds the official MCP SDK; nothing else does.
 
 A whole agent, against any gateway speaking OpenAI chat completions:
 

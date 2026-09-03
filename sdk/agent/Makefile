@@ -76,15 +76,25 @@ test:
 # go list -deps is the real linked set, not the module graph. openai-go pulls
 # the AWS and Azure SDKs into go.mod and links none of them, so counting
 # requirements would fail on a dependency that costs nothing.
+# Each entry is a package substring and the sentence to print when the core
+# links it. Adding an adapter under models/ or tools/ means adding a line here,
+# because the point of those directories is that the core cannot see into them.
+FORBIDDEN := \
+	openai/openai-go:the@model@client@belongs@behind@ModelClient \
+	modelcontextprotocol/go-sdk:MCP@is@a@source@of@tools,@not@something@a@pattern@speaks
+
 boundary:
 	@for pkg in . ./patterns; do \
-	  n=$$($(GO) list -deps $$pkg | grep -c 'openai/openai-go' || true); \
-	  if [ "$$n" != "0" ]; then \
-	    echo "$$pkg links $$n openai-go packages; the model client belongs behind ModelClient"; \
-	    exit 1; \
-	  fi; \
+	  for rule in $(FORBIDDEN); do \
+	    lib=$${rule%%:*}; why=$$(echo "$${rule#*:}" | tr '@' ' '); \
+	    n=$$($(GO) list -deps $$pkg | grep -c "$$lib" || true); \
+	    if [ "$$n" != "0" ]; then \
+	      echo "$$pkg links $$n $$lib packages; $$why"; \
+	      exit 1; \
+	    fi; \
+	  done; \
 	done
-	@echo "the core packages link no provider SDK"
+	@echo "the core packages link no provider or protocol SDK"
 
 ## cover: run tests and fail below the coverage threshold
 #

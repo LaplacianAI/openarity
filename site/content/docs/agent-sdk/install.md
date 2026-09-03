@@ -7,9 +7,11 @@ weight: 1
 go get github.com/LaplacianAI/openarity/sdk/agent
 ```
 
-Needs Go 1.26.6. The only direct dependency is `github.com/openai/openai-go/v3`;
-the whole tree a consumer inherits is that and four `tidwall` packages it pulls
-in turn.
+Needs Go 1.26.6. There are two direct dependencies and you build only the ones
+you import: `github.com/openai/openai-go/v3` sits behind
+[`models/openaicompat`](#talking-to-a-real-gateway), and the official MCP SDK
+behind [`tools/mcp`](../mcp). The core packages and the patterns link neither,
+which a `make check` step enforces rather than assumes.
 
 {{< callout type="warning" >}}
 `go get` resolves to `v0.1.0`. It is a `v0`, so nothing about the API is
