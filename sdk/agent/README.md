@@ -106,11 +106,12 @@ run happens.
 
 ## Patterns
 
-| Constructor        | Streaming variant  | What it does                                     |
-| ------------------ | ------------------ | ------------------------------------------------ |
-| `patterns.ReAct()` | `ReActStreaming()` | think, call a tool, look, repeat                 |
-| `patterns.Plan()`  | `PlanStreaming()`  | one planning call with no tools, then ReAct      |
-| `patterns.ReWOO()` | `ReWOOStreaming()` | plan every call up front, run them, then answer  |
+| Constructor             | Streaming variant       | What it does                                    |
+| ----------------------- | ----------------------- | ----------------------------------------------- |
+| `patterns.ReAct()`      | `ReActStreaming()`      | think, call a tool, look, repeat                |
+| `patterns.Plan()`       | `PlanStreaming()`       | one planning call with no tools, then ReAct     |
+| `patterns.ReWOO()`      | `ReWOOStreaming()`      | plan every call up front, run them, then answer |
+| `patterns.Reflection(n)`| `ReflectionStreaming(n)`| answer, critique it, rewrite — up to n times    |
 
 ReWOO costs two model calls whatever the plan holds, and no tool's output can
 change what the agent set out to do. That only *saves* tokens on a dependent

@@ -53,7 +53,7 @@ layout: hextra-home
   >}}
   {{< hextra/feature-card
     title="An agent loop you can take on its own"
-    subtitle="sdk/agent is a separate Go module with one dependency and no database, server or configuration file. ReAct, plan-then-act and ReWOO, behind an interface you can add your own pattern to."
+    subtitle="sdk/agent is a separate Go module with one dependency and no database, server or configuration file. ReAct, plan-then-act, ReWOO and reflection, behind an interface you can add your own pattern to."
     link="docs/agent-sdk"
   >}}
 {{< /hextra/feature-grid >}}
