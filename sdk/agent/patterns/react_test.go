@@ -18,6 +18,11 @@ type fakeModel struct {
 	turns []turn
 	calls []agent.Request
 
+	// streamed[i] records whether call i went through Stream rather than
+	// Complete. A pattern that streams a turn whose whole answer is a tool
+	// call shows the caller nothing while appearing to stall.
+	streamed []bool
+
 	// deltas are the text fragments Stream yields before the final response.
 	deltas []string
 
@@ -37,6 +42,7 @@ type turn struct {
 
 func (m *fakeModel) Complete(_ context.Context, req agent.Request) (agent.Response, error) {
 	m.calls = append(m.calls, req)
+	m.streamed = append(m.streamed, false)
 	if len(m.turns) == 0 {
 		return agent.Response{}, errors.New("the pattern asked for more turns than the fake has")
 	}
@@ -47,6 +53,7 @@ func (m *fakeModel) Complete(_ context.Context, req agent.Request) (agent.Respon
 
 func (m *fakeModel) Stream(_ context.Context, req agent.Request) (agent.Stream, error) {
 	m.calls = append(m.calls, req)
+	m.streamed = append(m.streamed, true)
 	if len(m.turns) == 0 {
 		return nil, errors.New("the pattern asked for more turns than the fake has")
 	}

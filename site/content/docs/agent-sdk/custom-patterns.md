@@ -6,7 +6,8 @@ weight: 3
 A pattern is the shape of the reasoning a run happens inside. `Runner.Run`
 drives one; everything about *how* a task is approached lives in it.
 
-This is the extension point that matters. ReAct, plan-then-act and ReWOO ship
+This is the extension point that matters. ReAct, plan-then-act, ReWOO and
+reflection ship
 with the library because they come from the literature and everyone wants them.
 Your deployment's rules — a spending ceiling, an allowlist, a retry policy, an
 approval gate — do not belong in a library, because they change when you change

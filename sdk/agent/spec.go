@@ -3,11 +3,12 @@ package agent
 type PatternName string
 
 const (
-	PatternReAct  PatternName = "react"
-	PatternPlan   PatternName = "plan"
-	PatternReWOO  PatternName = "rewoo"
-	PatternCode   PatternName = "code"
-	PatternCustom PatternName = "custom"
+	PatternReAct      PatternName = "react"
+	PatternPlan       PatternName = "plan"
+	PatternReWOO      PatternName = "rewoo"
+	PatternReflection PatternName = "reflection"
+	PatternCode       PatternName = "code"
+	PatternCustom     PatternName = "custom"
 )
 
 type ModelRef struct {

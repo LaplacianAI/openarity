@@ -116,11 +116,13 @@ platform does:
 `sdk/agent` is the agent loop, as a library. It receives a fully resolved spec and
 decides nothing:
 
-- ReAct, plan-then-act and ReWOO, streaming or not, behind a registry so a
-  deployment can add its own pattern — or wrap a shipped one in its own policy
-  — without changing the library. ReWOO plans every tool call before any of
-  them runs, so it costs two model calls whatever the plan holds, and a tool's
-  output cannot change what the agent set out to do
+- ReAct, plan-then-act, ReWOO and reflection, streaming or not, behind a
+  registry so a deployment can add its own pattern — or wrap a shipped one in
+  its own policy — without changing the library. ReWOO plans every tool call
+  before any of them runs, so it costs two model calls whatever the plan holds,
+  and a tool's output cannot change what the agent set out to do. Reflection
+  answers, then asks whether the answer holds, and rewrites only when the
+  critique says it should
 - Any gateway speaking OpenAI chat completions — LiteLLM, OmniRoute, or a
   provider directly. The brain passes a base URL and a key per run; nothing
   about a provider reaches the pattern
@@ -589,7 +591,7 @@ apps/cli/       oa, the command-line client
   internal/     config, contexts, credentials, output formats
   internal/client/  generated from the brain's spec by oapi-codegen
 sdk/agent/      the agent loop, as a library
-  patterns/     the reasoning patterns — ReAct, plan-then-act, ReWOO
+  patterns/     the reasoning patterns — ReAct, plan-then-act, ReWOO, reflection
   models/       clients for anything speaking OpenAI chat completions
   examples/     runnable agents, against a stub gateway or a real one
 site/           the documentation site, built with Hugo

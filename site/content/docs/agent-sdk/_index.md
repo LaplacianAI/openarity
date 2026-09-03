@@ -19,7 +19,7 @@ go get github.com/LaplacianAI/openarity/sdk/agent
 
 {{< cards >}}
   {{< card link="install" title="Install and first agent" subtitle="A whole working agent in about forty lines." >}}
-  {{< card link="patterns" title="Patterns" subtitle="ReAct, plan-then-act and ReWOO — what each costs and when it wins." >}}
+  {{< card link="patterns" title="Patterns" subtitle="ReAct, plan-then-act, ReWOO and reflection — what each costs and when it wins." >}}
   {{< card link="custom-patterns" title="Writing a pattern" subtitle="The extension point that matters: your rules, in your code, keeping the shipped name." >}}
   {{< card link="mcp" title="MCP servers as tools" subtitle="Connect a server, get []agent.Tool. The loop never learns MCP exists." >}}
   {{< card link="tools-and-skills" title="Tools and skills" subtitle="Why sixty skills cost one entry in the tool list." >}}
