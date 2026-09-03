@@ -9,6 +9,7 @@ go run ./examples/tools
 go run ./examples/skills
 go run ./examples/custom
 go run ./examples/rewoo
+go run ./examples/mcp
 ```
 
 Or run every one of them:
@@ -22,6 +23,8 @@ make example
 | `tools`    | one turn, one tool, streaming — read this first                       |
 | `skills`   | two skills offered, one opened, and the body of the other never read  |
 | `custom`   | a wrapper pattern written outside the SDK, enforcing a token ceiling     |
+| `rewoo`    | the same dependent chain under ReAct and under ReWOO, side by side    |
+| `mcp`      | an MCP server, in process, its tools reaching the loop as any other   |
 | `gateway`  | not an example: the stub and the printing the others share            |
 
 ## Against a real gateway

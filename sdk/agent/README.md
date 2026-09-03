@@ -15,8 +15,12 @@ go get github.com/LaplacianAI/openarity/sdk/agent
 ```
 
 Needs Go 1.26.6. Nothing else from this repository comes with it, and there is
-no database, no server and no configuration file to set up. The only direct
-dependency is `github.com/openai/openai-go/v3`.
+no database, no server and no configuration file to set up.
+
+Two direct dependencies, and which of them you build depends on what you
+import: `github.com/openai/openai-go/v3` behind the model client, and the
+official MCP SDK behind `tools/mcp`. The core and the patterns link neither —
+a `make check` step fails if they ever do.
 
 `go get` resolves to `v0.1.0`. It is a `v0`, so nothing about the API is
 promised yet — pin the version rather than tracking `@latest`, and read what
