@@ -138,3 +138,9 @@ example:
 
 ## check: everything CI runs
 check: tidy-check fmt-check vet lint boundary build cover vuln
+
+# Every target here is a command, not a file. Without this, a target whose name
+# matches something on disk is considered up to date and silently skipped —
+# which is exactly what `tools/` did to `make tools`, leaving CI to run a
+# linter it had never installed.
+.PHONY: help tools tidy tidy-check fmt fmt-check vet lint test boundary cover cover-html vuln build example check
