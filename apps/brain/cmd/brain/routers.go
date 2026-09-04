@@ -9,6 +9,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/docs"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/sessions"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teams"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/ui"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/users"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/whoami"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
@@ -36,6 +37,7 @@ func newRouters(
 		users.New(logger, dbStore),
 		sessions.New(logger, dbStore, authorizer, attachments),
 		authconfig.New(logger, cfg),
+		ui.New(logger),
 	}
 
 	if cfg.Environment == config.EnvironmentDevelopment {

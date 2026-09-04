@@ -36,6 +36,10 @@ jobs:
           filters: |
             brain:
               - 'apps/brain/**'
+              # The dashboard is embedded in the brain binary, so a change to
+              # it changes what the brain serves. It has no job of its own —
+              # its build and its type-check run inside this one.
+              - 'apps/dashboard/**'
               - 'go.work'
               - 'go.work.sum'
               - '.github/workflows/ci.yml'
@@ -141,6 +145,58 @@ jobs:
             -e MC_HOST_ci=http://openarity:openarity-ci-secret@localhost:9000 \
             minio/mc:RELEASE.2025-08-13T08-35-41Z \
             mb --ignore-existing ci/openarity
+
+      # Node before Go, because `make ui` writes into the tree that `make
+      # check` then compiles. Without this step the brain still builds and
+      # every test still passes — the bundle is optional by design — but CI
+      # would never prove that `make ui` works, and the first person to find
+      # out otherwise would be whoever cut a release.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      # The dashboard's own checks, before anything Go runs. It has no job of
+      # its own on purpose: it is not shipped separately, it is compiled into
+      # the brain, so a green dashboard and a red brain would be a status
+      # nobody can act on.
+      - name: Dashboard dependencies
+        working-directory: apps/dashboard
+        run: make deps
+
+      # One target per step rather than `make check`, so a failure names the
+      # check in the step list instead of only inside the log. The dashboard
+      # has no job of its own, so this is the only place its status is
+      # visible at a glance.
+      #
+      # Ordered the way `make check` orders them: cheapest and most likely to
+      # be wrong first. A missing semicolon should not wait for a test run.
+      - name: Dashboard formatting
+        working-directory: apps/dashboard
+        run: make fmt-check
+
+      - name: Dashboard lint
+        working-directory: apps/dashboard
+        run: make lint
+
+      - name: Dashboard types
+        working-directory: apps/dashboard
+        run: make typecheck
+
+      - name: Dashboard tests
+        working-directory: apps/dashboard
+        run: make test
+
+      - name: Dashboard build
+        working-directory: apps/dashboard
+        run: make build
+
+      # Copies what `make check` above just built into the embed directory.
+      # Separate from that target because the copy is the brain's business,
+      # not the dashboard's.
+      - name: Embed the dashboard in the binary's bundle
+        run: make ui-embed
 
       - uses: actions/setup-go@v7
         with:

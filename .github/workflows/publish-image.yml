@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - 'apps/brain/**'
+      - 'apps/dashboard/**'
       - 'deployment/Dockerfile'
       - 'deployment/Dockerfile.dockerignore'
       - '.github/workflows/publish-image.yml'
@@ -30,6 +31,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+
+      # The published image is the one nobody builds by hand, so it is the one
+      # that must never ship the "dashboard not built" page. The Dockerfile
+      # copies apps/brain, and `make ui` is what puts the bundle inside it.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      - name: Build the dashboard into the binary's bundle
+        working-directory: apps/brain
+        run: make ui
 
       # Every third-party action is pinned to a commit. A tag is mutable, and
       # this workflow holds a token that can write packages.
