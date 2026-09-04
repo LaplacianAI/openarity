@@ -34,6 +34,19 @@ var devOnlyRoutes = []string{"GET /docs", "GET /openapi.yaml"}
 // never by a flag someone set on a router.
 var publicRoutes = []string{"GET /auth/config"}
 
+// uiRoutes serve the dashboard: HTML and its assets, not API operations.
+//
+// Absent from the spec for the same reason devOnlyRoutes are — a page is not
+// part of the API's contract, and describing one would put it in the generated
+// CLI client, which has no use for HTML. Unlike those, these ship in every
+// environment: a deployment serving the API without the dashboard would be a
+// build nobody asked for.
+//
+// Public because a browser fetches the page and its scripts before it has a
+// token. Nothing behind them reads the database, so the pattern below is the
+// entire surface — "GET /ui/" is a subtree match covering every asset.
+var uiRoutes = []string{"GET /{$}", "GET /ui", "GET /ui/"}
+
 type patterned interface {
 	Patterns() []string
 }
@@ -104,6 +117,9 @@ func TestEveryRouteIsInTheSpec(t *testing.T) {
 	described := specRoutes(t)
 
 	for _, route := range served {
+		if slices.Contains(uiRoutes, route) {
+			continue
+		}
 		if !slices.Contains(described, route) {
 			t.Errorf("%s is served but not in api/openapi.yaml — see the update-api-spec skill", route)
 		}
@@ -124,7 +140,7 @@ func TestTheContractTestHasSomethingToCompare(t *testing.T) {
 	if len(served) <= len(probeRoutes) {
 		t.Fatalf("only the probes are served (%v) — newRouters returned nothing", served)
 	}
-	if len(specRoutes(t)) < len(served) {
+	if len(specRoutes(t)) < len(served)-len(uiRoutes) {
 		t.Error("the spec describes fewer operations than are served")
 	}
 }
@@ -191,7 +207,7 @@ func TestOnlyDeclaredRoutesArePublic(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
-	allowed := slices.Concat(devOnlyRoutes, publicRoutes)
+	allowed := slices.Concat(devOnlyRoutes, publicRoutes, uiRoutes)
 
 	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil) {
 		if !r.Public() {

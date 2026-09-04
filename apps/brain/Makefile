@@ -125,6 +125,36 @@ cover-html: cover
 vuln:
 	govulncheck ./...
 
+# ---------------------------------------------------------------------------
+# The dashboard.
+#
+# apps/dashboard builds into its own dist/, like any Vite project. Copying it
+# here is this file's job rather than the Vite config's: //go:embed cannot
+# reach outside the directory of the package that embeds it, so the bundle has
+# to live beside ui.go — but that is a fact about Go, and a frontend config
+# that encodes it breaks the day somebody moves a Go package.
+#
+# Deliberately not a prerequisite of build. `go build ./...` has to keep
+# working on a machine with no Node, which is what the committed dist/.gitkeep
+# and the "not built" page exist for.
+DASHBOARD := ../dashboard
+UI_DIST   := internal/api/ui/dist
+
+## ui: build the dashboard and copy it into the binary's embedded bundle
+ui:
+	cd $(DASHBOARD) && npm ci --no-audit --no-fund && npm run build
+	rm -rf $(UI_DIST)
+	mkdir -p $(UI_DIST)
+	cp -R $(DASHBOARD)/dist/. $(UI_DIST)/
+	@touch $(UI_DIST)/.gitkeep
+	@echo "embedded $$(find $(UI_DIST) -type f ! -name .gitkeep | wc -l | tr -d ' ') files"
+
+## ui-clean: empty the embedded bundle, leaving the directory embeddable
+ui-clean:
+	rm -rf $(UI_DIST)
+	mkdir -p $(UI_DIST)
+	@touch $(UI_DIST)/.gitkeep
+
 ## build: compile everything
 build:
 	$(GO) build ./...
@@ -192,4 +222,4 @@ clean:
 	rm -f $(COVER_PROFILE) $(COVER_HTML)
 	$(GO) clean -testcache
 
-.PHONY: help tools tools-editor testdb tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build run generate generate-sql generate-check migration check clean
+.PHONY: ui ui-clean help tools tools-editor testdb tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build run generate generate-sql generate-check migration check clean

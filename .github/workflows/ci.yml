@@ -36,6 +36,10 @@ jobs:
           filters: |
             brain:
               - 'apps/brain/**'
+              # The dashboard is embedded in the brain binary, so a change to
+              # it changes what the brain serves. It has no job of its own —
+              # its build and its type-check run inside this one.
+              - 'apps/dashboard/**'
               - 'go.work'
               - 'go.work.sum'
               - '.github/workflows/ci.yml'
@@ -141,6 +145,20 @@ jobs:
             -e MC_HOST_ci=http://openarity:openarity-ci-secret@localhost:9000 \
             minio/mc:RELEASE.2025-08-13T08-35-41Z \
             mb --ignore-existing ci/openarity
+
+      # Node before Go, because `make ui` writes into the tree that `make
+      # check` then compiles. Without this step the brain still builds and
+      # every test still passes — the bundle is optional by design — but CI
+      # would never prove that `make ui` works, and the first person to find
+      # out otherwise would be whoever cut a release.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      - name: Build the dashboard into the binary's bundle
+        run: make ui
 
       - uses: actions/setup-go@v7
         with:

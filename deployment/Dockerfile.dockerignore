@@ -7,6 +7,13 @@ deployment
 docs
 *.md
 
+# The dashboard's source and its dependencies. The image needs the *built*
+# bundle, which `make ui` has already copied into apps/brain — sending the
+# source as well would ship a few hundred megabytes of node_modules into the
+# build context to be ignored.
+apps/dashboard
+**/node_modules
+
 # Local artefacts that would invalidate the build cache on every change.
 **/coverage.out
 **/*.test

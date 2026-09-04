@@ -25,3 +25,16 @@ site/_vendor/
 
 # Playwright MCP scratch output
 .playwright-mcp/
+
+# The dashboard's dependencies and its build output.
+#
+# dist/ lands inside apps/brain because //go:embed cannot reach outside its own
+# module. It is build output and is not committed — but the embed pattern must
+# still match something or `go build ./...` fails on a fresh clone with
+# "pattern all:dist: no matching files", which would make Node a requirement
+# for compiling the brain. dist/.gitkeep is what keeps the directory tracked
+# and empty; the handler serves a page saying so when index.html is missing.
+apps/dashboard/node_modules/
+apps/dashboard/dist/
+apps/brain/internal/api/ui/dist/*
+!apps/brain/internal/api/ui/dist/.gitkeep
