@@ -47,6 +47,7 @@ func TestLoadDefaults(t *testing.T) {
 		"OIDCAudience":         "openarity",
 		"DevToken":             "",
 		"SuperAdmins":          "0 entries",
+		"BootstrapFirstUser":   "false",
 	}
 	got := map[string]string{
 		"Environment":          string(cfg.Environment),
@@ -74,6 +75,7 @@ func TestLoadDefaults(t *testing.T) {
 		"OIDCAudience":         cfg.OIDCAudience,
 		"DevToken":             cfg.DevToken,
 		"SuperAdmins":          fmt.Sprintf("%d entries", len(cfg.SuperAdmins)),
+		"BootstrapFirstUser":   strconv.FormatBool(cfg.BootstrapFirstUser),
 	}
 	for k, w := range want {
 		if got[k] != w {

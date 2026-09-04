@@ -83,6 +83,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	}
 
 	warnIfIssuerIsNew(ctx, cfg, logger, dbStore)
+	warnIfInstallIsUnowned(ctx, cfg, logger, dbStore)
 
 	srv := server.New(
 		cfg,

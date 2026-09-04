@@ -6,6 +6,24 @@ SET email      = EXCLUDED.email,
     updated_at = now()
 RETURNING *;
 
+-- name: LockFirstUserBootstrap :exec
+-- Serialises the check-then-promote below. Without it two logins arriving
+-- together both read "no super admin" and both promote, because they update
+-- different rows and so never contend for a row lock. Transaction-scoped, so
+-- it is released by the commit that writes the grant.
+SELECT pg_advisory_xact_lock(sqlc.arg('key')::bigint);
+
+-- name: AnySuperAdmin :one
+-- Whether anybody holds the grant. Asked before promoting, so it must be the
+-- whole table rather than one row: the guard is "this install has no admin",
+-- not "this user is not one".
+SELECT EXISTS (SELECT 1 FROM users WHERE is_super_admin) AS present;
+
+-- name: PromoteToSuperAdmin :one
+UPDATE users SET is_super_admin = true, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
 -- name: GetUser :one
 SELECT * FROM users WHERE id = $1;
 

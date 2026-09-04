@@ -247,6 +247,50 @@ Any other OIDC client works too; the brain only ever sees a bearer token.
 A first login creates the user row with no memberships. Whoever is listed in
 `OPENARITY_SUPER_ADMINS` can then create a team and add the first member.
 
+### When nobody can be listed yet
+
+`OPENARITY_SUPER_ADMINS` matches the `sub` claim, which means it has to be
+written *before* anyone logs in, by somebody who already knows what their
+subject will be. Authentik's default `sub_mode` makes that an opaque hash you
+can only read out of a token you do not have yet, and a personal install with
+no identity provider has no subject at all.
+
+`OPENARITY_BOOTSTRAP_FIRST_USER=true` answers it from the other end: while the
+install has no super admin — no row holding the grant, and nothing named in
+`SUPER_ADMINS` — the next successful login is granted one, permanently.
+
+```sh
+OPENARITY_BOOTSTRAP_FIRST_USER=true go run ./cmd/brain
+```
+
+Four things are worth knowing before using it:
+
+- **Both halves are required.** If `SUPER_ADMINS` names anybody, the flag does
+  nothing. A deployment that names its admins has already answered the
+  question, and a flag inherited from an image must not override it.
+- **The window closes by itself** the moment a super admin exists, so nothing
+  has to remember to turn it off. Leaving it set simply stops mattering.
+- **The guard is "no super admin", not "no users".** An ordinary member logging
+  in before the operator does costs nothing; the next login still finds the
+  install unowned. The empty-table version of this guard would brick the
+  install in that case, with no way out but an `UPDATE` by hand.
+- **Erasing the only admin reopens it.** `brain reap` deletes user rows, so an
+  install whose sole administrator is erased becomes unowned again and the next
+  login claims it. That is the right answer for the single-user machine the
+  flag exists for, and the reason it is off by default.
+
+The brain says so at startup while the window is open:
+
+```text
+level=WARN msg="BOOTSTRAP_FIRST_USER is set and this install has no super
+admin: the next successful login will be granted one, and the grant is
+permanent" api_bind=127.0.0.1:21120
+```
+
+Compose and the Kubernetes manifests leave it unset. It is for the installer
+that provisions a personal machine, where there is no operator to write a
+subject into a file.
+
 ### Making it reproducible
 
 None of the above is code. A provider created through the API or the UI lives

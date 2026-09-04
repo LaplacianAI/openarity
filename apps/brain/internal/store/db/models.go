@@ -125,10 +125,11 @@ type TeamMember struct {
 }
 
 type User struct {
-	ID        uuid.UUID
-	Issuer    string
-	Subject   string
-	Email     *string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           uuid.UUID
+	Issuer       string
+	Subject      string
+	Email        *string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	IsSuperAdmin bool
 }
