@@ -39,6 +39,19 @@ type Config struct {
 	DevToken     string   `env:"DEV_TOKEN" envDefault:""`
 	SuperAdmins  []string `env:"SUPER_ADMINS" envDefault:""`
 
+	// BootstrapFirstUser grants super admin to whoever logs in while the
+	// install has no super admin at all — neither a row nor an entry in
+	// SuperAdmins above. It is how an installer hands the machine to its owner
+	// without knowing their subject in advance, which is the one thing
+	// SUPER_ADMINS cannot do: that variable has to be written before anybody
+	// has logged in, and a personal install has no subject to write.
+	//
+	// Off by default, and compose and Kubernetes leave it off — a deployment
+	// that names its admins has already answered this question. The window
+	// closes by itself the moment a super admin exists, so nothing has to
+	// remember to turn it back off; leaving it on simply stops mattering.
+	BootstrapFirstUser bool `env:"BOOTSTRAP_FIRST_USER" envDefault:"false"`
+
 	/* Object Storage Configuration */
 	ObjectsBackend   ObjectsBackend `env:"OBJECTS_BACKEND" envDefault:"memory"`
 	ObjectsPath      string         `env:"OBJECTS_PATH" envDefault:"/var/lib/openarity/objects"`

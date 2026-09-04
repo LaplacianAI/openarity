@@ -40,7 +40,12 @@ func run(ctx context.Context, out io.Writer, args []string) error {
 		"environment", cfg.Environment,
 	)
 
-	db, err := store.New(ctx, cfg.PostgresDSN)
+	// Every command shares one store, so migrate and reap carry the option
+	// too. Neither resolves a principal, so neither can promote anybody — the
+	// policy only has an effect on the path that authenticates a request.
+	db, err := store.New(ctx, cfg.PostgresDSN,
+		store.WithFirstUserBootstrap(firstUserBootstrap(cfg)),
+	)
 	if err != nil {
 		return err
 	}

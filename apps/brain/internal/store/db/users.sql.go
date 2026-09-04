@@ -11,6 +11,20 @@ import (
 	"github.com/google/uuid"
 )
 
+const anySuperAdmin = `-- name: AnySuperAdmin :one
+SELECT EXISTS (SELECT 1 FROM users WHERE is_super_admin) AS present
+`
+
+// Whether anybody holds the grant. Asked before promoting, so it must be the
+// whole table rather than one row: the guard is "this install has no admin",
+// not "this user is not one".
+func (q *Queries) AnySuperAdmin(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, anySuperAdmin)
+	var present bool
+	err := row.Scan(&present)
+	return present, err
+}
+
 const findUsersBySubject = `-- name: FindUsersBySubject :many
 SELECT id, issuer, subject, email
 FROM users
@@ -57,7 +71,7 @@ func (q *Queries) FindUsersBySubject(ctx context.Context, arg FindUsersBySubject
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, issuer, subject, email, created_at, updated_at FROM users WHERE id = $1
+SELECT id, issuer, subject, email, created_at, updated_at, is_super_admin FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
@@ -70,6 +84,7 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.Email,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsSuperAdmin,
 	)
 	return i, err
 }
@@ -156,13 +171,47 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 	return items, nil
 }
 
+const lockFirstUserBootstrap = `-- name: LockFirstUserBootstrap :exec
+SELECT pg_advisory_xact_lock($1::bigint)
+`
+
+// Serialises the check-then-promote below. Without it two logins arriving
+// together both read "no super admin" and both promote, because they update
+// different rows and so never contend for a row lock. Transaction-scoped, so
+// it is released by the commit that writes the grant.
+func (q *Queries) LockFirstUserBootstrap(ctx context.Context, key int64) error {
+	_, err := q.db.Exec(ctx, lockFirstUserBootstrap, key)
+	return err
+}
+
+const promoteToSuperAdmin = `-- name: PromoteToSuperAdmin :one
+UPDATE users SET is_super_admin = true, updated_at = now()
+WHERE id = $1
+RETURNING id, issuer, subject, email, created_at, updated_at, is_super_admin
+`
+
+func (q *Queries) PromoteToSuperAdmin(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRow(ctx, promoteToSuperAdmin, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Issuer,
+		&i.Subject,
+		&i.Email,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsSuperAdmin,
+	)
+	return i, err
+}
+
 const upsertUser = `-- name: UpsertUser :one
 INSERT INTO users (issuer, subject, email)
 VALUES ($1, $2, $3)
 ON CONFLICT (issuer, subject) DO UPDATE
 SET email      = EXCLUDED.email,
     updated_at = now()
-RETURNING id, issuer, subject, email, created_at, updated_at
+RETURNING id, issuer, subject, email, created_at, updated_at, is_super_admin
 `
 
 type UpsertUserParams struct {
@@ -181,6 +230,7 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.Email,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsSuperAdmin,
 	)
 	return i, err
 }

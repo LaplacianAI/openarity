@@ -23,8 +23,21 @@ type Authorizer struct {
 	superAdmins map[string]bool
 }
 
+// IsSuperAdmin answers from two independent sources, and this is the only
+// place that knows both.
+//
+// The configured set is how a deployment decides in advance: the subjects are
+// written into OPENARITY_SUPER_ADMINS before anybody logs in, and editing that
+// variable changes who qualifies on the next start. The database grant is how
+// an install decides afterwards, and it is the only one available to a fresh
+// personal install, where nobody has a subject to name yet.
+//
+// OR rather than a merge on purpose. Neither source can revoke the other, so a
+// deployment that empties the variable does not silently strip a grant somebody
+// is relying on, and a promotion cannot be undone by an environment change made
+// for an unrelated reason.
 func (a *Authorizer) IsSuperAdmin(u *auth.User) bool {
-	return u != nil && a.superAdmins[u.Subject]
+	return u != nil && (a.superAdmins[u.Subject] || u.SuperAdmin)
 }
 
 func New(p Permissions, superAdmins []string) *Authorizer {

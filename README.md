@@ -469,21 +469,22 @@ the collection. Pass it back as `?cursor=` to fetch the next page.
 The brain is configured by environment only — no files, no flags — every
 variable prefixed `OPENARITY_`:
 
-| Variable                   | Default                     | What it does                     |
-| -------------------------- | --------------------------- | -------------------------------- |
-| `OPENARITY_ENVIRONMENT`    | `development`               | Selects the log format           |
-| `OPENARITY_LOG_LEVEL`      | `info`                      | `debug`, `info`, `warn`, `error` |
-| `OPENARITY_API_BIND`       | `127.0.0.1:21120`           | API listener address             |
-| `OPENARITY_WEBHOOK_BIND`   | `127.0.0.1:21121`           | Webhook listener address         |
-| `OPENARITY_POSTGRES_DSN`   | see below                   | Relational store                 |
-| `OPENARITY_FALKOR_DB_URL`  | `redis://127.0.0.1:6380`    | Graph store — not used yet       |
-| `OPENARITY_REDIS_URL`      | `redis://127.0.0.1:6379`    | Cache and queues — not used yet  |
-| `OPENARITY_OMNI_ROUTE_URL` | `http://localhost:20128/v1` | Model router — not used yet      |
-| `OPENARITY_OIDC_ENABLED`   | `false`                     | Verify tokens against an IdP     |
-| `OPENARITY_OIDC_ISSUER`    | empty                       | Issuer URL, required if enabled  |
-| `OPENARITY_OIDC_AUDIENCE`  | `openarity`                 | Audience the token must carry    |
-| `OPENARITY_DEV_TOKEN`      | empty                       | Shared token — development only  |
-| `OPENARITY_SUPER_ADMINS`   | empty                       | Comma-separated token subjects   |
+| Variable                         | Default                     | What it does                     |
+| -------------------------------- | --------------------------- | -------------------------------- |
+| `OPENARITY_ENVIRONMENT`          | `development`               | Selects the log format           |
+| `OPENARITY_LOG_LEVEL`            | `info`                      | `debug`, `info`, `warn`, `error` |
+| `OPENARITY_API_BIND`             | `127.0.0.1:21120`           | API listener address             |
+| `OPENARITY_WEBHOOK_BIND`         | `127.0.0.1:21121`           | Webhook listener address         |
+| `OPENARITY_POSTGRES_DSN`         | see below                   | Relational store                 |
+| `OPENARITY_FALKOR_DB_URL`        | `redis://127.0.0.1:6380`    | Graph store — not used yet       |
+| `OPENARITY_REDIS_URL`            | `redis://127.0.0.1:6379`    | Cache and queues — not used yet  |
+| `OPENARITY_OMNI_ROUTE_URL`       | `http://localhost:20128/v1` | Model router — not used yet      |
+| `OPENARITY_OIDC_ENABLED`         | `false`                     | Verify tokens against an IdP     |
+| `OPENARITY_OIDC_ISSUER`          | empty                       | Issuer URL, required if enabled  |
+| `OPENARITY_OIDC_AUDIENCE`        | `openarity`                 | Audience the token must carry    |
+| `OPENARITY_DEV_TOKEN`            | empty                       | Shared token — development only  |
+| `OPENARITY_SUPER_ADMINS`         | empty                       | Comma-separated token subjects   |
+| `OPENARITY_BOOTSTRAP_FIRST_USER` | `false`                     | First login becomes super admin  |
 
 The Postgres default is:
 
