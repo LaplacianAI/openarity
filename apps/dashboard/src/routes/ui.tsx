@@ -1,21 +1,20 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import {
-  Inbox,
-  LayoutGrid,
-  MessagesSquare,
-  Moon,
-  Radio,
-  RotateCcw,
-  Sun,
-  Users,
-} from "lucide-react";
-import { toast } from "sonner";
-
+import { Inbox, LayoutGrid, MessagesSquare, Moon, Radio, Sun, Users } from "lucide-react";
+import { fetchWhoami } from "@/api";
+import { useCurrentTeam, useToken } from "@/api/session";
+import { setToken } from "@/api/token";
+import { SignIn } from "@/components/sign-in";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
-import { getSetupState, listPendingSenders, loadDemoInstall, resetInstall } from "@/mocks/api";
 
 export const Route = createFileRoute("/ui")({
   component: UiLayout,
@@ -31,12 +30,15 @@ const NAV = [
 
 function UiLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const chromeless = pathname.startsWith("/ui/setup");
+  const token = useToken();
 
-  if (chromeless) {
+  // Everything below this line needs a token. Rendering the shell first and
+  // letting each screen 401 on its own would show five simultaneous failures
+  // and none of them would say what to do about it.
+  if (!token) {
     return (
       <div className="min-h-screen bg-background font-sans text-foreground">
-        <Outlet />
+        <SignIn />
       </div>
     );
   }
@@ -55,12 +57,6 @@ function UiLayout() {
 }
 
 function Sidebar({ pathname }: { pathname: string }) {
-  const { data: pending } = useQuery({
-    queryKey: ["pending", "count"],
-    queryFn: () => listPendingSenders({}),
-  });
-  const pendingCount = pending?.items.length ?? 0;
-
   return (
     <aside className="hidden w-56 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
       <div className="flex h-12 items-center gap-2 border-b border-sidebar-border px-4">
@@ -84,76 +80,47 @@ function Sidebar({ pathname }: { pathname: string }) {
             >
               <Icon className="size-4" aria-hidden />
               <span className="flex-1">{item.label}</span>
-              {item.label === "Approvals" && pendingCount > 0 ? (
-                <span className="rounded-sm bg-primary px-1.5 py-0.5 font-mono text-[10px] text-primary-foreground">
-                  {pendingCount}
-                  {pending?.next_cursor ? "+" : ""}
-                </span>
-              ) : null}
             </Link>
           );
         })}
       </nav>
-      <div className="border-t border-sidebar-border p-3">
-        <Link
-          to="/ui/setup"
-          className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-        >
-          First-run setup
-        </Link>
-      </div>
+      {/* No pending count in the sidebar: it would cost one request per
+          channel on every page, because the brain counts pending senders per
+          channel and not per install. */}
     </aside>
   );
 }
 
 function TopBar() {
   const { theme, toggle } = useTheme();
-  const qc = useQueryClient();
-  const { data: setup } = useQuery({ queryKey: ["setup"], queryFn: getSetupState });
+  const { teamId, teams, choose } = useCurrentTeam();
+  const whoami = useQuery({ queryKey: ["whoami"], queryFn: ({ signal }) => fetchWhoami(signal) });
 
-  const demo = useMutation({
-    mutationFn: loadDemoInstall,
-    onSuccess: () => {
-      qc.invalidateQueries();
-      toast.success("Demo install loaded");
-    },
-  });
-  const reset = useMutation({
-    mutationFn: resetInstall,
-    onSuccess: () => {
-      qc.invalidateQueries();
-      toast.success("Install reset to a fresh, empty state");
-    },
-  });
+  const principal = whoami.data as { subject?: string; email?: string } | undefined;
 
   return (
     <header className="flex h-12 items-center justify-between gap-3 border-b border-border px-6">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
         <span className="font-semibold text-foreground md:hidden">Openarity</span>
-        {setup?.signed_in_user ? (
-          <span className="font-mono">{setup.signed_in_user.email}</span>
-        ) : (
-          <span>Not signed in</span>
-        )}
+        <span className="font-mono">{principal?.email ?? principal?.subject ?? "…"}</span>
+        {teams.length > 1 ? (
+          <Select value={teamId ?? undefined} onValueChange={choose}>
+            <SelectTrigger className="h-7 w-48 text-xs" aria-label="Current team">
+              <SelectValue placeholder="Choose a team" />
+            </SelectTrigger>
+            <SelectContent>
+              {teams.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
       </div>
       <div className="flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => demo.mutate()}
-          disabled={demo.isPending}
-          className="text-xs"
-        >
-          Load demo data
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => reset.mutate()}
-          disabled={reset.isPending}
-          className="text-xs"
-        >
-          <RotateCcw className="size-3.5" aria-hidden /> Reset
+        <Button variant="ghost" size="sm" className="text-xs" onClick={() => setToken(null)}>
+          Sign out
         </Button>
         <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle color theme">
           {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}

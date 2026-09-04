@@ -23,8 +23,12 @@ site/resources/
 site/.hugo_build.lock
 site/_vendor/
 
-# Playwright MCP scratch output
+# Playwright MCP scratch output. The screenshot tool writes into the working
+# directory rather than the scratch folder, so the wildcard catches those too.
 .playwright-mcp/
+page-*.png
+*-screenshot.png
+signin.png
 
 # The dashboard's dependencies and its build output.
 #

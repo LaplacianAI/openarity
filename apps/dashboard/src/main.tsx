@@ -5,12 +5,12 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { routeTree } from "./routeTree.gen";
 
-// basepath, not a server rewrite: the app is served under /ui by the Go
-// binary, so every link and every history entry has to carry that prefix or a
-// reload lands on a path the router has never heard of.
+// No basepath. The route files are named ui.*, so every route already carries
+// the /ui prefix the Go server mounts the app under — setting basepath as well
+// applies it twice and lands the browser on /ui/ui. One or the other, and the
+// file names are the half that is visible in the tree.
 const router = createRouter({
   routeTree,
-  basepath: "/ui",
   defaultPreload: "intent",
   scrollRestoration: true,
 });

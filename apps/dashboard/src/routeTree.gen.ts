@@ -13,7 +13,6 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as UiRouteImport } from './routes/ui'
 import { Route as UiIndexRouteImport } from './routes/ui.index'
 import { Route as UiApprovalsRouteImport } from './routes/ui.approvals'
-import { Route as UiSetupRouteImport } from './routes/ui.setup'
 import { Route as UiChannelsIndexRouteImport } from './routes/ui.channels.index'
 import { Route as UiSessionsIndexRouteImport } from './routes/ui.sessions.index'
 import { Route as UiTeamsIndexRouteImport } from './routes/ui.teams.index'
@@ -38,11 +37,6 @@ const UiApprovalsRoute = UiApprovalsRouteImport.update({
   path: '/approvals',
   getParentRoute: () => UiRoute,
 } as any)
-const UiSetupRoute = UiSetupRouteImport.update({
-  id: '/setup',
-  path: '/setup',
-  getParentRoute: () => UiRoute,
-} as any)
 const UiChannelsIndexRoute = UiChannelsIndexRouteImport.update({
   id: '/channels/',
   path: '/channels/',
@@ -63,7 +57,6 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/ui': typeof UiRouteWithChildren
   '/ui/approvals': typeof UiApprovalsRoute
-  '/ui/setup': typeof UiSetupRoute
   '/ui/': typeof UiIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
   '/ui/sessions/': typeof UiSessionsIndexRoute
@@ -72,7 +65,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ui/approvals': typeof UiApprovalsRoute
-  '/ui/setup': typeof UiSetupRoute
   '/ui': typeof UiIndexRoute
   '/ui/channels': typeof UiChannelsIndexRoute
   '/ui/sessions': typeof UiSessionsIndexRoute
@@ -83,7 +75,6 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/ui': typeof UiRouteWithChildren
   '/ui/approvals': typeof UiApprovalsRoute
-  '/ui/setup': typeof UiSetupRoute
   '/ui/': typeof UiIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
   '/ui/sessions/': typeof UiSessionsIndexRoute
@@ -95,7 +86,6 @@ export interface FileRouteTypes {
     | '/'
     | '/ui'
     | '/ui/approvals'
-    | '/ui/setup'
     | '/ui/'
     | '/ui/channels/'
     | '/ui/sessions/'
@@ -104,7 +94,6 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/ui/approvals'
-    | '/ui/setup'
     | '/ui'
     | '/ui/channels'
     | '/ui/sessions'
@@ -114,7 +103,6 @@ export interface FileRouteTypes {
     | '/'
     | '/ui'
     | '/ui/approvals'
-    | '/ui/setup'
     | '/ui/'
     | '/ui/channels/'
     | '/ui/sessions/'
@@ -156,13 +144,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiApprovalsRouteImport
       parentRoute: typeof UiRoute
     }
-    '/ui/setup': {
-      id: '/ui/setup'
-      path: '/setup'
-      fullPath: '/ui/setup'
-      preLoaderRoute: typeof UiSetupRouteImport
-      parentRoute: typeof UiRoute
-    }
     '/ui/channels/': {
       id: '/ui/channels/'
       path: '/channels'
@@ -189,7 +170,6 @@ declare module '@tanstack/react-router' {
 
 interface UiRouteChildren {
   UiApprovalsRoute: typeof UiApprovalsRoute
-  UiSetupRoute: typeof UiSetupRoute
   UiIndexRoute: typeof UiIndexRoute
   UiChannelsIndexRoute: typeof UiChannelsIndexRoute
   UiSessionsIndexRoute: typeof UiSessionsIndexRoute
@@ -198,7 +178,6 @@ interface UiRouteChildren {
 
 const UiRouteChildren: UiRouteChildren = {
   UiApprovalsRoute: UiApprovalsRoute,
-  UiSetupRoute: UiSetupRoute,
   UiIndexRoute: UiIndexRoute,
   UiChannelsIndexRoute: UiChannelsIndexRoute,
   UiSessionsIndexRoute: UiSessionsIndexRoute,

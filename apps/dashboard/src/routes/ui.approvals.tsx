@@ -1,7 +1,12 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import { toast } from "sonner";
+
+import { approveSender, listChannels, listPendingSenders, listUsers } from "@/api";
+import { nextCursorOf } from "@/api/client";
+import { useCurrentTeam } from "@/api/session";
+import type { PendingSender } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -12,260 +17,191 @@ import {
 } from "@/components/ui/select";
 import { Avatar, EmptyState, LoadMore, Mono, PageHeader } from "@/components/ui-bits";
 import { relativeTime } from "@/lib/format";
-import { cn } from "@/lib/utils";
-import { decideSender, listChannels, listPendingSenders, listTeams } from "@/mocks/api";
-import type { PendingSender } from "@/mocks/types";
 
 export const Route = createFileRoute("/ui/approvals")({
   component: Approvals,
 });
 
 function Approvals() {
-  const qc = useQueryClient();
-  const [teamId, setTeamId] = useState<string>("all");
-  const [channelId, setChannelId] = useState<string>("all");
-  const [cursorIndex, setCursorIndex] = useState(0);
-  const rowRefs = useRef<Array<HTMLTableRowElement | null>>([]);
+  const { teamId } = useCurrentTeam();
+  const [channelId, setChannelId] = useState<string | null>(null);
 
-  const teams = useQuery({ queryKey: ["teams", null], queryFn: () => listTeams() });
   const channels = useQuery({
     queryKey: ["channels", teamId],
-    queryFn: () => listChannels(teamId === "all" ? null : teamId),
+    queryFn: () => listChannels(teamId as string),
+    enabled: Boolean(teamId),
   });
 
-  const filter = {
-    team_id: teamId === "all" ? null : teamId,
-    channel_id: channelId === "all" ? null : channelId,
-  };
-
-  const queue = useInfiniteQuery({
-    queryKey: ["pending", filter.team_id, filter.channel_id],
-    queryFn: ({ pageParam }) => listPendingSenders(filter, pageParam),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.next_cursor,
-  });
-
-  const rows: PendingSender[] = queue.data?.pages.flatMap((p) => p.items) ?? [];
-
-  const decide = useMutation({
-    mutationFn: ({ id, decision }: { id: string; decision: "approve" | "reject" }) =>
-      decideSender(id, decision),
-    onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ["pending"] });
-      qc.invalidateQueries({ queryKey: ["channels"] });
-      qc.invalidateQueries({ queryKey: ["sessions"] });
-      toast.success(vars.decision === "approve" ? "Sender approved" : "Sender rejected");
-    },
-  });
-
-  const focusRow = useCallback((index: number) => {
-    rowRefs.current[index]?.scrollIntoView({ block: "nearest" });
-  }, []);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
-      if (rows.length === 0) return;
-      const key = e.key.toLowerCase();
-      if (key === "j" || e.key === "ArrowDown") {
-        e.preventDefault();
-        setCursorIndex((i) => {
-          const next = Math.min(i + 1, rows.length - 1);
-          focusRow(next);
-          return next;
-        });
-      } else if (key === "k" || e.key === "ArrowUp") {
-        e.preventDefault();
-        setCursorIndex((i) => {
-          const next = Math.max(i - 1, 0);
-          focusRow(next);
-          return next;
-        });
-      } else if (key === "a" || key === "r") {
-        const row = rows[cursorIndex];
-        if (!row) return;
-        e.preventDefault();
-        decide.mutate({ id: row.id, decision: key === "a" ? "approve" : "reject" });
-        setCursorIndex((i) => Math.min(i, Math.max(0, rows.length - 2)));
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [rows, cursorIndex, decide, focusRow]);
-
-  const teamOptions = teams.data?.items ?? [];
-  const channelOptions = channels.data?.items ?? [];
+  // Pending senders are counted per channel, not per install: the brain has no
+  // endpoint that spans them. So the channel is a choice the operator makes
+  // rather than a filter over something already fetched.
+  const options = channels.data?.items ?? [];
+  const selected = channelId ?? options[0]?.id ?? null;
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Approval queue"
-        description="Unknown senders who messaged an agent. Nothing reaches the agent until you approve the sender."
+        description="Senders nobody has vouched for yet. Nothing they send reaches an agent until they are bound to a user."
         actions={
-          <div className="flex items-center gap-2">
-            <Select
-              value={teamId}
-              onValueChange={(v) => {
-                setTeamId(v);
-                setChannelId("all");
-              }}
-            >
-              <SelectTrigger className="h-8 w-44 text-xs" aria-label="Filter by team">
-                <SelectValue placeholder="All teams" />
+          options.length > 0 ? (
+            <Select value={selected ?? undefined} onValueChange={setChannelId}>
+              <SelectTrigger className="h-8 w-56 text-xs" aria-label="Channel">
+                <SelectValue placeholder="Choose a channel" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All teams</SelectItem>
-                {teamOptions.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={channelId} onValueChange={setChannelId}>
-              <SelectTrigger className="h-8 w-44 text-xs" aria-label="Filter by channel">
-                <SelectValue placeholder="All channels" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All channels</SelectItem>
-                {channelOptions.map((c) => (
+                {options.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
-                    {c.name}
+                    {c.name} · {c.provider}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          ) : null
         }
       />
 
-      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-        <span>
-          Keyboard: <Kbd>J</Kbd>/<Kbd>K</Kbd> move · <Kbd>A</Kbd> approve · <Kbd>R</Kbd> reject
-        </span>
-      </div>
-
-      {queue.isPending ? (
-        <SkeletonRows />
-      ) : rows.length === 0 ? (
+      {!teamId ? (
+        <EmptyState title="No team" body="Join or create a team before reviewing senders." />
+      ) : channels.isPending ? (
+        <p className="text-sm text-muted-foreground">Loading channels…</p>
+      ) : options.length === 0 ? (
         <EmptyState
-          title="Nothing waiting for a decision"
-          body="When someone the platform doesn't recognise messages an agent, they appear here first. An empty queue means every sender on your channels has already been approved or rejected."
-          action={
-            <Button asChild size="sm" variant="outline">
-              <Link to="/ui/channels">Review channels</Link>
-            </Button>
-          }
+          title="This team has no channels"
+          body="Senders arrive through a channel — an inbox, a Slack workspace, a webhook. Until one exists there is nothing that could be waiting."
         />
-      ) : (
-        <>
-          {/* A real table, not a list wearing ARIA: these rows have columns and
-              per-row controls, and a <tr> already carries the semantics that
-              role="row" would only describe. Selection is visual plus
-              aria-selected; the window-level handler below moves it. */}
-          <table className="w-full overflow-hidden rounded-md border border-border bg-card text-left">
-            <caption className="sr-only">
-              Senders waiting for a decision. Press J and K to move, A to approve, R to reject.
-            </caption>
-            <tbody className="divide-y divide-border">
-              {rows.map((row, i) => (
-                <tr
-                  key={row.id}
-                  ref={(el) => {
-                    rowRefs.current[i] = el;
-                  }}
-                  aria-selected={i === cursorIndex}
-                  className={cn(
-                    "transition-colors",
-                    i === cursorIndex
-                      ? "bg-accent/60 shadow-[inset_3px_0_0_0_var(--color-primary)]"
-                      : "hover:bg-secondary/60",
-                  )}
-                >
-                  <td className="w-9 py-2 pl-3">
-                    <Avatar name={row.sender_label ?? row.sender_address} />
-                  </td>
-                  <td className="min-w-0 py-2">
-                    <div className="flex items-baseline gap-2">
-                      <span className="truncate text-sm font-medium">
-                        {row.sender_label ?? row.sender_address}
-                      </span>
-                      {row.sender_label ? <Mono>{row.sender_address}</Mono> : null}
-                    </div>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {row.last_message_preview}
-                    </p>
-                  </td>
-                  <td className="hidden w-40 py-2 text-right text-xs text-muted-foreground lg:table-cell">
-                    <div className="truncate">{row.channel_name}</div>
-                    <div className="font-mono">
-                      {row.message_count} msg · {relativeTime(row.first_seen_at)}
-                    </div>
-                  </td>
-                  <td className="py-2 pr-3 pl-3">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <Button
-                        size="sm"
-                        className="h-7 px-2.5 text-xs"
-                        disabled={decide.isPending}
-                        onClick={() => decide.mutate({ id: row.id, decision: "approve" })}
-                      >
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2.5 text-xs"
-                        disabled={decide.isPending}
-                        onClick={() => decide.mutate({ id: row.id, decision: "reject" })}
-                      >
-                        Reject
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <LoadMore
-            hasMore={Boolean(queue.hasNextPage)}
-            loading={queue.isFetchingNextPage}
-            onClick={() => queue.fetchNextPage()}
-            loadedLabel={`${rows.length} senders loaded`}
-          />
-        </>
-      )}
+      ) : selected ? (
+        <Queue teamId={teamId} channelId={selected} />
+      ) : null}
     </div>
   );
 }
 
-function Kbd({ children }: { children: React.ReactNode }) {
+function Queue({ teamId, channelId }: { teamId: string; channelId: string }) {
+  const qc = useQueryClient();
+
+  const queue = useInfiniteQuery({
+    queryKey: ["pending", teamId, channelId],
+    queryFn: ({ pageParam }) => listPendingSenders(teamId, channelId, pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: nextCursorOf,
+  });
+
+  // Approving binds a sender to a user, so the directory has to be loaded
+  // before any row can be acted on — the brain will not accept an approval
+  // that does not say whose messages these are.
+  const users = useQuery({ queryKey: ["users"], queryFn: () => listUsers() });
+
+  const rows: PendingSender[] = queue.data?.pages.flatMap((p) => p.items) ?? [];
+
+  const approve = useMutation({
+    mutationFn: ({ ref, userId }: { ref: string; userId: string }) =>
+      approveSender(teamId, channelId, ref, userId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["pending", teamId, channelId] });
+      toast.success("Sender approved");
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  if (queue.isPending) return <p className="text-sm text-muted-foreground">Loading senders…</p>;
+  if (queue.isError) {
+    return (
+      <div role="alert" className="text-sm text-destructive">
+        {queue.error.message}
+      </div>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        title="Nothing waiting for a decision"
+        body="Every sender seen on this channel has already been bound to a user. New ones appear here the first time they write in."
+      />
+    );
+  }
+
   return (
-    <kbd className="rounded-sm border border-border bg-surface px-1 py-0.5 font-mono text-[10px] text-foreground">
-      {children}
-    </kbd>
+    <>
+      <table className="w-full overflow-hidden rounded-md border border-border bg-card text-left">
+        <caption className="sr-only">Senders waiting to be bound to a user</caption>
+        <tbody className="divide-y divide-border">
+          {rows.map((row) => (
+            <tr key={row.sender_ref} className="transition-colors hover:bg-secondary/60">
+              <td className="w-9 py-2 pl-3">
+                <Avatar name={row.sender_name || row.sender_ref} />
+              </td>
+              <td className="min-w-0 py-2">
+                <div className="flex items-baseline gap-2">
+                  <span className="truncate text-sm font-medium">
+                    {row.sender_name || row.sender_ref}
+                  </span>
+                  {row.sender_name ? <Mono>{row.sender_ref}</Mono> : null}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {row.seen_count} message{row.seen_count === 1 ? "" : "s"} · first seen{" "}
+                  {relativeTime(row.first_seen)} · last {relativeTime(row.last_seen)}
+                </p>
+              </td>
+              <td className="py-2 pr-3 pl-3">
+                <BindTo
+                  disabled={approve.isPending || users.isPending}
+                  users={users.data?.items ?? []}
+                  onApprove={(userId) => approve.mutate({ ref: row.sender_ref, userId })}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <LoadMore
+        hasMore={Boolean(queue.hasNextPage)}
+        loading={queue.isFetchingNextPage}
+        onClick={() => queue.fetchNextPage()}
+        loadedLabel={`${rows.length} sender${rows.length === 1 ? "" : "s"} loaded`}
+      />
+      <p className="text-xs text-muted-foreground">
+        There is no “reject”. A sender that is never approved never reaches an agent, so declining
+        is what happens by leaving them here.
+      </p>
+    </>
   );
 }
 
-const SKELETON_ROWS = ["a", "b", "c", "d", "e", "f"];
+function BindTo({
+  users,
+  disabled,
+  onApprove,
+}: {
+  users: Array<{ id: string; subject: string; email?: string }>;
+  disabled: boolean;
+  onApprove: (userId: string) => void;
+}) {
+  const [userId, setUserId] = useState<string>("");
 
-function SkeletonRows() {
   return (
-    <table className="w-full overflow-hidden rounded-md border border-border bg-card">
-      <caption className="sr-only">Loading the approval queue</caption>
-      <tbody className="divide-y divide-border">
-        {SKELETON_ROWS.map((key) => (
-          <tr key={key}>
-            <td className="w-9 py-3 pl-3">
-              <span className="block size-7 animate-pulse rounded-full bg-muted" />
-            </td>
-            <td className="py-3 pr-3">
-              <span className="block h-3 animate-pulse rounded bg-muted" />
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="flex items-center justify-end gap-1.5">
+      <Select value={userId} onValueChange={setUserId}>
+        <SelectTrigger className="h-7 w-52 text-xs" aria-label="Bind this sender to">
+          <SelectValue placeholder="Bind to user…" />
+        </SelectTrigger>
+        <SelectContent>
+          {users.map((u) => (
+            <SelectItem key={u.id} value={u.id}>
+              {u.email ?? u.subject}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Button
+        size="sm"
+        className="h-7 px-2.5 text-xs"
+        disabled={disabled || !userId}
+        onClick={() => userId && onApprove(userId)}
+      >
+        Approve
+      </Button>
+    </div>
   );
 }

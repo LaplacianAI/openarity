@@ -1,73 +1,75 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+
+import { listChannels, listSessions } from "@/api";
+import { useCurrentTeam } from "@/api/session";
 import { Button } from "@/components/ui/button";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
-import {
-  getSetupState,
-  listChannels,
-  listPendingSenders,
-  listSessions,
-  listTeams,
-} from "@/mocks/api";
 
 export const Route = createFileRoute("/ui/")({
   component: Overview,
 });
 
 function Overview() {
-  const setup = useQuery({ queryKey: ["setup"], queryFn: getSetupState });
-  const teams = useQuery({ queryKey: ["teams", null], queryFn: () => listTeams() });
-  const channels = useQuery({ queryKey: ["channels", "all"], queryFn: () => listChannels(null) });
-  const pending = useQuery({
-    queryKey: ["pending", null, null],
-    queryFn: () => listPendingSenders({}),
-  });
-  const sessions = useQuery({ queryKey: ["sessions", null], queryFn: () => listSessions(null) });
+  const { teamId, teams, isPending } = useCurrentTeam();
 
-  const empty = (teams.data?.items.length ?? 0) === 0;
+  const channels = useQuery({
+    queryKey: ["channels", teamId],
+    queryFn: () => listChannels(teamId as string),
+    enabled: Boolean(teamId),
+  });
+  const sessions = useQuery({
+    queryKey: ["sessions", teamId],
+    queryFn: () => listSessions(teamId as string),
+    enabled: Boolean(teamId),
+  });
+
+  if (isPending) {
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
+  }
+
+  if (teams.length === 0) {
+    return (
+      <div className="space-y-5">
+        <PageHeader title="Overview" />
+        <EmptyState
+          title="You are not in any team"
+          body="Everything in Openarity is scoped to a team — channels, sessions and the senders waiting for approval all belong to one. Create the first team to begin."
+          action={
+            <Button asChild size="sm">
+              <Link to="/ui/teams">Go to teams</Link>
+            </Button>
+          }
+          hint="Creating a team requires super admin. On a fresh install the first person to sign in is granted it."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Overview"
-        description="Openarity control plane. Everything here reads from the local API server."
-        actions={
-          setup.data?.completed ? null : (
-            <Button asChild size="sm">
-              <Link to="/ui/setup">Continue setup</Link>
-            </Button>
-          )
-        }
+        description="Everything here is scoped to the current team and read from the brain."
       />
-
-      {empty ? (
-        <EmptyState
-          title="This install is empty"
-          body="No teams exist yet, so there is nothing for an agent to answer. Run the first-run setup — it takes four short steps and you can stop at any point."
-          action={
-            <Button asChild size="sm">
-              <Link to="/ui/setup">Start first-run setup</Link>
-            </Button>
-          }
-          hint="Just exploring? Use “Load demo data” in the top bar to populate a realistic install."
+      <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Stat label="Teams you belong to" value={teams.length} to="/ui/teams" />
+        <Stat
+          label="Channels"
+          value={channels.data?.items.length}
+          more={Boolean(channels.data?.next_cursor)}
+          to="/ui/channels"
         />
-      ) : (
-        <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat label="Teams" value={teams.data?.items.length} to="/ui/teams" />
-          <Stat label="Channels" value={channels.data?.items.length} to="/ui/channels" />
-          <Stat
-            label="Awaiting approval"
-            value={pending.data?.items.length}
-            more={Boolean(pending.data?.next_cursor)}
-            to="/ui/approvals"
-          />
-          <Stat label="Sessions" value={sessions.data?.items.length} to="/ui/sessions" />
-        </dl>
-      )}
-
+        <Stat
+          label="Sessions"
+          value={sessions.data?.items.length}
+          more={Boolean(sessions.data?.next_cursor)}
+          to="/ui/sessions"
+        />
+      </dl>
       <p className="text-xs text-muted-foreground">
-        Counts reflect what has been loaded. The API returns cursor pages without totals, so lists
-        grow with “Load more” rather than page numbers.
+        Counts are of what has been loaded, not of what exists. The API returns cursor pages with no
+        totals, so a “+” means there is another page rather than an unknown remainder.
       </p>
     </div>
   );
@@ -82,7 +84,7 @@ function Stat({
   label: string;
   value: number | undefined;
   more?: boolean;
-  to: string;
+  to: "/ui/teams" | "/ui/channels" | "/ui/sessions";
 }) {
   return (
     <Link
