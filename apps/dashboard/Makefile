@@ -61,6 +61,13 @@ build:
 	$(NPM) run build
 
 ## check: everything CI runs, in the order that fails fastest
+#
+# CI calls these five targets as five named steps rather than calling this
+# one, so that a failure names the check in the step list instead of only
+# inside the log. That means the list here and the steps in
+# .github/workflows/ci.yml have to be kept in step by hand — adding a target
+# to this line without adding a step there leaves it running locally and
+# nowhere else.
 check: fmt-check lint typecheck test build
 
 ## clean: remove the build output and the installed dependencies
