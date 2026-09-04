@@ -9,10 +9,50 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 
+import { onSessionExpired } from "./client";
 import { fetchAuthConfig, listTeams } from "./index";
-import { getToken, subscribeToken } from "./token";
+import { refreshSession } from "./oidc";
+import { getSession, getToken, setSession, subscribeToken } from "./token";
 
 const TEAM_KEY = "openarity.team";
+
+/**
+ * Teaches the client how to renew a session, once the brain has said which
+ * provider to renew it against.
+ *
+ * Registered from a hook rather than at module load because the issuer is not
+ * known until /auth/config has answered — and a development token has no
+ * provider at all, in which case a 401 is final and the renewer says so by
+ * returning false.
+ */
+export function useSessionRenewal() {
+  const config = useAuthConfig();
+  const oidc = config.data?.oidc;
+
+  useEffect(() => {
+    if (!oidc) {
+      onSessionExpired(null);
+      return;
+    }
+
+    onSessionExpired(async () => {
+      const refresh = getSession()?.refresh;
+      if (!refresh) return false;
+      try {
+        setSession(await refreshSession(oidc.issuer, oidc.client_id, refresh));
+        return true;
+      } catch {
+        // A refresh token the provider will not honour is a session that is
+        // over. Clearing it here puts the sign-in screen up once, rather than
+        // leaving every screen to fail separately.
+        setSession(null);
+        return false;
+      }
+    });
+
+    return () => onSessionExpired(null);
+  }, [oidc]);
+}
 
 export function useAuthConfig() {
   return useQuery({

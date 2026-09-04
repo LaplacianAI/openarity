@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { completeLogin } from "@/api/oidc";
 import { useAuthConfig } from "@/api/session";
-import { setToken } from "@/api/token";
+import { setSession, setToken } from "@/api/token";
 
 export const Route = createFileRoute("/ui/callback")({
   component: Callback,
@@ -34,8 +34,8 @@ function Callback() {
     ran.current = true;
 
     completeLogin(oidc.issuer, oidc.client_id, new URLSearchParams(window.location.search))
-      .then(({ accessToken, returnTo }) => {
-        setToken(accessToken);
+      .then(({ session, returnTo }) => {
+        setSession(session);
         window.history.replaceState(null, "", returnTo);
         void navigate({ to: "/ui", replace: true });
       })

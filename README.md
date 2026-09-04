@@ -85,6 +85,11 @@ platform does:
 - Approval before anything is stored. A message from a sender nobody has linked
   to a user is dropped; only their id and name are queued, so a stranger cannot
   put text into your database by finding your URL
+- A web dashboard, served by the brain itself at `/ui` and compiled into the
+  same binary — no second process, no second origin, nothing to deploy
+  separately. It signs in with authorization code and PKCE against whichever
+  provider the brain names, and shows teams, members, channels, sessions and
+  the sender approval queue
 
 `oa` is early too, but it is real:
 
@@ -139,8 +144,8 @@ Which tools and skills a run may see is decided by the brain against its graph.
 That is an authorisation decision, and a separate Go module is what stops it
 leaking into the library: `sdk/agent` *cannot* import `apps/brain/internal`.
 
-Not built yet: the graph, the planner, the dashboard, and outbound replies —
-the brain can hold a conversation's messages but cannot yet answer one. The
+Not built yet: the graph, the planner, and outbound replies — the brain can
+hold a conversation's messages but cannot yet answer one. The
 agent loop exists as a library and runs end to end against a real gateway, but
 nothing in the brain calls it, so no message reaches a model. Slack, Discord and Telegram adapters are not written; the seam they
 plug into is, and `custom` is a working generic webhook in the meantime.
@@ -201,6 +206,14 @@ curl -s -H 'Authorization: Bearer letmein' 127.0.0.1:21120/whoami
 curl -s -H 'Authorization: Bearer letmein' \
      -d '{"name":"platform"}' 127.0.0.1:21120/teams
 ```
+
+Or open <http://127.0.0.1:21120/ui> — the dashboard is served by the brain
+itself, and `/` redirects there. A binary built without it says so and explains
+how; released images always carry it.
+
+Reach it at `127.0.0.1` rather than a LAN address. Signing in against an
+identity provider needs Web Crypto, which browsers provide only in a secure
+context, and plain HTTP to anything but loopback is not one.
 
 `brain migrate down` rolls the last migration back.
 
@@ -591,6 +604,10 @@ apps/cli/       oa, the command-line client
   cmd/oa/       the commands
   internal/     config, contexts, credentials, output formats
   internal/client/  generated from the brain's spec by oapi-codegen
+apps/dashboard/ the web dashboard, embedded into the brain's binary
+  src/api/      the only place it performs HTTP, typed from the brain's schemas
+  src/routes/   one file per screen, TanStack Router
+  src/components/ui/  shadcn components, vendored from upstream
 sdk/agent/      the agent loop, as a library
   patterns/     the reasoning patterns — ReAct, plan-then-act, ReWOO, reflection
   models/       clients for anything speaking OpenAI chat completions
@@ -615,9 +632,14 @@ agent's loop and must never persist, authorise or select anything. Being a
 separate module means it *cannot* import `apps/brain/internal`, so that is the
 compiler's rule rather than a convention someone relaxes under deadline. It is
 not under `apps/` because that directory means "has a main, ships as a
-container", and a library has neither. The dashboard will
-join them; channel clients that ship through an app store get their own
-repositories.
+container", and a library has neither.
+
+`apps/dashboard` is the exception that proves the rule: it has no main and
+ships as no container, because it ships *inside* the brain's. It lives under
+`apps/` anyway — it is a deployable surface rather than something another
+program imports, and `//go:embed` cannot reach outside the module that embeds
+it, so its build output has to land in `apps/brain`. Channel clients that ship
+through an app store get their own repositories.
 
 ## Development
 
@@ -637,6 +659,17 @@ make check      # the same gate, no database needed
 make generate   # regenerate the client after the brain's spec changes
 make install    # put oa on your PATH
 ```
+
+```sh
+cd apps/dashboard
+make check      # format, lint, types, tests, build
+make dev        # hot reload, proxying the API to a brain on 127.0.0.1:21120
+```
+
+The dashboard is compiled into the brain's binary, so it has no CI job of its
+own — its checks run inside the brain's. `go build ./...` works without Node
+installed and produces a binary that serves a page explaining how to build the
+dashboard; `cd apps/brain && make ui` puts the real one in.
 
 Tests that need Postgres skip unless a database is named, so the brain's
 `make check` works with nothing running. Point them at one with

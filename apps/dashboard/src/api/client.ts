@@ -6,8 +6,39 @@
  * address or a port forward. An absolute host here would work on the machine
  * it was written on and nowhere else.
  */
-import { getToken, setToken } from "./token";
+import { getToken, setSession } from "./token";
 import type { Page } from "./types";
+
+/**
+ * How the client renews a session. Injected rather than imported so this
+ * module keeps knowing nothing about OIDC — a development token has no
+ * provider behind it, and the brain is reached the same way either way.
+ */
+type Renewer = () => Promise<boolean>;
+
+let renew: Renewer | null = null;
+
+export function onSessionExpired(renewer: Renewer | null): void {
+  renew = renewer;
+}
+
+/**
+ * One renewal at a time. Several requests failing together is the normal case
+ * — a screen makes three calls and an expired token fails all of them — and
+ * without this they would each spend the refresh token, of which only the
+ * first would succeed.
+ */
+let inFlight: Promise<boolean> | null = null;
+
+function renewOnce(): Promise<boolean> {
+  if (!renew) return Promise.resolve(false);
+  if (!inFlight) {
+    inFlight = renew().finally(() => {
+      inFlight = null;
+    });
+  }
+  return inFlight;
+}
 
 /** Thrown for any non-2xx answer, carrying the status so callers can branch. */
 export class ApiError extends Error {
@@ -34,6 +65,23 @@ type RequestOptions = {
 };
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  try {
+    return await send<T>(path, options);
+  } catch (err) {
+    // One retry, and only for an expired session with something to renew it
+    // with. There is no loop to guard against: the retry calls send() rather
+    // than request(), so a brain that refuses even a freshly minted token
+    // fails on the second attempt instead of renewing again.
+    if (!(err instanceof ApiError) || !err.unauthenticated) throw err;
+    if (!(await renewOnce())) {
+      setSession(null);
+      throw err;
+    }
+    return send<T>(path, options);
+  }
+}
+
+async function send<T>(path: string, options: RequestOptions): Promise<T> {
   const headers = new Headers({ Accept: "application/json" });
 
   if (!options.anonymous) {
@@ -50,10 +98,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   });
 
   if (res.status === 401) {
-    // Drop it rather than keep retrying with a credential the brain has
-    // already refused — otherwise every subsequent screen fails the same way
-    // and the reason scrolls off.
-    setToken(null);
+    // Not cleared here: the caller decides, because a session with a refresh
+    // token has somewhere to go and one without does not. Clearing at this
+    // depth would sign the operator out before the renewal was even tried.
     throw new ApiError(401, "the brain refused this token");
   }
 

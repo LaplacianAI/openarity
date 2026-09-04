@@ -7,6 +7,7 @@
  * document, which is the whole reason the brain only needs an issuer.
  */
 import { ApiError } from "./client";
+import type { Session } from "./token";
 
 const VERIFIER_KEY = "openarity.pkce.verifier";
 const STATE_KEY = "openarity.pkce.state";
@@ -105,7 +106,28 @@ export async function beginLogin(issuer: string, clientId: string, returnTo: str
   window.location.assign(`${doc.authorization_endpoint}?${params}`);
 }
 
-export type LoginResult = { accessToken: string; returnTo: string };
+export type LoginResult = { session: Session; returnTo: string };
+
+type TokenResponse = {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  error?: string;
+  error_description?: string;
+};
+
+/**
+ * Turns a token response into a session.
+ *
+ * expires_in is seconds from now, so it is converted once, here, rather than
+ * being recomputed at every comparison against a clock that has moved.
+ */
+function sessionFrom(body: TokenResponse): Session {
+  const session: Session = { access: body.access_token as string };
+  if (body.refresh_token) session.refresh = body.refresh_token;
+  if (body.expires_in) session.expiresAt = Date.now() + body.expires_in * 1000;
+  return session;
+}
 
 /**
  * Completes the flow from the query string the provider redirected back with.
@@ -157,11 +179,7 @@ export async function completeLogin(
     }),
   });
 
-  const body = (await res.json().catch(() => ({}))) as {
-    access_token?: string;
-    error?: string;
-    error_description?: string;
-  };
+  const body = (await res.json().catch(() => ({}))) as TokenResponse;
 
   if (!res.ok || body.error) {
     throw new Error(
@@ -174,5 +192,44 @@ export async function completeLogin(
 
   // The access token, not the id token — this is what `oa` sends, and the pair
   // has to agree or a session that works in one fails in the other.
-  return { accessToken: body.access_token, returnTo };
+  return { session: sessionFrom(body), returnTo };
+}
+
+/**
+ * Exchanges a refresh token for a new session.
+ *
+ * offline_access is requested at login precisely so this exists: without it an
+ * access token simply expires and the operator is thrown back to a sign-in
+ * screen mid-task with nothing explaining why.
+ *
+ * A provider may or may not return a new refresh token. When it does not, the
+ * old one is still valid and is carried forward — dropping it would make the
+ * first successful refresh the last one.
+ */
+export async function refreshSession(
+  issuer: string,
+  clientId: string,
+  refresh: string,
+): Promise<Session> {
+  const doc = await fetchDiscovery(issuer);
+  const res = await fetch(doc.token_endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refresh,
+      client_id: clientId,
+    }),
+  });
+
+  const body = (await res.json().catch(() => ({}))) as TokenResponse;
+  if (!res.ok || body.error || !body.access_token) {
+    throw new Error(
+      body.error_description ?? body.error ?? `the token endpoint answered ${res.status}`,
+    );
+  }
+
+  const next = sessionFrom(body);
+  if (!next.refresh) next.refresh = refresh;
+  return next;
 }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, nextCursorOf, pageQuery, request } from "./client";
-import { getToken, setToken } from "./token";
+import { ApiError, nextCursorOf, onSessionExpired, pageQuery, request } from "./client";
+import { getToken, setSession, setToken } from "./token";
 
 function respond(body: unknown, init: ResponseInit = { status: 200 }) {
   const mock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(body), init));
@@ -124,5 +124,92 @@ describe("cursor pages", () => {
   it("reads an absent next_cursor as the end of the list", () => {
     expect(nextCursorOf({ items: [] })).toBeNull();
     expect(nextCursorOf({ items: [], next_cursor: "more" })).toBe("more");
+  });
+});
+
+describe("renewal on 401", () => {
+  afterEach(() => {
+    onSessionExpired(null);
+  });
+
+  it("retries once with the token the renewal produced", async () => {
+    setToken("expired");
+    const mock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("", { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", mock);
+
+    onSessionExpired(async () => {
+      setSession({ access: "fresh", refresh: "rt" });
+      return true;
+    });
+
+    await expect(request("/teams")).resolves.toEqual({ items: [] });
+
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(new Headers(mock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer expired",
+    );
+    expect(new Headers(mock.mock.calls[1]?.[1]?.headers).get("Authorization")).toBe("Bearer fresh");
+  });
+
+  // A development token has nothing behind it, so a 401 is the end of the
+  // session rather than the start of a renewal.
+  it("gives up when there is nothing to renew with", async () => {
+    setToken("letmein");
+    const mock = vi.fn<typeof fetch>(async () => new Response("", { status: 401 }));
+    vi.stubGlobal("fetch", mock);
+
+    await expect(request("/teams")).rejects.toBeInstanceOf(ApiError);
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(getToken()).toBeNull();
+  });
+
+  // A screen makes several calls at once, so an expired token fails all of
+  // them together. Without single-flight each would spend the refresh token,
+  // and only the first would succeed.
+  it("renews once for several requests that fail together", async () => {
+    setToken("expired");
+    let renewals = 0;
+    let renewed = false;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () =>
+        renewed
+          ? new Response(JSON.stringify({ items: [] }), { status: 200 })
+          : new Response("", { status: 401 }),
+      ),
+    );
+
+    onSessionExpired(async () => {
+      renewals += 1;
+      await new Promise((r) => setTimeout(r, 5));
+      renewed = true;
+      setSession({ access: "fresh", refresh: "rt" });
+      return true;
+    });
+
+    await Promise.all([request("/teams"), request("/users"), request("/whoami")]);
+
+    expect(renewals).toBe(1);
+  });
+
+  // The retry calls send() rather than request(), so it cannot renew again.
+  // Asserting the call count is what keeps that structural: a future edit that
+  // routes the retry back through request() would loop, and this would hang.
+  it("does not retry a second time", async () => {
+    setToken("expired");
+    const mock = vi.fn<typeof fetch>(async () => new Response("", { status: 401 }));
+    vi.stubGlobal("fetch", mock);
+
+    onSessionExpired(async () => {
+      setSession({ access: "also-refused", refresh: "rt" });
+      return true;
+    });
+
+    await expect(request("/teams")).rejects.toBeInstanceOf(ApiError);
+    expect(mock).toHaveBeenCalledTimes(2);
   });
 });

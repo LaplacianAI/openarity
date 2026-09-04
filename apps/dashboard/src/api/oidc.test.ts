@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { beginLogin, completeLogin, fetchDiscovery, pkceAvailable, redirectUri } from "./oidc";
+import {
+  beginLogin,
+  completeLogin,
+  fetchDiscovery,
+  pkceAvailable,
+  redirectUri,
+  refreshSession,
+} from "./oidc";
 
 const ISSUER = "http://127.0.0.1:5556";
 
@@ -105,7 +112,7 @@ describe("completeLogin", () => {
     const state = await start();
     const mock = respondJson(
       { body: discovery() },
-      { body: { access_token: "at_1", token_type: "bearer" } },
+      { body: { access_token: "at_1", refresh_token: "rt_1", expires_in: 3600 } },
     );
 
     const result = await completeLogin(
@@ -114,7 +121,9 @@ describe("completeLogin", () => {
       new URLSearchParams({ code: "c0de", state }),
     );
 
-    expect(result.accessToken).toBe("at_1");
+    expect(result.session.access).toBe("at_1");
+    expect(result.session.refresh).toBe("rt_1");
+    expect(result.session.expiresAt).toBeGreaterThan(Date.now());
     expect(result.returnTo).toBe("/ui");
 
     const body = new URLSearchParams(mock.mock.calls[1]?.[1]?.body as string);
@@ -176,5 +185,42 @@ describe("completeLogin", () => {
 
     expect(sessionStorage.getItem("openarity.pkce.verifier")).toBeNull();
     expect(sessionStorage.getItem("openarity.pkce.state")).toBeNull();
+  });
+});
+
+describe("refreshSession", () => {
+  it("exchanges the refresh token and keeps the new one", async () => {
+    const mock = respondJson(
+      { body: discovery() },
+      { body: { access_token: "at_2", refresh_token: "rt_2", expires_in: 3600 } },
+    );
+
+    const session = await refreshSession(ISSUER, "openarity", "rt_1");
+
+    expect(session.access).toBe("at_2");
+    expect(session.refresh).toBe("rt_2");
+
+    const body = new URLSearchParams(mock.mock.calls[1]?.[1]?.body as string);
+    expect(body.get("grant_type")).toBe("refresh_token");
+    expect(body.get("refresh_token")).toBe("rt_1");
+  });
+
+  // Providers are not required to rotate. Dropping the old token when none
+  // comes back would make the first refresh the last one.
+  it("carries the old refresh token forward when none is returned", async () => {
+    respondJson({ body: discovery() }, { body: { access_token: "at_2", expires_in: 60 } });
+
+    const session = await refreshSession(ISSUER, "openarity", "rt_1");
+
+    expect(session.refresh).toBe("rt_1");
+  });
+
+  it("refuses a refresh the provider rejected", async () => {
+    respondJson(
+      { body: discovery() },
+      { body: { error: "invalid_grant", error_description: "token expired" }, status: 400 },
+    );
+
+    await expect(refreshSession(ISSUER, "openarity", "rt_1")).rejects.toThrow("token expired");
   });
 });

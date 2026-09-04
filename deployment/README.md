@@ -355,6 +355,21 @@ committed rather than read back after every reset.
 
 Log in with `dev@openarity.local` and the password you hashed.
 
+The dashboard signs in against dex too, with authorization code and PKCE. Two
+things in `dex/config.yaml` exist only for that, and both are templated from
+`DASHBOARD_ORIGIN` so they follow `BIND_ADDR`:
+
+- **`web.allowedOrigins`.** The dashboard is served by the brain on another
+  port, so its calls to dex — discovery, and the token exchange — are
+  cross-origin and a browser will not send them without the header. `oa login`
+  never needed this: a CLI is not subject to the same-origin policy.
+- **`/ui/callback` among the client's `redirectURIs`,** the same trap as
+  `/device/callback` above and with the same symptom.
+
+Reach the dashboard at `127.0.0.1`. Web Crypto — which PKCE needs for its S256
+challenge — exists only in a secure context, and plain HTTP to a LAN address is
+not one. `oa login` works from anywhere.
+
 ### Three things that cost an hour each
 
 All three fail in ways that do not name themselves, and all three are already
