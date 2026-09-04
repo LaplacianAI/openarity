@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { beginLogin, pkceAvailable } from "@/api/oidc";
 import { useAuthConfig } from "@/api/session";
 import { setToken } from "@/api/token";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,7 @@ export function SignIn() {
       ) : config.isError ? (
         <Unreachable message={config.error.message} />
       ) : config.data.oidc ? (
-        <OidcPending issuer={config.data.oidc.issuer} />
+        <Oidc issuer={config.data.oidc.issuer} clientId={config.data.oidc.client_id} />
       ) : config.data.dev_token_accepted ? (
         <DevToken />
       ) : (
@@ -85,23 +86,57 @@ function DevToken() {
   );
 }
 
-/**
- * Not built, and said plainly. Guessing at an authorization-code flow here
- * would produce a button that redirects somewhere and never comes back.
- */
-function OidcPending({ issuer }: { issuer: string }) {
+function Oidc({ issuer, clientId }: { issuer: string; clientId: string }) {
+  const [error, setError] = useState<string | null>(null);
+  const [going, setGoing] = useState(false);
+
+  // Not a warning: without SubtleCrypto there is no S256 challenge, and a
+  // "plain" one would make the verifier decorative. Said before the button is
+  // pressed rather than after the redirect fails.
+  if (!pkceAvailable()) {
+    return (
+      <div role="alert" className="rounded-md border border-border-strong bg-surface px-4 py-4">
+        <h1 className="text-sm font-semibold">This page cannot sign you in</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Signing in needs Web Crypto, which browsers only provide in a secure context. This page
+          was loaded over plain HTTP from <span className="font-mono">{window.location.host}</span>,
+          which is not one.
+        </p>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Reach it at <span className="font-mono">127.0.0.1</span>, which counts as secure, or serve
+          it over HTTPS. <code className="font-mono">oa login</code> works either way.
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="rounded-md border border-dashed border-border-strong bg-surface px-4 py-4">
-      <h1 className="text-sm font-semibold">Sign-in is not built yet</h1>
-      <p className="mt-1 text-sm text-muted-foreground">
-        This brain authenticates against an identity provider, and the browser flow for it —
-        authorization code with PKCE — is the next thing being added.
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        This brain authenticates against an identity provider.
       </p>
-      <p className="mt-2 font-mono text-xs break-all text-muted-foreground">{issuer}</p>
-      <p className="mt-3 text-xs text-muted-foreground">
-        Until then, <code className="font-mono">oa login</code> obtains a token from the same
-        provider on the command line.
-      </p>
+      <p className="font-mono text-xs break-all text-muted-foreground">{issuer}</p>
+      <Button
+        size="sm"
+        disabled={going}
+        onClick={() => {
+          setGoing(true);
+          setError(null);
+          // The path being left, so the provider returns to the screen that
+          // was wanted rather than always to the overview.
+          beginLogin(issuer, clientId, window.location.pathname).catch((err: unknown) => {
+            setGoing(false);
+            setError(err instanceof Error ? err.message : String(err));
+          });
+        }}
+      >
+        {going ? "Redirecting…" : "Sign in"}
+      </Button>
+      {error ? (
+        <p role="alert" className="font-mono text-xs break-all text-destructive">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

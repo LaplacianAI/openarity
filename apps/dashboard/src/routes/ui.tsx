@@ -32,13 +32,27 @@ function UiLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const token = useToken();
 
-  // Everything below this line needs a token. Rendering the shell first and
-  // letting each screen 401 on its own would show five simultaneous failures
-  // and none of them would say what to do about it.
-  if (!token) {
+  // The callback is the one route that must render without a token, because
+  // obtaining one is what it does. Gating it sends the browser back to the
+  // sign-in screen holding an authorization code nothing will ever redeem —
+  // and the loop looks exactly like a provider that refused the login.
+  const completingLogin = pathname.startsWith("/ui/callback");
+
+  // Everything else needs a token. Rendering the shell first and letting each
+  // screen 401 on its own would show five simultaneous failures and none of
+  // them would say what to do about it.
+  if (!token && !completingLogin) {
     return (
       <div className="min-h-screen bg-background font-sans text-foreground">
         <SignIn />
+      </div>
+    );
+  }
+
+  if (completingLogin) {
+    return (
+      <div className="min-h-screen bg-background font-sans text-foreground">
+        <Outlet />
       </div>
     );
   }

@@ -25,6 +25,13 @@ storage:
 
 web:
   http: 0.0.0.0:5556
+  # The dashboard is served by the brain on a different port, so every call it
+  # makes to dex — discovery and the token exchange — is cross-origin and the
+  # browser will not send it without these headers. `oa` is unaffected: a CLI
+  # is not subject to the same-origin policy, which is why the device flow
+  # worked without this.
+  allowedOrigins:
+    - DASHBOARD_ORIGIN
 
 oauth2:
   # The device flow already asks the person to type a code they were shown.
@@ -43,7 +50,12 @@ staticClients:
       # this list like any other, so leaving it out fails `oa login` at the
       # password page with "Unregistered redirect_uri (/device/callback)".
       - /device/callback
-      # For a browser-based client. `oa` does not use it.
+      # Where the dashboard's authorization-code flow returns to. Same origin
+      # as the page that started it, which is the brain's own address — the
+      # bundle is served from there, so anything else would be cross-origin
+      # twice over.
+      - DASHBOARD_ORIGIN/ui/callback
+      # For any other browser client. `oa` does not use it.
       - http://localhost:8080/callback
 
 # Dex is a federator; this password database is the part that is not. It exists

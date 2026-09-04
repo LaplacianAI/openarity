@@ -47,9 +47,7 @@ it("stores the token the operator typed, so the screens can use it", async () =>
   expect(getToken()).toBe("letmein");
 });
 
-// Better an honest "not built" than a button that redirects somewhere and
-// never comes back.
-it("says PKCE is missing rather than pretending to start it", async () => {
+it("offers the provider when the brain names one", async () => {
   respond({
     environment: "staging",
     dev_token_accepted: false,
@@ -57,9 +55,29 @@ it("says PKCE is missing rather than pretending to start it", async () => {
   });
   show();
 
-  expect(await screen.findByText(/not built yet/i)).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
   expect(screen.getByText("http://127.0.0.1:5556")).toBeInTheDocument();
   expect(screen.queryByLabelText(/development token/i)).not.toBeInTheDocument();
+});
+
+// Web Crypto exists only in a secure context. Saying so before the button is
+// pressed is the difference between an explanation and a failed redirect.
+it("refuses to offer sign-in without Web Crypto, and says why", async () => {
+  const real = globalThis.crypto;
+  Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true });
+
+  respond({
+    environment: "staging",
+    dev_token_accepted: false,
+    oidc: { issuer: "http://192.168.1.6:5556", client_id: "openarity" },
+  });
+  show();
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(/secure context/i);
+  expect(screen.queryByRole("button", { name: /^sign in$/i })).not.toBeInTheDocument();
+
+  Object.defineProperty(globalThis, "crypto", { value: real, configurable: true });
 });
 
 // A brain with OIDC off and DEV_TOKEN cleared accepts nobody. Saying so is the
