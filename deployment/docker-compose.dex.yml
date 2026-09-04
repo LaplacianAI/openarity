@@ -32,6 +32,10 @@ services:
     # the container's.
     environment:
       DEX_ISSUER: http://${BIND_ADDR:-127.0.0.1}:${DEX_PORT:-5556}
+      # Where the dashboard is served from, which is the brain's API address.
+      # Dex needs it twice: as an allowed CORS origin, and as the redirect the
+      # authorization-code flow returns to.
+      DASHBOARD_ORIGIN: http://${BIND_ADDR:-127.0.0.1}:${API_PORT:-21120}
       DEX_PASSWORD_HASH: ${DEX_PASSWORD_HASH:?set DEX_PASSWORD_HASH in deployment/.env — `make dex-hash` prints one}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${DEX_PORT:-5556}:5556"
@@ -45,7 +49,9 @@ services:
     entrypoint: ["/bin/sh", "-euc"]
     command:
       - |
-        sed "s#ISSUER_URL#$$DEX_ISSUER#" /etc/dex/config.yaml > /var/dex/config.yaml
+        sed -e "s#ISSUER_URL#$$DEX_ISSUER#" \
+            -e "s#DASHBOARD_ORIGIN#$$DASHBOARD_ORIGIN#g" \
+            /etc/dex/config.yaml > /var/dex/config.yaml
         exec dex serve /var/dex/config.yaml
     healthcheck:
       # wget, not curl: the image is distroless-adjacent and has neither a
