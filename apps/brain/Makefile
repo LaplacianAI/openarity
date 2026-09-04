@@ -142,7 +142,18 @@ UI_DIST   := internal/api/ui/dist
 
 ## ui: build the dashboard and copy it into the binary's embedded bundle
 ui:
-	cd $(DASHBOARD) && npm ci --no-audit --no-fund && npm run build
+	$(MAKE) -C $(DASHBOARD) deps build
+	$(MAKE) ui-embed
+
+## ui-embed: copy an already-built dashboard into the bundle, building nothing
+#
+# Split from ui so CI does not build the dashboard twice: it runs the
+# dashboard's own `make check`, which ends in a build, and then only needs the
+# copy. Running `make ui` there would reinstall and rebuild what it just made.
+ui-embed:
+	@test -f $(DASHBOARD)/dist/index.html || { \
+	  echo "$(DASHBOARD)/dist is empty — run 'make ui', or 'make build' in $(DASHBOARD)"; \
+	  exit 1; }
 	rm -rf $(UI_DIST)
 	mkdir -p $(UI_DIST)
 	cp -R $(DASHBOARD)/dist/. $(UI_DIST)/
@@ -222,4 +233,4 @@ clean:
 	rm -f $(COVER_PROFILE) $(COVER_HTML)
 	$(GO) clean -testcache
 
-.PHONY: ui ui-clean help tools tools-editor testdb tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build run generate generate-sql generate-check migration check clean
+.PHONY: ui ui-embed ui-clean help tools tools-editor testdb tidy tidy-check fmt fmt-check vet lint test cover cover-html vuln build run generate generate-sql generate-check migration check clean

@@ -157,8 +157,23 @@ jobs:
           cache: npm
           cache-dependency-path: apps/dashboard/package-lock.json
 
-      - name: Build the dashboard into the binary's bundle
-        run: make ui
+      # The dashboard's own checks, before anything Go runs. It has no job of
+      # its own on purpose: it is not shipped separately, it is compiled into
+      # the brain, so a green dashboard and a red brain would be a status
+      # nobody can act on.
+      - name: Dashboard dependencies
+        working-directory: apps/dashboard
+        run: make deps
+
+      - name: Dashboard formatting, lint, types and tests
+        working-directory: apps/dashboard
+        run: make check
+
+      # Copies what `make check` above just built into the embed directory.
+      # Separate from that target because the copy is the brain's business,
+      # not the dashboard's.
+      - name: Embed the dashboard in the binary's bundle
+        run: make ui-embed
 
       - uses: actions/setup-go@v7
         with:

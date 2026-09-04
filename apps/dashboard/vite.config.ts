@@ -1,5 +1,5 @@
-import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { defineConfig } from "vitest/config";
 
 // base is "/ui/" and not "/": the SPA is mounted under a prefix so it cannot
 // swallow /teams, /users or /auth, and asset URLs have to agree with that or
@@ -24,6 +24,24 @@ export default defineConfig({
       "/teams": "http://127.0.0.1:21120",
       "/users": "http://127.0.0.1:21120",
       "/whoami": "http://127.0.0.1:21120",
+    },
+  },
+
+  test: {
+    // jsdom rather than the default node environment: these are components,
+    // and a component test without a DOM asserts nothing useful.
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./src/test/setup.ts"],
+    css: false,
+    coverage: {
+      provider: "v8",
+      reporter: ["text-summary"],
+      include: ["src/**/*.{ts,tsx}"],
+      // Entry points and vendored shadcn components. main.tsx is three lines
+      // of bootstrap that a test can only assert by re-implementing it, and
+      // components/ui is upstream source we do not edit.
+      exclude: ["src/main.tsx", "src/test/**", "src/components/ui/**", "src/**/*.d.ts"],
     },
   },
 });

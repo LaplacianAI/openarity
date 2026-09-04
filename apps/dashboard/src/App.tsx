@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchAuthConfig, type AuthConfig } from "./authConfig";
+import { type AuthConfig, fetchAuthConfig } from "./authConfig";
 
 type State =
   | { status: "loading" }
