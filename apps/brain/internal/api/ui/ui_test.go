@@ -30,6 +30,7 @@ func built() fs.FS {
 		"index.html":              {Data: []byte("<!doctype html><title>Openarity</title>")},
 		"assets/index-abc123.js":  {Data: []byte("console.log(1)")},
 		"assets/index-abc123.css": {Data: []byte("body{}")},
+		"favicon.svg":             {Data: []byte("<svg/>")},
 	}
 }
 
@@ -156,6 +157,38 @@ func TestADirectoryIsNotAFile(t *testing.T) {
 	}
 }
 
+// favicon.svg is the one thing the build emits outside assets/, and the
+// fallback above is what makes that dangerous: a missing file there is not a
+// 404 but index.html with a 200, so the browser is handed HTML where it asked
+// for an image and the tab silently keeps its default icon.
+func TestARootFileIsServedRatherThanTheIndex(t *testing.T) {
+	t.Parallel()
+
+	w := get(t, handlerFor(t, built()), "/ui/favicon.svg")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if w.Body.String() != "<svg/>" {
+		t.Errorf("body = %q, want the file rather than index.html", w.Body.String())
+	}
+}
+
+// Only assets/ is fingerprinted. A year of immutable caching on a name that
+// survives every build means a new mark never reaches anyone who has already
+// visited, and no deploy can dislodge it.
+func TestOnlyFingerprintedAssetsAreCachedForever(t *testing.T) {
+	t.Parallel()
+
+	const forever = "public, max-age=31536000, immutable"
+
+	if got := get(t, handlerFor(t, built()), "/ui/assets/index-abc123.js").Header().Get("Cache-Control"); got != forever {
+		t.Errorf("asset Cache-Control = %q, want %q", got, forever)
+	}
+	if got := get(t, handlerFor(t, built()), "/ui/favicon.svg").Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("favicon Cache-Control = %q, want no-cache", got)
+	}
+}
+
 // The embed itself: whatever `make ui` last produced, the package must load.
 func TestTheEmbeddedBundleIsReadable(t *testing.T) {
 	t.Parallel()
@@ -169,6 +202,13 @@ func TestTheEmbeddedBundleIsReadable(t *testing.T) {
 	// does not — so this asserts consistency rather than one of them.
 	if h.built != exists(h.files, indexFile) {
 		t.Error("built disagrees with what the embedded filesystem holds")
+	}
+
+	// When there is a bundle at all, the mark has to be in it: index.html asks
+	// for /ui/favicon.svg, and the fallback would answer that miss with
+	// index.html and a 200 rather than anything that looks like a failure.
+	if h.built && !exists(h.files, "favicon.svg") {
+		t.Error("the embedded bundle has no favicon.svg, so the icon request returns index.html")
 	}
 }
 

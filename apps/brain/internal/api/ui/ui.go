@@ -116,9 +116,17 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Vite fingerprints asset filenames, so a changed file is a changed URL and
-	// this can be cached indefinitely. index.html below deliberately is not.
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	// Vite fingerprints filenames under assets/, so a changed file is a changed
+	// URL and those can be cached indefinitely. Nothing else in the bundle is
+	// fingerprinted — favicon.svg keeps its name across every build — so the
+	// same header there would pin a stale mark in every browser that has
+	// already loaded the page, for a year, with no URL change to dislodge it.
+	// no-cache still revalidates against the ETag, so the cost is a 304.
+	if strings.HasPrefix(name, assetPrefix) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
 	http.StripPrefix("/ui/", h.server).ServeHTTP(w, r)
 }
 

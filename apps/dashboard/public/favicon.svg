@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Openarity">
+  <title>Openarity</title>
+  <!-- Re-weighted for 16px, not a scaled logo.svg: at that size a 2.2/64 stroke falls below one device pixel and the edges vanish. -->
+  <style>
+    .mark { fill: #0B6A5C; stroke: #0B6A5C; }
+    @media (prefers-color-scheme: dark) {
+      .mark { fill: #5FD3BC; stroke: #5FD3BC; }
+    }
+  </style>
+  <path class="mark" d="M7 7H25M25 7V25M25 25H7M7 25V7M7 7L16 16M25 7L16 16M25 25L16 16M7 25L16 16M7 7Q9.64 22.36 25 25M25 7Q22.36 22.36 7 25" fill="none" stroke-width="1.8" stroke-linecap="round"/>
+  <g class="mark" stroke="none"><circle cx="7" cy="7" r="3.0"/><circle cx="25" cy="7" r="3.0"/><circle cx="25" cy="25" r="3.0"/><circle cx="7" cy="25" r="3.0"/><circle cx="16" cy="16" r="3.6"/></g>
+</svg>
