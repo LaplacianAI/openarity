@@ -1,3 +1,5 @@
+import tailwindcss from "@tailwindcss/vite";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
@@ -9,7 +11,17 @@ import { defineConfig } from "vitest/config";
 // Makefile's job, not this file's — a Vite config that knows where a Go
 // package lives breaks the day somebody moves one.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    // Before the React plugin, which is what the router plugin's own docs
+    // require: it generates routeTree.gen.ts from src/routes and React has to
+    // transform the result rather than the other way round.
+    tanstackRouter({ target: "react", autoCodeSplitting: true }),
+    react(),
+    tailwindcss(),
+  ],
+  resolve: {
+    alias: { "@": new URL("./src", import.meta.url).pathname },
+  },
   base: "/ui/",
   build: {
     outDir: "dist",
@@ -26,7 +38,6 @@ export default defineConfig({
       "/whoami": "http://127.0.0.1:21120",
     },
   },
-
   test: {
     // jsdom rather than the default node environment: these are components,
     // and a component test without a DOM asserts nothing useful.
@@ -38,10 +49,14 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text-summary"],
       include: ["src/**/*.{ts,tsx}"],
-      // Entry points and vendored shadcn components. main.tsx is three lines
-      // of bootstrap that a test can only assert by re-implementing it, and
-      // components/ui is upstream source we do not edit.
-      exclude: ["src/main.tsx", "src/test/**", "src/components/ui/**", "src/**/*.d.ts"],
+      // Entry points, generated route trees and vendored shadcn components.
+      exclude: [
+        "src/main.tsx",
+        "src/test/**",
+        "src/components/ui/**",
+        "src/routeTree.gen.ts",
+        "src/**/*.d.ts",
+      ],
     },
   },
 });
