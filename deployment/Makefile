@@ -14,7 +14,11 @@ COMPOSE := docker compose -f docker-compose.yml
 #
 #   IMAGE runs the published image instead of building one, which is the
 #   difference between testing what CI produced and testing your own tree.
-#   OIDC adds authentik. BAO swaps the in-memory OpenBao for the one with file
+#   OIDC adds authentik. DEX is the same job in one small container, from a
+#   committed config file rather than an API call — the light path for a
+#   laptop, where OIDC is the staging one. They are alternatives: two issuers
+#   on one stack means the brain trusts one and rejects the other's tokens.
+#   BAO swaps the in-memory OpenBao for the one with file
 #   storage and a seal that opens itself. OBJECTS adds MinIO and creates the
 #   bucket. PROFILE opts the brain and its migrate step in — without it the
 #   stack is dependencies only.
@@ -29,6 +33,12 @@ COMPOSE := docker compose -f docker-compose.yml
 #   while the real OpenBao is up asks compose to replace it. up, dev and image
 #   are the fast local loop and use dev mode deliberately; `make bao` is the
 #   same loop against the real one.
+#
+#   DEX is absent from down, ps and destroy for the reason LITELLM and
+#   OMNIROUTE are: its `:?` guard on the password hash is interpolated for the
+#   whole file before compose looks at which service was asked for, so
+#   including it would make stopping the stack require a credential. `make
+#   dex-down` stops it; its volume holds refresh tokens and nothing else.
 #   LITELLM and OMNIROUTE are the two model gateways, and they are
 #   alternatives rather than a pair: each publishes a gateway the brain reaches
 #   at one URL, so running both means choosing which one that URL names. They
@@ -39,6 +49,7 @@ IMAGE     := -f docker-compose.image.yml
 LITELLM   := -f docker-compose.litellm.yml
 OMNIROUTE := -f docker-compose.omniroute.yml
 OIDC    := -f docker-compose.authentik.yml
+DEX     := -f docker-compose.dex.yml
 BAO     := -f docker-compose.openbao.yml
 OBJECTS := -f docker-compose.objects.yml
 PROFILE := --profile brain
@@ -79,6 +90,37 @@ objects:
 	  "export BRAIN_TEST_S3_BUCKET=$${OBJECTS_BUCKET:-openarity}" \
 	  "export BRAIN_TEST_S3_ACCESS_KEY=$${OBJECTS_ACCESS_KEY:-openarity}" \
 	  "export BRAIN_TEST_S3_SECRET_KEY=$${OBJECTS_SECRET_KEY:-openarity-dev-secret}"
+
+# ---------------------------------------------------------------------------
+# Dex. One container and a config file in git, for a login that works on a
+# fresh clone with nothing clicked. See README.md — authentik stays the
+# staging provider, and running both at once is choosing which issuer the
+# brain rejects.
+
+## dex-hash: print a bcrypt hash for DEX_PASSWORD_HASH — reads the password on stdin
+#
+# Not a flag: a password in an argument is in your shell history and in `ps`
+# for every user on the machine.
+dex-hash:
+	@command -v htpasswd >/dev/null 2>&1 || { \
+	  echo "htpasswd is not installed. Either install it (apache2-utils),"; \
+	  echo "or run:  docker run --rm -it httpd:2.4-alpine htpasswd -nBC 10 ''"; \
+	  exit 1; }
+	@printf 'password: ' >&2
+	@stty -echo 2>/dev/null; read -r pw; stty echo 2>/dev/null; echo >&2; \
+	  printf '\n# Add to deployment/.env. Single-quoted: the hash contains $$.\n'; \
+	  printf "DEX_PASSWORD_HASH='%s'\n\n" "$$(htpasswd -nbBC 10 '' "$$pw" | cut -d: -f2)"
+
+## dex: dependencies and the brain against dex — needs DEX_PASSWORD_HASH
+dex:
+	$(COMPOSE) $(DEX) $(PROFILE) up -d --build
+	@printf '\n%s\n%s\n\n' \
+	  "dex        http://$${BIND_ADDR:-127.0.0.1}:$${DEX_PORT:-5556}" \
+	  "discovery  http://$${BIND_ADDR:-127.0.0.1}:$${DEX_PORT:-5556}/.well-known/openid-configuration"
+
+## dex-down: stop dex, keeping its volume
+dex-down:
+	$(COMPOSE) $(DEX) stop dex
 
 # ---------------------------------------------------------------------------
 # Model gateways. Both answer OpenAI chat completions, so the brain speaks one
@@ -220,5 +262,6 @@ bao-approle:
 bao:
 	$(COMPOSE) $(BAO) $(PROFILE) up -d --build
 
-.PHONY: help up dev image staging restart pull ps logs down destroy \
-        bao-up bao-init bao-status bao-approle bao
+.PHONY: help up objects dex dex-hash dex-down litellm litellm-down \
+        omniroute omniroute-down dev image staging restart pull ps logs \
+        down destroy bao-up bao-init bao-status bao-approle bao

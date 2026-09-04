@@ -1,0 +1,62 @@
+# Dex as the identity provider for local development — the light path.
+#
+# One container, 141 MB, no database of its own. Authentik's overlay is three
+# containers and 1.5 GB, and it earns that on a staging stack: real users,
+# federation, MFA, an admin UI. None of which a laptop running `oa login`
+# against a test account needs.
+#
+# The difference that matters is not the size. Dex has no admin UI, so its
+# entire configuration is dex/config.yaml — in git, reviewed in a diff, and
+# identical on a colleague's fresh clone. Authentik's provider is created over
+# its API and lives only in its Postgres volume, which is the gap README.md
+# names under "Making it reproducible".
+#
+#   cd deployment
+#   make dex
+#
+# Both overlays can be described at once, but only one should run: two issuers
+# on one stack means the brain trusts one of them and rejects the other's
+# tokens with no explanation beyond "issuer mismatch".
+#
+# Pinned rather than tracking latest, for the same reason authentik is.
+
+name: openarity
+
+services:
+  dex:
+    image: ghcr.io/dexidp/dex:v2.44.0
+    # The issuer is baked into every token dex mints and checked by the brain
+    # against the value it was configured with, so browser and brain have to
+    # reach dex at one address. See "pick an address" in README.md — on a
+    # laptop that means the LAN address, because the browser's loopback is not
+    # the container's.
+    environment:
+      DEX_ISSUER: http://${BIND_ADDR:-127.0.0.1}:${DEX_PORT:-5556}
+      DEX_PASSWORD_HASH: ${DEX_PASSWORD_HASH:?set DEX_PASSWORD_HASH in deployment/.env — `make dex-hash` prints one}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${DEX_PORT:-5556}:5556"
+    volumes:
+      - ./dex/config.yaml:/etc/dex/config.yaml:ro
+      - dex-data:/var/dex
+    # dex/config.yaml carries ISSUER_URL as a placeholder because dex performs
+    # no environment substitution of its own and has no issuerFromEnv. One sed
+    # into the volume is the whole templating step; `exec` keeps dex as PID 1,
+    # so a `docker compose stop` still reaches it rather than the shell.
+    entrypoint: ["/bin/sh", "-euc"]
+    command:
+      - |
+        sed "s#ISSUER_URL#$$DEX_ISSUER#" /etc/dex/config.yaml > /var/dex/config.yaml
+        exec dex serve /var/dex/config.yaml
+    healthcheck:
+      # wget, not curl: the image is distroless-adjacent and has neither a
+      # shell's conveniences nor curl. Discovery is the right thing to probe —
+      # a dex that serves it is a dex the brain can start against.
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:5556/.well-known/openid-configuration"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  dex-data:
