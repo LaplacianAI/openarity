@@ -1,0 +1,60 @@
+# Dex, configured entirely from this file.
+#
+# This is the point of choosing dex over authentik for the light path: there is
+# no admin UI and no bootstrap API, so the provider a colleague gets on a fresh
+# clone is the provider described here rather than whatever was clicked into a
+# container's database. Change a client, commit the diff, restart.
+#
+# Dex does not expand environment variables in this file. Not "only braces",
+# not "only some" — the image's entrypoint copies the file to /tmp unchanged
+# and dex parses it literally, so `$DEX_ISSUER` becomes a URL whose path is
+# the string `$DEX_ISSUER` and every route 404s with nothing in the log.
+# What dex offers instead is per-field: `hashFromEnv` below reads the
+# environment directly. The issuer has no such field, so ISSUER_URL is
+# substituted by the compose command before dex ever sees this file.
+
+issuer: ISSUER_URL
+
+# SQLite in a volume rather than Postgres. Refresh tokens and device codes are
+# the only things dex persists, and losing them logs you out — it does not lose
+# your users, because the users are in this file.
+storage:
+  type: sqlite3
+  config:
+    file: /var/dex/dex.db
+
+web:
+  http: 0.0.0.0:5556
+
+oauth2:
+  # The device flow already asks the person to type a code they were shown.
+  # A second consent screen after that confirms nothing they have not just done.
+  skipApprovalScreen: true
+
+# Public: no client secret. A CLI ships its client id to every user, so a
+# secret alongside it is a secret in name only.
+staticClients:
+  - id: openarity
+    name: Openarity
+    public: true
+    redirectURIs:
+      # The device flow's own callback, not a URL anything browses to. Dex
+      # redirects to it internally after the login and validates it against
+      # this list like any other, so leaving it out fails `oa login` at the
+      # password page with "Unregistered redirect_uri (/device/callback)".
+      - /device/callback
+      # For a browser-based client. `oa` does not use it.
+      - http://localhost:8080/callback
+
+# Dex is a federator; this password database is the part that is not. It exists
+# so `make dex` needs no upstream provider, and it is why this stack is for
+# development. Point `connectors:` at Google, GitHub or LDAP for anything else.
+enablePasswordDB: true
+staticPasswords:
+  - email: dev@openarity.local
+    username: dev
+    # Fixed, not generated. Dex derives the `sub` claim from this id and the
+    # connector's, so pinning it here is what makes OPENARITY_SUPER_ADMINS a
+    # value that can be committed rather than one read back after every reset.
+    userID: 0d1e9f3c-6a52-4f5d-8b71-2c4e6a8d0f13
+    hashFromEnv: DEX_PASSWORD_HASH

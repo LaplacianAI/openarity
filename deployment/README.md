@@ -15,6 +15,7 @@ make            # list targets
 make up         # dependencies only — the normal loop, brain on your machine
 make dev        # and the brain, built from your working tree
 make image      # and the brain, from the image CI published
+make dex        # and dex: OIDC from a committed config, one small container
 make staging    # image plus authentik: OIDC only, no development token
 make objects    # add MinIO and create the bucket — for the object store tests
 make ps         # what is running, and on which ports
@@ -85,9 +86,11 @@ organisation wanting Google *and* GitHub *and* LDAP puts an identity provider in
 front and lets it federate, rather than teaching every service about every
 provider.
 
-Authentik is the reference, not a dependency. Keycloak, Okta, Entra, Auth0 and
-Dex all work — the brain only needs discovery at
-`<issuer>/.well-known/openid-configuration`.
+Authentik is the reference, not a dependency. Keycloak, Okta, Entra and Auth0
+all work — the brain only needs discovery at
+`<issuer>/.well-known/openid-configuration`. Dex is not hypothetical here:
+`docker-compose.dex.yml` runs it, and it is the lighter of the two providers
+this directory ships. See [A lighter provider](#a-lighter-provider).
 
 ### Step 1 — pick an address before you start
 
@@ -255,6 +258,79 @@ step before anyone else uses this stack.
 **The discovery document is fetched once, at startup.** An issuer that is
 unreachable then is a failed boot rather than a degraded service — the brain
 refuses to start rather than accept tokens it cannot verify.
+
+## A lighter provider
+
+Everything above is four screens of setup for a login on a laptop, and the
+result cannot be committed. `docker-compose.dex.yml` is the other end of that
+trade:
+
+|                          | authentik                        | dex                       |
+| ------------------------ | -------------------------------- | ------------------------- |
+| images                   | 1.2 GB, twice, plus Postgres     | 141 MB                    |
+| containers               | server, worker, database         | one                       |
+| its own state            | a Postgres volume                | refresh tokens, in SQLite |
+| where the provider lives | that container's database        | `dex/config.yaml`, in git |
+| setup                    | bootstrap admin, three API calls | none                      |
+
+The last row is the one that matters. Dex has no admin UI to click through, so
+`make dex` on a fresh clone produces the provider described in the file rather
+than an empty one waiting to be configured. That closes the gap the section
+above ends on.
+
+It buys that by not being an identity provider in the sense authentik is: the
+users are three lines of YAML, there is no self-service, no MFA and no groups
+administration. Dex federates — point `connectors:` at Google, GitHub or LDAP
+and it becomes a front for those. **Authentik stays the staging provider.**
+
+Run one or the other. Two issuers on one stack means the brain trusts whichever
+it was configured with and rejects the other's tokens.
+
+```sh
+cd deployment
+make dex-hash >> .env       # reads the password on stdin
+make dex
+```
+
+Step 1 above still applies — a token carries its issuer, so `BIND_ADDR` has to
+be the address your browser *and* the brain both reach dex at. Then four lines,
+which `.env.example` carries commented out:
+
+```sh
+OPENARITY_OIDC_ENABLED=true
+OPENARITY_OIDC_ISSUER=http://$LAN_IP:5556
+OPENARITY_OIDC_AUDIENCE=openarity
+OPENARITY_SUPER_ADMINS=CiQwZDFlOWYzYy02YTUyLTRmNWQtOGI3MS0yYzRlNmE4ZDBmMTMSBWxvY2Fs
+```
+
+No trailing slash, unlike authentik's issuer. The super admin value is dex's
+opaque `sub` for the dev user — there is no `sub_mode` to make it readable, but
+dex derives it from the `userID` pinned in `dex/config.yaml`, so it is the same
+string after deleting the volume and logging in again. That is why it can be
+committed rather than read back after every reset.
+
+Log in with `dev@openarity.local` and the password you hashed.
+
+### Three things that cost an hour each
+
+All three fail in ways that do not name themselves, and all three are already
+handled in the committed files — they are here because the next person to edit
+those files will undo one of them.
+
+- **Dex does not expand environment variables in its config.** Not partially:
+  `$DEX_ISSUER` and `${DEX_ISSUER}` both reach dex as literal text, and an
+  issuer whose value is `$DEX_ISSUER` is parsed as a URL with that path, so
+  *every* route including `/healthz` returns 404 with nothing in the log. The
+  compose file substitutes `ISSUER_URL` with `sed` before dex starts. The
+  password uses dex's own `hashFromEnv`, which is a per-field escape hatch
+  rather than general expansion.
+- **`/device/callback` must be in the client's `redirectURIs`.** Dex redirects
+  to it internally to finish the device flow and validates it like any other
+  redirect, so omitting it fails `oa login` at the password page with
+  *"Unregistered redirect_uri"*. This is dex's version of authentik's empty
+  `grant_types`, except the browser says so instead of only the container log.
+- **Quote the hash in `.env`.** Compose reads an unquoted `$2y$10$…` as
+  variable references and hands dex a hash missing three characters.
 
 ## Erasure
 
