@@ -47,6 +47,11 @@ Two numbers in `assets/logo.svg` are load-bearing:
 |`assets/logo.svg`|the mark, 64×64|
 |`assets/logo-wordmark.svg`|mark and name locked up, 232×64|
 |`assets/favicon.svg`|browser tab, 32×32|
+|`apps/dashboard/public/favicon.svg`|the same file; Vite's publicDir cannot reach outside the app|
+
+The dashboard's copy is checked against this one by `src/test/favicon.test.ts`,
+because a copy with nothing watching it goes stale silently — the mark gets a
+new colour here and the tab keeps the old one, and nothing fails.
 
 **The favicon is not a scaled copy.** At 16px the full mark's 2.2/64 strokes
 fall below one device pixel and the edges vanish. It carries heavier strokes,
@@ -173,6 +178,6 @@ Two rules that follow from that:
 
 ## Not decided yet
 
-A typeface, a favicon file, and anything for the dashboard beyond the palette
-above. They belong with the first design that needs them, and choosing them
-now would mean choosing them twice.
+A typeface, raster fallbacks for the favicon, and anything for the dashboard
+beyond the palette above and the mark in its tab. They belong with the first
+design that needs them, and choosing them now would mean choosing them twice.
