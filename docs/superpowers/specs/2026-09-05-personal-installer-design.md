@@ -71,6 +71,13 @@ One datastore is also one backup and one thing to corrupt.
 | -------- | ---- |
 | macOS | `~/Library/Application Support/openarity/` |
 | Linux | `${XDG_DATA_HOME:-~/.local/share}/openarity/` |
+| Windows | `%LOCALAPPDATA%\openarity\` |
+
+`%LOCALAPPDATA%`, not `%APPDATA%`, and so not `os.UserConfigDir()` — which
+returns the Roaming profile on Windows. A domain-joined machine syncs Roaming
+between logins, and a Postgres cluster inside it would be copied across the
+network mid-write. This is the one path that must be read from the environment
+directly rather than taken from the standard library.
 
 The CLI's own config stays at `os.UserConfigDir()/openarity`, where it is
 today. A Postgres cluster is not configuration, and putting one in `~/.config`
@@ -119,11 +126,26 @@ database was elsewhere, once wasting a verification run and once a migration.
 ## Versions
 
 Postgres binaries come from the zonky.io Maven artifacts, which is what
-`embedded-postgres` uses. Availability was checked rather than recalled:
-`embedded-postgres-binaries-darwin-arm64v8` publishes 84 versions, from
-10.20.0 to 18.6.0, so native Apple Silicon needs no Rosetta at any version
-worth pinning. Pin **18.6.0** — newest, and the brain's test suite already
-requires 18 or newer for its `SQLSTATE 23001` assertion.
+`embedded-postgres` uses. Availability was checked per platform rather than
+recalled:
+
+| Artifact | Latest |
+| -------- | ------ |
+| `darwin-arm64v8` | 18.6.0 — 84 versions, back to 10.20.0 |
+| `darwin-amd64` | 18.6.0 |
+| `linux-arm64v8` | 18.6.0 |
+| `linux-amd64` | 18.6.0 |
+| `windows-amd64` | 18.6.0 |
+| `windows-arm64v8` | **none published** |
+
+Native Apple Silicon needs no Rosetta at any version worth pinning. **Windows
+on ARM has no native build**, so it runs the amd64 binaries under the x64
+emulation Windows 11 provides. Setup says so rather than pretending the
+install is native, and `oa status` reports the architecture it actually
+downloaded.
+
+Pin **18.6.0** — newest, and the brain's test suite already requires 18 or
+newer for its `SQLSTATE 23001` assertion.
 
 Every version — Postgres, dex, brain — is written into `stack.toml` at setup.
 `oa upgrade` compares that file against what it is about to install, so an
@@ -150,13 +172,49 @@ Three things about the generated passphrase:
 
 ## Reboot survival
 
-launchd on macOS (`~/Library/LaunchAgents/`, a user agent), systemd `--user`
-on Linux. Both run `oa start`, so there is one start path and not two.
+| Platform | Mechanism |
+| -------- | --------- |
+| macOS | launchd user agent, `~/Library/LaunchAgents/` |
+| Linux | systemd `--user` unit |
+| Windows | Scheduled Task, trigger `ONLOGON` |
 
-**Windows is out of this cut.** A Windows service needs a different install
-path, a different privilege model, and a signed binary to avoid SmartScreen —
-roughly doubling the platform work for the least likely homelab machine. It is
-a follow-on, not a refusal.
+All three run `oa start`, so there is one start path and not two. All three are
+**per-user and need no administrator**, which is the property that makes the
+Windows case affordable: a Windows *Service* would need elevation, a different
+privilege model, and a signed binary, where a logon-triggered Scheduled Task
+needs none of those and matches what the other two platforms already do.
+
+    schtasks /create /tn Openarity /tr "…\oa.exe start" /sc onlogon
+
+## Where Windows genuinely differs
+
+Four places, and each needs code rather than a path change.
+
+**Stopping a child.** Windows has no `SIGTERM`. Postgres is stopped with
+`pg_ctl stop -m fast` on every platform, which sidesteps the problem for the
+one process where an ungraceful stop costs real data. For dex, the brain and
+the worker, Windows children are started with `CREATE_NEW_PROCESS_GROUP` and
+stopped with `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT)`, escalating to
+`TerminateProcess` after a timeout. The escalation is not optional: a child
+that ignores the event must not hang `oa stop` forever.
+
+**File permissions.** `chmod 0600` is a no-op on Windows. The dex config holds
+a bcrypt hash, so it is not nothing. `%LOCALAPPDATA%` is already ACL'd to the
+user by the operating system, which is the real protection; on top of that the
+installer removes inherited entries with `icacls /inheritance:r` so a
+permissive parent directory cannot widen it. The spec states this rather than
+letting a reader assume `0600` did something.
+
+**Opening the browser.** `open` on macOS, `xdg-open` on Linux,
+`rundll32 url.dll,FileProtocolHandler` on Windows. Not `cmd /c start`, whose
+first quoted argument is the window title — a path containing a space silently
+opens the wrong thing, and `C:\Users\First Last\…` is the common case.
+
+**SmartScreen.** An unsigned `oa.exe` downloaded from GitHub triggers a
+warning that reads like a malware alert to exactly the person this installer
+is for. Signing is a real cost and is not in this cut, so the download page
+shows the warning and says what to click. Pretending it will not appear is
+worse than explaining it.
 
 ## Failure, and what it must say
 
@@ -183,7 +241,8 @@ so every step is re-runnable and setup resumes rather than starting over.
 - **Supervision** is tested against a child that exits immediately, one that
   hangs, and one that ignores SIGTERM. The third is the one that matters:
   `stop` must escalate rather than block forever.
-- **A real end-to-end setup** runs in CI on macOS and Linux runners, asserts
+- **A real end-to-end setup** runs in CI on macOS, Linux and Windows runners,
+  asserts
   `/readyz`, then asserts the passphrase appears in stdout and **not** in
   `openarity.log`.
 
@@ -204,5 +263,6 @@ log the passphrase, watch the test fail, put it back.
 
 ## Not in this cut
 
-The desktop app, Windows, `oa reset-password`, multi-user personal installs,
-and any migration path from a personal install to a Docker one.
+The desktop app, code signing on Windows and macOS, `oa reset-password`,
+multi-user personal installs, and any migration path from a personal install
+to a Docker one.
