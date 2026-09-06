@@ -165,7 +165,7 @@ func newStartCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				return err
 			}
 
-			stack, err := build(layout, state)
+			stack, err := build(cmd.Context(), layout, state)
 			if err != nil {
 				return err
 			}

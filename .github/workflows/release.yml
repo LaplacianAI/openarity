@@ -1,0 +1,159 @@
+name: release
+
+# A tag is the only trigger. Nothing here runs on a branch: these artifacts
+# are what `oa stack setup` downloads by version, so publishing one that no
+# tag points at would leave a binary nobody can ask for.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # Every platform openarity claims to run on, built in parallel. windows/arm64
+  # is deliberately absent: no Postgres binaries are published for it, so an
+  # ARM Windows install runs the amd64 build under emulation and needs no
+  # native artifact of its own.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: windows
+            goarch: amd64
+
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # The dashboard is compiled into the brain, so it has to exist before
+      # the brain is built. Built here rather than downloaded from a prep job
+      # because it is a two-second Vite build and an artifact round trip costs
+      # more than repeating it.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      - name: Build the dashboard
+        working-directory: apps/dashboard
+        run: make deps build
+
+      - name: Embed the dashboard
+        working-directory: apps/brain
+        run: make ui-embed
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/brain/go.mod
+
+      # -trimpath so the binary carries no build-machine paths, and the
+      # version stamped from the tag rather than from a file somebody has to
+      # remember to bump.
+      - name: Build brain and oa
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          suffix=""
+          if [ "$GOOS" = "windows" ]; then suffix=".exe"; fi
+
+          (cd apps/brain && go build -trimpath -ldflags "-s -w" \
+            -o "../../dist/brain_${GOOS}_${GOARCH}${suffix}" ./cmd/brain)
+          (cd apps/cli && go build -trimpath -ldflags "-s -w" \
+            -o "../../dist/oa_${GOOS}_${GOARCH}${suffix}" ./cmd/oa)
+
+      # dex publishes no binaries and never has — every release from v2.41.0
+      # carries zero assets — and it cannot be imported as a library either:
+      # its module declares github.com/dexidp/dex while tagging v2.45.1, with
+      # no /v2 suffix, so Go refuses the tagged versions outright. Building it
+      # here is the only way a personal install can have one.
+      #
+      # CGO_ENABLED=0 is what makes cross-compilation possible, and it is why
+      # the personal install uses Postgres storage: dex's sqlite backend is a
+      # stub under that build and says so when opened.
+      - name: Read the pinned dex version
+        id: dex
+        run: |
+          version=$(grep -oE 'DexVersion *= *"[^"]+"' apps/cli/internal/stack/sources.go | grep -oE 'v[0-9.]+')
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build dex
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          suffix=""
+          if [ "$GOOS" = "windows" ]; then suffix=".exe"; fi
+
+          git clone --depth 1 --branch "${{ steps.dex.outputs.version }}" \
+            https://github.com/dexidp/dex.git /tmp/dex
+          (cd /tmp/dex && go build -trimpath -ldflags "-s -w" \
+            -o "$GITHUB_WORKSPACE/dist/dex_${GOOS}_${GOARCH}${suffix}" ./cmd/dex)
+
+          # Apache 2.0 requires the licence travel with the binary.
+          cp /tmp/dex/LICENSE "dist/dex_LICENSE.txt"
+
+      # One .sha256 per artifact, not a single checksums.txt: the downloader
+      # fetches <url>.sha256 for each file it wants, so a combined file would
+      # mean parsing a manifest to verify one binary.
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          for f in *; do
+            case "$f" in *.sha256) continue ;; esac
+            sha256sum "$f" > "$f.sha256"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # The release is a draft. Nothing downloads from a draft, which means a
+      # botched run can be deleted before anyone's `oa stack setup` has tried
+      # to fetch from it — publishing is a deliberate click.
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ github.ref_name }}" \
+            --draft \
+            --title "${{ github.ref_name }}" \
+            --notes "Binaries for brain, oa and dex.
+
+          dex is built from the upstream source at the tag pinned in
+          apps/cli/internal/stack/sources.go, with CGO disabled. It is
+          licensed Apache 2.0; see dex_LICENSE.txt." \
+            dist/*

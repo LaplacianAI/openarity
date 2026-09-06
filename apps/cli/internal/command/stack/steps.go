@@ -60,14 +60,14 @@ func realSteps() engine.Steps {
 	}
 }
 
-func build(layout engine.Layout, state engine.State) (*engine.Stack, error) {
+func build(ctx context.Context, layout engine.Layout, state engine.State) (*engine.Stack, error) {
 	binaries := state.Binaries
 	if len(binaries) == 0 {
 		finder := engine.LocalFinder{Dir: layout.Bin}
 
 		binaries = map[string]string{}
 		for _, name := range []string{"postgres", "dex", "brain"} {
-			path, err := finder.Find(context.Background(), name)
+			path, err := finder.Find(ctx, name)
 			if err != nil {
 				return nil, err
 			}
