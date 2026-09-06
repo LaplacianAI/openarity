@@ -7,6 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/oapi-codegen/runtime v1.6.0
 	github.com/spf13/cobra v1.10.2
+	github.com/ulikunitz/xz v0.5.16
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.46.0
 	golang.org/x/term v0.45.0

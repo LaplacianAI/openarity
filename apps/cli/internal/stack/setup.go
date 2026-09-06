@@ -59,7 +59,7 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 	}
 
 	for _, name := range required {
-		path, err := s.Finder.Find(name)
+		path, err := s.Finder.Find(ctx, name)
 		if err != nil {
 			return Result{}, err
 		}

@@ -24,7 +24,7 @@ func TestABinaryInTheInstallDirectoryIsFound(t *testing.T) {
 	dir := t.TempDir()
 	want := executable(t, dir, "dex")
 
-	got, err := LocalFinder{Dir: dir}.Find("dex")
+	got, err := LocalFinder{Dir: dir}.Find(t.Context(), "dex")
 	if err != nil {
 		t.Fatalf("Find() = %v", err)
 	}
@@ -45,7 +45,7 @@ func TestTheInstallDirectoryIsPreferredOverPath(t *testing.T) {
 	executable(t, elsewhere, "postgres")
 	t.Setenv("PATH", elsewhere)
 
-	got, err := LocalFinder{Dir: dir}.Find("postgres")
+	got, err := LocalFinder{Dir: dir}.Find(t.Context(), "postgres")
 	if err != nil {
 		t.Fatalf("Find() = %v", err)
 	}
@@ -62,7 +62,7 @@ func TestPathIsTheFallbackWhenThereIsNoInstallDirectory(t *testing.T) {
 	want := executable(t, elsewhere, "brain")
 	t.Setenv("PATH", elsewhere)
 
-	got, err := LocalFinder{}.Find("brain")
+	got, err := LocalFinder{}.Find(t.Context(), "brain")
 	if err != nil {
 		t.Fatalf("Find() = %v", err)
 	}
@@ -77,7 +77,7 @@ func TestWindowsLooksForAnExeSuffix(t *testing.T) {
 	dir := t.TempDir()
 	want := executable(t, dir, "dex.exe")
 
-	got, err := LocalFinder{Dir: dir, GOOS: "windows"}.Find("dex")
+	got, err := LocalFinder{Dir: dir, GOOS: "windows"}.Find(t.Context(), "dex")
 	if err != nil {
 		t.Fatalf("Find() = %v", err)
 	}
@@ -98,7 +98,7 @@ func TestAMissingBinarySaysWhichOneAndWhereItLooked(t *testing.T) {
 	// message the first time it was written.
 	t.Setenv("PATH", t.TempDir())
 
-	_, err := LocalFinder{Dir: dir}.Find("postgres")
+	_, err := LocalFinder{Dir: dir}.Find(t.Context(), "postgres")
 	if err == nil {
 		t.Fatal("Find() = nil, want an error")
 	}
@@ -125,7 +125,7 @@ func TestAFileThatIsNotExecutableIsNotABinary(t *testing.T) {
 		t.Fatalf("writing %s: %v", path, err)
 	}
 
-	if _, err := (LocalFinder{Dir: dir}).Find("dex"); err == nil {
+	if _, err := (LocalFinder{Dir: dir}).Find(t.Context(), "dex"); err == nil {
 		t.Error("Find() found a file with no executable bit set")
 	}
 }
@@ -147,7 +147,7 @@ func TestAnUnusableInstallCopyIsAnErrorRatherThanAFallbackToPath(t *testing.T) {
 	working := executable(t, elsewhere, "postgres")
 	t.Setenv("PATH", elsewhere)
 
-	got, err := LocalFinder{Dir: dir}.Find("postgres")
+	got, err := LocalFinder{Dir: dir}.Find(t.Context(), "postgres")
 	if err == nil {
 		t.Fatalf("Find() = %q with no error, want a refusal — that is the copy on PATH, not the install's", got)
 	}
@@ -159,6 +159,21 @@ func TestAnUnusableInstallCopyIsAnErrorRatherThanAFallbackToPath(t *testing.T) {
 	}
 }
 
+// The finder that downloads must never resolve from PATH. A machine with its
+// own Postgres would otherwise have that one supervised in place of the
+// pinned version — against a data directory initialised by a different build,
+// with stack.yaml recording a version that is not what is running. It was
+// doing exactly this the first time it ran.
+func TestTheDownloadingFinderDoesNotFallBackToPath(t *testing.T) {
+	elsewhere := t.TempDir()
+	executable(t, elsewhere, "postgres")
+	t.Setenv("PATH", elsewhere)
+
+	if _, err := (LocalFinder{Dir: t.TempDir(), DirOnly: true}).Find(t.Context(), "postgres"); err == nil {
+		t.Error("a DirOnly finder resolved a binary from PATH")
+	}
+}
+
 func TestADirectoryIsNotABinary(t *testing.T) {
 	t.Parallel()
 
@@ -167,7 +182,7 @@ func TestADirectoryIsNotABinary(t *testing.T) {
 		t.Fatalf("making a directory: %v", err)
 	}
 
-	if _, err := (LocalFinder{Dir: dir}).Find("brain"); err == nil {
+	if _, err := (LocalFinder{Dir: dir}).Find(t.Context(), "brain"); err == nil {
 		t.Error("Find() returned a directory as a binary")
 	}
 }

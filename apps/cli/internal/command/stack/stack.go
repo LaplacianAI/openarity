@@ -23,6 +23,8 @@ import (
 // start` blocks; this is how stop and status find it afterwards.
 const pidFile = "supervisor.pid"
 
+const releaseTag = ""
+
 func New(opts *cli.Options) *cobra.Command {
 	var root string
 
@@ -107,9 +109,19 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				return fmt.Errorf("already installed at %s — run `oa stack start`", layout.Root)
 			}
 
+			var finder engine.Finder = engine.DownloadingFinder{
+				Layout:     layout,
+				Platform:   engine.ThisPlatform(),
+				Downloader: &engine.Downloader{},
+				Tag:        releaseTag,
+			}
+			if binDir != "" {
+				finder = engine.LocalFinder{Dir: binDir}
+			}
+
 			setup := &engine.Setup{
 				Layout:   layout,
-				Finder:   engine.LocalFinder{Dir: binDir},
+				Finder:   finder,
 				Steps:    realSteps(),
 				Versions: engine.Versions{Postgres: "local", Dex: "local", Brain: "local"},
 			}

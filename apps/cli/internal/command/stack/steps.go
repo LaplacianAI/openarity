@@ -67,7 +67,7 @@ func build(layout engine.Layout, state engine.State) (*engine.Stack, error) {
 
 		binaries = map[string]string{}
 		for _, name := range []string{"postgres", "dex", "brain"} {
-			path, err := finder.Find(name)
+			path, err := finder.Find(context.Background(), name)
 			if err != nil {
 				return nil, err
 			}

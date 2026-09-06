@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -14,7 +15,7 @@ import (
 // "already on this machine" and "fetch it from a release" is where a binary
 // comes from, not what the supervisor does with it.
 type Finder interface {
-	Find(name string) (string, error)
+	Find(ctx context.Context, name string) (string, error)
 }
 
 // LocalFinder resolves against the install directory first and PATH second.
@@ -26,9 +27,11 @@ type LocalFinder struct {
 	// GOOS overrides the platform, so a test on Linux can assert what the
 	// finder does on Windows. Empty means this machine.
 	GOOS string
+
+	DirOnly bool
 }
 
-func (f LocalFinder) Find(name string) (string, error) {
+func (f LocalFinder) Find(_ context.Context, name string) (string, error) {
 	goos := f.GOOS
 	if goos == "" {
 		goos = runtime.GOOS
@@ -57,9 +60,10 @@ func (f LocalFinder) Find(name string) (string, error) {
 		}
 	}
 
-	found, err := exec.LookPath(filename)
-	if err == nil {
-		return found, nil
+	if !f.DirOnly {
+		if found, err := exec.LookPath(filename); err == nil {
+			return found, nil
+		}
 	}
 
 	// "exec: not found" tells a person nothing they can act on. Which binary
@@ -90,4 +94,67 @@ func runnable(path, goos string) error {
 		return errors.New("it has no executable bit set")
 	}
 	return nil
+}
+
+type DownloadingFinder struct {
+	Layout     Layout
+	Platform   Platform
+	Downloader *Downloader
+	Tag        string
+}
+
+func (f DownloadingFinder) Find(ctx context.Context, name string) (string, error) {
+	local := LocalFinder{Dir: f.Layout.Bin, GOOS: f.Platform.GOOS, DirOnly: true}
+
+	if path, err := local.Find(ctx, name); err == nil {
+		return path, nil
+	}
+
+	if err := f.download(ctx, name); err != nil {
+		return "", err
+	}
+	return local.Find(ctx, name)
+}
+
+func (f DownloadingFinder) download(ctx context.Context, name string) error {
+	if name == "postgres" {
+		url, err := f.Platform.PostgresURL(PostgresVersion)
+		if err != nil {
+			return err
+		}
+
+		dist := filepath.Join(f.Layout.Bin, "postgres-dist")
+		if err := f.Downloader.Postgres(ctx, url, dist); err != nil {
+			return err
+		}
+		return linkPostgres(dist, f.Layout.Bin, f.Platform)
+	}
+
+	tag := f.Tag
+	if tag == "" {
+		return fmt.Errorf("stack: %s is not published yet — build it and pass --bin-dir", name)
+	}
+	return f.Downloader.Binary(ctx, f.Platform.ReleaseURL(tag, name), filepath.Join(f.Layout.Bin, name+suffix(f.Platform)))
+}
+
+func linkPostgres(dist, bin string, platform Platform) error {
+	for _, name := range []string{"postgres", "initdb", "pg_ctl"} {
+		target := filepath.Join(dist, "bin", name+suffix(platform))
+		link := filepath.Join(bin, name+suffix(platform))
+
+		if err := os.Remove(link); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := os.Symlink(target, link); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func suffix(p Platform) string {
+	if p.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
 }
