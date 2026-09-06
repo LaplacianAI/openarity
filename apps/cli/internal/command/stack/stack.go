@@ -88,7 +88,10 @@ func requireInstall(find layoutFunc) (engine.Layout, engine.State, error) {
 }
 
 func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
-	var binDir string
+	var (
+		binDir      string
+		noAutostart bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "setup",
@@ -137,6 +140,14 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 			// Through Note, not Print: this is prose for a person, and it
 			// must stay out of the way of anything parsing the output. The
 			// passphrase is printed here and stored nowhere.
+			if !noAutostart {
+				if err := enableAutostart(cmd.Context(), layout); err != nil {
+					opts.Out.Note("Openarity will not start again by itself: " + err.Error())
+				} else {
+					opts.Out.Note("It will start again when you log in. `oa stack setup --no-autostart` skips this.")
+				}
+			}
+
 			opts.Out.Note("Openarity is running at " + result.URL)
 			if result.Passphrase != "" {
 				opts.Out.Note("Sign in as dev@openarity.local")
@@ -149,6 +160,8 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 
 	cmd.Flags().StringVar(&binDir, "bin-dir", "",
 		"a directory holding postgres, dex and brain (default: look on PATH)")
+	cmd.Flags().BoolVar(&noAutostart, "no-autostart", false,
+		"do not start Openarity when you log in")
 	return cmd
 }
 

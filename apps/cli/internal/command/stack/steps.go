@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -308,4 +309,26 @@ func readPID(layout engine.Layout) (int, error) {
 
 func withoutCancel(cmd *cobra.Command) context.Context {
 	return context.WithoutCancel(cmd.Context())
+}
+
+func enableAutostart(ctx context.Context, layout engine.Layout) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return err
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	unit, err := engine.UnitFor(runtime.GOOS, home, exe, layout.Root)
+	if err != nil {
+		return err
+	}
+	return engine.InstallAutostart(ctx, unit)
 }
