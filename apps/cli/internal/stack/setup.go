@@ -39,6 +39,7 @@ type Setup struct {
 	Versions    Versions
 	Settings    Settings
 	Credentials map[string]string
+	Report      Reporter
 }
 
 type Result struct {
@@ -62,13 +63,16 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 		Binaries: map[string]string{},
 	}
 
+	s.report(Event{Step: StepResolve, Phase: PhaseStarted})
 	for _, name := range required {
 		path, err := s.Finder.Find(ctx, name)
 		if err != nil {
+			s.report(Event{Step: StepResolve, Phase: PhaseFailed, Detail: err.Error()})
 			return Result{}, err
 		}
 		plan.Binaries[name] = path
 	}
+	s.report(Event{Step: StepResolve, Phase: PhaseDone})
 
 	if err := s.Layout.Create(); err != nil {
 		return Result{}, err
@@ -91,27 +95,40 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 	}
 	plan.Ports = ports
 
+	s.report(Event{Step: StepCluster, Phase: PhaseStarted})
 	if !exists(filepath.Join(s.Layout.Data, "PG_VERSION")) {
 		if err := s.Steps.InitDB(ctx, plan); err != nil {
+			s.report(Event{Step: StepCluster, Phase: PhaseFailed, Detail: err.Error()})
 			return Result{}, err
 		}
 	}
-
 	if err := s.Steps.CreateDBs(ctx, plan); err != nil {
+		s.report(Event{Step: StepCluster, Phase: PhaseFailed, Detail: err.Error()})
 		return Result{}, err
 	}
-	if err := s.Steps.Migrate(ctx, plan); err != nil {
-		return Result{}, err
-	}
+	s.report(Event{Step: StepCluster, Phase: PhaseDone})
 
+	s.report(Event{Step: StepMigrate, Phase: PhaseStarted})
+	if err := s.Steps.Migrate(ctx, plan); err != nil {
+		s.report(Event{Step: StepMigrate, Phase: PhaseFailed, Detail: err.Error()})
+		return Result{}, err
+	}
+	s.report(Event{Step: StepMigrate, Phase: PhaseDone})
+
+	s.report(Event{Step: StepIdentity, Phase: PhaseStarted})
 	passphrase, err := s.configureDex(ctx, plan)
 	if err != nil {
+		s.report(Event{Step: StepIdentity, Phase: PhaseFailed, Detail: err.Error()})
 		return Result{}, err
 	}
+	s.report(Event{Step: StepIdentity, Phase: PhaseDone})
 
+	s.report(Event{Step: StepStart, Phase: PhaseStarted})
 	if err := s.Steps.StartStack(ctx, plan); err != nil {
+		s.report(Event{Step: StepStart, Phase: PhaseFailed, Detail: err.Error()})
 		return Result{}, err
 	}
+	s.report(Event{Step: StepStart, Phase: PhaseDone})
 
 	if err := SaveState(s.Layout.State, State{
 		Root:     s.Layout.Root,
@@ -127,6 +144,10 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 	url := fmt.Sprintf("http://%s:%d/ui", loopback, plan.Ports.API)
 
 	_ = s.Steps.Open(url)
+
+	s.report(Event{
+		Step: StepReady, Phase: PhaseDone, URL: url, Passphrase: passphrase,
+	})
 
 	return Result{Plan: plan, Passphrase: passphrase, URL: url}, nil
 }

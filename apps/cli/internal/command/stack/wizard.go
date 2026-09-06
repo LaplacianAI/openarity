@@ -24,16 +24,18 @@ type wizard struct {
 	opts  *cli.Options
 	in    *bufio.Reader
 	ask   bool
+	quiet bool
 	creds map[string]string
 }
 
-func newWizard(opts *cli.Options) *wizard {
-	interactive := term.IsTerminal(int(os.Stdin.Fd())) && !opts.NonInteractive
+func newWizard(opts *cli.Options, quiet bool) *wizard {
+	interactive := term.IsTerminal(int(os.Stdin.Fd())) && !opts.NonInteractive && !quiet
 
 	return &wizard{
 		opts:  opts,
 		in:    bufio.NewReader(os.Stdin),
 		ask:   interactive,
+		quiet: quiet,
 		creds: map[string]string{},
 	}
 }
@@ -42,8 +44,10 @@ func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 	settings := engine.DefaultSettings()
 
 	if !w.ask {
-		w.say("Setting up with the defaults: artifacts on disk, secrets in the brain's own process.")
-		w.say("Run this in a terminal to choose differently.")
+		if !w.quiet {
+			w.say("Setting up with the defaults: artifacts on disk, secrets in the brain's own process.")
+			w.say("Run this in a terminal to choose differently.")
+		}
 		return settings, w.creds, nil
 	}
 

@@ -111,12 +111,19 @@ func (f DownloadingFinder) Find(ctx context.Context, name string) (string, error
 	}
 
 	if err := f.download(ctx, name); err != nil {
+		f.Downloader.report(Event{
+			Step: StepDownload, Phase: PhaseFailed, Detail: err.Error(),
+		})
 		return "", err
 	}
 	return local.Find(ctx, name)
 }
 
 func (f DownloadingFinder) download(ctx context.Context, name string) error {
+	f.Downloader.report(Event{
+		Step: StepDownload, Phase: PhaseStarted, Detail: name,
+	})
+
 	if name == "postgres" {
 		url, err := f.Platform.PostgresURL(PostgresVersion)
 		if err != nil {
@@ -127,14 +134,24 @@ func (f DownloadingFinder) download(ctx context.Context, name string) error {
 		if err := f.Downloader.Postgres(ctx, url, dist); err != nil {
 			return err
 		}
-		return linkPostgres(dist, f.Layout.Bin, f.Platform)
+		if err := linkPostgres(dist, f.Layout.Bin, f.Platform); err != nil {
+			return err
+		}
+		f.Downloader.report(Event{Step: StepDownload, Phase: PhaseDone, Detail: name})
+		return nil
 	}
 
 	tag := f.Tag
 	if tag == "" {
 		return fmt.Errorf("stack: %s is not published yet — build it and pass --bin-dir", name)
 	}
-	return f.Downloader.Binary(ctx, f.Platform.ReleaseURL(tag, name), filepath.Join(f.Layout.Bin, name+suffix(f.Platform)))
+
+	if err := f.Downloader.Binary(ctx, f.Platform.ReleaseURL(tag, name),
+		filepath.Join(f.Layout.Bin, name+suffix(f.Platform))); err != nil {
+		return err
+	}
+	f.Downloader.report(Event{Step: StepDownload, Phase: PhaseDone, Detail: name})
+	return nil
 }
 
 func linkPostgres(dist, bin string, platform Platform) error {

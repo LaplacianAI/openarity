@@ -3,6 +3,7 @@ package stack
 import (
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,6 +25,39 @@ const maxArtifact = 512 << 20
 
 type Downloader struct {
 	Client *http.Client
+	Report Reporter
+}
+
+func (d *Downloader) report(e Event) {
+	if d.Report == nil {
+		return
+	}
+	d.Report(e)
+}
+
+type counter struct {
+	read  int64
+	total int64
+	last  int
+	step  string
+	on    func(Event)
+}
+
+func (c *counter) Write(p []byte) (int, error) {
+	c.read += int64(len(p))
+	if c.total <= 0 || c.on == nil {
+		return len(p), nil
+	}
+
+	percent := int(c.read * 100 / c.total)
+	// Only on a change, and only whole percents: a report per chunk is tens
+	// of thousands of lines for one 325MB file, which is a progress bar that
+	// costs more than the download.
+	if percent != c.last {
+		c.last = percent
+		c.on(Event{Step: c.step, Phase: PhaseProgress, Percent: percent})
+	}
+	return len(p), nil
 }
 
 func (d *Downloader) client() *http.Client {
@@ -111,7 +145,13 @@ func (d *Downloader) get(ctx context.Context, url string) ([]byte, error) {
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("stack: fetching %s: %s", url, res.Status)
 	}
-	return io.ReadAll(io.LimitReader(res.Body, maxArtifact))
+
+	var buf bytes.Buffer
+	tally := &counter{total: res.ContentLength, step: StepDownload, on: d.Report}
+	if _, err := io.Copy(&buf, io.TeeReader(io.LimitReader(res.Body, maxArtifact), tally)); err != nil {
+		return nil, fmt.Errorf("stack: fetching %s: %w", url, err)
+	}
+	return buf.Bytes(), nil
 }
 
 func innerArchive(jar []byte) ([]byte, error) {

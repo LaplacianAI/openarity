@@ -91,6 +91,7 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 	var (
 		binDir      string
 		noAutostart bool
+		asJSON      bool
 	)
 
 	cmd := &cobra.Command{
@@ -112,17 +113,22 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				return fmt.Errorf("already installed at %s — run `oa stack start`", layout.Root)
 			}
 
+			var report engine.Reporter
+			if asJSON {
+				report = engine.JSONReporter(opts.Stdout)
+			}
+
 			var finder engine.Finder = engine.DownloadingFinder{
 				Layout:     layout,
 				Platform:   engine.ThisPlatform(),
-				Downloader: &engine.Downloader{},
+				Downloader: &engine.Downloader{Report: report},
 				Tag:        releaseTag,
 			}
 			if binDir != "" {
 				finder = engine.LocalFinder{Dir: binDir}
 			}
 
-			settings, credentials, err := newWizard(opts).Run()
+			settings, credentials, err := newWizard(opts, asJSON).Run()
 			if err != nil {
 				return err
 			}
@@ -132,6 +138,7 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				Finder:      finder,
 				Settings:    settings,
 				Credentials: credentials,
+				Report:      report,
 				Steps:       realSteps(),
 				Versions:    engine.Versions{Postgres: "local", Dex: "local", Brain: "local"},
 			}
@@ -169,6 +176,8 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 		"a directory holding postgres, dex and brain (default: look on PATH)")
 	cmd.Flags().BoolVar(&noAutostart, "no-autostart", false,
 		"do not start Openarity when you log in")
+	cmd.Flags().BoolVar(&asJSON, "json", false,
+		"report progress as one JSON event per line, for a program rather than a person")
 	return cmd
 }
 
