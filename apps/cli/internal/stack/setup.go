@@ -15,6 +15,7 @@ import (
 
 type Plan struct {
 	Layout   Layout
+	Settings Settings
 	Ports    Ports
 	Versions Versions
 	Arch     string
@@ -32,10 +33,12 @@ type Steps struct {
 }
 
 type Setup struct {
-	Layout   Layout
-	Finder   Finder
-	Steps    Steps
-	Versions Versions
+	Layout      Layout
+	Finder      Finder
+	Steps       Steps
+	Versions    Versions
+	Settings    Settings
+	Credentials map[string]string
 }
 
 type Result struct {
@@ -53,6 +56,7 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 
 	plan := Plan{
 		Layout:   s.Layout,
+		Settings: s.Settings,
 		Versions: s.Versions,
 		Arch:     runtime.GOARCH,
 		Binaries: map[string]string{},
@@ -71,6 +75,13 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 	}
 
 	if err := ensureSecret(s.Layout); err != nil {
+		return Result{}, err
+	}
+
+	if err := s.Settings.Validate(); err != nil {
+		return Result{}, err
+	}
+	if err := WriteCredentials(s.Layout.Env, s.Credentials); err != nil {
 		return Result{}, err
 	}
 
@@ -108,6 +119,7 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 		Ports:    plan.Ports,
 		Arch:     plan.Arch,
 		Binaries: plan.Binaries,
+		Settings: s.Settings,
 	}); err != nil {
 		return Result{}, err
 	}

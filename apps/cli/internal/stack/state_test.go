@@ -129,10 +129,53 @@ func TestTheStateFileHoldsNoCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile() = %v", err)
 	}
-	for _, word := range []string{"password", "passphrase", "secret", "token", "hash"} {
+	// Not the bare word "secret": stack.yaml legitimately records
+	// secrets_backend, which is the name of a choice rather than a value.
+	// The list is the shapes a credential actually takes.
+	for _, word := range []string{"password", "passphrase", "secret_key", "access_key", "approle", "token", "hash"} {
 		if strings.Contains(strings.ToLower(string(raw)), word) {
 			t.Errorf("stack.yaml mentions %q — credentials do not belong in it", word)
 		}
+	}
+}
+
+// The settings recorded in stack.yaml name backends; the values those
+// backends authenticate with live in secrets.env at 0600. This asserts the
+// split holds when the settings are the ones that have credentials.
+func TestAnS3InstallKeepsItsKeysOutOfTheStateFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stack.yaml")
+
+	state := sample()
+	state.Settings = Settings{
+		ObjectsBackend:  "s3",
+		ObjectsEndpoint: "http://127.0.0.1:19000",
+		ObjectsBucket:   "openarity",
+		SecretsBackend:  "openbao",
+		SecretsAddr:     "http://127.0.0.1:8200",
+	}
+	if err := SaveState(path, state); err != nil {
+		t.Fatalf("SaveState() = %v", err)
+	}
+
+	const key = "AKIAEXAMPLEKEYVALUE"
+	if err := WriteCredentials(filepath.Join(dir, "secrets.env"), map[string]string{
+		"OPENARITY_OBJECTS_ACCESS_KEY": key,
+	}); err != nil {
+		t.Fatalf("WriteCredentials() = %v", err)
+	}
+
+	raw, err := os.ReadFile(path) //nolint:gosec // a path this test created
+	if err != nil {
+		t.Fatalf("ReadFile() = %v", err)
+	}
+	if strings.Contains(string(raw), key) {
+		t.Error("the S3 access key reached stack.yaml")
+	}
+	if !strings.Contains(string(raw), "s3") {
+		t.Error("stack.yaml did not record which object store was chosen")
 	}
 }
 

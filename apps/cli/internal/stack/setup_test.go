@@ -27,8 +27,9 @@ func setupFor(t *testing.T, r *recorder) *Setup {
 	}
 
 	return &Setup{
-		Layout: layout,
-		Finder: LocalFinder{Dir: bin},
+		Layout:   layout,
+		Settings: DefaultSettings(),
+		Finder:   LocalFinder{Dir: bin},
 		Steps: Steps{
 			// The stub leaves behind what initdb leaves behind. Resumability
 			// is decided by looking at the cluster, not by a progress file

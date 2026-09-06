@@ -27,6 +27,8 @@ type State struct {
 	Arch string `yaml:"arch"`
 
 	Binaries map[string]string `yaml:"binaries"`
+
+	Settings Settings `yaml:"settings"`
 }
 
 type Versions struct {

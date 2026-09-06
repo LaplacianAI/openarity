@@ -76,7 +76,7 @@ func build(ctx context.Context, layout engine.Layout, state engine.State) (*engi
 		}
 	}
 
-	p := engine.Plan{Layout: layout, Ports: state.Ports, Binaries: binaries}
+	p := engine.Plan{Layout: layout, Settings: state.Settings, Ports: state.Ports, Binaries: binaries}
 	log := filepath.Join(layout.Logs, "openarity.log")
 
 	postgres := &engine.Child{
@@ -126,7 +126,7 @@ func build(ctx context.Context, layout engine.Layout, state engine.State) (*engi
 }
 
 func brainEnv(p engine.Plan) []string {
-	return []string{
+	out := []string{
 		"OPENARITY_POSTGRES_DSN=" + dsn(p, "openarity"),
 		fmt.Sprintf("OPENARITY_API_BIND=127.0.0.1:%d", p.Ports.API),
 		fmt.Sprintf("OPENARITY_WEBHOOK_BIND=127.0.0.1:%d", p.Ports.Webhook),
@@ -137,10 +137,20 @@ func brainEnv(p engine.Plan) []string {
 		// It is the whole bootstrap: there is no other way to become one on
 		// a machine with no operator.
 		"OPENARITY_BOOTSTRAP_FIRST_USER=true",
-		"OPENARITY_OBJECTS_BACKEND=filesystem",
 		"OPENARITY_OBJECTS_PATH=" + filepath.Join(p.Layout.Root, "objects"),
-		"OPENARITY_ENVIRONMENT=development",
+		"OPENARITY_ENVIRONMENT=" + p.Settings.Environment(),
 	}
+
+	out = append(out, p.Settings.Env()...)
+
+	credentials, err := engine.ReadCredentials(p.Layout.Env)
+	if err != nil {
+		return out
+	}
+	for key, value := range credentials {
+		out = append(out, key+"="+value)
+	}
+	return out
 }
 
 // dsn points at the Unix socket in the data directory rather than at a TCP

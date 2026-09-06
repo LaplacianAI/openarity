@@ -122,11 +122,18 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				finder = engine.LocalFinder{Dir: binDir}
 			}
 
+			settings, credentials, err := newWizard(opts).Run()
+			if err != nil {
+				return err
+			}
+
 			setup := &engine.Setup{
-				Layout:   layout,
-				Finder:   finder,
-				Steps:    realSteps(),
-				Versions: engine.Versions{Postgres: "local", Dex: "local", Brain: "local"},
+				Layout:      layout,
+				Finder:      finder,
+				Settings:    settings,
+				Credentials: credentials,
+				Steps:       realSteps(),
+				Versions:    engine.Versions{Postgres: "local", Dex: "local", Brain: "local"},
 			}
 
 			result, err := setup.Run(cmd.Context())

@@ -44,6 +44,7 @@ type Layout struct {
 	Logs   string
 	State  string
 	Secret string
+	Env    string
 }
 
 func NewLayout(root string) Layout {
@@ -55,6 +56,7 @@ func NewLayout(root string) Layout {
 		Logs:   filepath.Join(root, "logs"),
 		State:  filepath.Join(root, "stack.yaml"),
 		Secret: filepath.Join(root, "postgres.pw"),
+		Env:    filepath.Join(root, "secrets.env"),
 	}
 }
 
