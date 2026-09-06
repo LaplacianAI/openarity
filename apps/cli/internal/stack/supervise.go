@@ -95,8 +95,10 @@ func (s *Stack) startOne(ctx context.Context, c Component) error {
 		}
 	}
 
-	if err := c.Child.Start(ctx); err != nil {
-		return err
+	if c.Child != nil {
+		if err := c.Child.Start(ctx); err != nil {
+			return err
+		}
 	}
 	return s.waitReady(ctx, c)
 }
@@ -121,7 +123,7 @@ func (s *Stack) waitReady(ctx context.Context, c Component) error {
 		// A process that has already exited is never going to become ready,
 		// and waiting the full timeout to say so buries the real reason in
 		// the log while the person watches a spinner.
-		if !c.Child.Running() {
+		if c.Child != nil && !c.Child.Running() {
 			return fmt.Errorf("stack: %s exited before it was ready: %w", c.Name, last)
 		}
 		if time.Now().After(deadline) {
@@ -163,8 +165,10 @@ func (s *Stack) stopThrough(ctx context.Context, last int) error {
 				errs = append(errs, fmt.Errorf("stack: asking %s to stop: %w", c.Name, err))
 			}
 		}
-		if err := c.Child.Stop(s.StopGrace); err != nil {
-			errs = append(errs, err)
+		if c.Child != nil {
+			if err := c.Child.Stop(s.StopGrace); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 	return errors.Join(errs...)
@@ -178,12 +182,21 @@ func (s *Stack) Status(ctx context.Context) []Status {
 	out := make([]Status, 0, len(s.Components))
 
 	for _, c := range s.Components {
-		st := Status{Name: c.Name, PID: c.Child.PID(), Running: c.Child.Running()}
+		st := Status{Name: c.Name}
 
-		if st.Running && c.Ready != nil {
+		if c.Child != nil {
+			st.PID = c.Child.PID()
+			st.Running = c.Child.Running()
+		}
+
+		if c.Ready != nil && (st.Running || c.Child == nil) {
 			probe, cancel := context.WithTimeout(ctx, time.Second)
 			st.Ready = c.Ready(probe) == nil
 			cancel()
+
+			if c.Child == nil {
+				st.Running = st.Ready
+			}
 		} else if st.Running {
 			st.Ready = true
 		}

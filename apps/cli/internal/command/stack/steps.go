@@ -33,16 +33,7 @@ func realSteps() engine.Steps {
 				"--pwfile="+p.Layout.Secret, "--username=openarity", "--encoding=UTF8")
 		},
 
-		CreateDBs: func(ctx context.Context, p engine.Plan) error {
-			for _, name := range []string{"openarity", "dex"} {
-				cmd := command(ctx, p.Binaries["postgres"], "--single", "-D", p.Layout.Data, "postgres")
-				cmd.Stdin = strings.NewReader("CREATE DATABASE " + name + ";\n")
-				if err := capture(cmd, "creating "+name); err != nil && !alreadyExists(err) {
-					return err
-				}
-			}
-			return startPostgres(ctx, p)
-		},
+		CreateDBs: startPostgres,
 
 		Migrate: func(ctx context.Context, p engine.Plan) error {
 			cmd := command(ctx, p.Binaries["brain"], "migrate", "up")
@@ -79,13 +70,6 @@ func build(ctx context.Context, layout engine.Layout, state engine.State) (*engi
 	p := engine.Plan{Layout: layout, Settings: state.Settings, Ports: state.Ports, Binaries: binaries}
 	log := filepath.Join(layout.Logs, "openarity.log")
 
-	postgres := &engine.Child{
-		Name: "postgres", Path: binaries["postgres"], Log: log,
-		Args: []string{
-			"-D", layout.Data, "-p", strconv.Itoa(state.Ports.Postgres),
-			"-c", "listen_addresses=127.0.0.1",
-		},
-	}
 	dex := &engine.Child{
 		Name: "dex", Path: binaries["dex"], Log: log,
 		Args: []string{"serve", filepath.Join(layout.Dex, "config.yaml")},
@@ -104,7 +88,8 @@ func build(ctx context.Context, layout engine.Layout, state engine.State) (*engi
 		StopGrace:    stopGrace,
 		Components: []engine.Component{
 			{
-				Name: "postgres", Child: postgres,
+				Name:        "postgres",
+				BeforeStart: func(ctx context.Context) error { return startPostgres(ctx, p) },
 				Ready: func(ctx context.Context) error {
 					var d net.Dialer
 					conn, err := d.DialContext(ctx, "tcp",
@@ -114,9 +99,7 @@ func build(ctx context.Context, layout engine.Layout, state engine.State) (*engi
 					}
 					return conn.Close()
 				},
-				Shutdown: func(ctx context.Context) error {
-					return stopPostgres(ctx, p)
-				},
+				Shutdown: func(ctx context.Context) error { return stopPostgres(ctx, p) },
 			},
 			{Name: "dex", Child: dex, Ready: probe(state.Ports.Dex, "/healthz")},
 			{Name: "brain", Child: brain, Ready: probe(state.Ports.API, "/readyz")},
@@ -127,7 +110,7 @@ func build(ctx context.Context, layout engine.Layout, state engine.State) (*engi
 
 func brainEnv(p engine.Plan) []string {
 	out := []string{
-		"OPENARITY_POSTGRES_DSN=" + dsn(p, "openarity"),
+		"OPENARITY_POSTGRES_DSN=" + dsn(p, database),
 		fmt.Sprintf("OPENARITY_API_BIND=127.0.0.1:%d", p.Ports.API),
 		fmt.Sprintf("OPENARITY_WEBHOOK_BIND=127.0.0.1:%d", p.Ports.Webhook),
 		"OPENARITY_OIDC_ENABLED=true",
@@ -156,6 +139,8 @@ func brainEnv(p engine.Plan) []string {
 // dsn points at the Unix socket in the data directory rather than at a TCP
 // port. Nothing outside this install can reach it, and there is no password
 // to store anywhere as a result.
+const database = "postgres"
+
 func dsn(p engine.Plan, database string) string {
 	return fmt.Sprintf("postgres://openarity:%s@127.0.0.1:%d/%s?sslmode=disable",
 		url.QueryEscape(password(p)), p.Ports.Postgres, database)
@@ -183,7 +168,7 @@ func dexConfig(p engine.Plan, hash string) string {
 		"  config:\n" +
 		"    host: 127.0.0.1\n" +
 		"    port: " + strconv.Itoa(p.Ports.Postgres) + "\n" +
-		"    database: dex\n" +
+		"    database: postgres\n" +
 		"    user: openarity\n" +
 		"    password: \"" + password(p) + "\"\n" +
 		"    ssl:\n" +
@@ -265,10 +250,6 @@ func capture(cmd *exec.Cmd, what string) error {
 		return nil
 	}
 	return fmt.Errorf("%s: %w\n%s", what, err, strings.TrimSpace(string(out)))
-}
-
-func alreadyExists(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "already exists")
 }
 
 // probe reports readiness by asking over HTTP, which is the only thing that

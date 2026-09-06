@@ -193,6 +193,79 @@ func TestOneFailingShutdownDoesNotStrandTheOthers(t *testing.T) {
 	}
 }
 
+// Postgres is started by pg_ctl rather than supervised directly, because
+// postgres.exe refuses to run under an account with administrative rights and
+// pg_ctl creates the restricted token that makes it possible. Such a component
+// has no child process of its own: it is started, probed and stopped entirely
+// through commands.
+func TestAComponentWithNoChildIsStartedProbedAndStopped(t *testing.T) {
+	r := &recorder{}
+	ready := false
+
+	external := Component{
+		Name: "postgres",
+		BeforeStart: func(context.Context) error {
+			r.note("pg_ctl:start")
+			ready = true
+			return nil
+		},
+		Ready: func(context.Context) error {
+			r.note("probe")
+			if !ready {
+				return errors.New("not yet")
+			}
+			return nil
+		},
+		Shutdown: func(context.Context) error {
+			r.note("pg_ctl:stop")
+			ready = false
+			return nil
+		},
+	}
+
+	s := testStack(external)
+	if err := s.Start(t.Context()); err != nil {
+		t.Fatalf("Start() = %v", err)
+	}
+	if got := r.joined(); !strings.Contains(got, "pg_ctl:start probe") {
+		t.Errorf("order was %q, want it started before it was probed", got)
+	}
+
+	status := s.Status(t.Context())
+	if len(status) != 1 || !status[0].Running {
+		t.Errorf("Status() = %+v, want the component reported running", status)
+	}
+
+	if err := s.Stop(t.Context()); err != nil {
+		t.Fatalf("Stop() = %v", err)
+	}
+	if !strings.Contains(r.joined(), "pg_ctl:stop") {
+		t.Errorf("Stop() did not ask the component to stop: %q", r.joined())
+	}
+	if s.Status(t.Context())[0].Running {
+		t.Error("a stopped component is still reported running")
+	}
+}
+
+// Without a child there is nothing whose exit can shortcut the wait, so a
+// component that never becomes ready must still give up on the timeout rather
+// than looping forever.
+func TestAChildlessComponentThatNeverBecomesReadyGivesUp(t *testing.T) {
+	s := testStack(Component{
+		Name:  "postgres",
+		Ready: func(context.Context) error { return errors.New("never") },
+	})
+	s.ReadyTimeout = 200 * time.Millisecond
+
+	err := s.Start(t.Context())
+	if err == nil {
+		t.Fatal("Start() = nil, want the readiness timeout")
+	}
+	if !strings.Contains(err.Error(), "postgres") {
+		t.Errorf("Start() = %q, want it to name the component", err)
+	}
+}
+
 func TestStatusNamesEveryComponent(t *testing.T) {
 	r := &recorder{}
 

@@ -38,11 +38,13 @@ jobs:
 
   # A real install, from nothing to a dashboard answering, and back to nothing.
   #
-  # Windows is included deliberately even though it may not pass: PostgreSQL
-  # refuses to run under an account with administrative rights, and the
-  # windows-latest runner is one. If that is what happens, the log says so and
-  # the job is scoped down with the reason recorded — rather than the platform
-  # being quietly dropped on a guess.
+  # Windows works because nothing here runs postgres.exe directly. That binary
+  # refuses to start under an account with administrative rights — the string
+  # is in the binary, and the windows-latest runner is such an account — while
+  # initdb and pg_ctl both create a restricted token and drop the privilege
+  # themselves. So Postgres is started and stopped through pg_ctl, and the step
+  # that used `postgres --single` is gone: both applications use the database
+  # initdb already creates.
   install:
     strategy:
       fail-fast: false
