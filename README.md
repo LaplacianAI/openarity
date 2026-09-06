@@ -144,13 +144,53 @@ Which tools and skills a run may see is decided by the brain against its graph.
 That is an authorisation decision, and a separate Go module is what stops it
 leaking into the library: `sdk/agent` *cannot* import `apps/brain/internal`.
 
+`oa stack setup` installs the whole thing on one machine — PostgreSQL, dex,
+the brain and its worker, supervised together, started again at login. It
+downloads PostgreSQL itself and needs no Docker.
+
 Not built yet: the graph, the planner, and outbound replies — the brain can
 hold a conversation's messages but cannot yet answer one. The
 agent loop exists as a library and runs end to end against a real gateway, but
 nothing in the brain calls it, so no message reaches a model. Slack, Discord and Telegram adapters are not written; the seam they
 plug into is, and `custom` is a working generic webhook in the meantime.
 
+## Install it on your own machine
+
+One command, no Docker. It downloads PostgreSQL, builds nothing, and opens a
+browser at a dashboard you can sign in to:
+
+```sh
+oa stack setup
+```
+
+It asks three questions — where files go, where credentials go, and which
+model gateway to point at — and takes a sensible answer for each if you press
+enter. Then it prints a passphrase **once**, which is not stored anywhere, and
+opens `http://127.0.0.1:21120/ui`.
+
+Afterwards:
+
+```sh
+oa stack status    # what is running, and on which ports
+oa stack stop      # stop it
+oa stack start     # start it again; it also starts when you log in
+```
+
+Everything lives under one directory — `~/Library/Application Support/openarity`
+on macOS, `~/.local/share/openarity` on Linux, `%LOCALAPPDATA%\openarity` on
+Windows — so deleting that directory removes the install.
+
+**`dex` and `brain` are not published yet**, so today this needs
+`--bin-dir` pointing at a directory holding `postgres`, `dex` and `brain`.
+PostgreSQL downloads on its own already.
+
+Reach it at `127.0.0.1` rather than a LAN address: signing in uses PKCE, which
+needs Web Crypto, which browsers only expose in a secure context.
+
 ## Quick start
+
+This is the *developer* path — a brain against a Postgres you already have.
+For a personal install, use `oa stack setup` above.
 
 Requires Go 1.26.6 and a Postgres 13 or newer you can reach — 13 is where
 `gen_random_uuid()` became built-in, which the first migration needs. Running

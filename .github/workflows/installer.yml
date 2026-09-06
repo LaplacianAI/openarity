@@ -1,0 +1,175 @@
+name: installer
+
+on:
+  pull_request:
+    paths:
+      - "apps/cli/**"
+      - "apps/brain/**"
+      - ".github/workflows/installer.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # The unit tests on every platform, which is the only thing that executes
+  # child_windows.go and process_windows.go rather than merely compiling them.
+  # The escalation test — a child that ignores the stop signal must not hang
+  # the command — is the one that has never run on Windows.
+  units:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/cli/go.mod
+          cache-dependency-path: apps/cli/go.sum
+
+      - name: Test
+        working-directory: apps/cli
+        run: go test -race ./...
+
+  # A real install, from nothing to a dashboard answering, and back to nothing.
+  #
+  # Windows is included deliberately even though it may not pass: PostgreSQL
+  # refuses to run under an account with administrative rights, and the
+  # windows-latest runner is one. If that is what happens, the log says so and
+  # the job is scoped down with the reason recorded — rather than the platform
+  # being quietly dropped on a guess.
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      - name: Build the dashboard
+        working-directory: apps/dashboard
+        run: make deps build
+
+      - name: Embed the dashboard
+        working-directory: apps/brain
+        run: make ui-embed
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/brain/go.mod
+
+      # dex and brain have no published release yet, so the install is pointed
+      # at binaries built here. That also means this job proves the dex build
+      # on each platform, which the release workflow otherwise only does on
+      # Linux.
+      - name: Build brain, oa and dex
+        run: |
+          set -euo pipefail
+          mkdir -p "$PWD/.e2e/bin"
+
+          suffix=""
+          if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
+
+          (cd apps/brain && go build -o "$PWD/.e2e/bin/brain$suffix" ./cmd/brain)
+          (cd apps/cli && go build -o "$PWD/.e2e/bin/oa$suffix" ./cmd/oa)
+
+          version=$(grep -oE 'DexVersion *= *"[^"]+"' apps/cli/internal/stack/sources.go | grep -oE 'v[0-9.]+')
+          git clone --depth 1 --branch "$version" https://github.com/dexidp/dex.git "$PWD/.e2e/dex-src"
+          (cd "$PWD/.e2e/dex-src" && CGO_ENABLED=0 go build -o "$PWD/.e2e/bin/dex$suffix" ./cmd/dex)
+
+      # Not stdin from a terminal, so the wizard announces its defaults and
+      # continues rather than waiting for an answer nobody can give.
+      - name: Install
+        run: |
+          set -euo pipefail
+          "$PWD/.e2e/bin/oa" stack setup \
+            --root "$PWD/.e2e/install" \
+            --bin-dir "$PWD/.e2e/bin" \
+            --no-autostart 2>&1 | tee "$PWD/.e2e/setup.log"
+
+      # The security guard, and the reason it is here rather than only in a
+      # unit test: openarity.log is the file a person attaches to a bug report.
+      - name: The passphrase reached the terminal and nothing else
+        run: |
+          set -euo pipefail
+          passphrase=$(grep -oE 'Passphrase: [A-Za-z0-9]+' "$PWD/.e2e/setup.log" | cut -d' ' -f2)
+          test -n "$passphrase"
+
+          for f in "$PWD/.e2e/install/logs/"* "$PWD/.e2e/install/stack.yaml" "$PWD/.e2e/install/dex/config.yaml"; do
+            test -f "$f" || continue
+            if grep -qF "$passphrase" "$f"; then
+              echo "the passphrase is in $f"
+              exit 1
+            fi
+          done
+
+      - name: Start, and answer
+        run: |
+          set -euo pipefail
+          nohup "$PWD/.e2e/bin/oa" stack start --root "$PWD/.e2e/install" \
+            > "$PWD/.e2e/start.log" 2>&1 &
+          disown || true
+
+          port=$(python3 -c "import sys,re;print(re.search(r'api: (\d+)', open(sys.argv[1]).read()).group(1))" "$PWD/.e2e/install/stack.yaml")
+          echo "brain on $port"
+
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:$port/readyz" >/dev/null 2>&1; then
+              echo "ready"
+              curl -fsS -o /dev/null -w "ui %{http_code}\n" "http://127.0.0.1:$port/ui/"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "the brain never became ready"
+          tail -50 "$PWD/.e2e/install/logs/openarity.log" || true
+          exit 1
+
+      # An install is a database with data in it. A second setup that re-ran
+      # initdb over the top would destroy it, so it has to refuse.
+      - name: A second install is refused
+        run: |
+          set -euo pipefail
+          if "$PWD/.e2e/bin/oa" stack setup \
+               --root "$PWD/.e2e/install" \
+               --bin-dir "$PWD/.e2e/bin" --no-autostart; then
+            echo "a second setup over an existing install succeeded"
+            exit 1
+          fi
+
+      - name: Stop, and leave nothing behind
+        run: |
+          set -euo pipefail
+          "$PWD/.e2e/bin/oa" stack stop --root "$PWD/.e2e/install"
+          sleep 10
+
+          port=$(python3 -c "import sys,re;print(re.search(r'api: (\d+)', open(sys.argv[1]).read()).group(1))" "$PWD/.e2e/install/stack.yaml")
+          if curl -fsS -m 3 "http://127.0.0.1:$port/readyz" >/dev/null 2>&1; then
+            echo "the brain is still answering after stop"
+            exit 1
+          fi
+
+      - name: The logs, whatever happened
+        if: always()
+        run: |
+          tail -100 "$PWD/.e2e/install/logs/openarity.log" || true
+          tail -50 "$PWD/.e2e/install/logs/postgres.log" || true
+          tail -50 "$PWD/.e2e/start.log" || true
