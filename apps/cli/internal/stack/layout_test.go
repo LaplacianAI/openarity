@@ -99,7 +99,8 @@ func TestEveryPathIsUnderTheRoot(t *testing.T) {
 	l := NewLayout(root)
 
 	for name, path := range map[string]string{
-		"Bin": l.Bin, "Data": l.Data, "Dex": l.Dex, "Logs": l.Logs, "State": l.State,
+		"Bin": l.Bin, "Data": l.Data, "Dex": l.Dex, "Logs": l.Logs,
+		"State": l.State, "Secret": l.Secret,
 	} {
 		if !strings.HasPrefix(path, root) {
 			t.Errorf("%s = %q, want it under %q", name, path, root)

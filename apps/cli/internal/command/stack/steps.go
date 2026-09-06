@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,41 +19,28 @@ import (
 	engine "github.com/LaplacianAI/openarity/apps/cli/internal/stack"
 )
 
-// How long a component gets to become useful, and how long a child gets to
-// exit before it is killed. Postgres on a cold cache is the slow one.
 const (
 	readyTimeout = 60 * time.Second
 	stopGrace    = 10 * time.Second
 )
 
-// realSteps are the parts of setup that touch the world: initdb, createdb,
-// the migration, dex's config. Each takes the Plan, so none of them has to
-// work out a path or a port for itself.
 func realSteps() engine.Steps {
 	return engine.Steps{
 		InitDB: func(ctx context.Context, p engine.Plan) error {
-			// --auth=trust, and it is not a hole: the cluster listens on
-			// loopback only and its socket lives inside the install
-			// directory. A password here would have to be stored somewhere
-			// to be used, and the only place to store it is the same disk.
 			return run(ctx, p, beside(p.Binaries["postgres"], "initdb"),
-				"-D", p.Layout.Data, "--auth=trust", "--username=openarity", "--encoding=UTF8")
+				"-D", p.Layout.Data, "--auth=scram-sha-256",
+				"--pwfile="+p.Layout.Secret, "--username=openarity", "--encoding=UTF8")
 		},
 
 		CreateDBs: func(ctx context.Context, p engine.Plan) error {
-			if err := startPostgres(ctx, p); err != nil {
-				return err
-			}
-			// dex gets its own database in the same cluster. A CGO-free dex
-			// has no sqlite storage, and one cluster is one thing to back up.
 			for _, name := range []string{"openarity", "dex"} {
-				if err := run(ctx, p, beside(p.Binaries["postgres"], "createdb"),
-					"-h", p.Layout.Data, "-p", strconv.Itoa(p.Ports.Postgres),
-					"-U", "openarity", name); err != nil && !alreadyExists(err) {
+				cmd := command(ctx, p.Binaries["postgres"], "--single", "-D", p.Layout.Data, "postgres")
+				cmd.Stdin = strings.NewReader("CREATE DATABASE " + name + ";\n")
+				if err := capture(cmd, "creating "+name); err != nil && !alreadyExists(err) {
 					return err
 				}
 			}
-			return nil
+			return startPostgres(ctx, p)
 		},
 
 		Migrate: func(ctx context.Context, p engine.Plan) error {
@@ -65,28 +54,25 @@ func realSteps() engine.Steps {
 				[]byte(dexConfig(p, hash)), 0o600)
 		},
 
-		// Setup proves the install works and then hands over: `oa stack
-		// start` is what holds the processes. Starting a supervisor here that
-		// died with the setup command would leave the person with an install
-		// that stopped the moment it finished — so this only puts Postgres
-		// back down again.
 		StartStack: stopPostgres,
 
 		Open: openBrowser,
 	}
 }
 
-// build assembles the four components from a finished install.
 func build(layout engine.Layout, state engine.State) (*engine.Stack, error) {
-	finder := engine.LocalFinder{Dir: layout.Bin}
+	binaries := state.Binaries
+	if len(binaries) == 0 {
+		finder := engine.LocalFinder{Dir: layout.Bin}
 
-	binaries := map[string]string{}
-	for _, name := range []string{"postgres", "dex", "brain"} {
-		path, err := finder.Find(name)
-		if err != nil {
-			return nil, err
+		binaries = map[string]string{}
+		for _, name := range []string{"postgres", "dex", "brain"} {
+			path, err := finder.Find(name)
+			if err != nil {
+				return nil, err
+			}
+			binaries[name] = path
 		}
-		binaries[name] = path
 	}
 
 	p := engine.Plan{Layout: layout, Ports: state.Ports, Binaries: binaries}
@@ -96,7 +82,7 @@ func build(layout engine.Layout, state engine.State) (*engine.Stack, error) {
 		Name: "postgres", Path: binaries["postgres"], Log: log,
 		Args: []string{
 			"-D", layout.Data, "-p", strconv.Itoa(state.Ports.Postgres),
-			"-k", layout.Data, "-c", "listen_addresses=127.0.0.1",
+			"-c", "listen_addresses=127.0.0.1",
 		},
 	}
 	dex := &engine.Child{
@@ -119,29 +105,25 @@ func build(layout engine.Layout, state engine.State) (*engine.Stack, error) {
 			{
 				Name: "postgres", Child: postgres,
 				Ready: func(ctx context.Context) error {
-					return run(ctx, p, beside(binaries["postgres"], "pg_isready"),
-						"-h", layout.Data, "-p", strconv.Itoa(state.Ports.Postgres))
+					var d net.Dialer
+					conn, err := d.DialContext(ctx, "tcp",
+						net.JoinHostPort("127.0.0.1", strconv.Itoa(state.Ports.Postgres)))
+					if err != nil {
+						return err
+					}
+					return conn.Close()
 				},
-				// pg_ctl rather than a signal. An ungraceful stop here costs
-				// data, and -m fast is the mode that refuses new connections
-				// and rolls back the open ones rather than waiting for them.
 				Shutdown: func(ctx context.Context) error {
 					return stopPostgres(ctx, p)
 				},
 			},
 			{Name: "dex", Child: dex, Ready: probe(state.Ports.Dex, "/healthz")},
 			{Name: "brain", Child: brain, Ready: probe(state.Ports.API, "/readyz")},
-			// The worker has no port and nothing to probe: it is ready when
-			// it is running, and saying otherwise would be inventing a check.
 			{Name: "worker", Child: worker},
 		},
 	}, nil
 }
 
-// brainEnv is the whole environment the brain gets. Explicit, because Go's
-// exec hands a child the parent's environment when this is nil — and a
-// developer's shell full of OPENARITY_ values would silently override every
-// one of these.
 func brainEnv(p engine.Plan) []string {
 	return []string{
 		"OPENARITY_POSTGRES_DSN=" + dsn(p, "openarity"),
@@ -156,7 +138,7 @@ func brainEnv(p engine.Plan) []string {
 		"OPENARITY_BOOTSTRAP_FIRST_USER=true",
 		"OPENARITY_OBJECTS_BACKEND=filesystem",
 		"OPENARITY_OBJECTS_PATH=" + filepath.Join(p.Layout.Root, "objects"),
-		"OPENARITY_ENVIRONMENT=production",
+		"OPENARITY_ENVIRONMENT=development",
 	}
 }
 
@@ -164,8 +146,16 @@ func brainEnv(p engine.Plan) []string {
 // port. Nothing outside this install can reach it, and there is no password
 // to store anywhere as a result.
 func dsn(p engine.Plan, database string) string {
-	return fmt.Sprintf("postgres://openarity@/%s?host=%s&port=%d&sslmode=disable",
-		database, p.Layout.Data, p.Ports.Postgres)
+	return fmt.Sprintf("postgres://openarity:%s@127.0.0.1:%d/%s?sslmode=disable",
+		url.QueryEscape(password(p)), p.Ports.Postgres, database)
+}
+
+func password(p engine.Plan) string {
+	raw, err := os.ReadFile(p.Layout.Secret) //nolint:gosec // a path from Layout
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func dexConfig(p engine.Plan, hash string) string {
@@ -180,10 +170,11 @@ func dexConfig(p engine.Plan, hash string) string {
 		"storage:\n" +
 		"  type: postgres\n" +
 		"  config:\n" +
-		"    host: " + p.Layout.Data + "\n" +
+		"    host: 127.0.0.1\n" +
 		"    port: " + strconv.Itoa(p.Ports.Postgres) + "\n" +
 		"    database: dex\n" +
 		"    user: openarity\n" +
+		"    password: \"" + password(p) + "\"\n" +
 		"    ssl:\n" +
 		"      mode: disable\n" +
 		"web:\n" +
@@ -218,7 +209,7 @@ func dexConfig(p engine.Plan, hash string) string {
 func startPostgres(ctx context.Context, p engine.Plan) error {
 	return run(ctx, p, beside(p.Binaries["postgres"], "pg_ctl"),
 		"-D", p.Layout.Data, "-w", "-l", filepath.Join(p.Layout.Logs, "postgres.log"),
-		"-o", fmt.Sprintf("-p %d -k %s -c listen_addresses=127.0.0.1", p.Ports.Postgres, p.Layout.Data),
+		"-o", fmt.Sprintf("-p %d -c listen_addresses=127.0.0.1", p.Ports.Postgres),
 		"start")
 }
 

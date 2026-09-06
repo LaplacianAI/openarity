@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -14,6 +15,7 @@ func sample() State {
 		Versions: Versions{Postgres: "18.6.0", Dex: "v2.45.1", Brain: "v0.2.0"},
 		Ports:    Ports{API: 21120, Webhook: 21121, Dex: 5556, Postgres: 21432},
 		Arch:     "arm64",
+		Binaries: map[string]string{"postgres": "/bin/postgres", "dex": "/bin/dex", "brain": "/bin/brain"},
 	}
 }
 
@@ -30,7 +32,7 @@ func TestStateRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadState() = %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("LoadState() = %+v, want %+v", got, want)
 	}
 }

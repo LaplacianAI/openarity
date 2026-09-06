@@ -24,6 +24,33 @@ func hold(t *testing.T) int {
 	return addr.Port
 }
 
+// A listener on the wildcard address is what a container publishing a port
+// looks like. Three separate things hide it: a loopback bind succeeds while
+// another process holds 0.0.0.0, Go's "tcp" network gives a dual-stack IPv6
+// socket that does not collide with an IPv4 wildcard, and it does so even
+// when the address is written as 0.0.0.0. Only tcp4 reports the conflict.
+// Measured against a Docker container publishing 21120, which the first two
+// versions of this check declared free.
+func TestAPortHeldOnTheWildcardAddressIsNotAvailable(t *testing.T) {
+	t.Parallel()
+
+	var lc net.ListenConfig
+	ln, err := lc.Listen(t.Context(), "tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("holding the wildcard: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener returned a %T", ln.Addr())
+	}
+
+	if PortAvailable(t.Context(), addr.Port) {
+		t.Errorf("PortAvailable(%d) = true while a wildcard listener holds it", addr.Port)
+	}
+}
+
 func TestAHeldPortIsNotAvailable(t *testing.T) {
 	t.Parallel()
 

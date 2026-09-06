@@ -69,6 +69,89 @@ func TestSetupRunsItsStepsInOrder(t *testing.T) {
 	}
 }
 
+// The database password never reaches the terminal at all — unlike the
+// passphrase, nobody needs to type it. It lives in one 0600 file, and the two
+// files a person is most likely to share must not contain it.
+func TestTheDatabasePasswordStaysInItsOwnFile(t *testing.T) {
+	r := &recorder{}
+	s := setupFor(t, r)
+
+	if _, err := s.Run(t.Context()); err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	secret, err := os.ReadFile(s.Layout.Secret) //nolint:gosec // a path this test created
+	if err != nil {
+		t.Fatalf("reading the secret: %v", err)
+	}
+	password := strings.TrimSpace(string(secret))
+	if password == "" {
+		t.Fatal("setup wrote an empty database password")
+	}
+
+	info, err := os.Stat(s.Layout.Secret)
+	if err != nil {
+		t.Fatalf("Stat() = %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("the secret file is mode %04o, want 0600", mode)
+	}
+
+	raw, err := os.ReadFile(s.Layout.State) //nolint:gosec // a path this test created
+	if err != nil {
+		t.Fatalf("reading the state: %v", err)
+	}
+	if strings.Contains(string(raw), password) {
+		t.Error("the database password is in stack.yaml")
+	}
+
+	entries, err := os.ReadDir(s.Layout.Logs)
+	if err != nil {
+		t.Fatalf("reading the log directory: %v", err)
+	}
+	for _, e := range entries {
+		logged, err := os.ReadFile(filepath.Join(s.Layout.Logs, e.Name())) //nolint:gosec // a path this test created
+		if err != nil {
+			t.Fatalf("reading %s: %v", e.Name(), err)
+		}
+		if strings.Contains(string(logged), password) {
+			t.Errorf("the database password is in the log file %s", e.Name())
+		}
+	}
+}
+
+// Regenerating it on a resume would leave a cluster whose role has the old
+// password and a file holding the new one — an install that starts and then
+// cannot authenticate, with nothing saying why.
+func TestTheDatabasePasswordSurvivesAResume(t *testing.T) {
+	r := &recorder{}
+	s := setupFor(t, r)
+
+	failing := errors.New("the network went away")
+	s.Steps.Migrate = func(context.Context, Plan) error { return failing }
+
+	if _, err := s.Run(t.Context()); !errors.Is(err, failing) {
+		t.Fatalf("Run() = %v, want the step's error", err)
+	}
+	first, err := os.ReadFile(s.Layout.Secret) //nolint:gosec // a path this test created
+	if err != nil {
+		t.Fatalf("reading the secret: %v", err)
+	}
+
+	s.Steps.Migrate = func(context.Context, Plan) error { return nil }
+	if _, err := s.Run(t.Context()); err != nil {
+		t.Fatalf("Run() on the second attempt = %v", err)
+	}
+
+	second, err := os.ReadFile(s.Layout.Secret) //nolint:gosec // a path this test created
+	if err != nil {
+		t.Fatalf("reading the secret: %v", err)
+	}
+	if string(first) != string(second) {
+		t.Error("the second attempt generated a new database password, which the cluster does not have")
+	}
+}
+
 // The security guard. The passphrase is the one secret setup produces, and
 // the log file is what people paste into issues.
 func TestThePassphraseReachesTheTerminalAndNothingElse(t *testing.T) {
@@ -216,6 +299,28 @@ func TestAMissingBinaryIsFoundBeforeAnythingIsCreated(t *testing.T) {
 
 // Ports are chosen by binding, and recorded, so `oa start` uses the same ones
 // the install was built with rather than choosing again.
+// oa stack start runs in a later process with no --bin-dir, so the paths the
+// install was actually built against have to survive in the state file.
+// Without them start resolves the install's own bin/ and finds nothing.
+func TestTheResolvedBinariesAreRecorded(t *testing.T) {
+	r := &recorder{}
+	s := setupFor(t, r)
+
+	if _, err := s.Run(t.Context()); err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	state, err := LoadState(s.Layout.State)
+	if err != nil {
+		t.Fatalf("LoadState() = %v", err)
+	}
+	for _, name := range required {
+		if state.Binaries[name] == "" {
+			t.Errorf("the path to %s was not recorded", name)
+		}
+	}
+}
+
 func TestTheChosenPortsAreRecorded(t *testing.T) {
 	r := &recorder{}
 	s := setupFor(t, r)

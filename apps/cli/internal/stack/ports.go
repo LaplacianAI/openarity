@@ -26,12 +26,16 @@ const (
 // now. Binding is the only honest test: a port can be held by a process this
 // one cannot see, and asking the process table would miss it.
 func PortAvailable(ctx context.Context, port int) bool {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", net.JoinHostPort(loopback, strconv.Itoa(port)))
-	if err != nil {
-		return false
+	for _, address := range []string{"0.0.0.0:" + strconv.Itoa(port), net.JoinHostPort(loopback, strconv.Itoa(port))} {
+		var lc net.ListenConfig
+		ln, err := lc.Listen(ctx, "tcp4", address)
+		if err != nil {
+			return false
+		}
+		if err := ln.Close(); err != nil {
+			return false
+		}
 	}
-	_ = ln.Close()
 	return true
 }
 

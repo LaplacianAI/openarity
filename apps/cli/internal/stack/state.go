@@ -25,6 +25,8 @@ type State struct {
 	// install runs the amd64 build under emulation. Recording it means
 	// `oa status` can say so rather than implying the install is native.
 	Arch string `yaml:"arch"`
+
+	Binaries map[string]string `yaml:"binaries"`
 }
 
 type Versions struct {
