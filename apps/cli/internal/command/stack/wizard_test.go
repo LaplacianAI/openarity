@@ -257,7 +257,7 @@ func TestAnExternalSecretStoreWithNoAppRoleIsRefusedBeforeAnythingIsDone(t *test
 	for _, backend := range []string{"openbao", "vault"} {
 		w := newWizard(quietOptions(), true, Answers{
 			Objects: "filesystem", Secrets: backend,
-			Address: "http://127.0.0.1:8200",
+			Address: aStoreThatAnswers(t),
 		}, "/an/install")
 
 		_, _, err := w.Run(t.Context())
@@ -277,7 +277,7 @@ func TestHalfAnAppRoleSaysWhichHalfIsMissing(t *testing.T) {
 	t.Setenv("OPENARITY_SECRETS_APPROLE_ID", "an-id")
 
 	w := newWizard(quietOptions(), true, Answers{
-		Objects: "filesystem", Secrets: "openbao", Address: "http://127.0.0.1:8200",
+		Objects: "filesystem", Secrets: "openbao", Address: aStoreThatAnswers(t),
 	}, "/an/install")
 
 	_, _, err := w.Run(t.Context())
@@ -299,7 +299,7 @@ func TestAnAppRoleGivenInTheEnvironmentIsAccepted(t *testing.T) {
 	t.Setenv("OPENARITY_SECRETS_APPROLE_SECRET", "a-secret")
 
 	w := newWizard(quietOptions(), true, Answers{
-		Objects: "filesystem", Secrets: "openbao", Address: "http://127.0.0.1:8200",
+		Objects: "filesystem", Secrets: "openbao", Address: aStoreThatAnswers(t),
 	}, "/an/install")
 
 	_, creds, err := w.Run(t.Context())
@@ -367,13 +367,16 @@ func TestMintingAsksTheServerAndKeepsOnlyTheAppRole(t *testing.T) {
 	}
 }
 
-// Pasting is the other half, and must not reach the server at all.
-func TestPastingAnAppRoleContactsNothing(t *testing.T) {
+// Pasting is the other half. The store is still contacted — reachability is
+// checked whichever way the AppRole arrives — but nothing is created.
+func TestPastingAnAppRoleCreatesNothing(t *testing.T) {
 	t.Setenv("OPENARITY_SECRETS_APPROLE_ID", "a-pasted-id")
 	t.Setenv("OPENARITY_SECRETS_APPROLE_SECRET", "a-pasted-secret")
 
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Error("the secret store was contacted for an AppRole that was pasted")
+	var seen []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(server.Close)
 
@@ -387,6 +390,12 @@ func TestPastingAnAppRoleContactsNothing(t *testing.T) {
 	}
 	if creds["OPENARITY_SECRETS_APPROLE_ID"] != "a-pasted-id" {
 		t.Error("the pasted AppRole did not survive")
+	}
+
+	for _, path := range seen {
+		if path != "/v1/sys/health" {
+			t.Errorf("the installer called %s for an AppRole that was pasted — it should create nothing", path)
+		}
 	}
 }
 
@@ -402,4 +411,39 @@ func TestMintingIsSkippedWithoutASecretStore(t *testing.T) {
 	if _, _, err := w.Run(t.Context()); err != nil {
 		t.Errorf("Run() = %v, want the ordinary install to proceed", err)
 	}
+}
+
+// A pasted AppRole against a store that is not there used to fail at
+// `brain migrate up`, four minutes in. Reachability is asked whichever way the
+// AppRole arrives.
+func TestAnUnreachableSecretStoreIsRefusedEvenWhenTheAppRoleWasPasted(t *testing.T) {
+	t.Setenv("OPENARITY_SECRETS_APPROLE_ID", "an-id")
+	t.Setenv("OPENARITY_SECRETS_APPROLE_SECRET", "a-secret")
+
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	addr := server.URL
+	server.Close()
+
+	w := newWizard(quietOptions(), true, Answers{
+		Objects: "filesystem", Secrets: "openbao", Address: addr, SecretsAuth: "paste",
+	}, "/an/install")
+
+	_, _, err := w.Run(t.Context())
+	if err == nil {
+		t.Fatal("Run() against a store that is not there = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "nothing answered") {
+		t.Errorf("Run() = %q, want it to say the store could not be reached", err)
+	}
+}
+
+// A secret store that is there, for tests about what happens after that.
+func aStoreThatAnswers(t *testing.T) string {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	return server.URL
 }

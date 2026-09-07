@@ -185,9 +185,44 @@ func (v *vault) do(ctx context.Context, method, path string, body map[string]any
 
 	res, err := v.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("stack: reaching %s: %w", v.addr, err)
+		return nil, unreachable(v.addr, err)
 	}
 	return res, nil
+}
+
+// Reachable answers whether there is a secret store at that address, without
+// needing a credential: sys/health is unauthenticated.
+//
+// Asked before anything is downloaded, because the alternative is finding out
+// four minutes later. An address that is merely wrong — the default 8200 when
+// the server publishes 28200, which is what a compose file does — is the most
+// likely mistake and the cheapest to catch.
+func Reachable(ctx context.Context, client *http.Client, addr string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimRight(addr, "/")+"/v1/sys/health", nil)
+	if err != nil {
+		return fmt.Errorf("stack: %s is not an address: %w", addr, err)
+	}
+
+	res, err := client.Do(req)
+	if err != nil {
+		return unreachable(addr, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	// Any answer at all proves something is there. Sealed, standby and
+	// uninitialised all have their own status here and are the operator's
+	// business, not setup's.
+	return nil
+}
+
+// unreachable says what a connection error means, rather than passing on Go's
+// rendering of it. "Post "http://…/v1/sys/mounts/secret": dial tcp: connect:
+// connection refused" is accurate and tells a person nothing about what to do.
+func unreachable(addr string, err error) error {
+	return fmt.Errorf(
+		"stack: nothing answered at %s — check the address and that the server is running (a compose file often publishes it on a different port): %w",
+		addr, err)
 }
 
 // refuse says what was refused without repeating the token back.

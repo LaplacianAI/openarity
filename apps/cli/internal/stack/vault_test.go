@@ -190,3 +190,70 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// Asked before anything is downloaded. A wrong address is the most likely
+// mistake and the cheapest to catch: the default is 8200 and a compose file
+// commonly publishes the same server on another port, so the store is running
+// and nothing is at the address anyway.
+func TestReachableAcceptsAnythingThatAnswers(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{
+		http.StatusOK,                 // unsealed and serving
+		http.StatusTooManyRequests,    // standby
+		http.StatusServiceUnavailable, // sealed
+		http.StatusNotImplemented,     // uninitialised
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+		}))
+
+		// Sealed, standby and uninitialised are the operator's business, not
+		// setup's. All that is being asked here is whether anything is there.
+		if err := Reachable(t.Context(), server.Client(), server.URL); err != nil {
+			t.Errorf("Reachable() against a server answering %d = %v", status, err)
+		}
+		server.Close()
+	}
+}
+
+func TestReachableSaysWhatToCheckWhenNothingAnswers(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	addr := server.URL
+	server.Close() // nothing is listening now
+
+	err := Reachable(t.Context(), http.DefaultClient, addr)
+	if err == nil {
+		t.Fatal("Reachable() against nothing = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), addr) {
+		t.Errorf("Reachable() = %q, want it to name the address", err)
+	}
+	if !strings.Contains(err.Error(), "port") {
+		t.Errorf("Reachable() = %q, want it to suggest what is usually wrong", err)
+	}
+}
+
+// It asks the one endpoint that needs no credential, so it can be asked before
+// there is one.
+func TestReachableNeedsNoToken(t *testing.T) {
+	t.Parallel()
+
+	var path, token string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, token = r.URL.Path, r.Header.Get("X-Vault-Token")
+	}))
+	t.Cleanup(server.Close)
+
+	if err := Reachable(t.Context(), server.Client(), server.URL); err != nil {
+		t.Fatalf("Reachable() = %v", err)
+	}
+	if path != "/v1/sys/health" {
+		t.Errorf("Reachable() asked %s, want the unauthenticated health endpoint", path)
+	}
+	if token != "" {
+		t.Errorf("Reachable() sent a token, which it cannot have before one exists")
+	}
+}

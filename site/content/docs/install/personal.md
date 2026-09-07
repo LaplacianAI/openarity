@@ -193,6 +193,17 @@ Running it twice is safe. Every step tolerates what is already there, so a
 second install against the same server does not fail on a mount an operator
 enabled years ago.
 
+Either way, setup checks the store answers before it downloads anything. The
+address is the usual mistake — the default is `8200` and a compose file
+commonly publishes the same server somewhere else, so the store is running and
+nothing is at the address regardless:
+
+```text
+oa: stack: nothing answered at http://127.0.0.1:8200 — check the address and
+that the server is running (a compose file often publishes it on a different
+port)
+```
+
 ## A gateway of your own
 
 Neither gateway ships a binary you can just run. LiteLLM publishes no release

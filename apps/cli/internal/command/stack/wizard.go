@@ -170,7 +170,18 @@ func (w *wizard) Run(ctx context.Context) (engine.Settings, map[string]string, e
 // else: it can do anything to that server, which is why this is a choice
 // rather than what setup does when it can. Only the AppRole is kept.
 func (w *wizard) mint(ctx context.Context, s engine.Settings) error {
-	if w.given.SecretsAuth != "mint" || s.SecretsBackend == "static" {
+	if s.SecretsBackend == "static" {
+		return nil
+	}
+
+	// Asked whichever way the AppRole arrives. A pasted one against a store
+	// that is not there fails at `brain migrate up`, four minutes in; this
+	// costs a round trip.
+	if err := engine.Reachable(ctx, http.DefaultClient, s.SecretsAddr); err != nil {
+		return err
+	}
+
+	if w.given.SecretsAuth != "mint" {
 		return nil
 	}
 
