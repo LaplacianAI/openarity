@@ -31,10 +31,13 @@ pub struct Choices {
     bucket: String,
     region: String,
     address: String,
+    kv_mount: String,
     gateway: String,
     // Never a flag: argv is readable by every process on this machine, so
     // these go into the child's environment instead.
     gateway_password: String,
+    role_id: String,
+    role_secret: String,
     access_key: String,
     secret_key: String,
     model_key: String,
@@ -75,6 +78,7 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
         ("--objects-bucket", &choices.bucket),
         ("--objects-region", &choices.region),
         ("--secrets-addr", &choices.address),
+        ("--secrets-mount", &choices.kv_mount),
         ("--model-gateway", &choices.gateway),
         ("--minio-path", &choices.minio_path),
     ] {
@@ -105,6 +109,12 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
     // machine, which is the thing it is meant to keep out.
     if !choices.gateway_password.is_empty() {
         command = command.env("OPENARITY_GATEWAY_PASSWORD", &choices.gateway_password);
+    }
+
+    if !choices.role_id.is_empty() {
+        command = command
+            .env("OPENARITY_SECRETS_APPROLE_ID", &choices.role_id)
+            .env("OPENARITY_SECRETS_APPROLE_SECRET", &choices.role_secret);
     }
 
     let (mut rx, _child) = command.spawn().map_err(|e| e.to_string())?;
@@ -176,6 +186,9 @@ mod tests {
         "bucket": "openarity",
         "region": "us-east-1",
         "address": "http://127.0.0.1:8200",
+        "kvMount": "secret",
+        "roleId": "an-approle-id",
+        "roleSecret": "an-approle-secret",
         "gateway": "",
         "gatewayPassword": "a-dashboard-password",
         "accessKey": "an-access-key",
@@ -192,6 +205,9 @@ mod tests {
         assert_eq!(choices.model_backend, "omniroute");
         assert_eq!(choices.model_path, "/somewhere/gateway");
         assert_eq!(choices.gateway_password, "a-dashboard-password");
+        assert_eq!(choices.kv_mount, "secret");
+        assert_eq!(choices.role_id, "an-approle-id");
+        assert_eq!(choices.role_secret, "an-approle-secret");
         assert_eq!(choices.access_key, "an-access-key");
         assert_eq!(choices.secret_key, "a-secret-key");
         assert_eq!(choices.model_key, "a-model-key");
@@ -212,7 +228,8 @@ mod tests {
     /// the install proceeds with the answer missing.
     #[test]
     fn refuses_a_field_it_does_not_know() {
-        let extra = FROM_THE_WINDOW.replace(r#""root": "","#, r#""root": "", "somethingNew": "x","#);
+        let extra =
+            FROM_THE_WINDOW.replace(r#""root": "","#, r#""root": "", "somethingNew": "x","#);
         assert!(
             serde_json::from_str::<Choices>(&extra).is_err(),
             "an unknown field was ignored, so a question could be asked and never delivered"

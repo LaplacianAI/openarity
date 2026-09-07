@@ -3,6 +3,7 @@ package stack
 import (
 	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/pflag"
@@ -238,5 +239,84 @@ func TestPointingAtAGatewayGetsNoDirectory(t *testing.T) {
 	}
 	if settings.ModelPath != "" {
 		t.Errorf("ModelPath = %q, want nothing — no gateway is installed", settings.ModelPath)
+	}
+}
+
+// A secret store is a dependency, not a feature flag: the brain refuses to
+// start without an AppRole, and so does `brain migrate up`.
+//
+// The installer window asked for the address and not for the AppRole, so
+// choosing OpenBao failed several minutes in — after 70MB of Postgres and a
+// cluster — with "validation failed: SECRETS_APPROLE_ID and
+// SECRETS_APPROLE_SECRET are required". Refusing it costs a second.
+func TestAnExternalSecretStoreWithNoAppRoleIsRefusedBeforeAnythingIsDone(t *testing.T) {
+	t.Parallel()
+
+	for _, backend := range []string{"openbao", "vault"} {
+		w := newWizard(quietOptions(), true, Answers{
+			Objects: "filesystem", Secrets: backend,
+			Address: "http://127.0.0.1:8200",
+		}, "/an/install")
+
+		_, _, err := w.Run()
+		if err == nil {
+			t.Fatalf("Run() with %s and no AppRole = nil, want a refusal", backend)
+		}
+		for _, want := range []string{"APPROLE_ID", "APPROLE_SECRET"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("Run() = %q, want it to name %s", err, want)
+			}
+		}
+	}
+}
+
+// Half an AppRole is as unusable as none, and says which half is missing.
+func TestHalfAnAppRoleSaysWhichHalfIsMissing(t *testing.T) {
+	t.Setenv("OPENARITY_SECRETS_APPROLE_ID", "an-id")
+
+	w := newWizard(quietOptions(), true, Answers{
+		Objects: "filesystem", Secrets: "openbao", Address: "http://127.0.0.1:8200",
+	}, "/an/install")
+
+	_, _, err := w.Run()
+	if err == nil {
+		t.Fatal("Run() with half an AppRole = nil, want a refusal")
+	}
+	if strings.Contains(err.Error(), "APPROLE_ID and") {
+		t.Errorf("Run() = %q, want it to name only the missing half", err)
+	}
+	if !strings.Contains(err.Error(), "APPROLE_SECRET") {
+		t.Errorf("Run() = %q, want it to name the secret", err)
+	}
+}
+
+// Given both, it proceeds. The credentials arrive in the environment because
+// argv is readable by every process on the machine.
+func TestAnAppRoleGivenInTheEnvironmentIsAccepted(t *testing.T) {
+	t.Setenv("OPENARITY_SECRETS_APPROLE_ID", "an-id")
+	t.Setenv("OPENARITY_SECRETS_APPROLE_SECRET", "a-secret")
+
+	w := newWizard(quietOptions(), true, Answers{
+		Objects: "filesystem", Secrets: "openbao", Address: "http://127.0.0.1:8200",
+	}, "/an/install")
+
+	_, creds, err := w.Run()
+	if err != nil {
+		t.Fatalf("Run() with a whole AppRole = %v", err)
+	}
+	if creds["OPENARITY_SECRETS_APPROLE_ID"] != "an-id" {
+		t.Error("the AppRole id did not survive")
+	}
+}
+
+// Keeping secrets in the brain needs no AppRole, and demanding one would make
+// the ordinary install fail.
+func TestKeepingSecretsInTheBrainNeedsNoAppRole(t *testing.T) {
+	t.Parallel()
+
+	w := newWizard(quietOptions(), true, Answers{Objects: "filesystem", Secrets: "static"}, "/an/install")
+
+	if _, _, err := w.Run(); err != nil {
+		t.Errorf("Run() = %v, want the ordinary install to proceed", err)
 	}
 }

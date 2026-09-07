@@ -23,6 +23,9 @@ export function App() {
   const [accessKey, setAccessKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
   const [address, setAddress] = useState("http://127.0.0.1:8200");
+  const [kvMount, setKVMount] = useState("secret");
+  const [roleID, setRoleID] = useState("");
+  const [roleSecret, setRoleSecret] = useState("");
   const [minioPath, setMinioPath] = useState("");
 
   useEffect(() => {
@@ -55,6 +58,9 @@ export function App() {
           minioPath: objects === "minio" ? minioPath : "",
           region: objects === "s3" ? region : "",
           address: secrets === "static" ? "" : address,
+          kvMount: secrets === "static" ? "" : kvMount,
+          roleId: secrets === "static" ? "" : roleID,
+          roleSecret: secrets === "static" ? "" : roleSecret,
           modelBackend,
           modelPath: runsGateway ? modelPath : "",
           // Only sent when we point at one. A gateway we install is found at
@@ -137,6 +143,15 @@ export function App() {
         {secrets !== "static" && (
           <div className="follow">
             <Field label="Address" hint="For example http://127.0.0.1:8200" value={address} onChange={setAddress} />
+            <Field label="KV mount" value={kvMount} onChange={setKVMount} />
+            {/*
+              The brain refuses to start without these — a secret store is a
+              dependency, not a feature flag. The window used to ask only for
+              the address, so choosing OpenBao failed several minutes later,
+              after Postgres had been downloaded and a cluster built.
+            */}
+            <Field label="AppRole ID" value={roleID} onChange={setRoleID} />
+            <Field label="AppRole secret" value={roleSecret} onChange={setRoleSecret} secret />
           </div>
         )}
 

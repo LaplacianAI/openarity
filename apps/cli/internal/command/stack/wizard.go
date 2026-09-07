@@ -115,7 +115,10 @@ func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 	if w.given.complete() {
 		settings = w.given.settings(settings)
 		w.fillPaths(&settings)
-		return settings, w.creds, settings.Validate()
+		if err := settings.Validate(); err != nil {
+			return settings, w.creds, err
+		}
+		return settings, w.creds, w.checkCredentials(settings)
 	}
 
 	if !w.ask {
@@ -143,7 +146,10 @@ func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 
 	w.say("")
 	w.fillPaths(&settings)
-	return settings, w.creds, settings.Validate()
+	if err := settings.Validate(); err != nil {
+		return settings, w.creds, err
+	}
+	return settings, w.creds, w.checkCredentials(settings)
 }
 
 // fillPaths supplies the directories nobody was asked for.
@@ -175,6 +181,39 @@ func (w *wizard) fillPaths(s *engine.Settings) {
 			*field.into = filepath.Join(w.root, field.name)
 		}
 	}
+}
+
+// checkCredentials refuses what the brain would refuse, before anything is
+// downloaded.
+//
+// A secret store is a dependency rather than a feature flag: the brain will
+// not start without an AppRole, and neither will `brain migrate up`. Settings
+// cannot say so — credentials are deliberately not in it, so that the state
+// file can never hold one — so the check belongs here, where both halves are
+// in the same hand.
+//
+// Discovered by choosing OpenBao in the installer window, which asked for the
+// address and not for the AppRole. That failed several minutes in, after 70MB
+// of Postgres and a cluster, with "validation failed: SECRETS_APPROLE_ID and
+// SECRETS_APPROLE_SECRET are required". It now fails in about a second.
+func (w *wizard) checkCredentials(s engine.Settings) error {
+	if s.SecretsBackend == "static" {
+		return nil
+	}
+
+	var missing []string
+	for _, key := range []string{"OPENARITY_SECRETS_APPROLE_ID", "OPENARITY_SECRETS_APPROLE_SECRET"} {
+		if w.creds[key] == "" {
+			missing = append(missing, strings.TrimPrefix(key, "OPENARITY_"))
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"stack: %s reaches its secret store with an AppRole, so %s cannot be blank",
+		s.SecretsBackend, strings.Join(missing, " and "))
 }
 
 func (w *wizard) objects(s *engine.Settings) error {
