@@ -155,14 +155,16 @@ oa stack stop           # from another terminal
 ## An AppRole, pasted or minted
 
 The brain reaches an external secret store with an AppRole and will not start
-without one — a secret store is a dependency, not a feature flag. There are two
-ways to get it.
+without one — a secret store is a dependency, not a feature flag.
 
-**Paste one.** `make bao-approle` in `deployment/` prints the pair, and the
-installer takes them. Nothing is written to your server.
+You are not asked which way you want it. Give a token that may administer the
+server and the role is created for you; that is the only thing the token is
+for, and it is all the installer asks. If you already have an AppRole, set
+`OPENARITY_SECRETS_APPROLE_ID` and `OPENARITY_SECRETS_APPROLE_SECRET` in the
+environment and it is used as it is — nothing is created and no token is
+wanted.
 
-**Have one minted.** The installer creates the role itself, which takes a token
-that may administer that server. It does six things:
+Creating it does six things:
 
 ```text
 enable the KV v2 mount, if it is not already
@@ -200,6 +202,15 @@ shared with anything else, it is worth knowing that a policy and a role appear.
 Running it twice is safe. Every step tolerates what is already there, so a
 second install against the same server does not fail on a mount an operator
 enabled years ago.
+
+With neither an AppRole nor a token, setup says so before it downloads
+anything, and names both ways out:
+
+```text
+oa: stack: no AppRole and no admin token — set OPENARITY_SECRETS_APPROLE_ID and
+OPENARITY_SECRETS_APPROLE_SECRET, or give a token that may administer
+http://127.0.0.1:8200 and one will be created
+```
 
 Either way, setup checks the store answers before it downloads anything. The
 address is the usual mistake — the default is `8200` and a compose file

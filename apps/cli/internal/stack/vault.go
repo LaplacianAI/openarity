@@ -72,7 +72,12 @@ type vault struct {
 // have enabled the KV mount years ago.
 func MintAppRole(ctx context.Context, client *http.Client, addr, token, mount string) (AppRole, error) {
 	if strings.TrimSpace(token) == "" {
-		return AppRole{}, fmt.Errorf("stack: minting an AppRole needs a token that may administer %s", addr)
+		// Both ways out, because either is reasonable: somebody whose ops team
+		// handed them an AppRole and no admin token is not stuck, and somebody
+		// who owns the server does not have to go and mint one by hand.
+		return AppRole{}, fmt.Errorf(
+			"stack: no AppRole and no admin token — set %s and %s, or give a token that may administer %s and one will be created",
+			"OPENARITY_SECRETS_APPROLE_ID", "OPENARITY_SECRETS_APPROLE_SECRET", addr)
 	}
 	if mount == "" {
 		mount = "secret"

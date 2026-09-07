@@ -27,10 +27,6 @@ type Answers struct {
 	ModelBackend string
 	ModelPath    string
 
-	// "mint" asks the secret store for an AppRole rather than being given
-	// one. Anything else means it was pasted.
-	SecretsAuth string
-
 	Objects   string
 	Endpoint  string
 	Bucket    string
@@ -124,10 +120,7 @@ func (w *wizard) Run(ctx context.Context) (engine.Settings, map[string]string, e
 		if err := settings.Validate(); err != nil {
 			return settings, w.creds, err
 		}
-		if err := w.mint(ctx, settings); err != nil {
-			return settings, w.creds, err
-		}
-		return settings, w.creds, w.checkCredentials(settings)
+		return settings, w.creds, w.mint(ctx, settings)
 	}
 
 	if !w.ask {
@@ -158,10 +151,7 @@ func (w *wizard) Run(ctx context.Context) (engine.Settings, map[string]string, e
 	if err := settings.Validate(); err != nil {
 		return settings, w.creds, err
 	}
-	if err := w.mint(ctx, settings); err != nil {
-		return settings, w.creds, err
-	}
-	return settings, w.creds, w.checkCredentials(settings)
+	return settings, w.creds, w.mint(ctx, settings)
 }
 
 // mint asks the secret store for the AppRole, when that is what was chosen.
@@ -174,14 +164,17 @@ func (w *wizard) mint(ctx context.Context, s engine.Settings) error {
 		return nil
 	}
 
-	// Asked whichever way the AppRole arrives. A pasted one against a store
-	// that is not there fails at `brain migrate up`, four minutes in; this
+	// Asked however the AppRole arrives. One that was given, against a store
+	// that is not there, fails at `brain migrate up` four minutes in; this
 	// costs a round trip.
 	if err := engine.Reachable(ctx, http.DefaultClient, s.SecretsAddr); err != nil {
 		return err
 	}
 
-	if w.given.SecretsAuth != "mint" {
+	// Nobody is asked which way they want this. An AppRole already in hand is
+	// used, and otherwise one is minted — which is the only case where the
+	// admin token is wanted, and the only thing worth asking for.
+	if w.creds["OPENARITY_SECRETS_APPROLE_ID"] != "" && w.creds["OPENARITY_SECRETS_APPROLE_SECRET"] != "" {
 		return nil
 	}
 
@@ -230,39 +223,6 @@ func (w *wizard) fillPaths(s *engine.Settings) {
 			*field.into = filepath.Join(w.root, field.name)
 		}
 	}
-}
-
-// checkCredentials refuses what the brain would refuse, before anything is
-// downloaded.
-//
-// A secret store is a dependency rather than a feature flag: the brain will
-// not start without an AppRole, and neither will `brain migrate up`. Settings
-// cannot say so — credentials are deliberately not in it, so that the state
-// file can never hold one — so the check belongs here, where both halves are
-// in the same hand.
-//
-// Discovered by choosing OpenBao in the installer window, which asked for the
-// address and not for the AppRole. That failed several minutes in, after 70MB
-// of Postgres and a cluster, with "validation failed: SECRETS_APPROLE_ID and
-// SECRETS_APPROLE_SECRET are required". It now fails in about a second.
-func (w *wizard) checkCredentials(s engine.Settings) error {
-	if s.SecretsBackend == "static" {
-		return nil
-	}
-
-	var missing []string
-	for _, key := range []string{"OPENARITY_SECRETS_APPROLE_ID", "OPENARITY_SECRETS_APPROLE_SECRET"} {
-		if w.creds[key] == "" {
-			missing = append(missing, strings.TrimPrefix(key, "OPENARITY_"))
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-
-	return fmt.Errorf(
-		"stack: %s reaches its secret store with an AppRole, so %s cannot be blank",
-		s.SecretsBackend, strings.Join(missing, " and "))
 }
 
 func (w *wizard) objects(s *engine.Settings) error {
@@ -343,31 +303,26 @@ func (w *wizard) secrets(s *engine.Settings) error {
 		return err
 	}
 
-	how, err := w.pick("How should Openarity get its AppRole?",
-		"The brain logs in with one. It is the only credential kept.",
-		[]choice{
-			{"paste", "I have one", "The two values `make bao-approle` prints."},
-			{"mint", "Mint one for me", "Needs a token that may administer that server. It is used once and not stored."},
-		})
-	if err != nil {
-		return err
-	}
-
-	if how == "mint" {
-		token, err := w.secret("Admin token")
-		if err != nil {
-			return err
-		}
-		// Through the environment, so the rest of the flow reads it the same
-		// way whether it came from here or from the installer window.
-		if err := os.Setenv(adminToken, token); err != nil {
-			return err
-		}
-		w.given.SecretsAuth = "mint"
+	// An AppRole already in the environment is used as it is, so nothing is
+	// asked. Otherwise one is created here, which is what the token is for.
+	if w.creds["OPENARITY_SECRETS_APPROLE_ID"] != "" && w.creds["OPENARITY_SECRETS_APPROLE_SECRET"] != "" {
 		return nil
 	}
 
-	roleID, err := w.text("AppRole ID", "", "")
+	token, err := w.secret("Admin token, to create the role Openarity logs in with")
+	if err != nil {
+		return err
+	}
+	if token != "" {
+		// Through the environment, so the rest of the flow reads it the same
+		// way whether it came from here or from the installer window.
+		return os.Setenv(adminToken, token)
+	}
+
+	// Blank, so they have an AppRole and would rather type it than hand over a
+	// token that can do anything to that server. A reasonable preference, and
+	// the only reason this branch exists.
+	roleID, err := w.text("AppRole ID", "Because no admin token was given.", "")
 	if err != nil {
 		return err
 	}

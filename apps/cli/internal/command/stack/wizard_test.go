@@ -247,11 +247,11 @@ func TestPointingAtAGatewayGetsNoDirectory(t *testing.T) {
 // A secret store is a dependency, not a feature flag: the brain refuses to
 // start without an AppRole, and so does `brain migrate up`.
 //
-// The installer window asked for the address and not for the AppRole, so
-// choosing OpenBao failed several minutes in — after 70MB of Postgres and a
-// cluster — with "validation failed: SECRETS_APPROLE_ID and
-// SECRETS_APPROLE_SECRET are required". Refusing it costs a second.
-func TestAnExternalSecretStoreWithNoAppRoleIsRefusedBeforeAnythingIsDone(t *testing.T) {
+// Nobody is asked which way they want one, so with neither an AppRole nor an
+// admin token the refusal has to name both ways out. It used to fail several
+// minutes in — after 70MB of Postgres and a cluster — with the brain's own
+// "SECRETS_APPROLE_ID and SECRETS_APPROLE_SECRET are required".
+func TestNeitherAnAppRoleNorATokenIsRefusedBeforeAnythingIsDone(t *testing.T) {
 	t.Parallel()
 
 	for _, backend := range []string{"openbao", "vault"} {
@@ -262,18 +262,20 @@ func TestAnExternalSecretStoreWithNoAppRoleIsRefusedBeforeAnythingIsDone(t *test
 
 		_, _, err := w.Run(t.Context())
 		if err == nil {
-			t.Fatalf("Run() with %s and no AppRole = nil, want a refusal", backend)
+			t.Fatalf("Run() with %s, no AppRole and no token = nil, want a refusal", backend)
 		}
-		for _, want := range []string{"APPROLE_ID", "APPROLE_SECRET"} {
+		for _, want := range []string{"APPROLE_ID", "APPROLE_SECRET", "administer"} {
 			if !strings.Contains(err.Error(), want) {
-				t.Errorf("Run() = %q, want it to name %s", err, want)
+				t.Errorf("Run() = %q, want it to mention %s", err, want)
 			}
 		}
 	}
 }
 
-// Half an AppRole is as unusable as none, and says which half is missing.
-func TestHalfAnAppRoleSaysWhichHalfIsMissing(t *testing.T) {
+// Half an AppRole is as unusable as none, and with no admin token to fall back
+// on the refusal is the same one: it names both ways out rather than guessing
+// which half was meant.
+func TestHalfAnAppRoleIsTreatedAsNone(t *testing.T) {
 	t.Setenv("OPENARITY_SECRETS_APPROLE_ID", "an-id")
 
 	w := newWizard(quietOptions(), true, Answers{
@@ -282,13 +284,10 @@ func TestHalfAnAppRoleSaysWhichHalfIsMissing(t *testing.T) {
 
 	_, _, err := w.Run(t.Context())
 	if err == nil {
-		t.Fatal("Run() with half an AppRole = nil, want a refusal")
-	}
-	if strings.Contains(err.Error(), "APPROLE_ID and") {
-		t.Errorf("Run() = %q, want it to name only the missing half", err)
+		t.Fatal("Run() with half an AppRole and no token = nil, want a refusal")
 	}
 	if !strings.Contains(err.Error(), "APPROLE_SECRET") {
-		t.Errorf("Run() = %q, want it to name the secret", err)
+		t.Errorf("Run() = %q, want it to name what is missing", err)
 	}
 }
 
@@ -323,9 +322,11 @@ func TestKeepingSecretsInTheBrainNeedsNoAppRole(t *testing.T) {
 	}
 }
 
-// Minting is a choice because it costs an admin token, which can do anything
-// to that server. The token is used for the six calls that create the role and
-// never written down; only the AppRole reaches the credentials file.
+// Nobody is asked which way they want this. With no AppRole in hand, one is
+// minted — which is the only case where the admin token is wanted.
+//
+// The token is used for the six calls that create the role and never written
+// down; only the AppRole reaches the credentials file.
 func TestMintingAsksTheServerAndKeepsOnlyTheAppRole(t *testing.T) {
 	const admin = "an-admin-token-that-must-not-be-stored"
 	t.Setenv(adminToken, admin)
@@ -346,7 +347,7 @@ func TestMintingAsksTheServerAndKeepsOnlyTheAppRole(t *testing.T) {
 
 	w := newWizard(quietOptions(), true, Answers{
 		Objects: "filesystem", Secrets: "openbao",
-		Address: server.URL, KVMount: "secret", SecretsAuth: "mint",
+		Address: server.URL, KVMount: "secret",
 	}, "/an/install")
 
 	_, creds, err := w.Run(t.Context())
@@ -367,9 +368,10 @@ func TestMintingAsksTheServerAndKeepsOnlyTheAppRole(t *testing.T) {
 	}
 }
 
-// Pasting is the other half. The store is still contacted — reachability is
-// checked whichever way the AppRole arrives — but nothing is created.
-func TestPastingAnAppRoleCreatesNothing(t *testing.T) {
+// An AppRole already in hand is used as it is. The store is still contacted —
+// reachability is checked however the AppRole arrives — but nothing is created,
+// and no admin token is wanted.
+func TestAnAppRoleAlreadyInHandCreatesNothing(t *testing.T) {
 	t.Setenv("OPENARITY_SECRETS_APPROLE_ID", "a-pasted-id")
 	t.Setenv("OPENARITY_SECRETS_APPROLE_SECRET", "a-pasted-secret")
 
@@ -381,7 +383,7 @@ func TestPastingAnAppRoleCreatesNothing(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	w := newWizard(quietOptions(), true, Answers{
-		Objects: "filesystem", Secrets: "openbao", Address: server.URL, SecretsAuth: "paste",
+		Objects: "filesystem", Secrets: "openbao", Address: server.URL,
 	}, "/an/install")
 
 	_, creds, err := w.Run(t.Context())
@@ -399,13 +401,13 @@ func TestPastingAnAppRoleCreatesNothing(t *testing.T) {
 	}
 }
 
-// Keeping secrets in the brain contacts nothing either, whatever was asked
-// for, because there is no server to ask.
+// Keeping secrets in the brain contacts nothing, because there is no server to
+// ask.
 func TestMintingIsSkippedWithoutASecretStore(t *testing.T) {
 	t.Setenv(adminToken, "an-admin-token")
 
 	w := newWizard(quietOptions(), true, Answers{
-		Objects: "filesystem", Secrets: "static", SecretsAuth: "mint",
+		Objects: "filesystem", Secrets: "static",
 	}, "/an/install")
 
 	if _, _, err := w.Run(t.Context()); err != nil {
@@ -425,7 +427,7 @@ func TestAnUnreachableSecretStoreIsRefusedEvenWhenTheAppRoleWasPasted(t *testing
 	server.Close()
 
 	w := newWizard(quietOptions(), true, Answers{
-		Objects: "filesystem", Secrets: "openbao", Address: addr, SecretsAuth: "paste",
+		Objects: "filesystem", Secrets: "openbao", Address: addr,
 	}, "/an/install")
 
 	_, _, err := w.Run(t.Context())

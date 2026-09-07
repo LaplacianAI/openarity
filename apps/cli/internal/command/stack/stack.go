@@ -206,8 +206,6 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 	cmd.Flags().StringVar(&given.Secrets, "secrets", "", "where credentials are kept: static, openbao or vault")
 	cmd.Flags().StringVar(&given.Address, "secrets-addr", "", "the address of an external secret store")
 	cmd.Flags().StringVar(&given.KVMount, "secrets-mount", "", "the KV mount to use")
-	cmd.Flags().StringVar(&given.SecretsAuth, "secrets-auth", "",
-		"paste, or mint to have an AppRole created — minting reads OPENARITY_SECRETS_ADMIN_TOKEN")
 	cmd.Flags().StringVar(&given.Gateway, "model-gateway", "", "the base URL of a model gateway")
 	cmd.Flags().StringVar(&given.ModelBackend, "model-backend", "",
 		"where the model gateway comes from: external, litellm or omniroute")
