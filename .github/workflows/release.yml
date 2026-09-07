@@ -129,8 +129,138 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+
+  # The desktop installer, which is what a personal install is actually for.
+  #
+  # Built on the platform it is for rather than cross-compiled: Tauri packages
+  # with the host's own tooling — hdiutil for a .dmg, WiX for an .msi, dpkg-deb
+  # for a .deb — and none of that runs anywhere else. That is why this is a
+  # second job with a matrix of runners rather than four more entries above.
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            triple: aarch64-apple-darwin
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            triple: x86_64-apple-darwin
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            triple: x86_64-pc-windows-msvc
+          # The oldest glibc the .deb should demand. Building on a newer
+          # runner would produce a package that refuses to install on the
+          # distributions people actually run a home server on.
+          - os: ubuntu-22.04
+            goos: linux
+            goarch: amd64
+            triple: x86_64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/installer/package-lock.json
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/cli/go.mod
+          cache-dependency-path: apps/cli/go.sum
+
+      # Tauri v2 needs 1.77 or newer; stable is well past that.
+      - uses: dtolnay/rust-toolchain@stable
+
+      # What Tauri draws with on Linux, and none of it is on the runner.
+      - name: Linux bundling dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install the frontend dependencies
+        working-directory: apps/installer
+        run: npm ci
+
+      # Only icon.png is committed — the rest are derived from it and
+      # gitignored, so tauri build would fail here on a missing .icns.
+      - name: Generate the icon set
+        working-directory: apps/installer
+        run: npx tauri icon src-tauri/icons/icon.png
+
+      # The bundle ships oa inside it. Tauri resolves a sidecar by appending
+      # the target triple, so the name is not decorative.
+      - name: Stage the sidecar
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          root="$PWD"
+          suffix=""
+          if [ "$GOOS" = "windows" ]; then suffix=".exe"; fi
+
+          mkdir -p apps/installer/src-tauri/binaries
+          (cd apps/cli && go build -trimpath -ldflags "-s -w" \
+            -o "$root/apps/installer/src-tauri/binaries/oa-${{ matrix.triple }}$suffix" ./cmd/oa)
+
+      - name: Bundle
+        working-directory: apps/installer
+        run: npx tauri build
+
+      # Renamed on the way out. Tauri names a bundle after the application and
+      # its version; a release holding four of those cannot be told apart by
+      # the platform they run on, which is the only thing a person choosing
+      # one cares about.
+      - name: Collect
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          found=0
+          while IFS= read -r -d '' f; do
+            cp "$f" "dist/openarity-installer_${{ matrix.goos }}_${{ matrix.goarch }}.${f##*.}"
+            found=$((found + 1))
+          done < <(find apps/installer/src-tauri/target/release/bundle -type f \
+            \( -name '*.dmg' -o -name '*.msi' -o -name '*.deb' \) -print0)
+
+          test "$found" -gt 0 || { echo "tauri build produced no bundle"; exit 1; }
+          ls -la dist
+
+      # sha256sum is coreutils and is not on macOS; shasum is Perl and is on
+      # all three. Same output format either way.
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sum() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi; }
+          for f in *; do
+            case "$f" in *.sha256) continue ;; esac
+            sum "$f" > "$f.sha256"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          if-no-files-found: error
+
   publish:
-    needs: build
+    needs: [build, installer]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -151,7 +281,13 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             --draft \
             --title "${{ github.ref_name }}" \
-            --notes "Binaries for brain, oa and dex.
+            --notes "Binaries for brain, oa and dex, and the desktop installer.
+
+          The installer is the way in for a personal install: open it and it
+          does the rest. **The bundles are not signed** — macOS will say the
+          application cannot be checked for malicious software, and Windows
+          SmartScreen will warn — until there is a Developer ID certificate
+          and a Windows code-signing certificate to build with.
 
           dex is built from the upstream source at the tag pinned in
           apps/cli/internal/stack/sources.go, with CGO disabled. It is

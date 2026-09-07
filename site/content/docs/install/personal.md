@@ -86,10 +86,10 @@ question the command would ask, which is what most people want and is what the
 next section describes.
 
 {{< callout type="error" >}}
-**The bundle is not signed.** macOS and Windows both refuse an unsigned
-application without a deliberate override, which is why it is not distributed
-yet. Building it yourself, as above, produces a bundle your own machine already
-trusts.
+**The bundle is not signed.** macOS will say the application cannot be checked
+for malicious software and Windows SmartScreen will warn, until there is a
+Developer ID certificate and a Windows code-signing certificate to build with.
+Building it yourself, as above, produces one your own machine already trusts.
 {{< /callout >}}
 
 ## The command
@@ -187,8 +187,10 @@ creates it.
 
 ## What is not here yet
 
-**A signed bundle, and a download.** Both wait on the first release and on a
-Developer ID certificate for macOS and a code-signing certificate for Windows.
+**A signed bundle.** The release builds a `.dmg`, an `.msi` and a `.deb` on
+the platform each one is for, so there will be something to download — but
+signing waits on a Developer ID certificate for macOS and a code-signing
+certificate for Windows.
 
 **More than one person.** dex is configured with a single user. Adding a second
 means editing its configuration by hand, at which point a
