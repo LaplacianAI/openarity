@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 // Every test here writes a real file, so each gets its own config directory.
@@ -271,28 +270,5 @@ func TestSaveIsAtomicUnderConcurrentReads(t *testing.T) {
 
 	for failure := range failures {
 		t.Error(failure)
-	}
-}
-
-// The other half of the retry: a rename that cannot ever succeed has to report
-// that, not spin. Only Windows exercises the waiting itself — a rename over an
-// open file succeeds first time everywhere else — so this is what stops the
-// loop being unbounded on every platform.
-func TestReplaceGivesUpOnARenameThatCannotSucceed(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	missing := filepath.Join(dir, "was-never-written")
-
-	start := time.Now()
-	err := replace(missing, filepath.Join(dir, "destination"))
-	if err == nil {
-		t.Fatal("replace() of a file that does not exist = nil, want an error")
-	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Errorf("replace() took %s to give up, want it bounded", elapsed)
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, "destination")); statErr == nil {
-		t.Error("replace() created the destination from nothing")
 	}
 }

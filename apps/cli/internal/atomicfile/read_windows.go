@@ -1,6 +1,6 @@
 //go:build windows
 
-package config
+package atomicfile
 
 import (
 	"io"
@@ -8,18 +8,18 @@ import (
 	"syscall"
 )
 
-// readFile is os.ReadFile with one difference: the handle it opens lets the
+// Read is os.ReadFile with one difference: the handle it opens lets the
 // file be renamed over while it is still being read.
 //
 // Go opens files for reading with FILE_SHARE_READ and FILE_SHARE_WRITE but not
 // FILE_SHARE_DELETE, and Windows refuses to rename over a file any handle has
-// open. Every command loads this file, so `oa config set` failed with "Access
-// is denied" whenever another one was running — and Save's whole design is a
-// write to a temporary file followed by a rename.
+// open. Every command loads the config file, so `oa config set` failed with
+// "Access is denied" whenever another one was running — and Write's whole
+// design is a temporary file followed by a rename.
 //
 // Unix gives this for free: a rename replaces the directory entry, and a
 // reader that already has the file keeps reading the one it opened.
-func readFile(path string) ([]byte, error) {
+func Read(path string) ([]byte, error) {
 	name, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}

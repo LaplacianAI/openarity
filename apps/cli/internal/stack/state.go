@@ -4,9 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/LaplacianAI/openarity/apps/cli/internal/atomicfile"
 )
 
 // State is what setup decided, written once and read by every command after
@@ -73,33 +74,11 @@ func writeState(path string, s State) error {
 	if err != nil {
 		return err
 	}
-
-	// Write to a temporary file in the same directory and rename, so an
-	// interrupted write leaves the previous state rather than half of a new
-	// one. Same directory because rename across filesystems is not atomic.
-	temp, err := os.CreateTemp(filepath.Dir(path), ".stack-*.yaml")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(temp.Name()) }()
-
-	if _, err := temp.Write(out); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-
-	// No chmod: os.CreateTemp already creates at 0600. Adding one changed no
-	// test, which is how it was found — a line that looks like a permission
-	// guard and enforces nothing is worse than none, because the next reader
-	// stops looking. TestTheStateFileIsNotWorldReadable is the actual guard.
-	return os.Rename(temp.Name(), path)
+	return atomicfile.Write(path, out)
 }
 
 func LoadState(path string) (State, error) {
-	raw, err := os.ReadFile(path) //nolint:gosec // the path comes from Layout, not from input
+	raw, err := atomicfile.Read(path)
 	if err != nil {
 		return State{}, err
 	}

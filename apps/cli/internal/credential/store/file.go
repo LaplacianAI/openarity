@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/atomicfile"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/credential"
 )
 
@@ -29,7 +29,7 @@ func NewFileStore(dir string) *FileStore {
 }
 
 func (s *FileStore) read() (fileContents, error) {
-	data, err := os.ReadFile(s.path)
+	data, err := atomicfile.Read(s.path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return fileContents{Credentials: map[string]credential.Credential{}}, nil
 	}
@@ -49,33 +49,11 @@ func (s *FileStore) read() (fileContents, error) {
 }
 
 func (s *FileStore) write(contents fileContents) error {
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
-	}
-
 	data, err := yaml.Marshal(&contents)
 	if err != nil {
 		return fmt.Errorf("serialize credentials: %w", err)
 	}
-
-	temp, err := os.CreateTemp(dir, ".credentials-*.yaml")
-	if err != nil {
-		return fmt.Errorf("create a temporary file in %s: %w", dir, err)
-	}
-	defer func() { _ = os.Remove(temp.Name()) }()
-
-	if _, err := temp.Write(data); err != nil {
-		return fmt.Errorf("write %s: %w", temp.Name(), err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", temp.Name(), err)
-	}
-	if err := os.Rename(temp.Name(), s.path); err != nil {
-		return fmt.Errorf("replace %s: %w", s.path, err)
-	}
-
-	return nil
+	return atomicfile.Write(s.path, data)
 }
 
 func (s *FileStore) Location() string {

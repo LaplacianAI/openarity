@@ -1,4 +1,4 @@
-package config
+package atomicfile
 
 import (
 	"errors"
@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// readFile has two implementations and this is what holds both to the same
+// Read has two implementations and this is what holds both to the same
 // contract. The Windows one opens the file by hand to allow a rename while it
 // is being read, and getting that wrong would either break every config read
 // or, more quietly, report a fresh install as a failure.
@@ -21,27 +21,27 @@ func TestReadFileReadsWhatWasWritten(t *testing.T) {
 		t.Fatalf("writing %s: %v", path, err)
 	}
 
-	got, err := readFile(path)
+	got, err := Read(path)
 	if err != nil {
-		t.Fatalf("readFile() = %v", err)
+		t.Fatalf("Read() = %v", err)
 	}
 	if string(got) != string(want) {
-		t.Errorf("readFile() = %q, want %q", got, want)
+		t.Errorf("Read() = %q, want %q", got, want)
 	}
 }
 
 // A fresh install has no config file. Load turns this into an empty config, so
-// a readFile that reported it as some other kind of error would make every
+// a Read that reported it as some other kind of error would make every
 // command fail before anyone had a chance to run `oa context create`.
 func TestReadFileReportsAMissingFileAsNotExist(t *testing.T) {
 	t.Parallel()
 
-	_, err := readFile(filepath.Join(t.TempDir(), "was-never-written.yaml"))
+	_, err := Read(filepath.Join(t.TempDir(), "was-never-written.yaml"))
 	if err == nil {
-		t.Fatal("readFile() of a missing file = nil, want an error")
+		t.Fatal("Read() of a missing file = nil, want an error")
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("readFile() = %v, want it to satisfy errors.Is(err, fs.ErrNotExist)", err)
+		t.Errorf("Read() = %v, want it to satisfy errors.Is(err, fs.ErrNotExist)", err)
 	}
 }
 
@@ -56,11 +56,11 @@ func TestReadFileAcceptsAnEmptyFile(t *testing.T) {
 		t.Fatalf("writing %s: %v", path, err)
 	}
 
-	got, err := readFile(path)
+	got, err := Read(path)
 	if err != nil {
-		t.Fatalf("readFile() = %v", err)
+		t.Fatalf("Read() = %v", err)
 	}
 	if len(got) != 0 {
-		t.Errorf("readFile() = %q, want nothing", got)
+		t.Errorf("Read() = %q, want nothing", got)
 	}
 }
