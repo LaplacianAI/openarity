@@ -7,7 +7,7 @@ next: /docs/install/personal
 Three ways in, and the right one depends on who else is using it.
 
 {{< cards >}}
-  {{< card link="personal" title="One machine" icon="desktop-computer" subtitle="Your laptop or a home server. No Docker, everything on loopback, one command." >}}
+  {{< card link="personal" title="One machine" icon="desktop-computer" subtitle="Your laptop or a home server. A window that does it for you, or the command it drives." >}}
   {{< card link="enterprise" title="A deployment" icon="office-building" subtitle="Compose or Kubernetes, an identity provider you already run, and a worker that must not be forgotten." >}}
 {{< /cards >}}
 

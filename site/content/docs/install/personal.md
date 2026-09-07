@@ -7,11 +7,14 @@ A laptop, or a box in a cupboard. Postgres, dex, the brain and its worker run
 as ordinary processes under your own account — no Docker, no root, nothing
 listening anywhere but `127.0.0.1`.
 
-## What you need first
+There is a window for this and a command for it. The window is the one most
+people want; the command is what it drives, and what you would use on a server
+with no desktop.
 
-Nothing has been released, so the two binaries that are only ours have to be
-built. Postgres and MinIO are fetched from their own publishers and are not
-affected.
+## Build it first
+
+Nothing has been released, so the parts that are only ours have to be built.
+Postgres and MinIO are fetched from their own publishers and are not affected.
 
 ```sh
 git clone https://github.com/LaplacianAI/openarity
@@ -38,7 +41,60 @@ git clone --depth 1 --branch "$version" https://github.com/dexidp/dex.git /tmp/d
 `go.work`, and Go refuses to build a directory inside a module the workspace
 does not list.
 
-## Install
+{{< callout type="info" >}}
+Once there is a release, everything above disappears: the installer fetches
+`brain` and `dex` the way it already fetches Postgres and MinIO.
+{{< /callout >}}
+
+## The installer
+
+A desktop application — `apps/installer`, a Tauri window around the same
+command. It ships `oa` inside the bundle as a sidecar and reads the progress it
+prints, so there is nothing to type and no terminal to keep open.
+
+```sh
+cd apps/installer
+make deps
+make binaries OA=/tmp/openarity-bin/oa
+make bundle
+```
+
+`make bundle` produces a `.dmg`, `.msi` or `.deb` under
+`src-tauri/target/release/bundle/`. Tauri v2 needs Rust 1.77 or newer.
+
+What you see is six steps, in this order:
+
+| | |
+| ------------------------ | -------------------------------------------------- |
+| Finding what it needs    | resolving the binaries, and downloading any missing |
+| Downloading PostgreSQL   | about 70MB, with a percentage                       |
+| Creating the database    | `initdb`, then the cluster starts                   |
+| Setting up its tables    | the migrations                                      |
+| Creating your sign-in    | dex, configured with one user — you                 |
+| Starting Openarity       | and the dashboard opens                             |
+
+Then it shows a passphrase, once.
+
+{{< callout type="warning" >}}
+**Write the passphrase down.** It is generated during setup, stored only as a
+bcrypt hash in dex's configuration, and shown exactly once. There is no
+recovery — losing it means deleting the install directory and starting again.
+{{< /callout >}}
+
+The window asks nothing else. It takes the recommended answer to every
+question the command would ask, which is what most people want and is what the
+next section describes.
+
+{{< callout type="error" >}}
+**The bundle is not signed.** macOS and Windows both refuse an unsigned
+application without a deliberate override, which is why it is not distributed
+yet. Building it yourself, as above, produces a bundle your own machine already
+trusts.
+{{< /callout >}}
+
+## The command
+
+The same install, with the questions asked.
 
 {{% steps %}}
 
@@ -48,12 +104,12 @@ does not list.
 /tmp/openarity-bin/oa stack setup --bin-dir /tmp/openarity-bin
 ```
 
-It asks three questions, each with a recommended answer you can take by
-pressing enter:
+It asks three things, each with a recommended answer you take by pressing
+enter:
 
 **Where files are kept** — transcripts, uploads, anything an agent produces.
-On this machine, in memory, a MinIO it runs for you, or a bucket you already
-have anywhere S3-compatible.
+On this machine, in memory, a MinIO it runs and supervises for you, or a bucket
+you already have anywhere S3-compatible.
 
 **Where credentials are kept** — the tokens Openarity uses to reach the
 services you connect to it. In the brain's own process, which loses them on
@@ -63,9 +119,8 @@ restart, or an OpenBao or Vault you already run.
 calls it yet, because the agent loop is not wired into the brain, so this is
 recorded for when it is.
 
-Then it downloads Postgres, initialises a cluster, applies the migrations,
-writes a dex configuration with one user, starts everything, and opens the
-dashboard.
+Not a terminal? It takes the defaults and says so, which is how the window
+drives it.
 
 ### Write down the passphrase
 
@@ -75,10 +130,6 @@ Sign in as dev@openarity.local
 Passphrase: hK4mNpQ7rTvXwY2z
 Write it down — it is not stored anywhere and cannot be shown again.
 ```
-
-The passphrase is generated, shown once, and stored only as a bcrypt hash in
-dex's configuration. There is no recovery: losing it means deleting the install
-directory and running setup again.
 
 ### Use it
 
@@ -136,15 +187,13 @@ creates it.
 
 ## What is not here yet
 
-**A desktop installer.** `apps/installer` is a Tauri application that drives
-this same command through a window, for people who will not open a terminal. It
-builds and runs, and it is not signed — macOS and Windows both refuse an
-unsigned bundle without a deliberate override — so it is not distributed.
-
-**Downloaded binaries.** Once there is a release, `oa stack setup` fetches
-`brain` and `dex` the way it already fetches Postgres and MinIO, and everything
-above the first step goes away.
+**A signed bundle, and a download.** Both wait on the first release and on a
+Developer ID certificate for macOS and a code-signing certificate for Windows.
 
 **More than one person.** dex is configured with a single user. Adding a second
 means editing its configuration by hand, at which point a
 [deployment](/docs/install/enterprise) is the better shape.
+
+**Anything answering.** The brain holds what arrives and cannot yet reply —
+that is true of every install, and the [platform
+page](/docs/platform) says what is and is not built.
