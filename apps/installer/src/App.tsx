@@ -67,7 +67,15 @@ export function App() {
         },
       });
     } catch (err) {
-      setProgress((current) => ({ ...current, failure: String(err) }));
+      // Only when nothing more specific arrived. The steps report their own
+      // failures on stdout and those say what went wrong; this says the exit
+      // code. Overwriting one with the other is how "a gateway of our own
+      // needs a directory to install into" reached somebody as "setup exited
+      // with Some(1)".
+      setProgress((current) => ({
+        ...current,
+        failure: current.failure ?? String(err),
+      }));
     }
   };
 

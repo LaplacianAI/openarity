@@ -114,10 +114,12 @@ func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 
 	if w.given.complete() {
 		settings = w.given.settings(settings)
+		w.fillGatewayPath(&settings)
 		return settings, w.creds, settings.Validate()
 	}
 
 	if !w.ask {
+		w.fillGatewayPath(&settings)
 		if !w.quiet {
 			w.say("Setting up with the defaults: artifacts on disk, secrets in the brain's own process.")
 			w.say("Run this in a terminal to choose differently.")
@@ -140,7 +142,25 @@ func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 	}
 
 	w.say("")
+	w.fillGatewayPath(&settings)
 	return settings, w.creds, settings.Validate()
+}
+
+// fillGatewayPath supplies the directory nobody was asked for.
+//
+// The terminal wizard offers <root>/gateway and takes it when the answer is
+// blank; the installer window says "Blank puts it inside the install" and sent
+// an empty string, which nothing turned into anything. Setup then refused with
+// "a gateway of our own needs a directory to install into", which reached a
+// person as "setup exited with Some(1)".
+//
+// Here rather than in Validate, because validating must not change what it is
+// validating, and here rather than in Settings, which has no idea where the
+// install is.
+func (w *wizard) fillGatewayPath(s *engine.Settings) {
+	if s.RunsGateway() && s.ModelPath == "" {
+		s.ModelPath = filepath.Join(w.root, "gateway")
+	}
 }
 
 func (w *wizard) objects(s *engine.Settings) error {

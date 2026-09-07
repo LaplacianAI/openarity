@@ -109,6 +109,9 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
 
     let (mut rx, _child) = command.spawn().map_err(|e| e.to_string())?;
 
+    // Kept so a failure can say why rather than only that it happened.
+    let mut last_words = String::new();
+
     while let Some(event) = rx.recv().await {
         match event {
             CommandEvent::Stdout(bytes) => {
@@ -116,15 +119,20 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
                 let _ = app.emit("install", Line { line });
             }
             // The passphrase and the address are on stdout as an event; stderr
-            // carries the prose meant for a terminal, which this window has no
-            // use for beyond a failure.
+            // carries the prose meant for a terminal. The window has no use for
+            // it until something fails, and then it is the only thing that says
+            // what — so the last of it is kept rather than only emitted.
             CommandEvent::Stderr(bytes) => {
                 let line = String::from_utf8_lossy(&bytes).to_string();
+                last_words = line.trim().to_string();
                 let _ = app.emit("install-log", Line { line });
             }
             CommandEvent::Terminated(payload) => {
                 if payload.code != Some(0) {
-                    return Err(format!("setup exited with {:?}", payload.code));
+                    if last_words.is_empty() {
+                        return Err(format!("setup exited with {:?}", payload.code));
+                    }
+                    return Err(last_words);
                 }
             }
             _ => {}

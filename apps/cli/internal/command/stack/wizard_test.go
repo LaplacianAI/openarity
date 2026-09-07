@@ -1,12 +1,26 @@
 package stack
 
 import (
+	"io"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/pflag"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 	engine "github.com/LaplacianAI/openarity/apps/cli/internal/stack"
 )
+
+// The wizard writes nowhere and asks nothing in these tests: every one of them
+// supplies a complete set of answers, which is the path the installer window
+// takes.
+func quietOptions() *cli.Options {
+	return &cli.Options{
+		Stdout:         io.Discard,
+		Stderr:         io.Discard,
+		NonInteractive: true,
+	}
+}
 
 // The window fills every answer, because a sidecar has no terminal to prompt
 // at. Anything short of that has to fall back to asking or to the defaults.
@@ -78,4 +92,71 @@ func TestNoCredentialIsAFlag(t *testing.T) {
 			}
 		}
 	})
+}
+
+// The installer window says "Blank puts it inside the install" and sends an
+// empty string. Nothing turned that into anything, so setup refused with "a
+// gateway of our own needs a directory to install into" — which reached a
+// person as "setup exited with Some(1)".
+func TestABlankGatewayPathBecomesOneInsideTheInstall(t *testing.T) {
+	t.Parallel()
+
+	for _, backend := range []string{"litellm", "omniroute"} {
+		opts := quietOptions()
+		w := newWizard(opts, true, Answers{
+			Objects:      "filesystem",
+			Secrets:      "static",
+			ModelBackend: backend,
+			ModelPath:    "",
+		}, "/an/install")
+
+		settings, _, err := w.Run()
+		if err != nil {
+			t.Fatalf("Run() with %s and no path = %v", backend, err)
+		}
+		if settings.ModelPath != filepath.Join("/an/install", "gateway") {
+			t.Errorf("ModelPath = %q, want it inside the install", settings.ModelPath)
+		}
+	}
+}
+
+// A path that was chosen is left alone. Somebody putting a gigabyte on an
+// external drive meant it.
+func TestAGatewayPathThatWasGivenIsKept(t *testing.T) {
+	t.Parallel()
+
+	opts := quietOptions()
+	w := newWizard(opts, true, Answers{
+		Objects:      "filesystem",
+		Secrets:      "static",
+		ModelBackend: "omniroute",
+		ModelPath:    "/Volumes/big-disk/gateway",
+	}, "/an/install")
+
+	settings, _, err := w.Run()
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if settings.ModelPath != "/Volumes/big-disk/gateway" {
+		t.Errorf("ModelPath = %q, want the one that was given", settings.ModelPath)
+	}
+}
+
+// Pointing at a gateway needs no directory, and inventing one would put a
+// path in the state file for something that does not exist.
+func TestPointingAtAGatewayGetsNoDirectory(t *testing.T) {
+	t.Parallel()
+
+	opts := quietOptions()
+	w := newWizard(opts, true, Answers{
+		Objects: "filesystem", Secrets: "static", ModelBackend: "external",
+	}, "/an/install")
+
+	settings, _, err := w.Run()
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if settings.ModelPath != "" {
+		t.Errorf("ModelPath = %q, want nothing — no gateway is installed", settings.ModelPath)
+	}
 }

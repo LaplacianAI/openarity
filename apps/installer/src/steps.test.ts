@@ -135,3 +135,21 @@ it("names the gateway step", () => {
 
   expect(progress.states.gateway).toBe("started");
 });
+
+// A step that failed says what went wrong; the exit code says only that it
+// did. Losing the first to the second is how "a gateway of our own needs a
+// directory to install into" reached somebody as "setup exited with Some(1)".
+it("keeps the failure a step reported", () => {
+  const progress = readLines(
+    [
+      JSON.stringify({ step: "gateway", state: "started", detail: "omniroute" }),
+      JSON.stringify({
+        step: "gateway",
+        state: "failed",
+        detail: "stack: a gateway of our own needs a directory to install into",
+      }),
+    ].join("\n"),
+  ).reduce(apply, nothingYet);
+
+  expect(progress.failure).toContain("needs a directory");
+});
