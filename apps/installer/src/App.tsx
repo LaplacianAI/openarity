@@ -20,6 +20,7 @@ export function App() {
   const [accessKey, setAccessKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
   const [address, setAddress] = useState("http://127.0.0.1:8200");
+  const [minioPath, setMinioPath] = useState("");
 
   useEffect(() => {
     const stop = listen<{ line: string }>("install", (e) => {
@@ -45,7 +46,8 @@ export function App() {
           objects,
           secrets,
           endpoint: objects === "s3" ? endpoint : "",
-          bucket: objects === "s3" ? bucket : "",
+          bucket: objects === "s3" || objects === "minio" ? bucket : "",
+          minioPath: objects === "minio" ? minioPath : "",
           region: objects === "s3" ? region : "",
           address: secrets === "static" ? "" : address,
           gateway,
@@ -76,9 +78,22 @@ export function App() {
           options={[
             ["filesystem", "On this machine"],
             ["memory", "In memory — lost on restart"],
-            ["s3", "S3 or compatible"],
+            ["minio", "Run MinIO here — an object store of your own"],
+            ["s3", "Somewhere else — a bucket you already have"],
           ]}
         />
+
+        {objects === "minio" && (
+          <div className="follow">
+            <Field
+              label="Where should MinIO keep its files?"
+              hint="Blank puts them inside the install. An external drive is fine."
+              value={minioPath}
+              onChange={setMinioPath}
+            />
+            <Field label="Bucket" hint="Created for you." value={bucket} onChange={setBucket} />
+          </div>
+        )}
 
         {objects === "s3" && (
           <div className="follow">

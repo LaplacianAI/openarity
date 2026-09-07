@@ -174,6 +174,30 @@ func TestTheDownloadingFinderDoesNotFallBackToPath(t *testing.T) {
 	}
 }
 
+// --bin-dir means "look here first", not "only here". A developer with a
+// locally built brain still wants Postgres and MinIO downloaded rather than
+// having to produce those as well.
+func TestAnOverrideIsPreferredButNotExclusive(t *testing.T) {
+	t.Parallel()
+
+	override := t.TempDir()
+	want := executable(t, override, "brain")
+
+	f := DownloadingFinder{
+		Layout:   NewLayout(t.TempDir()),
+		Platform: ThisPlatform(),
+		Override: override,
+	}
+
+	got, err := f.Find(t.Context(), "brain")
+	if err != nil {
+		t.Fatalf("Find(brain) = %v", err)
+	}
+	if got != want {
+		t.Errorf("Find(brain) = %q, want the override at %q", got, want)
+	}
+}
+
 func TestADirectoryIsNotABinary(t *testing.T) {
 	t.Parallel()
 

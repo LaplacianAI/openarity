@@ -53,6 +53,8 @@ func realSteps() engine.Steps {
 }
 
 func build(ctx context.Context, layout engine.Layout, state engine.State) (*engine.Stack, error) {
+	settings := state.Settings
+
 	binaries := state.Binaries
 	if len(binaries) == 0 {
 		finder := engine.LocalFinder{Dir: layout.Bin}
@@ -83,28 +85,74 @@ func build(ctx context.Context, layout engine.Layout, state engine.State) (*engi
 		Args: []string{"worker"}, Env: brainEnv(p),
 	}
 
+	// Before the brain, which stores files in it. MINIO_ROOT_USER and
+	// MINIO_ROOT_PASSWORD are the same pair the brain uses as its S3 access
+	// key and secret — one credential, two names for it.
+	var objectStore []engine.Component
+	if settings.RunsMinIO() {
+		credentials, err := engine.ReadCredentials(layout.Env)
+		if err != nil {
+			return nil, err
+		}
+
+		minio := &engine.Child{
+			Name: "minio", Path: binaries["minio"], Log: log,
+			Args: []string{
+				"server", settings.MinIOPath,
+				"--address", net.JoinHostPort("127.0.0.1", strconv.Itoa(state.Ports.MinIO)),
+			},
+			Env: []string{
+				"MINIO_ROOT_USER=" + credentials["OPENARITY_OBJECTS_ACCESS_KEY"],
+				"MINIO_ROOT_PASSWORD=" + credentials["OPENARITY_OBJECTS_SECRET_KEY"],
+				// Without this MinIO writes a console banner naming its own
+				// root credentials, into the log a person attaches to a bug
+				// report.
+				"MINIO_BROWSER=off",
+				// MinIO shells out, so it needs a PATH. Two named variables
+				// rather than the parent's whole environment: the point of an
+				// empty one is that no OPENARITY_ value leaks in and quietly
+				// overrides what the installer wrote.
+				"PATH=" + os.Getenv("PATH"),
+				// Its own directory, so it writes no configuration into the
+				// person's home.
+				"HOME=" + layout.Root,
+			},
+		}
+
+		objectStore = []engine.Component{{
+			Name:  "minio",
+			Child: minio,
+			Ready: probe(state.Ports.MinIO, "/minio/health/live"),
+		}}
+	}
+
+	postgres := engine.Component{
+		Name:        "postgres",
+		BeforeStart: func(ctx context.Context) error { return startPostgres(ctx, p) },
+		Ready: func(ctx context.Context) error {
+			var d net.Dialer
+			conn, err := d.DialContext(ctx, "tcp",
+				net.JoinHostPort("127.0.0.1", strconv.Itoa(state.Ports.Postgres)))
+			if err != nil {
+				return err
+			}
+			return conn.Close()
+		},
+		Shutdown: func(ctx context.Context) error { return stopPostgres(ctx, p) },
+	}
+
+	components := []engine.Component{postgres}
+	components = append(components, objectStore...)
+	components = append(components,
+		engine.Component{Name: "dex", Child: dex, Ready: probe(state.Ports.Dex, "/healthz")},
+		engine.Component{Name: "brain", Child: brain, Ready: probe(state.Ports.API, "/readyz")},
+		engine.Component{Name: "worker", Child: worker},
+	)
+
 	return &engine.Stack{
 		ReadyTimeout: readyTimeout,
 		StopGrace:    stopGrace,
-		Components: []engine.Component{
-			{
-				Name:        "postgres",
-				BeforeStart: func(ctx context.Context) error { return startPostgres(ctx, p) },
-				Ready: func(ctx context.Context) error {
-					var d net.Dialer
-					conn, err := d.DialContext(ctx, "tcp",
-						net.JoinHostPort("127.0.0.1", strconv.Itoa(state.Ports.Postgres)))
-					if err != nil {
-						return err
-					}
-					return conn.Close()
-				},
-				Shutdown: func(ctx context.Context) error { return stopPostgres(ctx, p) },
-			},
-			{Name: "dex", Child: dex, Ready: probe(state.Ports.Dex, "/healthz")},
-			{Name: "brain", Child: brain, Ready: probe(state.Ports.API, "/readyz")},
-			{Name: "worker", Child: worker},
-		},
+		Components:   components,
 	}, nil
 }
 

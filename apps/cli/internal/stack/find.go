@@ -101,9 +101,22 @@ type DownloadingFinder struct {
 	Platform   Platform
 	Downloader *Downloader
 	Tag        string
+
+	// Looked in before the install's own bin/, and before anything is
+	// downloaded. It is where --bin-dir points: a developer with a locally
+	// built brain still wants Postgres and MinIO fetched rather than having
+	// to build those too.
+	Override string
 }
 
 func (f DownloadingFinder) Find(ctx context.Context, name string) (string, error) {
+	if f.Override != "" {
+		override := LocalFinder{Dir: f.Override, GOOS: f.Platform.GOOS, DirOnly: true}
+		if path, err := override.Find(ctx, name); err == nil {
+			return path, nil
+		}
+	}
+
 	local := LocalFinder{Dir: f.Layout.Bin, GOOS: f.Platform.GOOS, DirOnly: true}
 
 	if path, err := local.Find(ctx, name); err == nil {
@@ -131,10 +144,22 @@ func (f DownloadingFinder) download(ctx context.Context, name string) error {
 		}
 
 		dist := filepath.Join(f.Layout.Bin, "postgres-dist")
-		if err := f.Downloader.Postgres(ctx, url, dist); err != nil {
+		if err := f.Downloader.Postgres(ctx, url, url+".sha256", dist); err != nil {
 			return err
 		}
 		if err := linkPostgres(dist, f.Layout.Bin, f.Platform); err != nil {
+			return err
+		}
+		f.Downloader.report(Event{Step: StepDownload, Phase: PhaseDone, Detail: name})
+		return nil
+	}
+
+	if name == "minio" {
+		url, err := f.Platform.MinIOURL(MinIOVersion)
+		if err != nil {
+			return err
+		}
+		if err := f.Downloader.Binary(ctx, url, url+".sha256sum", filepath.Join(f.Layout.Bin, "minio"+suffix(f.Platform))); err != nil {
 			return err
 		}
 		f.Downloader.report(Event{Step: StepDownload, Phase: PhaseDone, Detail: name})
@@ -146,7 +171,8 @@ func (f DownloadingFinder) download(ctx context.Context, name string) error {
 		return fmt.Errorf("stack: %s is not published yet — build it and pass --bin-dir", name)
 	}
 
-	if err := f.Downloader.Binary(ctx, f.Platform.ReleaseURL(tag, name),
+	release := f.Platform.ReleaseURL(tag, name)
+	if err := f.Downloader.Binary(ctx, release, release+".sha256",
 		filepath.Join(f.Layout.Bin, name+suffix(f.Platform))); err != nil {
 		return err
 	}

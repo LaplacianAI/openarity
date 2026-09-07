@@ -67,12 +67,12 @@ func (d *Downloader) client() *http.Client {
 	return &http.Client{Timeout: 30 * time.Minute}
 }
 
-func (d *Downloader) Binary(ctx context.Context, url, dest string) error {
+func (d *Downloader) Binary(ctx context.Context, url, checksumURL, dest string) error {
 	if exists(dest) {
 		return nil
 	}
 
-	raw, err := d.fetch(ctx, url)
+	raw, err := d.fetch(ctx, url, checksumURL)
 	if err != nil {
 		return err
 	}
@@ -82,12 +82,12 @@ func (d *Downloader) Binary(ctx context.Context, url, dest string) error {
 	return os.WriteFile(dest, raw, 0o700) //nolint:gosec // a binary the stack executes must carry the executable bit
 }
 
-func (d *Downloader) Postgres(ctx context.Context, url, dest string) error {
+func (d *Downloader) Postgres(ctx context.Context, url, checksumURL, dest string) error {
 	if exists(filepath.Join(dest, "bin")) {
 		return nil
 	}
 
-	raw, err := d.fetch(ctx, url)
+	raw, err := d.fetch(ctx, url, checksumURL)
 	if err != nil {
 		return err
 	}
@@ -99,8 +99,12 @@ func (d *Downloader) Postgres(ctx context.Context, url, dest string) error {
 	return extract(inner, dest)
 }
 
-func (d *Downloader) fetch(ctx context.Context, url string) ([]byte, error) {
-	want, err := d.checksum(ctx, url+".sha256")
+// The checksum lives at a different address depending on who publishes it —
+// Maven writes .sha256 beside the jar, MinIO writes .sha256sum — so it is
+// given rather than guessed. Deriving it silently produced a 404 that read
+// like the binary was missing.
+func (d *Downloader) fetch(ctx context.Context, url, checksumURL string) ([]byte, error) {
+	want, err := d.checksum(ctx, checksumURL)
 	if err != nil {
 		return nil, err
 	}

@@ -20,6 +20,7 @@ const (
 	DefaultWebhookPort  = 21121
 	DefaultDexPort      = 5556
 	DefaultPostgresPort = 21432
+	DefaultMinIOPort    = 21900
 )
 
 // PortAvailable reports whether a listener can be opened on the port right

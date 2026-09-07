@@ -50,6 +50,16 @@ type Result struct {
 
 var required = []string{"postgres", "dex", "brain"}
 
+// MinIO is only needed by an install that runs one, so it is resolved
+// separately rather than being a fourth entry above — otherwise every install
+// would download 100MB it never starts.
+func (s *Setup) needs() []string {
+	if s.Settings.RunsMinIO() {
+		return append(append([]string{}, required...), "minio")
+	}
+	return required
+}
+
 func (s *Setup) Run(ctx context.Context) (Result, error) {
 	if s.Layout.Installed() {
 		return Result{}, fmt.Errorf("%w: %s", ErrInstalled, s.Layout.State)
@@ -64,7 +74,7 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 	}
 
 	s.report(Event{Step: StepResolve, Phase: PhaseStarted})
-	for _, name := range required {
+	for _, name := range s.needs() {
 		path, err := s.Finder.Find(ctx, name)
 		if err != nil {
 			s.report(Event{Step: StepResolve, Phase: PhaseFailed, Detail: err.Error()})
@@ -85,15 +95,26 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 	if err := s.Settings.Validate(); err != nil {
 		return Result{}, err
 	}
+
+	if s.Settings.RunsMinIO() {
+		if err := s.prepareMinIO(); err != nil {
+			return Result{}, err
+		}
+	}
 	if err := WriteCredentials(s.Layout.Env, s.Credentials); err != nil {
 		return Result{}, err
 	}
 
-	ports, err := pickPorts(ctx)
+	ports, err := pickPorts(ctx, s.Settings.RunsMinIO())
 	if err != nil {
 		return Result{}, err
 	}
 	plan.Ports = ports
+
+	if s.Settings.RunsMinIO() && s.Settings.ObjectsEndpoint == "" {
+		s.Settings.ObjectsEndpoint = fmt.Sprintf("http://%s:%d", loopback, ports.MinIO)
+		plan.Settings = s.Settings
+	}
 
 	s.report(Event{Step: StepCluster, Phase: PhaseStarted})
 	if !exists(filepath.Join(s.Layout.Data, "PG_VERSION")) {
@@ -150,6 +171,37 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 	})
 
 	return Result{Plan: plan, Passphrase: passphrase, URL: url}, nil
+}
+
+// prepareMinIO generates its root credentials and makes the bucket.
+//
+// A bucket in a single-drive MinIO is a directory, so creating one needs no
+// client — the same reason initdb could replace createdb. `mc` is a separate
+// binary and this avoids downloading it for one mkdir.
+func (s *Setup) prepareMinIO() error {
+	if err := os.MkdirAll(filepath.Join(s.Settings.MinIOPath, s.Settings.ObjectsBucket), 0o700); err != nil {
+		return err
+	}
+
+	if _, taken := s.Credentials["OPENARITY_OBJECTS_ACCESS_KEY"]; taken {
+		return nil
+	}
+
+	user, err := newPassphrase()
+	if err != nil {
+		return err
+	}
+	password, err := newPassphrase()
+	if err != nil {
+		return err
+	}
+
+	if s.Credentials == nil {
+		s.Credentials = map[string]string{}
+	}
+	s.Credentials["OPENARITY_OBJECTS_ACCESS_KEY"] = user
+	s.Credentials["OPENARITY_OBJECTS_SECRET_KEY"] = password
+	return nil
 }
 
 func ensureSecret(layout Layout) error {
@@ -209,7 +261,7 @@ func exists(path string) bool {
 	return err == nil
 }
 
-func pickPorts(ctx context.Context) (Ports, error) {
+func pickPorts(ctx context.Context, withMinIO bool) (Ports, error) {
 	taken := map[int]bool{}
 
 	pick := func(preferred int) (int, error) {
@@ -242,6 +294,11 @@ func pickPorts(ctx context.Context) (Ports, error) {
 	}
 	if p.Postgres, err = pick(DefaultPostgresPort); err != nil {
 		return Ports{}, err
+	}
+	if withMinIO {
+		if p.MinIO, err = pick(DefaultMinIOPort); err != nil {
+			return Ports{}, err
+		}
 	}
 	return p, nil
 }

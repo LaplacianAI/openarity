@@ -119,17 +119,15 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				report = engine.JSONReporter(opts.Stdout)
 			}
 
-			var finder engine.Finder = engine.DownloadingFinder{
+			finder := engine.Finder(engine.DownloadingFinder{
 				Layout:     layout,
 				Platform:   engine.ThisPlatform(),
 				Downloader: &engine.Downloader{Report: report},
 				Tag:        releaseTag,
-			}
-			if binDir != "" {
-				finder = engine.LocalFinder{Dir: binDir}
-			}
+				Override:   binDir,
+			})
 
-			settings, credentials, err := newWizard(opts, asJSON, given).Run()
+			settings, credentials, err := newWizard(opts, asJSON, given, layout.Root).Run()
 			if err != nil {
 				return err
 			}
@@ -174,7 +172,7 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&binDir, "bin-dir", "",
-		"a directory holding postgres, dex and brain (default: look on PATH)")
+		"binaries to use instead of downloading them; anything missing is still fetched")
 	cmd.Flags().BoolVar(&noAutostart, "no-autostart", false,
 		"do not start Openarity when you log in")
 	cmd.Flags().BoolVar(&asJSON, "json", false,
@@ -188,6 +186,7 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 	cmd.Flags().StringVar(&given.Endpoint, "objects-endpoint", "", "an S3-compatible endpoint, blank for AWS")
 	cmd.Flags().StringVar(&given.Bucket, "objects-bucket", "", "the bucket, which must already exist")
 	cmd.Flags().StringVar(&given.Region, "objects-region", "", "the bucket's region")
+	cmd.Flags().StringVar(&given.MinIOPath, "minio-path", "", "where a MinIO of our own keeps its files")
 	cmd.Flags().StringVar(&given.Secrets, "secrets", "", "where credentials are kept: static, openbao or vault")
 	cmd.Flags().StringVar(&given.Address, "secrets-addr", "", "the address of an external secret store")
 	cmd.Flags().StringVar(&given.KVMount, "secrets-mount", "", "the KV mount to use")
@@ -303,6 +302,7 @@ func newStatusCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 
 			ports := map[string]int{
 				"postgres": state.Ports.Postgres,
+				"minio":    state.Ports.MinIO,
 				"dex":      state.Ports.Dex,
 				"brain":    state.Ports.API,
 				"worker":   0,
@@ -311,8 +311,8 @@ func newStatusCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 			// make with a length, never a nil slice: nil marshals to null and
 			// `jq length` fails on it, which is exactly what an install with
 			// nothing running would produce.
-			views := make([]statusView, 0, len(componentNames))
-			for _, name := range componentNames {
+			views := make([]statusView, 0, len(componentsOf(state)))
+			for _, name := range componentsOf(state) {
 				views = append(views, statusView{
 					Name:    name,
 					Running: up,
@@ -338,7 +338,12 @@ func newStatusCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 }
 
 // The order they start in, which is the order worth reading them in.
-var componentNames = []string{"postgres", "dex", "brain", "worker"}
+func componentsOf(state engine.State) []string {
+	if state.Settings.RunsMinIO() {
+		return []string{"postgres", "minio", "dex", "brain", "worker"}
+	}
+	return []string{"postgres", "dex", "brain", "worker"}
+}
 
 func runningWord(running bool) string {
 	if running {

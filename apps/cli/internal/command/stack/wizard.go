@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -21,14 +22,15 @@ type choice struct {
 }
 
 type Answers struct {
-	Objects  string
-	Endpoint string
-	Bucket   string
-	Region   string
-	Secrets  string
-	Address  string
-	KVMount  string
-	Gateway  string
+	Objects   string
+	Endpoint  string
+	Bucket    string
+	Region    string
+	MinIOPath string
+	Secrets   string
+	Address   string
+	KVMount   string
+	Gateway   string
 }
 
 func (a Answers) complete() bool {
@@ -38,6 +40,9 @@ func (a Answers) complete() bool {
 func (a Answers) settings(base engine.Settings) engine.Settings {
 	out := base
 	out.ObjectsBackend = a.Objects
+	if a.MinIOPath != "" {
+		out.MinIOPath = a.MinIOPath
+	}
 	out.SecretsBackend = a.Secrets
 
 	for target, value := range map[*string]string{
@@ -56,6 +61,7 @@ func (a Answers) settings(base engine.Settings) engine.Settings {
 }
 
 type wizard struct {
+	root  string
 	opts  *cli.Options
 	in    *bufio.Reader
 	ask   bool
@@ -64,10 +70,11 @@ type wizard struct {
 	creds map[string]string
 }
 
-func newWizard(opts *cli.Options, quiet bool, given Answers) *wizard {
+func newWizard(opts *cli.Options, quiet bool, given Answers, root string) *wizard {
 	interactive := term.IsTerminal(int(os.Stdin.Fd())) && !opts.NonInteractive && !quiet
 
 	return &wizard{
+		root:  root,
 		opts:  opts,
 		in:    bufio.NewReader(os.Stdin),
 		ask:   interactive,
@@ -132,12 +139,25 @@ func (w *wizard) objects(s *engine.Settings) error {
 		[]choice{
 			{"filesystem", "On this machine", "In the install directory. Backed up when you back that up."},
 			{"memory", "In memory", "Lost every time it restarts. For trying it out."},
-			{"s3", "S3 or compatible", "AWS, MinIO, Cloudflare R2. Needs a bucket and a key."},
+			{"minio", "Run MinIO here", "An object store of your own, started and stopped with everything else."},
+			{"s3", "Somewhere else", "A bucket you already have — AWS, Cloudflare R2, a MinIO on another machine."},
 		})
 	if err != nil {
 		return err
 	}
 	s.ObjectsBackend = answer
+
+	if answer == "minio" {
+		if s.MinIOPath, err = w.text("Where should MinIO keep its files?",
+			"Anywhere with room. An external drive is fine.",
+			filepath.Join(w.root, "minio")); err != nil {
+			return err
+		}
+		if s.ObjectsBucket, err = w.text("Bucket", "Created for you.", "openarity"); err != nil {
+			return err
+		}
+		return nil
+	}
 
 	if answer != "s3" {
 		return nil

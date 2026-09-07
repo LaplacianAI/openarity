@@ -70,3 +70,40 @@ func TestAReleaseURLNamesThePlatformAndTheTag(t *testing.T) {
 		}
 	}
 }
+
+// Every platform uses the same archived file name, including Windows — whose
+// current-release download is minio.exe but whose archived one is not. Getting
+// that wrong is a 404 on one platform only.
+func TestMinIOHasOneArtifactNameEverywhere(t *testing.T) {
+	t.Parallel()
+
+	for _, p := range []Platform{
+		{GOOS: "darwin", GOARCH: "arm64"},
+		{GOOS: "darwin", GOARCH: "amd64"},
+		{GOOS: "linux", GOARCH: "arm64"},
+		{GOOS: "linux", GOARCH: "amd64"},
+		{GOOS: "windows", GOARCH: "amd64"},
+	} {
+		url, err := p.MinIOURL(MinIOVersion)
+		if err != nil {
+			t.Errorf("%s/%s: %v", p.GOOS, p.GOARCH, err)
+			continue
+		}
+		if !strings.HasSuffix(url, "/archive/minio."+MinIOVersion) {
+			t.Errorf("%s/%s gave %q, want the archived name", p.GOOS, p.GOARCH, url)
+		}
+		if strings.Contains(url, ".exe") {
+			t.Errorf("%s/%s gave %q — the archived artifact carries no .exe", p.GOOS, p.GOARCH, url)
+		}
+	}
+}
+
+// Pinned like Postgres and dex. The alias beside it moves, and an install that
+// tracked it would record a version it did not download.
+func TestTheMinIOVersionIsPinned(t *testing.T) {
+	t.Parallel()
+
+	if !strings.HasPrefix(MinIOVersion, "RELEASE.") {
+		t.Errorf("MinIOVersion = %q, want a pinned RELEASE stamp", MinIOVersion)
+	}
+}

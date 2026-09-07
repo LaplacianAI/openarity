@@ -102,7 +102,7 @@ func TestADownloadIsVerifiedAndExtracted(t *testing.T) {
 	dest := t.TempDir()
 
 	d := &Downloader{Client: server.Client()}
-	if err := d.Postgres(t.Context(), server.URL+"/artifact", dest); err != nil {
+	if err := d.Postgres(t.Context(), server.URL+"/artifact", server.URL+"/artifact.sha256", dest); err != nil {
 		t.Fatalf("Postgres() = %v", err)
 	}
 
@@ -126,7 +126,7 @@ func TestExtractedBinariesKeepTheirExecutableBit(t *testing.T) {
 	dest := t.TempDir()
 
 	d := &Downloader{Client: server.Client()}
-	if err := d.Postgres(t.Context(), server.URL+"/artifact", dest); err != nil {
+	if err := d.Postgres(t.Context(), server.URL+"/artifact", server.URL+"/artifact.sha256", dest); err != nil {
 		t.Fatalf("Postgres() = %v", err)
 	}
 
@@ -159,7 +159,7 @@ func TestAWrongChecksumIsRefusedAndLeavesNothingBehind(t *testing.T) {
 	dest := t.TempDir()
 	d := &Downloader{Client: server.Client()}
 
-	err := d.Postgres(t.Context(), server.URL+"/artifact", dest)
+	err := d.Postgres(t.Context(), server.URL+"/artifact", server.URL+"/artifact.sha256", dest)
 	if err == nil {
 		t.Fatal("Postgres() with a wrong checksum = nil, want a refusal")
 	}
@@ -225,7 +225,7 @@ func TestAnArchiveCannotWriteOutsideItsDestination(t *testing.T) {
 	dest := filepath.Join(parent, "into")
 
 	d := &Downloader{Client: server.Client()}
-	if err := d.Postgres(t.Context(), server.URL+"/artifact", dest); err == nil {
+	if err := d.Postgres(t.Context(), server.URL+"/artifact", server.URL+"/artifact.sha256", dest); err == nil {
 		t.Fatal("an archive escaping its destination was accepted")
 	}
 	if _, err := os.Stat(filepath.Join(parent, "escaped")); err == nil {
@@ -243,7 +243,7 @@ func TestAnAlreadyExtractedDownloadIsNotFetchedAgain(t *testing.T) {
 
 	d := &Downloader{Client: server.Client()}
 	for range 2 {
-		if err := d.Postgres(t.Context(), server.URL+"/artifact", dest); err != nil {
+		if err := d.Postgres(t.Context(), server.URL+"/artifact", server.URL+"/artifact.sha256", dest); err != nil {
 			t.Fatalf("Postgres() = %v", err)
 		}
 	}
@@ -263,7 +263,7 @@ func TestASingleBinaryIsDownloadedAndMadeExecutable(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "dex")
 
 	d := &Downloader{Client: server.Client()}
-	if err := d.Binary(t.Context(), server.URL+"/artifact", dest); err != nil {
+	if err := d.Binary(t.Context(), server.URL+"/artifact", server.URL+"/artifact.sha256", dest); err != nil {
 		t.Fatalf("Binary() = %v", err)
 	}
 
@@ -283,7 +283,7 @@ func TestAMissingArtifactIsReportedWithItsURL(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	d := &Downloader{Client: server.Client()}
-	err := d.Binary(t.Context(), server.URL+"/nowhere", filepath.Join(t.TempDir(), "dex"))
+	err := d.Binary(t.Context(), server.URL+"/nowhere", server.URL+"/nowhere.sha256", filepath.Join(t.TempDir(), "dex"))
 	if err == nil {
 		t.Fatal("Binary() on a 404 = nil, want an error")
 	}

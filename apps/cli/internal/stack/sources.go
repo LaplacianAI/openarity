@@ -8,9 +8,11 @@ import (
 const (
 	PostgresVersion = "18.6.0"
 	DexVersion      = "v2.45.1"
+	MinIOVersion    = "RELEASE.2025-09-07T16-13-09Z"
 
 	mavenBase = "https://repo1.maven.org/maven2/io/zonky/test/postgres"
 	dexBase   = "https://github.com/LaplacianAI/openarity/releases/download"
+	minioBase = "https://dl.min.io/server/minio/release"
 )
 
 type Platform struct {
@@ -58,6 +60,19 @@ func (p Platform) PostgresURL(version string) (string, error) {
 
 	artifact := "embedded-postgres-binaries-" + name
 	return fmt.Sprintf("%s/%s/%s/%s-%s.jar", mavenBase, artifact, version, artifact, version), nil
+}
+
+// MinIOURL names the pinned artifact rather than the floating alias beside
+// it. Every platform uses the same file name in the archive directory —
+// including Windows, whose current-release download is minio.exe but whose
+// archived one is not.
+func (p Platform) MinIOURL(version string) (string, error) {
+	switch p.GOOS {
+	case "darwin", "linux", "windows":
+	default:
+		return "", fmt.Errorf("stack: no MinIO build for %s/%s", p.GOOS, p.GOARCH)
+	}
+	return fmt.Sprintf("%s/%s-%s/archive/minio.%s", minioBase, p.GOOS, p.Arch(), version), nil
 }
 
 func (p Platform) ReleaseURL(tag, name string) string {

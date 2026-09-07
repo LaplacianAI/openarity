@@ -29,6 +29,7 @@ pub struct Choices {
     access_key: String,
     secret_key: String,
     model_key: String,
+    minio_path: String,
 }
 
 #[tauri::command]
@@ -50,6 +51,7 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
         ("--objects-region", &choices.region),
         ("--secrets-addr", &choices.address),
         ("--model-gateway", &choices.gateway),
+        ("--minio-path", &choices.minio_path),
     ] {
         if !value.is_empty() {
             args.push(flag.to_string());
