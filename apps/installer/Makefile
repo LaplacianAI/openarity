@@ -35,9 +35,10 @@ fmt-check:
 	npx tsc --noEmit
 	cd src-tauri && cargo fmt --check
 
-## test: the reducer, which is the whole flow without a window
+## test: the reducer, and the boundary the window sends across
 test:
 	npx vitest run
+	cd src-tauri && cargo test
 
 ## build: the frontend and the Rust binary
 build:

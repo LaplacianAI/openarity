@@ -14,7 +14,13 @@ struct Line {
 // line. This window only reads that stream: reimplementing any of it in Rust
 // would mean two installers that could disagree, and the Go one is the one
 // with tests.
+// The window is TypeScript and sends camelCase; these are Rust and are
+// snake_case. Without this only the single-word fields line up, which is why
+// an install taking every default worked and choosing anything did not:
+// "invalid args `choices` for command `install`: missing field
+// `model_backend`".
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Choices {
     root: String,
     objects: String,
@@ -134,4 +140,74 @@ fn main() {
         .invoke_handler(tauri::generate_handler![install])
         .run(tauri::generate_context!())
         .expect("the installer window could not start");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Choices;
+
+    /// The window's side of the boundary, written out as the window writes it.
+    ///
+    /// This is the shape that broke: the frontend is TypeScript and sends
+    /// camelCase, these are Rust and are snake_case, and serde matched names
+    /// exactly. Every single-word field lined up by accident, so an install
+    /// taking all the defaults worked and choosing anything at all failed with
+    /// "missing field `model_backend`" — the first multi-word field that is
+    /// always sent.
+    ///
+    /// deny_unknown_fields is what makes this test worth having in the other
+    /// direction too: a field renamed on one side and not the other fails here
+    /// rather than in somebody's installer.
+    const FROM_THE_WINDOW: &str = r#"{
+        "root": "",
+        "objects": "minio",
+        "secrets": "openbao",
+        "modelBackend": "omniroute",
+        "modelPath": "/somewhere/gateway",
+        "endpoint": "http://127.0.0.1:9000",
+        "bucket": "openarity",
+        "region": "us-east-1",
+        "address": "http://127.0.0.1:8200",
+        "gateway": "",
+        "gatewayPassword": "a-dashboard-password",
+        "accessKey": "an-access-key",
+        "secretKey": "a-secret-key",
+        "modelKey": "a-model-key",
+        "minioPath": "/somewhere/minio"
+    }"#;
+
+    #[test]
+    fn accepts_what_the_window_sends() {
+        let choices: Choices =
+            serde_json::from_str(FROM_THE_WINDOW).expect("the window's own JSON must deserialize");
+
+        assert_eq!(choices.model_backend, "omniroute");
+        assert_eq!(choices.model_path, "/somewhere/gateway");
+        assert_eq!(choices.gateway_password, "a-dashboard-password");
+        assert_eq!(choices.access_key, "an-access-key");
+        assert_eq!(choices.secret_key, "a-secret-key");
+        assert_eq!(choices.model_key, "a-model-key");
+        assert_eq!(choices.minio_path, "/somewhere/minio");
+    }
+
+    /// snake_case is what it used to want, and is not what arrives.
+    #[test]
+    fn refuses_snake_case_which_the_window_never_sends() {
+        let wrong = FROM_THE_WINDOW.replace("modelBackend", "model_backend");
+        assert!(
+            serde_json::from_str::<Choices>(&wrong).is_err(),
+            "a field the window does not send was accepted, so the two sides can drift"
+        );
+    }
+
+    /// A field added to the window and not here is a silent drop otherwise:
+    /// the install proceeds with the answer missing.
+    #[test]
+    fn refuses_a_field_it_does_not_know() {
+        let extra = FROM_THE_WINDOW.replace(r#""root": "","#, r#""root": "", "somethingNew": "x","#);
+        assert!(
+            serde_json::from_str::<Choices>(&extra).is_err(),
+            "an unknown field was ignored, so a question could be asked and never delivered"
+        );
+    }
 }
