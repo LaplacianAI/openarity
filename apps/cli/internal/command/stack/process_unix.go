@@ -25,7 +25,7 @@ func alive(pid int) bool {
 // supervisor's whole job is stopping the children in reverse order with
 // pg_ctl, and killing it outright skips all of that and leaves four processes
 // behind holding the data directory.
-func interrupt(proc *os.Process) error {
+func interrupt(_ string, proc *os.Process) error {
 	return proc.Signal(syscall.SIGTERM)
 }
 

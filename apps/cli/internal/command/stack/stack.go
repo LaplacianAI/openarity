@@ -225,9 +225,21 @@ func newStartCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 			}
 			opts.Out.Note(fmt.Sprintf("Openarity is running at http://127.0.0.1:%d/ui", state.Ports.API))
 
-			// Blocks until Ctrl-C or `oa stack stop`. cmd.Context() carries
-			// the signal handler main installed, so both arrive the same way.
-			<-cmd.Context().Done()
+			// Blocks until Ctrl-C or `oa stack stop`. Ctrl-C arrives through
+			// cmd.Context(), which carries the signal handler main installed.
+			// `stop` arrives that way too on Unix, where it is a SIGTERM; on
+			// Windows no signal reaches one process, so it sets a named event
+			// and this is what waits on it.
+			stopped, done, err := waitForStop(layout.Root)
+			if err != nil {
+				return err
+			}
+			defer done()
+
+			select {
+			case <-cmd.Context().Done():
+			case <-stopped:
+			}
 
 			// WithoutCancel: the context is already cancelled — that is why
 			// we are here — and a shutdown that skipped itself for that
@@ -266,7 +278,7 @@ func newStopCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 			// The supervisor stops the children itself, in reverse order,
 			// with the escalation Child.Stop carries. Signalling the children
 			// from here would race with it and skip pg_ctl.
-			if err := interrupt(proc); err != nil {
+			if err := interrupt(layout.Root, proc); err != nil {
 				return fmt.Errorf("stack: stopping the supervisor (pid %d): %w", pid, err)
 			}
 

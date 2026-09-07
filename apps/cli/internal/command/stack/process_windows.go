@@ -34,18 +34,12 @@ func alive(pid int) bool {
 	return code == stillActive
 }
 
-// interrupt asks the supervisor to stop. CTRL_BREAK is what a Go process
-// receives as os.Interrupt, so the supervisor needs no Windows-specific code
-// of its own — and it must be an ask rather than a kill, because the
-// supervisor's job is stopping the children with pg_ctl first.
-func interrupt(proc *os.Process) error {
-	const ctrlBreakEvent = 1
-
-	send := syscall.NewLazyDLL("kernel32.dll").NewProc("GenerateConsoleCtrlEvent")
-	if r, _, err := send.Call(uintptr(ctrlBreakEvent), uintptr(proc.Pid)); r == 0 {
-		return err
-	}
-	return nil
+// interrupt asks the supervisor to stop, through the event it waits on.
+// stopsignal_windows.go says why this is not a console control event: those
+// reach a process group rather than a process, and the group they reached
+// included this command, which died of the signal it sent.
+func interrupt(root string, _ *os.Process) error {
+	return askToStop(root)
 }
 
 // openBrowser goes through rundll32 rather than `cmd /c start`, whose first
