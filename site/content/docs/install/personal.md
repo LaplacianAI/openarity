@@ -71,7 +71,8 @@ What you see is six steps, in this order:
 | | |
 | ------------------------ | -------------------------------------------------- |
 | Finding what it needs    | oa, brain and dex, from inside the bundle            |
-| Downloading PostgreSQL   | about 70MB, with a percentage — the only download    |
+| Downloading PostgreSQL   | about 70MB, with a percentage                        |
+| Installing the model gateway | only if you asked for one, and the long step    |
 | Creating the database    | `initdb`, then the cluster starts                   |
 | Setting up its tables    | the migrations                                      |
 | Creating your sign-in    | dex, configured with one user — you                 |
@@ -119,9 +120,11 @@ you already have anywhere S3-compatible.
 services you connect to it. In the brain's own process, which loses them on
 restart, or an OpenBao or Vault you already run.
 
-**Which model service to use** — anything speaking the OpenAI API. Nothing
-calls it yet, because the agent loop is not wired into the brain, so this is
-recorded for when it is.
+**Where models come from** — point at a gateway you already run, or have one
+installed and started here. LiteLLM and OmniRoute both work; see
+[A gateway of your own](#a-gateway-of-your-own) for what each costs. Nothing
+calls it yet, because the agent loop is not wired into the brain, so the choice
+is recorded and the gateway runs, waiting.
 
 Not a terminal? It takes the defaults and says so, which is how the window
 drives it.
@@ -146,6 +149,44 @@ oa stack stop           # from another terminal
 ```
 
 {{% /steps %}}
+
+## A gateway of your own
+
+Neither gateway ships a binary you can just run. LiteLLM publishes no release
+assets at all and is Python with ninety dependencies; OmniRoute publishes an
+Electron desktop application whose server form is a container. So the installer
+fetches a runtime as well — that is the whole cost, and it is not small.
+
+| | Runtime | On disk | Its own dashboard |
+| ----------- | ------------------------- | ------- | ----------------- |
+| **LiteLLM** | uv, which brings a Python | ~1.0GB  | no                |
+| **OmniRoute** | Node                    | ~3.7GB  | yes               |
+
+Both are measured, not estimated. Both are supervised like everything else —
+started and stopped with `oa stack start` and `oa stack stop`, and listed by
+`oa stack status`.
+
+Everything a gateway downloads stays under the directory you choose, including
+uv's interpreters and npm's cache, so deleting that directory removes the
+gateway and nothing else.
+
+{{< callout type="warning" >}}
+**OmniRoute has a dashboard, and therefore a password.** Its own image defaults
+that password to `CHANGEME` and warns about it in a log nobody reads. Setup
+asks; leave the answer blank and one is generated and shown once, beside the
+sign-in passphrase. It is kept in the install's credentials file and appears in
+no log and not in `stack.yaml`.
+{{< /callout >}}
+
+Both are held to `127.0.0.1`. OmniRoute binds every interface unless told
+otherwise, and says so itself — *"the inference plane is reachable by ANY
+device that can route to this host, and requests are billed to your configured
+providers"* — so the installer sets `OMNIROUTE_SERVER_HOST`. Its leaderboard
+and pricing syncs are turned off too: they reach the internet daily and change
+no routing.
+
+The gateway listens on `20128`, which is where the brain already looks by
+default.
 
 ## Where it lives
 
@@ -174,6 +215,7 @@ problem. What it settled on is in `stack.yaml` and in `oa stack status`.
 | ------------- | ------- |
 | Brain API     | `21120` |
 | Brain webhook | `21121` |
+| Model gateway | `20128` |
 | Postgres      | `21432` |
 | MinIO         | `21900` |
 | dex           | `5556`  |
