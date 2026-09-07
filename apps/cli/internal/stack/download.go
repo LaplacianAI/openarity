@@ -327,7 +327,17 @@ func realDirWithinRoot(root, dir string) error {
 }
 
 func writeEntry(root string, header *tar.Header, body io.Reader) error {
-	path := filepath.Join(root, filepath.FromSlash(header.Name)) //nolint:gosec // checked below
+	entryName := filepath.FromSlash(header.Name)
+	if filepath.IsAbs(entryName) {
+		return fmt.Errorf("stack: %s escapes the directory it is extracted into", header.Name)
+	}
+	for _, part := range strings.Split(entryName, string(os.PathSeparator)) {
+		if part == ".." {
+			return fmt.Errorf("stack: %s escapes the directory it is extracted into", header.Name)
+		}
+	}
+
+	path := filepath.Join(root, entryName) //nolint:gosec // checked below
 
 	if !pathWithinRoot(root, path) {
 		return fmt.Errorf("stack: %s escapes the directory it is extracted into", header.Name)
