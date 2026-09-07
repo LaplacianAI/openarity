@@ -329,12 +329,20 @@ func realDirWithinRoot(root, dir string) error {
 func writeEntry(root string, header *tar.Header, body io.Reader) error {
 	path := filepath.Join(root, filepath.FromSlash(header.Name)) //nolint:gosec // checked below
 
+	// An entry naming the root itself asks for nothing to be created. `tar -cf
+	// archive.tar .` produces one; none of the Postgres archives carries one,
+	// which was checked rather than assumed. Handling it here keeps the guard
+	// below a plain prefix test.
+	if path == root {
+		return nil
+	}
+
 	// Written out rather than routed through pathWithinRoot, and it has to
 	// stay that way. The check is identical either way, but CodeQL recognises
-	// a strings.HasPrefix guard where it does not follow a helper returning a
-	// bool — two generated fixes went through a helper and left the alert
-	// open, which is how that was worked out.
-	if path != root && !strings.HasPrefix(path, root+string(os.PathSeparator)) {
+	// a bare strings.HasPrefix guard where it follows neither a helper
+	// returning a bool nor a condition this one is joined to. Two generated
+	// fixes went through a helper and left the alert open.
+	if !strings.HasPrefix(path, root+string(os.PathSeparator)) {
 		return fmt.Errorf("stack: %s escapes the directory it is extracted into", header.Name)
 	}
 

@@ -650,3 +650,28 @@ func TestADirectoryEntryCannotBeCreatedOutsideTheDestination(t *testing.T) {
 		t.Errorf("the archive made a directory outside its destination, at %s", filepath.Join(parent, "pwned"))
 	}
 }
+
+// `tar -cf archive.tar .` writes an entry for the root itself. None of the
+// Postgres archives carries one — checked, not assumed — but refusing an
+// archive over a harmless "." would be a strange way to find that out if one
+// ever did.
+func TestAnEntryNamingTheRootItselfIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	jar := jarOf(t,
+		entry{header: tar.Header{Name: ".", Typeflag: tar.TypeDir, Mode: 0o700}},
+		entry{header: tar.Header{Name: "./bin", Typeflag: tar.TypeDir, Mode: 0o700}},
+		entry{header: tar.Header{Name: "./bin/postgres", Typeflag: tar.TypeReg, Mode: 0o755}, body: "not really a binary"},
+	)
+
+	dest := filepath.Join(realDir(t, t.TempDir()), "into")
+	server, _ := serve(t, jar)
+
+	d := &Downloader{Client: server.Client()}
+	if err := d.Postgres(t.Context(), server.URL+"/artifact", server.URL+"/artifact.sha256", dest); err != nil {
+		t.Fatalf("Postgres() = %v, want an archive with a root entry accepted", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "bin", "postgres")); err != nil {
+		t.Errorf("the archive's contents did not arrive: %v", err)
+	}
+}
