@@ -1006,3 +1006,82 @@ func TestAZipDirectoryEntryCannotEscapeItsDestination(t *testing.T) {
 		t.Errorf("the zip made a directory outside its destination, at %s", filepath.Join(parent, "pwned"))
 	}
 }
+
+// Node's tarball links bin/corepack to ../lib/node_modules/corepack/dist/corepack.js
+// — relative, with a .., and entirely inside the archive. Refusing it is what
+// the sibling-only rule did, and it stopped the runtime being installed at all.
+func TestALinkThatWalksUpButStaysInsideIsExtracted(t *testing.T) {
+	t.Parallel()
+
+	body := tarball(t,
+		entry{header: tar.Header{Name: "w/lib/node_modules/corepack/dist", Typeflag: tar.TypeDir, Mode: 0o755}},
+		entry{header: tar.Header{Name: "w/lib/node_modules/corepack/dist/corepack.js", Typeflag: tar.TypeReg, Mode: 0o644}, body: "not really corepack"},
+		entry{header: tar.Header{Name: "w/bin", Typeflag: tar.TypeDir, Mode: 0o755}},
+		entry{header: tar.Header{Name: "w/bin/corepack", Typeflag: tar.TypeSymlink, Linkname: "../lib/node_modules/corepack/dist/corepack.js"}},
+	)
+
+	server := serveNamed(t, "node.tar.gz", body)
+	dest := filepath.Join(realDir(t, t.TempDir()), "node")
+
+	d := &Downloader{Client: server.Client()}
+	if err := d.Unpack(t.Context(), Archive{
+		URL: server.URL + "/node.tar.gz", ChecksumURL: server.URL + "/node.tar.gz.sha256",
+		Dest: dest, Strip: 1,
+	}); err != nil {
+		t.Fatalf("Unpack() = %v, want a link that stays inside accepted", err)
+	}
+
+	if _, err := os.ReadFile(filepath.Join(dest, "bin", "corepack")); err != nil {
+		t.Errorf("reading through the link = %v", err)
+	}
+}
+
+// The link is written before the file it points at, which is the order Node's
+// own tarball uses and the reason containment cannot be judged as each entry
+// arrives.
+func TestALinkExtractedBeforeItsTargetIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	body := tarball(t,
+		entry{header: tar.Header{Name: "w/bin/tool", Typeflag: tar.TypeSymlink, Linkname: "../lib/tool.js"}},
+		entry{header: tar.Header{Name: "w/lib/tool.js", Typeflag: tar.TypeReg, Mode: 0o644}, body: "arrives second"},
+	)
+
+	server := serveNamed(t, "node.tar.gz", body)
+	dest := filepath.Join(realDir(t, t.TempDir()), "node")
+
+	if err := (&Downloader{Client: server.Client()}).Unpack(t.Context(), Archive{
+		URL: server.URL + "/node.tar.gz", ChecksumURL: server.URL + "/node.tar.gz.sha256",
+		Dest: dest, Strip: 1,
+	}); err != nil {
+		t.Fatalf("Unpack() = %v, want a link written before its target accepted", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dest, "bin", "tool"))
+	if err != nil {
+		t.Fatalf("reading through the link = %v", err)
+	}
+	if string(got) != "arrives second" {
+		t.Errorf("read %q through the link", got)
+	}
+}
+
+// An absolute target is refused where it is written rather than after, because
+// it can never be right and needs no filesystem to judge.
+func TestAnAbsoluteLinkIsRefused(t *testing.T) {
+	t.Parallel()
+
+	jar := jarOf(t, entry{header: tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"}})
+
+	dest := filepath.Join(realDir(t, t.TempDir()), "into")
+	server, _ := serve(t, jar)
+
+	err := (&Downloader{Client: server.Client()}).Postgres(t.Context(),
+		server.URL+"/artifact", server.URL+"/artifact.sha256", dest)
+	if err == nil {
+		t.Fatal("an absolute symlink was accepted")
+	}
+	if !strings.Contains(err.Error(), "not a relative path") {
+		t.Errorf("Unpack() = %q, want it to say why", err)
+	}
+}

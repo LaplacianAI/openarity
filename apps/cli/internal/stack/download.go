@@ -308,6 +308,9 @@ func (d *Downloader) Unpack(ctx context.Context, a Archive) error {
 	if err != nil {
 		return err
 	}
+	if err := into.check(); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(filepath.Dir(a.Dest), 0o700); err != nil {
 		return err
@@ -420,6 +423,9 @@ func extract(txz []byte, dest string) error {
 			return err
 		}
 	}
+	if err := into.check(); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return err
@@ -452,6 +458,10 @@ func pathWithinRoot(root, candidate string) bool {
 type extraction struct {
 	root     string
 	verified map[string]bool
+
+	// Every symlink created, checked once the archive is fully unpacked.
+	// See links.
+	links []string
 
 	// Leading path elements to drop. uv and Node both wrap everything in one
 	// directory named for the version; the Postgres archive does not, and
@@ -566,52 +576,69 @@ func (e *extraction) entry(header *tar.Header, body io.Reader) error {
 		return err
 
 	case tar.TypeSymlink:
-		// A link may name something in its own directory and nothing else.
+		// Only the cheap, certain refusals here. A link may not be absolute
+		// and may not be empty, because neither can ever be right and both
+		// can be judged without touching the disk.
 		//
-		// The wider rule this replaced — resolve the link's parent, then join
-		// and clean the target — is the one CodeQL's own help text describes
-		// as ineffective, because cleaning collapses `subdir/parent/..` to
-		// `subdir` while the kernel, for which `subdir/parent` really is a
-		// link, resolves it somewhere else entirely. Two links neither of
-		// which escapes on its own then compose into one that does. It was
-		// measured escaping two directories above the root, and there is a
-		// test for it.
-		//
-		// Nothing legitimate is lost. Every symlink in every Postgres
-		// distribution is a bare filename: 14 in the Linux builds, all in
-		// lib/, each pointing at a sibling .so; the macOS and Windows builds
-		// carry none at all.
-		if header.Linkname == "" || header.Linkname == "." || header.Linkname == ".." ||
-			strings.ContainsAny(header.Linkname, `/\`) {
-			return fmt.Errorf("stack: %s links to %q, which is not a name in its own directory",
+		// Containment is not decided here. It cannot be: a link's target may
+		// not exist yet — Node writes bin/corepack before
+		// lib/node_modules/corepack — and judging it lexically is exactly the
+		// mistake that let two links neither of which escapes on its own
+		// compose into one that does. So the link is created and every link
+		// is resolved at the end, by links(), when there is a filesystem to
+		// ask.
+		if header.Linkname == "" || filepath.IsAbs(header.Linkname) ||
+			filepath.VolumeName(header.Linkname) != "" {
+			return fmt.Errorf("stack: %s links to %q, which is not a relative path",
 				header.Name, header.Linkname)
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return err
 		}
-
-		// Resolved rather than compared as a string: the directory a link is
-		// created in may itself have been reached through one. Inlined for
-		// the same reason as the check above.
-		//
-		// Unreachable while the rule above holds — a link that can only name
-		// a sibling cannot lead anywhere else — and kept because that is the
-		// rule most likely to be widened by someone who has not read the test
-		// above. Removing the sibling rule and leaving this one still refuses
-		// the escape; removing both does not.
-		parent, err := filepath.EvalSymlinks(filepath.Dir(path))
-		if err != nil {
+		if err := e.dirWithinRoot(filepath.Dir(path)); err != nil {
 			return err
 		}
-		if parent != root && !strings.HasPrefix(parent, root+string(os.PathSeparator)) {
-			return fmt.Errorf("stack: %s is created in %s, which escapes the directory it is extracted into",
-				header.Name, parent)
+		if err := os.Symlink(header.Linkname, path); err != nil {
+			return err
 		}
-		return os.Symlink(header.Linkname, path)
+		e.links = append(e.links, path)
+		return nil
 
 	default:
 		return nil
 	}
+}
+
+// links resolves every symlink the archive created and refuses the lot if any
+// of them leaves the root.
+//
+// Deferred to the end because that is the only point at which the answer is
+// knowable. A link's target may be extracted after the link, so resolving as
+// we go would refuse Node's bin/corepack for pointing at a file that does not
+// exist yet. And resolving lexically is unsound: cleaning collapses
+// subdir/parent/.. to subdir while the kernel, for which subdir/parent is a
+// link, goes somewhere else entirely.
+//
+// Nothing is lost by waiting. Extraction writes to a staging directory that is
+// renamed into place only on success, so an archive refused here leaves
+// nothing behind.
+func (e *extraction) check() error {
+	for _, link := range e.links {
+		real, err := filepath.EvalSymlinks(link)
+		if err != nil {
+			// A link whose target the archive never wrote. It cannot be
+			// followed, so it cannot escape; the worst it can do is dangle.
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		if !pathWithinRoot(e.root, real) {
+			return fmt.Errorf("stack: %s resolves to %s, which is outside the directory it was extracted into",
+				link, real)
+		}
+	}
+	return nil
 }
 
 // zipEntry is entry for an archive with no symlinks and no type flags. Both

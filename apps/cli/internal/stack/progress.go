@@ -35,6 +35,7 @@ var StepNames = []string{
 	StepDownload,
 	StepCluster,
 	StepMigrate,
+	StepGateway,
 	StepIdentity,
 	StepStart,
 }
@@ -44,6 +45,7 @@ const (
 	StepDownload = "download"
 	StepCluster  = "cluster"
 	StepMigrate  = "migrate"
+	StepGateway  = "gateway"
 	StepIdentity = "identity"
 	StepStart    = "start"
 	StepReady    = "ready"
@@ -75,6 +77,7 @@ var stepLabels = map[string]string{
 	StepDownload: "Downloading",
 	StepCluster:  "Creating the database",
 	StepMigrate:  "Setting up its tables",
+	StepGateway:  "Installing the model gateway",
 	StepIdentity: "Creating your sign-in",
 	StepStart:    "Starting Openarity",
 }

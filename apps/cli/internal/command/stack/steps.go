@@ -26,7 +26,7 @@ const (
 	stopGrace    = 10 * time.Second
 )
 
-func realSteps() engine.Steps {
+func realSteps(d *engine.Downloader, platform engine.Platform) engine.Steps {
 	return engine.Steps{
 		InitDB: func(ctx context.Context, p engine.Plan) error {
 			return run(ctx, p, beside(p.Binaries["postgres"], "initdb"),
@@ -45,6 +45,10 @@ func realSteps() engine.Steps {
 		WriteDex: func(_ context.Context, p engine.Plan, hash string) error {
 			return os.WriteFile(filepath.Join(p.Layout.Dex, "config.yaml"),
 				[]byte(dexConfig(p, hash)), 0o600)
+		},
+
+		Gateway: func(ctx context.Context, p engine.Plan) error {
+			return installGateway(ctx, d, platform, p)
 		},
 
 		StartStack: stopPostgres,
@@ -127,6 +131,20 @@ func build(ctx context.Context, layout engine.Layout, state engine.State) (*engi
 		}}
 	}
 
+	var gateway []engine.Component
+	if settings.RunsGateway() {
+		child := gatewayChild(settings, state.Ports.Gateway, filepath.Join(layout.Logs, "gateway.log"))
+		if child == nil {
+			return nil, fmt.Errorf("stack: no gateway to run for %q", settings.ModelBackend)
+		}
+
+		gateway = []engine.Component{{
+			Name:  "gateway",
+			Child: child,
+			Ready: probe(state.Ports.Gateway, gatewayReady(settings.ModelBackend)),
+		}}
+	}
+
 	postgres := engine.Component{
 		Name:        "postgres",
 		BeforeStart: func(ctx context.Context) error { return startPostgres(ctx, p) },
@@ -144,6 +162,7 @@ func build(ctx context.Context, layout engine.Layout, state engine.State) (*engi
 
 	components := []engine.Component{postgres}
 	components = append(components, objectStore...)
+	components = append(components, gateway...)
 	components = append(components,
 		engine.Component{Name: "dex", Child: dex, Ready: probe(state.Ports.Dex, "/healthz")},
 		engine.Component{Name: "brain", Child: brain, Ready: probe(state.Ports.API, "/readyz")},

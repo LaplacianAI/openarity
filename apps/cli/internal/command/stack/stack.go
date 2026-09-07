@@ -122,10 +122,13 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				report = engine.JSONReporter(opts.Stdout)
 			}
 
+			platform := engine.ThisPlatform()
+			downloader := &engine.Downloader{Report: report}
+
 			finder := engine.Finder(engine.DownloadingFinder{
 				Layout:     layout,
-				Platform:   engine.ThisPlatform(),
-				Downloader: &engine.Downloader{Report: report},
+				Platform:   platform,
+				Downloader: downloader,
 				Tag:        releaseTag,
 				Override:   binDir,
 			})
@@ -141,7 +144,7 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				Settings:    settings,
 				Credentials: credentials,
 				Report:      report,
-				Steps:       realSteps(),
+				Steps:       realSteps(downloader, platform),
 				Versions:    engine.Versions{Postgres: "local", Dex: "local", Brain: "local"},
 			}
 
@@ -194,6 +197,10 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 	cmd.Flags().StringVar(&given.Address, "secrets-addr", "", "the address of an external secret store")
 	cmd.Flags().StringVar(&given.KVMount, "secrets-mount", "", "the KV mount to use")
 	cmd.Flags().StringVar(&given.Gateway, "model-gateway", "", "the base URL of a model gateway")
+	cmd.Flags().StringVar(&given.ModelBackend, "model-backend", "",
+		"where the model gateway comes from: external, litellm or omniroute")
+	cmd.Flags().StringVar(&given.ModelPath, "model-path", "",
+		"where a gateway of our own installs its runtime and packages")
 	return cmd
 }
 
@@ -318,6 +325,7 @@ func newStatusCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 			ports := map[string]int{
 				"postgres": state.Ports.Postgres,
 				"minio":    state.Ports.MinIO,
+				"gateway":  state.Ports.Gateway,
 				"dex":      state.Ports.Dex,
 				"brain":    state.Ports.API,
 				"worker":   0,
@@ -354,10 +362,14 @@ func newStatusCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 
 // The order they start in, which is the order worth reading them in.
 func componentsOf(state engine.State) []string {
+	names := []string{"postgres"}
 	if state.Settings.RunsMinIO() {
-		return []string{"postgres", "minio", "dex", "brain", "worker"}
+		names = append(names, "minio")
 	}
-	return []string{"postgres", "dex", "brain", "worker"}
+	if state.Settings.RunsGateway() {
+		names = append(names, "gateway")
+	}
+	return append(names, "dex", "brain", "worker")
 }
 
 func runningWord(running bool) string {

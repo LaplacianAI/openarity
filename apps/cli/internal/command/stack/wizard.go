@@ -22,6 +22,9 @@ type choice struct {
 }
 
 type Answers struct {
+	ModelBackend string
+	ModelPath    string
+
 	Objects   string
 	Endpoint  string
 	Bucket    string
@@ -40,6 +43,12 @@ func (a Answers) complete() bool {
 func (a Answers) settings(base engine.Settings) engine.Settings {
 	out := base
 	out.ObjectsBackend = a.Objects
+	if a.ModelBackend != "" {
+		out.ModelBackend = a.ModelBackend
+	}
+	if a.ModelPath != "" {
+		out.ModelPath = a.ModelPath
+	}
 	if a.MinIOPath != "" {
 		out.MinIOPath = a.MinIOPath
 	}

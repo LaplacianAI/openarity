@@ -270,3 +270,95 @@ func TestMinIOWithNowhereToPutFilesIsRefused(t *testing.T) {
 		t.Error("a MinIO install with no data directory validated")
 	}
 }
+
+func TestOnlyAGatewayWeRunNeedsSomewhereToLive(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		backend string
+		runs    bool
+		runtime string
+	}{
+		{backend: "litellm", runs: true, runtime: "uv"},
+		{backend: "omniroute", runs: true, runtime: "node"},
+		{backend: "external", runs: false, runtime: ""},
+		{backend: "", runs: false, runtime: ""},
+	} {
+		s := Settings{ModelBackend: tc.backend}
+		if got := s.RunsGateway(); got != tc.runs {
+			t.Errorf("RunsGateway() with %q = %v, want %v", tc.backend, got, tc.runs)
+		}
+		if got := s.GatewayRuntime(); got != tc.runtime {
+			t.Errorf("GatewayRuntime() with %q = %q, want %q", tc.backend, got, tc.runtime)
+		}
+	}
+}
+
+// Neither gateway ships a binary, so running one means downloading a runtime
+// and installing into it. Somewhere to put a gigabyte is not optional, and
+// discovering that after the download is the wrong time.
+func TestAGatewayWeRunIsRefusedWithNowhereToInstall(t *testing.T) {
+	t.Parallel()
+
+	base := DefaultSettings()
+
+	for _, backend := range []string{"litellm", "omniroute"} {
+		s := base
+		s.ModelBackend = backend
+
+		if err := s.Validate(); err == nil {
+			t.Errorf("Validate() with %s and no path = nil, want a refusal", backend)
+		}
+
+		s.ModelPath = t.TempDir()
+		if err := s.Validate(); err != nil {
+			t.Errorf("Validate() with %s and a path = %v", backend, err)
+		}
+	}
+}
+
+// Pointing at somebody else's gateway needs no directory, and demanding one
+// would make the ordinary case fail.
+func TestPointingAtAGatewayNeedsNoDirectory(t *testing.T) {
+	t.Parallel()
+
+	s := DefaultSettings()
+	if s.ModelBackend != "external" {
+		t.Errorf("the default model backend is %q, want external — running one is a gigabyte nobody asked for", s.ModelBackend)
+	}
+	if err := s.Validate(); err != nil {
+		t.Errorf("Validate() on the defaults = %v", err)
+	}
+}
+
+func TestAnUnknownModelBackendIsRefused(t *testing.T) {
+	t.Parallel()
+
+	s := DefaultSettings()
+	s.ModelBackend = "ollama"
+
+	err := s.Validate()
+	if err == nil {
+		t.Fatal("Validate() with an unknown model backend = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "ollama") {
+		t.Errorf("Validate() = %q, want it to name the value it did not know", err)
+	}
+}
+
+// The state file is what a person pastes into an issue. A gateway password
+// must not be in it — it goes to the credentials file, like every other one.
+func TestTheGatewaySettingsHoldNoCredential(t *testing.T) {
+	t.Parallel()
+
+	s := DefaultSettings()
+	s.ModelBackend = "omniroute"
+	s.ModelPath = "/somewhere"
+	s.ModelBaseURL = "http://127.0.0.1:20128/v1"
+
+	for _, env := range s.Env() {
+		if strings.Contains(strings.ToUpper(env), "PASSWORD") {
+			t.Errorf("Env() carries %q, which belongs in the credentials file", env)
+		}
+	}
+}

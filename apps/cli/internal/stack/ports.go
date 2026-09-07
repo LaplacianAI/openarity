@@ -21,6 +21,10 @@ const (
 	DefaultDexPort      = 5556
 	DefaultPostgresPort = 21432
 	DefaultMinIOPort    = 21900
+
+	// The brain's own default for a model gateway, so an install that runs
+	// one lands where an install that does not already expects to find one.
+	DefaultGatewayPort = 20128
 )
 
 // PortAvailable reports whether a listener can be opened on the port right

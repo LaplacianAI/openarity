@@ -28,6 +28,7 @@ type Steps struct {
 	CreateDBs  func(context.Context, Plan) error
 	Migrate    func(context.Context, Plan) error
 	WriteDex   func(ctx context.Context, p Plan, bcryptHash string) error
+	Gateway    func(context.Context, Plan) error
 	StartStack func(context.Context, Plan) error
 	Open       func(url string) error
 }
@@ -105,11 +106,16 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 		return Result{}, err
 	}
 
-	ports, err := pickPorts(ctx, s.Settings.RunsMinIO())
+	ports, err := pickPorts(ctx, s.Settings.RunsMinIO(), s.Settings.RunsGateway())
 	if err != nil {
 		return Result{}, err
 	}
 	plan.Ports = ports
+
+	if s.Settings.RunsGateway() {
+		s.Settings.ModelBaseURL = fmt.Sprintf("http://%s:%d/v1", loopback, ports.Gateway)
+		plan.Settings = s.Settings
+	}
 
 	if s.Settings.RunsMinIO() && s.Settings.ObjectsEndpoint == "" {
 		s.Settings.ObjectsEndpoint = fmt.Sprintf("http://%s:%d", loopback, ports.MinIO)
@@ -135,6 +141,19 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 		return Result{}, err
 	}
 	s.report(Event{Step: StepMigrate, Phase: PhaseDone})
+
+	// After the migrations and before the identity provider, because it is
+	// the long one — a runtime and a gigabyte of packages — and a person
+	// watching would rather see the quick steps land first than watch the
+	// first bar for four minutes.
+	if s.Settings.RunsGateway() {
+		s.report(Event{Step: StepGateway, Phase: PhaseStarted, Detail: s.Settings.ModelBackend})
+		if err := s.Steps.Gateway(ctx, plan); err != nil {
+			s.report(Event{Step: StepGateway, Phase: PhaseFailed, Detail: err.Error()})
+			return Result{}, err
+		}
+		s.report(Event{Step: StepGateway, Phase: PhaseDone})
+	}
 
 	s.report(Event{Step: StepIdentity, Phase: PhaseStarted})
 	passphrase, err := s.configureDex(ctx, plan)
@@ -261,7 +280,7 @@ func exists(path string) bool {
 	return err == nil
 }
 
-func pickPorts(ctx context.Context, withMinIO bool) (Ports, error) {
+func pickPorts(ctx context.Context, withMinIO, withGateway bool) (Ports, error) {
 	taken := map[int]bool{}
 
 	pick := func(preferred int) (int, error) {
@@ -276,7 +295,7 @@ func pickPorts(ctx context.Context, withMinIO bool) (Ports, error) {
 			}
 			preferred = 0
 		}
-		return 0, errors.New("stack: could not find four distinct free ports")
+		return 0, errors.New("stack: could not find enough distinct free ports")
 	}
 
 	var (
@@ -297,6 +316,11 @@ func pickPorts(ctx context.Context, withMinIO bool) (Ports, error) {
 	}
 	if withMinIO {
 		if p.MinIO, err = pick(DefaultMinIOPort); err != nil {
+			return Ports{}, err
+		}
+	}
+	if withGateway {
+		if p.Gateway, err = pick(DefaultGatewayPort); err != nil {
 			return Ports{}, err
 		}
 	}

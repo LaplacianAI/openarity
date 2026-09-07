@@ -20,14 +20,28 @@ type Settings struct {
 	SecretsAddr    string `yaml:"secrets_addr,omitempty"`
 	SecretsKVMount string `yaml:"secrets_kv_mount,omitempty"`
 
+	// Where the model gateway comes from. "external" points at one somebody
+	// else runs, which is every install today; "litellm" and "omniroute"
+	// install and supervise one here.
+	ModelBackend string `yaml:"model_backend,omitempty"`
 	ModelBaseURL string `yaml:"model_base_url,omitempty"`
+
+	// Where a gateway of our own keeps its runtime and its packages. Separate
+	// from the install root's bin/ because it is a gigabyte of somebody
+	// else's software, and a person moving it to another disk should be able
+	// to.
+	ModelPath string `yaml:"model_path,omitempty"`
 }
 
 func DefaultSettings() Settings {
 	return Settings{
 		ObjectsBackend: "filesystem",
 		SecretsBackend: "static",
-		ModelBaseURL:   "http://127.0.0.1:20128/v1",
+
+		// Pointing at one rather than running one, because running one is a
+		// gigabyte and nobody should download that without being asked.
+		ModelBackend: "external",
+		ModelBaseURL: "http://127.0.0.1:20128/v1",
 	}
 }
 
@@ -41,6 +55,26 @@ func (s Settings) Environment() string {
 // RunsMinIO reports whether this install supervises an object store of its
 // own, rather than reaching one somebody else runs.
 func (s Settings) RunsMinIO() bool { return s.ObjectsBackend == "minio" }
+
+// RunsGateway reports whether this install has a model gateway to provision
+// and supervise. Neither of them ships a binary, so "running one" means
+// downloading a runtime and installing into it.
+func (s Settings) RunsGateway() bool {
+	return s.ModelBackend == "litellm" || s.ModelBackend == "omniroute"
+}
+
+// GatewayRuntime is what has to be fetched before the gateway can be
+// installed: uv provisions a Python for LiteLLM, Node runs OmniRoute.
+func (s Settings) GatewayRuntime() string {
+	switch s.ModelBackend {
+	case "litellm":
+		return "uv"
+	case "omniroute":
+		return "node"
+	default:
+		return ""
+	}
+}
 
 // The brain has three object backends and minio is not one of them: MinIO is
 // S3, and what makes it MinIO is the endpoint. The distinction matters to the
@@ -135,6 +169,16 @@ func (s Settings) Validate() error {
 	}
 	if s.SecretsBackend != "static" && s.SecretsAddr == "" {
 		return errors.New("stack: an external secret store needs an address")
+	}
+
+	switch s.ModelBackend {
+	case "", "external", "litellm", "omniroute":
+	default:
+		return fmt.Errorf("stack: unknown model backend %q", s.ModelBackend)
+	}
+
+	if s.RunsGateway() && s.ModelPath == "" {
+		return errors.New("stack: a gateway of our own needs a directory to install into")
 	}
 	return nil
 }
