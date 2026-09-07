@@ -218,11 +218,15 @@ func extract(txz []byte, dest string) error {
 	return os.Rename(staging, dest)
 }
 
+func pathWithinRoot(root, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
 func writeEntry(root string, header *tar.Header, body io.Reader) error {
 	path := filepath.Join(root, filepath.FromSlash(header.Name)) //nolint:gosec // checked below
 
-	rel, err := filepath.Rel(root, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+	if !pathWithinRoot(root, path) {
 		return fmt.Errorf("stack: %s escapes the directory it is extracted into", header.Name)
 	}
 
@@ -250,12 +254,22 @@ func writeEntry(root string, header *tar.Header, body io.Reader) error {
 		return err
 
 	case tar.TypeSymlink:
-		if filepath.IsAbs(header.Linkname) || strings.Contains(header.Linkname, "..") {
+		if filepath.IsAbs(header.Linkname) {
 			return fmt.Errorf("stack: %s links outside the directory it is extracted into", header.Name)
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return err
 		}
+
+		resolvedParent, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		targetPath := filepath.Clean(filepath.Join(resolvedParent, filepath.FromSlash(header.Linkname)))
+		if !pathWithinRoot(root, targetPath) {
+			return fmt.Errorf("stack: %s links outside the directory it is extracted into", header.Name)
+		}
+
 		return os.Symlink(header.Linkname, path)
 
 	default:
