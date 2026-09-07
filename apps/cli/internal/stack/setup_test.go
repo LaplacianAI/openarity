@@ -3,6 +3,7 @@ package stack
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -357,5 +358,121 @@ func TestTheChosenPortsAreRecorded(t *testing.T) {
 			t.Errorf("%s and %s were both given port %d", name, other, port)
 		}
 		seen[port] = name
+	}
+}
+
+// The window sends the dashboard password through the environment, never as a
+// flag: argv is readable by every process on this machine. A password given
+// that way must be used as-is and must not be replaced by a generated one.
+func TestAGatewayPasswordThatWasGivenIsNotReplaced(t *testing.T) {
+	t.Parallel()
+
+	r := &recorder{}
+	s := setupFor(t, r)
+	s.Settings.ModelBackend = "omniroute"
+	s.Settings.ModelPath = t.TempDir()
+	s.Credentials = map[string]string{"OPENARITY_GATEWAY_PASSWORD": "the-one-they-chose"}
+	s.Steps.Gateway = func(context.Context, Plan) error { return nil }
+
+	result, err := s.Run(t.Context())
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	if result.GatewayPassword != "" {
+		t.Errorf("Run() reported a generated password %q, but one was given", result.GatewayPassword)
+	}
+
+	got, err := ReadCredentials(s.Layout.Env)
+	if err != nil {
+		t.Fatalf("ReadCredentials() = %v", err)
+	}
+	if got["OPENARITY_GATEWAY_PASSWORD"] != "the-one-they-chose" {
+		t.Errorf("the stored password is %q, want the one that was given", got["OPENARITY_GATEWAY_PASSWORD"])
+	}
+}
+
+// Nobody chose one, so one is generated and reported exactly once. Without it
+// OmniRoute takes CHANGEME from its own image.
+func TestAGatewayWithNoPasswordGetsOneGeneratedAndShownOnce(t *testing.T) {
+	t.Parallel()
+
+	r := &recorder{}
+	s := setupFor(t, r)
+	s.Settings.ModelBackend = "omniroute"
+	s.Settings.ModelPath = t.TempDir()
+	s.Steps.Gateway = func(context.Context, Plan) error { return nil }
+
+	result, err := s.Run(t.Context())
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	if result.GatewayPassword == "" {
+		t.Fatal("Run() generated no password, so the gateway comes up as CHANGEME")
+	}
+
+	got, err := ReadCredentials(s.Layout.Env)
+	if err != nil {
+		t.Fatalf("ReadCredentials() = %v", err)
+	}
+	if got["OPENARITY_GATEWAY_PASSWORD"] != result.GatewayPassword {
+		t.Error("the password shown is not the password stored")
+	}
+
+	// The state file is what people paste into issues.
+	state, err := os.ReadFile(s.Layout.State)
+	if err != nil {
+		t.Fatalf("reading the state: %v", err)
+	}
+	if strings.Contains(string(state), result.GatewayPassword) {
+		t.Error("the gateway password is in stack.yaml")
+	}
+}
+
+// LiteLLM has no dashboard, so generating one would be a password for nothing
+// and a line of output that means nothing.
+func TestLiteLLMGetsNoDashboardPassword(t *testing.T) {
+	t.Parallel()
+
+	r := &recorder{}
+	s := setupFor(t, r)
+	s.Settings.ModelBackend = "litellm"
+	s.Settings.ModelPath = t.TempDir()
+	s.Steps.Gateway = func(context.Context, Plan) error { return nil }
+
+	result, err := s.Run(t.Context())
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if result.GatewayPassword != "" {
+		t.Errorf("Run() generated %q for a gateway with no dashboard", result.GatewayPassword)
+	}
+}
+
+// A gateway of our own is what the brain must be pointed at, on the port setup
+// actually picked. Left alone it would talk to whatever happened to be on the
+// default port, or to nothing.
+func TestTheBrainIsPointedAtTheGatewayWeRun(t *testing.T) {
+	t.Parallel()
+
+	r := &recorder{}
+	s := setupFor(t, r)
+	s.Settings.ModelBackend = "litellm"
+	s.Settings.ModelPath = t.TempDir()
+	s.Settings.ModelBaseURL = "http://example.com/somewhere-else/v1"
+	s.Steps.Gateway = func(context.Context, Plan) error { return nil }
+
+	result, err := s.Run(t.Context())
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	want := fmt.Sprintf("http://127.0.0.1:%d/v1", result.Plan.Ports.Gateway)
+	if result.Plan.Settings.ModelBaseURL != want {
+		t.Errorf("the brain was pointed at %q, want %q", result.Plan.Settings.ModelBaseURL, want)
+	}
+	if result.Plan.Ports.Gateway == 0 {
+		t.Error("no port was chosen for the gateway")
 	}
 }

@@ -105,6 +105,7 @@ func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 		"OPENARITY_SECRETS_APPROLE_ID",
 		"OPENARITY_SECRETS_APPROLE_SECRET",
 		"OPENARITY_MODEL_API_KEY",
+		"OPENARITY_GATEWAY_PASSWORD",
 	} {
 		if value := os.Getenv(key); value != "" {
 			w.creds[key] = value

@@ -19,6 +19,8 @@ pub struct Choices {
     root: String,
     objects: String,
     secrets: String,
+    model_backend: String,
+    model_path: String,
     endpoint: String,
     bucket: String,
     region: String,
@@ -26,6 +28,7 @@ pub struct Choices {
     gateway: String,
     // Never a flag: argv is readable by every process on this machine, so
     // these go into the child's environment instead.
+    gateway_password: String,
     access_key: String,
     secret_key: String,
     model_key: String,
@@ -60,6 +63,8 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
 
     for (flag, value) in [
         ("--root", &choices.root),
+        ("--model-backend", &choices.model_backend),
+        ("--model-path", &choices.model_path),
         ("--objects-endpoint", &choices.endpoint),
         ("--objects-bucket", &choices.bucket),
         ("--objects-region", &choices.region),
@@ -87,6 +92,13 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
 
     if !choices.model_key.is_empty() {
         command = command.env("OPENARITY_MODEL_API_KEY", &choices.model_key);
+    }
+
+    // Through the environment, like every other credential here. A dashboard
+    // password on the command line is readable by every process on the
+    // machine, which is the thing it is meant to keep out.
+    if !choices.gateway_password.is_empty() {
+        command = command.env("OPENARITY_GATEWAY_PASSWORD", &choices.gateway_password);
     }
 
     let (mut rx, _child) = command.spawn().map_err(|e| e.to_string())?;

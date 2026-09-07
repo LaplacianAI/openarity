@@ -12,7 +12,10 @@ export function App() {
   const [progress, setProgress] = useState<Progress>(nothingYet);
   const [objects, setObjects] = useState("filesystem");
   const [secrets, setSecrets] = useState("static");
+  const [modelBackend, setModelBackend] = useState("external");
   const [gateway, setGateway] = useState("http://127.0.0.1:20128/v1");
+  const [modelPath, setModelPath] = useState("");
+  const [gatewayPassword, setGatewayPassword] = useState("");
   const [modelKey, setModelKey] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [bucket, setBucket] = useState("openarity");
@@ -37,6 +40,8 @@ export function App() {
     }
   }, [progress.url]);
 
+  const runsGateway = modelBackend === "litellm" || modelBackend === "omniroute";
+
   const start = async () => {
     setScreen("installing");
     try {
@@ -50,7 +55,12 @@ export function App() {
           minioPath: objects === "minio" ? minioPath : "",
           region: objects === "s3" ? region : "",
           address: secrets === "static" ? "" : address,
-          gateway,
+          modelBackend,
+          modelPath: runsGateway ? modelPath : "",
+          // Only sent when we point at one. A gateway we install is found at
+          // the port setup picked, which is not knowable from here.
+          gateway: runsGateway ? "" : gateway,
+          gatewayPassword: modelBackend === "omniroute" ? gatewayPassword : "",
           accessKey: objects === "s3" ? accessKey : "",
           secretKey: objects === "s3" ? secretKey : "",
           modelKey,
@@ -123,27 +133,56 @@ export function App() {
         )}
 
         <Question
-          label="Which model service?"
+          label="Where should Openarity get its models from?"
           about="Anything that speaks the OpenAI API. Nothing calls it yet — recorded for when it does."
-          value={gateway}
-          onChange={setGateway}
+          value={modelBackend}
+          onChange={setModelBackend}
           options={[
-            ["http://127.0.0.1:20128/v1", "A gateway you run — LiteLLM or OmniRoute"],
-            ["https://api.openai.com/v1", "OpenAI"],
-            ["", "Something else"],
+            ["external", "One you already run — nothing is downloaded"],
+            ["litellm", "Run LiteLLM here — about 1GB, brings its own Python"],
+            ["omniroute", "Run OmniRoute here — about 3.7GB, brings its own Node"],
           ]}
         />
 
-        <div className="follow">
-          <Field label="URL" value={gateway} onChange={setGateway} />
-          <Field
-            label="API key"
-            hint="Blank if it needs none, which a gateway you run usually does not."
-            value={modelKey}
-            onChange={setModelKey}
-            secret
-          />
-        </div>
+        {runsGateway && (
+          <div className="follow">
+            <Field
+              label="Where should it install?"
+              hint="Anywhere with room. Blank puts it inside the install."
+              value={modelPath}
+              onChange={setModelPath}
+            />
+            {modelBackend === "omniroute" && (
+              <Field
+                label="Dashboard password"
+                hint="Blank generates one and shows it at the end."
+                value={gatewayPassword}
+                onChange={setGatewayPassword}
+                secret
+              />
+            )}
+            <Field
+              label="A provider API key"
+              hint="Blank for none. It can be added from the gateway's own dashboard later."
+              value={modelKey}
+              onChange={setModelKey}
+              secret
+            />
+          </div>
+        )}
+
+        {!runsGateway && (
+          <div className="follow">
+            <Field label="URL" value={gateway} onChange={setGateway} />
+            <Field
+              label="API key"
+              hint="Blank if it needs none, which a gateway on your own machine usually does not."
+              value={modelKey}
+              onChange={setModelKey}
+              secret
+            />
+          </div>
+        )}
 
         <button type="button" className="primary" onClick={start}>
           Install
@@ -190,6 +229,16 @@ export function App() {
         <span>{progress.passphrase}</span>
         <small>Write this down. It is not stored anywhere and cannot be shown again.</small>
       </div>
+
+      {progress.gatewayPassword && (
+        <div className="passphrase">
+          <span>{progress.gatewayPassword}</span>
+          <small>
+            The model gateway&rsquo;s own dashboard password, generated because none was
+            given. Kept in the credentials file.
+          </small>
+        </div>
+      )}
 
       <button
         type="button"

@@ -90,3 +90,48 @@ it("names every step the installer emits", () => {
     expect(named.has(step)).toBe(true);
   }
 });
+
+// The gateway password rides on the same event as the passphrase and has the
+// same bargain: shown once, never again. A reducer that dropped it would send
+// somebody to a dashboard they cannot open.
+it("keeps the gateway password from the ready event", () => {
+  const progress = readLines(
+    JSON.stringify({
+      step: "ready",
+      state: "done",
+      url: "http://127.0.0.1:21120/ui",
+      passphrase: "a-sign-in-passphrase",
+      gateway_password: "a-dashboard-password",
+    }),
+  ).reduce(apply, nothingYet);
+
+  expect(progress.gatewayPassword).toBe("a-dashboard-password");
+  expect(progress.passphrase).toBe("a-sign-in-passphrase");
+});
+
+// An install that points at a gateway rather than running one generates no
+// password, and the done screen must not offer an empty box.
+it("has no gateway password when none was generated", () => {
+  const progress = readLines(
+    JSON.stringify({
+      step: "ready",
+      state: "done",
+      url: "http://127.0.0.1:21120/ui",
+      passphrase: "a-sign-in-passphrase",
+    }),
+  ).reduce(apply, nothingYet);
+
+  expect(progress.gatewayPassword).toBeNull();
+});
+
+// The step exists in the list, or the window shows five steps while the
+// installer reports six and the last one appears to hang.
+it("names the gateway step", () => {
+  expect(STEPS.map((s) => s.id)).toContain("gateway");
+
+  const progress = readLines(
+    JSON.stringify({ step: "gateway", state: "started", detail: "omniroute" }),
+  ).reduce(apply, nothingYet);
+
+  expect(progress.states.gateway).toBe("started");
+});

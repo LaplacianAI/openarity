@@ -7,6 +7,7 @@ export type Event = {
   percent?: number;
   url?: string;
   passphrase?: string;
+  gateway_password?: string;
 };
 
 // The order they happen in, and the words a person reads. The step names come
@@ -16,6 +17,7 @@ export const STEPS: ReadonlyArray<{ id: string; label: string }> = [
   { id: "download", label: "Downloading PostgreSQL" },
   { id: "cluster", label: "Creating the database" },
   { id: "migrate", label: "Setting up its tables" },
+  { id: "gateway", label: "Installing the model gateway" },
   { id: "identity", label: "Creating your sign-in" },
   { id: "start", label: "Starting Openarity" },
 ];
@@ -26,6 +28,7 @@ export type Progress = {
   failure: string | null;
   url: string | null;
   passphrase: string | null;
+  gatewayPassword: string | null;
 };
 
 export const nothingYet: Progress = {
@@ -34,6 +37,7 @@ export const nothingYet: Progress = {
   failure: null,
   url: null,
   passphrase: null,
+  gatewayPassword: null,
 };
 
 // A pure reducer so the whole flow can be tested without a window: feed it the
@@ -44,6 +48,7 @@ export function apply(progress: Progress, event: Event): Progress {
       ...progress,
       url: event.url ?? null,
       passphrase: event.passphrase ?? null,
+      gatewayPassword: event.gateway_password ?? null,
     };
   }
 
