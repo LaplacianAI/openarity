@@ -92,6 +92,7 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 		binDir      string
 		noAutostart bool
 		asJSON      bool
+		given       Answers
 	)
 
 	cmd := &cobra.Command{
@@ -128,7 +129,7 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				finder = engine.LocalFinder{Dir: binDir}
 			}
 
-			settings, credentials, err := newWizard(opts, asJSON).Run()
+			settings, credentials, err := newWizard(opts, asJSON, given).Run()
 			if err != nil {
 				return err
 			}
@@ -178,6 +179,19 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 		"do not start Openarity when you log in")
 	cmd.Flags().BoolVar(&asJSON, "json", false,
 		"report progress as one JSON event per line, for a program rather than a person")
+
+	// Given together, these answer the wizard so it asks nothing — which is
+	// how the installer window drives it, a sidecar having no terminal to
+	// prompt at. Credentials are deliberately absent; the wizard reads those
+	// from the environment.
+	cmd.Flags().StringVar(&given.Objects, "objects", "", "where files are kept: filesystem, memory or s3")
+	cmd.Flags().StringVar(&given.Endpoint, "objects-endpoint", "", "an S3-compatible endpoint, blank for AWS")
+	cmd.Flags().StringVar(&given.Bucket, "objects-bucket", "", "the bucket, which must already exist")
+	cmd.Flags().StringVar(&given.Region, "objects-region", "", "the bucket's region")
+	cmd.Flags().StringVar(&given.Secrets, "secrets", "", "where credentials are kept: static, openbao or vault")
+	cmd.Flags().StringVar(&given.Address, "secrets-addr", "", "the address of an external secret store")
+	cmd.Flags().StringVar(&given.KVMount, "secrets-mount", "", "the KV mount to use")
+	cmd.Flags().StringVar(&given.Gateway, "model-gateway", "", "the base URL of a model gateway")
 	return cmd
 }
 

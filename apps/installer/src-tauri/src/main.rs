@@ -14,28 +14,61 @@ struct Line {
 // line. This window only reads that stream: reimplementing any of it in Rust
 // would mean two installers that could disagree, and the Go one is the one
 // with tests.
+#[derive(serde::Deserialize)]
+pub struct Choices {
+    root: String,
+    objects: String,
+    secrets: String,
+    endpoint: String,
+    bucket: String,
+    region: String,
+    address: String,
+    gateway: String,
+    // Never a flag: argv is readable by every process on this machine, so
+    // these go into the child's environment instead.
+    access_key: String,
+    secret_key: String,
+}
+
 #[tauri::command]
-async fn install(app: AppHandle, root: String, objects: String, secrets: String, gateway: String) -> Result<(), String> {
+async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
     let mut args = vec![
         "stack".to_string(),
         "setup".to_string(),
         "--json".to_string(),
+        "--objects".to_string(),
+        choices.objects.clone(),
+        "--secrets".to_string(),
+        choices.secrets.clone(),
     ];
 
-    if !root.is_empty() {
-        args.push("--root".to_string());
-        args.push(root);
+    for (flag, value) in [
+        ("--root", &choices.root),
+        ("--objects-endpoint", &choices.endpoint),
+        ("--objects-bucket", &choices.bucket),
+        ("--objects-region", &choices.region),
+        ("--secrets-addr", &choices.address),
+        ("--model-gateway", &choices.gateway),
+    ] {
+        if !value.is_empty() {
+            args.push(flag.to_string());
+            args.push(value.clone());
+        }
     }
 
-    let _ = (&objects, &secrets, &gateway);
-
-    let (mut rx, _child) = app
+    let mut command = app
         .shell()
         .sidecar("oa")
         .map_err(|e| e.to_string())?
-        .args(args)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+        .args(args);
+
+    if !choices.access_key.is_empty() {
+        command = command
+            .env("OPENARITY_OBJECTS_ACCESS_KEY", &choices.access_key)
+            .env("OPENARITY_OBJECTS_SECRET_KEY", &choices.secret_key);
+    }
+
+    let (mut rx, _child) = command.spawn().map_err(|e| e.to_string())?;
 
     while let Some(event) = rx.recv().await {
         match event {

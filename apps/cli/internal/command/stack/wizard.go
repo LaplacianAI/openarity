@@ -20,15 +20,51 @@ type choice struct {
 	about string
 }
 
+type Answers struct {
+	Objects  string
+	Endpoint string
+	Bucket   string
+	Region   string
+	Secrets  string
+	Address  string
+	KVMount  string
+	Gateway  string
+}
+
+func (a Answers) complete() bool {
+	return a.Objects != "" && a.Secrets != ""
+}
+
+func (a Answers) settings(base engine.Settings) engine.Settings {
+	out := base
+	out.ObjectsBackend = a.Objects
+	out.SecretsBackend = a.Secrets
+
+	for target, value := range map[*string]string{
+		&out.ObjectsEndpoint: a.Endpoint,
+		&out.ObjectsBucket:   a.Bucket,
+		&out.ObjectsRegion:   a.Region,
+		&out.SecretsAddr:     a.Address,
+		&out.SecretsKVMount:  a.KVMount,
+		&out.ModelGatewayURL: a.Gateway,
+	} {
+		if value != "" {
+			*target = value
+		}
+	}
+	return out
+}
+
 type wizard struct {
 	opts  *cli.Options
 	in    *bufio.Reader
 	ask   bool
 	quiet bool
+	given Answers
 	creds map[string]string
 }
 
-func newWizard(opts *cli.Options, quiet bool) *wizard {
+func newWizard(opts *cli.Options, quiet bool, given Answers) *wizard {
 	interactive := term.IsTerminal(int(os.Stdin.Fd())) && !opts.NonInteractive && !quiet
 
 	return &wizard{
@@ -36,12 +72,32 @@ func newWizard(opts *cli.Options, quiet bool) *wizard {
 		in:    bufio.NewReader(os.Stdin),
 		ask:   interactive,
 		quiet: quiet,
+		given: given,
 		creds: map[string]string{},
 	}
 }
 
 func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 	settings := engine.DefaultSettings()
+
+	// Credentials arrive in the environment rather than as flags: argv is
+	// readable by every process on the machine, and an S3 secret key on a
+	// command line is a secret key in `ps`.
+	for _, key := range []string{
+		"OPENARITY_OBJECTS_ACCESS_KEY",
+		"OPENARITY_OBJECTS_SECRET_KEY",
+		"OPENARITY_SECRETS_APPROLE_ID",
+		"OPENARITY_SECRETS_APPROLE_SECRET",
+	} {
+		if value := os.Getenv(key); value != "" {
+			w.creds[key] = value
+		}
+	}
+
+	if w.given.complete() {
+		settings = w.given.settings(settings)
+		return settings, w.creds, settings.Validate()
+	}
 
 	if !w.ask {
 		if !w.quiet {

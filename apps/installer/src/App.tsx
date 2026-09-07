@@ -13,6 +13,12 @@ export function App() {
   const [objects, setObjects] = useState("filesystem");
   const [secrets, setSecrets] = useState("static");
   const [gateway, setGateway] = useState("http://127.0.0.1:20128/v1");
+  const [endpoint, setEndpoint] = useState("");
+  const [bucket, setBucket] = useState("openarity");
+  const [region, setRegion] = useState("us-east-1");
+  const [accessKey, setAccessKey] = useState("");
+  const [secretKey, setSecretKey] = useState("");
+  const [address, setAddress] = useState("http://127.0.0.1:8200");
 
   useEffect(() => {
     const stop = listen<{ line: string }>("install", (e) => {
@@ -32,7 +38,20 @@ export function App() {
   const start = async () => {
     setScreen("installing");
     try {
-      await invoke("install", { root: "", objects, secrets, gateway });
+      await invoke("install", {
+        choices: {
+          root: "",
+          objects,
+          secrets,
+          endpoint: objects === "s3" ? endpoint : "",
+          bucket: objects === "s3" ? bucket : "",
+          region: objects === "s3" ? region : "",
+          address: secrets === "static" ? "" : address,
+          gateway,
+          accessKey: objects === "s3" ? accessKey : "",
+          secretKey: objects === "s3" ? secretKey : "",
+        },
+      });
     } catch (err) {
       setProgress((current) => ({ ...current, failure: String(err) }));
     }
@@ -59,6 +78,16 @@ export function App() {
           ]}
         />
 
+        {objects === "s3" && (
+          <div className="follow">
+            <Field label="Endpoint" hint="Blank for AWS. For MinIO, http://127.0.0.1:9000" value={endpoint} onChange={setEndpoint} />
+            <Field label="Bucket" hint="It must already exist." value={bucket} onChange={setBucket} />
+            <Field label="Region" hint="MinIO ignores this." value={region} onChange={setRegion} />
+            <Field label="Access key" value={accessKey} onChange={setAccessKey} />
+            <Field label="Secret key" value={secretKey} onChange={setSecretKey} secret />
+          </div>
+        )}
+
         <Question
           label="Where should credentials be kept?"
           about="The tokens Openarity uses to reach services you connect to it."
@@ -69,6 +98,12 @@ export function App() {
             ["openbao", "OpenBao or Vault"],
           ]}
         />
+
+        {secrets !== "static" && (
+          <div className="follow">
+            <Field label="Address" hint="For example http://127.0.0.1:8200" value={address} onChange={setAddress} />
+          </div>
+        )}
 
         <label className="field">
           <span>Model gateway</span>
@@ -134,6 +169,32 @@ export function App() {
         Open the dashboard
       </button>
     </main>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  value,
+  onChange,
+  secret,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (value: string) => void;
+  secret?: boolean;
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {hint && <small>{hint}</small>}
+      <input
+        type={secret ? "password" : "text"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
   );
 }
 
