@@ -569,14 +569,6 @@ func (e *extraction) entry(header *tar.Header, body io.Reader) error {
 		// Only the cheap, certain refusals here. A link may not be absolute
 		// and may not be empty, because neither can ever be right and both
 		// can be judged without touching the disk.
-		//
-		// Containment is not decided here. It cannot be: a link's target may
-		// not exist yet — Node writes bin/corepack before
-		// lib/node_modules/corepack — and judging it lexically is exactly the
-		// mistake that let two links neither of which escapes on its own
-		// compose into one that does. So the link is created and every link
-		// is resolved at the end, by links(), when there is a filesystem to
-		// ask.
 		if header.Linkname == "" || filepath.IsAbs(header.Linkname) ||
 			filepath.VolumeName(header.Linkname) != "" {
 			return fmt.Errorf("stack: %s links to %q, which is not a relative path",
@@ -588,6 +580,22 @@ func (e *extraction) entry(header *tar.Header, body io.Reader) error {
 		if err := e.dirWithinRoot(filepath.Dir(path)); err != nil {
 			return err
 		}
+
+		// Resolve the link parent directory through existing symlinks before
+		// validating the link target stays within the extraction root.
+		realParent, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		linkTarget := filepath.Join(realParent, header.Linkname)
+		if !filepath.IsAbs(linkTarget) {
+			linkTarget = filepath.Join(e.root, linkTarget)
+		}
+		if err := e.dirWithinRoot(filepath.Clean(linkTarget)); err != nil {
+			return fmt.Errorf("stack: %s links to %q outside root: %w",
+				header.Name, header.Linkname, err)
+		}
+
 		if err := os.Symlink(header.Linkname, path); err != nil {
 			return err
 		}
