@@ -120,7 +120,10 @@ func TestAGatewayDoesNotInheritTheShell(t *testing.T) {
 func TestTheRuntimePathsMatchTheArchiveLayout(t *testing.T) {
 	t.Parallel()
 
-	root := "/install/gateway"
+	// Built with filepath.Join, not written as a POSIX string: on Windows the
+	// paths under test come back with backslashes and would not have this as
+	// a prefix.
+	root := filepath.Join(string(filepath.Separator)+"install", "gateway")
 
 	node, npm := nodeExe(root), npmCLI(root)
 	if !strings.HasPrefix(node, root) || !strings.HasPrefix(npm, root) {

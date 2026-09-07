@@ -1071,17 +1071,87 @@ func TestALinkExtractedBeforeItsTargetIsAccepted(t *testing.T) {
 func TestAnAbsoluteLinkIsRefused(t *testing.T) {
 	t.Parallel()
 
-	jar := jarOf(t, entry{header: tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"}})
-
-	dest := filepath.Join(realDir(t, t.TempDir()), "into")
-	server, _ := serve(t, jar)
-
-	err := (&Downloader{Client: server.Client()}).Postgres(t.Context(),
-		server.URL+"/artifact", server.URL+"/artifact.sha256", dest)
-	if err == nil {
-		t.Fatal("an absolute symlink was accepted")
+	// Every shape of "absolute" an archive can carry, because the platform
+	// reading it disagrees about which of them are. filepath.IsAbs on Windows
+	// says "/etc/passwd" is relative — it has no volume — so a guard built on
+	// IsAbs alone let the POSIX form straight through, on the one platform
+	// where a link is most likely to be a surprise.
+	targets := []string{"/etc/passwd", `\Windows\System32\drivers\etc\hosts`}
+	if runtime.GOOS == "windows" {
+		// A drive letter only means anything here. Everywhere else it is an
+		// unusual filename inside the extraction directory and nothing more.
+		targets = append(targets, `C:\Windows\win.ini`)
 	}
-	if !strings.Contains(err.Error(), "not a relative path") {
-		t.Errorf("Unpack() = %q, want it to say why", err)
+
+	for _, target := range targets {
+		jar := jarOf(t, entry{header: tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: target}})
+
+		dest := filepath.Join(realDir(t, t.TempDir()), "into")
+		server, _ := serve(t, jar)
+
+		err := (&Downloader{Client: server.Client()}).Postgres(t.Context(),
+			server.URL+"/artifact", server.URL+"/artifact.sha256", dest)
+		if err == nil {
+			t.Errorf("a symlink to %q was accepted", target)
+			continue
+		}
+		if !strings.Contains(err.Error(), "not a relative path") {
+			t.Errorf("a symlink to %q gave %q, want it to say why", target, err)
+		}
+	}
+}
+
+// Maven Central answers Forbidden when it is throttling an address rather than
+// refusing a request. A CI runner shares its address with everything else on
+// that machine, so it sees 403 where a laptop sees 200 — the same URL answered
+// both within a minute of each other.
+func TestAForbiddenIsWaitedOutLikeARateLimit(t *testing.T) {
+	t.Parallel()
+
+	body := []byte("#!/bin/sh\nexit 0\n")
+	var seen int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&seen, 1) <= 2 {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, ".sha256") {
+			_, _ = w.Write([]byte(digest(body)))
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+
+	d := &Downloader{Client: server.Client(), Backoff: time.Millisecond}
+	if err := d.Binary(t.Context(), server.URL+"/artifact", server.URL+"/artifact.sha256",
+		filepath.Join(t.TempDir(), "dex")); err != nil {
+		t.Fatalf("Binary() = %v, want the download to survive two 403s", err)
+	}
+	if got := atomic.LoadInt32(&seen); got < 3 {
+		t.Errorf("the server saw %d requests, want the two refusals and then the real one", got)
+	}
+}
+
+// A 404 is still an answer, and must not join them.
+func TestOnlyTheStatusesWorthWaitingForAreRetried(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{http.StatusNotFound, http.StatusUnauthorized, http.StatusGone} {
+		var seen int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			atomic.AddInt32(&seen, 1)
+			w.WriteHeader(status)
+		}))
+
+		d := &Downloader{Client: server.Client(), Backoff: time.Millisecond}
+		if err := d.Binary(t.Context(), server.URL+"/nowhere", server.URL+"/nowhere.sha256",
+			filepath.Join(t.TempDir(), "dex")); err == nil {
+			t.Errorf("Binary() on a %d = nil, want an error", status)
+		}
+		if got := atomic.LoadInt32(&seen); got != 1 {
+			t.Errorf("a %d was tried %d times, want once — it is an answer, not a wait", status, got)
+		}
+		server.Close()
 	}
 }

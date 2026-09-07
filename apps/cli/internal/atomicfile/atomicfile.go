@@ -63,9 +63,11 @@ func tempPattern(path string) string {
 	return "." + strings.TrimSuffix(base, ext) + "-*" + ext
 }
 
-// Nine attempts over a quarter of a second. Long enough for a read to finish,
-// short enough that a rename which will never succeed still reports promptly.
-const longestWait = 128 * time.Millisecond
+// Twelve attempts over about two seconds. Long enough for a read to finish and
+// for a virus scanner to let go — Windows Defender opens a file as it is
+// closed, and a quarter of a second was not always enough on a loaded machine.
+// Short enough that a rename which can never succeed still reports promptly.
+const longestWait = time.Second
 
 // replace renames over the destination, waiting briefly for a handle held by
 // something else to be released.

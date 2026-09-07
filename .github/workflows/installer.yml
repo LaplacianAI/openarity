@@ -104,6 +104,26 @@ jobs:
           (cd "$RUNNER_TEMP/dex-src" && GOWORK=off CGO_ENABLED=0 \
             go build -o "$root/.e2e/bin/dex$suffix" ./cmd/dex)
 
+      # Postgres is 70MB from Maven Central, fetched by three jobs on every
+      # push. It answered 403 Forbidden to the Windows runner while the same
+      # URL answered 200 from a laptop a minute later — Maven throttles by
+      # address, and a runner shares one with everything else on that machine.
+      #
+      # The finder looks in bin/ and then bin/postgres-dist/bin, and setup
+      # decides an install exists by looking for stack.yaml, so seeding the
+      # distribution here is invisible to it and skips the download entirely.
+      - name: Read the pinned Postgres version
+        id: pg
+        run: |
+          version=$(grep -oE 'PostgresVersion *= *"[^"]+"' apps/cli/internal/stack/sources.go | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: .e2e/install/bin/postgres-dist
+          key: postgres-${{ runner.os }}-${{ steps.pg.outputs.version }}
+
       # Not stdin from a terminal, so the wizard announces its defaults and
       # continues rather than waiting for an answer nobody can give.
       # A hang here is a bug, not a slow runner. Without a bound it burns the

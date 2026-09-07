@@ -228,7 +228,13 @@ func (d *Downloader) getOnce(ctx context.Context, url string) ([]byte, error) {
 
 	if res.StatusCode != http.StatusOK {
 		status := fmt.Errorf("stack: fetching %s: %s", url, res.Status)
-		if res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= 500 {
+		// 403 as well as 429: Maven Central answers Forbidden when it is
+		// throttling an address rather than refusing a request, which is what
+		// a CI runner sharing an address with everything else on the machine
+		// looks like to it. The same URL answered 200 from elsewhere at the
+		// same moment.
+		if res.StatusCode == http.StatusTooManyRequests ||
+			res.StatusCode == http.StatusForbidden || res.StatusCode >= 500 {
 			return nil, &serverBusy{after: retryAfter(res.Header.Get("Retry-After")), err: status}
 		}
 		return nil, status
@@ -582,8 +588,13 @@ func (e *extraction) entry(header *tar.Header, body io.Reader) error {
 		// when there is a filesystem to ask. Two generated fixes have tried
 		// to move it back here; TestALinkExtractedBeforeItsTargetIsAccepted
 		// is what says no.
-		if header.Linkname == "" || filepath.IsAbs(header.Linkname) ||
-			filepath.VolumeName(header.Linkname) != "" {
+		// A leading separator is checked directly rather than through
+		// filepath.IsAbs, which answers about the platform doing the reading
+		// and not about the archive: on Windows "/etc/passwd" is not absolute,
+		// because it has no volume, so IsAbs alone let it through.
+		if header.Linkname == "" ||
+			strings.HasPrefix(header.Linkname, "/") || strings.HasPrefix(header.Linkname, `\`) ||
+			filepath.IsAbs(header.Linkname) || filepath.VolumeName(header.Linkname) != "" {
 			return fmt.Errorf("stack: %s links to %q, which is not a relative path",
 				header.Name, header.Linkname)
 		}
