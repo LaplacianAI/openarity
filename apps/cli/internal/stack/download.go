@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -472,34 +471,25 @@ type extraction struct {
 // stripped drops the leading elements, and reports whether anything is left.
 // The wrapper directory itself strips to nothing and is skipped rather than
 // creating the destination twice.
+//
+// It decides nothing about safety, deliberately. A generated fix once made it
+// reject any name containing "..", which reads as a hardening and is not one:
+// false here means "skip this entry", so a malicious archive stopped being
+// refused and started being installed with the offending entry quietly
+// missing — a runtime that looks installed and is incomplete. Four tests said
+// so. Containment is decided below, where it can be refused.
 func (e *extraction) stripped(name string) (string, bool) {
-	clean := filepath.ToSlash(name)
-	clean = strings.TrimPrefix(clean, "./")
-	clean = strings.TrimLeft(clean, "/")
-	if clean == "" {
-		return "", false
-	}
-
-	norm := pathpkg.Clean(clean)
-	if norm == "." || norm == "" || norm == ".." ||
-		strings.HasPrefix(norm, "../") || strings.Contains(norm, "/../") {
-		return "", false
-	}
-
+	clean := strings.TrimPrefix(filepath.ToSlash(name), "./")
 	if e.strip == 0 {
-		return norm, true
+		return clean, clean != ""
 	}
 
-	parts := strings.Split(norm, "/")
+	parts := strings.Split(clean, "/")
 	if len(parts) <= e.strip {
 		return "", false
 	}
 	rest := strings.Join(parts[e.strip:], "/")
-	if rest == "" || rest == "." || rest == ".." ||
-		strings.HasPrefix(rest, "../") || strings.Contains(rest, "/../") {
-		return "", false
-	}
-	return rest, true
+	return rest, rest != ""
 }
 
 func (e *extraction) dirWithinRoot(dir string) error {
