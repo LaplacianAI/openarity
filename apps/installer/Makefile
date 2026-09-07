@@ -19,12 +19,16 @@ icons:
 	}
 	npx tauri icon src-tauri/icons/icon.png
 
-## binaries: put the oa the bundle ships into place
+## binaries: put the three the bundle ships into place
 binaries:
 	@mkdir -p src-tauri/binaries
 	@test -n "$(OA)" || { echo "OA=/path/to/oa is required"; exit 1; }
-	cp "$(OA)" "$(SIDECAR)"
-	@echo "staged $(SIDECAR)"
+	@test -n "$(BRAIN)" || { echo "BRAIN=/path/to/brain is required"; exit 1; }
+	@test -n "$(DEX)" || { echo "DEX=/path/to/dex is required"; exit 1; }
+	cp "$(OA)" "src-tauri/binaries/oa-$(TRIPLE)"
+	cp "$(BRAIN)" "src-tauri/binaries/brain-$(TRIPLE)"
+	cp "$(DEX)" "src-tauri/binaries/dex-$(TRIPLE)"
+	@echo "staged oa, brain and dex for $(TRIPLE)"
 
 ## fmt-check: fail if anything is unformatted
 fmt-check:
@@ -42,7 +46,7 @@ build:
 
 ## bundle: the installable artifact — .dmg, .msi or .deb
 bundle:
-	@test -f "$(SIDECAR)" || { echo "no sidecar at $(SIDECAR) — run make binaries OA=..."; exit 1; }
+	@test -f "$(SIDECAR)" || { echo "no sidecars for $(TRIPLE) — run make binaries OA=... BRAIN=... DEX=..."; exit 1; }
 	npx tauri build
 
 ## dev: the window, against a live frontend

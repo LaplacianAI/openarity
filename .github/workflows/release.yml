@@ -201,9 +201,24 @@ jobs:
         working-directory: apps/installer
         run: npx tauri icon src-tauri/icons/icon.png
 
-      # The bundle ships oa inside it. Tauri resolves a sidecar by appending
-      # the target triple, so the name is not decorative.
-      - name: Stage the sidecar
+      # The dashboard is compiled into the brain, which the bundle ships.
+      - name: Build the dashboard
+        working-directory: apps/dashboard
+        run: make deps build
+
+      - name: Embed the dashboard
+        working-directory: apps/brain
+        run: make ui-embed
+
+      # The bundle ships oa, brain and dex, and setup is pointed at them with
+      # --bin-dir. Carrying them is what makes the installer work at all: there
+      # is nothing to download them from until a release exists, and even then
+      # a desktop installer that needs the network for its own parts is worse
+      # than one that does not. Postgres is still fetched.
+      #
+      # Tauri resolves a sidecar by appending the target triple, so the names
+      # are not decorative.
+      - name: Build dex for the bundle
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -214,9 +229,30 @@ jobs:
           suffix=""
           if [ "$GOOS" = "windows" ]; then suffix=".exe"; fi
 
+          version=$(grep -oE 'DexVersion *= *"[^"]+"' apps/cli/internal/stack/sources.go | grep -oE 'v[0-9.]+')
+          git clone --depth 1 --branch "$version" https://github.com/dexidp/dex.git "$RUNNER_TEMP/dex-src"
+
           mkdir -p apps/installer/src-tauri/binaries
+          (cd "$RUNNER_TEMP/dex-src" && GOWORK=off go build -trimpath -ldflags "-s -w" \
+            -o "$root/apps/installer/src-tauri/binaries/dex-${{ matrix.triple }}$suffix" ./cmd/dex)
+
+      - name: Stage the sidecars
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          root="$PWD"
+          suffix=""
+          if [ "$GOOS" = "windows" ]; then suffix=".exe"; fi
+          into="$root/apps/installer/src-tauri/binaries"
+
+          mkdir -p "$into"
           (cd apps/cli && go build -trimpath -ldflags "-s -w" \
-            -o "$root/apps/installer/src-tauri/binaries/oa-${{ matrix.triple }}$suffix" ./cmd/oa)
+            -o "$into/oa-${{ matrix.triple }}$suffix" ./cmd/oa)
+          (cd apps/brain && go build -trimpath -ldflags "-s -w" \
+            -o "$into/brain-${{ matrix.triple }}$suffix" ./cmd/brain)
 
       - name: Bundle
         working-directory: apps/installer

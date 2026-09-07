@@ -49,13 +49,17 @@ Once there is a release, everything above disappears: the installer fetches
 ## The installer
 
 A desktop application — `apps/installer`, a Tauri window around the same
-command. It ships `oa` inside the bundle as a sidecar and reads the progress it
-prints, so there is nothing to type and no terminal to keep open.
+command. It carries `oa`, `brain` and `dex` inside the bundle and reads the
+progress `oa` prints, so there is nothing to type and no terminal to keep open.
+
+Carrying them is what makes it work on its own: only Postgres is downloaded,
+and the parts that are Openarity's own are already there.
 
 ```sh
 cd apps/installer
 make deps
-make binaries OA=/tmp/openarity-bin/oa
+make binaries OA=/tmp/openarity-bin/oa \
+  BRAIN=/tmp/openarity-bin/brain DEX=/tmp/openarity-bin/dex
 make bundle
 ```
 
@@ -66,8 +70,8 @@ What you see is six steps, in this order:
 
 | | |
 | ------------------------ | -------------------------------------------------- |
-| Finding what it needs    | resolving the binaries, and downloading any missing |
-| Downloading PostgreSQL   | about 70MB, with a percentage                       |
+| Finding what it needs    | oa, brain and dex, from inside the bundle            |
+| Downloading PostgreSQL   | about 70MB, with a percentage — the only download    |
 | Creating the database    | `initdb`, then the cluster starts                   |
 | Setting up its tables    | the migrations                                      |
 | Creating your sign-in    | dex, configured with one user — you                 |

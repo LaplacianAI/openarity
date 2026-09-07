@@ -34,10 +34,24 @@ pub struct Choices {
 
 #[tauri::command]
 async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
+    // The bundle carries brain and dex beside oa, and setup is pointed at
+    // them. Without this it has nowhere to get either: there is no published
+    // release to download from, and the install stopped at "dex is not
+    // published yet — build it and pass --bin-dir" after fetching 70MB of
+    // Postgres. Postgres and MinIO are still downloaded; --bin-dir means look
+    // here first, not only here.
+    let beside_us = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .parent()
+        .ok_or("the installer has no directory to find its binaries in")?
+        .to_path_buf();
+
     let mut args = vec![
         "stack".to_string(),
         "setup".to_string(),
         "--json".to_string(),
+        "--bin-dir".to_string(),
+        beside_us.to_string_lossy().to_string(),
         "--objects".to_string(),
         choices.objects.clone(),
         "--secrets".to_string(),
