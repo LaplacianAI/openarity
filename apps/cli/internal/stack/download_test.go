@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -684,5 +685,324 @@ func TestAnEntryNamingTheRootItselfIsAccepted(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dest, "bin", "postgres")); err != nil {
 		t.Errorf("the archive's contents did not arrive: %v", err)
+	}
+}
+
+// serveNamed answers for one archive under its own name, because Unpack picks
+// tar or zip from the extension — an artefact called "artifact" would always
+// be read as a tar.
+func serveNamed(t *testing.T, name string, body []byte) *httptest.Server {
+	t.Helper()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/"+name+".sha256", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(digest(body) + "  " + name + "\n"))
+	})
+	mux.HandleFunc("/"+name, func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, name, zeroTime, bytes.NewReader(body))
+	})
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server
+}
+
+// A gzipped tar wrapping everything in one directory, which is how both uv and
+// Node ship.
+func tarball(t *testing.T, entries ...entry) []byte {
+	t.Helper()
+
+	var tarred bytes.Buffer
+	tw := tar.NewWriter(&tarred)
+	for _, e := range entries {
+		e.header.Size = int64(len(e.body))
+		if err := tw.WriteHeader(&e.header); err != nil {
+			t.Fatalf("tar header %s: %v", e.header.Name, err)
+		}
+		if _, err := tw.Write([]byte(e.body)); err != nil {
+			t.Fatalf("tar body %s: %v", e.header.Name, err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("closing tar: %v", err)
+	}
+
+	var out bytes.Buffer
+	zw := gzip.NewWriter(&out)
+	if _, err := zw.Write(tarred.Bytes()); err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("closing gzip: %v", err)
+	}
+	return out.Bytes()
+}
+
+func zipOf(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+
+	var out bytes.Buffer
+	zw := zip.NewWriter(&out)
+	for name, body := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("zip create %s: %v", name, err)
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatalf("zip write %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("closing zip: %v", err)
+	}
+	return out.Bytes()
+}
+
+// Node's tarball is node-v24.20.0-darwin-arm64/bin/node, and the caller wants
+// bin/node. Stripping here is what stops the version being known twice — once
+// in the URL and again in every path built from the result.
+func TestUnpackStripsTheWrappingDirectory(t *testing.T) {
+	t.Parallel()
+
+	body := tarball(t,
+		entry{header: tar.Header{Name: "node-v24.20.0-darwin-arm64", Typeflag: tar.TypeDir, Mode: 0o755}},
+		entry{header: tar.Header{Name: "node-v24.20.0-darwin-arm64/bin", Typeflag: tar.TypeDir, Mode: 0o755}},
+		entry{header: tar.Header{Name: "node-v24.20.0-darwin-arm64/bin/node", Typeflag: tar.TypeReg, Mode: 0o755}, body: "not really node"},
+		entry{header: tar.Header{Name: "node-v24.20.0-darwin-arm64/README.md", Typeflag: tar.TypeReg, Mode: 0o644}, body: "hello"},
+	)
+
+	server := serveNamed(t, "node.tar.gz", body)
+	dest := filepath.Join(realDir(t, t.TempDir()), "node")
+
+	d := &Downloader{Client: server.Client()}
+	err := d.Unpack(t.Context(), Archive{
+		URL: server.URL + "/node.tar.gz", ChecksumURL: server.URL + "/node.tar.gz.sha256",
+		Dest: dest, Strip: 1,
+	})
+	if err != nil {
+		t.Fatalf("Unpack() = %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dest, "bin", "node")); err != nil {
+		t.Errorf("bin/node is not where the caller was told it would be: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "node-v24.20.0-darwin-arm64")); err == nil {
+		t.Error("the wrapping directory survived, so every path below it carries the version")
+	}
+}
+
+// The executable bit is what the finder checks before it will run anything, so
+// an unpacked runtime that lost it is a runtime that cannot start.
+func TestUnpackKeepsTheExecutableBit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the executable bit is not how Windows decides")
+	}
+	t.Parallel()
+
+	body := tarball(t,
+		entry{header: tar.Header{Name: "uv-aarch64-apple-darwin/uv", Typeflag: tar.TypeReg, Mode: 0o755}, body: "#!/bin/sh\nexit 0\n"},
+	)
+
+	server := serveNamed(t, "uv.tar.gz", body)
+	dest := filepath.Join(realDir(t, t.TempDir()), "uv")
+
+	d := &Downloader{Client: server.Client()}
+	if err := d.Unpack(t.Context(), Archive{
+		URL: server.URL + "/uv.tar.gz", ChecksumURL: server.URL + "/uv.tar.gz.sha256",
+		Dest: dest, Strip: 1,
+	}); err != nil {
+		t.Fatalf("Unpack() = %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(dest, "uv"))
+	if err != nil {
+		t.Fatalf("Stat() = %v", err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Error("the unpacked binary has no executable bit")
+	}
+}
+
+// Windows gets a zip from both publishers rather than a tar.
+func TestUnpackReadsAZip(t *testing.T) {
+	t.Parallel()
+
+	body := zipOf(t, map[string]string{
+		"node-v24.20.0-win-x64/node.exe": "not really node",
+		"node-v24.20.0-win-x64/npm.cmd":  "not really npm",
+		"node-v24.20.0-win-x64/LICENSE":  "a licence",
+	})
+
+	server := serveNamed(t, "node.zip", body)
+	dest := filepath.Join(realDir(t, t.TempDir()), "node")
+
+	d := &Downloader{Client: server.Client()}
+	if err := d.Unpack(t.Context(), Archive{
+		URL: server.URL + "/node.zip", ChecksumURL: server.URL + "/node.zip.sha256",
+		Dest: dest, Strip: 1,
+	}); err != nil {
+		t.Fatalf("Unpack() = %v", err)
+	}
+
+	for _, name := range []string{"node.exe", "npm.cmd", "LICENSE"} {
+		if _, err := os.Stat(filepath.Join(dest, name)); err != nil {
+			t.Errorf("%s is missing: %v", name, err)
+		}
+	}
+}
+
+// A zip escaping its destination is the same attack as a tar doing it, and the
+// guard has to be on both paths rather than only the one that was written
+// first.
+func TestAZipCannotWriteOutsideItsDestination(t *testing.T) {
+	t.Parallel()
+
+	body := zipOf(t, map[string]string{"../escaped": "owned"})
+
+	server := serveNamed(t, "evil.zip", body)
+	parent := realDir(t, t.TempDir())
+	dest := filepath.Join(parent, "into")
+
+	d := &Downloader{Client: server.Client()}
+	if err := d.Unpack(t.Context(), Archive{
+		URL: server.URL + "/evil.zip", ChecksumURL: server.URL + "/evil.zip.sha256", Dest: dest,
+	}); err == nil {
+		t.Error("a zip escaping its destination was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(parent, "escaped")); err == nil {
+		t.Error("the zip wrote a file outside its destination")
+	}
+}
+
+// Node publishes one SHASUMS256.txt for a whole release. Taking the first
+// field there verifies the darwin-arm64 tarball against the hash of whatever
+// is listed first, which is to say against nothing.
+func TestAChecksumIsFoundInAManifestCoveringManyFiles(t *testing.T) {
+	t.Parallel()
+
+	body := tarball(t, entry{header: tar.Header{Name: "node-v24.20.0-linux-x64/bin/node", Typeflag: tar.TypeReg, Mode: 0o755}, body: "not really node"})
+	want := "node-v24.20.0-linux-x64.tar.gz"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/SHASUMS256.txt", func(w http.ResponseWriter, _ *http.Request) {
+		// The real file lists thirty-odd builds; the one we want is never
+		// first, and the hashes of the others do not match this body.
+		_, _ = w.Write([]byte(
+			"0000000000000000000000000000000000000000000000000000000000000000  node-v24.20.0-aix-ppc64.tar.gz\n" +
+				"1111111111111111111111111111111111111111111111111111111111111111  node-v24.20.0-darwin-arm64.tar.gz\n" +
+				digest(body) + "  " + want + "\n" +
+				"2222222222222222222222222222222222222222222222222222222222222222  node-v24.20.0-win-x64.zip\n"))
+	})
+	mux.HandleFunc("/"+want, func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, want, zeroTime, bytes.NewReader(body))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	dest := filepath.Join(realDir(t, t.TempDir()), "node")
+	d := &Downloader{Client: server.Client()}
+
+	if err := d.Unpack(t.Context(), Archive{
+		URL: server.URL + "/" + want, ChecksumURL: server.URL + "/SHASUMS256.txt",
+		ChecksumName: want, Dest: dest, Strip: 1,
+	}); err != nil {
+		t.Fatalf("Unpack() = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "bin", "node")); err != nil {
+		t.Errorf("the archive did not arrive: %v", err)
+	}
+}
+
+// A manifest that does not mention the file being fetched is a refusal, not a
+// reason to carry on unverified.
+func TestAChecksumMissingFromTheManifestIsRefused(t *testing.T) {
+	t.Parallel()
+
+	body := tarball(t, entry{header: tar.Header{Name: "x/y", Typeflag: tar.TypeReg, Mode: 0o644}, body: "hello"})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/SHASUMS256.txt", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("0000000000000000000000000000000000000000000000000000000000000000  something-else.tar.gz\n"))
+	})
+	mux.HandleFunc("/wanted.tar.gz", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "wanted.tar.gz", zeroTime, bytes.NewReader(body))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	err := (&Downloader{Client: server.Client()}).Unpack(t.Context(), Archive{
+		URL: server.URL + "/wanted.tar.gz", ChecksumURL: server.URL + "/SHASUMS256.txt",
+		ChecksumName: "wanted.tar.gz", Dest: filepath.Join(t.TempDir(), "out"),
+	})
+	if err == nil {
+		t.Fatal("Unpack() with no checksum for the file = nil, want a refusal")
+	}
+	// A missing entry and a wrong hash are both refusals, so naming the file
+	// does not distinguish them — written that way, this passed against a
+	// version that returned a zero hash and let the mismatch do the refusing.
+	// The message is the thing being tested: "the manifest does not cover
+	// this file" and "the file is not what the manifest says" send a person
+	// to different places.
+	if !strings.Contains(err.Error(), "lists no checksum") {
+		t.Errorf("Unpack() = %q, want it to say the manifest does not cover the file", err)
+	}
+}
+
+// An archive already unpacked is not fetched again. Node and its packages are
+// hundreds of megabytes, so running setup twice must not pay for them twice.
+func TestAnUnpackedArchiveIsNotFetchedAgain(t *testing.T) {
+	t.Parallel()
+
+	body := tarball(t, entry{header: tar.Header{Name: "w/bin/node", Typeflag: tar.TypeReg, Mode: 0o755}, body: "not really node"})
+	server := serveNamed(t, "node.tar.gz", body)
+	dest := filepath.Join(realDir(t, t.TempDir()), "node")
+
+	d := &Downloader{Client: server.Client()}
+	a := Archive{URL: server.URL + "/node.tar.gz", ChecksumURL: server.URL + "/node.tar.gz.sha256", Dest: dest, Strip: 1}
+
+	if err := d.Unpack(t.Context(), a); err != nil {
+		t.Fatalf("first Unpack() = %v", err)
+	}
+
+	// The server is closed, so a second fetch cannot succeed. If Unpack
+	// returns anyway, it did not try.
+	server.Close()
+	if err := d.Unpack(t.Context(), a); err != nil {
+		t.Errorf("second Unpack() = %v, want it to notice the archive is already there", err)
+	}
+}
+
+// The zip counterpart of the directory case. A directory is created before
+// anything can resolve where it landed, so the check on the entry's own path
+// is the only thing between "../pwned" and a directory outside the
+// destination — the refusal that follows would be too late.
+//
+// Written first as a file entry, where it passed with the guard removed:
+// resolving the parent caught it instead, and the guard under test was never
+// reached.
+func TestAZipDirectoryEntryCannotEscapeItsDestination(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	zw := zip.NewWriter(&out)
+	if _, err := zw.Create("../pwned/"); err != nil {
+		t.Fatalf("zip create: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("closing zip: %v", err)
+	}
+
+	server := serveNamed(t, "evil.zip", out.Bytes())
+	parent := realDir(t, t.TempDir())
+
+	err := (&Downloader{Client: server.Client()}).Unpack(t.Context(), Archive{
+		URL: server.URL + "/evil.zip", ChecksumURL: server.URL + "/evil.zip.sha256",
+		Dest: filepath.Join(parent, "into"),
+	})
+	if err == nil {
+		t.Error("a zip with a directory entry outside its destination was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(parent, "pwned")); err == nil {
+		t.Errorf("the zip made a directory outside its destination, at %s", filepath.Join(parent, "pwned"))
 	}
 }
