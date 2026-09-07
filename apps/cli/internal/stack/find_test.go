@@ -18,11 +18,22 @@ func executable(t *testing.T, dir, name string) string {
 	return path
 }
 
+// hostBinary is what the finder will look for on the machine running the test.
+// Writing a file called "postgres" and expecting Find to return it asserts
+// Unix rather than the finder: on Windows it looks for postgres.exe, and every
+// one of these tests failed there for that reason and no other.
+func hostBinary(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
+
 func TestABinaryInTheInstallDirectoryIsFound(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	want := executable(t, dir, "dex")
+	want := executable(t, dir, hostBinary("dex"))
 
 	got, err := LocalFinder{Dir: dir}.Find(t.Context(), "dex")
 	if err != nil {
@@ -41,8 +52,8 @@ func TestTheInstallDirectoryIsPreferredOverPath(t *testing.T) {
 	dir := t.TempDir()
 	elsewhere := t.TempDir()
 
-	want := executable(t, dir, "postgres")
-	executable(t, elsewhere, "postgres")
+	want := executable(t, dir, hostBinary("postgres"))
+	executable(t, elsewhere, hostBinary("postgres"))
 	t.Setenv("PATH", elsewhere)
 
 	got, err := LocalFinder{Dir: dir}.Find(t.Context(), "postgres")
@@ -59,7 +70,7 @@ func TestTheInstallDirectoryIsPreferredOverPath(t *testing.T) {
 // they already have.
 func TestPathIsTheFallbackWhenThereIsNoInstallDirectory(t *testing.T) {
 	elsewhere := t.TempDir()
-	want := executable(t, elsewhere, "brain")
+	want := executable(t, elsewhere, hostBinary("brain"))
 	t.Setenv("PATH", elsewhere)
 
 	got, err := LocalFinder{}.Find(t.Context(), "brain")
@@ -120,7 +131,7 @@ func TestAFileThatIsNotExecutableIsNotABinary(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "dex")
+	path := filepath.Join(dir, hostBinary("dex"))
 	if err := os.WriteFile(path, []byte("not a program"), 0o600); err != nil {
 		t.Fatalf("writing %s: %v", path, err)
 	}
@@ -140,11 +151,11 @@ func TestAnUnusableInstallCopyIsAnErrorRatherThanAFallbackToPath(t *testing.T) {
 	dir := t.TempDir()
 	elsewhere := t.TempDir()
 
-	broken := filepath.Join(dir, "postgres")
+	broken := filepath.Join(dir, hostBinary("postgres"))
 	if err := os.WriteFile(broken, []byte("half a download"), 0o600); err != nil {
 		t.Fatalf("writing %s: %v", broken, err)
 	}
-	working := executable(t, elsewhere, "postgres")
+	working := executable(t, elsewhere, hostBinary("postgres"))
 	t.Setenv("PATH", elsewhere)
 
 	got, err := LocalFinder{Dir: dir}.Find(t.Context(), "postgres")
@@ -166,7 +177,7 @@ func TestAnUnusableInstallCopyIsAnErrorRatherThanAFallbackToPath(t *testing.T) {
 // doing exactly this the first time it ran.
 func TestTheDownloadingFinderDoesNotFallBackToPath(t *testing.T) {
 	elsewhere := t.TempDir()
-	executable(t, elsewhere, "postgres")
+	executable(t, elsewhere, hostBinary("postgres"))
 	t.Setenv("PATH", elsewhere)
 
 	if _, err := (LocalFinder{Dir: t.TempDir(), DirOnly: true}).Find(t.Context(), "postgres"); err == nil {
@@ -181,12 +192,13 @@ func TestAnOverrideIsPreferredButNotExclusive(t *testing.T) {
 	t.Parallel()
 
 	override := t.TempDir()
-	want := executable(t, override, "brain")
+	want := executable(t, override, hostBinary("brain"))
 
 	f := DownloadingFinder{
-		Layout:   NewLayout(t.TempDir()),
-		Platform: ThisPlatform(),
-		Override: override,
+		Layout:     NewLayout(t.TempDir()),
+		Platform:   ThisPlatform(),
+		Downloader: &Downloader{},
+		Override:   override,
 	}
 
 	got, err := f.Find(t.Context(), "brain")
@@ -202,7 +214,7 @@ func TestADirectoryIsNotABinary(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "brain"), 0o700); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, hostBinary("brain")), 0o700); err != nil {
 		t.Fatalf("making a directory: %v", err)
 	}
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -95,7 +96,7 @@ func TestUpdateStateOverwritesDeliberately(t *testing.T) {
 }
 
 func TestTheStateFileIsNotWorldReadable(t *testing.T) {
-	if os.Getenv("GOOS") == "windows" {
+	if runtime.GOOS == "windows" {
 		t.Skip("file modes are not the access-control mechanism on Windows")
 	}
 	t.Parallel()

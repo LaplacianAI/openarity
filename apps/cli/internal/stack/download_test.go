@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -117,7 +118,7 @@ func TestADownloadIsVerifiedAndExtracted(t *testing.T) {
 // several layers from the thing that is wrong, which LocalFinder already
 // refuses. The archive carries the mode; the extractor has to honour it.
 func TestExtractedBinariesKeepTheirExecutableBit(t *testing.T) {
-	if os.Getenv("GOOS") == "windows" {
+	if runtime.GOOS == "windows" {
 		t.Skip("the executable bit is not how Windows decides")
 	}
 	t.Parallel()
@@ -253,7 +254,7 @@ func TestAnAlreadyExtractedDownloadIsNotFetchedAgain(t *testing.T) {
 }
 
 func TestASingleBinaryIsDownloadedAndMadeExecutable(t *testing.T) {
-	if os.Getenv("GOOS") == "windows" {
+	if runtime.GOOS == "windows" {
 		t.Skip("the executable bit is not how Windows decides")
 	}
 	t.Parallel()

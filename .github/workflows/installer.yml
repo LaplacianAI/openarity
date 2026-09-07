@@ -84,17 +84,25 @@ jobs:
       - name: Build brain, oa and dex
         run: |
           set -euo pipefail
-          mkdir -p "$PWD/.e2e/bin"
+
+          # $PWD is expanded after the cd in each subshell below, so the
+          # output paths have to be taken from a variable fixed here.
+          root="$PWD"
+          mkdir -p "$root/.e2e/bin"
 
           suffix=""
           if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
 
-          (cd apps/brain && go build -o "$PWD/.e2e/bin/brain$suffix" ./cmd/brain)
-          (cd apps/cli && go build -o "$PWD/.e2e/bin/oa$suffix" ./cmd/oa)
+          (cd apps/brain && go build -o "$root/.e2e/bin/brain$suffix" ./cmd/brain)
+          (cd apps/cli && go build -o "$root/.e2e/bin/oa$suffix" ./cmd/oa)
 
+          # Cloned outside the checkout, and built with GOWORK=off. A clone
+          # under $root is covered by the repository's go.work, and go refuses
+          # to build a directory inside a module the workspace does not list.
           version=$(grep -oE 'DexVersion *= *"[^"]+"' apps/cli/internal/stack/sources.go | grep -oE 'v[0-9.]+')
-          git clone --depth 1 --branch "$version" https://github.com/dexidp/dex.git "$PWD/.e2e/dex-src"
-          (cd "$PWD/.e2e/dex-src" && CGO_ENABLED=0 go build -o "$PWD/.e2e/bin/dex$suffix" ./cmd/dex)
+          git clone --depth 1 --branch "$version" https://github.com/dexidp/dex.git "$RUNNER_TEMP/dex-src"
+          (cd "$RUNNER_TEMP/dex-src" && GOWORK=off CGO_ENABLED=0 \
+            go build -o "$root/.e2e/bin/dex$suffix" ./cmd/dex)
 
       # Not stdin from a terminal, so the wizard announces its defaults and
       # continues rather than waiting for an answer nobody can give.

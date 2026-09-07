@@ -3,6 +3,7 @@ package stack
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -130,6 +131,13 @@ func TestCredentialsRoundTripThroughTheirOwnFile(t *testing.T) {
 		if got[key] != value {
 			t.Errorf("%s = %q, want %q", key, got[key], value)
 		}
+	}
+
+	// The round trip above is the point and it matters everywhere. Only the
+	// mode assertion below is Unix-only: Windows does not carry permission
+	// bits, and os.WriteFile there reports 0666 whatever it was given.
+	if runtime.GOOS == "windows" {
+		return
 	}
 
 	info, err := os.Stat(path)
