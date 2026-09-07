@@ -461,15 +461,17 @@ func TestADirectoryReachedThroughALinkIsNotInsideTheRoot(t *testing.T) {
 	root := realDir(t, t.TempDir())
 	outside := realDir(t, t.TempDir())
 
+	into := &extraction{root: root, verified: map[string]bool{}}
+
 	inside := filepath.Join(root, "real")
 	if err := os.Mkdir(inside, 0o700); err != nil {
 		t.Fatalf("making %s: %v", inside, err)
 	}
-	if err := realDirWithinRoot(root, inside); err != nil {
-		t.Errorf("realDirWithinRoot(%s) = %v, want a real directory inside the root accepted", inside, err)
+	if err := into.dirWithinRoot(inside); err != nil {
+		t.Errorf("dirWithinRoot(%s) = %v, want a real directory inside the root accepted", inside, err)
 	}
-	if err := realDirWithinRoot(root, root); err != nil {
-		t.Errorf("realDirWithinRoot(root, root) = %v, want the root itself accepted", err)
+	if err := into.dirWithinRoot(root); err != nil {
+		t.Errorf("dirWithinRoot(root) = %v, want the root itself accepted", err)
 	}
 
 	// Named inside the root, located outside it. The string says one thing and
@@ -478,8 +480,17 @@ func TestADirectoryReachedThroughALinkIsNotInsideTheRoot(t *testing.T) {
 	if err := os.Symlink(outside, link); err != nil {
 		t.Fatalf("linking %s: %v", link, err)
 	}
-	if err := realDirWithinRoot(root, link); err == nil {
+	if err := into.dirWithinRoot(link); err == nil {
 		t.Error("a directory reached through a link out of the root was accepted")
+	}
+
+	// The cache must not turn a refusal into an acceptance on the second ask,
+	// nor an acceptance into work done twice.
+	if err := into.dirWithinRoot(link); err == nil {
+		t.Error("a second ask about the same escaping link was accepted")
+	}
+	if err := into.dirWithinRoot(inside); err != nil {
+		t.Errorf("a second ask about a directory inside the root = %v", err)
 	}
 }
 

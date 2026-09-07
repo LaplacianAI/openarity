@@ -283,6 +283,8 @@ func extract(txz []byte, dest string) error {
 		return err
 	}
 
+	into := &extraction{root: root, verified: map[string]bool{}}
+
 	reader := tar.NewReader(decompressed)
 	for {
 		header, err := reader.Next()
@@ -292,7 +294,7 @@ func extract(txz []byte, dest string) error {
 		if err != nil {
 			return err
 		}
-		if err := writeEntry(root, header, reader); err != nil {
+		if err := into.entry(header, reader); err != nil {
 			return err
 		}
 	}
@@ -312,21 +314,43 @@ func pathWithinRoot(root, candidate string) bool {
 	return candidate == root || strings.HasPrefix(candidate, root+string(os.PathSeparator))
 }
 
-// realDirWithinRoot asks the kernel, not the string. A directory reached
-// through a symlink extracted a moment ago has a name inside the root and a
-// location outside it, and only EvalSymlinks can tell the two apart.
-func realDirWithinRoot(root, dir string) error {
+// extraction is one archive being unpacked into one directory, carrying the
+// directories it has already resolved.
+//
+// The cache is what makes this affordable on Windows. EvalSymlinks there opens
+// each component of the path and asks the kernel for its final name, which
+// Defender inspects; at one call per entry the Windows Postgres archive — 1569
+// files across 74 directories — turned a four-second extraction into one that
+// had not finished in sixteen minutes. Files share their parents, so resolving
+// each directory once does the same work twenty times less often.
+//
+// Safe to cache because a directory cannot become a link mid-extraction:
+// os.Symlink refuses a path that already exists, and every directory verified
+// here was created by the call above it.
+type extraction struct {
+	root     string
+	verified map[string]bool
+}
+
+func (e *extraction) dirWithinRoot(dir string) error {
+	if e.verified[dir] {
+		return nil
+	}
+
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return err
 	}
-	if !pathWithinRoot(root, real) {
+	if !pathWithinRoot(e.root, real) {
 		return fmt.Errorf("stack: %s escapes the directory it is extracted into", dir)
 	}
+
+	e.verified[dir] = true
 	return nil
 }
 
-func writeEntry(root string, header *tar.Header, body io.Reader) error {
+func (e *extraction) entry(header *tar.Header, body io.Reader) error {
+	root := e.root
 	path := filepath.Join(root, filepath.FromSlash(header.Name)) //nolint:gosec // checked below
 
 	// An entry naming the root itself asks for nothing to be created. `tar -cf
@@ -351,13 +375,13 @@ func writeEntry(root string, header *tar.Header, body io.Reader) error {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			return err
 		}
-		return realDirWithinRoot(root, path)
+		return e.dirWithinRoot(path)
 
 	case tar.TypeReg:
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return err
 		}
-		if err := realDirWithinRoot(root, filepath.Dir(path)); err != nil {
+		if err := e.dirWithinRoot(filepath.Dir(path)); err != nil {
 			return err
 		}
 

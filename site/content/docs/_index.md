@@ -11,15 +11,16 @@ Start with the argument, then the parts that exist.
   {{< card link="surfaces" title="Surfaces" icon="template" subtitle="One graph, more than one way in. Direction, not documentation." >}}
 {{< /cards >}}
 
-Then the two things that run today. Neither section assumes you have read the
-other.
+Then the parts that run today. No section assumes you have read another.
 
 {{< cards >}}
+  {{< card link="install" title="Install" icon="download" subtitle="One machine, or a deployment. What each one assumes, and what you have to build first." >}}
   {{< card link="platform" title="Platform" icon="server" subtitle="The brain, the CLI and the gateway — running Openarity itself." >}}
   {{< card link="agent-sdk" title="Agent SDK" icon="code" subtitle="sdk/agent, a Go library you can install into any project on its own." >}}
 {{< /cards >}}
 
 {{< callout type="warning" >}}
-Early. There is no release and no stable API. The graph, the planner and the
-dashboard do not exist yet — every page says what is built and what is not.
+Early. There is no release and no stable API. The graph and the planner do not
+exist yet, and nothing in the brain calls a model — every page says what is
+built and what is not.
 {{< /callout >}}
