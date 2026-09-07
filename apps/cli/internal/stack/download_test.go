@@ -622,3 +622,31 @@ func TestRetryAfterIsHonouredAndCapped(t *testing.T) {
 		}
 	}
 }
+
+// A directory entry is created before anything can resolve where it landed,
+// so the check on the entry's own path is the only thing standing between
+// `../pwned` and a directory made outside the extraction root. The refusal
+// that follows would be too late: the mkdir has already happened.
+func TestADirectoryEntryCannotBeCreatedOutsideTheDestination(t *testing.T) {
+	t.Parallel()
+
+	jar := jarOf(t,
+		entry{header: tar.Header{Name: "../pwned", Typeflag: tar.TypeDir, Mode: 0o700}},
+	)
+
+	parent := filepath.Join(realDir(t, t.TempDir()), "one")
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		t.Fatalf("making %s: %v", parent, err)
+	}
+	dest := filepath.Join(parent, "into")
+
+	server, _ := serve(t, jar)
+	d := &Downloader{Client: server.Client()}
+	if err := d.Postgres(t.Context(), server.URL+"/artifact", server.URL+"/artifact.sha256", dest); err == nil {
+		t.Error("an archive with a directory entry outside its destination was accepted")
+	}
+
+	if _, err := os.Stat(filepath.Join(parent, "pwned")); err == nil {
+		t.Errorf("the archive made a directory outside its destination, at %s", filepath.Join(parent, "pwned"))
+	}
+}

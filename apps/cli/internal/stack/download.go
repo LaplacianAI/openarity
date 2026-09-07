@@ -327,19 +327,14 @@ func realDirWithinRoot(root, dir string) error {
 }
 
 func writeEntry(root string, header *tar.Header, body io.Reader) error {
-	entryName := filepath.FromSlash(header.Name)
-	if filepath.IsAbs(entryName) {
-		return fmt.Errorf("stack: %s escapes the directory it is extracted into", header.Name)
-	}
-	for _, part := range strings.Split(entryName, string(os.PathSeparator)) {
-		if part == ".." {
-			return fmt.Errorf("stack: %s escapes the directory it is extracted into", header.Name)
-		}
-	}
+	path := filepath.Join(root, filepath.FromSlash(header.Name)) //nolint:gosec // checked below
 
-	path := filepath.Join(root, entryName) //nolint:gosec // checked below
-
-	if !pathWithinRoot(root, path) {
+	// Written out rather than routed through pathWithinRoot, and it has to
+	// stay that way. The check is identical either way, but CodeQL recognises
+	// a strings.HasPrefix guard where it does not follow a helper returning a
+	// bool — two generated fixes went through a helper and left the alert
+	// open, which is how that was worked out.
+	if path != root && !strings.HasPrefix(path, root+string(os.PathSeparator)) {
 		return fmt.Errorf("stack: %s escapes the directory it is extracted into", header.Name)
 	}
 
@@ -396,8 +391,23 @@ func writeEntry(root string, header *tar.Header, body io.Reader) error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return err
 		}
-		if err := realDirWithinRoot(root, filepath.Dir(path)); err != nil {
+
+		// Resolved rather than compared as a string: the directory a link is
+		// created in may itself have been reached through one. Inlined for
+		// the same reason as the check above.
+		//
+		// Unreachable while the rule above holds — a link that can only name
+		// a sibling cannot lead anywhere else — and kept because that is the
+		// rule most likely to be widened by someone who has not read the test
+		// above. Removing the sibling rule and leaving this one still refuses
+		// the escape; removing both does not.
+		parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
 			return err
+		}
+		if parent != root && !strings.HasPrefix(parent, root+string(os.PathSeparator)) {
+			return fmt.Errorf("stack: %s is created in %s, which escapes the directory it is extracted into",
+				header.Name, parent)
 		}
 		return os.Symlink(header.Linkname, path)
 
