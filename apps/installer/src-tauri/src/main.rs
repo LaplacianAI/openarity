@@ -32,10 +32,12 @@ pub struct Choices {
     region: String,
     address: String,
     kv_mount: String,
+    secrets_auth: String,
     gateway: String,
     // Never a flag: argv is readable by every process on this machine, so
     // these go into the child's environment instead.
     gateway_password: String,
+    admin_token: String,
     role_id: String,
     role_secret: String,
     access_key: String,
@@ -79,6 +81,7 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
         ("--objects-region", &choices.region),
         ("--secrets-addr", &choices.address),
         ("--secrets-mount", &choices.kv_mount),
+        ("--secrets-auth", &choices.secrets_auth),
         ("--model-gateway", &choices.gateway),
         ("--minio-path", &choices.minio_path),
     ] {
@@ -109,6 +112,13 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
     // machine, which is the thing it is meant to keep out.
     if !choices.gateway_password.is_empty() {
         command = command.env("OPENARITY_GATEWAY_PASSWORD", &choices.gateway_password);
+    }
+
+    // Used once, to create a role and a policy, and never written down. It
+    // can do anything to that server, which is why it goes the same way every
+    // other credential does rather than onto a command line.
+    if !choices.admin_token.is_empty() {
+        command = command.env("OPENARITY_SECRETS_ADMIN_TOKEN", &choices.admin_token);
     }
 
     if !choices.role_id.is_empty() {
@@ -187,6 +197,8 @@ mod tests {
         "region": "us-east-1",
         "address": "http://127.0.0.1:8200",
         "kvMount": "secret",
+        "secretsAuth": "paste",
+        "adminToken": "",
         "roleId": "an-approle-id",
         "roleSecret": "an-approle-secret",
         "gateway": "",
@@ -206,6 +218,7 @@ mod tests {
         assert_eq!(choices.model_path, "/somewhere/gateway");
         assert_eq!(choices.gateway_password, "a-dashboard-password");
         assert_eq!(choices.kv_mount, "secret");
+        assert_eq!(choices.secrets_auth, "paste");
         assert_eq!(choices.role_id, "an-approle-id");
         assert_eq!(choices.role_secret, "an-approle-secret");
         assert_eq!(choices.access_key, "an-access-key");

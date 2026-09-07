@@ -2,6 +2,8 @@ package stack
 
 import (
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -111,7 +113,7 @@ func TestABlankGatewayPathBecomesOneInsideTheInstall(t *testing.T) {
 			ModelPath:    "",
 		}, "/an/install")
 
-		settings, _, err := w.Run()
+		settings, _, err := w.Run(t.Context())
 		if err != nil {
 			t.Fatalf("Run() with %s and no path = %v", backend, err)
 		}
@@ -136,7 +138,7 @@ func TestABlankMinIOPathBecomesOneInsideTheInstall(t *testing.T) {
 		Objects: "minio", Secrets: "static", Bucket: "openarity", MinIOPath: "",
 	}, "/an/install")
 
-	settings, _, err := w.Run()
+	settings, _, err := w.Run(t.Context())
 	if err != nil {
 		t.Fatalf("Run() with MinIO and no path = %v", err)
 	}
@@ -156,7 +158,7 @@ func TestEveryRequiredDirectoryIsFilledWhenBlank(t *testing.T) {
 		ModelBackend: "litellm",
 	}, "/an/install")
 
-	settings, _, err := w.Run()
+	settings, _, err := w.Run(t.Context())
 	if err != nil {
 		t.Fatalf("Run() with both and neither path = %v", err)
 	}
@@ -178,7 +180,7 @@ func TestAGatewayPathThatWasGivenIsKept(t *testing.T) {
 		ModelPath:    "/Volumes/big-disk/gateway",
 	}, "/an/install")
 
-	settings, _, err := w.Run()
+	settings, _, err := w.Run(t.Context())
 	if err != nil {
 		t.Fatalf("Run() = %v", err)
 	}
@@ -196,7 +198,7 @@ func TestAMinIOPathThatWasGivenIsKept(t *testing.T) {
 		MinIOPath: "/Volumes/big-disk/minio",
 	}, "/an/install")
 
-	settings, _, err := w.Run()
+	settings, _, err := w.Run(t.Context())
 	if err != nil {
 		t.Fatalf("Run() = %v", err)
 	}
@@ -214,7 +216,7 @@ func TestFilesystemStorageGetsNoMinIODirectory(t *testing.T) {
 	opts := quietOptions()
 	w := newWizard(opts, true, Answers{Objects: "filesystem", Secrets: "static"}, "/an/install")
 
-	settings, _, err := w.Run()
+	settings, _, err := w.Run(t.Context())
 	if err != nil {
 		t.Fatalf("Run() = %v", err)
 	}
@@ -233,7 +235,7 @@ func TestPointingAtAGatewayGetsNoDirectory(t *testing.T) {
 		Objects: "filesystem", Secrets: "static", ModelBackend: "external",
 	}, "/an/install")
 
-	settings, _, err := w.Run()
+	settings, _, err := w.Run(t.Context())
 	if err != nil {
 		t.Fatalf("Run() = %v", err)
 	}
@@ -258,7 +260,7 @@ func TestAnExternalSecretStoreWithNoAppRoleIsRefusedBeforeAnythingIsDone(t *test
 			Address: "http://127.0.0.1:8200",
 		}, "/an/install")
 
-		_, _, err := w.Run()
+		_, _, err := w.Run(t.Context())
 		if err == nil {
 			t.Fatalf("Run() with %s and no AppRole = nil, want a refusal", backend)
 		}
@@ -278,7 +280,7 @@ func TestHalfAnAppRoleSaysWhichHalfIsMissing(t *testing.T) {
 		Objects: "filesystem", Secrets: "openbao", Address: "http://127.0.0.1:8200",
 	}, "/an/install")
 
-	_, _, err := w.Run()
+	_, _, err := w.Run(t.Context())
 	if err == nil {
 		t.Fatal("Run() with half an AppRole = nil, want a refusal")
 	}
@@ -300,7 +302,7 @@ func TestAnAppRoleGivenInTheEnvironmentIsAccepted(t *testing.T) {
 		Objects: "filesystem", Secrets: "openbao", Address: "http://127.0.0.1:8200",
 	}, "/an/install")
 
-	_, creds, err := w.Run()
+	_, creds, err := w.Run(t.Context())
 	if err != nil {
 		t.Fatalf("Run() with a whole AppRole = %v", err)
 	}
@@ -316,7 +318,88 @@ func TestKeepingSecretsInTheBrainNeedsNoAppRole(t *testing.T) {
 
 	w := newWizard(quietOptions(), true, Answers{Objects: "filesystem", Secrets: "static"}, "/an/install")
 
-	if _, _, err := w.Run(); err != nil {
+	if _, _, err := w.Run(t.Context()); err != nil {
+		t.Errorf("Run() = %v, want the ordinary install to proceed", err)
+	}
+}
+
+// Minting is a choice because it costs an admin token, which can do anything
+// to that server. The token is used for the six calls that create the role and
+// never written down; only the AppRole reaches the credentials file.
+func TestMintingAsksTheServerAndKeepsOnlyTheAppRole(t *testing.T) {
+	const admin = "an-admin-token-that-must-not-be-stored"
+	t.Setenv(adminToken, admin)
+
+	var seen []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.URL.Path)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/role-id"):
+			_, _ = w.Write([]byte(`{"data":{"role_id":"minted-id"}}`))
+		case strings.HasSuffix(r.URL.Path, "/secret-id"):
+			_, _ = w.Write([]byte(`{"data":{"secret_id":"minted-secret"}}`))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	w := newWizard(quietOptions(), true, Answers{
+		Objects: "filesystem", Secrets: "openbao",
+		Address: server.URL, KVMount: "secret", SecretsAuth: "mint",
+	}, "/an/install")
+
+	_, creds, err := w.Run(t.Context())
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	if creds["OPENARITY_SECRETS_APPROLE_ID"] != "minted-id" {
+		t.Errorf("the AppRole id is %q, want the one the server minted", creds["OPENARITY_SECRETS_APPROLE_ID"])
+	}
+	for key, value := range creds {
+		if value == admin {
+			t.Errorf("%s holds the admin token, which must not be stored", key)
+		}
+	}
+	if len(seen) < 6 {
+		t.Errorf("the server saw %d calls, want the six that create a role: %v", len(seen), seen)
+	}
+}
+
+// Pasting is the other half, and must not reach the server at all.
+func TestPastingAnAppRoleContactsNothing(t *testing.T) {
+	t.Setenv("OPENARITY_SECRETS_APPROLE_ID", "a-pasted-id")
+	t.Setenv("OPENARITY_SECRETS_APPROLE_SECRET", "a-pasted-secret")
+
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("the secret store was contacted for an AppRole that was pasted")
+	}))
+	t.Cleanup(server.Close)
+
+	w := newWizard(quietOptions(), true, Answers{
+		Objects: "filesystem", Secrets: "openbao", Address: server.URL, SecretsAuth: "paste",
+	}, "/an/install")
+
+	_, creds, err := w.Run(t.Context())
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if creds["OPENARITY_SECRETS_APPROLE_ID"] != "a-pasted-id" {
+		t.Error("the pasted AppRole did not survive")
+	}
+}
+
+// Keeping secrets in the brain contacts nothing either, whatever was asked
+// for, because there is no server to ask.
+func TestMintingIsSkippedWithoutASecretStore(t *testing.T) {
+	t.Setenv(adminToken, "an-admin-token")
+
+	w := newWizard(quietOptions(), true, Answers{
+		Objects: "filesystem", Secrets: "static", SecretsAuth: "mint",
+	}, "/an/install")
+
+	if _, _, err := w.Run(t.Context()); err != nil {
 		t.Errorf("Run() = %v, want the ordinary install to proceed", err)
 	}
 }

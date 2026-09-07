@@ -2,8 +2,10 @@ package stack
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +26,10 @@ type choice struct {
 type Answers struct {
 	ModelBackend string
 	ModelPath    string
+
+	// "mint" asks the secret store for an AppRole rather than being given
+	// one. Anything else means it was pasted.
+	SecretsAuth string
 
 	Objects   string
 	Endpoint  string
@@ -93,7 +99,7 @@ func newWizard(opts *cli.Options, quiet bool, given Answers, root string) *wizar
 	}
 }
 
-func (w *wizard) Run() (engine.Settings, map[string]string, error) {
+func (w *wizard) Run(ctx context.Context) (engine.Settings, map[string]string, error) {
 	settings := engine.DefaultSettings()
 
 	// Credentials arrive in the environment rather than as flags: argv is
@@ -116,6 +122,9 @@ func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 		settings = w.given.settings(settings)
 		w.fillPaths(&settings)
 		if err := settings.Validate(); err != nil {
+			return settings, w.creds, err
+		}
+		if err := w.mint(ctx, settings); err != nil {
 			return settings, w.creds, err
 		}
 		return settings, w.creds, w.checkCredentials(settings)
@@ -149,8 +158,37 @@ func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 	if err := settings.Validate(); err != nil {
 		return settings, w.creds, err
 	}
+	if err := w.mint(ctx, settings); err != nil {
+		return settings, w.creds, err
+	}
 	return settings, w.creds, w.checkCredentials(settings)
 }
+
+// mint asks the secret store for the AppRole, when that is what was chosen.
+//
+// The admin token comes from the environment and is used here and nowhere
+// else: it can do anything to that server, which is why this is a choice
+// rather than what setup does when it can. Only the AppRole is kept.
+func (w *wizard) mint(ctx context.Context, s engine.Settings) error {
+	if w.given.SecretsAuth != "mint" || s.SecretsBackend == "static" {
+		return nil
+	}
+
+	role, err := engine.MintAppRole(ctx, http.DefaultClient,
+		s.SecretsAddr, os.Getenv(adminToken), s.SecretsKVMount)
+	if err != nil {
+		return err
+	}
+
+	w.creds["OPENARITY_SECRETS_APPROLE_ID"] = role.ID
+	w.creds["OPENARITY_SECRETS_APPROLE_SECRET"] = role.Secret
+	return nil
+}
+
+// The token that mints, which is never stored. Read from the environment for
+// the same reason every other credential is: argv is readable by every
+// process on this machine.
+const adminToken = "OPENARITY_SECRETS_ADMIN_TOKEN"
 
 // fillPaths supplies the directories nobody was asked for.
 //
@@ -292,6 +330,30 @@ func (w *wizard) secrets(s *engine.Settings) error {
 	}
 	if s.SecretsKVMount, err = w.text("KV mount", "", "secret"); err != nil {
 		return err
+	}
+
+	how, err := w.pick("How should Openarity get its AppRole?",
+		"The brain logs in with one. It is the only credential kept.",
+		[]choice{
+			{"paste", "I have one", "The two values `make bao-approle` prints."},
+			{"mint", "Mint one for me", "Needs a token that may administer that server. It is used once and not stored."},
+		})
+	if err != nil {
+		return err
+	}
+
+	if how == "mint" {
+		token, err := w.secret("Admin token")
+		if err != nil {
+			return err
+		}
+		// Through the environment, so the rest of the flow reads it the same
+		// way whether it came from here or from the installer window.
+		if err := os.Setenv(adminToken, token); err != nil {
+			return err
+		}
+		w.given.SecretsAuth = "mint"
+		return nil
 	}
 
 	roleID, err := w.text("AppRole ID", "", "")

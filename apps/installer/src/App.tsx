@@ -24,6 +24,8 @@ export function App() {
   const [secretKey, setSecretKey] = useState("");
   const [address, setAddress] = useState("http://127.0.0.1:8200");
   const [kvMount, setKVMount] = useState("secret");
+  const [secretsAuth, setSecretsAuth] = useState("mint");
+  const [adminToken, setAdminToken] = useState("");
   const [roleID, setRoleID] = useState("");
   const [roleSecret, setRoleSecret] = useState("");
   const [minioPath, setMinioPath] = useState("");
@@ -59,8 +61,10 @@ export function App() {
           region: objects === "s3" ? region : "",
           address: secrets === "static" ? "" : address,
           kvMount: secrets === "static" ? "" : kvMount,
-          roleId: secrets === "static" ? "" : roleID,
-          roleSecret: secrets === "static" ? "" : roleSecret,
+          secretsAuth: secrets === "static" ? "" : secretsAuth,
+          adminToken: secrets === "static" || secretsAuth !== "mint" ? "" : adminToken,
+          roleId: secrets === "static" || secretsAuth === "mint" ? "" : roleID,
+          roleSecret: secrets === "static" || secretsAuth === "mint" ? "" : roleSecret,
           modelBackend,
           modelPath: runsGateway ? modelPath : "",
           // Only sent when we point at one. A gateway we install is found at
@@ -144,14 +148,38 @@ export function App() {
           <div className="follow">
             <Field label="Address" hint="For example http://127.0.0.1:8200" value={address} onChange={setAddress} />
             <Field label="KV mount" value={kvMount} onChange={setKVMount} />
+
             {/*
-              The brain refuses to start without these — a secret store is a
-              dependency, not a feature flag. The window used to ask only for
-              the address, so choosing OpenBao failed several minutes later,
-              after Postgres had been downloaded and a cluster built.
+              The brain logs in with an AppRole and refuses to start without
+              one — a secret store is a dependency, not a feature flag. Either
+              it is pasted, or it is minted here, which costs an admin token
+              that is used once and never stored.
             */}
-            <Field label="AppRole ID" value={roleID} onChange={setRoleID} />
-            <Field label="AppRole secret" value={roleSecret} onChange={setRoleSecret} secret />
+            <Question
+              label="How should Openarity get its AppRole?"
+              about="The brain logs in with one. It is the only credential kept."
+              value={secretsAuth}
+              onChange={setSecretsAuth}
+              options={[
+                ["mint", "Mint one for me — needs a token that may administer that server"],
+                ["paste", "I have one"],
+              ]}
+            />
+
+            {secretsAuth === "mint" ? (
+              <Field
+                label="Admin token"
+                hint="Used once to create a role and a policy. It is not stored."
+                value={adminToken}
+                onChange={setAdminToken}
+                secret
+              />
+            ) : (
+              <>
+                <Field label="AppRole ID" value={roleID} onChange={setRoleID} />
+                <Field label="AppRole secret" value={roleSecret} onChange={setRoleSecret} secret />
+              </>
+            )}
           </div>
         )}
 

@@ -118,7 +118,9 @@ you already have anywhere S3-compatible.
 
 **Where credentials are kept** — the tokens Openarity uses to reach the
 services you connect to it. In the brain's own process, which loses them on
-restart, or an OpenBao or Vault you already run.
+restart, or an OpenBao or Vault you already run. Choosing one asks how the
+brain should log in; see [An AppRole, pasted or
+minted](#an-approle-pasted-or-minted).
 
 **Where models come from** — point at a gateway you already run, or have one
 installed and started here. LiteLLM and OmniRoute both work; see
@@ -149,6 +151,47 @@ oa stack stop           # from another terminal
 ```
 
 {{% /steps %}}
+
+## An AppRole, pasted or minted
+
+The brain reaches an external secret store with an AppRole and will not start
+without one — a secret store is a dependency, not a feature flag. There are two
+ways to get it.
+
+**Paste one.** `make bao-approle` in `deployment/` prints the pair, and the
+installer takes them. Nothing is written to your server.
+
+**Have one minted.** The installer creates the role itself, which takes a token
+that may administer that server. It does six things:
+
+```text
+enable the KV v2 mount, if it is not already
+enable the approle auth method, if it is not already
+write a policy named openarity-brain
+create a role using it
+read its role-id
+generate a secret-id
+```
+
+The policy grants exactly what the brain needs — read and write on a team's
+channel secrets and its attachment key, delete on their metadata, and renewal
+of its own token. It grants no `list`, nothing under `sys` and no ability to
+administer the store. That was checked against a real OpenBao rather than
+assumed: a token holding only this policy can write
+`secret/data/teams/T1/channels/C1` and is refused
+`secret/data/teams/T1/tokens/K1`, refused a list, and refused its own policy.
+
+{{< callout type="warning" >}}
+**The admin token is more dangerous than what it creates.** It can do anything
+to that server, where the AppRole can do the five things above. It is used for
+those six calls and never written down — only the AppRole reaches the install's
+credentials file. Minting also writes into infrastructure you own: on a server
+shared with anything else, it is worth knowing that a policy and a role appear.
+{{< /callout >}}
+
+Running it twice is safe. Every step tolerates what is already there, so a
+second install against the same server does not fail on a mount an operator
+enabled years ago.
 
 ## A gateway of your own
 
