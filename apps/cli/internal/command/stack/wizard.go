@@ -114,12 +114,12 @@ func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 
 	if w.given.complete() {
 		settings = w.given.settings(settings)
-		w.fillGatewayPath(&settings)
+		w.fillPaths(&settings)
 		return settings, w.creds, settings.Validate()
 	}
 
 	if !w.ask {
-		w.fillGatewayPath(&settings)
+		w.fillPaths(&settings)
 		if !w.quiet {
 			w.say("Setting up with the defaults: artifacts on disk, secrets in the brain's own process.")
 			w.say("Run this in a terminal to choose differently.")
@@ -142,24 +142,38 @@ func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 	}
 
 	w.say("")
-	w.fillGatewayPath(&settings)
+	w.fillPaths(&settings)
 	return settings, w.creds, settings.Validate()
 }
 
-// fillGatewayPath supplies the directory nobody was asked for.
+// fillPaths supplies the directories nobody was asked for.
 //
-// The terminal wizard offers <root>/gateway and takes it when the answer is
-// blank; the installer window says "Blank puts it inside the install" and sent
-// an empty string, which nothing turned into anything. Setup then refused with
-// "a gateway of our own needs a directory to install into", which reached a
-// person as "setup exited with Some(1)".
+// Two fields in the installer window start empty and say so — "Blank puts it
+// inside the install" — and the window sends that empty string as the answer.
+// The terminal wizard never sees the problem, because there a blank answer
+// takes the default it offered; the window skips the wizard entirely, a
+// sidecar having no terminal to prompt at, and nothing filled the gap.
+//
+// Both refusals reached a person as "setup exited with Some(1)". The gateway
+// was fixed first and MinIO was not, which is the whole reason this is one
+// function over a list rather than a check per field: the next directory
+// somebody adds should be a line here, not another bug report.
 //
 // Here rather than in Validate, because validating must not change what it is
 // validating, and here rather than in Settings, which has no idea where the
 // install is.
-func (w *wizard) fillGatewayPath(s *engine.Settings) {
-	if s.RunsGateway() && s.ModelPath == "" {
-		s.ModelPath = filepath.Join(w.root, "gateway")
+func (w *wizard) fillPaths(s *engine.Settings) {
+	for _, field := range []struct {
+		needed bool
+		into   *string
+		name   string
+	}{
+		{needed: s.RunsGateway(), into: &s.ModelPath, name: "gateway"},
+		{needed: s.RunsMinIO(), into: &s.MinIOPath, name: "minio"},
+	} {
+		if field.needed && *field.into == "" {
+			*field.into = filepath.Join(w.root, field.name)
+		}
 	}
 }
 

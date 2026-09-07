@@ -120,6 +120,50 @@ func TestABlankGatewayPathBecomesOneInsideTheInstall(t *testing.T) {
 	}
 }
 
+// The same shape, for the object store. The window says "Blank puts them
+// inside the install" and sends an empty string; setup refused with "a MinIO
+// of our own needs a directory to keep its data in", which reached a person as
+// an exit code.
+//
+// This is here because fixing the gateway and not looking for its siblings
+// cost a second report of the same bug.
+func TestABlankMinIOPathBecomesOneInsideTheInstall(t *testing.T) {
+	t.Parallel()
+
+	opts := quietOptions()
+	w := newWizard(opts, true, Answers{
+		Objects: "minio", Secrets: "static", Bucket: "openarity", MinIOPath: "",
+	}, "/an/install")
+
+	settings, _, err := w.Run()
+	if err != nil {
+		t.Fatalf("Run() with MinIO and no path = %v", err)
+	}
+	if settings.MinIOPath != filepath.Join("/an/install", "minio") {
+		t.Errorf("MinIOPath = %q, want it inside the install", settings.MinIOPath)
+	}
+}
+
+// Every answer the window can leave empty and setup insists on, in one place.
+// If a third one is added, this is what says so.
+func TestEveryRequiredDirectoryIsFilledWhenBlank(t *testing.T) {
+	t.Parallel()
+
+	opts := quietOptions()
+	w := newWizard(opts, true, Answers{
+		Objects: "minio", Secrets: "static", Bucket: "openarity",
+		ModelBackend: "litellm",
+	}, "/an/install")
+
+	settings, _, err := w.Run()
+	if err != nil {
+		t.Fatalf("Run() with both and neither path = %v", err)
+	}
+	if err := settings.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want every directory supplied", err)
+	}
+}
+
 // A path that was chosen is left alone. Somebody putting a gigabyte on an
 // external drive meant it.
 func TestAGatewayPathThatWasGivenIsKept(t *testing.T) {
@@ -139,6 +183,42 @@ func TestAGatewayPathThatWasGivenIsKept(t *testing.T) {
 	}
 	if settings.ModelPath != "/Volumes/big-disk/gateway" {
 		t.Errorf("ModelPath = %q, want the one that was given", settings.ModelPath)
+	}
+}
+
+func TestAMinIOPathThatWasGivenIsKept(t *testing.T) {
+	t.Parallel()
+
+	opts := quietOptions()
+	w := newWizard(opts, true, Answers{
+		Objects: "minio", Secrets: "static", Bucket: "openarity",
+		MinIOPath: "/Volumes/big-disk/minio",
+	}, "/an/install")
+
+	settings, _, err := w.Run()
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if settings.MinIOPath != "/Volumes/big-disk/minio" {
+		t.Errorf("MinIOPath = %q, want the one that was given", settings.MinIOPath)
+	}
+}
+
+// Files on this machine rather than in a MinIO of our own: no MinIO, so no
+// directory, and inventing one would put a path in the state file for
+// something that does not exist.
+func TestFilesystemStorageGetsNoMinIODirectory(t *testing.T) {
+	t.Parallel()
+
+	opts := quietOptions()
+	w := newWizard(opts, true, Answers{Objects: "filesystem", Secrets: "static"}, "/an/install")
+
+	settings, _, err := w.Run()
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if settings.MinIOPath != "" {
+		t.Errorf("MinIOPath = %q, want nothing — no MinIO is run", settings.MinIOPath)
 	}
 }
 
