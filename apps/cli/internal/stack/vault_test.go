@@ -103,8 +103,41 @@ func TestATokenThatMayNotAdministerSaysSo(t *testing.T) {
 	if err == nil {
 		t.Fatal("MintAppRole() with a token that may not write policies = nil, want an error")
 	}
-	if !strings.Contains(err.Error(), "write policies") {
-		t.Errorf("MintAppRole() = %q, want it to say what the token is missing", err)
+	// The path alone does not read as a sentence and does not say which token
+	// to reach for. "the token may not /v1/sys/mounts/secret" was the first
+	// attempt, and it reached somebody that way.
+	for _, want := range []string{"write the openarity-brain policy", "root token"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("MintAppRole() = %q, want it to mention %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "/v1/sys/") {
+		t.Errorf("MintAppRole() = %q, want the operation in words rather than a path", err)
+	}
+}
+
+// Each step says which one it was, so a token that can do some of this and not
+// the rest points at the thing it cannot do.
+func TestEachStepSaysWhichOneItWas(t *testing.T) {
+	t.Parallel()
+
+	for path, want := range map[string]string{
+		"/v1/sys/mounts/secret":              "enable the KV v2 mount at secret/",
+		"/v1/sys/auth/approle":               "enable the approle auth method",
+		"/v1/auth/approle/role/" + vaultRole: "create the " + vaultRole + " role",
+	} {
+		server, _ := stubVault(t, map[string]func(http.ResponseWriter){
+			path: func(w http.ResponseWriter) { w.WriteHeader(http.StatusForbidden) },
+		})
+
+		_, err := MintAppRole(t.Context(), server.Client(), server.URL, "a-narrow-token", "secret")
+		if err == nil {
+			t.Errorf("MintAppRole() refused at %s = nil, want an error", path)
+			continue
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refused at %s: got %q, want it to say %q", path, err, want)
+		}
 	}
 }
 

@@ -181,6 +181,14 @@ assumed: a token holding only this policy can write
 `secret/data/teams/T1/channels/C1` and is refused
 `secret/data/teams/T1/tokens/K1`, refused a list, and refused its own policy.
 
+A token that cannot do all six is refused at the first one it cannot, and named:
+
+```text
+oa: stack: that token may not enable the KV v2 mount at secret/ — minting needs
+one that can enable mounts and auth methods and write policies, which usually
+means a root token
+```
+
 {{< callout type="warning" >}}
 **The admin token is more dangerous than what it creates.** It can do anything
 to that server, where the AppRole can do the five things above. It is used for

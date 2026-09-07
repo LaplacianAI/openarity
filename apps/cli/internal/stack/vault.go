@@ -84,17 +84,18 @@ func MintAppRole(ctx context.Context, client *http.Client, addr, token, mount st
 	// have.
 	if err := v.put(ctx, "/v1/sys/mounts/"+mount, map[string]any{
 		"type": "kv", "options": map[string]string{"version": "2"},
-	}); err != nil {
+	}, "enable the KV v2 mount at "+mount+"/"); err != nil {
 		return AppRole{}, err
 	}
 
-	if err := v.put(ctx, "/v1/sys/auth/approle", map[string]any{"type": "approle"}); err != nil {
+	if err := v.put(ctx, "/v1/sys/auth/approle", map[string]any{"type": "approle"},
+		"enable the approle auth method"); err != nil {
 		return AppRole{}, err
 	}
 
 	if err := v.put(ctx, "/v1/sys/policies/acl/"+vaultRole, map[string]any{
 		"policy": renderPolicy(mount),
-	}); err != nil {
+	}, "write the "+vaultRole+" policy"); err != nil {
 		return AppRole{}, err
 	}
 
@@ -102,7 +103,7 @@ func MintAppRole(ctx context.Context, client *http.Client, addr, token, mount st
 		"token_policies": vaultRole,
 		"token_ttl":      "1h",
 		"token_max_ttl":  "4h",
-	}); err != nil {
+	}, "create the "+vaultRole+" role"); err != nil {
 		return AppRole{}, err
 	}
 
@@ -118,7 +119,7 @@ func MintAppRole(ctx context.Context, client *http.Client, addr, token, mount st
 }
 
 // put writes, and treats "it is already there" as success.
-func (v *vault) put(ctx context.Context, path string, body map[string]any) error {
+func (v *vault) put(ctx context.Context, path string, body map[string]any, what string) error {
 	res, err := v.do(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return err
@@ -137,7 +138,7 @@ func (v *vault) put(ctx context.Context, path string, body map[string]any) error
 	if res.StatusCode == http.StatusBadRequest && strings.Contains(string(said), "already in use") {
 		return nil
 	}
-	return v.refuse(path, res.StatusCode, said)
+	return v.refuse(what, res.StatusCode, said)
 }
 
 func (v *vault) field(ctx context.Context, method, path string, body map[string]any, name string) (string, error) {
@@ -149,7 +150,7 @@ func (v *vault) field(ctx context.Context, method, path string, body map[string]
 
 	said, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 	if res.StatusCode >= 300 {
-		return "", v.refuse(path, res.StatusCode, said)
+		return "", v.refuse("read "+name+" from "+path, res.StatusCode, said)
 	}
 
 	var answer struct {
@@ -225,12 +226,19 @@ func unreachable(addr string, err error) error {
 		addr, err)
 }
 
-// refuse says what was refused without repeating the token back.
-func (v *vault) refuse(path string, status int, said []byte) error {
+// refuse says what was refused, in words, without repeating the token back.
+//
+// The path alone does not read as a sentence — "the token may not
+// /v1/sys/mounts/secret" was the first attempt — and does not tell somebody
+// which token to reach for instead.
+func (v *vault) refuse(what string, status int, said []byte) error {
 	if status == http.StatusForbidden {
-		return fmt.Errorf("stack: the token may not %s — minting needs one that can write policies and enable auth methods", path)
+		return fmt.Errorf(
+			"stack: that token may not %s — minting needs one that can enable mounts and auth methods and write policies, which usually means a root token",
+			what)
 	}
-	return fmt.Errorf("stack: %s answered %d: %s", path, status, strings.TrimSpace(string(said)))
+	return fmt.Errorf("stack: could not %s: %s answered %d: %s",
+		what, v.addr, status, strings.TrimSpace(string(said)))
 }
 
 // renderPolicy is the policy with the mount filled in.
