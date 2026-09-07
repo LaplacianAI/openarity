@@ -114,7 +114,10 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				return fmt.Errorf("already installed at %s — run `oa stack start`", layout.Root)
 			}
 
-			var report engine.Reporter
+			// Always reported, one way or the other. Silence through a
+			// download, a cluster and sixteen migrations is indistinguishable
+			// from a hang, and was mistaken for one.
+			report := engine.TextReporter(opts.Stderr)
 			if asJSON {
 				report = engine.JSONReporter(opts.Stdout)
 			}
