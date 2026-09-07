@@ -569,6 +569,19 @@ func (e *extraction) entry(header *tar.Header, body io.Reader) error {
 		// Only the cheap, certain refusals here. A link may not be absolute
 		// and may not be empty, because neither can ever be right and both
 		// can be judged without touching the disk.
+		//
+		// Containment is NOT decided here, and adding a check that resolves
+		// the target as each entry arrives breaks the extractor: Node writes
+		// bin/corepack before lib/node_modules/corepack exists, so resolving
+		// then fails with "no such file or directory" and refuses a runtime
+		// that is entirely legitimate. Judging it lexically instead is the
+		// mistake CodeQL's own help text describes, which let two links
+		// neither of which escapes on its own compose into one that does.
+		//
+		// Every link is resolved once the archive is unpacked, by check(),
+		// when there is a filesystem to ask. Two generated fixes have tried
+		// to move it back here; TestALinkExtractedBeforeItsTargetIsAccepted
+		// is what says no.
 		if header.Linkname == "" || filepath.IsAbs(header.Linkname) ||
 			filepath.VolumeName(header.Linkname) != "" {
 			return fmt.Errorf("stack: %s links to %q, which is not a relative path",
@@ -579,21 +592,6 @@ func (e *extraction) entry(header *tar.Header, body io.Reader) error {
 		}
 		if err := e.dirWithinRoot(filepath.Dir(path)); err != nil {
 			return err
-		}
-
-		// Resolve the link parent directory through existing symlinks before
-		// validating the link target stays within the extraction root.
-		realParent, err := filepath.EvalSymlinks(filepath.Dir(path))
-		if err != nil {
-			return err
-		}
-		linkTarget := filepath.Join(realParent, header.Linkname)
-		if !filepath.IsAbs(linkTarget) {
-			linkTarget = filepath.Join(e.root, linkTarget)
-		}
-		if err := e.dirWithinRoot(filepath.Clean(linkTarget)); err != nil {
-			return fmt.Errorf("stack: %s links to %q outside root: %w",
-				header.Name, header.Linkname, err)
 		}
 
 		if err := os.Symlink(header.Linkname, path); err != nil {
