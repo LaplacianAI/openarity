@@ -658,7 +658,16 @@ func (e *extraction) zipEntry(f *zip.File) error {
 
 	path := filepath.Join(e.root, filepath.FromSlash(name)) //nolint:gosec // checked below
 
-	if path != e.root && !strings.HasPrefix(path, e.root+string(os.PathSeparator)) {
+	// An entry naming the root itself asks for nothing to be created, and is
+	// handled before the guard rather than inside it — same as the tar path,
+	// and for the same two reasons. It reads better, and CodeQL models a
+	// strings.HasPrefix guard as sanitizing when it is the condition and not
+	// when it is one half of a conjunction whose negation is what continues.
+	if path == e.root {
+		return nil
+	}
+
+	if !strings.HasPrefix(path, e.root+string(os.PathSeparator)) {
 		return fmt.Errorf("stack: %s escapes the directory it is extracted into", f.Name)
 	}
 
