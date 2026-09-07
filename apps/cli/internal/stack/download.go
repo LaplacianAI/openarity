@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -462,17 +463,33 @@ type extraction struct {
 // The wrapper directory itself strips to nothing and is skipped rather than
 // creating the destination twice.
 func (e *extraction) stripped(name string) (string, bool) {
-	clean := strings.TrimPrefix(filepath.ToSlash(name), "./")
-	if e.strip == 0 {
-		return clean, clean != ""
+	clean := filepath.ToSlash(name)
+	clean = strings.TrimPrefix(clean, "./")
+	clean = strings.TrimLeft(clean, "/")
+	if clean == "" {
+		return "", false
 	}
 
-	parts := strings.Split(clean, "/")
+	norm := pathpkg.Clean(clean)
+	if norm == "." || norm == "" || norm == ".." ||
+		strings.HasPrefix(norm, "../") || strings.Contains(norm, "/../") {
+		return "", false
+	}
+
+	if e.strip == 0 {
+		return norm, true
+	}
+
+	parts := strings.Split(norm, "/")
 	if len(parts) <= e.strip {
 		return "", false
 	}
 	rest := strings.Join(parts[e.strip:], "/")
-	return rest, rest != ""
+	if rest == "" || rest == "." || rest == ".." ||
+		strings.HasPrefix(rest, "../") || strings.Contains(rest, "/../") {
+		return "", false
+	}
+	return rest, true
 }
 
 func (e *extraction) dirWithinRoot(dir string) error {
