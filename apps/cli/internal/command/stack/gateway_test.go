@@ -21,7 +21,7 @@ func TestTheGatewayIsHeldToLoopback(t *testing.T) {
 		{"omniroute", "OMNIROUTE_SERVER_HOST=127.0.0.1"},
 		{"litellm", "--host"},
 	} {
-		child := gatewayChild(engine.Settings{ModelBackend: tc.backend, ModelPath: "/somewhere"}, 20128, "/dev/null")
+		child := gatewayChild(engine.Settings{ModelBackend: tc.backend, ModelPath: "/somewhere"}, nil, 20128, "/dev/null")
 		if child == nil {
 			t.Fatalf("gatewayChild(%s) = nil", tc.backend)
 		}
@@ -148,8 +148,54 @@ func TestNoGatewayIsBuiltForABackendThatRunsNothing(t *testing.T) {
 	t.Parallel()
 
 	for _, backend := range []string{"external", "", "ollama"} {
-		if child := gatewayChild(engine.Settings{ModelBackend: backend}, 20128, "/dev/null"); child != nil {
+		if child := gatewayChild(engine.Settings{ModelBackend: backend}, nil, 20128, "/dev/null"); child != nil {
 			t.Errorf("gatewayChild(%q) = %+v, want nothing to supervise", backend, child)
+		}
+	}
+}
+
+// OmniRoute's own image defaults its dashboard password to CHANGEME and logs a
+// warning nobody reads. A gateway installed without being asked would come up
+// with a password every reader of its documentation knows.
+func TestOmniRouteIsGivenADashboardPassword(t *testing.T) {
+	t.Parallel()
+
+	child := gatewayChild(
+		engine.Settings{ModelBackend: "omniroute", ModelPath: "/somewhere"},
+		map[string]string{"OPENARITY_GATEWAY_PASSWORD": "a-generated-one"},
+		20128, "/dev/null")
+
+	var given string
+	for _, entry := range child.Env {
+		if after, ok := strings.CutPrefix(entry, "INITIAL_PASSWORD="); ok {
+			given = after
+		}
+	}
+	if given != "a-generated-one" {
+		t.Errorf("INITIAL_PASSWORD=%q, want the one setup generated", given)
+	}
+	if given == "CHANGEME" {
+		t.Error("the gateway came up with the documented default")
+	}
+}
+
+// A gateway on somebody's laptop reaching the internet on a timer is a
+// surprise, and neither sync affects routing.
+func TestOmniRouteDoesNotPhoneHomeOnATimer(t *testing.T) {
+	t.Parallel()
+
+	child := gatewayChild(
+		engine.Settings{ModelBackend: "omniroute", ModelPath: "/somewhere"}, nil, 20128, "/dev/null")
+
+	for _, want := range []string{"ARENA_ELO_SYNC_ENABLED=false", "PRICING_SYNC_ENABLED=false"} {
+		found := false
+		for _, entry := range child.Env {
+			if entry == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s is not set, so the gateway syncs on a schedule", want)
 		}
 	}
 }

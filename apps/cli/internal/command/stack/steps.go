@@ -133,7 +133,12 @@ func build(ctx context.Context, layout engine.Layout, state engine.State) (*engi
 
 	var gateway []engine.Component
 	if settings.RunsGateway() {
-		child := gatewayChild(settings, state.Ports.Gateway, filepath.Join(layout.Logs, "gateway.log"))
+		credentials, err := engine.ReadCredentials(layout.Env)
+		if err != nil {
+			return nil, err
+		}
+
+		child := gatewayChild(settings, credentials, state.Ports.Gateway, filepath.Join(layout.Logs, "gateway.log"))
 		if child == nil {
 			return nil, fmt.Errorf("stack: no gateway to run for %q", settings.ModelBackend)
 		}

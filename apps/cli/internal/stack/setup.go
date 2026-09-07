@@ -47,6 +47,11 @@ type Result struct {
 	Plan       Plan
 	Passphrase string
 	URL        string
+
+	// The gateway's own dashboard password, when one was generated here
+	// rather than chosen. Shown once, beside the passphrase, and stored only
+	// in the credentials file.
+	GatewayPassword string
 }
 
 var required = []string{"postgres", "dex", "brain"}
@@ -101,6 +106,11 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 		if err := s.prepareMinIO(); err != nil {
 			return Result{}, err
 		}
+	}
+
+	gatewayPassword, err := s.prepareGateway()
+	if err != nil {
+		return Result{}, err
 	}
 	if err := WriteCredentials(s.Layout.Env, s.Credentials); err != nil {
 		return Result{}, err
@@ -186,10 +196,14 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 	_ = s.Steps.Open(url)
 
 	s.report(Event{
-		Step: StepReady, Phase: PhaseDone, URL: url, Passphrase: passphrase,
+		Step: StepReady, Phase: PhaseDone, URL: url,
+		Passphrase: passphrase, GatewayPassword: gatewayPassword,
 	})
 
-	return Result{Plan: plan, Passphrase: passphrase, URL: url}, nil
+	return Result{
+		Plan: plan, Passphrase: passphrase, URL: url,
+		GatewayPassword: gatewayPassword,
+	}, nil
 }
 
 // prepareMinIO generates its root credentials and makes the bucket.
@@ -221,6 +235,34 @@ func (s *Setup) prepareMinIO() error {
 	s.Credentials["OPENARITY_OBJECTS_ACCESS_KEY"] = user
 	s.Credentials["OPENARITY_OBJECTS_SECRET_KEY"] = password
 	return nil
+}
+
+// prepareGateway makes sure OmniRoute has a dashboard password.
+//
+// Its image defaults one to CHANGEME and logs a warning nobody reads, so a
+// gateway installed without being asked would come up with a password every
+// reader of its documentation knows. If nobody chose one, one is generated and
+// returned so it can be shown once — the same bargain as the sign-in
+// passphrase.
+//
+// LiteLLM has no dashboard and needs none of this.
+func (s *Setup) prepareGateway() (string, error) {
+	if s.Settings.ModelBackend != "omniroute" {
+		return "", nil
+	}
+	if s.Credentials["OPENARITY_GATEWAY_PASSWORD"] != "" {
+		return "", nil
+	}
+
+	password, err := newPassphrase()
+	if err != nil {
+		return "", err
+	}
+	if s.Credentials == nil {
+		s.Credentials = map[string]string{}
+	}
+	s.Credentials["OPENARITY_GATEWAY_PASSWORD"] = password
+	return password, nil
 }
 
 func ensureSecret(layout Layout) error {

@@ -154,7 +154,7 @@ func npmCLI(root string) string {
 // default — measured answering on a LAN address — and a personal install
 // promises that nothing but this machine can reach it. Next.js takes its bind
 // address from HOSTNAME; LiteLLM takes a --host flag.
-func gatewayChild(settings engine.Settings, port int, log string) *engine.Child {
+func gatewayChild(settings engine.Settings, credentials map[string]string, port int, log string) *engine.Child {
 	root := settings.ModelPath
 
 	switch settings.ModelBackend {
@@ -186,6 +186,17 @@ func gatewayChild(settings engine.Settings, port int, log string) *engine.Child 
 				// providers". A personal install promises otherwise.
 				"OMNIROUTE_SERVER_HOST=127.0.0.1",
 				"OMNIROUTE_HOME="+filepath.Join(root, "omniroute-data"),
+
+				// Without this the image takes CHANGEME and writes a warning
+				// nobody reads. Setup generates one when nobody chose one, so
+				// this is never empty by the time it gets here.
+				"INITIAL_PASSWORD="+credentials["OPENARITY_GATEWAY_PASSWORD"],
+
+				// Two daily syncs that reach the internet for leaderboard and
+				// pricing data. A gateway on somebody's laptop phoning out on
+				// a timer is a surprise, and neither affects routing.
+				"ARENA_ELO_SYNC_ENABLED=false",
+				"PRICING_SYNC_ENABLED=false",
 			),
 		}
 

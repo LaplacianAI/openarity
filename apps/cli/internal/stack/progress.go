@@ -25,7 +25,8 @@ type Event struct {
 
 	URL string `json:"url,omitempty"`
 
-	Passphrase string `json:"passphrase,omitempty"`
+	Passphrase      string `json:"passphrase,omitempty"`
+	GatewayPassword string `json:"gateway_password,omitempty"`
 }
 
 type Reporter func(Event)

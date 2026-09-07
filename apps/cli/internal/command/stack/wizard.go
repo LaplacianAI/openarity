@@ -235,24 +235,81 @@ func (w *wizard) secrets(s *engine.Settings) error {
 }
 
 func (w *wizard) models(s *engine.Settings) error {
-	answer, err := w.pick("Which model service should Openarity use?",
+	answer, err := w.pick("Where should Openarity get its models from?",
 		"Anything that speaks the OpenAI API. Nothing calls it yet — the agent loop is not built — so this is recorded for when it is.",
 		[]choice{
-			{s.ModelBaseURL, "A gateway you run", "LiteLLM or OmniRoute on this machine, usually without a key."},
-			{"https://api.openai.com/v1", "OpenAI", "Needs a key."},
-			{"", "Something else", "Any other OpenAI-compatible endpoint."},
+			{"external", "One you already run", "A gateway on this machine or your network. Nothing is downloaded."},
+			{"here", "Run one here", "LiteLLM or OmniRoute, installed and started for you. A gigabyte or more."},
+			{"openai", "OpenAI", "Needs a key."},
+			{"other", "Something else", "Any other OpenAI-compatible endpoint."},
 		})
 	if err != nil {
 		return err
 	}
 
-	url, err := w.text("URL", "", answer)
+	if answer == "here" {
+		return w.runAGateway(s)
+	}
+
+	s.ModelBackend = "external"
+
+	fallback := s.ModelBaseURL
+	if answer == "openai" {
+		fallback = "https://api.openai.com/v1"
+	}
+
+	url, err := w.text("URL", "", fallback)
 	if err != nil {
 		return err
 	}
 	s.ModelBaseURL = url
 
 	key, err := w.secret("API key, or blank for none")
+	if err != nil {
+		return err
+	}
+	if key != "" {
+		w.creds["OPENARITY_MODEL_API_KEY"] = key
+	}
+	return nil
+}
+
+// The gateway is installed rather than pointed at, which means a runtime as
+// well: neither publishes a binary. The sizes are measured and said out loud,
+// because a gigabyte arriving unannounced on somebody's laptop is the kind of
+// surprise that gets an installer uninstalled.
+func (w *wizard) runAGateway(s *engine.Settings) error {
+	answer, err := w.pick("Which one?",
+		"Both speak the OpenAI API and both are started and stopped with everything else.",
+		[]choice{
+			{"litellm", "LiteLLM", "A proxy in front of every provider. About 1GB, and it brings its own Python."},
+			{"omniroute", "OmniRoute", "A router with a dashboard of its own. About 3.7GB, and it brings its own Node."},
+		})
+	if err != nil {
+		return err
+	}
+	s.ModelBackend = answer
+
+	if s.ModelPath, err = w.text("Where should it install?",
+		"Anywhere with room. An external drive is fine.",
+		filepath.Join(w.root, "gateway")); err != nil {
+		return err
+	}
+
+	if answer == "omniroute" {
+		// Its own image defaults this to CHANGEME and warns in a log nobody
+		// reads. Blank is fine — setup generates one and shows it once, the
+		// same bargain as the sign-in passphrase.
+		password, err := w.secret("Dashboard password, or blank to have one generated")
+		if err != nil {
+			return err
+		}
+		if password != "" {
+			w.creds["OPENARITY_GATEWAY_PASSWORD"] = password
+		}
+	}
+
+	key, err := w.secret("A provider API key to start it with, or blank for none")
 	if err != nil {
 		return err
 	}
