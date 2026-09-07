@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -292,12 +293,48 @@ func run(ctx context.Context, _ engine.Plan, path string, args ...string) error 
 // capture puts the tool's own output in the error. "exit status 1" is the
 // least useful sentence a person can be shown, and initdb explains itself
 // perfectly well if anyone passes the explanation on.
+// capture runs a command and keeps what it said, through a file rather than a
+// pipe.
+//
+// os/exec only builds a pipe and a copying goroutine when Stdout is not an
+// *os.File, and Wait blocks until that goroutine reaches EOF — which needs
+// every holder of the write end to let go, not just the process that was
+// started. pg_ctl's whole job is to leave a postgres running, and on Windows a
+// child inherits every inheritable handle, so that server holds the pipe open
+// for as long as it serves. CombinedOutput therefore never returns: setup
+// stopped at "Creating the database" and sat there until the job was cancelled.
+//
+// A file is passed to the child as a handle, so there is no goroutine to wait
+// for and Wait returns when the process does. It is also what Child already
+// does for the supervised processes, for the same reason.
 func capture(cmd *exec.Cmd, what string) error {
-	out, err := cmd.CombinedOutput()
-	if err == nil {
+	out, err := os.CreateTemp("", "openarity-*.log")
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	defer func() {
+		_ = out.Close()
+		_ = os.Remove(out.Name())
+	}()
+
+	cmd.Stdout, cmd.Stderr = out, out
+
+	runErr := cmd.Run()
+	if runErr == nil {
 		return nil
 	}
-	return fmt.Errorf("%s: %w\n%s", what, err, strings.TrimSpace(string(out)))
+
+	// Read back through the handle already open. Opening the path again would
+	// be a second handle on a file this process is holding, which Windows is
+	// particular about.
+	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("%s: %w", what, runErr)
+	}
+	said, err := io.ReadAll(out)
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, runErr)
+	}
+	return fmt.Errorf("%s: %w\n%s", what, runErr, strings.TrimSpace(string(said)))
 }
 
 // probe reports readiness by asking over HTTP, which is the only thing that
