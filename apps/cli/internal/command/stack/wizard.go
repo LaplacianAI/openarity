@@ -46,7 +46,7 @@ func (a Answers) settings(base engine.Settings) engine.Settings {
 		&out.ObjectsRegion:   a.Region,
 		&out.SecretsAddr:     a.Address,
 		&out.SecretsKVMount:  a.KVMount,
-		&out.ModelGatewayURL: a.Gateway,
+		&out.ModelBaseURL:    a.Gateway,
 	} {
 		if value != "" {
 			*target = value
@@ -88,6 +88,7 @@ func (w *wizard) Run() (engine.Settings, map[string]string, error) {
 		"OPENARITY_OBJECTS_SECRET_KEY",
 		"OPENARITY_SECRETS_APPROLE_ID",
 		"OPENARITY_SECRETS_APPROLE_SECRET",
+		"OPENARITY_MODEL_API_KEY",
 	} {
 		if value := os.Getenv(key); value != "" {
 			w.creds[key] = value
@@ -205,17 +206,30 @@ func (w *wizard) secrets(s *engine.Settings) error {
 }
 
 func (w *wizard) models(s *engine.Settings) error {
-	w.say("Model gateway")
-	w.say("  Where Openarity will send model requests. LiteLLM and OmniRoute both")
-	w.say("  speak the OpenAI API, so either one is just a base URL.")
-	w.say("  Nothing calls it yet — the agent loop is not built — so this is recorded")
-	w.say("  for when it is.")
-
-	url, err := w.text("URL", "", s.ModelGatewayURL)
+	answer, err := w.pick("Which model service should Openarity use?",
+		"Anything that speaks the OpenAI API. Nothing calls it yet — the agent loop is not built — so this is recorded for when it is.",
+		[]choice{
+			{s.ModelBaseURL, "A gateway you run", "LiteLLM or OmniRoute on this machine, usually without a key."},
+			{"https://api.openai.com/v1", "OpenAI", "Needs a key."},
+			{"", "Something else", "Any other OpenAI-compatible endpoint."},
+		})
 	if err != nil {
 		return err
 	}
-	s.ModelGatewayURL = url
+
+	url, err := w.text("URL", "", answer)
+	if err != nil {
+		return err
+	}
+	s.ModelBaseURL = url
+
+	key, err := w.secret("API key, or blank for none")
+	if err != nil {
+		return err
+	}
+	if key != "" {
+		w.creds["OPENARITY_MODEL_API_KEY"] = key
+	}
 	return nil
 }
 

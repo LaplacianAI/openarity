@@ -13,6 +13,7 @@ export function App() {
   const [objects, setObjects] = useState("filesystem");
   const [secrets, setSecrets] = useState("static");
   const [gateway, setGateway] = useState("http://127.0.0.1:20128/v1");
+  const [modelKey, setModelKey] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [bucket, setBucket] = useState("openarity");
   const [region, setRegion] = useState("us-east-1");
@@ -50,6 +51,7 @@ export function App() {
           gateway,
           accessKey: objects === "s3" ? accessKey : "",
           secretKey: objects === "s3" ? secretKey : "",
+          modelKey,
         },
       });
     } catch (err) {
@@ -105,11 +107,28 @@ export function App() {
           </div>
         )}
 
-        <label className="field">
-          <span>Model gateway</span>
-          <small>Nothing calls it yet. Recorded for when it does.</small>
-          <input value={gateway} onChange={(e) => setGateway(e.target.value)} />
-        </label>
+        <Question
+          label="Which model service?"
+          about="Anything that speaks the OpenAI API. Nothing calls it yet — recorded for when it does."
+          value={gateway}
+          onChange={setGateway}
+          options={[
+            ["http://127.0.0.1:20128/v1", "A gateway you run — LiteLLM or OmniRoute"],
+            ["https://api.openai.com/v1", "OpenAI"],
+            ["", "Something else"],
+          ]}
+        />
+
+        <div className="follow">
+          <Field label="URL" value={gateway} onChange={setGateway} />
+          <Field
+            label="API key"
+            hint="Blank if it needs none, which a gateway you run usually does not."
+            value={modelKey}
+            onChange={setModelKey}
+            secret
+          />
+        </div>
 
         <button type="button" className="primary" onClick={start}>
           Install

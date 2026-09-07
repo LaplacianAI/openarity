@@ -44,8 +44,8 @@ func TestAnswersOverrideOnlyWhatTheyGive(t *testing.T) {
 	}
 	// Left empty, so the default survives rather than becoming an empty
 	// string, which the brain validates differently from absent.
-	if got.ModelGatewayURL != base.ModelGatewayURL {
-		t.Errorf("ModelGatewayURL = %q, want the default %q", got.ModelGatewayURL, base.ModelGatewayURL)
+	if got.ModelBaseURL != base.ModelBaseURL {
+		t.Errorf("ModelBaseURL = %q, want the default %q", got.ModelBaseURL, base.ModelBaseURL)
 	}
 }
 

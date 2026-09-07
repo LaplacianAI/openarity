@@ -28,6 +28,7 @@ pub struct Choices {
     // these go into the child's environment instead.
     access_key: String,
     secret_key: String,
+    model_key: String,
 }
 
 #[tauri::command]
@@ -66,6 +67,10 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
         command = command
             .env("OPENARITY_OBJECTS_ACCESS_KEY", &choices.access_key)
             .env("OPENARITY_OBJECTS_SECRET_KEY", &choices.secret_key);
+    }
+
+    if !choices.model_key.is_empty() {
+        command = command.env("OPENARITY_MODEL_API_KEY", &choices.model_key);
     }
 
     let (mut rx, _child) = command.spawn().map_err(|e| e.to_string())?;

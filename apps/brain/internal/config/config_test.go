@@ -41,7 +41,8 @@ func TestLoadDefaults(t *testing.T) {
 		"ObjectsBucket":        "openarity",
 		"ObjectsAccessKey":     "",
 		"ObjectsSecretKey":     "",
-		"OmniRouteURL":         "http://localhost:20128/v1",
+		"ModelBaseURL":         "http://localhost:20128/v1",
+		"ModelAPIKey":          "",
 		"OIDCEnabled":          "false",
 		"OIDCIssuer":           "",
 		"OIDCAudience":         "openarity",
@@ -69,7 +70,7 @@ func TestLoadDefaults(t *testing.T) {
 		"ObjectsBucket":        cfg.ObjectsBucket,
 		"ObjectsAccessKey":     cfg.ObjectsAccessKey,
 		"ObjectsSecretKey":     cfg.ObjectsSecretKey,
-		"OmniRouteURL":         cfg.OmniRouteURL,
+		"ModelBaseURL":         cfg.ModelBaseURL,
 		"OIDCEnabled":          strconv.FormatBool(cfg.OIDCEnabled),
 		"OIDCIssuer":           cfg.OIDCIssuer,
 		"OIDCAudience":         cfg.OIDCAudience,
@@ -183,7 +184,7 @@ func TestStringRedactsPasswords(t *testing.T) {
 		"OPENARITY_FALKOR_DB_URL":  "redis://user:falkorsecret@127.0.0.1:6380",
 		"OPENARITY_REDIS_URL":      "redis://user:redissecret@127.0.0.1:6379",
 		"OPENARITY_SECRETS_ADDR":   "http://user:baosecret@localhost:8200",
-		"OPENARITY_OMNI_ROUTE_URL": "http://user:omnisecret@localhost:20128/v1",
+		"OPENARITY_MODEL_BASE_URL": "http://user:gatewaysecret@localhost:20128/v1",
 	})
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -191,7 +192,7 @@ func TestStringRedactsPasswords(t *testing.T) {
 
 	s := cfg.String()
 	for _, secret := range []string{
-		"pgsecret", "falkorsecret", "redissecret", "baosecret", "omnisecret",
+		"pgsecret", "falkorsecret", "redissecret", "baosecret", "gatewaysecret",
 	} {
 		if strings.Contains(s, secret) {
 			t.Errorf("String() leaked %q: %s", secret, s)
@@ -269,5 +270,47 @@ func TestStringHandlesInvalidURL(t *testing.T) {
 	s := cfg.String()
 	if strings.Contains(s, "secret") {
 		t.Errorf("String() leaked from an unparseable URL: %s", s)
+	}
+}
+
+// A model gateway's API key is a bearer credential: there is no host or
+// username worth keeping, so there is no useful redacted form and it is left
+// out of String() altogether — the same treatment DEV_TOKEN gets.
+//
+// The assertion is on the value, not on a redaction marker. A test that
+// checks String() redacts a field it never prints passes vacuously.
+func TestStringOmitsTheModelAPIKey(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(map[string]string{
+		"OPENARITY_MODEL_API_KEY": "sk-thisisthekey",
+	})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	s := cfg.String()
+
+	if strings.Contains(s, "sk-thisisthekey") {
+		t.Errorf("String() leaked the model API key: %s", s)
+	}
+	if strings.Contains(s, "ModelAPIKey") {
+		t.Errorf("String() now prints ModelAPIKey — a bearer token has no safe "+
+			"redacted form, so print nothing rather than a marker: %s", s)
+	}
+}
+
+// The gateway is reachable without one — a LiteLLM somebody runs on their own
+// machine usually needs no key — so an empty value must not stop the brain
+// from starting.
+func TestAnEmptyModelAPIKeyIsAllowed(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(map[string]string{})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() with no model API key = %v, want nil", err)
 	}
 }

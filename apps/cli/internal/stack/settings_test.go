@@ -72,7 +72,7 @@ func TestSettingsBecomeTheBrainsEnvironment(t *testing.T) {
 		SecretsBackend:  "openbao",
 		SecretsAddr:     "http://127.0.0.1:8200",
 		SecretsKVMount:  "secret",
-		ModelGatewayURL: "http://127.0.0.1:20128/v1",
+		ModelBaseURL:    "http://127.0.0.1:20128/v1",
 	}
 
 	env := map[string]bool{}
@@ -86,7 +86,7 @@ func TestSettingsBecomeTheBrainsEnvironment(t *testing.T) {
 		"OPENARITY_OBJECTS_BUCKET=openarity",
 		"OPENARITY_SECRETS_BACKEND=openbao",
 		"OPENARITY_SECRETS_ADDR=http://127.0.0.1:8200",
-		"OPENARITY_OMNI_ROUTE_URL=http://127.0.0.1:20128/v1",
+		"OPENARITY_MODEL_BASE_URL=http://127.0.0.1:20128/v1",
 	} {
 		if !env[want] {
 			t.Errorf("Env() does not contain %q", want)

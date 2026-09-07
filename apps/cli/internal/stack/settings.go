@@ -18,14 +18,14 @@ type Settings struct {
 	SecretsAddr    string `yaml:"secrets_addr,omitempty"`
 	SecretsKVMount string `yaml:"secrets_kv_mount,omitempty"`
 
-	ModelGatewayURL string `yaml:"model_gateway_url,omitempty"`
+	ModelBaseURL string `yaml:"model_base_url,omitempty"`
 }
 
 func DefaultSettings() Settings {
 	return Settings{
-		ObjectsBackend:  "filesystem",
-		SecretsBackend:  "static",
-		ModelGatewayURL: "http://127.0.0.1:20128/v1",
+		ObjectsBackend: "filesystem",
+		SecretsBackend: "static",
+		ModelBaseURL:   "http://127.0.0.1:20128/v1",
 	}
 }
 
@@ -48,7 +48,7 @@ func (s Settings) Env() []string {
 		"OPENARITY_OBJECTS_REGION":   s.ObjectsRegion,
 		"OPENARITY_SECRETS_ADDR":     s.SecretsAddr,
 		"OPENARITY_SECRETS_KV_MOUNT": s.SecretsKVMount,
-		"OPENARITY_OMNI_ROUTE_URL":   s.ModelGatewayURL,
+		"OPENARITY_MODEL_BASE_URL":   s.ModelBaseURL,
 	} {
 		if value != "" {
 			out = append(out, key+"="+value)

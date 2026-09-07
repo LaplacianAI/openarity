@@ -44,7 +44,7 @@ func TestValidateRejectsWrongSchemePerField(t *testing.T) {
 		"OPENARITY_REDIS_URL":      "http://127.0.0.1:6379",
 		"OPENARITY_FALKOR_DB_URL":  "postgres://127.0.0.1:6380",
 		"OPENARITY_SECRETS_ADDR":   "redis://127.0.0.1:8200",
-		"OPENARITY_OMNI_ROUTE_URL": "redis://127.0.0.1:20128",
+		"OPENARITY_MODEL_BASE_URL": "redis://127.0.0.1:20128",
 	}
 	for key, bad := range tests {
 		if cfg, err := load(map[string]string{key: bad}); err == nil {

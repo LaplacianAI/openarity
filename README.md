@@ -531,7 +531,8 @@ variable prefixed `OPENARITY_`:
 | `OPENARITY_POSTGRES_DSN`         | see below                   | Relational store                 |
 | `OPENARITY_FALKOR_DB_URL`        | `redis://127.0.0.1:6380`    | Graph store — not used yet       |
 | `OPENARITY_REDIS_URL`            | `redis://127.0.0.1:6379`    | Cache and queues — not used yet  |
-| `OPENARITY_OMNI_ROUTE_URL`       | `http://localhost:20128/v1` | Model router — not used yet      |
+| `OPENARITY_MODEL_BASE_URL`       | `http://localhost:20128/v1` | OpenAI-compatible endpoint — not used yet |
+| `OPENARITY_MODEL_API_KEY`        | empty                       | Its key, if it needs one — not used yet   |
 | `OPENARITY_OIDC_ENABLED`         | `false`                     | Verify tokens against an IdP     |
 | `OPENARITY_OIDC_ISSUER`          | empty                       | Issuer URL, required if enabled  |
 | `OPENARITY_OIDC_AUDIENCE`        | `openarity`                 | Audience the token must carry    |
