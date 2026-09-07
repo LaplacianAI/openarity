@@ -74,9 +74,7 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	// #nosec G304 -- the path is built by Path() from the user's own config
-	// directory, not from input. Nothing reaches it from a flag or a server.
-	data, err := os.ReadFile(path)
+	data, err := readFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return Config{}, nil
 	}

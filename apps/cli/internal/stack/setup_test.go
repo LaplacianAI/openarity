@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -90,12 +91,17 @@ func TestTheDatabasePasswordStaysInItsOwnFile(t *testing.T) {
 		t.Fatal("setup wrote an empty database password")
 	}
 
-	info, err := os.Stat(s.Layout.Secret)
-	if err != nil {
-		t.Fatalf("Stat() = %v", err)
-	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Errorf("the secret file is mode %04o, want 0600", mode)
+	// Windows reports 0666 for every file whatever it was created with, and
+	// the access control that does apply there is an ACL this cannot read.
+	// The password not being in stack.yaml, asserted above, holds everywhere.
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(s.Layout.Secret)
+		if err != nil {
+			t.Fatalf("Stat() = %v", err)
+		}
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Errorf("the secret file is mode %04o, want 0600", mode)
+		}
 	}
 
 	raw, err := os.ReadFile(s.Layout.State) //nolint:gosec // a path this test created
