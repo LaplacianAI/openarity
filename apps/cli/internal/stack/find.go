@@ -117,9 +117,7 @@ func (f DownloadingFinder) Find(ctx context.Context, name string) (string, error
 		}
 	}
 
-	local := LocalFinder{Dir: f.Layout.Bin, GOOS: f.Platform.GOOS, DirOnly: true}
-
-	if path, err := local.Find(ctx, name); err == nil {
+	if path, err := f.installed(ctx, name); err == nil {
 		return path, nil
 	}
 
@@ -129,7 +127,32 @@ func (f DownloadingFinder) Find(ctx context.Context, name string) (string, error
 		})
 		return "", err
 	}
-	return local.Find(ctx, name)
+	return f.installed(ctx, name)
+}
+
+// installed looks in bin/, then in the directory Postgres was unpacked into.
+//
+// Postgres is used where it landed rather than being linked into bin/, because
+// its binaries resolve everything else relative to their own location. On
+// Windows the 29 DLLs they load sit beside them in the distribution's bin/, so
+// an initdb.exe reached through a link in a directory holding none of them
+// exits 0xc0000135 — STATUS_DLL_NOT_FOUND — before printing a word. Everything
+// downstream derives initdb and pg_ctl from where postgres was found, so this
+// is the only place that has to know.
+//
+// bin/ is searched first, so an install made while the links existed keeps
+// working.
+func (f DownloadingFinder) installed(ctx context.Context, name string) (string, error) {
+	dirs := []string{f.Layout.Bin, filepath.Join(f.Layout.Bin, "postgres-dist", "bin")}
+
+	var err error
+	for _, dir := range dirs {
+		var path string
+		if path, err = (LocalFinder{Dir: dir, GOOS: f.Platform.GOOS, DirOnly: true}).Find(ctx, name); err == nil {
+			return path, nil
+		}
+	}
+	return "", err
 }
 
 func (f DownloadingFinder) download(ctx context.Context, name string) error {
@@ -145,9 +168,6 @@ func (f DownloadingFinder) download(ctx context.Context, name string) error {
 
 		dist := filepath.Join(f.Layout.Bin, "postgres-dist")
 		if err := f.Downloader.Postgres(ctx, url, url+".sha256", dist); err != nil {
-			return err
-		}
-		if err := linkPostgres(dist, f.Layout.Bin, f.Platform); err != nil {
 			return err
 		}
 		f.Downloader.report(Event{Step: StepDownload, Phase: PhaseDone, Detail: name})
@@ -177,21 +197,6 @@ func (f DownloadingFinder) download(ctx context.Context, name string) error {
 		return err
 	}
 	f.Downloader.report(Event{Step: StepDownload, Phase: PhaseDone, Detail: name})
-	return nil
-}
-
-func linkPostgres(dist, bin string, platform Platform) error {
-	for _, name := range []string{"postgres", "initdb", "pg_ctl"} {
-		target := filepath.Join(dist, "bin", name+suffix(platform))
-		link := filepath.Join(bin, name+suffix(platform))
-
-		if err := os.Remove(link); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if err := os.Symlink(target, link); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

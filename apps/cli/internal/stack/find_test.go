@@ -148,6 +148,14 @@ func TestAFileThatIsNotExecutableIsNotABinary(t *testing.T) {
 // in stack.yaml naming neither. An interrupted download leaves exactly this
 // state, so it is not hypothetical.
 func TestAnUnusableInstallCopyIsAnErrorRatherThanAFallbackToPath(t *testing.T) {
+	// The state this is about cannot exist on Windows: there is no executable
+	// bit, so a half-written postgres.exe is as runnable as a real one as far
+	// as anything here can tell. TestADirectoryIsNotABinary covers the
+	// unusable case that does exist there.
+	if runtime.GOOS == "windows" {
+		t.Skip("a file with no executable bit is not a state Windows has")
+	}
+
 	dir := t.TempDir()
 	elsewhere := t.TempDir()
 
@@ -220,5 +228,61 @@ func TestADirectoryIsNotABinary(t *testing.T) {
 
 	if _, err := (LocalFinder{Dir: dir}).Find(t.Context(), "brain"); err == nil {
 		t.Error("Find() returned a directory as a binary")
+	}
+}
+
+// Postgres is used where it was unpacked. Its binaries resolve share/ and, on
+// Windows, the 29 DLLs beside them relative to their own directory, so moving
+// or linking the three executables into bin/ leaves initdb exiting
+// 0xc0000135 with nothing written to any log.
+func TestPostgresIsFoundWhereItWasUnpacked(t *testing.T) {
+	t.Parallel()
+
+	layout := NewLayout(t.TempDir())
+	if err := layout.Create(); err != nil {
+		t.Fatalf("Create() = %v", err)
+	}
+
+	dist := filepath.Join(layout.Bin, "postgres-dist", "bin")
+	if err := os.MkdirAll(dist, 0o700); err != nil {
+		t.Fatalf("making %s: %v", dist, err)
+	}
+	want := executable(t, dist, hostBinary("postgres"))
+
+	f := DownloadingFinder{Layout: layout, Platform: ThisPlatform(), Downloader: &Downloader{}}
+	got, err := f.Find(t.Context(), "postgres")
+	if err != nil {
+		t.Fatalf("Find(postgres) = %v", err)
+	}
+	if got != want {
+		t.Errorf("Find(postgres) = %q, want the copy in the distribution at %q", got, want)
+	}
+}
+
+// bin/ is searched first, so an install made while the binaries were linked
+// there goes on working rather than downloading 71MB again.
+func TestABinaryDirectlyInBinIsStillPreferred(t *testing.T) {
+	t.Parallel()
+
+	layout := NewLayout(t.TempDir())
+	if err := layout.Create(); err != nil {
+		t.Fatalf("Create() = %v", err)
+	}
+
+	want := executable(t, layout.Bin, hostBinary("postgres"))
+
+	dist := filepath.Join(layout.Bin, "postgres-dist", "bin")
+	if err := os.MkdirAll(dist, 0o700); err != nil {
+		t.Fatalf("making %s: %v", dist, err)
+	}
+	executable(t, dist, hostBinary("postgres"))
+
+	f := DownloadingFinder{Layout: layout, Platform: ThisPlatform(), Downloader: &Downloader{}}
+	got, err := f.Find(t.Context(), "postgres")
+	if err != nil {
+		t.Fatalf("Find(postgres) = %v", err)
+	}
+	if got != want {
+		t.Errorf("Find(postgres) = %q, want bin/ to win at %q", got, want)
 	}
 }

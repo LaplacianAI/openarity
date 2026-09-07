@@ -23,7 +23,7 @@ func setupFor(t *testing.T, r *recorder) *Setup {
 	// disk to clean up.
 	bin := t.TempDir()
 	for _, name := range []string{"postgres", "dex", "brain"} {
-		executable(t, bin, name)
+		executable(t, bin, hostBinary(name))
 	}
 
 	return &Setup{
