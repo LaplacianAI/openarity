@@ -83,7 +83,18 @@ func MintAppRole(ctx context.Context, client *http.Client, addr, token, mount st
 		mount = "secret"
 	}
 
-	v := &vault{client: client, addr: strings.TrimRight(addr, "/"), token: token}
+	// Trimmed because it is pasted. A token carrying a trailing newline is
+	// rejected as if it were somebody else's, and the answer says nothing
+	// about whitespace.
+	v := &vault{client: client, addr: strings.TrimRight(addr, "/"), token: strings.TrimSpace(token)}
+
+	// A token the server has never seen and one that is merely too narrow are
+	// both 403 "permission denied" — measured, not assumed. Asking what this
+	// token is separates them, so a typo stops being reported as "go and find
+	// a root token" to somebody who already has one.
+	if err := v.identify(ctx); err != nil {
+		return AppRole{}, err
+	}
 
 	// KV v2, because the brain writes with check-and-set, which v1 does not
 	// have.
@@ -121,6 +132,29 @@ func MintAppRole(ctx context.Context, client *http.Client, addr, token, mount st
 		return AppRole{}, err
 	}
 	return AppRole{ID: id, Secret: secret}, nil
+}
+
+// identify asks the server what the token it was given is, which costs one
+// round trip and is the only way to tell "I have never seen this token" from
+// "this token may not do that". Both are 403 here.
+func (v *vault) identify(ctx context.Context) error {
+	res, err := v.do(ctx, http.MethodGet, "/v1/auth/token/lookup-self", nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode < 300 {
+		return nil
+	}
+
+	said, _ := io.ReadAll(io.LimitReader(res.Body, 4<<10))
+	if res.StatusCode == http.StatusForbidden {
+		return fmt.Errorf(
+			"stack: %s does not recognise that token — check it was copied whole and has not expired (a wrong token and no token get the same answer)",
+			v.addr)
+	}
+	return v.refuse("look up the token it was given", res.StatusCode, said)
 }
 
 // put writes, and treats "it is already there" as success.

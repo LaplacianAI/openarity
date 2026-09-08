@@ -290,3 +290,73 @@ func TestReachableNeedsNoToken(t *testing.T) {
 		t.Errorf("Reachable() sent a token, which it cannot have before one exists")
 	}
 }
+
+// A token the server has never seen answers 403 "permission denied" — exactly
+// what a real token that may not enable mounts answers. Reported as the
+// second, it sends somebody to find a root token they are already holding.
+func TestATokenTheServerDoesNotKnowIsNotReportedAsTooNarrow(t *testing.T) {
+	t.Parallel()
+
+	server, seen := stubVault(t, map[string]func(http.ResponseWriter){
+		"/v1/auth/token/lookup-self": func(w http.ResponseWriter) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"errors":["permission denied"]}`))
+		},
+	})
+
+	_, err := MintAppRole(t.Context(), server.Client(), server.URL, "a-typo", "secret")
+	if err == nil {
+		t.Fatal("MintAppRole() with a token the server does not know = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "does not recognise that token") {
+		t.Errorf("MintAppRole() = %q, want it to say the token was not recognised", err)
+	}
+	if strings.Contains(err.Error(), "root token") {
+		t.Errorf("MintAppRole() = %q, want it not to ask for a wider token when the one given was never valid", err)
+	}
+	// And nothing was written into somebody's Vault on the way to finding out.
+	for _, unwanted := range []string{
+		"POST /v1/sys/mounts/secret",
+		"POST /v1/sys/auth/approle",
+		"POST /v1/sys/policies/acl/" + vaultRole,
+	} {
+		if contains(*seen, unwanted) {
+			t.Errorf("%q was called despite the token being refused; the server saw %v", unwanted, *seen)
+		}
+	}
+}
+
+// The token is pasted, into a terminal or into a window's password field, and
+// a trailing newline makes it somebody else's token as far as Vault is
+// concerned.
+func TestAPastedTokenIsTrimmedBeforeItIsSent(t *testing.T) {
+	t.Parallel()
+
+	var sent []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sent = append(sent, r.Header.Get("X-Vault-Token"))
+
+		switch r.URL.Path {
+		case "/v1/auth/approle/role/" + vaultRole + "/role-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"role_id": "the-role-id"}})
+		case "/v1/auth/approle/role/" + vaultRole + "/secret-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"secret_id": "the-secret-id"}})
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	if _, err := MintAppRole(t.Context(), server.Client(), server.URL, "  an-admin-token\n", "secret"); err != nil {
+		t.Fatalf("MintAppRole() = %v", err)
+	}
+
+	if len(sent) == 0 {
+		t.Fatal("the server saw no requests")
+	}
+	for _, token := range sent {
+		if token != "an-admin-token" {
+			t.Errorf("X-Vault-Token = %q, want the token without the whitespace it was pasted with", token)
+		}
+	}
+}

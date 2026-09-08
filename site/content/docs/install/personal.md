@@ -164,9 +164,10 @@ for, and it is all the installer asks. If you already have an AppRole, set
 environment and it is used as it is — nothing is created and no token is
 wanted.
 
-Creating it does six things:
+Creating it does seven things:
 
 ```text
+ask the server what the token is
 enable the KV v2 mount, if it is not already
 enable the approle auth method, if it is not already
 write a policy named openarity-brain
@@ -190,6 +191,22 @@ oa: stack: that token may not enable the KV v2 mount at secret/ — minting need
 one that can enable mounts and auth methods and write policies, which usually
 means a root token
 ```
+
+The first of the seven exists because that message would otherwise be wrong
+half the time. A token the server has never seen, and a token that is real but
+too narrow, are the same answer — `403 permission denied`, measured against a
+real OpenBao rather than assumed. So a typo read as "go and find a root token"
+to somebody already holding one. Asking what the token is costs one round trip
+and says what happened:
+
+```text
+oa: stack: http://127.0.0.1:28200 does not recognise that token — check it was
+copied whole and has not expired (a wrong token and no token get the same
+answer)
+```
+
+Surrounding whitespace is removed before the token is sent, because it is
+pasted. A trailing space made a correct token somebody else's.
 
 {{< callout type="warning" >}}
 **The admin token is more dangerous than what it creates.** It can do anything
