@@ -48,9 +48,14 @@ pageRef = "/docs"
 weight = 1
 
 [[menu.main]]
+name = "Install"
+pageRef = "/docs/install"
+weight = 2
+
+[[menu.main]]
 name = "Agent SDK"
 pageRef = "/docs/agent-sdk"
-weight = 2
+weight = 3
 
 [[menu.main]]
 name = "Search"

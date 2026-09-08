@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the installer window is allowed to do",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-execute",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [{ "name": "binaries/oa", "sidecar": true, "args": true }]
+    },
+    "shell:allow-open"
+  ]
+}

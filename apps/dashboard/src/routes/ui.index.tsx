@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 
 import { listChannels, listSessions } from "@/api";
 import { useCurrentTeam } from "@/api/session";
 import { Button } from "@/components/ui/button";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
+import { welcomeDismissed } from "./ui.welcome";
 
 export const Route = createFileRoute("/ui/")({
   component: Overview,
@@ -26,6 +27,12 @@ function Overview() {
 
   if (isPending) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
+  }
+
+  // Somebody who belongs to no team has nothing to look at here: every count
+  // below would read zero and nothing would say what to do about it.
+  if (teams.length === 0 && !welcomeDismissed()) {
+    return <Navigate to="/ui/welcome" />;
   }
 
   if (teams.length === 0) {

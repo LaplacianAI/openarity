@@ -24,6 +24,7 @@ jobs:
       brain: ${{ steps.filter.outputs.brain }}
       cli: ${{ steps.filter.outputs.cli }}
       sdk: ${{ steps.filter.outputs.sdk }}
+      installer: ${{ steps.filter.outputs.installer }}
 
     steps:
       - uses: actions/checkout@v7
@@ -43,6 +44,9 @@ jobs:
               - 'go.work'
               - 'go.work.sum'
               - '.github/workflows/ci.yml'
+            installer:
+              - 'apps/installer/**'
+              - '.github/workflows/ci.yml'
             sdk:
               - 'sdk/**'
               - 'go.work'
@@ -58,6 +62,60 @@ jobs:
               - 'go.work'
               - 'go.work.sum'
               - '.github/workflows/ci.yml'
+
+  # The installer had no job at all: it was built only by release.yml, which
+  # runs on a tag. So the boundary between its window and its Rust — the
+  # frontend sends camelCase, the struct was snake_case — was never checked by
+  # anything, and an install that chose any option failed with "missing field
+  # `model_backend`" while one taking every default worked, because those
+  # fields are all single words.
+  installer:
+    needs: changes
+    if: needs.changes.outputs.installer == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/installer
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/installer/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # What Tauri draws with on Linux, and none of it is on the runner. Needed
+      # even to compile: the crate links against webkit2gtk.
+      - name: Bundling dependencies
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - run: make deps
+
+      # The sidecar has to exist for the crate to build — tauri resolves
+      # externalBin at compile time — but it need not be the real thing to
+      # type-check and test the boundary.
+      - name: Stand in for the sidecars
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/binaries
+          triple=$(rustc -Vv | awk '/^host:/ {print $2}')
+          for name in oa brain dex; do
+            printf '#!/bin/sh\nexit 0\n' > "src-tauri/binaries/$name-$triple"
+            chmod +x "src-tauri/binaries/$name-$triple"
+          done
+
+      - name: Generate the icon set
+        run: npx tauri icon src-tauri/icons/icon.png
+
+      - run: make check
 
   brain:
     needs: changes

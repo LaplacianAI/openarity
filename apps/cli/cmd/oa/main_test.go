@@ -98,7 +98,14 @@ func TestEveryCommandIsRegistered(t *testing.T) {
 		registered[cmd.Name()] = true
 	}
 
-	for _, want := range []string{"whoami", "config", "context", "teams", "channels", "sessions"} {
+	// Every noun, not a subset. This list had drifted three commands behind
+	// the code, which is the failure it exists to prevent: a package that is
+	// built and never registered passes every test written about its body,
+	// and `unused` stays quiet because its own test calls New.
+	for _, want := range []string{
+		"whoami", "config", "context", "teams", "channels",
+		"sessions", "users", "login", "logout", "stack",
+	} {
 		if !registered[want] {
 			t.Errorf("%q is not on the root: %v", want, registered)
 		}

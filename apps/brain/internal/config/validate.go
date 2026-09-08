@@ -71,7 +71,7 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
-	if err := checkURL("OMNI_ROUTE_URL", c.OmniRouteURL, httpSchemes...); err != nil {
+	if err := checkURL("MODEL_BASE_URL", c.ModelBaseURL, httpSchemes...); err != nil {
 		errs = append(errs, err)
 	}
 
