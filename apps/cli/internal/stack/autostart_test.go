@@ -184,3 +184,46 @@ func TestTheSystemdUnitRestartsAndStartsAtLogin(t *testing.T) {
 		}
 	}
 }
+
+// launchd throws an agent's output away unless it is told where to put it, so
+// an agent that exits 1 leaves a status in `launchctl list` and nothing else.
+// That is what "the dashboard refuses to connect" looked like from the
+// outside: no log, no next step.
+func TestTheLaunchAgentHasSomewhereToWrite(t *testing.T) {
+	t.Parallel()
+
+	u, err := UnitFor("darwin", "/Users/someone", "/Applications/Openarity.app/Contents/MacOS/oa", "/Users/someone/install")
+	if err != nil {
+		t.Fatalf("UnitFor(darwin) = %v", err)
+	}
+
+	for _, key := range []string{"StandardOutPath", "StandardErrorPath"} {
+		if !strings.Contains(u.Content, key) {
+			t.Errorf("the plist sets no %s, so a failed start says nothing anywhere", key)
+		}
+	}
+	if !strings.Contains(u.Content, filepath.Join("/Users/someone/install", "logs", "autostart.log")) {
+		t.Errorf("the plist writes outside the install:\n%s", u.Content)
+	}
+}
+
+// Loading the agent runs it at once, which during setup means arriving at an
+// install setup has already started — where `oa stack start` says so and
+// exits 0. Plain KeepAlive restarts an agent whatever its exit status, so
+// that clean exit would be restarted every ten seconds for as long as the
+// other supervisor lived.
+func TestTheLaunchAgentRestartsOnlyAFailure(t *testing.T) {
+	t.Parallel()
+
+	u, err := UnitFor("darwin", "/Users/someone", "/oa", "/Users/someone/install")
+	if err != nil {
+		t.Fatalf("UnitFor(darwin) = %v", err)
+	}
+
+	if !strings.Contains(u.Content, "SuccessfulExit") {
+		t.Error("KeepAlive does not name SuccessfulExit, so a deliberate exit is restarted forever")
+	}
+	if strings.Contains(u.Content, "<key>KeepAlive</key>\n\t<true/>") {
+		t.Error("KeepAlive is still unconditional")
+	}
+}

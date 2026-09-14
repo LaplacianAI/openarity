@@ -226,6 +226,18 @@ func newStartCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				return err
 			}
 
+			// Two things start an install and both are meant to: setup,
+			// and the autostart unit at login — which on macOS also fires
+			// the moment the agent is loaded, which is during setup. Exiting
+			// 0 rather than refusing, because launchd restarts an agent that
+			// fails and would spin for as long as the other one lives.
+			if pid := running(layout); pid != 0 {
+				opts.Out.Note(fmt.Sprintf(
+					"Openarity is already running at http://127.0.0.1:%d/ui, supervised by pid %d",
+					state.Ports.API, pid))
+				return nil
+			}
+
 			stack, err := build(cmd.Context(), layout, state)
 			if err != nil {
 				return err

@@ -154,13 +154,16 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 	}
 	s.report(Event{Step: StepIdentity, Phase: PhaseDone})
 
-	s.report(Event{Step: StepStart, Phase: PhaseStarted})
-	if err := s.Steps.StartStack(ctx, plan); err != nil {
-		s.report(Event{Step: StepStart, Phase: PhaseFailed, Detail: err.Error()})
-		return Result{}, err
-	}
-	s.report(Event{Step: StepStart, Phase: PhaseDone})
-
+	// Written before the stack is started, not after: starting it is
+	// `oa stack start`, and that reads this file to know what to start. With
+	// the two the other way round the supervisor came up, said "no install at
+	// /tmp/v17 — run `oa stack setup` first", and exited, while setup waited
+	// four minutes for it.
+	//
+	// The cost is that a failed start leaves an install that `setup` will
+	// refuse to redo — which is right, because by this point it is an
+	// install: the cluster, the migrations and dex are all done, and
+	// `oa stack start` is the thing to run.
 	if err := SaveState(s.Layout.State, State{
 		Root:     s.Layout.Root,
 		Versions: plan.Versions,
@@ -171,6 +174,13 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 	}); err != nil {
 		return Result{}, err
 	}
+
+	s.report(Event{Step: StepStart, Phase: PhaseStarted})
+	if err := s.Steps.StartStack(ctx, plan); err != nil {
+		s.report(Event{Step: StepStart, Phase: PhaseFailed, Detail: err.Error()})
+		return Result{}, err
+	}
+	s.report(Event{Step: StepStart, Phase: PhaseDone})
 
 	url := fmt.Sprintf("http://%s:%d/ui", loopback, plan.Ports.API)
 

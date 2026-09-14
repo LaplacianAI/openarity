@@ -51,7 +51,7 @@ func realSteps(d *engine.Downloader, platform engine.Platform) engine.Steps {
 			return installGateway(ctx, d, platform, p)
 		},
 
-		StartStack: stopPostgres,
+		StartStack: startStack,
 
 		Open: openBrowser,
 	}

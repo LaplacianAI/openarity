@@ -53,6 +53,13 @@ func UnitFor(goos, home, exe, root string) (Unit, error) {
 	}
 }
 
+// KeepAlive is a dict rather than <true/> deliberately. Loading the agent
+// runs it at once, which during setup means arriving at an install setup has
+// already started — and `oa stack start` says so and exits 0. Plain KeepAlive
+// restarts an agent whatever its exit status, so that clean exit would be
+// restarted every ten seconds for as long as the other supervisor lived.
+// SuccessfulExit false means "restart it only if it failed", which is the
+// thing actually wanted: survive a crash, accept a deliberate stop.
 func launchdPlist(exe, root string) string {
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -71,12 +78,29 @@ func launchdPlist(exe, root string) string {
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<true/>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
 	<key>ProcessType</key>
 	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>` + xmlEscape(autostartLog(root)) + `</string>
+	<key>StandardErrorPath</key>
+	<string>` + xmlEscape(autostartLog(root)) + `</string>
 </dict>
 </plist>
 `
+}
+
+// autostartLog is where a start nobody watched says what went wrong.
+//
+// Without it launchd throws the output away: an agent that exits 1 leaves a
+// status in `launchctl list` and nothing else, so "the dashboard refuses to
+// connect" has no next step. systemd keeps its own journal, which is why only
+// launchd needs this.
+func autostartLog(root string) string {
+	return filepath.Join(root, "logs", "autostart.log")
 }
 
 func systemdUnit(exe, root string) string {
