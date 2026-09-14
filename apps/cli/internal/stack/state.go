@@ -43,7 +43,6 @@ type Ports struct {
 	Webhook  int `yaml:"webhook"`
 	Dex      int `yaml:"dex"`
 	Postgres int `yaml:"postgres"`
-	MinIO    int `yaml:"minio,omitempty"`
 	Gateway  int `yaml:"gateway,omitempty"`
 }
 

@@ -27,15 +27,14 @@ type Answers struct {
 	ModelBackend string
 	ModelPath    string
 
-	Objects   string
-	Endpoint  string
-	Bucket    string
-	Region    string
-	MinIOPath string
-	Secrets   string
-	Address   string
-	KVMount   string
-	Gateway   string
+	Objects  string
+	Endpoint string
+	Bucket   string
+	Region   string
+	Secrets  string
+	Address  string
+	KVMount  string
+	Gateway  string
 }
 
 // any reports whether a flag answered anything at all.
@@ -61,7 +60,6 @@ func (a Answers) settings(base engine.Settings) engine.Settings {
 		&out.ObjectsEndpoint: a.Endpoint,
 		&out.ObjectsBucket:   a.Bucket,
 		&out.ObjectsRegion:   a.Region,
-		&out.MinIOPath:       a.MinIOPath,
 		&out.SecretsBackend:  a.Secrets,
 		&out.SecretsAddr:     a.Address,
 		&out.SecretsKVMount:  a.KVMount,
@@ -209,16 +207,17 @@ const adminToken = "OPENARITY_SECRETS_ADMIN_TOKEN"
 
 // fillPaths supplies the directories nobody was asked for.
 //
-// Two fields in the installer window start empty and say so — "Blank puts it
+// A field in the installer window starts empty and says so — "Blank puts it
 // inside the install" — and the window sends that empty string as the answer.
 // The terminal wizard never sees the problem, because there a blank answer
 // takes the default it offered; the window skips the wizard entirely, a
 // sidecar having no terminal to prompt at, and nothing filled the gap.
 //
-// Both refusals reached a person as "setup exited with Some(1)". The gateway
-// was fixed first and MinIO was not, which is the whole reason this is one
-// function over a list rather than a check per field: the next directory
-// somebody adds should be a line here, not another bug report.
+// The refusal reached a person as "setup exited with Some(1)", twice: the
+// gateway was fixed and its sibling was not. That is why this is one list
+// rather than a check per field — the next directory somebody adds should be
+// a line here, not another bug report — and the list is down to one entry
+// only because MinIO went away, not because the shape was wrong.
 //
 // Here rather than in Validate, because validating must not change what it is
 // validating, and here rather than in Settings, which has no idea where the
@@ -230,7 +229,6 @@ func (w *wizard) fillPaths(s *engine.Settings) {
 		name   string
 	}{
 		{needed: s.RunsGateway(), into: &s.ModelPath, name: "gateway"},
-		{needed: s.RunsMinIO(), into: &s.MinIOPath, name: "minio"},
 	} {
 		if field.needed && *field.into == "" {
 			*field.into = filepath.Join(w.root, field.name)
@@ -244,25 +242,12 @@ func (w *wizard) objects(s *engine.Settings) error {
 		[]choice{
 			{"filesystem", "On this machine", "In the install directory. Backed up when you back that up."},
 			{"memory", "In memory", "Lost every time it restarts. For trying it out."},
-			{"minio", "Run MinIO here", "An object store of your own, started and stopped with everything else."},
-			{"s3", "Somewhere else", "A bucket you already have — AWS, Cloudflare R2, a MinIO on another machine."},
+			{"s3", "Somewhere else", "A bucket you already have — AWS, Cloudflare R2, or a MinIO somebody already runs."},
 		})
 	if err != nil {
 		return err
 	}
 	s.ObjectsBackend = answer
-
-	if answer == "minio" {
-		if s.MinIOPath, err = w.text("Where should MinIO keep its files?",
-			"Anywhere with room. An external drive is fine.",
-			filepath.Join(w.root, "minio")); err != nil {
-			return err
-		}
-		if s.ObjectsBucket, err = w.text("Bucket", "Created for you.", "openarity"); err != nil {
-			return err
-		}
-		return nil
-	}
 
 	if answer != "s3" {
 		return nil

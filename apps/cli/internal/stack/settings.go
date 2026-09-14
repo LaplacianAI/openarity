@@ -14,8 +14,6 @@ type Settings struct {
 	ObjectsBucket   string `yaml:"objects_bucket,omitempty"`
 	ObjectsRegion   string `yaml:"objects_region,omitempty"`
 
-	MinIOPath string `yaml:"minio_path,omitempty"`
-
 	SecretsBackend string `yaml:"secrets_backend"`
 	SecretsAddr    string `yaml:"secrets_addr,omitempty"`
 	SecretsKVMount string `yaml:"secrets_kv_mount,omitempty"`
@@ -52,10 +50,6 @@ func (s Settings) Environment() string {
 	return "development"
 }
 
-// RunsMinIO reports whether this install supervises an object store of its
-// own, rather than reaching one somebody else runs.
-func (s Settings) RunsMinIO() bool { return s.ObjectsBackend == "minio" }
-
 // RunsGateway reports whether this install has a model gateway to provision
 // and supervise. Neither of them ships a binary, so "running one" means
 // downloading a runtime and installing into it.
@@ -76,19 +70,9 @@ func (s Settings) GatewayRuntime() string {
 	}
 }
 
-// The brain has three object backends and minio is not one of them: MinIO is
-// S3, and what makes it MinIO is the endpoint. The distinction matters to the
-// installer, which has to download and supervise one, and to nothing else.
-func (s Settings) brainObjectsBackend() string {
-	if s.RunsMinIO() {
-		return "s3"
-	}
-	return s.ObjectsBackend
-}
-
 func (s Settings) Env() []string {
 	out := []string{
-		"OPENARITY_OBJECTS_BACKEND=" + s.brainObjectsBackend(),
+		"OPENARITY_OBJECTS_BACKEND=" + s.ObjectsBackend,
 		"OPENARITY_SECRETS_BACKEND=" + s.SecretsBackend,
 	}
 
@@ -150,7 +134,15 @@ func ReadCredentials(path string) (map[string]string, error) {
 
 func (s Settings) Validate() error {
 	switch s.ObjectsBackend {
-	case "memory", "filesystem", "s3", "minio":
+	case "memory", "filesystem", "s3":
+	case "minio":
+		// Named rather than folded into "unknown", because an install made
+		// before this was removed says minio in its own stack.yaml and the
+		// person reading that has done nothing wrong. MinIO's publisher
+		// archived the open-source server and took every binary down —
+		// dl.min.io answers 410 for every version and every platform — so
+		// there is nothing left to run.
+		return errors.New("stack: MinIO is no longer published — its own project was archived and every binary withdrawn; point objects_backend at s3 with an endpoint instead")
 	default:
 		return fmt.Errorf("stack: unknown objects backend %q", s.ObjectsBackend)
 	}
@@ -163,9 +155,6 @@ func (s Settings) Validate() error {
 
 	if s.ObjectsBackend == "s3" && s.ObjectsBucket == "" {
 		return errors.New("stack: an S3 object store needs a bucket")
-	}
-	if s.RunsMinIO() && s.MinIOPath == "" {
-		return errors.New("stack: a MinIO of our own needs a directory to keep its data in")
 	}
 	if s.SecretsBackend != "static" && s.SecretsAddr == "" {
 		return errors.New("stack: an external secret store needs an address")

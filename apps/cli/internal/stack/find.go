@@ -104,8 +104,8 @@ type DownloadingFinder struct {
 
 	// Looked in before the install's own bin/, and before anything is
 	// downloaded. It is where --bin-dir points: a developer with a locally
-	// built brain still wants Postgres and MinIO fetched rather than having
-	// to build those too.
+	// built brain still wants Postgres fetched rather than having to build
+	// that too.
 	Override string
 }
 
@@ -168,18 +168,6 @@ func (f DownloadingFinder) download(ctx context.Context, name string) error {
 
 		dist := filepath.Join(f.Layout.Bin, "postgres-dist")
 		if err := f.Downloader.Postgres(ctx, url, url+".sha256", dist); err != nil {
-			return err
-		}
-		f.Downloader.report(Event{Step: StepDownload, Phase: PhaseDone, Detail: name})
-		return nil
-	}
-
-	if name == "minio" {
-		url, err := f.Platform.MinIOURL(MinIOVersion)
-		if err != nil {
-			return err
-		}
-		if err := f.Downloader.Binary(ctx, url, url+".sha256sum", filepath.Join(f.Layout.Bin, "minio"+suffix(f.Platform))); err != nil {
 			return err
 		}
 		f.Downloader.report(Event{Step: StepDownload, Phase: PhaseDone, Detail: name})

@@ -14,7 +14,7 @@ with no desktop.
 ## Build it first
 
 Nothing has been released, so the parts that are only ours have to be built.
-Postgres and MinIO are fetched from their own publishers and are not affected.
+Postgres is fetched from its own publisher and is not affected.
 
 ```sh
 git clone https://github.com/LaplacianAI/openarity
@@ -43,7 +43,7 @@ does not list.
 
 {{< callout type="info" >}}
 Once there is a release, everything above disappears: the installer fetches
-`brain` and `dex` the way it already fetches Postgres and MinIO.
+`brain` and `dex` the way it already fetches Postgres.
 {{< /callout >}}
 
 ## The installer
@@ -66,7 +66,7 @@ make bundle
 `make bundle` produces a `.dmg`, `.msi` or `.deb` under
 `src-tauri/target/release/bundle/`. Tauri v2 needs Rust 1.77 or newer.
 
-What you see is six steps, in this order:
+What you see is seven steps, in this order:
 
 | | |
 | ------------------------ | -------------------------------------------------- |
@@ -113,8 +113,14 @@ It asks three things, each with a recommended answer you take by pressing
 enter:
 
 **Where files are kept** — transcripts, uploads, anything an agent produces.
-On this machine, in memory, a MinIO it runs and supervises for you, or a bucket
-you already have anywhere S3-compatible.
+On this machine, in memory, or a bucket you already have anywhere
+S3-compatible — including a MinIO of your own, pointed at by its endpoint.
+
+Openarity used to offer to run a MinIO for you. It cannot any more: its
+publisher archived the open-source server and withdrew every binary, so
+`dl.min.io` answers `410 Gone` for every version and every platform. An
+install whose `stack.yaml` still says `minio` is told that rather than told
+its backend is unknown.
 
 **Where credentials are kept** — the tokens Openarity uses to reach the
 services you connect to it. In the brain's own process, which loses them on
@@ -184,7 +190,7 @@ assumed: a token holding only this policy can write
 `secret/data/teams/T1/channels/C1` and is refused
 `secret/data/teams/T1/tokens/K1`, refused a list, and refused its own policy.
 
-A token that cannot do all six is refused at the first one it cannot, and named:
+A token that cannot do all seven is refused at the first one it cannot, and named:
 
 ```text
 oa: stack: that token may not enable the KV v2 mount at secret/ — minting needs
@@ -307,7 +313,6 @@ problem. What it settled on is in `stack.yaml` and in `oa stack status`.
 | Brain webhook | `21121` |
 | Model gateway | `20128` |
 | Postgres      | `21432` |
-| MinIO         | `21900` |
 | dex           | `5556`  |
 
 ## Uninstalling

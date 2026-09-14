@@ -111,7 +111,7 @@ export function whatIsMissing(choices: {
       say: "Admin token is empty. Openarity needs one to create the role it logs in with.",
     },
     {
-      when: choices.objects === "s3" || choices.objects === "minio",
+      when: choices.objects === "s3",
       blank: choices.bucket,
       say: "Bucket is empty. Files have to go somewhere with a name.",
     },

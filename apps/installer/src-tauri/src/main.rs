@@ -40,7 +40,6 @@ pub struct Choices {
     access_key: String,
     secret_key: String,
     model_key: String,
-    minio_path: String,
 }
 
 #[tauri::command]
@@ -49,8 +48,8 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
     // them. Without this it has nowhere to get either: there is no published
     // release to download from, and the install stopped at "dex is not
     // published yet — build it and pass --bin-dir" after fetching 70MB of
-    // Postgres. Postgres and MinIO are still downloaded; --bin-dir means look
-    // here first, not only here.
+    // Postgres. Postgres is still downloaded; --bin-dir means look here
+    // first, not only here.
     let beside_us = std::env::current_exe()
         .map_err(|e| e.to_string())?
         .parent()
@@ -79,7 +78,6 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
         ("--secrets-addr", &choices.address),
         ("--secrets-mount", &choices.kv_mount),
         ("--model-gateway", &choices.gateway),
-        ("--minio-path", &choices.minio_path),
     ] {
         if !value.is_empty() {
             args.push(flag.to_string());
@@ -178,7 +176,7 @@ mod tests {
     /// rather than in somebody's installer.
     const FROM_THE_WINDOW: &str = r#"{
         "root": "",
-        "objects": "minio",
+        "objects": "s3",
         "secrets": "openbao",
         "modelBackend": "omniroute",
         "modelPath": "/somewhere/gateway",
@@ -192,8 +190,7 @@ mod tests {
         "gatewayPassword": "a-dashboard-password",
         "accessKey": "an-access-key",
         "secretKey": "a-secret-key",
-        "modelKey": "a-model-key",
-        "minioPath": "/somewhere/minio"
+        "modelKey": "a-model-key"
     }"#;
 
     #[test]
@@ -209,7 +206,6 @@ mod tests {
         assert_eq!(choices.access_key, "an-access-key");
         assert_eq!(choices.secret_key, "a-secret-key");
         assert_eq!(choices.model_key, "a-model-key");
-        assert_eq!(choices.minio_path, "/somewhere/minio");
     }
 
     /// snake_case is what it used to want, and is not what arrives.

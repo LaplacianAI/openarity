@@ -174,12 +174,10 @@ it("wants no token when the credentials stay in Openarity", () => {
   ).toBeNull();
 });
 
-it("wants a bucket from the two backends that store into one", () => {
-  for (const objects of ["s3", "minio"]) {
-    expect(
-      whatIsMissing({ secrets: "static", adminToken: "", objects, bucket: "" }),
-    ).toMatch(/Bucket/);
-  }
+it("wants a bucket from the backend that stores into one", () => {
+  expect(
+    whatIsMissing({ secrets: "static", adminToken: "", objects: "s3", bucket: "" }),
+  ).toMatch(/Bucket/);
   expect(
     whatIsMissing({ secrets: "static", adminToken: "", objects: "filesystem", bucket: "" }),
   ).toBeNull();

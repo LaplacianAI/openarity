@@ -202,7 +202,6 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 	cmd.Flags().StringVar(&given.Endpoint, "objects-endpoint", "", "an S3-compatible endpoint, blank for AWS")
 	cmd.Flags().StringVar(&given.Bucket, "objects-bucket", "", "the bucket, which must already exist")
 	cmd.Flags().StringVar(&given.Region, "objects-region", "", "the bucket's region")
-	cmd.Flags().StringVar(&given.MinIOPath, "minio-path", "", "where a MinIO of our own keeps its files")
 	cmd.Flags().StringVar(&given.Secrets, "secrets", "", "where credentials are kept: static, openbao or vault")
 	cmd.Flags().StringVar(&given.Address, "secrets-addr", "", "the address of an external secret store")
 	cmd.Flags().StringVar(&given.KVMount, "secrets-mount", "", "the KV mount to use")
@@ -334,7 +333,6 @@ func newStatusCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 
 			ports := map[string]int{
 				"postgres": state.Ports.Postgres,
-				"minio":    state.Ports.MinIO,
 				"gateway":  state.Ports.Gateway,
 				"dex":      state.Ports.Dex,
 				"brain":    state.Ports.API,
@@ -373,9 +371,6 @@ func newStatusCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 // The order they start in, which is the order worth reading them in.
 func componentsOf(state engine.State) []string {
 	names := []string{"postgres"}
-	if state.Settings.RunsMinIO() {
-		names = append(names, "minio")
-	}
 	if state.Settings.RunsGateway() {
 		names = append(names, "gateway")
 	}

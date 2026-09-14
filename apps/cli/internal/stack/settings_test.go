@@ -204,70 +204,12 @@ func TestSettingsThatCannotWorkAreRefusedAtSetup(t *testing.T) {
 	}{
 		{"s3 with no bucket", Settings{ObjectsBackend: "s3", SecretsBackend: "static"}},
 		{"openbao with no address", Settings{ObjectsBackend: "filesystem", SecretsBackend: "openbao"}},
-		{"an invented object store", Settings{ObjectsBackend: "minio", SecretsBackend: "static"}},
+		{"an invented object store", Settings{ObjectsBackend: "ceph", SecretsBackend: "static"}},
 		{"an invented secret store", Settings{ObjectsBackend: "filesystem", SecretsBackend: "1password"}},
 	} {
 		if err := tc.s.Validate(); err == nil {
 			t.Errorf("%s: Validate() = nil, want an error", tc.name)
 		}
-	}
-}
-
-// The brain has three object backends and minio is not one of them. What makes
-// an S3 store MinIO is the endpoint, so the distinction exists for the
-// installer — which has to download and supervise one — and for nothing else.
-func TestMinIOReachesTheBrainAsS3(t *testing.T) {
-	t.Parallel()
-
-	s := Settings{
-		ObjectsBackend:  "minio",
-		MinIOPath:       "/data/minio",
-		ObjectsEndpoint: "http://127.0.0.1:21900",
-		ObjectsBucket:   "openarity",
-		SecretsBackend:  "static",
-	}
-
-	if err := s.Validate(); err != nil {
-		t.Fatalf("Validate() = %v", err)
-	}
-	if !s.RunsMinIO() {
-		t.Error("RunsMinIO() = false for a minio install")
-	}
-
-	for _, entry := range s.Env() {
-		if entry == "OPENARITY_OBJECTS_BACKEND=minio" {
-			t.Error("the brain was told about a backend it does not have")
-		}
-	}
-
-	env := strings.Join(s.Env(), " ")
-	if !strings.Contains(env, "OPENARITY_OBJECTS_BACKEND=s3") {
-		t.Errorf("a minio install did not reach the brain as s3:\n%s", env)
-	}
-	if !strings.Contains(env, "OPENARITY_OBJECTS_ENDPOINT=http://127.0.0.1:21900") {
-		t.Errorf("a minio install carried no endpoint:\n%s", env)
-	}
-}
-
-// Someone who points at a bucket they already have is not running one, and
-// must not have a MinIO started for them.
-func TestPlainS3DoesNotRunMinIO(t *testing.T) {
-	t.Parallel()
-
-	s := Settings{ObjectsBackend: "s3", ObjectsBucket: "theirs", SecretsBackend: "static"}
-	if s.RunsMinIO() {
-		t.Error("RunsMinIO() = true for a bucket somebody else runs")
-	}
-}
-
-// Without a directory there is nothing for MinIO to serve, and the failure
-// would arrive when the first file is written rather than at setup.
-func TestMinIOWithNowhereToPutFilesIsRefused(t *testing.T) {
-	t.Parallel()
-
-	s := Settings{ObjectsBackend: "minio", SecretsBackend: "static"}
-	if err := s.Validate(); err == nil {
-		t.Error("a MinIO install with no data directory validated")
 	}
 }
 
@@ -360,5 +302,25 @@ func TestTheGatewaySettingsHoldNoCredential(t *testing.T) {
 		if strings.Contains(strings.ToUpper(env), "PASSWORD") {
 			t.Errorf("Env() carries %q, which belongs in the credentials file", env)
 		}
+	}
+}
+
+// An install made before MinIO was removed still says minio in its own
+// stack.yaml, and the person reading that did nothing wrong. "unknown objects
+// backend" would be a lie: it was known, and its publisher took it away.
+func TestAnOldMinIOInstallIsToldWhatHappened(t *testing.T) {
+	t.Parallel()
+
+	err := Settings{ObjectsBackend: "minio", SecretsBackend: "static"}.Validate()
+	if err == nil {
+		t.Fatal("Validate() = nil, want minio refused")
+	}
+	for _, want := range []string{"no longer published", "s3"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Validate() = %q, want it to mention %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "unknown") {
+		t.Errorf("Validate() = %q, want it to say what happened rather than call it unknown", err)
 	}
 }

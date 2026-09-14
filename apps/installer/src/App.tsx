@@ -25,7 +25,6 @@ export function App() {
   const [address, setAddress] = useState("http://127.0.0.1:8200");
   const [kvMount, setKVMount] = useState("secret");
   const [adminToken, setAdminToken] = useState("");
-  const [minioPath, setMinioPath] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
@@ -64,8 +63,7 @@ export function App() {
           objects,
           secrets,
           endpoint: objects === "s3" ? endpoint : "",
-          bucket: objects === "s3" || objects === "minio" ? bucket : "",
-          minioPath: objects === "minio" ? minioPath : "",
+          bucket: objects === "s3" ? bucket : "",
           region: objects === "s3" ? region : "",
           address: secrets === "static" ? "" : address,
           kvMount: secrets === "static" ? "" : kvMount,
@@ -111,28 +109,15 @@ export function App() {
           options={[
             ["filesystem", "On this machine"],
             ["memory", "In memory — lost on restart"],
-            ["minio", "Run MinIO here — an object store of your own"],
             ["s3", "Somewhere else — a bucket you already have"],
           ]}
         />
 
-        {objects === "minio" && (
-          <div className="follow">
-            <Field
-              label="Where should MinIO keep its files?"
-              hint="Blank puts them inside the install. An external drive is fine."
-              value={minioPath}
-              onChange={setMinioPath}
-            />
-            <Field label="Bucket" hint="Created for you." value={bucket} onChange={setBucket} />
-          </div>
-        )}
-
         {objects === "s3" && (
           <div className="follow">
-            <Field label="Endpoint" hint="Blank for AWS. For MinIO, http://127.0.0.1:9000" value={endpoint} onChange={setEndpoint} />
+            <Field label="Endpoint" hint="Blank for AWS. For a MinIO you already run, http://127.0.0.1:9000" value={endpoint} onChange={setEndpoint} />
             <Field label="Bucket" hint="It must already exist." value={bucket} onChange={setBucket} />
-            <Field label="Region" hint="MinIO ignores this." value={region} onChange={setRegion} />
+            <Field label="Region" hint="Ignored by most S3-compatible servers." value={region} onChange={setRegion} />
             <Field label="Access key" value={accessKey} onChange={setAccessKey} />
             <Field label="Secret key" value={secretKey} onChange={setSecretKey} secret />
           </div>

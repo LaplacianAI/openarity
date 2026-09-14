@@ -8,7 +8,6 @@ import (
 const (
 	PostgresVersion = "18.6.0"
 	DexVersion      = "v2.45.1"
-	MinIOVersion    = "RELEASE.2025-09-07T16-13-09Z"
 
 	// The runtimes a model gateway needs, downloaded for the same reason
 	// Postgres is: a personal install may not assume anything is already on
@@ -30,7 +29,6 @@ const (
 
 	mavenBase = "https://repo1.maven.org/maven2/io/zonky/test/postgres"
 	dexBase   = "https://github.com/LaplacianAI/openarity/releases/download"
-	minioBase = "https://dl.min.io/server/minio/release"
 	uvBase    = "https://github.com/astral-sh/uv/releases/download"
 	nodeBase  = "https://nodejs.org/dist"
 )
@@ -80,19 +78,6 @@ func (p Platform) PostgresURL(version string) (string, error) {
 
 	artifact := "embedded-postgres-binaries-" + name
 	return fmt.Sprintf("%s/%s/%s/%s-%s.jar", mavenBase, artifact, version, artifact, version), nil
-}
-
-// MinIOURL names the pinned artifact rather than the floating alias beside
-// it. Every platform uses the same file name in the archive directory —
-// including Windows, whose current-release download is minio.exe but whose
-// archived one is not.
-func (p Platform) MinIOURL(version string) (string, error) {
-	switch p.GOOS {
-	case "darwin", "linux", "windows":
-	default:
-		return "", fmt.Errorf("stack: no MinIO build for %s/%s", p.GOOS, p.GOARCH)
-	}
-	return fmt.Sprintf("%s/%s-%s/archive/minio.%s", minioBase, p.GOOS, p.Arch(), version), nil
 }
 
 // uvTriple is Rust's target naming, which is what uv publishes under.
