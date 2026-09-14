@@ -38,30 +38,35 @@ type Answers struct {
 	Gateway   string
 }
 
-func (a Answers) complete() bool {
-	return a.Objects != "" && a.Secrets != ""
+// any reports whether a flag answered anything at all.
+//
+// It used to be complete(), needing both --objects and --secrets, and anything
+// short of that fell through to the defaults with every flag discarded in
+// silence. `--secrets openbao --secrets-addr …` installed with the secrets in
+// the brain's own process and said nothing: credentials in a place nobody
+// chose, and stack.yaml the only evidence. Flags are overrides, so one is
+// enough, and the rest take the default they would have taken anyway.
+func (a Answers) any() bool {
+	return a != Answers{}
 }
 
 func (a Answers) settings(base engine.Settings) engine.Settings {
 	out := base
-	out.ObjectsBackend = a.Objects
-	if a.ModelBackend != "" {
-		out.ModelBackend = a.ModelBackend
-	}
-	if a.ModelPath != "" {
-		out.ModelPath = a.ModelPath
-	}
-	if a.MinIOPath != "" {
-		out.MinIOPath = a.MinIOPath
-	}
-	out.SecretsBackend = a.Secrets
 
+	// Every field guarded, because a flag nobody passed must not overwrite the
+	// default with "". The two that were not guarded are the two that could
+	// only ever be set together, which is exactly why it was not noticed.
 	for target, value := range map[*string]string{
+		&out.ObjectsBackend:  a.Objects,
 		&out.ObjectsEndpoint: a.Endpoint,
 		&out.ObjectsBucket:   a.Bucket,
 		&out.ObjectsRegion:   a.Region,
+		&out.MinIOPath:       a.MinIOPath,
+		&out.SecretsBackend:  a.Secrets,
 		&out.SecretsAddr:     a.Address,
 		&out.SecretsKVMount:  a.KVMount,
+		&out.ModelBackend:    a.ModelBackend,
+		&out.ModelPath:       a.ModelPath,
 		&out.ModelBaseURL:    a.Gateway,
 	} {
 		if value != "" {
@@ -114,11 +119,19 @@ func (w *wizard) Run(ctx context.Context) (engine.Settings, map[string]string, e
 		}
 	}
 
-	if w.given.complete() {
+	if w.given.any() {
 		settings = w.given.settings(settings)
 		w.fillPaths(&settings)
 		if err := settings.Validate(); err != nil {
 			return settings, w.creds, err
+		}
+
+		// Whatever the flags did not answer took a default, and a default
+		// nobody chose should be visible rather than only in stack.yaml:
+		// --secrets on its own still decides where files and models come from.
+		if !w.quiet {
+			w.say(fmt.Sprintf("Taking the flags as the answers: files %s, credentials %s, models %s.",
+				settings.ObjectsBackend, settings.SecretsBackend, settings.ModelBackend))
 		}
 		return settings, w.creds, w.mint(ctx, settings)
 	}

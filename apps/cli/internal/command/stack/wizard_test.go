@@ -14,8 +14,8 @@ import (
 	engine "github.com/LaplacianAI/openarity/apps/cli/internal/stack"
 )
 
-// The wizard writes nowhere and asks nothing in these tests: every one of them
-// supplies a complete set of answers, which is the path the installer window
+// The wizard writes nowhere and asks nothing in these tests: they answer with
+// flags, which is the path the installer window takes and the path a script
 // takes.
 func quietOptions() *cli.Options {
 	return &cli.Options{
@@ -25,9 +25,10 @@ func quietOptions() *cli.Options {
 	}
 }
 
-// The window fills every answer, because a sidecar has no terminal to prompt
-// at. Anything short of that has to fall back to asking or to the defaults.
-func TestAnswersAreOnlyCompleteWithBothBackends(t *testing.T) {
+// One flag is enough. Requiring two meant `--secrets openbao` on its own was
+// discarded in silence and the install kept credentials in the brain's own
+// process — a place nobody chose, reported nowhere.
+func TestOneAnswerIsEnoughToBeTakenAsTheAnswers(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -36,13 +37,38 @@ func TestAnswersAreOnlyCompleteWithBothBackends(t *testing.T) {
 		want bool
 	}{
 		{"nothing", Answers{}, false},
-		{"only objects", Answers{Objects: "filesystem"}, false},
-		{"only secrets", Answers{Secrets: "static"}, false},
-		{"both", Answers{Objects: "filesystem", Secrets: "static"}, true},
+		{"only objects", Answers{Objects: "filesystem"}, true},
+		{"only secrets", Answers{Secrets: "openbao"}, true},
+		{"only the secret store's address", Answers{Address: "http://127.0.0.1:28200"}, true},
+		{"only the model backend", Answers{ModelBackend: "litellm"}, true},
+		{"both backends", Answers{Objects: "filesystem", Secrets: "static"}, true},
 	} {
-		if got := tc.a.complete(); got != tc.want {
-			t.Errorf("%s: complete() = %v, want %v", tc.name, got, tc.want)
+		if got := tc.a.any(); got != tc.want {
+			t.Errorf("%s: any() = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// The bug itself, at the level it was found: one flag, and the setting it
+// names is the setting that ends up in the install.
+func TestASingleAnswerReachesTheSettings(t *testing.T) {
+	t.Parallel()
+
+	base := engine.DefaultSettings()
+	got := Answers{Secrets: "openbao", Address: "http://127.0.0.1:28200"}.settings(base)
+
+	if got.SecretsBackend != "openbao" {
+		t.Errorf("SecretsBackend = %q, want the one the flag named", got.SecretsBackend)
+	}
+	if got.SecretsAddr != "http://127.0.0.1:28200" {
+		t.Errorf("SecretsAddr = %q, want the one the flag named", got.SecretsAddr)
+	}
+	// And nothing it did not name was blanked on the way through.
+	if got.ObjectsBackend != base.ObjectsBackend {
+		t.Errorf("ObjectsBackend = %q, want the default %q kept", got.ObjectsBackend, base.ObjectsBackend)
+	}
+	if got.ModelBackend != base.ModelBackend {
+		t.Errorf("ModelBackend = %q, want the default %q kept", got.ModelBackend, base.ModelBackend)
 	}
 }
 
@@ -448,4 +474,27 @@ func aStoreThatAnswers(t *testing.T) string {
 	}))
 	t.Cleanup(server.Close)
 	return server.URL
+}
+
+// Through Run, which is where the branch was wrong: one flag and no terminal
+// used to mean the defaults, silently. Objects only here, because secrets only
+// would go on to mint against an address nothing is listening at.
+func TestOneFlagAndNoTerminalDoesNotFallBackToTheDefaults(t *testing.T) {
+	t.Parallel()
+
+	opts := quietOptions()
+	w := newWizard(opts, true, Answers{Objects: "memory"}, "/an/install")
+
+	settings, _, err := w.Run(t.Context())
+	if err != nil {
+		t.Fatalf("Run() with one answer = %v", err)
+	}
+	if settings.ObjectsBackend != "memory" {
+		t.Errorf("ObjectsBackend = %q, want the answer that was given rather than the default",
+			settings.ObjectsBackend)
+	}
+	if settings.SecretsBackend != engine.DefaultSettings().SecretsBackend {
+		t.Errorf("SecretsBackend = %q, want the default for the question nobody answered",
+			settings.SecretsBackend)
+	}
 }
