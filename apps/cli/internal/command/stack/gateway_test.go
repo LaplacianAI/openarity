@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -133,14 +134,28 @@ func TestTheRuntimePathsMatchTheArchiveLayout(t *testing.T) {
 		t.Errorf("npmCLI() = %q, want the JavaScript entry point", npm)
 	}
 
+	// nodeBin is what goes on PATH, and it is the directory the archive puts
+	// node, npm and npx in — beside each other, and in different places on
+	// Windows. Asserted against the layout rather than against nodeBin's own
+	// answer, which would agree with itself whatever it said.
 	if runtime.GOOS == "windows" {
 		if !strings.HasSuffix(node, "node.exe") {
 			t.Errorf("nodeExe() = %q, want node.exe", node)
+		}
+		if got, want := nodeBin(root), filepath.Join(root, "node"); got != want {
+			t.Errorf("nodeBin() = %q, want %q", got, want)
 		}
 		return
 	}
 	if !strings.HasSuffix(node, filepath.Join("bin", "node")) {
 		t.Errorf("nodeExe() = %q, want bin/node", node)
+	}
+	if got, want := nodeBin(root), filepath.Join(root, "node", "bin"); got != want {
+		t.Errorf("nodeBin() = %q, want %q", got, want)
+	}
+	if filepath.Dir(node) != nodeBin(root) {
+		t.Errorf("nodeBin() = %q but node is in %q; PATH would not find it",
+			nodeBin(root), filepath.Dir(node))
 	}
 	if !strings.Contains(npm, filepath.Join("lib", "node_modules")) {
 		t.Errorf("npmCLI() = %q, want it under lib/node_modules", npm)
@@ -201,4 +216,61 @@ func TestOmniRouteDoesNotPhoneHomeOnATimer(t *testing.T) {
 			t.Errorf("%s is not set, so the gateway syncs on a schedule", want)
 		}
 	}
+}
+
+// `npm install` of a package with a native addon runs
+// `sh -c node scripts/build-from-source.js`. We drive npm as
+// `node npm-cli.js`, which needs nothing on PATH, so this stayed invisible
+// until a dependency wanted node itself — and then it was
+// "sh: node: command not found", minutes into the install, on a machine that
+// was never meant to have a node of its own.
+func TestNodeIsOnThePathItGivesItsChildren(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "gateway")
+
+	var path string
+	for _, entry := range nodeEnv(root) {
+		if key, value, _ := strings.Cut(entry, "="); key == "PATH" {
+			path = value
+		}
+	}
+	if path == "" {
+		t.Fatal("nodeEnv() sets no PATH")
+	}
+
+	first, rest, _ := strings.Cut(path, string(os.PathListSeparator))
+	if first != nodeBin(root) {
+		t.Errorf("PATH starts %q, want the node we downloaded at %q", first, nodeBin(root))
+	}
+	// And the machine's own PATH is still behind it, because a package script
+	// reaching for sh, git or a compiler has to find one.
+	if rest != os.Getenv("PATH") {
+		t.Errorf("PATH after the node directory = %q, want the machine's own", rest)
+	}
+}
+
+// The supervised gateway gets the same treatment: OmniRoute runs under node
+// and spawns node, so a PATH that was only right during the install would
+// fail at start instead.
+func TestTheRunningGatewayAlsoFindsNode(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "gateway")
+	child := gatewayChild(
+		engine.Settings{ModelBackend: "omniroute", ModelPath: root},
+		map[string]string{}, 20128, filepath.Join(root, "gateway.log"))
+	if child == nil {
+		t.Fatal("gatewayChild() = nil for omniroute")
+	}
+
+	for _, entry := range child.Env {
+		if key, value, _ := strings.Cut(entry, "="); key == "PATH" {
+			if !strings.HasPrefix(value, nodeBin(root)) {
+				t.Errorf("the gateway's PATH = %q, want it to start with %q", value, nodeBin(root))
+			}
+			return
+		}
+	}
+	t.Error("the gateway is started with no PATH at all")
 }

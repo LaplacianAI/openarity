@@ -109,12 +109,32 @@ func uvEnv(root string) []string {
 }
 
 func nodeEnv(root string) []string {
-	return append(baseEnv(), []string{
+	// The node we downloaded, first on PATH. We drive npm as `node
+	// npm-cli.js`, which needs no PATH at all and hides this until a
+	// dependency wants one: a package with a native addon builds it with
+	// `sh -c node scripts/build-from-source.js`, and on a machine with no
+	// system node — which is every machine this is for — that is
+	// "sh: node: command not found", several minutes into the install.
+	//
+	// npm and npx sit in the same directory, so a package script running
+	// either of those finds them too.
+	return append([]string{
+		"PATH=" + nodeBin(root) + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}, append(systemEnv(), []string{
 		"npm_config_cache=" + filepath.Join(root, "npm-cache"),
 		"npm_config_update_notifier=false",
 		"HOME=" + root,
 		"USERPROFILE=" + root,
-	}...)
+	}...)...)
+}
+
+// nodeBin holds node, npm and npx. Windows puts them at the root of the
+// archive; everywhere else they are under bin/.
+func nodeBin(root string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(root, "node")
+	}
+	return filepath.Join(root, "node", "bin")
 }
 
 // baseEnv is the floor a child needs to run at all: a PATH for anything it
@@ -122,14 +142,20 @@ func nodeEnv(root string) []string {
 // process being created. Deliberately not the parent's whole environment —
 // an OPENARITY_* variable in the shell that ran setup must not reach these.
 func baseEnv() []string {
-	out := []string{"PATH=" + os.Getenv("PATH")}
-	if runtime.GOOS == "windows" {
-		out = append(out,
-			"SystemRoot="+os.Getenv("SystemRoot"),
-			"TEMP="+os.Getenv("TEMP"),
-			"TMP="+os.Getenv("TMP"))
+	return append([]string{"PATH=" + os.Getenv("PATH")}, systemEnv()...)
+}
+
+// systemEnv is everything in that floor except PATH, for the callers that
+// build their own.
+func systemEnv() []string {
+	if runtime.GOOS != "windows" {
+		return nil
 	}
-	return out
+	return []string{
+		"SystemRoot=" + os.Getenv("SystemRoot"),
+		"TEMP=" + os.Getenv("TEMP"),
+		"TMP=" + os.Getenv("TMP"),
+	}
 }
 
 func nodeExe(root string) string {
