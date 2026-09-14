@@ -98,14 +98,32 @@ func installOmniRoute(ctx context.Context, d *engine.Downloader, platform engine
 // Without these it writes to the person's home directory, and uninstalling
 // Openarity would leave a Python and a gigabyte of packages behind.
 func uvEnv(root string) []string {
-	return append(baseEnv(), []string{
+	// The tools uv installs, first on PATH. uv says so itself at the end of
+	// every install — "`<root>/bin` is not on your PATH" — and litellm ships
+	// three executables that may reach for each other.
+	return append([]string{
+		"PATH=" + filepath.Join(root, "bin") + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}, append(systemEnv(), []string{
 		"UV_CACHE_DIR=" + filepath.Join(root, "cache"),
 		"UV_PYTHON_INSTALL_DIR=" + filepath.Join(root, "python"),
 		"UV_TOOL_DIR=" + filepath.Join(root, "tools"),
 		"UV_TOOL_BIN_DIR=" + filepath.Join(root, "bin"),
+
+		// A Python we chose, downloaded, rather than whatever the machine
+		// has. "uv brings its own Python" was not true without these two:
+		// uv took macOS's /usr/bin/python3, which is 3.9.6, and LiteLLM needs
+		// >=3.10 — so the install ended in "No solution found when resolving
+		// dependencies", naming a Python nobody asked it to use.
+		//
+		// only-managed rather than the default, because a machine that does
+		// have a suitable python3 would then install against that one, and
+		// removing it later would break an Openarity that looked fine.
+		"UV_PYTHON=" + engine.GatewayPythonVersion,
+		"UV_PYTHON_PREFERENCE=only-managed",
+
 		"HOME=" + root,
 		"USERPROFILE=" + root,
-	}...)
+	}...)...)
 }
 
 func nodeEnv(root string) []string {
@@ -137,16 +155,11 @@ func nodeBin(root string) string {
 	return filepath.Join(root, "node", "bin")
 }
 
-// baseEnv is the floor a child needs to run at all: a PATH for anything it
-// shells out to, and SystemRoot on Windows, where an empty block stops a
-// process being created. Deliberately not the parent's whole environment —
-// an OPENARITY_* variable in the shell that ran setup must not reach these.
-func baseEnv() []string {
-	return append([]string{"PATH=" + os.Getenv("PATH")}, systemEnv()...)
-}
-
-// systemEnv is everything in that floor except PATH, for the callers that
-// build their own.
+// systemEnv is the rest of the floor a child needs to run at all, once its
+// caller has built the PATH it wants: SystemRoot on Windows, where an empty
+// block stops a process being created at all. Deliberately not the parent's
+// whole environment — an OPENARITY_* variable in the shell that ran setup
+// must not reach a gateway.
 func systemEnv() []string {
 	if runtime.GOOS != "windows" {
 		return nil

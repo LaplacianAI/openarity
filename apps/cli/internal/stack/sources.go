@@ -21,6 +21,13 @@ const (
 	UvVersion   = "0.12.10"
 	NodeVersion = "v24.20.0"
 
+	// The interpreter uv provisions for LiteLLM, which requires >=3.10,<3.15.
+	// Pinned rather than left to uv: without being told, uv takes whatever
+	// python3 is on PATH if it satisfies the range, so the same install would
+	// be a different Python on every machine — and on macOS, which still
+	// ships 3.9.6, it satisfies nothing and the install fails outright.
+	GatewayPythonVersion = "3.12"
+
 	// The gateways, pinned like everything else. LiteLLM's proxy extra is
 	// what serves an OpenAI-compatible endpoint; the bare package is a
 	// library.

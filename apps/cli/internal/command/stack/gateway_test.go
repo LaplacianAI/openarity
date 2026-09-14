@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -273,4 +274,72 @@ func TestTheRunningGatewayAlsoFindsNode(t *testing.T) {
 		}
 	}
 	t.Error("the gateway is started with no PATH at all")
+}
+
+// "uv brings its own Python" was not true. uv takes whatever python3 is on
+// PATH when it satisfies the requirement, and on macOS — which still ships
+// 3.9.6 — it satisfies nothing, so `uv tool install litellm[proxy]` ended in
+// "No solution found when resolving dependencies", naming a Python nobody
+// asked it to use.
+func TestLiteLLMGetsAPythonWeChoseRatherThanTheMachines(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{}
+	for _, entry := range uvEnv(filepath.Join(t.TempDir(), "gateway")) {
+		key, value, _ := strings.Cut(entry, "=")
+		env[key] = value
+	}
+
+	if env["UV_PYTHON"] != engine.GatewayPythonVersion {
+		t.Errorf("UV_PYTHON = %q, want the pinned %q", env["UV_PYTHON"], engine.GatewayPythonVersion)
+	}
+	// only-managed rather than the default: a machine that does have a
+	// suitable python3 would otherwise install against it, and removing that
+	// Python later would break an Openarity that looked fine.
+	if env["UV_PYTHON_PREFERENCE"] != "only-managed" {
+		t.Errorf("UV_PYTHON_PREFERENCE = %q, want only-managed", env["UV_PYTHON_PREFERENCE"])
+	}
+	if env["UV_PYTHON_INSTALL_DIR"] == "" {
+		t.Error("UV_PYTHON_INSTALL_DIR is unset, so a downloaded Python lands outside the install")
+	}
+}
+
+// The pin has to be a version LiteLLM accepts: it requires >=3.10,<3.15, and
+// the failure for a version outside that is a resolver message rather than
+// anything naming the pin.
+func TestThePinnedPythonIsOneLiteLLMAccepts(t *testing.T) {
+	t.Parallel()
+
+	major, minor, ok := strings.Cut(engine.GatewayPythonVersion, ".")
+	if !ok || major != "3" {
+		t.Fatalf("GatewayPythonVersion = %q, want a 3.x version", engine.GatewayPythonVersion)
+	}
+	n, err := strconv.Atoi(minor)
+	if err != nil {
+		t.Fatalf("GatewayPythonVersion = %q: %v", engine.GatewayPythonVersion, err)
+	}
+	if n < 10 || n >= 15 {
+		t.Errorf("GatewayPythonVersion = %q, outside LiteLLM's >=3.10,<3.15",
+			engine.GatewayPythonVersion)
+	}
+}
+
+// Same reason as node's: uv says "`<root>/bin` is not on your PATH" at the end
+// of every install, and litellm ships three executables that may reach for
+// each other.
+func TestTheToolsUvInstallsAreOnThePath(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "gateway")
+	for _, entry := range uvEnv(root) {
+		if key, value, _ := strings.Cut(entry, "="); key == "PATH" {
+			first, _, _ := strings.Cut(value, string(os.PathListSeparator))
+			if first != filepath.Join(root, "bin") {
+				t.Errorf("PATH starts %q, want the tools uv installed at %q",
+					first, filepath.Join(root, "bin"))
+			}
+			return
+		}
+	}
+	t.Error("uvEnv() sets no PATH")
 }

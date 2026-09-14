@@ -258,7 +258,16 @@ fetches a runtime as well — that is the whole cost, and it is not small.
 | **LiteLLM** | uv, which brings a Python | ~1.0GB  | no                |
 | **OmniRoute** | Node                    | ~3.7GB  | yes               |
 
-Both are measured, not estimated. Both are supervised like everything else —
+The Python is 3.12, downloaded rather than found. Left to itself uv takes
+whatever `python3` is on the machine when it satisfies LiteLLM's
+`>=3.10,<3.15` — so the same install would be a different interpreter on
+every laptop, and on macOS, which still ships 3.9.6, it satisfies nothing and
+the install ends in "No solution found when resolving dependencies". Node is
+pinned for the same reason and put on the PATH its own children get: a
+package with a native addon builds it by shelling out to `node`, on a machine
+chosen for not having one.
+
+Both sizes are measured, not estimated. Both are supervised like everything else —
 started and stopped with `oa stack start` and `oa stack stop`, and listed by
 `oa stack status`.
 
