@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { apply, nothingYet, readLines, STEPS, type Event } from "./steps";
+import { apply, nothingYet, readLines, STEPS, whatIsMissing, type Event } from "./steps";
 
 function run(events: Event[]) {
   return events.reduce(apply, nothingYet);
@@ -152,4 +152,41 @@ it("keeps the failure a step reported", () => {
   ).reduce(apply, nothingYet);
 
   expect(progress.failure).toContain("needs a directory");
+});
+
+it("refuses an empty admin token when the store is somebody else's", () => {
+  expect(
+    whatIsMissing({ secrets: "openbao", adminToken: "", objects: "filesystem", bucket: "" }),
+  ).toMatch(/Admin token/);
+});
+
+// The failure that sent somebody here: a manager fills the box, React never
+// sees it, and the field holds whitespace or nothing while showing dots.
+it("treats a field holding only spaces as empty", () => {
+  expect(
+    whatIsMissing({ secrets: "openbao", adminToken: "   ", objects: "filesystem", bucket: "" }),
+  ).toMatch(/Admin token/);
+});
+
+it("wants no token when the credentials stay in Openarity", () => {
+  expect(
+    whatIsMissing({ secrets: "static", adminToken: "", objects: "filesystem", bucket: "" }),
+  ).toBeNull();
+});
+
+it("wants a bucket from the two backends that store into one", () => {
+  for (const objects of ["s3", "minio"]) {
+    expect(
+      whatIsMissing({ secrets: "static", adminToken: "", objects, bucket: "" }),
+    ).toMatch(/Bucket/);
+  }
+  expect(
+    whatIsMissing({ secrets: "static", adminToken: "", objects: "filesystem", bucket: "" }),
+  ).toBeNull();
+});
+
+it("lets a complete set of answers through", () => {
+  expect(
+    whatIsMissing({ secrets: "openbao", adminToken: "a-token", objects: "s3", bucket: "openarity" }),
+  ).toBeNull();
 });

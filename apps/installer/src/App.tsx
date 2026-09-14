@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-shell";
 import { useEffect, useState } from "react";
 
-import { apply, nothingYet, readLines, STEPS, type Progress } from "./steps";
+import { apply, nothingYet, readLines, STEPS, whatIsMissing, type Progress } from "./steps";
 
 type Screen = "questions" | "installing" | "done";
 
@@ -26,6 +26,7 @@ export function App() {
   const [kvMount, setKVMount] = useState("secret");
   const [adminToken, setAdminToken] = useState("");
   const [minioPath, setMinioPath] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
     const stop = listen<{ line: string }>("install", (e) => {
@@ -45,6 +46,16 @@ export function App() {
   const runsGateway = modelBackend === "litellm" || modelBackend === "omniroute";
 
   const start = async () => {
+    // Checked before anything is spawned: setup refuses these too, but the
+    // answer is in front of the person right now. The rules are in steps.ts
+    // so they can be tested without a window.
+    const missing = whatIsMissing({ secrets, adminToken, objects, bucket });
+    if (missing) {
+      setProblem(missing);
+      return;
+    }
+    setProblem(null);
+
     setScreen("installing");
     try {
       await invoke("install", {
@@ -212,6 +223,8 @@ export function App() {
           </div>
         )}
 
+        {problem && <p className="failure">{problem}</p>}
+
         <button type="button" className="primary" onClick={start}>
           Install
         </button>
@@ -300,10 +313,19 @@ function Field({
     <label className="field">
       <span>{label}</span>
       {hint && <small>{hint}</small>}
+      {/*
+        A password manager that fills a field without React seeing it leaves
+        the box showing dots and the state holding "", and the install then
+        fails saying no token was given. None of these has any effect on a
+        person typing.
+      */}
       <input
         type={secret ? "password" : "text"}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        autoComplete={secret ? "new-password" : "off"}
+        data-1p-ignore
+        data-lpignore="true"
       />
     </label>
   );

@@ -86,3 +86,41 @@ export function readLines(chunk: string): Event[] {
   }
   return out;
 }
+
+// What the window must not send, checked before anything is spawned.
+//
+// Setup refuses these too, and says so within a second — but the answer is in
+// front of the person here, and reaching them through a sidecar's stderr is
+// the long way round. A blank admin token is the one that matters: an app
+// opened from Finder inherits no shell environment, so the AppRole-already-in-
+// hand path `oa` supports cannot be reached from this window, and blank can
+// only mean blank — including when the box is showing dots a password manager
+// put there without React seeing them.
+//
+// A list rather than a check per field, so the next one is a line here.
+export function whatIsMissing(choices: {
+  secrets: string;
+  adminToken: string;
+  objects: string;
+  bucket: string;
+}): string | null {
+  const rules: Array<{ when: boolean; blank: string; say: string }> = [
+    {
+      when: choices.secrets !== "static",
+      blank: choices.adminToken,
+      say: "Admin token is empty. Openarity needs one to create the role it logs in with.",
+    },
+    {
+      when: choices.objects === "s3" || choices.objects === "minio",
+      blank: choices.bucket,
+      say: "Bucket is empty. Files have to go somewhere with a name.",
+    },
+  ];
+
+  for (const rule of rules) {
+    if (rule.when && rule.blank.trim() === "") {
+      return rule.say;
+    }
+  }
+  return null;
+}
