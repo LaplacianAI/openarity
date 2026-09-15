@@ -101,8 +101,55 @@ written outside this module gets the right number without knowing to try, and a
 run that failed half way still reports what it spent.
 
 **`events chan<- Event`** is optional; pass `nil` to ignore it. `TextEvent`,
-`ToolCallEvent`, `ToolResultEvent`, `UsageEvent` and `StepEvent` arrive as the
-run happens.
+`ToolCallEvent`, `ToolResultEvent`, `UsageEvent`, `StepEvent` and `SteerEvent`
+arrive as the run happens.
+
+## Steering a run
+
+`Run` waits. `Start` hands you a handle while it works, so you can say
+something to a run already in progress:
+
+```go
+run := runner.Start(ctx, spec, msgs, endpoint, events)
+
+go func() {
+    for ev := range events {
+        if call, ok := ev.(agent.ToolCallEvent); ok && wrongDirection(call) {
+            run.Steer("the bug is in vault.go — stop reading tests")
+        }
+    }
+}()
+
+result, err := run.Wait()
+```
+
+Nothing is interrupted. The model is not listening while a pattern works — it
+is called, it answers, and between those two moments it has no ears. So a steer
+waits, and rides the next request out.
+
+Where it lands depends on what the pattern has already built, and there is only
+one safe answer in each case. After a tool call the provider requires the very
+next message to be that call's result, so a user message wedged in between is a
+400 before the model sees anything — the steer is added to the end of the tool
+result instead, which is free-form text. Anywhere else it becomes a user
+message.
+
+**No pattern implements this.** Patterns reach the model through
+`ModelClient`, so the runner wraps that — the same seam it already uses to
+total usage. ReAct, Plan, ReWOO, Reflection and any pattern you write yourself
+are steerable without a line of change, and a pattern cannot forget to support
+it.
+
+Two things follow from the model having no ears, and both are visible rather
+than silent:
+
+- `Steer` returns `ErrRunFinished` once there is no further request to carry it.
+- A steer sent during what turns out to be the last call comes back on
+  `Result.UnappliedSteers` rather than disappearing. A steer that silently
+  vanishes is indistinguishable from one the model read and ignored.
+
+`Run` is unchanged and still the right call when you only want the answer — it
+is `Start(...).Wait()`.
 
 ## Patterns
 

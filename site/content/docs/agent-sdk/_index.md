@@ -23,6 +23,7 @@ go get github.com/LaplacianAI/openarity/sdk/agent
   {{< card link="custom-patterns" title="Writing a pattern" subtitle="The extension point that matters: your rules, in your code, keeping the shipped name." >}}
   {{< card link="mcp" title="MCP servers as tools" subtitle="Connect a server, get []agent.Tool. The loop never learns MCP exists." >}}
   {{< card link="tools-and-skills" title="Tools and skills" subtitle="Why sixty skills cost one entry in the tool list." >}}
+  {{< card link="steering" title="Steering a run" subtitle="Saying something to an agent that has already started, and where those words land." >}}
 {{< /cards >}}
 
 ## Why it is separate

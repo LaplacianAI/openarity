@@ -39,8 +39,69 @@ func New(clientFor ClientFactory, patterns ...Pattern) (*Runner, error) {
 	return &Runner{clientFor: clientFor, patterns: byName}, nil
 }
 
+// Start runs the same thing Run does, and hands back a handle while it works.
+//
+// Run is the whole API for a run you only wait for; this is for one you want
+// to say something to. It is additive on purpose — Run's signature is released
+// as v0.1.0 and already takes five arguments, so steering arrives as a second
+// entry point rather than a sixth parameter.
+//
+// The caller still owns events and still closes it. Wait blocks until the run
+// is over and may be called more than once.
+func (r *Runner) Start(ctx context.Context, spec Spec, msgs []Message,
+	endpoint Endpoint, events chan<- Event,
+) *Run {
+	run := &Run{box: &steerBox{}, done: make(chan struct{})}
+
+	go func() {
+		defer close(run.done)
+		result, err := r.run(ctx, spec, msgs, endpoint, events, run.box)
+
+		// Drained after the pattern has returned, so anything still waiting is
+		// something no request will ever carry. Reported rather than dropped.
+		result.UnappliedSteers = run.box.close()
+		run.result, run.err = result, err
+	}()
+
+	return run
+}
+
+// A Run is a run in progress. Steer may be called from any goroutine —
+// typically the one reading events, which is how a caller notices a run going
+// the wrong way in the first place.
+type Run struct {
+	box  *steerBox
+	done chan struct{}
+
+	result Result
+	err    error
+}
+
+// Steer says something to a run that has already started.
+//
+// It does not interrupt anything. The text waits, and is added to the next
+// request the pattern makes — onto the end of a tool result when one is being
+// sent, and as a user message otherwise.
+//
+// ErrRunFinished means there is no next request: the run is over, or over by
+// the time this was called. A steer sent during the model's last call is not
+// lost, but it is not applied either — it comes back on Result.UnappliedSteers.
+func (run *Run) Steer(text string) error { return run.box.add(text) }
+
+// Wait blocks until the run finishes and returns what it returned.
+func (run *Run) Wait() (Result, error) {
+	<-run.done
+	return run.result, run.err
+}
+
 func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 	endpoint Endpoint, events chan<- Event,
+) (Result, error) {
+	return r.Start(ctx, spec, msgs, endpoint, events).Wait()
+}
+
+func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
+	endpoint Endpoint, events chan<- Event, box *steerBox,
 ) (Result, error) {
 	if spec.Pattern == "" {
 		return Result{}, fmt.Errorf("the spec names no pattern; set Spec.Pattern to one of: %s",
@@ -63,9 +124,20 @@ func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 		return Result{}, fmt.Errorf("connecting to %s: %w", endpoint.BaseURL, err)
 	}
 
+	// Two wrappers, for the same reason: a pattern reaches the model through
+	// this interface and nothing else, so anything that must happen on every
+	// call belongs here rather than in a loop somebody has to remember to
+	// write. Steering goes inside the counter — it edits the request on its
+	// way out, and what the call costs is still measured at the call.
+	steered := &steeringClient{
+		inner: client,
+		box:   box,
+		emit:  func(e Event) { emit(ctx, events, e) },
+	}
+
 	// Wrapped so no pattern has to do its own accounting. A pattern written
 	// outside this module gets the right number without knowing to try.
-	counter := &countingClient{inner: client}
+	counter := &countingClient{inner: steered}
 
 	result, err := pattern.Run(ctx, Input{
 		Spec:     spec,

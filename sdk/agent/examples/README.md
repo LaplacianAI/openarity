@@ -11,6 +11,7 @@ go run ./examples/custom
 go run ./examples/rewoo
 go run ./examples/mcp
 go run ./examples/reflection
+go run ./examples/steering
 ```
 
 Or run every one of them:
@@ -27,6 +28,7 @@ make example
 | `rewoo`    | the same dependent chain under ReAct and under ReWOO, side by side    |
 | `mcp`      | an MCP server, in process, its tools reaching the loop as any other   |
 | `reflection` | a wrong first draft, and what catching it costs                     |
+| `steering` | a message sent to a run already in progress, and the tool result it rides |
 | `gateway`  | not an example: the stub and the printing the others share            |
 
 ## Against a real gateway
