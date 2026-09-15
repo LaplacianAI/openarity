@@ -42,11 +42,12 @@ func attempt() error {
 	}
 
 	steered := make(chan struct{})
+	var once sync.Once
 
 	spec := agent.Spec{
 		Model:    agent.ModelRef{Name: gateway.Model(), MaxTokens: 1024},
 		Pattern:  agent.PatternReAct,
-		System:   agent.System("You are a terse assistant. Use the tools you are given."),
+		System:   agent.System("You are a terse assistant. Always call the search tool before answering — never answer from memory."),
 		Tools:    []agent.Tool{search(steered)},
 		MaxSteps: 5,
 	}
@@ -66,12 +67,14 @@ func attempt() error {
 		for ev := range events {
 			switch e := ev.(type) {
 			case agent.ToolCallEvent:
-
-				fmt.Printf("tool     %s — steering it away\n", e.Name)
-				if err := run.Steer("the failure is in vault.go, stop reading tests"); err != nil {
-					fmt.Fprintln(os.Stderr, "steer:", err)
-				}
-				close(steered)
+				fmt.Printf("tool     %s\n", e.Name)
+				once.Do(func() {
+					fmt.Println("steer    sending it away from the tests")
+					if err := run.Steer("the failure is in vault.go, stop reading tests"); err != nil {
+						fmt.Fprintln(os.Stderr, "steer:", err)
+					}
+					close(steered)
+				})
 			case agent.SteerEvent:
 				fmt.Printf("steer    reached a request: %q\n", e.Text)
 			}
@@ -92,12 +95,22 @@ func attempt() error {
 func report(seen *recorder, result agent.Result) {
 	fmt.Println()
 
-	if req := seen.last(); len(req) > 0 {
-		carrier := req[len(req)-1]
-		fmt.Printf("carried by  a %s message, not one of its own:\n", carrier.Role)
-		for _, line := range strings.Split(strings.TrimSpace(carrier.Text()), "\n") {
+	req := seen.last()
+	for i, m := range req {
+		if !strings.Contains(m.Text(), "stop reading tests") {
+			continue
+		}
+		fmt.Printf("carried by  a %s message of its own, at index %d of %d:\n",
+			m.Role, i, len(req))
+		for _, line := range strings.Split(strings.TrimSpace(m.Text()), "\n") {
 			fmt.Printf("    │ %s\n", line)
 		}
+		if i+1 < len(req) {
+			fmt.Printf("\nstill last  a %s message — the steer did not follow the end of\n"+
+				"            the conversation, so the model could stop and answer\n",
+				req[len(req)-1].Role)
+		}
+		break
 	}
 
 	fmt.Printf("\ntranscript  %d messages, and the steer is in %d of them\n",
@@ -130,11 +143,20 @@ func search(steered <-chan struct{}) agent.Tool {
 			"properties": {"query": {"type": "string"}},
 			"required": ["query"]
 		}`),
-		Invoke: func(ctx context.Context, _ json.RawMessage) (string, error) {
+		Invoke: func(ctx context.Context, args json.RawMessage) (string, error) {
 			select {
 			case <-steered:
 			case <-ctx.Done():
 				return "", ctx.Err()
+			}
+			var in struct {
+				Query string `json:"query"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if strings.Contains(in.Query, "vault") {
+				return "vault.go:88  renewLease returns a nil lease when the token is already expired", nil
 			}
 			return "12 files match", nil
 		},

@@ -52,7 +52,7 @@ func text(m Message) string {
 	return b.String()
 }
 
-func TestASteerRidesTheToolResultRatherThanBecomingAMessage(t *testing.T) {
+func TestASteerBecomesAUserMessageAndLeavesTheToolResultAlone(t *testing.T) {
 	box := &steerBox{}
 	client, inner := steering(box, nil)
 
@@ -70,18 +70,21 @@ func TestASteerRidesTheToolResultRatherThanBecomingAMessage(t *testing.T) {
 	}
 
 	sent := inner.requests()[0].Messages
-	if len(sent) != len(msgs) {
-		t.Fatalf("sent %d messages, want %d — a steer must not be inserted after a tool call",
-			len(sent), len(msgs))
+	if len(sent) != len(msgs)+1 {
+		t.Fatalf("sent %d messages, want %d — the steer is a message of its own",
+			len(sent), len(msgs)+1)
 	}
-	if sent[2].Role != RoleTool {
-		t.Fatalf("the message after the tool call is %q, want %q", sent[2].Role, RoleTool)
+	if sent[2].Role != RoleTool || sent[2].ToolCallID != "1" {
+		t.Fatalf("the message after the tool call is %q, want the tool result", sent[2].Role)
 	}
-	if got := text(sent[2]); !strings.Contains(got, "the bug is in vault.go") {
-		t.Errorf("the tool result does not carry the steer:\n%s", got)
+	if got := text(sent[2]); got != "12 files" {
+		t.Errorf("the tool result was rewritten:\n%s", got)
 	}
-	if got := text(sent[2]); !strings.Contains(got, "12 files") {
-		t.Errorf("the tool result lost its own output:\n%s", got)
+	if sent[3].Role != RoleUser {
+		t.Errorf("the steer arrived as %q, want %q", sent[3].Role, RoleUser)
+	}
+	if got := text(sent[3]); !strings.Contains(got, "the bug is in vault.go") {
+		t.Errorf("the appended message does not carry the steer:\n%s", got)
 	}
 }
 
@@ -185,32 +188,133 @@ func TestEverySteerWaitingGoesOutOnTheNextRequest(t *testing.T) {
 		t.Fatalf("Complete() = %v", err)
 	}
 
-	got := text(inner.requests()[0].Messages[0])
-	first, second := strings.Index(got, "first"), strings.Index(got, "second")
+	var got []string
+	for _, m := range inner.requests()[0].Messages {
+		got = append(got, text(m))
+	}
+	joined := strings.Join(got, "\n")
+	first, second := strings.Index(joined, "first"), strings.Index(joined, "second")
 	if first < 0 || second < 0 {
-		t.Fatalf("a steer was dropped:\n%s", got)
+		t.Fatalf("a steer was dropped:\n%s", joined)
 	}
 	if first > second {
-		t.Errorf("the steers came out in the wrong order:\n%s", got)
+		t.Errorf("the steers came out in the wrong order:\n%s", joined)
+	}
+	if len(got) != 2 {
+		t.Errorf("two things the user said arrived as %d messages, want 2", len(got))
 	}
 }
 
-func TestASteerIsDeliveredOnce(t *testing.T) {
+func TestASteerStaysOnEveryLaterRequest(t *testing.T) {
 	box := &steerBox{}
 	client, inner := steering(box, nil)
 
-	if err := box.add("only once"); err != nil {
+	if err := box.add("stop reading tests"); err != nil {
 		t.Fatalf("add() = %v", err)
 	}
-	for range 2 {
+	for range 3 {
 		if _, err := client.Complete(t.Context(), Request{}); err != nil {
 			t.Fatalf("Complete() = %v", err)
 		}
 	}
 
-	second := inner.requests()[1]
-	if len(second.Messages) != 0 {
-		t.Errorf("the steer was sent a second time: %+v", second.Messages)
+	for i, req := range inner.requests() {
+		if len(req.Messages) != 1 {
+			t.Fatalf("request %d carried %d messages, want 1", i, len(req.Messages))
+		}
+		if got := text(req.Messages[0]); !strings.Contains(got, "stop reading tests") {
+			t.Errorf("request %d lost the steer:\n%s", i, got)
+		}
+		if got := strings.Count(text(req.Messages[0]), "stop reading tests"); got != 1 {
+			t.Errorf("request %d repeated the steer %d times", i, got)
+		}
+	}
+}
+
+func TestASteerIsAnnouncedOnlyWhenItIsNew(t *testing.T) {
+	var seen []string
+	box := &steerBox{}
+	client, _ := steering(box, func(e Event) {
+		if s, ok := e.(SteerEvent); ok {
+			seen = append(seen, s.Text)
+		}
+	})
+
+	if err := box.add("once"); err != nil {
+		t.Fatalf("add() = %v", err)
+	}
+	for range 3 {
+		if _, err := client.Complete(t.Context(), Request{}); err != nil {
+			t.Fatalf("Complete() = %v", err)
+		}
+	}
+
+	if len(seen) != 1 {
+		t.Errorf("announced %d times, want 1: %q", len(seen), seen)
+	}
+}
+
+func TestTheTranscriptRecordsWhatTheUserSaid(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleUser, Content: []Content{{Type: ContentText, Text: "why?"}}},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "1", Name: "grep"}}},
+		{Role: RoleTool, ToolCallID: "1", Content: []Content{{Type: ContentText, Text: "12 files"}}},
+		{Role: RoleAssistant, Content: []Content{{Type: ContentText, Text: "it is vault.go"}}},
+	}
+
+	got := recordSteers(msgs, []steer{{text: "stop reading tests", at: 3}})
+	if len(got) != len(msgs)+1 {
+		t.Fatalf("recorded %d messages, want %d", len(got), len(msgs)+1)
+	}
+	if got[3].Role != RoleUser {
+		t.Errorf("the steer sits at index 3 as %q, want %q", got[3].Role, RoleUser)
+	}
+	if !strings.Contains(text(got[3]), "stop reading tests") {
+		t.Errorf("the recorded message does not carry the steer:\n%s", text(got[3]))
+	}
+	if text(got[4]) != "it is vault.go" {
+		t.Errorf("the answer no longer ends the transcript: %q", text(got[4]))
+	}
+}
+
+func TestASteerStaysWhereItArrivedRatherThanFollowingTheEnd(t *testing.T) {
+	box := &steerBox{}
+	client, inner := steering(box, nil)
+
+	msgs := []Message{
+		{Role: RoleUser, Content: []Content{{Type: ContentText, Text: "why?"}}},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "1", Name: "grep"}}},
+		{Role: RoleTool, ToolCallID: "1", Content: []Content{{Type: ContentText, Text: "12 files"}}},
+	}
+	if err := box.add("look in vault.go"); err != nil {
+		t.Fatalf("add() = %v", err)
+	}
+	if _, err := client.Complete(t.Context(), Request{Messages: msgs}); err != nil {
+		t.Fatalf("Complete() = %v", err)
+	}
+
+	msgs = append(msgs,
+		Message{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "2", Name: "grep"}}},
+		Message{Role: RoleTool, ToolCallID: "2", Content: []Content{{Type: ContentText, Text: "vault.go:88"}}})
+	if _, err := client.Complete(t.Context(), Request{Messages: msgs}); err != nil {
+		t.Fatalf("Complete() = %v", err)
+	}
+
+	sent := inner.requests()[1].Messages
+	if got := sent[len(sent)-1]; got.Role != RoleTool {
+		t.Errorf("the request ends with a %q message, want the tool result — a steer that is\n"+
+			"always last reads as a fresh instruction every turn and the model never concludes",
+			got.Role)
+	}
+	if got := text(sent[3]); !strings.Contains(got, "look in vault.go") {
+		t.Errorf("the steer did not stay at the index it arrived at, index 3 holds:\n%s", got)
+	}
+}
+
+func TestNothingIsRecordedWhenNobodySteered(t *testing.T) {
+	msgs := []Message{{Role: RoleUser, Content: []Content{{Type: ContentText, Text: "why?"}}}}
+	if got := recordSteers(msgs, nil); len(got) != 1 {
+		t.Errorf("recordSteers() added %d messages to a run nobody steered", len(got)-1)
 	}
 }
 
@@ -247,7 +351,44 @@ func (p *obliviousPattern) Run(ctx context.Context, in Input) (Result, error) {
 	if _, err := in.Model.Complete(ctx, Request{Messages: msgs}); err != nil {
 		return Result{}, err
 	}
-	return Result{Output: "finished"}, nil
+	msgs = append(msgs, Message{
+		Role:    RoleAssistant,
+		Content: []Content{{Type: ContentText, Text: "finished"}},
+	})
+	return Result{Output: "finished", Messages: msgs}, nil
+}
+
+func TestTheRunnerPutsTheSteerIntoTheTranscriptItHandsBack(t *testing.T) {
+	inner := &recordingClient{}
+	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil }, &obliviousPattern{})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+
+	run := runner.Start(t.Context(), Spec{Pattern: "oblivious", MaxSteps: 1}, nil, Endpoint{}, nil)
+	if err := run.Steer("stop reading tests"); err != nil {
+		t.Fatalf("Steer() = %v", err)
+	}
+	result, err := run.Wait()
+	if err != nil {
+		t.Fatalf("Wait() = %v", err)
+	}
+
+	var found int
+	for _, m := range result.Messages {
+		if strings.Contains(text(m), "stop reading tests") {
+			found++
+			if m.Role != RoleUser {
+				t.Errorf("the transcript records the steer as %q, want %q", m.Role, RoleUser)
+			}
+		}
+	}
+	if found != 1 {
+		t.Fatalf("the transcript carries the steer %d times, want 1:\n%+v", found, result.Messages)
+	}
+	if last := result.Messages[len(result.Messages)-1]; text(last) != "finished" {
+		t.Errorf("the answer no longer ends the transcript: %q", text(last))
+	}
 }
 
 func TestAPatternThatKnowsNothingOfSteeringIsStillSteered(t *testing.T) {

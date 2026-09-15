@@ -105,8 +105,6 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 		emit:  func(e Event) { emit(ctx, events, e) },
 	}
 
-	// Wrapped so no pattern has to do its own accounting. A pattern written
-	// outside this module gets the right number without knowing to try.
 	counter := &countingClient{inner: steered}
 
 	result, err := pattern.Run(ctx, Input{
@@ -116,11 +114,9 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 		Events:   events,
 	})
 
-	// Set after the pattern returns and on the error path too: what a run that
-	// failed half way spent is still owed. This is the authoritative figure —
-	// a pattern may total its own for anyone calling it directly, but the
-	// count taken at the client is the one that cannot miss a call.
 	result.Usage = counter.spent()
+	result.Messages = recordSteers(result.Messages, box.applied())
+
 	return result, err
 }
 

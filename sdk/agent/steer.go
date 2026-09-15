@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"strings"
 	"sync"
 )
 
@@ -14,9 +13,15 @@ type SteerEvent struct{ Text string }
 
 func (SteerEvent) event() {}
 
+type steer struct {
+	text string
+	at   int
+}
+
 type steerBox struct {
 	mu       sync.Mutex
 	pending  []string
+	carried  []steer
 	finished bool
 }
 
@@ -31,13 +36,23 @@ func (b *steerBox) add(text string) error {
 	return nil
 }
 
-func (b *steerBox) drain() []string {
+func (b *steerBox) take(at int) (fresh []string, carried []steer) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	out := b.pending
+	fresh = b.pending
 	b.pending = nil
-	return out
+	for _, text := range fresh {
+		b.carried = append(b.carried, steer{text: text, at: at})
+	}
+	return fresh, slices.Clone(b.carried)
+}
+
+func (b *steerBox) applied() []steer {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return slices.Clone(b.carried)
 }
 
 func (b *steerBox) close() []string {
@@ -67,45 +82,34 @@ func (c *steeringClient) Stream(ctx context.Context, req Request) (Stream, error
 }
 
 func (c *steeringClient) apply(msgs []Message) []Message {
-	steers := c.box.drain()
-	if len(steers) == 0 {
-		return msgs
-	}
+	fresh, carried := c.box.take(len(msgs))
 
-	for _, text := range steers {
+	for _, text := range fresh {
 		if c.emit != nil {
 			c.emit(SteerEvent{Text: text})
 		}
 	}
-	block := steerBlock(steers)
+	return recordSteers(msgs, carried)
+}
+
+func steerMessage(text string) Message {
+	return Message{Role: RoleUser, Content: []Content{{
+		Type: ContentText,
+		Text: "The user sent this while you were working:\n" + text,
+	}}}
+}
+
+func recordSteers(msgs []Message, steers []steer) []Message {
+	if len(steers) == 0 {
+		return msgs
+	}
 
 	out := slices.Clone(msgs)
-	if last := len(out) - 1; last >= 0 && out[last].Role == RoleTool {
-		out[last] = withText(out[last], block)
-		return out
+	for i, s := range steers {
+		at := min(s.at+i, len(out))
+		out = slices.Insert(out, at, steerMessage(s.text))
 	}
-
-	return append(out, Message{
-		Role:    RoleUser,
-		Content: []Content{{Type: ContentText, Text: block}},
-	})
-}
-
-func steerBlock(steers []string) string {
-	var b strings.Builder
-	b.WriteString("The user sent this while you were working:\n")
-	for i, text := range steers {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString(text)
-	}
-	return b.String()
-}
-
-func withText(m Message, text string) Message {
-	m.Content = append(slices.Clone(m.Content), Content{Type: ContentText, Text: "\n\n" + text})
-	return m
+	return out
 }
 
 var _ ModelClient = (*steeringClient)(nil)
