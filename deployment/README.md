@@ -4,10 +4,59 @@ Nothing here is required to develop the brain — `go run ./cmd/brain` against a
 local Postgres is enough. These files exist so the dependencies are reproducible
 and so a deployment is a starting point rather than a blank page.
 
+## From a clone
+
+```sh
+cd deployment
+make start-docker
+```
+
+It asks which identity provider you want, generates everything that is
+missing, brings the whole stack up, waits until the brain answers, and prints
+the address and the sign-in.
+
+That is the only target that works on a machine which has never run this
+before. Everything in the next section assumes the setup already happened —
+`.env` is not in git, and neither are the two OpenBao keys, so a clone has
+none of them and `make staging` stops on its first line.
+
+What it generates, and only when it is absent:
+
+| | |
+| --- | --- |
+| `.env` | from `.env.example`, with every secret filled |
+| `BIND_ADDR` | this machine's LAN address — see below |
+| `DEX_PASSWORD_HASH` | a passphrase, hashed, printed once |
+| `openbao/keys/unseal.key` | 32 random bytes |
+| `openbao/keys/init-keys.json` | `bao init` |
+| the brain's AppRole | `bao approle`, written into `.env` |
+| authentik's OAuth provider | over its API, if you chose authentik |
+
+Run it twice and the second run changes nothing, apart from minting a fresh
+`secret_id` — a credential with a lease, so reissuing it is the cheap path to
+a stack whose store was rebuilt.
+
+```sh
+make start-docker PROVIDER=dex    # do not ask
+make start-docker BUILD=1         # build the brain from this tree, not the image
+```
+
+The stack it brings up is a staging one: OIDC only, no development token, the
+real OpenBao rather than the in-memory one, and MinIO for attachments.
+
+**It publishes on your LAN address, not loopback.** A token carries the issuer
+that minted it and the brain rejects one that disagrees, so the browser and
+the brain have to reach the provider at the same address — and on a laptop
+that rules out `127.0.0.1`, because the container's loopback is not the
+browser's. The identity provider and Postgres are therefore reachable from
+your network while the stack is up. On an untrusted network, run the brain on
+the host instead and leave `BIND_ADDR` alone.
+
 ## Commands
 
 The compose invocations below are long enough to be retyped wrongly, so the
-combinations that make sense have names:
+combinations that make sense have names. All of these need the setup above to
+have happened once:
 
 ```sh
 cd deployment
@@ -23,6 +72,10 @@ make logs       # follow the brain; make logs service=authentik-server
 make down       # stop everything, keeping the data
 make destroy    # and delete every volume
 ```
+
+`make up`, `make dev` and `make image` are the exception: they run with the
+development token and the in-memory OpenBao, so they need no `.env` at all.
+It is `dex` and `staging` that do.
 
 The raw commands still work and are what the rest of this file shows, because
 the flags are the explanation.

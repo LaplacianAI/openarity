@@ -42,3 +42,6 @@ apps/dashboard/node_modules/
 apps/dashboard/dist/
 apps/brain/internal/api/ui/dist/*
 !apps/brain/internal/api/ui/dist/.gitkeep
+
+# Python bytecode, from deployment/authentik-provision.py
+__pycache__/

@@ -75,6 +75,16 @@ BAO_KEYS := openbao/keys/init-keys.json
 help:
 	@grep -hE '^## ' $(MAKEFILE_LIST) | sed 's/## /  /'
 
+# The only target that works from a bare clone. Everything below assumes the
+# setup already happened — .env, and two OpenBao keys that are gitignored —
+# and stops on its first line without it.
+#
+#   PROVIDER=dex|authentik   skip the question
+#   BUILD=1                  build the brain from this tree, not the image
+## start-docker: set up whatever is missing and bring the whole stack up
+start-docker:
+	@./start-docker.sh
+
 ## up: dependencies only — Postgres, Redis, FalkorDB, OpenBao in dev mode
 up:
 	$(COMPOSE) up -d
