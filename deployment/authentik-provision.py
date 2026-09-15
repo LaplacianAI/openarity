@@ -19,6 +19,20 @@ import urllib.request
 URL = os.environ["AUTHENTIK_URL"].rstrip("/")
 TOKEN = os.environ["AUTHENTIK_TOKEN"]
 
+# Where the dashboard is served from — the brain's address, not authentik's.
+# They are different hosts and the callback belongs to the one running the
+# page that started the login. Building it from URL registered a redirect URI
+# on the identity provider's own origin, where nothing answers.
+DASHBOARD_ORIGIN = os.environ["DASHBOARD_ORIGIN"].rstrip("/")
+
+WANTED_REDIRECTS = [
+    # The device flow's own callback, which dex documents as internal: the
+    # provider redirects to it after the login rather than a browser.
+    "/device/callback",
+    f"{DASHBOARD_ORIGIN}/ui/callback",
+    "http://localhost:8080/callback",
+]
+
 
 def api(path, body=None, method=None):
     request = urllib.request.Request(
@@ -56,10 +70,34 @@ def existing(path, field, value):
     return None
 
 
+def repair_redirects(found):
+    """Add any redirect URI the provider is missing, keeping what is there.
+
+    A provider created against a different address — a LAN address the machine
+    no longer has, an ngrok tunnel long since expired — keeps those URIs, and
+    a login against the current address then fails on a redirect_uri the
+    provider has never heard of. Adding rather than replacing, because a URI
+    somebody added by hand for their own client is not ours to delete.
+    """
+    have = [entry["url"] for entry in found.get("redirect_uris", [])]
+    missing = [url for url in WANTED_REDIRECTS if url not in have]
+    if not missing:
+        return found
+
+    return api(
+        f"/providers/oauth2/{found['pk']}/",
+        {
+            "redirect_uris": found.get("redirect_uris", [])
+            + [{"matching_mode": "strict", "url": url} for url in missing]
+        },
+        method="PATCH",
+    )
+
+
 def provider():
     found = existing("/providers/oauth2/", "name", "openarity")
     if found:
-        return found
+        return repair_redirects(found)
 
     authorization = first(
         "/flows/instances/?designation=authorization", "authorization flow"
@@ -95,9 +133,7 @@ def provider():
             # match and every privileged call would answer 403.
             "sub_mode": "user_username",
             "redirect_uris": [
-                {"matching_mode": "strict", "url": "/device/callback"},
-                {"matching_mode": "strict", "url": f"{URL}/ui/callback"},
-                {"matching_mode": "strict", "url": "http://localhost:8080/callback"},
+                {"matching_mode": "strict", "url": url} for url in WANTED_REDIRECTS
             ],
         },
     )

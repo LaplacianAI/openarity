@@ -52,6 +52,11 @@ browser's. The identity provider and Postgres are therefore reachable from
 your network while the stack is up. On an untrusted network, run the brain on
 the host instead and leave `BIND_ADDR` alone.
 
+A `BIND_ADDR` of `0.0.0.0` is a fine thing to publish on and not an address
+anything can reach — `start-docker` uses the LAN address for every URL it
+writes in that case, because an issuer or a callback containing `0.0.0.0`
+leaves the brain retrying discovery against nothing.
+
 ## Commands
 
 The compose invocations below are long enough to be retyped wrongly, so the

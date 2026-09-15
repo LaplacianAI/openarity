@@ -139,15 +139,40 @@ lan_address() {
 ensure_bind_addr() {
 	if env_is_set BIND_ADDR; then
 		BIND_ADDR=$(env_value BIND_ADDR)
-		return
+	else
+		BIND_ADDR=$(lan_address)
+		[ -n "$BIND_ADDR" ] || die "Could not work out this machine's LAN address.
+Set it by hand and run again:  echo 'BIND_ADDR=<address>' >> deployment/.env"
+		env_set BIND_ADDR "$BIND_ADDR"
+		note "BIND_ADDR=$BIND_ADDR — detected"
 	fi
 
-	BIND_ADDR=$(lan_address)
-	[ -n "$BIND_ADDR" ] || die "Could not work out this machine's LAN address.
-Set it by hand and run again:  echo 'BIND_ADDR=<address>' >> deployment/.env"
+	# BIND_ADDR is an address to bind, and a wildcard is a perfectly good one:
+	# 0.0.0.0 publishes on every interface. It is not an address anything can
+	# *reach*, though — no issuer, no callback and no health poll may contain
+	# it, and writing one into OPENARITY_OIDC_ISSUER is what put a brain into
+	# a crash loop with "dial tcp 0.0.0.0:9000: connect: connection refused".
+	#
+	# So the two are separate from here down. BIND_ADDR is only ever handed to
+	# compose; REACH_ADDR is what goes into a URL.
+	case "$BIND_ADDR" in
+		0.0.0.0|::|'[::]'|'*')
+			REACH_ADDR=$(lan_address)
+			[ -n "$REACH_ADDR" ] || REACH_ADDR=127.0.0.1
+			note "BIND_ADDR=$BIND_ADDR publishes everywhere; addressing it as $REACH_ADDR"
+			;;
+		*)
+			REACH_ADDR=$BIND_ADDR
+			;;
+	esac
 
-	env_set BIND_ADDR "$BIND_ADDR"
-	note "BIND_ADDR=$BIND_ADDR — detected"
+	# Resolved once, here, because env_value succeeds with empty output when
+	# the key is absent — so `$(env_value API_PORT || echo 21120)` never took
+	# the fallback and wrote a redirect URI with no port in it at all:
+	# http://192.168.1.11:/ui/callback. ${x:-default} tests the value; `||`
+	# only tests the exit status.
+	API_PORT=$(env_value API_PORT || true)
+	API_PORT=${API_PORT:-21120}
 	say ""
 	say "  The identity provider and Postgres are reachable from your network"
 	say "  while the stack is up. That is the trade for a browser login that"
@@ -270,7 +295,7 @@ ensure_dex() {
 		say "  Write it down. Only its hash is kept, in deployment/.env."
 	fi
 
-	env_set OPENARITY_OIDC_ISSUER "http://$BIND_ADDR:5556"
+	env_set OPENARITY_OIDC_ISSUER "http://$REACH_ADDR:5556"
 	env_set OPENARITY_OIDC_AUDIENCE "openarity"
 	env_set OPENARITY_SUPER_ADMINS "$DEX_SUBJECT"
 }
@@ -289,12 +314,13 @@ ensure_authentik() {
 	token=$(env_value AUTHENTIK_BOOTSTRAP_TOKEN)
 
 	local client_id
-	client_id=$(AUTHENTIK_URL="http://$BIND_ADDR:9000" AUTHENTIK_TOKEN="$token" \
+	client_id=$(AUTHENTIK_URL="http://$REACH_ADDR:9000" AUTHENTIK_TOKEN="$token" \
+		DASHBOARD_ORIGIN="http://$REACH_ADDR:$API_PORT" \
 		python3 authentik-provision.py) ||
 		die "Could not provision authentik. Its log may say why:
   docker compose $COMPOSE_FILES logs authentik-server"
 
-	env_set OPENARITY_OIDC_ISSUER "http://$BIND_ADDR:9000/application/o/openarity/"
+	env_set OPENARITY_OIDC_ISSUER "http://$REACH_ADDR:9000/application/o/openarity/"
 	env_set OPENARITY_OIDC_AUDIENCE "$client_id"
 	env_set OPENARITY_SUPER_ADMINS "akadmin"
 	note "authentik provider ready"
@@ -309,7 +335,7 @@ ensure_authentik() {
 # DASHBOARD_ORIGIN/ui/callback, built from this same value, so a sign-in
 # started at loopback fails at the callback.
 wait_ready() {
-	local url="http://$BIND_ADDR:${API_PORT:-21120}/readyz" deadline
+	local url="http://$REACH_ADDR:$API_PORT/readyz" deadline
 	deadline=$(( $(date +%s) + 180 ))
 	while :; do
 		if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" 2>/dev/null)" = "200" ]; then
@@ -388,11 +414,10 @@ step "Starting"
 $COMPOSE --profile brain up -d $BUILD_FLAG
 wait_ready
 
-API_PORT=$(env_value API_PORT || true)
 say ""
 say "${bold}Openarity is running.${plain}"
 say ""
-say "  dashboard    http://$BIND_ADDR:${API_PORT:-21120}/ui"
+say "  dashboard    http://$REACH_ADDR:$API_PORT/ui"
 if [ "$PROVIDER" = dex ]; then
 	say "  sign in as   dev@openarity.local"
 	if [ -n "${DEX_PASSPHRASE:-}" ]; then
@@ -403,11 +428,11 @@ if [ "$PROVIDER" = dex ]; then
 		say "  passphrase   the one from the first run — deployment/.env has only its hash"
 	fi
 else
-	say "  authentik    http://$BIND_ADDR:9000"
+	say "  authentik    http://$REACH_ADDR:9000"
 	say "  sign in as   akadmin"
 	say "  passphrase   ${AUTHENTIK_PASSWORD:-AUTHENTIK_BOOTSTRAP_PASSWORD in deployment/.env}"
 fi
 say ""
-say "${dim}  oa context create local --server http://$BIND_ADDR:${API_PORT:-21120}${plain}"
+say "${dim}  oa context create local --server http://$REACH_ADDR:$API_PORT${plain}"
 say "${dim}  oa login${plain}"
 say ""
