@@ -73,7 +73,27 @@ provider issues.
 
 ---
 
-## B — compose, with authentik
+## B — compose, with an identity provider
+
+```sh
+cd deployment
+make start-docker
+```
+
+That is steps 1 to 6 below, done for you: it picks the address, writes `.env`
+with every secret generated, initialises OpenBao and mints the brain's
+AppRole, creates authentik's provider and application over its API, gives the
+device flow somewhere to enter the code, starts everything and waits until the
+brain answers. It asks which provider you want first — **dex** is one
+container configured from a file in this repository, **authentik** is three
+containers and an admin UI. Run it twice and the second run changes nothing.
+
+Carry on at [step 7](#7-log-in), which is where a person still has work to do.
+
+The rest of this section is what it does, for when you are setting this up
+against infrastructure that is not yours — minting an AppRole writes a policy
+and a role into a secret store you may share with something else, and that is
+worth doing deliberately rather than by script.
 
 ### 1. Choose the address
 

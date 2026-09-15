@@ -11,6 +11,12 @@ Start with the argument, then the parts that exist.
   {{< card link="surfaces" title="Surfaces" icon="template" subtitle="One graph, more than one way in. Direction, not documentation." >}}
 {{< /cards >}}
 
+Then run it, in one command.
+
+{{< cards >}}
+  {{< card link="install" title="Install" icon="download" subtitle="Docker: Postgres, a secret store, an identity provider, the brain and the dashboard." >}}
+{{< /cards >}}
+
 Then the two things that run today. Neither section assumes you have read the
 other.
 

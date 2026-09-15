@@ -1,6 +1,6 @@
 ---
 title: Platform
-weight: 4
+weight: 5
 next: /docs/platform/quick-start
 ---
 
