@@ -25,9 +25,23 @@ type Event struct {
 
 	URL string `json:"url,omitempty"`
 
+	// What the window puts on its last screen. A person who closes it has to
+	// be able to find all of this again, and the only copy of the passphrase
+	// is the one they write down — so the window shows the sign-in, the
+	// directory it all lives in, and the gateway's own address when there is
+	// one, rather than a URL and a password on their own.
+	Sign       string `json:"sign_in,omitempty"`
+	Root       string `json:"root,omitempty"`
+	GatewayURL string `json:"gateway_url,omitempty"`
+
 	Passphrase      string `json:"passphrase,omitempty"`
 	GatewayPassword string `json:"gateway_password,omitempty"`
 }
+
+// DexUser is the one account a personal install has. Named here because three
+// places say it — the dex configuration that creates it, the line setup
+// prints, and the window's last screen — and two of them had it typed out.
+const DexUser = "dev@openarity.local"
 
 type Reporter func(Event)
 

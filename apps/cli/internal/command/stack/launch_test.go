@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -135,22 +134,16 @@ func TestAnInstallAlreadyHeldIsRecognised(t *testing.T) {
 	}
 }
 
-// A pg_ctl that does nothing, so these tests are about what happens after the
-// cluster is stopped rather than about Postgres.
-func planWithAFakePgCtl(t *testing.T, port int) engine.Plan {
+// Neither the stop nor the spawn is real here: this is about what happens
+// between them and after.
+func nothingToStop(context.Context, engine.Plan) error { return nil }
+
+func planFor(t *testing.T, port int) engine.Plan {
 	t.Helper()
 
-	if runtime.GOOS == "windows" {
-		t.Skip("the stub is a shell script")
-	}
-
-	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "pg_ctl"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	return engine.Plan{
 		Layout:   engine.NewLayout(t.TempDir()),
-		Binaries: map[string]string{"postgres": filepath.Join(bin, "postgres")},
+		Binaries: map[string]string{},
 		Ports:    engine.Ports{API: port},
 	}
 }
@@ -165,10 +158,10 @@ func TestStartingIsNotDoneUntilTheBrainAnswers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
-	plan := planWithAFakePgCtl(t, 1)
+	plan := planFor(t, 1)
 
 	spawned := false
-	err := launch(ctx, plan, func(engine.Plan) error {
+	err := launch(ctx, plan, nothingToStop, func(engine.Plan) error {
 		spawned = true
 		return nil
 	})
@@ -195,9 +188,9 @@ func TestStartingSucceedsOnceSomethingIsListening(t *testing.T) {
 		t.Fatalf("the test server's port: %v", err)
 	}
 
-	plan := planWithAFakePgCtl(t, port)
+	plan := planFor(t, port)
 
-	if err := launch(t.Context(), plan, func(engine.Plan) error { return nil }); err != nil {
+	if err := launch(t.Context(), plan, nothingToStop, func(engine.Plan) error { return nil }); err != nil {
 		t.Errorf("launch() = %v, want it to finish once the brain answers", err)
 	}
 }
@@ -237,5 +230,21 @@ func TestTheSupervisorGetsAnEnvironmentItCanStartIn(t *testing.T) {
 	}
 	if !home {
 		t.Error("supervisorEnv() sets no HOME, and oa reads its own config before it runs anything")
+	}
+}
+
+// The stop is injectable so the tests above need no pg_ctl, which means
+// nothing else notices if the real one stops being passed in. This does:
+// with no binaries, stopPostgres cannot find pg_ctl and says so, and that
+// error can only come from the step still being there.
+func TestStartingStillStopsTheClusterTheInstallUsed(t *testing.T) {
+	t.Parallel()
+
+	err := startStack(t.Context(), planFor(t, 1))
+	if err == nil {
+		t.Fatal("startStack() with no pg_ctl = nil")
+	}
+	if !strings.Contains(err.Error(), "pg_ctl") {
+		t.Errorf("startStack() = %v, want it to have tried to stop the cluster first", err)
 	}
 }

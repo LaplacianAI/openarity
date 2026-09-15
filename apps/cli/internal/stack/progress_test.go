@@ -142,14 +142,54 @@ func TestJSONReporterCarriesTheReadyEventWhole(t *testing.T) {
 	var out bytes.Buffer
 	JSONReporter(&out)(Event{
 		Step: StepReady, Phase: PhaseDone,
-		URL: "http://127.0.0.1:21120/ui", Passphrase: "hK4mNpQ7rTvXwY2z",
+		URL: "http://127.0.0.1:21120/ui", Sign: DexUser,
+		Root: "/Users/someone/openarity", GatewayURL: "http://127.0.0.1:20128",
+		Passphrase: "hK4mNpQ7rTvXwY2z", GatewayPassword: "a-gateway-password",
 	})
 
 	var got Event
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("the reporter wrote something that is not JSON: %v", err)
 	}
-	if got.URL == "" || got.Passphrase == "" {
-		t.Errorf("decoded %+v, want the URL and passphrase the window needs", got)
+
+	// Everything the window's last screen shows. A person who closes it has
+	// no other copy of the passphrase, and the rest is what makes the
+	// passphrase useful: where to go, who to be, and where it all lives.
+	for name, value := range map[string]string{
+		"url":              got.URL,
+		"sign_in":          got.Sign,
+		"root":             got.Root,
+		"gateway_url":      got.GatewayURL,
+		"passphrase":       got.Passphrase,
+		"gateway_password": got.GatewayPassword,
+	} {
+		if value == "" {
+			t.Errorf("%s did not survive the round trip: %+v", name, got)
+		}
+	}
+}
+
+// The field names are a contract with the window, which is TypeScript and
+// will not fail to compile when one is renamed here — it will just show
+// nothing where the value was.
+func TestTheReadyEventUsesTheNamesTheWindowReads(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	JSONReporter(&out)(Event{
+		Step: StepReady, Phase: PhaseDone,
+		URL: "u", Sign: "s", Root: "r", GatewayURL: "g",
+		Passphrase: "p", GatewayPassword: "q",
+	})
+
+	var raw map[string]any
+	if err := json.Unmarshal(out.Bytes(), &raw); err != nil {
+		t.Fatalf("the reporter wrote something that is not JSON: %v", err)
+	}
+
+	for _, key := range []string{"url", "sign_in", "root", "gateway_url", "passphrase", "gateway_password"} {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("the event has no %q; the window reads that name", key)
+		}
 	}
 }

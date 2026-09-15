@@ -167,21 +167,30 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				}
 			}
 
+			// Everything a person needs to get back in, together, because the
+			// passphrase is shown once and the rest is worth having beside
+			// it: the address to open, who to sign in as, and the directory
+			// holding all of it.
+			opts.Out.Note("")
 			opts.Out.Note("Openarity is running at " + result.URL)
 			if result.Passphrase != "" {
-				opts.Out.Note("Sign in as dev@openarity.local")
-				opts.Out.Note("Passphrase: " + result.Passphrase)
-				opts.Out.Note("Write it down — it is not stored anywhere and cannot be shown again.")
+				opts.Out.Note("  sign in as   " + engine.DexUser)
+				opts.Out.Note("  passphrase   " + result.Passphrase)
+			}
+			opts.Out.Note("  installed in " + layout.Root)
+			if result.Passphrase != "" {
+				opts.Out.Note("")
+				opts.Out.Note("Write the passphrase down — it is not stored anywhere and cannot be shown again.")
 			}
 
 			// The gateway's own dashboard, which is not where the brain talks
 			// to it: the brain uses /v1, a person uses the root.
 			if result.GatewayPassword != "" {
 				opts.Out.Note("")
-				opts.Out.Note(fmt.Sprintf("The gateway's dashboard is at http://127.0.0.1:%d",
+				opts.Out.Note(fmt.Sprintf("The model gateway's own screen is at http://127.0.0.1:%d",
 					result.Plan.Ports.Gateway))
-				opts.Out.Note("Password: " + result.GatewayPassword)
-				opts.Out.Note("Generated because none was given, and kept in the credentials file.")
+				opts.Out.Note("  password     " + result.GatewayPassword)
+				opts.Out.Note("Made for you because none was given, and kept with the install.")
 			}
 			return nil
 		},

@@ -188,3 +188,35 @@ it("lets a complete set of answers through", () => {
     whatIsMissing({ secrets: "openbao", adminToken: "a-token", objects: "s3", bucket: "openarity" }),
   ).toBeNull();
 });
+
+it("keeps everything the last screen shows", () => {
+  const p = run([
+    {
+      step: "ready",
+      state: "done",
+      url: "http://127.0.0.1:21120/ui",
+      sign_in: "dev@openarity.local",
+      root: "/Users/someone/Library/Application Support/openarity",
+      gateway_url: "http://127.0.0.1:20128",
+      passphrase: "a-passphrase",
+      gateway_password: "a-gateway-password",
+    },
+  ]);
+
+  expect(p.url).toBe("http://127.0.0.1:21120/ui");
+  expect(p.signIn).toBe("dev@openarity.local");
+  expect(p.root).toBe("/Users/someone/Library/Application Support/openarity");
+  expect(p.gatewayURL).toBe("http://127.0.0.1:20128");
+  expect(p.passphrase).toBe("a-passphrase");
+  expect(p.gatewayPassword).toBe("a-gateway-password");
+});
+
+// An install with no gateway must not offer a screen that does not exist.
+it("has no gateway address when no gateway was installed", () => {
+  const p = run([
+    { step: "ready", state: "done", url: "http://127.0.0.1:21120/ui", passphrase: "a-passphrase" },
+  ]);
+
+  expect(p.gatewayURL).toBeNull();
+  expect(p.gatewayPassword).toBeNull();
+});

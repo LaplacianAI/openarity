@@ -259,21 +259,30 @@ export function App() {
     <main>
       <h1>Openarity is ready</h1>
 
-      <p className="lede">Sign in with dev@openarity.local and the password below.</p>
+      <p className="lede">
+        Here is everything you need to get back in. The password is shown once and is not
+        saved anywhere — write it down now.
+      </p>
 
-      <div className="passphrase">
-        <span>{progress.passphrase}</span>
-        <small>Write this down now. It is not saved anywhere and cannot be shown again.</small>
-      </div>
+      <dl className="details">
+        <Detail label="Web address" value={progress.url} copyable />
+        <Detail label="Sign in as" value={progress.signIn} copyable />
+        <Detail label="Password" value={progress.passphrase} copyable secret />
+        <Detail label="Installed in" value={progress.root} />
+      </dl>
 
-      {progress.gatewayPassword && (
-        <div className="passphrase">
-          <span>{progress.gatewayPassword}</span>
-          <small>
-            The password for the AI models screen, made for you because none was given.
-            It is saved with the install, so this one is not lost.
-          </small>
-        </div>
+      {progress.gatewayURL && (
+        <>
+          <h2>The AI models screen</h2>
+          <p className="lede">
+            Its own separate screen, with its own password. This one is saved with the
+            install, so it is not lost.
+          </p>
+          <dl className="details">
+            <Detail label="Web address" value={progress.gatewayURL} copyable />
+            <Detail label="Password" value={progress.gatewayPassword} copyable secret />
+          </dl>
+        </>
       )}
 
       <button
@@ -285,9 +294,53 @@ export function App() {
           }
         }}
       >
-        Open the dashboard
+        Open Openarity
       </button>
     </main>
+  );
+}
+
+// One row of the last screen. Copyable because a twenty-character password is
+// not something to retype, and shown in full rather than as dots: this is the
+// only time it is ever displayed.
+function Detail({
+  label,
+  value,
+  copyable,
+  secret,
+}: {
+  label: string;
+  value: string | null;
+  copyable?: boolean;
+  secret?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  if (!value) {
+    return null;
+  }
+
+  return (
+    <div className="detail">
+      <dt>{label}</dt>
+      <dd>
+        <span className={secret ? "value secret" : "value"}>{value}</span>
+        {copyable && (
+          <button
+            type="button"
+            className="copy"
+            onClick={() => {
+              void navigator.clipboard.writeText(value).then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              });
+            }}
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+        )}
+      </dd>
+    </div>
   );
 }
 

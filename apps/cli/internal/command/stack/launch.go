@@ -38,16 +38,21 @@ const howLongToWaitForReady = 4 * time.Minute
 // the way `oa stack start` does — as a detached supervisor, so it outlives
 // the setup that spawned it and the window that spawned that.
 func startStack(ctx context.Context, p engine.Plan) error {
-	return launch(ctx, p, spawnSupervisor)
+	return launch(ctx, p, stopPostgres, spawnSupervisor)
 }
 
-// launch is the order the three parts happen in, with the spawn passed in so
-// a test can drive it. Without that seam the only way to exercise this is to
-// re-exec the test binary, and the readiness wait — the part that makes the
-// promise true — would go unchecked. It was unchecked before, which is how
-// the step got away with starting nothing.
-func launch(ctx context.Context, p engine.Plan, spawn func(engine.Plan) error) error {
-	if err := stopPostgres(ctx, p); err != nil {
+// launch is the order the three parts happen in, with both processes passed
+// in so a test can drive it without running either. Without that seam the only
+// way to exercise this is to re-exec the test binary, and the readiness wait —
+// the part that makes the promise true — would go unchecked. It was unchecked
+// before, which is how the step got away with starting nothing.
+//
+// The stop is a parameter for the same reason and one more: a test that
+// supplied a real pg_ctl had to write a stub and exec it immediately, which
+// fails intermittently under a loaded machine and failed roughly one run in
+// ten of `make check`.
+func launch(ctx context.Context, p engine.Plan, stop func(context.Context, engine.Plan) error, spawn func(engine.Plan) error) error {
+	if err := stop(ctx, p); err != nil {
 		return err
 	}
 	if err := spawn(p); err != nil {

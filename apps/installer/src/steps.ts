@@ -6,6 +6,9 @@ export type Event = {
   detail?: string;
   percent?: number;
   url?: string;
+  sign_in?: string;
+  root?: string;
+  gateway_url?: string;
   passphrase?: string;
   gateway_password?: string;
 };
@@ -27,6 +30,9 @@ export type Progress = {
   percent: number;
   failure: string | null;
   url: string | null;
+  signIn: string | null;
+  root: string | null;
+  gatewayURL: string | null;
   passphrase: string | null;
   gatewayPassword: string | null;
 };
@@ -36,6 +42,9 @@ export const nothingYet: Progress = {
   percent: 0,
   failure: null,
   url: null,
+  signIn: null,
+  root: null,
+  gatewayURL: null,
   passphrase: null,
   gatewayPassword: null,
 };
@@ -47,6 +56,9 @@ export function apply(progress: Progress, event: Event): Progress {
     return {
       ...progress,
       url: event.url ?? null,
+      signIn: event.sign_in ?? null,
+      root: event.root ?? null,
+      gatewayURL: event.gateway_url ?? null,
       passphrase: event.passphrase ?? null,
       gatewayPassword: event.gateway_password ?? null,
     };

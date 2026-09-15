@@ -221,7 +221,7 @@ func dexConfig(p engine.Plan, hash string) string {
 		"      - " + dashboard + "/ui/callback\n" +
 		"enablePasswordDB: true\n" +
 		"staticPasswords:\n" +
-		"  - email: dev@openarity.local\n" +
+		"  - email: " + engine.DexUser + "\n" +
 		"    username: dev\n" +
 		// Pinned, so `sub` survives deleting and recreating the install —
 		// otherwise every reinstall makes a new user and the old one keeps

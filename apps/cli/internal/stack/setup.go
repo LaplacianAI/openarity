@@ -186,8 +186,14 @@ func (s *Setup) Run(ctx context.Context) (Result, error) {
 
 	_ = s.Steps.Open(url)
 
+	gatewayURL := ""
+	if s.Settings.RunsGateway() {
+		gatewayURL = fmt.Sprintf("http://%s:%d", loopback, plan.Ports.Gateway)
+	}
+
 	s.report(Event{
 		Step: StepReady, Phase: PhaseDone, URL: url,
+		Sign: DexUser, Root: s.Layout.Root, GatewayURL: gatewayURL,
 		Passphrase: passphrase, GatewayPassword: gatewayPassword,
 	})
 
