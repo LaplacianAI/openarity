@@ -97,116 +97,126 @@ export function App() {
       <main>
         <h1>Set up Openarity</h1>
         <p className="lede">
-          This puts everything on this machine — a database, a sign-in and the dashboard. It
-          downloads about 325&nbsp;MB and takes a minute.
+          Everything runs on this computer and nothing is sent anywhere. It downloads about
+          70&nbsp;MB and takes about a minute.
         </p>
 
-        <Question
-          label="Where should files be kept?"
-          about="Transcripts, uploads, anything an agent produces."
-          value={objects}
-          onChange={setObjects}
-          options={[
-            ["filesystem", "On this machine"],
-            ["memory", "In memory — lost on restart"],
-            ["s3", "Somewhere else — a bucket you already have"],
-          ]}
-        />
+        {/*
+          One button. Everything below used to be on this screen — three
+          questions and up to nine fields, in words nobody outside this
+          repository uses: object store, KV mount, AppRole, gateway. For
+          "install this on my laptop" the honest number of questions is none,
+          and somebody who wants a password vault will open the section that
+          says so.
+        */}
+        <details className="advanced">
+          <summary>Advanced settings</summary>
 
-        {objects === "s3" && (
-          <div className="follow">
-            <Field label="Endpoint" hint="Blank for AWS. For a MinIO you already run, http://127.0.0.1:9000" value={endpoint} onChange={setEndpoint} />
-            <Field label="Bucket" hint="It must already exist." value={bucket} onChange={setBucket} />
-            <Field label="Region" hint="Ignored by most S3-compatible servers." value={region} onChange={setRegion} />
-            <Field label="Access key" value={accessKey} onChange={setAccessKey} />
-            <Field label="Secret key" value={secretKey} onChange={setSecretKey} secret />
-          </div>
-        )}
+          <Question
+            label="Where should files be saved?"
+            about="Conversations, uploads, and anything Openarity produces."
+            value={objects}
+            onChange={setObjects}
+            options={[
+              ["filesystem", "On this computer"],
+              ["memory", "Nowhere — clear everything when it restarts"],
+              ["s3", "In cloud storage I already have"],
+            ]}
+          />
 
-        <Question
-          label="Where should credentials be kept?"
-          about="The tokens Openarity uses to reach services you connect to it."
-          value={secrets}
-          onChange={setSecrets}
-          options={[
-            ["static", "In Openarity itself"],
-            ["openbao", "OpenBao or Vault"],
-          ]}
-        />
+          {objects === "s3" && (
+            <div className="follow">
+              <Field label="Server address" hint="Leave blank for Amazon S3." value={endpoint} onChange={setEndpoint} />
+              <Field label="Bucket name" hint="It has to exist already." value={bucket} onChange={setBucket} />
+              <Field label="Region" hint="Leave as it is if you are not sure." value={region} onChange={setRegion} />
+              <Field label="Access key" value={accessKey} onChange={setAccessKey} />
+              <Field label="Secret key" value={secretKey} onChange={setSecretKey} secret />
+            </div>
+          )}
 
-        {secrets !== "static" && (
-          <div className="follow">
-            <Field label="Address" hint="For example http://127.0.0.1:8200" value={address} onChange={setAddress} />
-            <Field label="KV mount" value={kvMount} onChange={setKVMount} />
+          <Question
+            label="Where should saved passwords be kept?"
+            about="When you connect Openarity to Slack or anything else, that password is kept here."
+            value={secrets}
+            onChange={setSecrets}
+            options={[
+              ["static", "Inside Openarity"],
+              ["openbao", "In a password vault I run (OpenBao or Vault)"],
+            ]}
+          />
 
-            {/*
-              The brain logs in with an AppRole and refuses to start without
-              one — a secret store is a dependency, not a feature flag. Nobody
-              is asked which way they want it: the installer creates the role
-              itself, which is what the token is for. Somebody who already has
-              an AppRole sets it in the environment and this is ignored.
-            */}
-            <Field
-              label="Admin token"
-              hint="Used once to create the role Openarity logs in with. It is not stored."
-              value={adminToken}
-              onChange={setAdminToken}
-              secret
-            />
-          </div>
-        )}
+          {secrets !== "static" && (
+            <div className="follow">
+              <Field label="Vault address" hint="For example http://127.0.0.1:8200" value={address} onChange={setAddress} />
+              <Field label="Where in the vault" hint="Leave as it is if you are not sure." value={kvMount} onChange={setKVMount} />
 
-        <Question
-          label="Where should Openarity get its models from?"
-          about="Anything that speaks the OpenAI API. Nothing calls it yet — recorded for when it does."
-          value={modelBackend}
-          onChange={setModelBackend}
-          options={[
-            ["external", "One you already run — nothing is downloaded"],
-            ["litellm", "Run LiteLLM here — about 1GB, brings its own Python"],
-            ["omniroute", "Run OmniRoute here — about 3.7GB, brings its own Node"],
-          ]}
-        />
-
-        {runsGateway && (
-          <div className="follow">
-            <Field
-              label="Where should it install?"
-              hint="Anywhere with room. Blank puts it inside the install."
-              value={modelPath}
-              onChange={setModelPath}
-            />
-            {modelBackend === "omniroute" && (
+              {/*
+                Openarity needs its own login to that vault and cannot start
+                without one, so it creates one — which is the only thing this
+                token is for. It is used once and never written down.
+              */}
               <Field
-                label="Dashboard password"
-                hint="Blank generates one and shows it at the end."
-                value={gatewayPassword}
-                onChange={setGatewayPassword}
+                label="A token that can administer it"
+                hint="Used once to create Openarity's own login. It is not saved anywhere."
+                value={adminToken}
+                onChange={setAdminToken}
                 secret
               />
-            )}
-            <Field
-              label="A provider API key"
-              hint="Blank for none. It can be added from the gateway's own dashboard later."
-              value={modelKey}
-              onChange={setModelKey}
-              secret
-            />
-          </div>
-        )}
+            </div>
+          )}
 
-        {!runsGateway && (
-          <div className="follow">
-            <Field label="URL" value={gateway} onChange={setGateway} />
-            <Field
-              label="API key"
-              hint="Blank if it needs none, which a gateway on your own machine usually does not."
-              value={modelKey}
-              onChange={setModelKey}
-              secret
-            />
-          </div>
-        )}
+          <Question
+            label="Where should the AI models come from?"
+            about="Nothing uses them yet — this is remembered for when it does."
+            value={modelBackend}
+            onChange={setModelBackend}
+            options={[
+              ["external", "Something I already run — nothing is downloaded"],
+              ["litellm", "Install LiteLLM here — about 1 GB"],
+              ["omniroute", "Install OmniRoute here — about 3.7 GB"],
+            ]}
+          />
+
+          {runsGateway && (
+            <div className="follow">
+              <Field
+                label="Where should it be installed?"
+                hint="Leave blank to keep it with everything else. An external drive is fine."
+                value={modelPath}
+                onChange={setModelPath}
+              />
+              {modelBackend === "omniroute" && (
+                <Field
+                  label="Password for its own screen"
+                  hint="Leave blank and one is made for you, shown at the end."
+                  value={gatewayPassword}
+                  onChange={setGatewayPassword}
+                  secret
+                />
+              )}
+              <Field
+                label="An API key, if you have one"
+                hint="Leave blank. You can add one later."
+                value={modelKey}
+                onChange={setModelKey}
+                secret
+              />
+            </div>
+          )}
+
+          {!runsGateway && (
+            <div className="follow">
+              <Field label="Its web address" value={gateway} onChange={setGateway} />
+              <Field
+                label="Its API key, if it needs one"
+                hint="Leave blank. Something on your own computer usually needs none."
+                value={modelKey}
+                onChange={setModelKey}
+                secret
+              />
+            </div>
+          )}
+        </details>
 
         {problem && <p className="failure">{problem}</p>}
 
@@ -220,7 +230,7 @@ export function App() {
   if (screen === "installing") {
     return (
       <main>
-        <h1>Setting up</h1>
+        <h1>Setting up Openarity</h1>
         <ol className="steps">
           {STEPS.map((step) => {
             const state = progress.states[step.id];
@@ -249,19 +259,19 @@ export function App() {
     <main>
       <h1>Openarity is ready</h1>
 
-      <p className="lede">Sign in as dev@openarity.local</p>
+      <p className="lede">Sign in with dev@openarity.local and the password below.</p>
 
       <div className="passphrase">
         <span>{progress.passphrase}</span>
-        <small>Write this down. It is not stored anywhere and cannot be shown again.</small>
+        <small>Write this down now. It is not saved anywhere and cannot be shown again.</small>
       </div>
 
       {progress.gatewayPassword && (
         <div className="passphrase">
           <span>{progress.gatewayPassword}</span>
           <small>
-            The model gateway&rsquo;s own dashboard password, generated because none was
-            given. Kept in the credentials file.
+            The password for the AI models screen, made for you because none was given.
+            It is saved with the install, so this one is not lost.
           </small>
         </div>
       )}

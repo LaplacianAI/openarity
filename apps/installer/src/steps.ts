@@ -13,12 +13,12 @@ export type Event = {
 // The order they happen in, and the words a person reads. The step names come
 // from the installer; these are the labels for them.
 export const STEPS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: "resolve", label: "Finding what it needs" },
-  { id: "download", label: "Downloading PostgreSQL" },
-  { id: "cluster", label: "Creating the database" },
-  { id: "migrate", label: "Setting up its tables" },
-  { id: "gateway", label: "Installing the model gateway" },
-  { id: "identity", label: "Creating your sign-in" },
+  { id: "resolve", label: "Getting ready" },
+  { id: "download", label: "Downloading" },
+  { id: "cluster", label: "Setting up storage" },
+  { id: "migrate", label: "Preparing it" },
+  { id: "gateway", label: "Installing the AI models part" },
+  { id: "identity", label: "Setting up your sign-in" },
   { id: "start", label: "Starting Openarity" },
 ];
 
@@ -108,12 +108,12 @@ export function whatIsMissing(choices: {
     {
       when: choices.secrets !== "static",
       blank: choices.adminToken,
-      say: "Admin token is empty. Openarity needs one to create the role it logs in with.",
+      say: "The vault token is empty. Openarity needs one to create its own login.",
     },
     {
       when: choices.objects === "s3",
       blank: choices.bucket,
-      say: "Bucket is empty. Files have to go somewhere with a name.",
+      say: "The bucket name is empty. Cloud storage needs one to save files into.",
     },
   ];
 

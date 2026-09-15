@@ -157,7 +157,7 @@ it("keeps the failure a step reported", () => {
 it("refuses an empty admin token when the store is somebody else's", () => {
   expect(
     whatIsMissing({ secrets: "openbao", adminToken: "", objects: "filesystem", bucket: "" }),
-  ).toMatch(/Admin token/);
+  ).toMatch(/vault token/);
 });
 
 // The failure that sent somebody here: a manager fills the box, React never
@@ -165,7 +165,7 @@ it("refuses an empty admin token when the store is somebody else's", () => {
 it("treats a field holding only spaces as empty", () => {
   expect(
     whatIsMissing({ secrets: "openbao", adminToken: "   ", objects: "filesystem", bucket: "" }),
-  ).toMatch(/Admin token/);
+  ).toMatch(/vault token/);
 });
 
 it("wants no token when the credentials stay in Openarity", () => {
@@ -177,7 +177,7 @@ it("wants no token when the credentials stay in Openarity", () => {
 it("wants a bucket from the backend that stores into one", () => {
   expect(
     whatIsMissing({ secrets: "static", adminToken: "", objects: "s3", bucket: "" }),
-  ).toMatch(/Bucket/);
+  ).toMatch(/bucket name/);
   expect(
     whatIsMissing({ secrets: "static", adminToken: "", objects: "filesystem", bucket: "" }),
   ).toBeNull();

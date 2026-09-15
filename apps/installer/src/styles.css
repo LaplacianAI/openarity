@@ -181,3 +181,39 @@ input[type="text"],
   padding-left: 14px;
   border-left: 2px solid var(--line);
 }
+
+/* The one thing on the first screen besides the button. Closed it is a quiet
+   line of text; opened it is the three questions this window used to ask
+   everybody. */
+.advanced {
+  margin: 1.5rem 0;
+}
+
+.advanced > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 0.35rem 0;
+  list-style: none;
+}
+
+.advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced > summary::before {
+  content: "▸ ";
+}
+
+.advanced[open] > summary::before {
+  content: "▾ ";
+}
+
+.advanced > summary:hover {
+  color: var(--ink);
+}
+
+.advanced[open] > summary {
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
