@@ -1,15 +1,18 @@
 ---
 title: Platform
-weight: 4
+weight: 5
 next: /docs/platform/quick-start
 ---
 
 The `brain` service, `oa` the CLI, and the inbound gateway they share.
 
 {{< cards >}}
-  {{< card link="quick-start" title="Quick start" subtitle="A brain against a local Postgres, in about five commands." >}}
+  {{< card link="quick-start" title="Quick start" subtitle="A brain from source against a local Postgres — for working on Openarity itself." >}}
   {{< card link="configuration" title="Configuration" subtitle="Every environment variable, its default, and whether it is used yet." >}}
 {{< /cards >}}
+
+To *run* Openarity rather than work on it, see [Install](/docs/install): one
+machine, or a deployment.
 
 ## What runs today
 
@@ -28,13 +31,17 @@ platform does:
 - Role-based authorisation, where roles and their permissions are rows
 - A teams API, and an inbound gateway that verifies a channel's webhook against
   that channel's own signing secret
+- A dashboard, embedded in the binary and served at `/ui`: sign in through the
+  identity provider, create teams and move people in and out of them, approve a
+  channel's senders, and read what has arrived
 
 ## What does not exist yet
 
-The graph, the planner, the dashboard, and outbound replies — the brain can
-hold a conversation's messages but cannot yet answer one. The agent loop runs
-end to end against a real gateway, but nothing in the brain calls it, so no
-message reaches a model.
+The graph, the planner, and outbound replies — the brain can hold a
+conversation's messages but cannot yet answer one. The agent loop runs end to
+end against a real gateway, but nothing in the brain calls it, so no message
+reaches a model. The dashboard shows what has arrived for the same reason it
+shows no reply.
 
 Slack, Discord and Telegram adapters are not written. The seam they plug into
 is, and a generic webhook adapter works today.

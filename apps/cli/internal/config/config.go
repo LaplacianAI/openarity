@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/LaplacianAI/openarity/apps/cli/internal/atomicfile"
 )
 
 const DefaultServer = "http://127.0.0.1:21120"
@@ -73,9 +75,7 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	// #nosec G304 -- the path is built by Path() from the user's own config
-	// directory, not from input. Nothing reaches it from a flag or a server.
-	data, err := os.ReadFile(path)
+	data, err := atomicfile.Read(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return Config{}, nil
 	}
@@ -98,35 +98,11 @@ func Save(cfg Config) error {
 		return err
 	}
 
-	dir := filepath.Dir(path)
-	err = os.MkdirAll(dir, 0o700)
-	if err != nil {
-		return fmt.Errorf("create config directory %s: %w", dir, err)
-	}
-
 	data, err := yaml.Marshal(&cfg)
 	if err != nil {
 		return fmt.Errorf("serialize config: %w", err)
 	}
-
-	temp, err := os.CreateTemp(dir, ".config-*.yaml")
-	if err != nil {
-		return fmt.Errorf("create a temporary file in %s: %w", dir, err)
-	}
-	defer func() { _ = os.Remove(temp.Name()) }()
-
-	if _, err := temp.Write(data); err != nil {
-		return fmt.Errorf("write %s: %w", temp.Name(), err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", temp.Name(), err)
-	}
-
-	if err := os.Rename(temp.Name(), path); err != nil {
-		return fmt.Errorf("replace %s: %w", path, err)
-	}
-
-	return nil
+	return atomicfile.Write(path, data)
 }
 
 func Dir() (string, error) {

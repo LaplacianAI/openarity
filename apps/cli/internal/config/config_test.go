@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -66,6 +67,14 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 // and which one you are pointed at. Cheap to keep owner-only, and the mode is
 // what stops a future field from quietly becoming world-readable.
 func TestTheSavedFileIsOwnerOnly(t *testing.T) {
+	// Windows carries no permission bits: os.WriteFile reports 0666 and a
+	// directory 0777 whatever it was created with, and the access control
+	// that does apply is an ACL this test cannot read. The guard is still
+	// worth having everywhere else.
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes are not the access-control mechanism on Windows")
+	}
+
 	isolate(t)
 
 	if err := Save(withContext("https://brain.example.com")); err != nil {

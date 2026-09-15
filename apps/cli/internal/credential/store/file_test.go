@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,14 @@ func TestACredentialSurvivesTheRoundTrip(t *testing.T) {
 // The whole reason this file is separate from config.yaml. A credential file
 // readable by every process on a shared box is the thing the split was for.
 func TestTheFileIsOnlyReadableByItsOwner(t *testing.T) {
+	// Windows carries no permission bits: os.WriteFile reports 0666 and a
+	// directory 0777 whatever it was created with, and the access control
+	// that does apply is an ACL this test cannot read. The guard is still
+	// worth having everywhere else.
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes are not the access-control mechanism on Windows")
+	}
+
 	t.Parallel()
 
 	s := newStore(t)

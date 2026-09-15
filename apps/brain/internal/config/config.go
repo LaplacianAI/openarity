@@ -30,7 +30,8 @@ type Config struct {
 	SecretsKVMount       string         `env:"SECRETS_KV_MOUNT" envDefault:"secret"`
 
 	/* Model Router Configuration */
-	OmniRouteURL string `env:"OMNI_ROUTE_URL" envDefault:"http://localhost:20128/v1"`
+	ModelBaseURL string `env:"MODEL_BASE_URL" envDefault:"http://localhost:20128/v1"`
+	ModelAPIKey  string `env:"MODEL_API_KEY" envDefault:""`
 
 	/* Authentication Configuration */
 	OIDCEnabled  bool     `env:"OIDC_ENABLED" envDefault:"false"`
@@ -68,7 +69,7 @@ func (c *Config) String() string {
 			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s "+
 			"SecretsBackend:%s SecretsAddr:%s "+
 			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
-			"OmniRouteURL:%s}",
+			"ModelBaseURL:%s}",
 		c.Environment,
 		c.LogLevel,
 		c.APIBind,
@@ -82,7 +83,7 @@ func (c *Config) String() string {
 		c.ObjectsPath,
 		redactURL(c.ObjectsEndpoint),
 		c.ObjectsBucket,
-		redactURL(c.OmniRouteURL),
+		redactURL(c.ModelBaseURL),
 	)
 }
 
