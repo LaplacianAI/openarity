@@ -127,12 +127,12 @@ Nothing is interrupted. The model is not listening while a pattern works — it
 is called, it answers, and between those two moments it has no ears. So a steer
 waits, and rides the next request out.
 
-Where it lands depends on what the pattern has already built, and there is only
-one safe answer in each case. After a tool call the provider requires the very
-next message to be that call's result, so a user message wedged in between is a
-400 before the model sees anything — the steer is added to the end of the tool
-result instead, which is free-form text. Anywhere else it becomes a user
-message.
+It lands as a user message of its own, at the index in the conversation where
+it arrived — not appended to a tool result, and not moved to the end of every
+later request. The provider only forbids a user message *between* a tool call
+and its result; after the results it is legal. A steer kept permanently last
+reads to the model as a fresh instruction every turn, and the run never
+concludes.
 
 **No pattern implements this.** Patterns reach the model through
 `ModelClient`, so the runner wraps that — the same seam it already uses to

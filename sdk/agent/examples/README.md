@@ -30,7 +30,7 @@ make example
 | `rewoo`    | the same dependent chain under ReAct and under ReWOO, side by side    |
 | `mcp`      | an MCP server, in process, its tools reaching the loop as any other   |
 | `reflection` | a wrong first draft, and what catching it costs                     |
-| `steering` | a message sent to a run already in progress, and the tool result it rides |
+| `steering` | a message sent to a run already in progress, and where it lands in the conversation |
 | `steering-typed` | typing at an agent while it works — `STEER_FROM_STDIN=1` to use your own keys |
 | `steering-limits` | where steering stops: a plan already fixed, and a steer with no request left |
 | `gateway`  | not an example: the stub and the printing the others share            |

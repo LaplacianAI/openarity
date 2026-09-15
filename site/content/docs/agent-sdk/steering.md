@@ -34,9 +34,37 @@ rides the next request out.
 
 ## Using it
 
-`Run` waits for the answer. `Start` hands back a handle while the run works:
+`Run` waits for the answer. `Start` hands back a handle while the run works, and
+that handle is the whole API:
 
 ```go
+run := runner.Start(ctx, spec, msgs, endpoint, nil)
+
+go func() {
+    line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+    if err := run.Steer(strings.TrimSpace(line)); err != nil {
+        fmt.Fprintln(os.Stderr, "too late:", err)
+    }
+}()
+
+result, err := run.Wait()
+```
+
+Type while it works and the line goes out with the next model request. Nothing
+else changes: same `Spec`, same pattern, same `Result`. `Steer` is safe from any
+goroutine and returns `ErrRunFinished` rather than swallowing a line that
+arrived after the end.
+
+`Run` is unchanged and still right when you only want the answer — it is
+`Start(...).Wait()`.
+
+## Steering on what the run does
+
+A steer does not have to come from a person. Watch the event stream and send one
+when the run goes somewhere you did not want:
+
+```go
+events := make(chan agent.Event, 64)
 run := runner.Start(ctx, spec, msgs, endpoint, events)
 
 go func() {
@@ -50,32 +78,43 @@ go func() {
 result, err := run.Wait()
 ```
 
-`Run` is unchanged and still right when you only want the answer — it is
-`Start(...).Wait()`.
-
 ## Where a steer lands
 
-Not in a message of its own, usually. After a tool call the provider requires
-the very next message to be that call's result; a user message wedged between
-them is rejected before the model reads anything. But a tool result is
-free-form text, so the steer goes on the end of it:
+In a message of its own, from the user, at the point in the conversation where
+it arrived:
 
 ```text
-carried by  a tool message, not one of its own:
-    │ 12 files match
-    │
+carried by  a user message of its own, at index 4 of 8:
     │ The user sent this while you were working:
     │ the failure is in vault.go, stop reading tests
+
+still last  a tool message
 ```
 
-With no tool call outstanding there is nothing to ride, and the steer becomes
-an ordinary user message. Both are always legal at the moment a request is
-assembled, which is why those are the two cases.
+Two things about that placement are load-bearing, and both were learned by
+getting them wrong against a real model.
+
+**It is not appended to the tool result.** A provider requires the message
+straight after a tool call to be that call's result — but only *straight
+after*. A user message following the results is legal, and it matters: text
+added to tool output reads as something the tool said, which is not who said
+it.
+
+**It does not follow the end of the conversation.** Each steer remembers how
+many messages existed when it arrived and is re-inserted at that index on every
+later request. Keeping it last instead — so the model always sees it as the
+most recent thing said — makes the model treat it as a brand-new instruction
+every turn and never conclude: five steps, four tool calls, no answer. Pinned
+to its index, the last thing the model reads is the tool result, and it can
+stop.
 
 It is labelled on purpose. Unlabelled, a steer reads as something that was
 always in the conversation — and "look at vault.go" arriving as ordinary
 history is advice the model may weigh against its current plan, rather than an
 instruction that just arrived from the person watching it work.
+
+Timing matches Claude Code, which queues a message typed mid-run and flushes it
+at the next pause between tool calls rather than into a tool already running.
 
 ## No pattern implements this
 
@@ -105,10 +144,12 @@ Both halves of that are visible rather than silent:
 A steer that silently vanished would be indistinguishable from one the model
 read and chose to ignore, which is the one outcome worth ruling out.
 
-**It is not in the transcript.** `Result.Messages` is the conversation the
-pattern built; the steer is added to the copy that goes to the provider. Hand
-that slice back on the next turn and the steer is not replayed as something the
-user said again.
+**It does not reset `MaxSteps`.** A steer arriving on the last permitted step
+gets one step to change course, and a run at its limit ends at its limit —
+`UnappliedSteers` says so. Claude Code is stricter still: a message queued when
+`maxTurns` is reached stays queued and is never delivered. Extending the budget
+would also mean the pattern re-reading `MaxSteps` each iteration, which is the
+pattern cooperation this design exists to avoid.
 
 ## Seeing it work
 
@@ -118,8 +159,10 @@ go run ./examples/steering-typed    # type at an agent while it works
 go run ./examples/steering-limits   # where it stops working
 ```
 
-The first prints the message that carried the steer, and the count of
-transcript messages containing it — which is zero.
+The first prints the message that carried the steer, its index, and what is
+last in the request instead — the two facts that decide whether the model can
+finish. `Result.Messages` carries the steer too, so the transcript you hand
+back next turn records that the person spoke.
 
 The second is the shape most programs want: a person watching a run and saying
 something to it. `STEER_FROM_STDIN=1` reads your keystrokes; without it a
