@@ -52,6 +52,7 @@ func New(opts *cli.Options) *cobra.Command {
 		newStopCmd(opts, find),
 		newStatusCmd(opts, find),
 		newInfoCmd(opts, find),
+		newPassphraseCmd(opts, find),
 	)
 	return cmd
 }
@@ -445,6 +446,83 @@ func waitForStopped(ctx context.Context, pid int) error {
 		}
 	}
 	return nil
+}
+
+// newPassphraseCmd replaces the sign-in nobody can recover.
+//
+// The passphrase is shown once and kept only as a bcrypt hash, which is the
+// right design and left exactly one answer for losing it: delete the install
+// directory and start again — throwing away the database, the identity and
+// every connection to get a new password. This replaces the hash and leaves
+// the rest alone.
+func newPassphraseCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
+	return &cobra.Command{
+		Use:   "passphrase",
+		Short: "Set a new sign-in passphrase, and show it once",
+		Long: "For a passphrase that was lost. It cannot be recovered — only a\n" +
+			"bcrypt hash is kept — so this makes a new one and restarts the\n" +
+			"identity provider, which reads its configuration only at startup.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			layout, state, err := requireInstall(find)
+			if err != nil {
+				return err
+			}
+
+			passphrase, err := engine.ResetPassphrase(filepath.Join(layout.Dex, "config.yaml"), "")
+			if err != nil {
+				return err
+			}
+
+			// dex reads its configuration at startup and nowhere else, so
+			// until it is restarted the old hash is what the sign-in page is
+			// still checking against — and a new passphrase that does not
+			// work yet is worse than none.
+			restarted := false
+			if pid := running(layout); pid != 0 {
+				if err := restart(cmd.Context(), opts, layout, state); err != nil {
+					return err
+				}
+				restarted = true
+			}
+
+			opts.Out.Note("")
+			opts.Out.Note("  sign in as   " + engine.DexUser)
+			opts.Out.Note("  passphrase   " + passphrase)
+			opts.Out.Note("")
+			opts.Out.Note("Write it down — it is not stored anywhere and cannot be shown again.")
+			if !restarted {
+				opts.Out.Note("It works the next time Openarity starts.")
+			}
+			return nil
+		},
+	}
+}
+
+// restart stops the install and starts it again, which is what it takes for
+// dex to read a configuration it only reads at startup.
+func restart(ctx context.Context, opts *cli.Options, layout engine.Layout, state engine.State) error {
+	pid, err := readPID(layout)
+	if err != nil || pid == 0 {
+		return err
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("stack: finding the supervisor (pid %d): %w", pid, err)
+	}
+	if err := interrupt(layout.Root, proc); err != nil {
+		return fmt.Errorf("stack: stopping the supervisor (pid %d): %w", pid, err)
+	}
+	if err := waitForStopped(ctx, pid); err != nil {
+		return err
+	}
+
+	opts.Out.Note("restarting")
+	if err := spawnSupervisor(layout.Root); err != nil {
+		return err
+	}
+	return waitForReady(ctx, state.Ports.API)
 }
 
 // statusView is what `oa status` prints. Both tags, always: a field with only
