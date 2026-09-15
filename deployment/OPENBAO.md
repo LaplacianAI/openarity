@@ -24,6 +24,16 @@ until every request comes back 403.
 
 ## Setup, once
 
+`make start-docker` does all of this — it generates the seal key, initialises
+the store the first time, mints the brain's AppRole and writes both halves
+into `.env`. If that is how you are starting the stack, there is nothing in
+this section to run.
+
+What follows is the same sequence by hand, which is worth doing deliberately
+when the store is not yours alone: initialising writes recovery keys you are
+responsible for, and minting an AppRole adds a policy and a role to a server
+that may hold something else's secrets.
+
 ```sh
 # 1. The seal key. Exactly 32 bytes — the static seal takes an AES-256 key and
 #    rejects any other length.
@@ -35,6 +45,14 @@ make bao-up        # start the real OpenBao
 make bao-init      # once, ever — writes openbao/keys/init-keys.json
 make bao-approle   # prints two lines for .env
 ```
+
+One difference worth knowing if you are debugging either: a store that has
+never been initialised answers `501` on `/v1/sys/health`, and the overlay's
+healthcheck is a `wget` that fails on any non-2xx. So a fresh OpenBao is
+**never** healthy until `bao init` has run, and waiting for health before
+initialising waits forever. `bao status` answers whatever state it is in —
+though it exits 2 whenever the store is sealed, so read its output rather than
+its exit code.
 
 Paste those two lines into `deployment/.env`, then either:
 

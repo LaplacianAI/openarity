@@ -152,6 +152,25 @@ plug into is, and `custom` is a working generic webhook in the meantime.
 
 ## Quick start
 
+Two ways in, and they are for different jobs.
+
+**The whole thing, in one command.** Postgres, a secret store, an identity
+provider, the brain and the dashboard, with every secret and key generated for
+you. Needs Docker and nothing else — not Go, not Node:
+
+```sh
+git clone https://github.com/LaplacianAI/openarity
+cd openarity/deployment
+make start-docker
+```
+
+It asks which identity provider you want, brings the stack up, waits until the
+brain answers, and prints the address and the sign-in. See
+[deployment/README.md](deployment/README.md).
+
+**The brain on its own**, which is what you want while writing code — no
+identity provider to configure, no container to rebuild.
+
 Requires Go 1.26.6 and a Postgres 13 or newer you can reach — 13 is where
 `gen_random_uuid()` became built-in, which the first migration needs. Running
 the *tests* needs 18; see [CONTRIBUTING.md](CONTRIBUTING.md). CI runs against

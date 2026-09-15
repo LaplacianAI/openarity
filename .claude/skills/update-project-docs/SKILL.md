@@ -26,8 +26,25 @@ Each fact lives in exactly one place. Duplicating it means one copy goes stale.
 | Conduct and enforcement                         | `CODE_OF_CONDUCT.md`                    |
 | What we ask for in a bug report                 | `.github/ISSUE_TEMPLATE/bug_report.yml` |
 | What a pull request has to demonstrate          | `.github/pull_request_template.md`      |
+| How to run the whole stack, and every `make` target | `deployment/README.md`              |
+| The path through it, with the reasons           | `deployment/QUICKSTART.md`              |
+| The real secret store — init, unseal, AppRoles  | `deployment/OPENBAO.md`                 |
+| The same facts for a stranger, on the web       | `site/content/docs/`                    |
 
 The README links the others. Nothing links back to the README.
+
+The bottom four are the ones that rot quietly. A change to the deployment is
+rarely a change to a Go file, so nothing in `make check` fails and no test goes
+red — the documents simply stop describing what the commands do. `make
+start-docker` shipped with only `deployment/README.md` updated, leaving
+`QUICKSTART.md` walking somebody through thirteen `.env` lines a script now
+writes, and the site with no install page at all.
+
+The site is a copy of facts that live elsewhere, so it is the last thing to be
+updated and the first to be wrong. `site/content/docs/install/` describes
+running it, `docs/platform/` describes the brain and its settings; a fact about
+running Openarity belongs in one of them and in the matching repository
+document, and nowhere else.
 
 ## Step 2 — the triggers
 
@@ -37,6 +54,12 @@ Do not wait to be asked. These changes make a document wrong:
   `add-env-var` skill already tells you this.
 - **A new `make` target a contributor needs** → `CONTRIBUTING.md`, and the
   README's Development block if it is one of the everyday four.
+- **A change to how the stack is started or configured** → `deployment/README.md`
+  for the target itself, `deployment/QUICKSTART.md` for the walkthrough it
+  replaces or changes, and `site/content/docs/install/`. Check whether a manual
+  sequence documented elsewhere is now automated: a walkthrough that still
+  works but is no longer the way anybody does it is the kind of stale that
+  reads as current.
 - **A new command or subcommand** → the README quick start.
 - **A dependency with a version floor** — a Postgres feature, a Go version →
   the prerequisites in both files.
