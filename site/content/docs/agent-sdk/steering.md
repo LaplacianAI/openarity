@@ -113,8 +113,19 @@ user said again.
 ## Seeing it work
 
 ```sh
-go run ./examples/steering
+go run ./examples/steering          # the mechanism: what carried the steer
+go run ./examples/steering-typed    # type at an agent while it works
+go run ./examples/steering-limits   # where it stops working
 ```
 
-It prints the message that carried the steer and the count of transcript
-messages containing it — which is zero.
+The first prints the message that carried the steer, and the count of
+transcript messages containing it — which is zero.
+
+The second is the shape most programs want: a person watching a run and saying
+something to it. `STEER_FROM_STDIN=1` reads your keystrokes; without it a
+scripted line goes through the same call, because `make example` inherits the
+terminal and an example that always read stdin would hang the suite.
+
+The third shows both limits — a ReWOO plan that was fixed a model call before
+the steer existed, and a steer with no request left to carry it coming back on
+`UnappliedSteers` rather than vanishing.

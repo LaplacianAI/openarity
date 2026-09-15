@@ -151,6 +151,11 @@ than silent:
 `Run` is unchanged and still the right call when you only want the answer — it
 is `Start(...).Wait()`.
 
+Three examples run it end to end: [`steering`](examples/steering) for the
+mechanism, [`steering-typed`](examples/steering-typed) for a person typing at a
+working agent, and [`steering-limits`](examples/steering-limits) for the two
+places it stops doing what you might hope.
+
 ## Patterns
 
 | Constructor             | Streaming variant       | What it does                                    |
