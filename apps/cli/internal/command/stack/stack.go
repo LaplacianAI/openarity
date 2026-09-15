@@ -474,26 +474,26 @@ func newPassphraseCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				return err
 			}
 
-			// dex reads its configuration at startup and nowhere else, so
-			// until it is restarted the old hash is what the sign-in page is
-			// still checking against — and a new passphrase that does not
-			// work yet is worse than none.
-			restarted := false
-			if pid := running(layout); pid != 0 {
-				if err := restart(cmd.Context(), opts, layout, state); err != nil {
-					return err
-				}
-				restarted = true
-			}
-
+			// Shown before anything else is attempted. It is already written
+			// into dex's configuration by this point and exists nowhere else,
+			// so a restart that fails after this line must not take it with
+			// it — which is exactly what the first version did, on a machine
+			// whose secret store had gone away: the reset succeeded, the
+			// restart did not, and the new passphrase was lost with the old
+			// one.
 			opts.Out.Note("")
 			opts.Out.Note("  sign in as   " + engine.DexUser)
 			opts.Out.Note("  passphrase   " + passphrase)
 			opts.Out.Note("")
 			opts.Out.Note("Write it down — it is not stored anywhere and cannot be shown again.")
-			if !restarted {
-				opts.Out.Note("It works the next time Openarity starts.")
+
+			// dex reads its configuration at startup and nowhere else, so
+			// until it is restarted the old hash is what the sign-in page is
+			// still checking against.
+			if pid := running(layout); pid != 0 {
+				return restart(cmd.Context(), opts, layout, state)
 			}
+			opts.Out.Note("It works the next time Openarity starts.")
 			return nil
 		},
 	}
