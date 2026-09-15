@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// recordingClient keeps every request it was asked to make, so a test can see
-// what the model would actually have been sent.
 type recordingClient struct {
 	mu   sync.Mutex
 	sent []Request
@@ -54,10 +52,6 @@ func text(m Message) string {
 	return b.String()
 }
 
-// The rule that decides the whole design: a provider requires the message
-// after a tool call to be that call's result. A steer wedged between them is a
-// 400 before the model reads anything — so it goes *onto* the result instead,
-// which is free-form text and always legal.
 func TestASteerRidesTheToolResultRatherThanBecomingAMessage(t *testing.T) {
 	box := &steerBox{}
 	client, inner := steering(box, nil)
@@ -91,8 +85,6 @@ func TestASteerRidesTheToolResultRatherThanBecomingAMessage(t *testing.T) {
 	}
 }
 
-// With no tool call outstanding there is nothing to ride, and a user message
-// is exactly what the steer is.
 func TestASteerWithNoToolResultBecomesAUserMessage(t *testing.T) {
 	box := &steerBox{}
 	client, inner := steering(box, nil)
@@ -118,9 +110,6 @@ func TestASteerWithNoToolResultBecomesAUserMessage(t *testing.T) {
 	}
 }
 
-// The slice belongs to the pattern, which keeps appending to it and hands it
-// back as Result.Messages. Editing it in place would put the steer in the
-// transcript as well as in the request.
 func TestSteeringDoesNotTouchTheCallersMessages(t *testing.T) {
 	box := &steerBox{}
 	client, _ := steering(box, nil)
@@ -144,8 +133,6 @@ func TestSteeringDoesNotTouchTheCallersMessages(t *testing.T) {
 	}
 }
 
-// A steer that changes a run's course and leaves no trace makes a transcript
-// impossible to read afterwards.
 func TestASteerIsAnnounced(t *testing.T) {
 	var seen []Event
 	box := &steerBox{}
@@ -170,7 +157,6 @@ func TestASteerIsAnnounced(t *testing.T) {
 	}
 }
 
-// Every request would otherwise pay for a clone it does not need.
 func TestNoSteerLeavesTheRequestExactlyAsItWas(t *testing.T) {
 	box := &steerBox{}
 	client, inner := steering(box, nil)
@@ -186,8 +172,6 @@ func TestNoSteerLeavesTheRequestExactlyAsItWas(t *testing.T) {
 	}
 }
 
-// Two steers sent before the next call go out together, in the order they were
-// sent, rather than one being dropped.
 func TestEverySteerWaitingGoesOutOnTheNextRequest(t *testing.T) {
 	box := &steerBox{}
 	client, inner := steering(box, nil)
@@ -211,8 +195,6 @@ func TestEverySteerWaitingGoesOutOnTheNextRequest(t *testing.T) {
 	}
 }
 
-// Once it has gone out it must not go out again, or every subsequent request
-// repeats it and the model reads it as the user saying it over and over.
 func TestASteerIsDeliveredOnce(t *testing.T) {
 	box := &steerBox{}
 	client, inner := steering(box, nil)
@@ -253,11 +235,6 @@ func TestASteerThatNeverMadeItOntoARequestIsHandedBack(t *testing.T) {
 	}
 }
 
-// The point of putting this in a ModelClient rather than in a loop: a pattern
-// that has never heard of steering is steered anyway. This one is not ReAct
-// and shares no code with it — it calls the model once and returns what it was
-// sent, which is enough to prove the steer arrived without the pattern doing
-// anything.
 type obliviousPattern struct{}
 
 func (*obliviousPattern) Name() PatternName { return "oblivious" }
@@ -309,7 +286,6 @@ func TestRunReportsASteerItCouldNotApply(t *testing.T) {
 		t.Fatalf("Wait() = %v", err)
 	}
 
-	// The run is over, so this can never go out.
 	if err := run.Steer("too late"); !errors.Is(err, ErrRunFinished) {
 		t.Errorf("Steer() after the run = %v, want ErrRunFinished", err)
 	}

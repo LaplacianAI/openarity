@@ -1,18 +1,3 @@
-// Command steering says something to a run that has already started.
-//
-// The model is not listening while a pattern works: it is called, it answers,
-// and between those two moments it has no ears. So a steer is not delivered —
-// it waits, and rides the next request out.
-//
-// This prints the message that carried it, which is the part a reader would
-// otherwise have to take on trust: the steer is not a message of its own. It
-// is added to the end of the tool result, because a provider requires the
-// message after a tool call to be that call's result and nothing may be
-// wedged between them.
-//
-//	go run ./examples/steering
-//
-// See package gateway for pointing it at a real LiteLLM or OmniRoute.
 package main
 
 import (
@@ -32,8 +17,6 @@ import (
 )
 
 func main() {
-	// os.Exit skips deferred calls, so the signal handler is released in
-	// attempt rather than in a defer here that would never run.
 	if err := attempt(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -41,7 +24,6 @@ func main() {
 }
 
 func attempt() error {
-	// Ctrl-C matters here because a streaming run holds an open connection.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -53,18 +35,12 @@ func attempt() error {
 
 	fmt.Printf("gateway  %s\nmodel    %s\n\n", endpoint.BaseURL, gateway.Model())
 
-	// The factory is the caller's, so wrapping it is the caller's to do. This
-	// records what each request actually carried — the only way an example can
-	// show where a steer landed without reaching inside the library.
 	seen := &recorder{}
 	runner, err := agent.New(seen.wrap(openaicompat.Factory()), patterns.ReActStreaming())
 	if err != nil {
 		return err
 	}
 
-	// Closed once the steer has been sent. The tool waits for it so the
-	// example is the same every run — standing in for the real case, which is
-	// a person typing while a slow tool works.
 	steered := make(chan struct{})
 
 	spec := agent.Spec{
@@ -83,7 +59,6 @@ func attempt() error {
 	events := make(chan agent.Event, 64)
 	done := make(chan struct{})
 
-	// Start rather than Run: it hands back a handle while the run works.
 	run := runner.Start(ctx, spec, msgs, endpoint, events)
 
 	go func() {
@@ -91,8 +66,7 @@ func attempt() error {
 		for ev := range events {
 			switch e := ev.(type) {
 			case agent.ToolCallEvent:
-				// The moment a person watching would realise it is looking in
-				// the wrong place.
+
 				fmt.Printf("tool     %s — steering it away\n", e.Name)
 				if err := run.Steer("the failure is in vault.go, stop reading tests"); err != nil {
 					fmt.Fprintln(os.Stderr, "steer:", err)
@@ -115,12 +89,9 @@ func attempt() error {
 	return nil
 }
 
-// report prints the two facts the example exists for.
 func report(seen *recorder, result agent.Result) {
 	fmt.Println()
 
-	// One: the steer is not a message. It is on the end of the tool result,
-	// where a provider will accept it.
 	if req := seen.last(); len(req) > 0 {
 		carrier := req[len(req)-1]
 		fmt.Printf("carried by  a %s message, not one of its own:\n", carrier.Role)
@@ -129,9 +100,6 @@ func report(seen *recorder, result agent.Result) {
 		}
 	}
 
-	// Two: it is not in the transcript. The pattern's own slice was never
-	// touched, so handing Result.Messages back on the next turn does not
-	// replay the steer as something the user said again.
 	fmt.Printf("\ntranscript  %d messages, and the steer is in %d of them\n",
 		len(result.Messages), countSteers(result.Messages))
 
@@ -163,8 +131,6 @@ func search(steered <-chan struct{}) agent.Tool {
 			"required": ["query"]
 		}`),
 		Invoke: func(ctx context.Context, _ json.RawMessage) (string, error) {
-			// A real tool would do the work here. This one waits for the
-			// steer, so the run is identical every time.
 			select {
 			case <-steered:
 			case <-ctx.Done():
@@ -175,8 +141,6 @@ func search(steered <-chan struct{}) agent.Tool {
 	}
 }
 
-// recorder keeps the messages of every request, so the example can show what
-// the model was sent rather than assert it.
 type recorder struct {
 	mu   sync.Mutex
 	sent [][]agent.Message

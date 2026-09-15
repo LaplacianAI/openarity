@@ -26,9 +26,6 @@ type Input struct {
 
 func (in Input) Emit(ctx context.Context, e Event) { emit(ctx, in.Events, e) }
 
-// emit is the same send, for the parts of the runner that hold the channel
-// without holding an Input — the steering client, which emits from inside a
-// ModelClient wrapper and never sees a pattern's Input at all.
 func emit(ctx context.Context, events chan<- Event, e Event) {
 	if events == nil {
 		return

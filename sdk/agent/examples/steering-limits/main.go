@@ -1,23 +1,3 @@
-// Command steering-limits shows the two places steering stops doing what you
-// might hope, both of which the SDK makes visible rather than silent.
-//
-// One — a pattern that plans up front is steerable, but not in the way a
-// reader expects. ReWOO decides every tool call in one model call before any
-// of them runs, so a steer arriving during execution cannot change the plan.
-// It reaches the call that writes the answer, and that is all.
-//
-// Two — a steer sent when no request is left to carry it was never applied. A
-// run is a loop the caller's program drives; nothing outside a pattern can
-// make it go round again. So the steer comes back on Result.UnappliedSteers,
-// and one sent after the run is over is refused with ErrRunFinished.
-//
-// That second half is the honest cost of steering no pattern implements. It
-// would be worse hidden: a steer that silently vanished is indistinguishable
-// from one the model read and chose to ignore.
-//
-//	go run ./examples/steering-limits
-//
-// See package gateway for pointing it at a real LiteLLM or OmniRoute.
 package main
 
 import (
@@ -39,8 +19,6 @@ import (
 )
 
 func main() {
-	// os.Exit skips deferred calls, so the signal handler is released in
-	// attempt rather than in a defer here that would never run.
 	if err := attempt(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -48,7 +26,6 @@ func main() {
 }
 
 func attempt() error {
-	// Ctrl-C matters here because a streaming run holds an open connection.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -58,15 +35,11 @@ func attempt() error {
 	return tooLate(ctx)
 }
 
-// plannedUpFront steers a pattern that is not ReAct and shares no code with
-// it, which is the point: no pattern implements steering. The runner wraps the
-// model client, so every pattern is steerable — including one written outside
-// this module.
 func plannedUpFront(ctx context.Context) error {
 	fmt.Println("── ReWOO: the plan is already fixed ──────────────────────")
 
 	endpoint, shutdown := gateway.Resolve(
-		// One call decides the whole plan, before any tool runs.
+
 		gateway.ToolCall(patterns.PlanToolName,
 			`{"steps":[{"tool":"search","args":{"query":"failing test"},`+
 				`"why":"find where the failure is"}]}`),
@@ -79,12 +52,8 @@ func plannedUpFront(ctx context.Context) error {
 		return err
 	}
 
-	// The steer is sent from inside the tool — during execution, which is
-	// after the plan exists and before the answer is written.
 	handle := make(chan *agent.Run, 1)
 
-	// Counted rather than claimed: the plan named one step, and a steer
-	// arriving mid-execution cannot add or remove one.
 	var tools atomic.Int32
 
 	spec := agent.Spec{
@@ -128,8 +97,6 @@ func plannedUpFront(ctx context.Context) error {
 	return nil
 }
 
-// tooLate steers during what turns out to be the final request, and again
-// after the run is over. Neither can be applied, and neither is swallowed.
 func tooLate(ctx context.Context) error {
 	fmt.Println("── A steer with no request left to carry it ──────────────")
 
@@ -138,10 +105,6 @@ func tooLate(ctx context.Context) error {
 	)
 	defer shutdown()
 
-	// The steer is sent from inside the model client, on the last call — by
-	// which point the runner has already decided what that request carries.
-	// Contrived, and it is the only way to hit the case on purpose: in a real
-	// program it is somebody typing a half-second too late.
 	handle := make(chan *agent.Run, 1)
 	late := &lateSteerer{handle: handle}
 
@@ -172,7 +135,6 @@ func tooLate(ctx context.Context) error {
 	fmt.Printf("  sent during the last call   %d unapplied: %q\n",
 		len(result.UnappliedSteers), strings.Join(result.UnappliedSteers, ", "))
 
-	// And once the run is over there is nowhere for it to go at all.
 	err = run.Steer("later still")
 	fmt.Printf("  sent after the run          %v\n", err)
 	if !errors.Is(err, agent.ErrRunFinished) {
@@ -184,8 +146,6 @@ func tooLate(ctx context.Context) error {
 	return nil
 }
 
-// steeringTool steers from inside a tool, which for ReWOO is during execution
-// — the window between the plan and the answer.
 func steeringTool(handle <-chan *agent.Run, count *atomic.Int32) agent.Tool {
 	return agent.Tool{
 		Name:        "search",
@@ -210,8 +170,6 @@ func steeringTool(handle <-chan *agent.Run, count *atomic.Int32) agent.Tool {
 	}
 }
 
-// lateSteerer steers from inside the model client, after the runner has
-// already assembled the request it is being handed.
 type lateSteerer struct {
 	handle <-chan *agent.Run
 

@@ -1,25 +1,3 @@
-// Command steering-typed lets you type at an agent while it is working.
-//
-// This is the shape most programs steering an agent actually want: a person
-// watching a run, seeing it head the wrong way, and saying so — without
-// stopping it and without starting again.
-//
-// Nothing is interrupted. What you type waits, and rides the next request out.
-// The tool in flight finishes first, which is why the prompt appears while the
-// search is still running and your words still arrive in time.
-//
-//	go run ./examples/steering-typed
-//
-// Reading your keystrokes is opt-in:
-//
-//	STEER_FROM_STDIN=1 go run ./examples/steering-typed
-//
-// Without it the example steers with a scripted line, through exactly the same
-// call. That is not a convenience — `make example` inherits the terminal it
-// was started from, so an example that always read stdin would hang the whole
-// suite waiting for input nobody knew to give it.
-//
-// See package gateway for pointing it at a real LiteLLM or OmniRoute.
 package main
 
 import (
@@ -39,8 +17,6 @@ import (
 )
 
 func main() {
-	// os.Exit skips deferred calls, so the signal handler is released in
-	// attempt rather than in a defer here that would never run.
 	if err := attempt(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -48,7 +24,6 @@ func main() {
 }
 
 func attempt() error {
-	// Ctrl-C matters here because a streaming run holds an open connection.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -65,8 +40,6 @@ func attempt() error {
 		return err
 	}
 
-	// The tool waits for this, so there is always a moment to type into. A
-	// real tool is slow on its own; this one has to be told to be.
 	typed := make(chan struct{})
 
 	spec := agent.Spec{
@@ -85,10 +58,6 @@ func attempt() error {
 	events := make(chan agent.Event, 64)
 	reported := make(chan struct{})
 
-	// Closed when the model first reaches for a tool — the moment a person
-	// watching would see it heading the wrong way. The scripted line waits for
-	// it so the example shows what it claims to: a steer arriving *during* the
-	// work, landing on the request after it rather than the one before.
 	sawTool := make(chan struct{})
 
 	run := runner.Start(ctx, spec, msgs, endpoint, events)
@@ -106,14 +75,11 @@ func attempt() error {
 		}
 	}()
 
-	// One goroutine, one source of text, one call to Steer. Whether the line
-	// came from a person or from the fallback makes no difference past here.
 	go func() {
 		defer close(typed)
 		for _, line := range lines(ctx, sawTool) {
 			if err := run.Steer(line); err != nil {
-				// ErrRunFinished is the ordinary ending, not a failure: the
-				// run finished while somebody was still typing.
+
 				fmt.Printf("steer    not applied — %v\n", err)
 				return
 			}
@@ -136,17 +102,11 @@ func attempt() error {
 	return nil
 }
 
-// lines is what to steer with: whatever is typed, or one scripted line.
-//
-// Returning a slice rather than a channel keeps the caller identical in both
-// cases. Neither source can produce more than a handful of lines before the
-// run is over, so nothing is gained by streaming them.
 func lines(ctx context.Context, sawTool <-chan struct{}) []string {
 	if os.Getenv("STEER_FROM_STDIN") == "" {
 		fmt.Println("steering with a scripted line — set STEER_FROM_STDIN=1 to type your own")
 		fmt.Println()
 
-		// Where a person's hesitation would go.
 		select {
 		case <-sawTool:
 		case <-ctx.Done():
@@ -182,8 +142,6 @@ func search(typed <-chan struct{}) agent.Tool {
 			"required": ["query"]
 		}`),
 		Invoke: func(ctx context.Context, _ json.RawMessage) (string, error) {
-			// A real tool would be doing the work here — and that is the
-			// window a person types into.
 			select {
 			case <-typed:
 			case <-ctx.Done():

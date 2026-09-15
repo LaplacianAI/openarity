@@ -37,14 +37,9 @@ func (UsageEvent) event()      {}
 func (StepEvent) event()       {}
 
 type Result struct {
-	Output   string
-	Messages []Message
-	Usage    Usage
-	Steps    int
-
-	// Steers that arrived with no request left to carry them — sent during the
-	// model's last call, or after the pattern had already decided to stop.
-	// Returned rather than dropped, because a steer that silently vanishes is
-	// indistinguishable from one the model read and chose to ignore.
+	Output          string
+	Messages        []Message
+	Usage           Usage
+	Steps           int
 	UnappliedSteers []string
 }
