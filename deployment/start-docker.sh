@@ -12,9 +12,10 @@
 # So this generates what is missing and nothing that is already there. Run it
 # twice and the second run changes nothing.
 #
-#   make start-docker                  # asks which identity provider
-#   make start-docker PROVIDER=dex     # or does not ask
-#   make start-docker BUILD=1          # build the brain from this tree
+#   make start-docker                     # asks which identity provider and gateway
+#   make start-docker PROVIDER=dex        # or does not ask
+#   make start-docker GATEWAY=omniroute   # omniroute | litellm | existing | none
+#   make start-docker BUILD=1             # build the brain from this tree
 #
 set -euo pipefail
 
@@ -92,7 +93,8 @@ ensure_env_file() {
 	# quote or an equals sign.
 	local key
 	for key in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS \
-		AUTHENTIK_BOOTSTRAP_TOKEN OBJECTS_SECRET_KEY; do
+		AUTHENTIK_BOOTSTRAP_TOKEN OBJECTS_SECRET_KEY \
+		LITELLM_MASTER_KEY LITELLM_PG_PASS LITELLM_UI_PASSWORD OMNIROUTE_PASSWORD; do
 		env_is_set "$key" || { env_set "$key" "$(secret)"; note "generated $key"; }
 	done
 
@@ -327,6 +329,87 @@ ensure_authentik() {
 	note "authentik provider ready"
 }
 
+# ------------------------------------------------------------------- gateway
+
+wait_answering() {
+	local url=$1 deadline code
+	deadline=$(( $(date +%s) + 180 ))
+	while :; do
+		code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" 2>/dev/null || true)
+		case "$code" in
+			000) ;;
+			*) return 0 ;;
+		esac
+		[ "$(date +%s)" -lt "$deadline" ] ||
+			die "The gateway did not answer $url within three minutes.
+It will say why:  docker compose $COMPOSE_FILES logs $GATEWAY"
+		sleep 2
+	done
+}
+
+ensure_litellm() {
+	LITELLM_PORT=$(env_value LITELLM_PORT || true)
+	LITELLM_PORT=${LITELLM_PORT:-14000}
+
+	$COMPOSE up -d litellm-postgresql litellm >/dev/null
+	wait_answering "http://$REACH_ADDR:$LITELLM_PORT/health/liveliness"
+
+	GATEWAY_URL="http://$REACH_ADDR:$LITELLM_PORT/v1"
+	GATEWAY_KEY=$(env_value LITELLM_MASTER_KEY)
+	GATEWAY_DASHBOARD="http://$REACH_ADDR:$LITELLM_PORT/ui"
+
+	env_set OPENARITY_MODELS_BASE_URL "$GATEWAY_URL"
+	env_set OPENARITY_MODELS_API_KEY "$GATEWAY_KEY"
+	note "LiteLLM answering on $LITELLM_PORT"
+}
+
+ensure_omniroute() {
+	OMNIROUTE_PORT=$(env_value OMNIROUTE_PORT || true)
+	OMNIROUTE_PORT=${OMNIROUTE_PORT:-20128}
+
+	$COMPOSE up -d omniroute >/dev/null
+	wait_answering "http://$REACH_ADDR:$OMNIROUTE_PORT/v1/models"
+
+	GATEWAY_URL="http://$REACH_ADDR:$OMNIROUTE_PORT/v1"
+	GATEWAY_KEY=$(env_value OMNIROUTE_API_KEY || true)
+	GATEWAY_DASHBOARD="http://$REACH_ADDR:$OMNIROUTE_PORT/dashboard"
+
+	env_set OPENARITY_MODELS_BASE_URL "$GATEWAY_URL"
+	[ -n "$GATEWAY_KEY" ] && env_set OPENARITY_MODELS_API_KEY "$GATEWAY_KEY"
+	note "OmniRoute answering on $OMNIROUTE_PORT"
+}
+
+ensure_existing() {
+	GATEWAY_URL=${MODELS_BASE_URL:-}
+	GATEWAY_KEY=${MODELS_API_KEY:-}
+	GATEWAY_DASHBOARD=""
+
+	if [ -z "$GATEWAY_URL" ]; then
+		[ -t 0 ] || die "GATEWAY=existing needs MODELS_BASE_URL, and there is no terminal to ask at.
+  MODELS_BASE_URL=http://host:port/v1 MODELS_API_KEY=… make start-docker GATEWAY=existing"
+		printf '  base URL (ending in /v1): '
+		read -r GATEWAY_URL
+	fi
+	[ -n "$GATEWAY_URL" ] || die "No base URL given."
+
+	if [ -z "$GATEWAY_KEY" ] && [ -t 0 ]; then
+		printf '  API key (blank if it needs none): '
+		read -r GATEWAY_KEY
+	fi
+
+	env_set OPENARITY_MODELS_BASE_URL "$GATEWAY_URL"
+	env_set OPENARITY_MODELS_API_KEY "$GATEWAY_KEY"
+
+	local code
+	code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+		-H "Authorization: Bearer $GATEWAY_KEY" "$GATEWAY_URL/models" 2>/dev/null || true)
+	case "$code" in
+		000) note "nothing answered $GATEWAY_URL/models — recorded anyway" ;;
+		200) note "$GATEWAY_URL answered and accepted the key" ;;
+		*)   note "$GATEWAY_URL answered $code — recorded, but check the key" ;;
+	esac
+}
+
 # --------------------------------------------------------------------- start
 
 # At $BIND_ADDR, not loopback. BIND_ADDR moves every published port, so on a
@@ -383,6 +466,39 @@ case "$PROVIDER" in
 	*) die "PROVIDER must be dex or authentik, not $PROVIDER." ;;
 esac
 
+GATEWAY=${GATEWAY:-}
+if [ -z "$GATEWAY" ]; then
+	if [ -t 0 ]; then
+		say ""
+		say "${bold}Which model gateway?${plain}"
+		say "  1) none       nothing in the brain calls one yet"
+		say "  2) omniroute  a dashboard for providers and routing, 4.1GB image, port 20128"
+		say "  3) litellm    1.2GB and its own Postgres, port 14000"
+		say "  4) existing   an OpenAI-compatible endpoint you already run"
+		say ""
+		printf '  [1] '
+		read -r answer
+		case "${answer:-1}" in
+			1|none) GATEWAY=none ;;
+			2|omniroute) GATEWAY=omniroute ;;
+			3|litellm) GATEWAY=litellm ;;
+			4|existing) GATEWAY=existing ;;
+			*) die "Answer 1, 2, 3 or 4." ;;
+		esac
+	else
+		GATEWAY=none
+		note "not a terminal — starting no gateway"
+	fi
+fi
+
+case "$GATEWAY" in
+	none)      GATEWAY_OVERLAY="" ;;
+	existing)  GATEWAY_OVERLAY="" ;;
+	omniroute) GATEWAY_OVERLAY="-f docker-compose.omniroute.yml" ;;
+	litellm)   GATEWAY_OVERLAY="-f docker-compose.litellm.yml" ;;
+	*) die "GATEWAY must be none, omniroute, litellm or existing, not $GATEWAY." ;;
+esac
+
 # The published image unless asked otherwise. A clone that wants its own tree
 # built passes BUILD=1 and waits for the compile instead of the pull.
 if [ -n "${BUILD:-}" ]; then
@@ -393,7 +509,7 @@ else
 	BUILD_FLAG=""
 fi
 
-COMPOSE_FILES="$COMPOSE_BASE $PROVIDER_OVERLAY $IMAGE_OVERLAY $BAO_OVERLAY $OBJECTS_OVERLAY"
+COMPOSE_FILES="$COMPOSE_BASE $PROVIDER_OVERLAY $GATEWAY_OVERLAY $IMAGE_OVERLAY $BAO_OVERLAY $OBJECTS_OVERLAY"
 COMPOSE="docker compose $COMPOSE_FILES"
 BAO_COMPOSE="docker compose $COMPOSE_BASE $BAO_OVERLAY"
 
@@ -409,6 +525,18 @@ case "$PROVIDER" in
 	dex)       ensure_dex ;;
 	authentik) ensure_authentik ;;
 esac
+
+GATEWAY_URL=""
+GATEWAY_KEY=""
+GATEWAY_DASHBOARD=""
+if [ "$GATEWAY" != none ]; then
+	step "Model gateway — $GATEWAY"
+	case "$GATEWAY" in
+		omniroute) ensure_omniroute ;;
+		litellm)   ensure_litellm ;;
+		existing)  ensure_existing ;;
+	esac
+fi
 
 step "Starting"
 # shellcheck disable=SC2086 # every one of these is a flag we wrote
@@ -433,6 +561,29 @@ else
 	say "  sign in as   akadmin"
 	say "  passphrase   ${AUTHENTIK_PASSWORD:-AUTHENTIK_BOOTSTRAP_PASSWORD in deployment/.env}"
 fi
+
+if [ -n "$GATEWAY_URL" ]; then
+	say ""
+	say "  gateway      $GATEWAY_URL"
+	[ -n "$GATEWAY_DASHBOARD" ] && say "  its console  $GATEWAY_DASHBOARD"
+	case "$GATEWAY" in
+		omniroute)
+			say ""
+			say "  It routes nothing until you add a provider and mint a key in"
+			say "  that console, then put the key in deployment/.env as"
+			say "  OMNIROUTE_API_KEY and run this again."
+			;;
+		litellm)
+			say ""
+			say "  It routes nothing until a provider key is in deployment/.env"
+			say "  — ANTHROPIC_API_KEY or OPENAI_API_KEY — and litellm restarts."
+			;;
+	esac
+	say ""
+	say "${dim}  export OPENARITY_MODELS_BASE_URL=$GATEWAY_URL${plain}"
+	say "${dim}  export OPENARITY_MODELS_API_KEY=…   # in deployment/.env${plain}"
+fi
+
 say ""
 say "${dim}  oa context create local --server http://$REACH_ADDR:$API_PORT${plain}"
 say "${dim}  oa login${plain}"
