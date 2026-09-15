@@ -161,7 +161,7 @@ func TestStartingIsNotDoneUntilTheBrainAnswers(t *testing.T) {
 	plan := planFor(t, 1)
 
 	spawned := false
-	err := launch(ctx, plan, nothingToStop, func(engine.Plan) error {
+	err := launch(ctx, plan, nothingToStop, func(string) error {
 		spawned = true
 		return nil
 	})
@@ -190,7 +190,7 @@ func TestStartingSucceedsOnceSomethingIsListening(t *testing.T) {
 
 	plan := planFor(t, port)
 
-	if err := launch(t.Context(), plan, nothingToStop, func(engine.Plan) error { return nil }); err != nil {
+	if err := launch(t.Context(), plan, nothingToStop, func(string) error { return nil }); err != nil {
 		t.Errorf("launch() = %v, want it to finish once the brain answers", err)
 	}
 }
@@ -246,5 +246,27 @@ func TestStartingStillStopsTheClusterTheInstallUsed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "pg_ctl") {
 		t.Errorf("startStack() = %v, want it to have tried to stop the cluster first", err)
+	}
+}
+
+// `oa stack stop` used to ask and return. A moment later `oa stack info` still
+// said running — it reads the same pid file — and the installer window's
+// Start button, acting on exactly that answer, refused with "already running"
+// and did nothing.
+func TestStoppingWaitsUntilItHasStopped(t *testing.T) {
+	t.Parallel()
+
+	// A pid nothing owns: already stopped, so this returns at once.
+	if err := waitForStopped(t.Context(), 2147483647); err != nil {
+		t.Errorf("waitForStopped() on a dead pid = %v, want nil", err)
+	}
+
+	// One that never stops. The wait has to be interruptible rather than
+	// something a person has to kill.
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+
+	if err := waitForStopped(ctx, os.Getpid()); err == nil {
+		t.Error("waitForStopped() on a process that is still alive = nil")
 	}
 }

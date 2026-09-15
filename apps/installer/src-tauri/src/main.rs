@@ -42,6 +42,65 @@ pub struct Choices {
     model_key: String,
 }
 
+/// What `oa stack info -o json` answers. Deserialised rather than passed
+/// through as text so a rename on either side fails here.
+#[derive(serde::Deserialize, Serialize, Clone)]
+pub struct Existing {
+    installed: bool,
+    running: bool,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    sign_in: String,
+    root: String,
+}
+
+/// Asked before the window shows anything.
+///
+/// Opening the installer on a machine that already has Openarity used to
+/// present the whole form, take every answer, and fail at the end with
+/// "already installed at ... — run `oa stack start`" — a sentence about a
+/// command the person never ran, at the end of work that was never going to
+/// count.
+#[tauri::command]
+async fn existing(app: AppHandle) -> Result<Existing, String> {
+    let output = app
+        .shell()
+        .sidecar("oa")
+        .map_err(|e| e.to_string())?
+        .args(["stack", "info", "-o", "json"])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
+}
+
+/// Starting what is already installed, for the case where it is there and
+/// nothing is running — a machine not logged into since the last restart.
+///
+/// --detach because `oa stack start` holds the processes for as long as it
+/// runs, and a window has no terminal to hold them in.
+#[tauri::command]
+async fn start(app: AppHandle) -> Result<(), String> {
+    let output = app
+        .shell()
+        .sidecar("oa")
+        .map_err(|e| e.to_string())?
+        .args(["stack", "start", "--detach"])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
     // The bundle carries brain and dex beside oa, and setup is pointed at
@@ -153,7 +212,7 @@ async fn install(app: AppHandle, choices: Choices) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![install])
+        .invoke_handler(tauri::generate_handler![install, existing, start])
         .run(tauri::generate_context!())
         .expect("the installer window could not start");
 }

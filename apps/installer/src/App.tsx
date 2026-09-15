@@ -3,12 +3,20 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-shell";
 import { useEffect, useState } from "react";
 
-import { apply, nothingYet, readLines, STEPS, whatIsMissing, type Progress } from "./steps";
+import {
+  apply,
+  nothingYet,
+  readLines,
+  STEPS,
+  whatIsMissing,
+  type Existing,
+  type Progress,
+} from "./steps";
 
-type Screen = "questions" | "installing" | "done";
+type Screen = "looking" | "already" | "questions" | "installing" | "done";
 
 export function App() {
-  const [screen, setScreen] = useState<Screen>("questions");
+  const [screen, setScreen] = useState<Screen>("looking");
   const [progress, setProgress] = useState<Progress>(nothingYet);
   const [objects, setObjects] = useState("filesystem");
   const [secrets, setSecrets] = useState("static");
@@ -26,6 +34,8 @@ export function App() {
   const [kvMount, setKVMount] = useState("secret");
   const [adminToken, setAdminToken] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
+  const [here, setHere] = useState<Existing | null>(null);
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
     const stop = listen<{ line: string }>("install", (e) => {
@@ -41,6 +51,77 @@ export function App() {
       setScreen("done");
     }
   }, [progress.url]);
+
+  // Asked before anything is shown. Opening this on a machine that already
+  // has Openarity used to present the whole form, take every answer, and fail
+  // at the end with "already installed at ... — run `oa stack start`": a
+  // sentence about a command nobody ran, at the end of work that was never
+  // going to count.
+  useEffect(() => {
+    invoke<Existing>("existing")
+      .then((found) => {
+        setHere(found);
+        setScreen(found.installed ? "already" : "questions");
+      })
+      .catch(() => setScreen("questions"));
+  }, []);
+
+  if (screen === "looking") {
+    return (
+      <main>
+        <h1>Set up Openarity</h1>
+        <p className="lede">Looking for an existing install&hellip;</p>
+      </main>
+    );
+  }
+
+  if (screen === "already" && here) {
+    return (
+      <main>
+        <h1>Openarity is already here</h1>
+        <p className="lede">
+          {here.running
+            ? "It is installed on this computer and running."
+            : "It is installed on this computer but not running at the moment."}
+        </p>
+
+        <dl className="details">
+          <Detail label="Web address" value={here.url} copyable />
+          <Detail label="Sign in as" value={here.sign_in} copyable />
+          <Detail label="Installed in" value={here.root} />
+        </dl>
+
+        {problem && <p className="failure">{problem}</p>}
+
+        {here.running ? (
+          <button type="button" className="primary" onClick={() => void open(here.url)}>
+            Open Openarity
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="primary"
+            disabled={starting}
+            onClick={() => {
+              setStarting(true);
+              setProblem(null);
+              invoke("start")
+                .then(() => setHere({ ...here, running: true }))
+                .catch((err) => setProblem(String(err)))
+                .finally(() => setStarting(false));
+            }}
+          >
+            {starting ? "Starting…" : "Start Openarity"}
+          </button>
+        )}
+
+        <p className="lede">
+          Your password was shown once when it was installed and is not saved anywhere. If it
+          is lost, delete the folder above and set it up again.
+        </p>
+      </main>
+    );
+  }
 
   const runsGateway = modelBackend === "litellm" || modelBackend === "omniroute";
 

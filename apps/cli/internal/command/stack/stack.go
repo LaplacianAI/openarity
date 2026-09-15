@@ -6,11 +6,13 @@
 package stack
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -49,6 +51,7 @@ func New(opts *cli.Options) *cobra.Command {
 		newStartCmd(opts, find),
 		newStopCmd(opts, find),
 		newStatusCmd(opts, find),
+		newInfoCmd(opts, find),
 	)
 	return cmd
 }
@@ -223,11 +226,14 @@ func newSetupCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 }
 
 func newStartCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
-	return &cobra.Command{
+	var detached bool
+
+	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start an install, and stay running",
 		Long: "Holds the four processes for as long as it runs, so stopping this\n" +
-			"stops them. Ctrl-C, or `oa stack stop` from another terminal.",
+			"stops them. Ctrl-C, or `oa stack stop` from another terminal.\n" +
+			"--detach starts them and returns instead.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			layout, state, err := requireInstall(find)
@@ -244,6 +250,21 @@ func newStartCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				opts.Out.Note(fmt.Sprintf(
 					"Openarity is already running at http://127.0.0.1:%d/ui, supervised by pid %d",
 					state.Ports.API, pid))
+				return nil
+			}
+
+			// The same start setup does: spawn the supervisor, wait until the
+			// brain answers, and return. For the installer window, which has
+			// no terminal to hold, and for anybody who wants their prompt
+			// back.
+			if detached {
+				if err := spawnSupervisor(layout.Root); err != nil {
+					return err
+				}
+				if err := waitForReady(cmd.Context(), state.Ports.API); err != nil {
+					return err
+				}
+				opts.Out.Note(fmt.Sprintf("Openarity is running at http://127.0.0.1:%d/ui", state.Ports.API))
 				return nil
 			}
 
@@ -285,6 +306,10 @@ func newStartCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 			return stack.Stop(withoutCancel(cmd))
 		},
 	}
+
+	cmd.Flags().BoolVar(&detached, "detach", false,
+		"start it and return, instead of holding the processes here")
+	return cmd
 }
 
 func newStopCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
@@ -319,10 +344,107 @@ func newStopCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
 				return fmt.Errorf("stack: stopping the supervisor (pid %d): %w", pid, err)
 			}
 
-			opts.Out.Note("stopping")
+			// Waited for, not assumed. Asking a supervisor to stop and
+			// returning immediately meant `oa stack info` still said running
+			// a moment later, and the installer window's Start button —
+			// acting on exactly that answer — refused with "already running"
+			// and did nothing. Postgres shutting down is the slow part, and
+			// it is worth the second.
+			if err := waitForStopped(cmd.Context(), pid); err != nil {
+				return err
+			}
+
+			opts.Out.Note("stopped")
 			return nil
 		},
 	}
+}
+
+// infoView answers one question — is Openarity already here — without
+// failing when the answer is no.
+//
+// `status` refuses with "no install at ..." and `setup` refuses with "already
+// installed at ... — run `oa stack start`", both of which are the right thing
+// to tell a person at a terminal and neither of which a window can act on. It
+// opened its form regardless, took every answer again, and failed at the end
+// with a sentence about a command nobody had run.
+type infoView struct {
+	Installed bool   `json:"installed" yaml:"installed"`
+	Running   bool   `json:"running" yaml:"running"`
+	URL       string `json:"url,omitempty" yaml:"url,omitempty"`
+	SignIn    string `json:"sign_in,omitempty" yaml:"sign_in,omitempty"`
+	Root      string `json:"root" yaml:"root"`
+}
+
+func newInfoCmd(opts *cli.Options, find layoutFunc) *cobra.Command {
+	return &cobra.Command{
+		Use:   "info",
+		Short: "Say whether Openarity is installed here, and where to reach it",
+		Long: "Answers rather than refuses: an install that is not there is\n" +
+			"installed: false, not an error. Written for the installer window,\n" +
+			"which has to decide what to show before it shows anything.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			layout, err := find()
+			if err != nil {
+				return err
+			}
+
+			view := infoView{Root: layout.Root}
+			if !layout.Installed() {
+				return print(opts, view)
+			}
+			view.Installed = true
+
+			state, err := engine.LoadState(layout.State)
+			if err != nil {
+				return err
+			}
+			view.URL = fmt.Sprintf("http://127.0.0.1:%d/ui", state.Ports.API)
+			view.SignIn = engine.DexUser
+			view.Running = running(layout) != 0
+
+			return print(opts, view)
+		},
+	}
+}
+
+func print(opts *cli.Options, view infoView) error {
+	return opts.Out.Print(view, printer.Options{
+		Table: func(table *printer.Table) {
+			if !view.Installed {
+				table.Row("installed", "no")
+				table.Row("would install into", view.Root)
+				return
+			}
+			table.Row("installed", view.Root)
+			table.Row("running", map[bool]string{true: "yes", false: "no"}[view.Running])
+			table.Row("address", opts.Styles.Value.Render(view.URL))
+			table.Row("sign in as", view.SignIn)
+		},
+	})
+}
+
+// howLongToWaitForStopped is generous because the slow part is Postgres
+// flushing, and the failure it guards against is waiting forever rather than
+// waiting a while.
+const howLongToWaitForStopped = 2 * time.Minute
+
+func waitForStopped(ctx context.Context, pid int) error {
+	deadline := time.Now().Add(howLongToWaitForStopped)
+	for alive(pid) {
+		if time.Now().After(deadline) {
+			return fmt.Errorf(
+				"stack: the supervisor (pid %d) was asked to stop %s ago and is still running",
+				pid, howLongToWaitForStopped)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return nil
 }
 
 // statusView is what `oa status` prints. Both tags, always: a field with only

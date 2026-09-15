@@ -1,5 +1,16 @@
 export type Phase = "started" | "progress" | "done" | "failed";
 
+// What `oa stack info` answers, and the shape Rust passes through. Named
+// fields rather than a string, so a rename on either side is a type error
+// here rather than an empty row in somebody's window.
+export type Existing = {
+  installed: boolean;
+  running: boolean;
+  url: string;
+  sign_in: string;
+  root: string;
+};
+
 export type Event = {
   step: string;
   state: Phase;

@@ -25,7 +25,7 @@ func TestEveryVerbIsRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stack --help = %v", err)
 	}
-	for _, verb := range []string{"setup", "start", "stop", "status"} {
+	for _, verb := range []string{"setup", "start", "stop", "status", "info"} {
 		if !strings.Contains(out, verb) {
 			t.Errorf("stack --help does not name %q:\n%s", verb, out)
 		}
@@ -163,7 +163,7 @@ func TestExtraArgumentsAreRefused(t *testing.T) {
 	clitest.Isolate(t)
 	root := install(t)
 
-	for _, verb := range []string{"setup", "start", "stop", "status"} {
+	for _, verb := range []string{"setup", "start", "stop", "status", "info"} {
 		if _, err := clitest.Execute(t, commands(), "stack", verb, "--root", root, "unexpected"); err == nil {
 			t.Errorf("stack %s accepted an unexpected argument", verb)
 		}
@@ -218,5 +218,64 @@ func TestTheRootFlagDefaultsToThePlatformDirectory(t *testing.T) {
 	// It must not print a path from the machine that built the binary.
 	if strings.Contains(out, os.TempDir()) {
 		t.Errorf("the --root default leaked a build-time path:\n%s", out)
+	}
+}
+
+// `oa stack info` exists so the installer window can decide what to show
+// before it shows anything. Opening it on a machine that already has
+// Openarity used to present the whole form, take every answer, and fail at
+// the end with "already installed at ... — run `oa stack start`".
+//
+// So the answer to "is it here" must be an answer, not an error, in both
+// directions.
+func TestInfoAnswersRatherThanRefusing(t *testing.T) {
+	clitest.Isolate(t)
+
+	root := filepath.Join(t.TempDir(), "nothing-here")
+	out, err := clitest.Execute(t, commands(), "stack", "info", "--root", root, "-o", "json")
+	if err != nil {
+		t.Fatalf("stack info on an empty directory = %v", err)
+	}
+
+	var view struct {
+		Installed bool   `json:"installed"`
+		Running   bool   `json:"running"`
+		URL       string `json:"url"`
+		Root      string `json:"root"`
+	}
+	if err := json.Unmarshal([]byte(out), &view); err != nil {
+		t.Fatalf("stack info printed something that is not JSON: %v\n%s", err, out)
+	}
+
+	if view.Installed || view.Running {
+		t.Errorf("an empty directory reported %+v, want neither installed nor running", view)
+	}
+	if view.Root != root {
+		t.Errorf("root = %q, want the directory it was asked about, %q", view.Root, root)
+	}
+	if view.URL != "" {
+		t.Errorf("url = %q, want nothing to open when there is nothing installed", view.URL)
+	}
+}
+
+// And when there is one, it says where to reach it. The window shows exactly
+// these three.
+func TestInfoNamesWhereToReachAnInstall(t *testing.T) {
+	clitest.Isolate(t)
+	root := install(t)
+
+	out, err := clitest.Execute(t, commands(), "stack", "info", "--root", root, "-o", "json")
+	if err != nil {
+		t.Fatalf("stack info = %v", err)
+	}
+
+	for _, want := range []string{
+		`"installed": true`,
+		`"url": "http://127.0.0.1:21120/ui"`,
+		`"sign_in": "dev@openarity.local"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stack info did not report %s:\n%s", want, out)
+		}
 	}
 }

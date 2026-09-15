@@ -51,11 +51,11 @@ func startStack(ctx context.Context, p engine.Plan) error {
 // supplied a real pg_ctl had to write a stub and exec it immediately, which
 // fails intermittently under a loaded machine and failed roughly one run in
 // ten of `make check`.
-func launch(ctx context.Context, p engine.Plan, stop func(context.Context, engine.Plan) error, spawn func(engine.Plan) error) error {
+func launch(ctx context.Context, p engine.Plan, stop func(context.Context, engine.Plan) error, spawn func(string) error) error {
 	if err := stop(ctx, p); err != nil {
 		return err
 	}
-	if err := spawn(p); err != nil {
+	if err := spawn(p.Layout.Root); err != nil {
 		return err
 	}
 	return waitForReady(ctx, p.Ports.API)
@@ -64,20 +64,24 @@ func launch(ctx context.Context, p engine.Plan, stop func(context.Context, engin
 // spawnSupervisor starts the whole stack the way `oa stack start` does — as a
 // detached process, so it outlives the setup that spawned it and the window
 // that spawned that.
-func spawnSupervisor(p engine.Plan) error {
+func spawnSupervisor(root string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("stack: cannot find the binary to start with: %w", err)
 	}
 
-	log, err := os.OpenFile(filepath.Join(p.Layout.Root, "logs", "supervisor.log"),
+	// The root is the install directory, from a flag or the platform default,
+	// not from anything a stranger sends. It stopped being a Layout field
+	// when the spawn learnt to take a root on its own, which is when gosec
+	// started asking.
+	log, err := os.OpenFile(filepath.Join(root, "logs", "supervisor.log"), //nolint:gosec // the install directory
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = log.Close() }()
 
-	cmd := supervisorCommand(exe, p.Layout.Root, log)
+	cmd := supervisorCommand(exe, root, log)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("stack: could not start the supervisor: %w", err)
