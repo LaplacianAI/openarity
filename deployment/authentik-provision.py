@@ -25,6 +25,14 @@ TOKEN = os.environ["AUTHENTIK_TOKEN"]
 # on the identity provider's own origin, where nothing answers.
 DASHBOARD_ORIGIN = os.environ["DASHBOARD_ORIGIN"].rstrip("/")
 
+# Comma-separated: a browser treats localhost and 127.0.0.1 as different
+# origins, so allowing one says nothing about the other.
+LOOPBACK_ORIGINS = [
+    origin.rstrip("/")
+    for origin in os.environ.get("LOOPBACK_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
 WANTED_REDIRECTS = [
     # The device flow's own callback, which dex documents as internal: the
     # provider redirects to it after the login rather than a browser.
@@ -32,6 +40,18 @@ WANTED_REDIRECTS = [
     f"{DASHBOARD_ORIGIN}/ui/callback",
     "http://localhost:8080/callback",
 ]
+
+# Authentik derives the origins it will answer CORS for from the redirect URIs
+# registered here, and nothing else. So a dashboard opened at
+# http://localhost:21120 — which is what a person types, and what the brain
+# answers on — fails on the first cross-origin call the sign-in makes:
+# discovery returns 200 with no Access-Control-Allow-Origin, and the browser
+# reports it as "Failed to fetch" with nothing about CORS in it. Registering
+# the loopback callback is what makes that origin allowed.
+for origin in LOOPBACK_ORIGINS:
+    callback = f"{origin}/ui/callback"
+    if callback not in WANTED_REDIRECTS:
+        WANTED_REDIRECTS.append(callback)
 
 
 def api(path, body=None, method=None):

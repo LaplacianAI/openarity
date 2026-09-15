@@ -316,6 +316,7 @@ ensure_authentik() {
 	local client_id
 	client_id=$(AUTHENTIK_URL="http://$REACH_ADDR:9000" AUTHENTIK_TOKEN="$token" \
 		DASHBOARD_ORIGIN="http://$REACH_ADDR:$API_PORT" \
+		LOOPBACK_ORIGINS="http://localhost:$API_PORT,http://127.0.0.1:$API_PORT" \
 		python3 authentik-provision.py) ||
 		die "Could not provision authentik. Its log may say why:
   docker compose $COMPOSE_FILES logs authentik-server"
