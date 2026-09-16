@@ -134,8 +134,8 @@ you want the run to stop; that is a different thing and it ends the run rather
 than redirecting it.
 
 **It cannot resurrect a finished run.** If the model has stopped calling tools,
-there is no next request, and nothing can create one from outside a pattern.
-Both halves of that are visible rather than silent:
+there is no next request, and nothing can create one from inside the run. Both
+halves of that are visible rather than silent:
 
 - `Steer` returns `ErrRunFinished` once there is no request left to carry it.
 - A steer sent during what turns out to be the final call comes back on
@@ -150,6 +150,49 @@ gets one step to change course, and a run at its limit ends at its limit —
 `maxTurns` is reached stays queued and is never delivered. Extending the budget
 would also mean the pattern re-reading `MaxSteps` each iteration, which is the
 pattern cooperation this design exists to avoid.
+
+## Carrying on for a steer that arrived too late
+
+A run that ends while somebody is still talking to it can take their line as the
+start of another turn. One field switches it on:
+
+```go
+spec := agent.Spec{
+    ...
+    SteerContinuations: 2,
+}
+```
+
+Zero, the default, is the behaviour above: the run ends and the steer comes back
+on `UnappliedSteers`. Above zero, anything still pending when the pattern
+returns becomes an ordinary user message, and the pattern runs again on the
+extended conversation.
+
+| Value | What a steer that arrived too late does                       |
+| ----- | ------------------------------------------------------------- |
+| `0`   | comes back on `UnappliedSteers`; the run is over              |
+| `2`   | becomes a user message and the pattern runs again, twice more |
+| `-1`  | `Run` refuses the spec before reaching the model              |
+
+The number is *extra* turns, so `2` allows at most three pattern runs. It is a
+bound rather than a switch because nothing else can stop a run that is steered
+repeatedly — each continuation gets a fresh `MaxSteps`, so the step budget is no
+limit at all across turns.
+
+You still get one `Result`: `Steps` and `Usage` summed over every turn, and
+`Messages` the whole conversation with the steers in it as user messages. A
+steer arriving after the allowance is spent still comes back on
+`UnappliedSteers` — turning this on never makes one disappear.
+
+It lands as a plain user message, not the labelled form a mid-run steer gets.
+By then the model had stopped working, so "the user sent this while you were
+working" would not be true.
+
+This is what Claude Code does at the session level: type while it is finishing
+and your message becomes the next turn rather than being dropped. The difference
+is that here it is off by default and bounded when on, because the SDK owns no
+conversation loop of its own — `Result.Messages` is yours, and a runner that
+quietly started more turns would be the runner deciding.
 
 ## Seeing it work
 

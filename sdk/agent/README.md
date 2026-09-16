@@ -148,6 +148,14 @@ than silent:
   `Result.UnappliedSteers` rather than disappearing. A steer that silently
   vanishes is indistinguishable from one the model read and ignored.
 
+Set `Spec.SteerContinuations` above zero and a steer left pending at the end
+does not have to stop there: it becomes an ordinary user message and the pattern
+runs again on the extended conversation, up to that many extra turns. Zero, the
+default, is the behaviour above. The count is a bound rather than a switch
+because each continuation gets a fresh `MaxSteps`, so nothing else limits a run
+that is steered over and over. One `Result` comes back either way, with `Steps`
+and `Usage` summed across every turn.
+
 `Run` is unchanged and still the right call when you only want the answer — it
 is `Start(...).Wait()`.
 

@@ -107,17 +107,39 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 
 	counter := &countingClient{inner: steered}
 
-	result, err := pattern.Run(ctx, Input{
-		Spec:     spec,
-		Messages: msgs,
-		Model:    counter,
-		Events:   events,
-	})
+	if spec.SteerContinuations < 0 {
+		return Result{}, fmt.Errorf(
+			"Spec.SteerContinuations is %d; a run cannot continue a negative number of times",
+			spec.SteerContinuations)
+	}
 
-	result.Usage = counter.spent()
-	result.Messages = recordSteers(result.Messages, box.applied())
+	var result Result
+	for turn := 0; ; turn++ {
+		this, err := pattern.Run(ctx, Input{
+			Spec:     spec,
+			Messages: msgs,
+			Model:    counter,
+			Events:   events,
+		})
 
-	return result, err
+		result.Output = this.Output
+		result.Steps += this.Steps
+		result.Usage = counter.spent()
+		result.Messages = recordSteers(this.Messages, box.applied())
+
+		if err != nil {
+			return result, err
+		}
+		if turn >= spec.SteerContinuations {
+			return result, nil
+		}
+
+		pending := box.restart()
+		if len(pending) == 0 {
+			return result, nil
+		}
+		msgs = append(slices.Clone(result.Messages), steerMessages(pending)...)
+	}
 }
 
 func withSkills(spec Spec) (Spec, error) {

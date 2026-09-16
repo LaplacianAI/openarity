@@ -24,6 +24,8 @@ type Spec struct {
 	Tools    []Tool
 	Skills   []Skill
 	MaxSteps int
+
+	SteerContinuations int
 }
 
 func System(prompt string) []Content {

@@ -55,6 +55,16 @@ func (b *steerBox) applied() []steer {
 	return slices.Clone(b.carried)
 }
 
+func (b *steerBox) restart() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	out := b.pending
+	b.pending = nil
+	b.carried = nil
+	return out
+}
+
 func (b *steerBox) close() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -108,6 +118,17 @@ func recordSteers(msgs []Message, steers []steer) []Message {
 	for i, s := range steers {
 		at := min(s.at+i, len(out))
 		out = slices.Insert(out, at, steerMessage(s.text))
+	}
+	return out
+}
+
+func steerMessages(steers []string) []Message {
+	out := make([]Message, 0, len(steers))
+	for _, text := range steers {
+		out = append(out, Message{
+			Role:    RoleUser,
+			Content: []Content{{Type: ContentText, Text: text}},
+		})
 	}
 	return out
 }
