@@ -39,8 +39,44 @@ func New(clientFor ClientFactory, patterns ...Pattern) (*Runner, error) {
 	return &Runner{clientFor: clientFor, patterns: byName}, nil
 }
 
+func (r *Runner) Start(ctx context.Context, spec Spec, msgs []Message,
+	endpoint Endpoint, events chan<- Event,
+) *Run {
+	run := &Run{box: &steerBox{}, done: make(chan struct{})}
+
+	go func() {
+		defer close(run.done)
+		result, err := r.run(ctx, spec, msgs, endpoint, events, run.box)
+		result.UnappliedSteers = run.box.close()
+		run.result, run.err = result, err
+	}()
+
+	return run
+}
+
+type Run struct {
+	box  *steerBox
+	done chan struct{}
+
+	result Result
+	err    error
+}
+
+func (run *Run) Steer(text string) error { return run.box.add(text) }
+
+func (run *Run) Wait() (Result, error) {
+	<-run.done
+	return run.result, run.err
+}
+
 func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 	endpoint Endpoint, events chan<- Event,
+) (Result, error) {
+	return r.Start(ctx, spec, msgs, endpoint, events).Wait()
+}
+
+func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
+	endpoint Endpoint, events chan<- Event, box *steerBox,
 ) (Result, error) {
 	if spec.Pattern == "" {
 		return Result{}, fmt.Errorf("the spec names no pattern; set Spec.Pattern to one of: %s",
@@ -63,9 +99,13 @@ func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 		return Result{}, fmt.Errorf("connecting to %s: %w", endpoint.BaseURL, err)
 	}
 
-	// Wrapped so no pattern has to do its own accounting. A pattern written
-	// outside this module gets the right number without knowing to try.
-	counter := &countingClient{inner: client}
+	steered := &steeringClient{
+		inner: client,
+		box:   box,
+		emit:  func(e Event) { emit(ctx, events, e) },
+	}
+
+	counter := &countingClient{inner: steered}
 
 	result, err := pattern.Run(ctx, Input{
 		Spec:     spec,
@@ -74,11 +114,9 @@ func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 		Events:   events,
 	})
 
-	// Set after the pattern returns and on the error path too: what a run that
-	// failed half way spent is still owed. This is the authoritative figure —
-	// a pattern may total its own for anyone calling it directly, but the
-	// count taken at the client is the one that cannot miss a call.
 	result.Usage = counter.spent()
+	result.Messages = recordSteers(result.Messages, box.applied())
+
 	return result, err
 }
 

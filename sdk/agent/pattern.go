@@ -24,12 +24,14 @@ type Input struct {
 	Events   chan<- Event
 }
 
-func (in Input) Emit(ctx context.Context, e Event) {
-	if in.Events == nil {
+func (in Input) Emit(ctx context.Context, e Event) { emit(ctx, in.Events, e) }
+
+func emit(ctx context.Context, events chan<- Event, e Event) {
+	if events == nil {
 		return
 	}
 	select {
-	case in.Events <- e:
+	case events <- e:
 	case <-ctx.Done():
 	}
 }

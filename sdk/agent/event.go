@@ -37,8 +37,9 @@ func (UsageEvent) event()      {}
 func (StepEvent) event()       {}
 
 type Result struct {
-	Output   string
-	Messages []Message
-	Usage    Usage
-	Steps    int
+	Output          string
+	Messages        []Message
+	Usage           Usage
+	Steps           int
+	UnappliedSteers []string
 }
