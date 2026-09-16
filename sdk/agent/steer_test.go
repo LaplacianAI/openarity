@@ -449,3 +449,243 @@ func TestWaitCanBeCalledMoreThanOnce(t *testing.T) {
 		t.Errorf("a second Wait() returned %q, want %q", second.Output, first.Output)
 	}
 }
+
+type echoPattern struct {
+	steps int
+	calls int
+}
+
+func (*echoPattern) Name() PatternName { return "echo" }
+
+func (p *echoPattern) Run(ctx context.Context, in Input) (Result, error) {
+	msgs := append([]Message(nil), in.Messages...)
+
+	for range max(p.calls, 1) {
+		if _, err := in.Model.Complete(ctx, Request{Messages: msgs}); err != nil {
+			return Result{}, err
+		}
+		msgs = append(msgs,
+			Message{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "1", Name: "grep"}}},
+			Message{Role: RoleTool, ToolCallID: "1", Content: []Content{{Type: ContentText, Text: "found"}}})
+	}
+
+	msgs = append(msgs, Message{
+		Role:    RoleAssistant,
+		Content: []Content{{Type: ContentText, Text: "done"}},
+	})
+	return Result{Output: "done", Messages: msgs, Steps: p.steps}, nil
+}
+
+func steerOnEveryCall(t *testing.T, texts ...string) (*recordingClient, func(*Run)) {
+	t.Helper()
+
+	runCh := make(chan *Run, 1)
+	var call int
+	inner := &recordingClient{}
+	inner.reply = func(Request) Response {
+		if call < len(texts) {
+			run := <-runCh
+			runCh <- run
+			_ = run.Steer(texts[call])
+		}
+		call++
+		return Response{}
+	}
+	return inner, func(run *Run) {
+		select {
+		case runCh <- run:
+		default:
+		}
+	}
+}
+
+func TestAPendingSteerContinuesTheRunWhenAskedTo(t *testing.T) {
+	inner, publish := steerOnEveryCall(t, "actually, look in vault.go")
+	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil }, &echoPattern{})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+
+	spec := Spec{Pattern: "echo", MaxSteps: 1, SteerContinuations: 1}
+	run := runner.Start(t.Context(), spec, nil, Endpoint{}, nil)
+	publish(run)
+
+	result, err := run.Wait()
+	if err != nil {
+		t.Fatalf("Wait() = %v", err)
+	}
+
+	if len(inner.requests()) != 2 {
+		t.Fatalf("the pattern ran %d times, want 2 — the steer should have started another turn",
+			len(inner.requests()))
+	}
+	second := inner.requests()[1].Messages
+	var carried bool
+	for _, m := range second {
+		if strings.Contains(text(m), "look in vault.go") {
+			carried = true
+		}
+	}
+	if !carried {
+		t.Errorf("the continuation did not put the steer in front of the model: %+v", second)
+	}
+	if len(result.UnappliedSteers) != 0 {
+		t.Errorf("a steer that was delivered is still reported unapplied: %v", result.UnappliedSteers)
+	}
+}
+
+func TestWithoutContinuationsTheSteerComesBackInstead(t *testing.T) {
+	inner, publish := steerOnEveryCall(t, "actually, look in vault.go")
+	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil }, &echoPattern{})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+
+	run := runner.Start(t.Context(), Spec{Pattern: "echo", MaxSteps: 1}, nil, Endpoint{}, nil)
+	publish(run)
+
+	result, err := run.Wait()
+	if err != nil {
+		t.Fatalf("Wait() = %v", err)
+	}
+
+	if len(inner.requests()) != 1 {
+		t.Errorf("the pattern ran %d times, want 1 — continuations are off by default",
+			len(inner.requests()))
+	}
+	if len(result.UnappliedSteers) != 1 {
+		t.Errorf("UnappliedSteers = %v, want the one steer nobody carried", result.UnappliedSteers)
+	}
+}
+
+func TestContinuationsAreBounded(t *testing.T) {
+	inner, publish := steerOnEveryCall(t, "one", "two", "three", "four", "five")
+	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil }, &echoPattern{})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+
+	spec := Spec{Pattern: "echo", MaxSteps: 1, SteerContinuations: 2}
+	run := runner.Start(t.Context(), spec, nil, Endpoint{}, nil)
+	publish(run)
+
+	result, err := run.Wait()
+	if err != nil {
+		t.Fatalf("Wait() = %v", err)
+	}
+
+	if got := len(inner.requests()); got != 3 {
+		t.Errorf("the pattern ran %d times, want 3 — somebody steering in a loop must not run forever", got)
+	}
+	if len(result.UnappliedSteers) != 1 {
+		t.Errorf("the steer that ran out of continuations was not handed back: %v", result.UnappliedSteers)
+	}
+}
+
+func TestASteerIsNotReappliedAfterItBecomesAMessage(t *testing.T) {
+	inner, publish := steerOnEveryCall(t, "look in vault.go", "and check the lease")
+	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil }, &echoPattern{calls: 2})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+
+	spec := Spec{Pattern: "echo", MaxSteps: 1, SteerContinuations: 1}
+	run := runner.Start(t.Context(), spec, nil, Endpoint{}, nil)
+	publish(run)
+
+	result, err := run.Wait()
+	if err != nil {
+		t.Fatalf("Wait() = %v", err)
+	}
+	if len(inner.requests()) < 3 {
+		t.Fatalf("only %d requests — the first steer never got carried onto one",
+			len(inner.requests()))
+	}
+
+	for i, req := range inner.requests() {
+		var n int
+		for _, m := range req.Messages {
+			if strings.Contains(text(m), "look in vault.go") {
+				n++
+			}
+		}
+		if n > 1 {
+			t.Errorf("request %d carries the first steer %d times — once it is an ordinary\n"+
+				"message it must not also be re-applied on top of the conversation", i, n)
+		}
+	}
+
+	var inTranscript int
+	for _, m := range result.Messages {
+		if strings.Contains(text(m), "look in vault.go") {
+			inTranscript++
+		}
+	}
+	if inTranscript != 1 {
+		t.Errorf("the transcript holds the first steer %d times, want 1", inTranscript)
+	}
+}
+
+func TestStepsAndUsageCoverEveryContinuation(t *testing.T) {
+	inner, publish := steerOnEveryCall(t, "again")
+	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil },
+		&echoPattern{steps: 3})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+
+	spec := Spec{Pattern: "echo", MaxSteps: 1, SteerContinuations: 1}
+	run := runner.Start(t.Context(), spec, nil, Endpoint{}, nil)
+	publish(run)
+
+	result, err := run.Wait()
+	if err != nil {
+		t.Fatalf("Wait() = %v", err)
+	}
+
+	turns := len(inner.requests())
+	if turns < 2 {
+		t.Fatalf("the run never continued, so this proves nothing about summing: %d turns", turns)
+	}
+	if want := 3 * turns; result.Steps != want {
+		t.Errorf("Steps = %d across %d pattern runs of 3, want %d — a continuation's cost\n"+
+			"is still the run's cost", result.Steps, turns, want)
+	}
+}
+
+func TestANegativeContinuationCountIsRefused(t *testing.T) {
+	inner := &recordingClient{}
+	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil }, &echoPattern{})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+
+	spec := Spec{Pattern: "echo", MaxSteps: 1, SteerContinuations: -1}
+	if _, err := runner.Run(t.Context(), spec, nil, Endpoint{}, nil); err == nil {
+		t.Error("a negative continuation count was accepted")
+	}
+	if len(inner.requests()) != 0 {
+		t.Error("a refused spec still reached the model")
+	}
+}
+
+func TestContinuationsAllowedButNobodySteered(t *testing.T) {
+	inner := &recordingClient{}
+	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil }, &echoPattern{})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+
+	spec := Spec{Pattern: "echo", MaxSteps: 1, SteerContinuations: 3}
+	result, err := runner.Run(t.Context(), spec, nil, Endpoint{}, nil)
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	if got := len(inner.requests()); got != 1 {
+		t.Errorf("the pattern ran %d times, want 1 — an allowance is not an instruction to keep going", got)
+	}
+	if len(result.UnappliedSteers) != 0 {
+		t.Errorf("UnappliedSteers = %v on a run nobody steered", result.UnappliedSteers)
+	}
+}
