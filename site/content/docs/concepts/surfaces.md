@@ -1,6 +1,8 @@
 ---
 title: Surfaces
 weight: 3
+aliases:
+  - /docs/surfaces/
 ---
 
 {{< callout type="error" >}}

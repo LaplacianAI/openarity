@@ -1,6 +1,8 @@
 ---
 title: The harness
 weight: 2
+aliases:
+  - /docs/the-harness/
 ---
 
 A model with tools is a demo. What makes it a system anyone will run against

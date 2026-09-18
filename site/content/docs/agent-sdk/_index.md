@@ -1,6 +1,6 @@
 ---
 title: Agent SDK
-weight: 6
+weight: 4
 next: /docs/agent-sdk/install
 ---
 
@@ -25,6 +25,7 @@ go get github.com/LaplacianAI/openarity/sdk/agent
   {{< card link="tools-and-skills" title="Tools and skills" subtitle="Why sixty skills cost one entry in the tool list." >}}
   {{< card link="steering" title="Steering a run" subtitle="Saying something to an agent that has already started, and where those words land." >}}
   {{< card link="structured-output" title="Structured output" subtitle="A schema the answer has to fit, and a cheaper model to fit it." >}}
+  {{< card link="/docs/examples" title="Examples" subtitle="Ten runnable agents, each one a single file. They need no key." >}}
 {{< /cards >}}
 
 ## Why it is separate

@@ -1,28 +1,34 @@
 ---
 title: Documentation
-next: /docs/why-a-graph
+next: /docs/get-started
 ---
 
-Start with the argument, then the parts that exist.
+Openarity is an agent platform whose authority comes from a graph rather than a
+flat list of permissions. Two parts of it run today, and they are independent of
+each other.
 
 {{< cards >}}
-  {{< card link="why-a-graph" title="Why a graph" icon="share" subtitle="Why capability selection is a relationship problem, and where a graph does not help." >}}
-  {{< card link="the-harness" title="The harness" icon="shield-check" subtitle="Identity, action boundaries, spend, erasure — and what is not built." >}}
-  {{< card link="surfaces" title="Surfaces" icon="template" subtitle="One graph, more than one way in. Direction, not documentation." >}}
+  {{< card link="get-started" title="Get started" icon="download" subtitle="One command for the whole stack, or a brain against a Postgres you already have." >}}
+  {{< card link="examples" title="Examples" icon="code" subtitle="Ten runnable agents. They work with nothing installed and no key." >}}
 {{< /cards >}}
 
-Then run it, in one command.
+## The parts
 
 {{< cards >}}
-  {{< card link="install" title="Install" icon="download" subtitle="Docker: Postgres, a secret store, an identity provider, the brain and the dashboard." >}}
+  {{< card link="platform" title="Platform" icon="server" subtitle="The brain, the CLI and the inbound gateway — running Openarity itself." >}}
+  {{< card link="agent-sdk" title="Agent SDK" icon="code" subtitle="sdk/agent, a Go module you can install into a project that has never heard of the rest." >}}
+  {{< card link="reference" title="Reference" icon="template" subtitle="Every command, every endpoint, every environment variable." >}}
 {{< /cards >}}
 
-Then the two things that run today. Neither section assumes you have read the
-other.
+The SDK is a separate module on purpose: which tools and skills a run may see is
+an authorisation decision, and keeping the loop out of that module means the
+decision cannot leak into it — the compiler refuses the import rather than a
+reviewer noticing.
+
+## Why it is built this way
 
 {{< cards >}}
-  {{< card link="platform" title="Platform" icon="server" subtitle="The brain, the CLI and the gateway — running Openarity itself." >}}
-  {{< card link="agent-sdk" title="Agent SDK" icon="code" subtitle="sdk/agent, a Go library you can install into any project on its own." >}}
+  {{< card link="concepts" title="Concepts" icon="share" subtitle="The argument: why a graph, what the harness owes you, and where none of it helps." >}}
 {{< /cards >}}
 
 {{< callout type="warning" >}}
