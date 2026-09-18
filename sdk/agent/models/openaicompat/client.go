@@ -83,6 +83,7 @@ type stream struct {
 	text   strings.Builder
 	usage  agent.Usage
 	finish string
+	calls  []fragment
 
 	cur  agent.StreamEvent
 	err  error
@@ -124,6 +125,15 @@ func (s *stream) Next() bool {
 	}
 	s.repair(&final)
 
+	// A turn that ends on tool_calls and carries none is a contradiction, and
+	// the one outcome worth ruling out: silently, it is a successful run whose
+	// answer announces work that never happened.
+	if final.Finish == agent.FinishToolCalls && len(final.Message.ToolCalls) == 0 {
+		s.err = fmt.Errorf("the turn ended on %q and carried no tool calls: %w",
+			s.finish, agent.ErrIncompleteStream)
+		return false
+	}
+
 	s.cur = agent.StreamEvent{Final: &final}
 	s.done = true
 	return true
@@ -141,9 +151,55 @@ func (s *stream) observe(chunk openai.ChatCompletionChunk) {
 
 	choice := chunk.Choices[0]
 	s.text.WriteString(choice.Delta.Content)
+	s.collect(choice.Delta.ToolCalls)
 	if choice.FinishReason != "" {
 		s.finish = choice.FinishReason
 	}
+}
+
+// A fragment is one tool call being assembled from the pieces it arrives in.
+// Name and arguments are appended rather than assigned: a gateway may split
+// either across chunks, and arguments almost always are.
+type fragment struct {
+	id, name, args string
+}
+
+// collect keeps the tool-call pieces as they pass, so losing the accumulator
+// does not lose the calls with it. An index identifies a call within a turn;
+// the id, when it comes, identifies it to the provider.
+func (s *stream) collect(deltas []openai.ChatCompletionChunkChoiceDeltaToolCall) {
+	for _, delta := range deltas {
+		at := int(delta.Index)
+		if at < 0 {
+			continue
+		}
+		for len(s.calls) <= at {
+			s.calls = append(s.calls, fragment{})
+		}
+
+		if delta.ID != "" {
+			s.calls[at].id = delta.ID
+		}
+		s.calls[at].name += delta.Function.Name
+		s.calls[at].args += delta.Function.Arguments
+	}
+}
+
+// assembled is what passed through the chunks, as tool calls. A fragment with
+// no name is dropped: an index that only ever carried argument text is not a
+// call anyone can dispatch, and passing it on turns a stream problem into a
+// confusing tool-not-found further away.
+func (s *stream) assembled() []agent.ToolCall {
+	out := make([]agent.ToolCall, 0, len(s.calls))
+	for _, f := range s.calls {
+		if f.name == "" {
+			continue
+		}
+		out = append(out, agent.ToolCall{
+			ID: f.id, Name: f.name, Arguments: json.RawMessage(f.args),
+		})
+	}
+	return out
 }
 
 // repair replaces whatever the accumulator lost. What was tracked here is
@@ -169,6 +225,14 @@ func (s *stream) repair(final *agent.Response) {
 	// turn that finished, and the loop would dispatch its half-written call.
 	if s.finish != "" {
 		final.Finish = finishReason(s.finish)
+	}
+	// Tool calls were left to the accumulator alone until a real gateway was
+	// measured dropping them roughly once in ten streamed turns — the same
+	// renumbering that costs the text, but far worse: a pattern reads no tool
+	// calls as a finished turn and hands back the model's preamble as the
+	// answer, with no error anywhere.
+	if len(s.calls) > 0 {
+		final.Message.ToolCalls = s.assembled()
 	}
 }
 
