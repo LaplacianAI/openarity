@@ -41,7 +41,7 @@ start-docker` shipped with only `deployment/README.md` updated, leaving
 writes, and the site with no install page at all.
 
 The site is a copy of facts that live elsewhere, so it is the last thing to be
-updated and the first to be wrong. `site/content/docs/install/` describes
+updated and the first to be wrong. `site/content/docs/get-started/` describes
 running it, `docs/platform/` describes the brain and its settings; a fact about
 running Openarity belongs in one of them and in the matching repository
 document, and nowhere else.
@@ -56,11 +56,16 @@ Do not wait to be asked. These changes make a document wrong:
   README's Development block if it is one of the everyday four.
 - **A change to how the stack is started or configured** → `deployment/README.md`
   for the target itself, `deployment/QUICKSTART.md` for the walkthrough it
-  replaces or changes, and `site/content/docs/install/`. Check whether a manual
+  replaces or changes, and `site/content/docs/get-started/`. Check whether a manual
   sequence documented elsewhere is now automated: a walkthrough that still
   works but is no longer the way anybody does it is the kind of stale that
   reads as current.
-- **A new command or subcommand** → the README quick start.
+- **A new command or subcommand** → the README quick start, and
+  `site/content/docs/reference/cli.md`, which lists the whole tree.
+- **A new endpoint** → `apps/brain/api/openapi.yaml` first, since a test fails
+  without it, then `site/content/docs/reference/http-api.md`.
+- **A new example under `sdk/agent/examples/`** → its README table and
+  `site/content/docs/examples/`.
 - **A dependency with a version floor** — a Postgres feature, a Go version →
   the prerequisites in both files.
 - **A feature actually shipping** → move it out of "not built yet" in the

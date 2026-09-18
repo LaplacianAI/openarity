@@ -9,7 +9,7 @@ and no container to rebuild.
 
 For the whole thing instead — a real identity provider, a secret store that
 survives a restart, the dashboard — that is one command and it is on the
-[install page](/docs/install/docker). This page needs Go; that one does not.
+[Docker page](/docs/get-started/docker). This page needs Go; that one does not.
 
 Needs Go 1.26.6 and a Postgres 13 or newer you can reach. 13 is where
 `gen_random_uuid()` became built-in, which the first migration uses. Running the

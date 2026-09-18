@@ -42,15 +42,32 @@ displayPoweredBy = false
 [params.editURL]
 enable = false
 
+# The navbar mirrors the top level of the docs tree, so the two never disagree
+# about what the sections are.
 [[menu.main]]
-name = "Docs"
-pageRef = "/docs"
+name = "Get started"
+pageRef = "/docs/get-started"
 weight = 1
+
+[[menu.main]]
+name = "Platform"
+pageRef = "/docs/platform"
+weight = 2
 
 [[menu.main]]
 name = "Agent SDK"
 pageRef = "/docs/agent-sdk"
-weight = 2
+weight = 3
+
+[[menu.main]]
+name = "Examples"
+pageRef = "/docs/examples"
+weight = 4
+
+[[menu.main]]
+name = "Reference"
+pageRef = "/docs/reference"
+weight = 5
 
 [[menu.main]]
 name = "Search"

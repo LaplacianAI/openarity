@@ -1,5 +1,7 @@
 ---
 title: Docker
+aliases:
+  - /docs/install/docker/
 weight: 1
 ---
 
