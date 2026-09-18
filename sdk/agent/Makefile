@@ -86,7 +86,9 @@ FORBIDDEN := \
 	openai/openai-go:the@model@client@belongs@behind@ModelClient \
 	modelcontextprotocol/go-sdk:MCP@is@a@source@of@tools,@not@something@a@pattern@speaks \
 	modernc.org/sqlite:a@store@is@a@deployment@choice,@not@something@a@pattern@links \
-	jackc/pgx:a@store@is@a@deployment@choice,@not@something@a@pattern@links
+	jackc/pgx:a@store@is@a@deployment@choice,@not@something@a@pattern@links \
+	go-sql-driver/mysql:a@store@is@a@deployment@choice,@not@something@a@pattern@links \
+	mongo-driver:a@store@is@a@deployment@choice,@not@something@a@pattern@links
 
 boundary:
 	@for pkg in . ./patterns; do \
@@ -107,9 +109,10 @@ boundary:
 # without it the example in package agent_test, which is the only thing driving
 # all three packages together, counts for nothing.
 cover:
-	@test -n "$$AGENT_TEST_POSTGRES_DSN" || printf '%s\n%s\n\n' \
-	  "warning: AGENT_TEST_POSTGRES_DSN is unset — every Postgres store test will skip" \
-	  "         and the coverage below is not the real number."
+	@for v in AGENT_TEST_POSTGRES_DSN AGENT_TEST_MYSQL_DSN AGENT_TEST_MONGO_URI; do \
+	  eval "set -- \$$$$v"; test -n "$$1" || \
+	    echo "warning: $$v is unset — that store's tests will skip and the coverage below is not the real number"; \
+	done
 	$(GO) test -race -covermode=atomic -coverpkg=$(COVER_PKGS) -coverprofile=$(COVER_PROFILE) ./...
 	@$(GO) tool cover -func=$(COVER_PROFILE) | tail -1
 	@total=$$($(GO) tool cover -func=$(COVER_PROFILE) | tail -1 | grep -oE '[0-9]+\.[0-9]+'); \
