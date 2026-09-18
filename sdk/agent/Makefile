@@ -84,7 +84,8 @@ test:
 # because the point of those directories is that the core cannot see into them.
 FORBIDDEN := \
 	openai/openai-go:the@model@client@belongs@behind@ModelClient \
-	modelcontextprotocol/go-sdk:MCP@is@a@source@of@tools,@not@something@a@pattern@speaks
+	modelcontextprotocol/go-sdk:MCP@is@a@source@of@tools,@not@something@a@pattern@speaks \
+	modernc.org/sqlite:a@store@is@a@deployment@choice,@not@something@a@pattern@links
 
 boundary:
 	@for pkg in . ./patterns; do \
