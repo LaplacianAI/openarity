@@ -339,11 +339,23 @@ func TestASteerThatNeverMadeItOntoARequestIsHandedBack(t *testing.T) {
 	}
 }
 
-type obliviousPattern struct{}
+// started is how a test holds the run at the door. Start() puts the pattern on
+// its own goroutine immediately, and this pattern plus an in-memory client
+// finish in microseconds — so a test that steers after Start has already lost
+// the race on a machine that schedules the run first, and gets ErrRunFinished.
+type obliviousPattern struct{ started chan struct{} }
 
 func (*obliviousPattern) Name() PatternName { return "oblivious" }
 
 func (p *obliviousPattern) Run(ctx context.Context, in Input) (Result, error) {
+	if p.started != nil {
+		select {
+		case <-p.started:
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
+		}
+	}
+
 	msgs := []Message{
 		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "1", Name: "grep"}}},
 		{Role: RoleTool, ToolCallID: "1", Content: []Content{{Type: ContentText, Text: "done"}}},
@@ -360,7 +372,8 @@ func (p *obliviousPattern) Run(ctx context.Context, in Input) (Result, error) {
 
 func TestTheRunnerPutsTheSteerIntoTheTranscriptItHandsBack(t *testing.T) {
 	inner := &recordingClient{}
-	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil }, &obliviousPattern{})
+	pattern := &obliviousPattern{started: make(chan struct{})}
+	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil }, pattern)
 	if err != nil {
 		t.Fatalf("New() = %v", err)
 	}
@@ -369,6 +382,8 @@ func TestTheRunnerPutsTheSteerIntoTheTranscriptItHandsBack(t *testing.T) {
 	if err := run.Steer("stop reading tests"); err != nil {
 		t.Fatalf("Steer() = %v", err)
 	}
+	close(pattern.started)
+
 	result, err := run.Wait()
 	if err != nil {
 		t.Fatalf("Wait() = %v", err)
@@ -393,7 +408,8 @@ func TestTheRunnerPutsTheSteerIntoTheTranscriptItHandsBack(t *testing.T) {
 
 func TestAPatternThatKnowsNothingOfSteeringIsStillSteered(t *testing.T) {
 	inner := &recordingClient{}
-	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil }, &obliviousPattern{})
+	pattern := &obliviousPattern{started: make(chan struct{})}
+	runner, err := New(func(Endpoint) (ModelClient, error) { return inner, nil }, pattern)
 	if err != nil {
 		t.Fatalf("New() = %v", err)
 	}
@@ -402,6 +418,8 @@ func TestAPatternThatKnowsNothingOfSteeringIsStillSteered(t *testing.T) {
 	if err := run.Steer("the bug is in vault.go"); err != nil {
 		t.Fatalf("Steer() = %v", err)
 	}
+	close(pattern.started)
+
 	if _, err := run.Wait(); err != nil {
 		t.Fatalf("Wait() = %v", err)
 	}
