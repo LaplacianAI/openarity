@@ -23,7 +23,10 @@ GOVULNCHECK_VERSION := latest
 # same reasoning that excludes the generated client in apps/cli. The pattern
 # has no anchor because the examples are now a tree: examples/gateway is a
 # package too, and an anchored /examples$ would have counted it silently.
-COVER_PKGS = $(shell $(GO) list ./... | grep -v '/examples' | paste -sd, -)
+# storetest alongside examples: it is a conformance suite whose t.Fatalf
+# branches only run against a store that is broken, so counting it reports 95%
+# for code that is behaving. The stores it drives are counted as normal.
+COVER_PKGS = $(shell $(GO) list ./... | grep -vE '/examples|/storetest' | paste -sd, -)
 
 .DEFAULT_GOAL := help
 
