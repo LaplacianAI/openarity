@@ -1833,10 +1833,25 @@ git commit -m "docs(sdk): sessions, and an example that steers a run it never he
 
 ## What is not in this plan
 
-- **The brain wrapper** — its own spec → plan cycle. It needs a migration
-  applying `postgres.Schema` with a `Down`, an endpoint that accepts a steer,
-  and authorisation tests proving a caller who may not see a session never
-  reaches the store. Different module, different `make check db=`.
+- **The brain wrapper** — its own spec → plan cycle, and it is governed by the
+  `add-a-backend` skill: `OPENARITY_SESSION_STORE` as an enum with
+  `UnmarshalText`, per-backend validation, and one switch in `cmd/brain`. It
+  also needs a migration applying `postgres.Schema` with a `Down`, an endpoint
+  that accepts a steer, and authorisation tests proving a caller who may not
+  see a session never reaches the store. Different module, different
+  `make check db=`.
+
+  **`Store` is not a registry, and that is deliberate.** `add-a-backend` draws
+  the line: a provider picked *per request* with many alive at once is a
+  registry keyed by `Name()`; a backend chosen *once at boot* with exactly one
+  alive is an enum and a switch. A session store is the second, so it gets a
+  constructor — `sqlite.Open(path)`, `postgres.New(pool)` — exactly like
+  `openbao.New()` and `s3.New(Config)`. `agent.Pattern` stays a registry
+  because many are alive and one is picked per run by name.
+
+  A registry would also breach `make boundary` quietly: self-registering
+  drivers need something to blank-import them, and the only place that would
+  sit is the core.
 - **`forkSession` and `resumeSessionAt`** — branching a conversation, and
   resuming at a chosen message. Real features, not this one.
 - **Tool-level journalling** — would stop a tool re-running after a crash.
