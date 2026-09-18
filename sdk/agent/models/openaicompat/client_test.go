@@ -3,6 +3,7 @@ package openaicompat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -442,12 +443,16 @@ func sse(t *testing.T, chunks ...string) http.HandlerFunc {
 }
 
 func chunk(delta map[string]any, finish string) string {
+	return chunkAs("chatcmpl-1", delta, finish)
+}
+
+func chunkAs(id string, delta map[string]any, finish string) string {
 	choice := map[string]any{"index": 0, "delta": delta}
 	if finish != "" {
 		choice["finish_reason"] = finish
 	}
 	out, _ := json.Marshal(map[string]any{
-		"id": "chatcmpl-1", "object": "chat.completion.chunk", "model": "probe",
+		"id": id, "object": "chat.completion.chunk", "model": "probe",
 		"choices": []any{choice},
 	})
 	return string(out)
@@ -994,4 +999,149 @@ func probeRequest() agent.Request {
 		Model:    agent.ModelRef{Name: "probe"},
 		Messages: []agent.Message{userSays("go")},
 	}
+}
+
+// A gateway that renumbers mid-stream makes the accumulator throw away what it
+// holds. It was already known to lose the text, the usage and the finish
+// reason that way; it loses tool calls too, and that one is not cosmetic — a
+// pattern reads no tool calls as "the model is finished" and returns a preamble
+// as the answer. Seen against a real gateway roughly once in ten streamed
+// turns.
+func TestToolCallsSurviveARenumberedStream(t *testing.T) {
+	client, _ := serve(t, sse(t,
+		chunkAs("chatcmpl-1", map[string]any{"role": "assistant", "content": "Let me look deeper."}, ""),
+		chunkAs("chatcmpl-1", map[string]any{"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_1", "type": "function",
+			"function": map[string]any{"name": "search", "arguments": `{"que`},
+		}}}, ""),
+		chunkAs("chatcmpl-2", map[string]any{"tool_calls": []any{map[string]any{
+			"index": 0, "function": map[string]any{"arguments": `ry":"vault"}`},
+		}}}, ""),
+		chunkAs("chatcmpl-2", map[string]any{}, "tool_calls"),
+	))
+
+	stream, err := client.Stream(t.Context(), agent.Request{
+		Model:    agent.ModelRef{Name: "probe"},
+		Messages: []agent.Message{userSays("go")},
+	})
+	if err != nil {
+		t.Fatalf("Stream() = %v", err)
+	}
+
+	var final *agent.Response
+	for stream.Next() {
+		if ev := stream.Event(); ev.Final != nil {
+			final = ev.Final
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("Err() = %v", err)
+	}
+	if final == nil {
+		t.Fatal("the stream ended with no final response")
+	}
+
+	if len(final.Message.ToolCalls) != 1 {
+		t.Fatalf("kept %d tool calls, want 1 — the gateway asked for one and the run\n"+
+			"would have ended on %q as if it were the answer",
+			len(final.Message.ToolCalls), final.Message.Text())
+	}
+	call := final.Message.ToolCalls[0]
+	if call.ID != "call_1" || call.Name != "search" {
+		t.Errorf("call = %+v", call)
+	}
+	if string(call.Arguments) != `{"query":"vault"}` {
+		t.Errorf("arguments = %s — fragments either side of the renumber must both survive",
+			call.Arguments)
+	}
+}
+
+func TestAStreamThatPromisedToolCallsAndHasNoneSaysSo(t *testing.T) {
+	client, _ := serve(t, sse(t,
+		chunk(map[string]any{"role": "assistant", "content": "Let me look deeper."}, ""),
+		chunk(map[string]any{}, "tool_calls"),
+	))
+
+	stream, err := client.Stream(t.Context(), agent.Request{
+		Model:    agent.ModelRef{Name: "probe"},
+		Messages: []agent.Message{userSays("go")},
+	})
+	if err != nil {
+		t.Fatalf("Stream() = %v", err)
+	}
+	for stream.Next() {
+	}
+
+	if !errors.Is(stream.Err(), agent.ErrIncompleteStream) {
+		t.Errorf("Err() = %v, want ErrIncompleteStream — finishing on tool_calls with no tool\n"+
+			"calls is a contradiction, and returning it as a finished turn makes a pattern\n"+
+			"treat the preamble as the answer", stream.Err())
+	}
+}
+
+func TestArgumentsThatNeverGotANameAreNotDispatched(t *testing.T) {
+	client, _ := serve(t, sse(t,
+		chunk(map[string]any{"role": "assistant", "content": "answering"}, ""),
+		chunk(map[string]any{"tool_calls": []any{map[string]any{
+			"index": 0, "function": map[string]any{"arguments": `{"query":"vault"}`},
+		}}}, ""),
+		chunk(map[string]any{}, "stop"),
+	))
+
+	final := finalOf(t, client)
+	if len(final.Message.ToolCalls) != 0 {
+		t.Errorf("dispatched %+v — a call with no name reaches the loop as a tool nobody\n"+
+			"registered, which reads as the caller's mistake rather than the gateway's",
+			final.Message.ToolCalls)
+	}
+	if final.Message.Text() != "answering" {
+		t.Errorf("the answer was lost: %q", final.Message.Text())
+	}
+}
+
+func TestAnImpossibleIndexIsLeftToTheAccumulator(t *testing.T) {
+	client, _ := serve(t, sse(t,
+		chunk(map[string]any{"role": "assistant", "content": "answering"}, ""),
+		chunk(map[string]any{"tool_calls": []any{map[string]any{
+			"index": -1, "id": "call_1", "type": "function",
+			"function": map[string]any{"name": "search", "arguments": `{}`},
+		}}}, ""),
+		chunk(map[string]any{}, "stop"),
+	))
+
+	final := finalOf(t, client)
+	if len(final.Message.ToolCalls) != 1 {
+		t.Fatalf("kept %d tool calls, want 1 — an index outside any slot is not tracked here,\n"+
+			"and dropping what the accumulator did make of it would lose a real call",
+			len(final.Message.ToolCalls))
+	}
+	if got := final.Message.ToolCalls[0].Name; got != "search" {
+		t.Errorf("name = %q", got)
+	}
+}
+
+func finalOf(t *testing.T, client *Client) *agent.Response {
+	t.Helper()
+
+	stream, err := client.Stream(t.Context(), agent.Request{
+		Model:    agent.ModelRef{Name: "probe"},
+		Messages: []agent.Message{userSays("go")},
+	})
+	if err != nil {
+		t.Fatalf("Stream() = %v", err)
+	}
+
+	var final *agent.Response
+	for stream.Next() {
+		if ev := stream.Event(); ev.Final != nil {
+			final = ev.Final
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("Err() = %v", err)
+	}
+	if final == nil {
+		t.Fatal("the stream ended with no final response")
+	}
+	return final
 }
