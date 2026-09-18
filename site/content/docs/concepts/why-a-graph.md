@@ -1,6 +1,8 @@
 ---
 title: Why a graph
 weight: 1
+aliases:
+  - /docs/why-a-graph/
 ---
 
 Every agent platform has to answer one question before it can do anything else:

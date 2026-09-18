@@ -29,27 +29,27 @@ layout: hextra-home
   {{< hextra/feature-card
     title="Traversal, not ranking"
     subtitle="Tool selection measurably collapses as the pool grows, and retrieving tools by embedding only postpones it — the paper that popularised that fix reports its own precision degrading into the thousands. What separates two similar tools is not in their descriptions. It is what they connect to."
-    link="docs/why-a-graph"
+    link="docs/concepts/why-a-graph"
   >}}
   {{< hextra/feature-card
     title="Graph engineering, not GraphRAG"
     subtitle="A knowledge graph models what a system knows. This one models what it is — agents, tools, skills, teams and learnings, with edges of authority and provenance. Asking what a run may do and what it can do is the same walk."
-    link="docs/why-a-graph"
+    link="docs/concepts/why-a-graph"
   >}}
   {{< hextra/feature-card
     title="Boundaries that fail loudly"
     subtitle="The agent loop cannot authorise anything: it is a separate module, so the import does not compile. It cannot reach a provider either — a CI check fails on the linked package. Rules a reviewer has to remember last until the first deadline."
-    link="docs/the-harness"
+    link="docs/concepts/the-harness"
   >}}
   {{< hextra/feature-card
     title="Deletion that actually deletes"
     subtitle="Attachments are encrypted with a per-team key. Deleting a team destroys the key first, so every one of its attachments is unreadable before a single object has been removed — because no transaction spans Postgres, an object store and a vault."
-    link="docs/the-harness"
+    link="docs/concepts/the-harness"
   >}}
   {{< hextra/feature-card
     title="One graph, many surfaces"
     subtitle="Code, Work, Knowledge, Design, Mobile. Not products that share a vendor — views onto the same graph, so a learning earned in one is capability in every other, with nothing to integrate. None of it is built."
-    link="docs/surfaces"
+    link="docs/concepts/surfaces"
   >}}
   {{< hextra/feature-card
     title="An agent loop you can take on its own"
