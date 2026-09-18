@@ -94,6 +94,10 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 		return Result{}, err
 	}
 
+	if err := checkOutput(spec); err != nil {
+		return Result{}, err
+	}
+
 	client, err := r.clientFor(endpoint)
 	if err != nil {
 		return Result{}, fmt.Errorf("connecting to %s: %w", endpoint.BaseURL, err)
@@ -105,7 +109,12 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 		emit:  func(e Event) { emit(ctx, events, e) },
 	}
 
-	counter := &countingClient{inner: steered}
+	var beneath ModelClient = steered
+	if spec.OutputSchema != nil && !spec.Parser {
+		beneath = &outputClient{inner: steered, schema: spec.OutputSchema}
+	}
+
+	counter := &countingClient{inner: beneath}
 
 	if spec.SteerContinuations < 0 {
 		return Result{}, fmt.Errorf(
@@ -131,15 +140,59 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 			return result, err
 		}
 		if turn >= spec.SteerContinuations {
-			return result, nil
+			return r.finish(ctx, spec, counter, result)
 		}
 
 		pending := box.restart()
 		if len(pending) == 0 {
-			return result, nil
+			return r.finish(ctx, spec, counter, result)
 		}
 		msgs = append(slices.Clone(result.Messages), steerMessages(pending)...)
 	}
+}
+
+func (r *Runner) finish(ctx context.Context, spec Spec, counter *countingClient,
+	result Result,
+) (Result, error) {
+	if spec.OutputSchema == nil {
+		return answered(result), nil
+	}
+
+	if !spec.Parser {
+		result.Structured = structured(result.Output)
+		return answered(result), nil
+	}
+
+	model := spec.ParserModel
+	if model.Name == "" {
+		model = spec.Model
+	}
+
+	raw, err := parseIntoSchema(ctx, counter, model, spec.OutputSchema, transcript(result.Messages))
+	result.Usage = counter.spent()
+	if err != nil {
+		return answered(result), err
+	}
+	result.Structured = raw
+
+	return answered(result), nil
+}
+
+func transcript(msgs []Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		said := strings.TrimSpace(m.Text())
+		if said == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(string(m.Role))
+		b.WriteString(": ")
+		b.WriteString(said)
+	}
+	return b.String()
 }
 
 func withSkills(spec Spec) (Spec, error) {

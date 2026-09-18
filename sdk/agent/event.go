@@ -38,6 +38,8 @@ func (StepEvent) event()       {}
 
 type Result struct {
 	Output          string
+	Structured      json.RawMessage
+	Plain           string
 	Messages        []Message
 	Usage           Usage
 	Steps           int

@@ -33,6 +33,7 @@ make example
 | `steering` | a message sent to a run already in progress, and where it lands in the conversation |
 | `steering-typed` | typing at an agent while it works — `STEER_FROM_STDIN=1` to use your own keys |
 | `steering-limits` | where steering stops: a plan already fixed, and a steer with no request left |
+| `structured` | a schema the model answers in, and a parser model turning prose into one |
 | `gateway`  | not an example: the stub and the printing the others share            |
 
 ## Against a real gateway

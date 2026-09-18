@@ -274,6 +274,10 @@ func toParams(req agent.Request) (openai.ChatCompletionNewParams, error) {
 	}
 	params.Tools = tools
 
+	if format, ok := toResponseFormat(req.OutputSchema); ok {
+		params.ResponseFormat = format
+	}
+
 	return params, nil
 }
 
@@ -490,6 +494,32 @@ func finishReason(reason string) agent.FinishReason {
 	default:
 		return agent.FinishStop
 	}
+}
+
+func toResponseFormat(out *agent.OutputSchema) (openai.ChatCompletionNewParamsResponseFormatUnion, bool) {
+	if out == nil {
+		return openai.ChatCompletionNewParamsResponseFormatUnion{}, false
+	}
+
+	var schema any
+	if err := json.Unmarshal(out.JSON, &schema); err != nil {
+		return openai.ChatCompletionNewParamsResponseFormatUnion{}, false
+	}
+
+	format := shared.ResponseFormatJSONSchemaJSONSchemaParam{
+		Name:   out.Name,
+		Schema: schema,
+	}
+	if out.Description != "" {
+		format.Description = openai.String(out.Description)
+	}
+	if out.Strict {
+		format.Strict = openai.Bool(true)
+	}
+
+	return openai.ChatCompletionNewParamsResponseFormatUnion{
+		OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{JSONSchema: format},
+	}, true
 }
 
 // the compiler is what keeps this honest: the pattern only ever sees the

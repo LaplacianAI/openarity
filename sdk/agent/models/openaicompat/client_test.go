@@ -1001,6 +1001,136 @@ func probeRequest() agent.Request {
 	}
 }
 
+func TestASchemaIsSentAsResponseFormat(t *testing.T) {
+	client, sent := serve(t, answer(t, completion(`{"file":"vault.go"}`, nil, "stop")))
+
+	_, err := client.Complete(t.Context(), agent.Request{
+		Model:    agent.ModelRef{Name: "probe"},
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "why"}}}},
+		OutputSchema: &agent.OutputSchema{
+			Name:        "finding",
+			Description: "Where the failure is.",
+			JSON:        json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"}}}`),
+			Strict:      true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete() = %v", err)
+	}
+
+	format, ok := sent()["response_format"].(map[string]any)
+	if !ok {
+		t.Fatalf("no response_format on the wire: %v", sent())
+	}
+	if format["type"] != "json_schema" {
+		t.Errorf("type = %v, want json_schema", format["type"])
+	}
+
+	js, ok := format["json_schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("no json_schema object: %v", format)
+	}
+	if js["name"] != "finding" {
+		t.Errorf("name = %v, want finding", js["name"])
+	}
+	if js["description"] != "Where the failure is." {
+		t.Errorf("description = %v — the model reads it, so it must go out", js["description"])
+	}
+	if js["strict"] != true {
+		t.Errorf("strict = %v, want true", js["strict"])
+	}
+	if _, ok := js["schema"].(map[string]any); !ok {
+		t.Errorf("schema went out as %T, want an object", js["schema"])
+	}
+}
+
+func TestWhatIsLeftOutOfAResponseFormat(t *testing.T) {
+	client, sent := serve(t, answer(t, completion("{}", nil, "stop")))
+
+	_, err := client.Complete(t.Context(), agent.Request{
+		Model:    agent.ModelRef{Name: "probe"},
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "why"}}}},
+		OutputSchema: &agent.OutputSchema{
+			Name: "finding",
+			JSON: json.RawMessage(`{"type":"object"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete() = %v", err)
+	}
+
+	format, ok := sent()["response_format"].(map[string]any)
+	if !ok {
+		t.Fatalf("no response_format on the wire: %v", sent())
+	}
+	js, ok := format["json_schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("no json_schema object: %v", format)
+	}
+
+	for _, key := range []string{"description", "strict"} {
+		if _, there := js[key]; there {
+			t.Errorf("%q was sent as %v; an unset field should be omitted, not sent empty",
+				key, js[key])
+		}
+	}
+}
+
+func TestARequestWithNoSchemaSendsNoResponseFormat(t *testing.T) {
+	client, sent := serve(t, answer(t, completion("prose", nil, "stop")))
+
+	_, err := client.Complete(t.Context(), agent.Request{
+		Model:    agent.ModelRef{Name: "probe"},
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "why"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Complete() = %v", err)
+	}
+
+	if got, there := sent()["response_format"]; there {
+		t.Errorf("response_format = %v on a request that asked for none", got)
+	}
+}
+
+func TestASchemaThatIsNotJSONIsNotSent(t *testing.T) {
+	client, sent := serve(t, answer(t, completion("prose", nil, "stop")))
+
+	_, err := client.Complete(t.Context(), agent.Request{
+		Model:        agent.ModelRef{Name: "probe"},
+		Messages:     []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "why"}}}},
+		OutputSchema: &agent.OutputSchema{Name: "finding", JSON: json.RawMessage(`{not json`)},
+	})
+	if err != nil {
+		t.Fatalf("Complete() = %v — a schema the client cannot parse should be dropped, not fatal", err)
+	}
+
+	if got, there := sent()["response_format"]; there {
+		t.Errorf("response_format = %v built from a schema that is not JSON", got)
+	}
+}
+
+func TestAStreamingRequestCarriesTheSchemaToo(t *testing.T) {
+	client, sent := serve(t, sse(t,
+		chunk(map[string]any{"role": "assistant", "content": `{"file":"vault.go"}`}, ""),
+		chunk(map[string]any{}, "stop"),
+	))
+
+	stream, err := client.Stream(t.Context(), agent.Request{
+		Model:        agent.ModelRef{Name: "probe"},
+		Messages:     []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "why"}}}},
+		OutputSchema: &agent.OutputSchema{Name: "finding", JSON: json.RawMessage(`{"type":"object"}`)},
+	})
+	if err != nil {
+		t.Fatalf("Stream() = %v", err)
+	}
+	for stream.Next() {
+	}
+
+	if _, there := sent()["response_format"]; !there {
+		t.Error("Stream() sent no response_format, so every streaming pattern would ignore the schema")
+	}
+}
+
 // A gateway that renumbers mid-stream makes the accumulator throw away what it
 // holds. It was already known to lose the text, the usage and the finish
 // reason that way; it loses tool calls too, and that one is not cosmetic — a
