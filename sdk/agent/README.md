@@ -164,6 +164,43 @@ mechanism, [`steering-typed`](examples/steering-typed) for a person typing at a
 working agent, and [`steering-limits`](examples/steering-limits) for the two
 places it stops doing what you might hope.
 
+## Structured output
+
+`Spec.OutputSchema` puts a JSON Schema on every request the run makes, as
+`response_format` — a feature of the OpenAI-compatible API, so it reaches
+whatever your gateway reaches. No pattern implements it: the runner wraps
+`ModelClient`, the same seam it already uses to total usage.
+
+```go
+spec.OutputSchema = &agent.OutputSchema{Name: "finding", JSON: schema}
+...
+var found finding
+if result.Structured != nil {
+	json.Unmarshal(result.Structured, &found)
+}
+```
+
+`Result` carries three forms of the answer. `Plain` is what the model said and
+is always set; `Structured` is that parsed, or nil; `Output` is the structured
+one when there is one and `Plain` when there is not — so a caller that does not
+care which mode produced the answer reads `Output`.
+
+`Parser: true` moves the schema off the loop: the run answers in prose, and one
+further call — to `ParserModel`, or the run's own model if that is empty — turns
+the transcript into the schema. One ordinary model call, counted in
+`Result.Usage` like any other.
+
+**`Structured` can be nil even when the gateway accepted the schema**, because
+`response_format` is not enforced everywhere; roughly one run in three came back
+as prose against OmniRoute. That is not an error — an unmet schema leaves
+`Structured` nil and `Plain` intact, and the caller decides whether it can
+proceed. A model that answered correctly but
+wrapped it in a markdown code fence is unwrapped, including when a sentence
+comes first.
+
+[`examples/structured`](examples/structured) runs both modes and prints how many
+requests carried the schema, which is the whole difference between them.
+
 ## Patterns
 
 | Constructor             | Streaming variant       | What it does                                    |

@@ -18,14 +18,16 @@ type ModelRef struct {
 }
 
 type Spec struct {
-	Model    ModelRef
-	Pattern  PatternName
-	System   []Content
-	Tools    []Tool
-	Skills   []Skill
-	MaxSteps int
-
+	Model              ModelRef
+	Pattern            PatternName
+	System             []Content
+	Tools              []Tool
+	Skills             []Skill
+	MaxSteps           int
 	SteerContinuations int
+	OutputSchema       *OutputSchema
+	Parser             bool
+	ParserModel        ModelRef
 }
 
 func System(prompt string) []Content {

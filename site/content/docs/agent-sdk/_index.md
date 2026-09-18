@@ -24,6 +24,7 @@ go get github.com/LaplacianAI/openarity/sdk/agent
   {{< card link="mcp" title="MCP servers as tools" subtitle="Connect a server, get []agent.Tool. The loop never learns MCP exists." >}}
   {{< card link="tools-and-skills" title="Tools and skills" subtitle="Why sixty skills cost one entry in the tool list." >}}
   {{< card link="steering" title="Steering a run" subtitle="Saying something to an agent that has already started, and where those words land." >}}
+  {{< card link="structured-output" title="Structured output" subtitle="A schema the answer has to fit, and a cheaper model to fit it." >}}
 {{< /cards >}}
 
 ## Why it is separate

@@ -8,10 +8,11 @@ type ModelClient interface {
 }
 
 type Request struct {
-	Model    ModelRef
-	System   []Content
-	Messages []Message
-	Tools    []Tool
+	Model        ModelRef
+	System       []Content
+	Messages     []Message
+	Tools        []Tool
+	OutputSchema *OutputSchema
 }
 
 type FinishReason string
