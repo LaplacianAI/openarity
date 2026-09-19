@@ -127,12 +127,16 @@ jobs:
       # BRAIN_TEST_S3_ENDPOINT is unset, and a test that only ever runs on
       # somebody's laptop is a test that stops running. The same reasoning put
       # OpenBao in this file.
+      # quay.io rather than Docker Hub: MinIO withdrew minio/minio and minio/mc
+      # from Hub, so an unauthenticated pull now answers "pull access denied
+      # ... repository does not exist". quay.io serves the same tags, and it is
+      # the registry MinIO's own install instructions use.
       - name: Start the object store
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=openarity \
             -e MINIO_ROOT_PASSWORD=openarity-ci-secret \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
           for _ in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live > /dev/null && break
             sleep 1
@@ -143,7 +147,7 @@ jobs:
           # The alias in the environment needs no shell and no second command.
           docker run --rm --network host \
             -e MC_HOST_ci=http://openarity:openarity-ci-secret@localhost:9000 \
-            minio/mc:RELEASE.2025-08-13T08-35-41Z \
+            quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z \
             mb --ignore-existing ci/openarity
 
       # Node before Go, because `make ui` writes into the tree that `make
