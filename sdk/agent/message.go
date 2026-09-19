@@ -20,29 +20,29 @@ const (
 )
 
 type Message struct {
-	Role       Role
-	Content    []Content
-	ToolCalls  []ToolCall
-	ToolCallID string
+	Role       Role       `json:"role"`
+	Content    []Content  `json:"content,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
 type Content struct {
-	Type      ContentType
-	Text      string
-	Blob      *Blob
-	Cacheable bool
+	Type      ContentType `json:"type"`
+	Text      string      `json:"text,omitempty"`
+	Blob      *Blob       `json:"blob,omitempty"`
+	Cacheable bool        `json:"cacheable,omitempty"`
 }
 
 type Blob struct {
-	MediaType string
-	Name      string
-	Data      []byte
+	MediaType string `json:"media_type"`
+	Name      string `json:"name,omitempty"`
+	Data      []byte `json:"data,omitempty"`
 }
 
 type ToolCall struct {
-	ID        string
-	Name      string
-	Arguments json.RawMessage
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
 func (m Message) Text() string {

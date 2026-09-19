@@ -164,6 +164,61 @@ mechanism, [`steering-typed`](examples/steering-typed) for a person typing at a
 working agent, and [`steering-limits`](examples/steering-limits) for the two
 places it stops doing what you might hope.
 
+## Sessions
+
+`Run.Steer` is a method on a handle, so it cannot serve a steer that arrives at
+a different replica, and it cannot serve a run whose process has gone.
+`Spec.Session` can:
+
+```go
+store, err := sqlite.Open("sessions.db")
+session, err := agent.Open("conversation-1", store)
+
+spec := agent.Spec{
+    ...
+    Session: session,
+}
+```
+
+Now anything holding the same session can steer the run without holding the
+run:
+
+```go
+session.Steer(ctx, "check the lease expiry, not the token")
+```
+
+The loop collects whatever is waiting immediately before every model request,
+and puts it in the same place `Run.Steer` does — so it lands where the run had
+got to rather than at the end, which is what stops the model re-reading it as a
+fresh instruction every turn.
+
+The transcript is written before every request and once more when the pattern
+returns, so resuming needs no new entry point — `Runner.Run` has always taken
+messages:
+
+```go
+msgs, err := store.Messages(ctx, "conversation-1")
+result, err := runner.Run(ctx, spec, msgs, endpoint, events)
+```
+
+That granularity has a cost worth stating: a run that dies mid-step resumes
+from the step before and **redoes the one it was in, tool calls included**. A
+tool with a side effect can therefore run twice.
+
+Five stores ship — `memory`, `sqlite`, `postgres`, `mysql`, `mongodb` — and
+each takes the connection you already have rather than a DSN. The drivers live
+in subpackages so the core cannot link them, so importing `agent` still costs
+you no database driver. `stores/postgres` and `stores/mysql` export their DDL
+and run none of it; migrating a shared database is the caller's decision.
+
+Every store passes the same conformance suite, `stores/storetest`, which is
+what caught MySQL's `JSON` column and Postgres's `jsonb` silently reordering a
+model's tool arguments and dropping a duplicate key — on those backends only.
+
+`Spec.Session` is nil by default and costs nothing when it is.
+[`sessions`](examples/sessions) runs three replicas over one SQLite file and
+nothing else.
+
 ## Structured output
 
 `Spec.OutputSchema` puts a JSON Schema on every request the run makes, as

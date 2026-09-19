@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 )
@@ -34,6 +35,17 @@ func (b *steerBox) add(text string) error {
 	}
 	b.pending = append(b.pending, text)
 	return nil
+}
+
+func (b *steerBox) fill(texts []string) {
+	if len(texts) == 0 {
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.pending = append(b.pending, texts...)
 }
 
 func (b *steerBox) take(at int) (fresh []string, carried []steer) {
@@ -76,22 +88,39 @@ func (b *steerBox) close() []string {
 }
 
 type steeringClient struct {
-	inner ModelClient
-	box   *steerBox
-	emit  func(Event)
+	inner   ModelClient
+	box     *steerBox
+	session Session
+	emit    func(Event)
 }
 
 func (c *steeringClient) Complete(ctx context.Context, req Request) (Response, error) {
-	req.Messages = c.apply(req.Messages)
+	msgs, err := c.apply(ctx, req.Messages)
+	if err != nil {
+		return Response{}, err
+	}
+	req.Messages = msgs
 	return c.inner.Complete(ctx, req)
 }
 
 func (c *steeringClient) Stream(ctx context.Context, req Request) (Stream, error) {
-	req.Messages = c.apply(req.Messages)
+	msgs, err := c.apply(ctx, req.Messages)
+	if err != nil {
+		return nil, err
+	}
+	req.Messages = msgs
 	return c.inner.Stream(ctx, req)
 }
 
-func (c *steeringClient) apply(msgs []Message) []Message {
+func (c *steeringClient) apply(ctx context.Context, msgs []Message) ([]Message, error) {
+	if c.session != nil {
+		elsewhere, err := c.session.TakeSteers(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("collecting the steers left for this session: %w", err)
+		}
+		c.box.fill(elsewhere)
+	}
+
 	fresh, carried := c.box.take(len(msgs))
 
 	for _, text := range fresh {
@@ -99,7 +128,7 @@ func (c *steeringClient) apply(msgs []Message) []Message {
 			c.emit(SteerEvent{Text: text})
 		}
 	}
-	return recordSteers(msgs, carried)
+	return recordSteers(msgs, carried), nil
 }
 
 func steerMessage(text string) Message {

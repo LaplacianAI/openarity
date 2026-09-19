@@ -9,7 +9,7 @@ each other.
 
 {{< cards >}}
   {{< card link="get-started" title="Get started" icon="download" subtitle="One command for the whole stack, or a brain against a Postgres you already have." >}}
-  {{< card link="examples" title="Examples" icon="code" subtitle="Ten runnable agents. They work with nothing installed and no key." >}}
+  {{< card link="examples" title="Examples" icon="code" subtitle="Eleven runnable agents. They work with nothing installed and no key." >}}
 {{< /cards >}}
 
 ## The parts

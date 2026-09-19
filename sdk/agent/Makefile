@@ -23,7 +23,25 @@ GOVULNCHECK_VERSION := latest
 # same reasoning that excludes the generated client in apps/cli. The pattern
 # has no anchor because the examples are now a tree: examples/gateway is a
 # package too, and an anchored /examples$ would have counted it silently.
-COVER_PKGS = $(shell $(GO) list ./... | grep -v '/examples' | paste -sd, -)
+# storetest alongside examples: it is a conformance suite whose t.Fatalf
+# branches only run against a store that is broken, so counting it reports 95%
+# for code that is behaving. The stores it drives are counted as normal.
+#
+# A store whose database is not configured is dropped too. Its tests skip, so
+# counting it would report a contributor's unrelated change as a coverage
+# failure and teach them to ignore the number. CI sets all three, so nothing
+# is dropped there — `make cover` says out loud which ones it left out.
+# $(subst) needs a literal space to split on, and make has no way to write one.
+# Both must be defined before the := assignments below, which expand at once.
+empty :=
+space := $(empty) $(empty)
+
+SKIP_STORES := $(strip \
+  $(if $(AGENT_TEST_POSTGRES_DSN),,/stores/postgres) \
+  $(if $(AGENT_TEST_MYSQL_DSN),,/stores/mysql) \
+  $(if $(AGENT_TEST_MONGO_URI),,/stores/mongodb))
+COVER_EXCLUDE := /examples|/storetest$(if $(SKIP_STORES),|$(subst $(space),|,$(SKIP_STORES)))
+COVER_PKGS = $(shell $(GO) list ./... | grep -vE '$(COVER_EXCLUDE)' | paste -sd, -)
 
 .DEFAULT_GOAL := help
 
@@ -81,7 +99,11 @@ test:
 # because the point of those directories is that the core cannot see into them.
 FORBIDDEN := \
 	openai/openai-go:the@model@client@belongs@behind@ModelClient \
-	modelcontextprotocol/go-sdk:MCP@is@a@source@of@tools,@not@something@a@pattern@speaks
+	modelcontextprotocol/go-sdk:MCP@is@a@source@of@tools,@not@something@a@pattern@speaks \
+	modernc.org/sqlite:a@store@is@a@deployment@choice,@not@something@a@pattern@links \
+	jackc/pgx:a@store@is@a@deployment@choice,@not@something@a@pattern@links \
+	go-sql-driver/mysql:a@store@is@a@deployment@choice,@not@something@a@pattern@links \
+	mongo-driver:a@store@is@a@deployment@choice,@not@something@a@pattern@links
 
 boundary:
 	@for pkg in . ./patterns; do \
@@ -102,6 +124,10 @@ boundary:
 # without it the example in package agent_test, which is the only thing driving
 # all three packages together, counts for nothing.
 cover:
+	@for v in AGENT_TEST_POSTGRES_DSN AGENT_TEST_MYSQL_DSN AGENT_TEST_MONGO_URI; do \
+	  eval "set -- \$$$$v"; test -n "$$1" || \
+	    echo "warning: $$v is unset — that store's tests will skip and the coverage below is not the real number"; \
+	done
 	$(GO) test -race -covermode=atomic -coverpkg=$(COVER_PKGS) -coverprofile=$(COVER_PROFILE) ./...
 	@$(GO) tool cover -func=$(COVER_PROFILE) | tail -1
 	@total=$$($(GO) tool cover -func=$(COVER_PROFILE) | tail -1 | grep -oE '[0-9]+\.[0-9]+'); \
