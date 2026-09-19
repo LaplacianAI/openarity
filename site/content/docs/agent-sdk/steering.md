@@ -144,6 +144,15 @@ halves of that are visible rather than silent:
 A steer that silently vanished would be indistinguishable from one the model
 read and chose to ignore, which is the one outcome worth ruling out.
 
+{{< callout type="info" >}}
+Once a [session](/docs/agent-sdk/sessions) is in play, `UnappliedSteers` is no
+longer the complete list of what is undelivered. It still means what it says —
+steers that reached the run and never made it onto a request — but a steer
+still sitting in the store was never taken at all, so it stays there and the
+next run collects it. That is the right outcome, and it is the reason the two
+lists are not the same list.
+{{< /callout >}}
+
 **It does not reset `MaxSteps`.** A steer arriving on the last permitted step
 gets one step to change course, and a run at its limit ends at its limit —
 `UnappliedSteers` says so. Claude Code is stricter still: a message queued when
