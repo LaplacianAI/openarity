@@ -68,11 +68,20 @@ func attempt() error {
 		return err
 	}
 	// Replica A. It was never told about replica B.
+	//
+	// The run starts from a real question. A steer is a correction to work in
+	// progress, so a run with nothing in progress gives the model only the
+	// correction and no task — and it answers by asking what you are talking
+	// about, which is fair.
 	session, err := agent.Open(conversation, store)
 	if err != nil {
 		return err
 	}
-	result, err := run(ctx, session, nil)
+	asking := []agent.Message{{
+		Role:    agent.RoleUser,
+		Content: []agent.Content{{Type: agent.ContentText, Text: "why does renewLease return a nil lease?"}},
+	}}
+	result, err := run(ctx, session, asking)
 	if err != nil {
 		return err
 	}
@@ -116,7 +125,8 @@ func attempt() error {
 	// the lines worth reading.
 	fmt.Printf("\n\nreplica B   left a steer in %s, holding no run — there was none yet\n",
 		filepath.Base(path))
-	fmt.Printf("replica A   ran %d steps and was never told replica B existed\n", result.Steps)
+	fmt.Printf("replica A   asked its own question, ran %d steps, and was never told\n"+
+		"            replica B existed\n", result.Steps)
 	fmt.Printf("transcript  %d messages, and the steer is message %d of them\n",
 		len(result.Messages), at)
 	fmt.Printf("replica C   took over %d messages it never produced, was asked one more\n"+
