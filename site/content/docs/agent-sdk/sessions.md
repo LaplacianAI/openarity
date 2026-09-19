@@ -98,8 +98,38 @@ msgs, err := store.Messages(ctx, "conversation-1")
 result, err := runner.Run(ctx, spec, msgs, endpoint, events)
 ```
 
-The replica doing this never ran the turn that produced those messages. It
-does not need a session of its own to carry on from them.
+The replica doing this never ran the turn that produced those messages, and
+needs no session of its own to carry on from them.
+
+What it does need is a conversation the model can answer, and that depends on
+why you are resuming:
+
+| Resuming | The transcript ends with | What to pass |
+| --- | --- | --- |
+| a run that died mid-turn | a tool result | the transcript as it is |
+| a conversation, because somebody said something new | the assistant's answer | the transcript plus that message |
+
+The second case is the common one — a new message arriving in a thread another
+replica was handling — and skipping the new message is an error the provider
+reports rather than the SDK:
+
+```text
+400: This model does not support assistant message prefill.
+     The conversation must end with a user message.
+```
+
+So append it:
+
+```go
+msgs = append(msgs, agent.Message{
+	Role:    agent.RoleUser,
+	Content: []agent.Content{{Type: agent.ContentText, Text: "and which line returns the token error?"}},
+})
+```
+
+The SDK does not check this. Prefilling an assistant message is a legitimate
+technique that some providers support, so a guard would refuse something that
+works.
 
 ## What a crash costs
 

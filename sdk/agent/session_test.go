@@ -495,9 +495,17 @@ func TestARunResumesFromWhatAnotherRunSaved(t *testing.T) {
 		t.Fatalf("the store holds %d of %d messages", len(kept), len(first.Messages))
 	}
 
-	// A second run, no session at all, handed what the first one left.
+	// A second run, no session at all, handed what the first one left plus the
+	// message that prompted it. The saved transcript ends with the assistant's
+	// answer, and a provider refuses a conversation with nothing to respond to
+	// — "this model does not support assistant message prefill". The fake
+	// client here would accept it, so the test models what a real one needs.
+	asked := append(slices.Clone(kept), Message{
+		Role:    RoleUser,
+		Content: []Content{{Type: ContentText, Text: "and the token path?"}},
+	})
 	second, err := runner.Run(t.Context(),
-		Spec{Pattern: "echo", MaxSteps: 1}, kept, Endpoint{}, nil)
+		Spec{Pattern: "echo", MaxSteps: 1}, asked, Endpoint{}, nil)
 	if err != nil {
 		t.Fatalf("resuming = %v", err)
 	}

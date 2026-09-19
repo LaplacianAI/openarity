@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -82,14 +83,24 @@ func attempt() error {
 			at = i
 		}
 	}
-	// Replica C. A different runner, a different client, no session at all —
-	// it is handed the transcript and carries on from it. This is resume: the
-	// process that produced these messages could have died.
+	// Replica C. A different runner, no session at all — it reads the
+	// transcript and carries on. This is what a brain does when the next
+	// message arrives in a thread somebody else was handling.
+	//
+	// The new message matters: the saved transcript ends with the assistant's
+	// answer, and a provider refuses a conversation that does not end with
+	// something to respond to — "this model does not support assistant message
+	// prefill". Resuming a run that died mid-turn needs no such thing, because
+	// that transcript ends with a tool result.
 	kept, err := store.Messages(ctx, conversation)
 	if err != nil {
 		return err
 	}
-	resumed, err := run(ctx, nil, kept)
+	asked := append(slices.Clone(kept), agent.Message{
+		Role:    agent.RoleUser,
+		Content: []agent.Content{{Type: agent.ContentText, Text: "and which line returns the token error?"}},
+	})
+	resumed, err := run(ctx, nil, asked)
 	if err != nil {
 		return err
 	}
@@ -108,8 +119,8 @@ func attempt() error {
 	fmt.Printf("replica A   ran %d steps and was never told replica B existed\n", result.Steps)
 	fmt.Printf("transcript  %d messages, and the steer is message %d of them\n",
 		len(result.Messages), at)
-	fmt.Printf("replica C   resumed from %d messages it never produced, and answered\n"+
-		"            %q\n", len(kept), summarise(resumed.Output))
+	fmt.Printf("replica C   took over %d messages it never produced, was asked one more\n"+
+		"            thing, and answered %q\n", len(kept), summarise(resumed.Output))
 	fmt.Printf("steers      %d left in the store: it was handed over exactly once\n", len(left))
 
 	return nil
