@@ -103,10 +103,16 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 		return Result{}, fmt.Errorf("connecting to %s: %w", endpoint.BaseURL, err)
 	}
 
+	sending := client
+	if spec.Session != nil {
+		sending = &savingClient{inner: client, session: spec.Session}
+	}
+
 	steered := &steeringClient{
-		inner: client,
-		box:   box,
-		emit:  func(e Event) { emit(ctx, events, e) },
+		inner:   sending,
+		box:     box,
+		session: spec.Session,
+		emit:    func(e Event) { emit(ctx, events, e) },
 	}
 
 	var beneath ModelClient = steered
@@ -136,6 +142,11 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 		result.Usage = counter.spent()
 		result.Messages = recordSteers(this.Messages, box.applied())
 
+		if spec.Session != nil {
+			if err := spec.Session.Save(ctx, result.Messages); err != nil {
+				return result, fmt.Errorf("saving the transcript: %w", err)
+			}
+		}
 		if err != nil {
 			return result, err
 		}

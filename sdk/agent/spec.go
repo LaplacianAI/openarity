@@ -28,6 +28,7 @@ type Spec struct {
 	OutputSchema       *OutputSchema
 	Parser             bool
 	ParserModel        ModelRef
+	Session            Session
 }
 
 func System(prompt string) []Content {

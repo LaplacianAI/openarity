@@ -26,7 +26,22 @@ GOVULNCHECK_VERSION := latest
 # storetest alongside examples: it is a conformance suite whose t.Fatalf
 # branches only run against a store that is broken, so counting it reports 95%
 # for code that is behaving. The stores it drives are counted as normal.
-COVER_PKGS = $(shell $(GO) list ./... | grep -vE '/examples|/storetest' | paste -sd, -)
+#
+# A store whose database is not configured is dropped too. Its tests skip, so
+# counting it would report a contributor's unrelated change as a coverage
+# failure and teach them to ignore the number. CI sets all three, so nothing
+# is dropped there — `make cover` says out loud which ones it left out.
+# $(subst) needs a literal space to split on, and make has no way to write one.
+# Both must be defined before the := assignments below, which expand at once.
+empty :=
+space := $(empty) $(empty)
+
+SKIP_STORES := $(strip \
+  $(if $(AGENT_TEST_POSTGRES_DSN),,/stores/postgres) \
+  $(if $(AGENT_TEST_MYSQL_DSN),,/stores/mysql) \
+  $(if $(AGENT_TEST_MONGO_URI),,/stores/mongodb))
+COVER_EXCLUDE := /examples|/storetest$(if $(SKIP_STORES),|$(subst $(space),|,$(SKIP_STORES)))
+COVER_PKGS = $(shell $(GO) list ./... | grep -vE '$(COVER_EXCLUDE)' | paste -sd, -)
 
 .DEFAULT_GOAL := help
 

@@ -14,6 +14,7 @@ go run ./examples/reflection
 go run ./examples/steering
 go run ./examples/steering-typed
 go run ./examples/steering-limits
+go run ./examples/sessions
 ```
 
 Or run every one of them:
@@ -34,6 +35,7 @@ make example
 | `steering-typed` | typing at an agent while it works — `STEER_FROM_STDIN=1` to use your own keys |
 | `steering-limits` | where steering stops: a plan already fixed, and a steer with no request left |
 | `structured` | a schema the model answers in, and a parser model turning prose into one |
+| `sessions`   | a steer that reaches a run nothing is holding, and a resume in a runner that produced none of it |
 | `gateway`  | not an example: the stub and the printing the others share            |
 
 ## Against a real gateway
