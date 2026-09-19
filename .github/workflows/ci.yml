@@ -313,8 +313,13 @@ jobs:
       - name: Known vulnerabilities
         run: make vuln
 
-  # The agent loop, as a library. No services: it reaches nothing, and every
-  # test that touches HTTP stands up its own httptest server rather than
+  # The agent loop, as a library. It needs three databases because five session
+  # stores ship with it and each one is only proved against the real server:
+  # MySQL has no DELETE ... RETURNING, a standalone mongod has no transactions,
+  # and both MySQL's JSON column and Postgres's jsonb silently reorder what
+  # they are given. A suite that skipped them would be asserting nothing.
+  #
+  # Every other test still stands up its own httptest server rather than
   # waiting on a container.
   sdk:
     needs: changes
@@ -323,6 +328,55 @@ jobs:
     defaults:
       run:
         working-directory: sdk/agent
+
+    # The store tests read these and skip when they are unset, so `make check`
+    # still works locally with nothing running — `make cover` drops a store
+    # whose database is absent and says which, rather than reporting an
+    # unrelated change as a coverage failure.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: mysql
+          MYSQL_DATABASE: agent_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pmysql --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      mongodb:
+        image: mongo:8
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      AGENT_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/agent_test?sslmode=disable
+      AGENT_TEST_MYSQL_DSN: root:mysql@tcp(localhost:3306)/agent_test?parseTime=true
+      # retryWrites=false because a standalone mongod rejects retryable writes,
+      # and the driver asks for them by default.
+      AGENT_TEST_MONGO_URI: mongodb://localhost:27017/?retryWrites=false
 
     steps:
       - uses: actions/checkout@v7
