@@ -511,7 +511,15 @@ fi
 
 COMPOSE_FILES="$COMPOSE_BASE $PROVIDER_OVERLAY $GATEWAY_OVERLAY $IMAGE_OVERLAY $BAO_OVERLAY $OBJECTS_OVERLAY"
 COMPOSE="docker compose $COMPOSE_FILES"
-BAO_COMPOSE="docker compose $COMPOSE_BASE $BAO_OVERLAY"
+# The same `env` prefix the Makefile's $(BOOTSTRAP) carries, and for the same
+# reason: the OpenBao overlay guards both halves of the AppRole with `:?`, and
+# compose interpolates every guard in every file it was handed before it looks
+# at which service the command names. On a fresh clone those two are empty
+# until this phase mints them — so without this, every call here failed on
+# interpolation rather than on OpenBao, with the reason sent to the /dev/null
+# the callers redirect stderr to. wait_bao_answering then waited out its full
+# deadline while `bao status` was answering the whole time.
+BAO_COMPOSE="env OPENARITY_SECRETS_APPROLE_ID=bootstrap OPENARITY_SECRETS_APPROLE_SECRET=bootstrap docker compose $COMPOSE_BASE $BAO_OVERLAY"
 
 step "Settings"
 ensure_env_file
