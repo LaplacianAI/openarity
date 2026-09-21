@@ -100,13 +100,13 @@ skills
 
 agent_mcp_servers
   agent_id, team_id → agents (id, team_id) ON DELETE CASCADE
-  mcp_server_id, team_id → mcp_servers (id, team_id) ON DELETE NO ACTION
+  mcp_server_id, team_id → mcp_servers (id, team_id) ON DELETE RESTRICT
   allow               text[] NULL -- NULL grants every tool on the server
   PK (agent_id, mcp_server_id)
 
 agent_skills
   agent_id, team_id → agents (id, team_id) ON DELETE CASCADE
-  skill_id, team_id → skills (id, team_id) ON DELETE NO ACTION
+  skill_id, team_id → skills (id, team_id) ON DELETE RESTRICT
   PK (agent_id, skill_id)
 
 -- team_id on the link rows is forced by the triggers: during a team cascade

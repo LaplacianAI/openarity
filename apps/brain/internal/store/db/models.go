@@ -8,7 +8,43 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type Agent struct {
+	ID                 uuid.UUID
+	TeamID             uuid.UUID
+	Name               string
+	Description        string
+	Kind               string
+	Instructions       string
+	ModelName          string
+	MaxTokens          int32
+	Temperature        pgtype.Float8
+	Pattern            string
+	MaxSteps           int32
+	SteerContinuations int32
+	OutputSchema       []byte
+	Parser             bool
+	ParserModelName    *string
+	ParserMaxTokens    pgtype.Int4
+	ParserTemperature  pgtype.Float8
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type AgentMcpServer struct {
+	AgentID     uuid.UUID
+	McpServerID uuid.UUID
+	TeamID      uuid.UUID
+	Allow       []string
+}
+
+type AgentSkill struct {
+	AgentID uuid.UUID
+	SkillID uuid.UUID
+	TeamID  uuid.UUID
+}
 
 type Attachment struct {
 	ID         uuid.UUID
@@ -53,6 +89,39 @@ type DeletedSecret struct {
 	DeletedAt     time.Time
 	Attempts      int32
 	LastAttemptAt *time.Time
+}
+
+type GraphOutbox struct {
+	ID        int64
+	TeamID    uuid.UUID
+	Entity    string
+	EntityID  uuid.UUID
+	CreatedAt time.Time
+}
+
+type McpServer struct {
+	ID            uuid.UUID
+	TeamID        uuid.UUID
+	Name          string
+	Url           *string
+	Command       []string
+	Env           []byte
+	AuthSecretRef *string
+	Bare          bool
+	DiscoveredAt  *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type McpTool struct {
+	ID          uuid.UUID
+	McpServerID uuid.UUID
+	TeamID      uuid.UUID
+	Name        string
+	Description string
+	InputSchema []byte
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type Message struct {
@@ -107,6 +176,16 @@ type Session struct {
 	StartedAt     time.Time
 	LastMessageAt time.Time
 	UserID        *uuid.UUID
+}
+
+type Skill struct {
+	ID          uuid.UUID
+	TeamID      uuid.UUID
+	Name        string
+	Description string
+	Body        string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type Team struct {

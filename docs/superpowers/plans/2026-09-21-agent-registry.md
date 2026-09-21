@@ -118,7 +118,7 @@ Claude hands each migration over; the user creates it with
 - **Link tables carry `team_id`**, because a trigger cannot see a parent above
   it in a cascade (`write-migration` step 5c). `(agent_id, team_id)` →
   agents `ON DELETE CASCADE`; `(mcp_server_id, team_id)` / `(skill_id,
-  team_id)` → servers / skills `ON DELETE NO ACTION` (checked at end of statement, so a team cascade that removes the grants first is not refused mid-way). **This makes Postgres
+  team_id)` → servers / skills `ON DELETE RESTRICT` — a team delete succeeds only because agents is created first, so its cascade removes the grants before a server goes; a test pins that order. **This makes Postgres
   refuse a grant of another team's server or skill** (23503), so no query is
   needed to check it.
 - `graph_outbox(id bigint identity, team_id uuid, entity text CHECK IN
@@ -145,7 +145,7 @@ Claude hands each migration over; the user creates it with
   - `TestAServerNameThatCannotPrefixAToolIsRefused` — `"my server"`, 65 chars.
   - `TestAToolCannotNameATeamItsServerIsNotIn` — 23503.
   - `TestAGrantOfAnotherTeamsServerOrSkillIsRefused` — 23503 on both link tables.
-  - `TestDeletingAGrantedSkillIsRefused` / `…GrantedServer…` — 23503, row still there.
+  - `TestDeletingAGrantedSkillIsRefused` / `…GrantedServer…` — 23001, row still there.
   - `TestDeletingAnAgentDropsItsGrants`.
   - `TestEveryWriteLeavesAnOutboxRow` — table-driven over insert/update/delete
     of each entity and link: the expected `(entity, entity_id)` appears.
@@ -220,7 +220,7 @@ Wire: `skill{id, team_id, name, description, body?, created_at, updated_at}` —
 `body` present on create/get/put, absent in list. Request
 `{name, description, body}`, all required. Limits: name 200 bytes via
 `api.Name`, description 1536 (the SDK's listing limit — longer would be cut
-silently), body 256 KiB. Delete of a granted skill: the FK's 23503 → **409**
+silently), body 256 KiB. Delete of a granted skill: RESTRICT's 23001 → **409**
 "the skill is granted to an agent".
 
 - [ ] **Step 1:** User adds `skill:write` (admin, member) and five route
