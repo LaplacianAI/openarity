@@ -77,8 +77,8 @@ mcp_servers
   id, team_id, name     -- unique per team, and a valid tool-name prefix
   url                 text NULL
   command             text[] NULL -- CHECK exactly one of url, command
-  env                 jsonb       -- {"VAR": "<secret path>"}, never a value
-  auth_secret_ref     text NULL   -- secret path for the URL transport's header
+  env                 jsonb       -- {"VAR": "<path>#<key>"}, never a value
+  auth_secret_ref     text NULL   -- <path>#<key> for the URL transport's header
   bare                bool        -- mcp.Server.Bare: no server__ prefix
   discovered_at       timestamptz NULL
   created_at, updated_at
@@ -112,8 +112,8 @@ agent_skills
 
 ### Decisions
 
-- **Secrets are references.** `env` values and `auth_secret_ref` are paths into
-  the secret store. Discovery resolves them; the API never sees a value.
+- **Secrets are references.** `env` values and `auth_secret_ref` are
+  `path#key` references into the secret store — `secrets.Store.Get` takes both. Discovery resolves them; the API never sees a value.
 - **The stdio transport is stored, not yet trusted.** The SDK supports
   `Command`, so the row does. Spawning a process on the brain's host waits on
   the sandbox decision (`Agent-SDK.md`, open question 3), so discovering a
@@ -284,7 +284,7 @@ Brain-wide, over `OMNI_ROUTE_URL`'s OpenAI-compatible `/embeddings`:
 ```text
 OPENARITY_EMBEDDING_MODEL       the gateway's name for it, e.g. ollama/nomic-embed-text
 OPENARITY_EMBEDDING_DIMENSIONS  e.g. 768
-OPENARITY_EMBEDDING_KEY_REF     secret-store path to the gateway key; empty for a
+OPENARITY_EMBEDDING_KEY_REF     path#key of the gateway key; empty for a
                                 gateway that takes none. The key is never in config.
 ```
 
