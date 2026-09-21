@@ -99,15 +99,19 @@ skills
   created_at, updated_at
 
 agent_mcp_servers
-  agent_id → agents ON DELETE CASCADE
-  mcp_server_id → mcp_servers ON DELETE RESTRICT
+  agent_id, team_id → agents (id, team_id) ON DELETE CASCADE
+  mcp_server_id, team_id → mcp_servers (id, team_id) ON DELETE RESTRICT
   allow               text[] NULL -- NULL grants every tool on the server
   PK (agent_id, mcp_server_id)
 
 agent_skills
-  agent_id → agents ON DELETE CASCADE
-  skill_id → skills ON DELETE RESTRICT
+  agent_id, team_id → agents (id, team_id) ON DELETE CASCADE
+  skill_id, team_id → skills (id, team_id) ON DELETE RESTRICT
   PK (agent_id, skill_id)
+
+-- team_id on the link rows is forced by the triggers: during a team cascade
+-- the agent is gone before its links' trigger fires, so the team has to be on
+-- the row. The composite keys then make a cross-team grant impossible to write.
 ```
 
 ### Decisions

@@ -1,10 +1,10 @@
 # Agent registry Implementation Plan
 
 > **For agentic workers:** this plan is executed under the working agreement,
-> not subagent-driven development. **The user writes production code; Claude
-> writes tests, reviews, and tries to break it.** Production files are handed
-> over one per reply, complete, and the next is not posted until the user has
-> pasted the last. Steps use checkbox (`- [ ]`) syntax for tracking.
+> not subagent-driven development. **The user writes every file that is not a
+> test** — Go, migrations, SQL, `rbac.json`, `openapi.yaml`, compose, CI —
+> as `apps/brain/CLAUDE.md` requires. Claude hands each one over complete, one
+> per reply, then reviews what was pasted and writes the tests that attack it. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A team can create, read, change and delete agents, MCP servers and
 skills through the brain's API, and every one of those rows is projected, with
@@ -101,7 +101,8 @@ the graph tests stop skipping in CI before the projector is written.
 - Create: `internal/store/migrations/<ts>_add_embeddings.sql`
 - Test: `internal/store/registry_schema_test.go`
 
-Claude writes these (migrations are not production Go), the user reviews.
+Claude hands each migration over; the user creates it with
+`make migration name=…` and pastes it in.
 
 **Produces:** the tables exactly as in the spec's *Data model*, plus:
 
@@ -112,23 +113,31 @@ Claude writes these (migrations are not production Go), the user reviews.
   `mcp_servers_name_is_prefix` (`name ~ '^[a-zA-Z0-9_-]{1,64}$'`),
   `*_name_present` on every name.
 - Unique indexes `(team_id, lower(name))` on agents, mcp_servers, skills.
-- `mcp_servers (id, team_id)` unique, and `mcp_tools (mcp_server_id, team_id)`
-  a composite FK onto it `ON DELETE CASCADE` — the attachments pattern, so a
-  tool cannot name a team its server is not in.
-- Link tables: FK to agents `ON DELETE CASCADE`, to servers and skills
-  `ON DELETE RESTRICT`.
+- `UNIQUE (id, team_id)` on agents, mcp_servers and skills, so children can
+  carry a composite FK — the attachments pattern.
+- `mcp_tools (mcp_server_id, team_id)` → `mcp_servers (id, team_id)`
+  `ON DELETE CASCADE`: a tool cannot name a team its server is not in.
+- **Link tables carry `team_id`**, because a trigger cannot see a parent above
+  it in a cascade (`write-migration` step 5c). `(agent_id, team_id)` →
+  agents `ON DELETE CASCADE`; `(mcp_server_id, team_id)` / `(skill_id,
+  team_id)` → servers / skills `ON DELETE RESTRICT`. **This makes Postgres
+  refuse a grant of another team's server or skill** (23503), so no query is
+  needed to check it.
 - `graph_outbox(id bigint identity, team_id uuid, entity text CHECK IN
   ('team','agent','mcp_server','mcp_tool','skill'), entity_id uuid,
   created_at)`. **No FK** — its rows must outlive what they name.
-- Row-level `AFTER INSERT OR UPDATE OR DELETE` triggers on agents,
-  mcp_servers, mcp_tools, skills enqueue `(team_id, entity, id)`; on
-  agent_mcp_servers and agent_skills they enqueue `('agent', agent_id)`, with
-  the agent's `team_id` read from `OLD`/`NEW` via a lookup that tolerates the
-  agent already being gone (a team cascade — then the agent's own trigger has
-  already enqueued it). `AFTER DELETE` on teams enqueues `('team', id)`.
+- **Statement-level triggers with transition tables**, never `FOR EACH ROW`.
+  Postgres allows a transition table only on a single-event trigger, so each
+  table gets three (insert, update, delete), every one naming its table
+  `changed_rows`, sharing two functions:
+  `graph_outbox_enqueue()` (`TG_ARGV[0]` is the entity; reads `team_id, id`)
+  for agents, mcp_servers, mcp_tools, skills, teams (teams reads `id` as both),
+  and `graph_outbox_enqueue_agent()` (reads `team_id, agent_id`) for the two
+  link tables. Unverified in this shell — no Postgres; the schema tests are
+  the proof.
 - `embeddings` as in the spec, plus `CHECK (entity IN ('agent','mcp_tool','skill'))`.
 
-- [ ] **Step 1:** Claude writes the three migrations.
+- [ ] **Step 1:** Claude hands over the three migrations, one per reply; the user pastes each.
 - [ ] **Step 2:** Claude writes `registry_schema_test.go`. Tests:
   - `TestAnMCPServerNeedsExactlyOneTransport` — url and command both set:
     23514; neither: 23514; each alone: inserted.
@@ -138,6 +147,7 @@ Claude writes these (migrations are not production Go), the user reviews.
   - `TestAnUnknownKindOrPatternIsRefused`.
   - `TestAServerNameThatCannotPrefixAToolIsRefused` — `"my server"`, 65 chars.
   - `TestAToolCannotNameATeamItsServerIsNotIn` — 23503.
+  - `TestAGrantOfAnotherTeamsServerOrSkillIsRefused` — 23503 on both link tables.
   - `TestDeletingAGrantedSkillIsRefused` / `…GrantedServer…` — 23001, row still there.
   - `TestDeletingAnAgentDropsItsGrants`.
   - `TestEveryWriteLeavesAnOutboxRow` — table-driven over insert/update/delete
@@ -154,7 +164,7 @@ Claude writes these (migrations are not production Go), the user reviews.
 - Create: `internal/store/queries/{agents,mcp_servers,mcp_tools,skills,graph_outbox,embeddings}.sql`
 - Test: `internal/store/{agents,mcp_servers,mcp_tools,skills,graph_outbox,embeddings}_test.go`
 
-Claude writes these (SQL, not Go); `make generate` writes the Go.
+Claude hands each query file over; the user pastes it; `make generate` writes the Go.
 
 **Produces** (sqlc names, used by every later task):
 
@@ -164,7 +174,6 @@ agents.sql       CreateAgent :one  GetAgent :one  ListAgentsByTeam :many (cursor
                  DeleteAgent :exec
                  AddAgentMCPServer :exec  ClearAgentMCPServers :exec  ListAgentMCPServers :many
                  AddAgentSkill :exec      ClearAgentSkills :exec      ListAgentSkills :many
-                 CountForeignGrants :one  -- ids not in team_id, for the 400
 mcp_servers.sql  CreateMCPServer :one  GetMCPServer :one  ListMCPServersByTeam :many
                  UpdateMCPServer :one  DeleteMCPServer :exec  MarkMCPServerDiscovered :exec
 mcp_tools.sql    ListMCPToolsByServer :many  UpsertMCPTool :exec
@@ -177,7 +186,7 @@ graph_outbox.sql ClaimGraphOutbox :many (oldest first, LIMIT, FOR UPDATE SKIP LO
 embeddings.sql   GetEmbedding :one  PutEmbedding :exec (upsert)
 ```
 
-- [ ] **Step 1:** Claude writes the queries; `make generate`.
+- [ ] **Step 1:** User pastes the query files; `make generate`.
 - [ ] **Step 2:** Claude writes query tests, each against a real Postgres:
   list pages by `(created_at, id)` with no row twice across pages;
   `ListSkillsByTeam` returns no body; `DeleteMCPToolsNotIn` with an empty
@@ -192,7 +201,7 @@ embeddings.sql   GetEmbedding :one  PutEmbedding :exec (upsert)
 **Files:**
 - Create: `internal/api/skills/skills.go`, `schema.go` — **user writes**
 - Modify: `cmd/brain/routers.go` — **user writes** one line
-- Modify: `internal/store/rbac.json`, `api/openapi.yaml` — Claude
+- Modify: `internal/store/rbac.json`, `api/openapi.yaml` — user
 - Test: `internal/api/skills/skills_test.go`, `internal/store/rbac_test.go`
 
 **Interfaces:**
@@ -219,7 +228,7 @@ Wire: `skill{id, team_id, name, description, body?, created_at, updated_at}` —
 silently), body 256 KiB. Delete of a granted skill: the FK's 23001 → **409**
 "the skill is granted to an agent".
 
-- [ ] **Step 1:** Claude adds `skill:write` (admin, member) and five route
+- [ ] **Step 1:** User adds `skill:write` (admin, member) and five route
   rows to `rbac.json`, pins them in `TestTheRouteMappingIsWhatWeIntend`, and
   writes the openapi section (`listSkills`, `createSkill`, `getSkill`,
   `replaceSkill`, `deleteSkill`, `SkillPage`, `Skill`, `SkillRequest`,
@@ -241,7 +250,7 @@ silently), body 256 KiB. Delete of a granted skill: the FK's 23001 → **409**
 **Files:**
 - Create: `internal/api/mcpservers/mcpservers.go`, `schema.go` — **user**
 - Modify: `cmd/brain/routers.go` — **user**
-- Modify: `rbac.json`, `openapi.yaml` — Claude
+- Modify: `rbac.json`, `openapi.yaml` — user
 - Test: `internal/api/mcpservers/mcpservers_test.go`
 
 **Interfaces:**
@@ -275,7 +284,7 @@ Response includes `discovered_at` (null until Task 5).
 `GET …/{serverID}/tools` → `{items:[{name, description, input_schema}]}`, not
 paged (one server's tools are tens).
 
-- [ ] **Step 1:** Claude: rbac rows (`tool:write` writes, `member` reads), openapi.
+- [ ] **Step 1:** User: rbac rows (`tool:write` writes, `member` reads), openapi.
 - [ ] **Step 2:** User: `schema.go`, `mcpservers.go`, routers line.
 - [ ] **Step 3:** Claude tests: the `add-route` five per route, body tests, plus
   `TestBothTransportsIsRefused`, `TestNeitherTransportIsRefused`,
@@ -352,7 +361,7 @@ The handler's `Store.InTx` takes `func(*db.Queries) error`, matching
   `TestACommandServerIsRefusedWithoutStartingAProcess`,
   `TestAnUnreachableServerIsAnError`, `TestDiscoveryHonoursTheTimeout`.
 - [ ] **Step 3:** User writes `discover.go` and wires `discovery.New(secretStore, 15*time.Second)`.
-- [ ] **Step 4:** Claude: rbac row, openapi `discoverMCPServer`, and
+- [ ] **Step 4:** User: rbac row, openapi `discoverMCPServer`. Claude:
   `discover_test.go`: `TestDiscoveryAddsChangesAndRemovesTools`,
   `TestAFailedDiscoveryLeavesThePreviousTools`,
   `TestACommandServerIsAConflict`, `TestAnotherTeamsServerCannotBeDiscovered`,
@@ -365,7 +374,7 @@ The handler's `Store.InTx` takes `func(*db.Queries) error`, matching
 **Files:**
 - Create: `internal/api/agents/agents.go`, `schema.go`, `validate.go` — **user**
 - Modify: `cmd/brain/routers.go` — **user**
-- Modify: `rbac.json`, `openapi.yaml` — Claude
+- Modify: `rbac.json`, `openapi.yaml` — user
 - Test: `internal/api/agents/agents_test.go`, `validate_test.go`
 
 **Interfaces:**
@@ -392,9 +401,9 @@ func validate(req agentRequest) error // first failure as a sentence for the 400
 ```
 
 Create and replace run in `InTx`: write the agent row
-(`CreateAgent`/`UpdateAgent`), `CountForeignGrants` → non-zero is **400
-"a granted server or skill belongs to another team"** and the tx rolls back,
-`Clear*` then `Add*` for grants. `kind` on create must be `custom` (400
+(`CreateAgent`/`UpdateAgent`), `Clear*` then `Add*` for grants. A 23503 from
+an `Add*` is **400 "a granted server or skill does not exist in this team"**
+and the tx rolls back — the composite FK is the check. `kind` on create must be `custom` (400
 otherwise); on replace must equal the stored kind (400). The response embeds
 `mcp_servers:[{id, allow}]` and `skills:[id]`.
 
@@ -403,7 +412,7 @@ otherwise); on replace must equal the stored kind (400). The response embeds
 needs `output_schema`, `output_schema.json` is valid JSON and has a `name`,
 `allow` entries non-empty and unique, no id granted twice.
 
-- [ ] **Step 1:** Claude: rbac rows (`agent:write`), openapi (`Agent`,
+- [ ] **Step 1:** User: rbac rows (`agent:write`), openapi (`Agent`,
   `AgentRequest`, `ModelRef`, `OutputSchema`, `MCPServerGrant`, `AgentPage`).
 - [ ] **Step 2:** User writes `schema.go`, then `validate.go`.
 - [ ] **Step 3:** Claude writes `validate_test.go` — one row per rule, each
@@ -423,7 +432,7 @@ needs `output_schema`, `output_schema.json` is valid JSON and has a `name`,
 
 **Files:**
 - Modify: `internal/config/config.go`, `validate.go` — **user**
-- Modify: `deployment/docker-compose.yml`, `deployment/k8s/configmap.yaml`, `.env` example in README — Claude
+- Modify: `deployment/docker-compose.yml`, `deployment/k8s/configmap.yaml`, `.env` example in README — user
 - Test: `internal/config/validate_test.go`
 
 Follow `add-env-var`.
@@ -534,14 +543,14 @@ from a row.
 
 ### Task 10: CI and local FalkorDB for tests
 
-**Files:** `.github/workflows/ci.yml`, `apps/brain/Makefile`, `deployment/docker-compose.yml` — Claude
+**Files:** `.github/workflows/ci.yml`, `apps/brain/Makefile`, `deployment/docker-compose.yml` — user
 
 - Brain job gains a `falkordb/falkordb:<pinned>` service and
   `BRAIN_TEST_FALKOR_URL=redis://localhost:6379`.
 - `make check db=postgres` also accepts `falkor=<url>`; README says how.
 - Compose pins the same version in place of `latest`.
 
-- [ ] **Step 1:** Claude edits. **Step 2:** Confirm in the CI log that the Task 9
+- [ ] **Step 1:** User edits, from what Claude hands over. **Step 2:** Confirm in the CI log that the Task 9
   tests ran rather than skipped; paste the line. Commit
   `ci(brain): run the graph tests against a real FalkorDB`.
 
@@ -586,9 +595,9 @@ func (p *Projector) embedding(ctx context.Context, entity string, id uuid.UUID, 
 ```
 
 Embedded text is `name + "\n" + description` for Agent, Tool, Skill (spec).
-`GetMCPTool` is added to `mcp_tools.sql` in this task (Claude).
+`GetMCPTool` is added to `mcp_tools.sql` in this task.
 
-- [ ] **Step 1:** Claude adds `GetMCPTool`; `make generate`.
+- [ ] **Step 1:** User adds `GetMCPTool`; `make generate`.
 - [ ] **Step 2:** User writes `projector.go`.
 - [ ] **Step 3:** Claude tests against real Postgres + FalkorDB with a fake
   embeddings server that counts calls:
@@ -661,9 +670,9 @@ func (p *Projector) Rebuild(ctx context.Context, team uuid.UUID) error
 ```
 
 `Rebuild` needs list-by-team queries for each entity without paging
-(`ListAllAgentIDsByTeam` etc.) — Claude adds them in this task.
+(`ListAllAgentIDsByTeam` etc.), added in this task.
 
-- [ ] **Step 1:** Claude adds the queries; `make generate`.
+- [ ] **Step 1:** User adds the queries; `make generate`.
 - [ ] **Step 2:** User writes `rebuild.go`, then `graph.go`, then `command.go`/`main.go`.
 - [ ] **Step 3:** Claude tests: parse table (`graph`, `graph rebuild`,
   `graph rebuild --team x` bad uuid, extra args); and the one the spec calls
@@ -676,7 +685,7 @@ func (p *Projector) Rebuild(ctx context.Context, team uuid.UUID) error
 
 ### Task 14: Ollama overlay
 
-**Files:** `deployment/docker-compose.ollama.yml`, `deployment/Makefile`, `deployment/README.md` — Claude
+**Files:** `deployment/docker-compose.ollama.yml`, `deployment/Makefile`, `deployment/README.md` — user
 
 - `ollama` service, pinned `ollama/ollama:<version>`, bound to
   `${BIND_ADDR:-127.0.0.1}:${OLLAMA_PORT:-11434}`, volume `ollama-data`,
@@ -687,7 +696,7 @@ func (p *Projector) Rebuild(ctx context.Context, team uuid.UUID) error
 - README: registering `http://ollama:11434` in LiteLLM (`ollama/nomic-embed-text`)
   and in OmniRoute, and setting `EMBEDDING_MODEL`/`EMBEDDING_DIMENSIONS=768`.
 
-- [ ] **Step 1:** Claude writes. **Step 2:** The user runs `make ollama` and a
+- [ ] **Step 1:** User writes, from what Claude hands over. **Step 2:** The user runs `make ollama` and a
   `curl` to the gateway's `/v1/embeddings` on a machine with Docker; output
   pasted into the PR. Commit `feat(deployment): a local embedding model the gateway can route to`.
 
