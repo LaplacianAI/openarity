@@ -100,13 +100,13 @@ skills
 
 agent_mcp_servers
   agent_id, team_id → agents (id, team_id) ON DELETE CASCADE
-  mcp_server_id, team_id → mcp_servers (id, team_id) ON DELETE RESTRICT
+  mcp_server_id, team_id → mcp_servers (id, team_id) ON DELETE NO ACTION
   allow               text[] NULL -- NULL grants every tool on the server
   PK (agent_id, mcp_server_id)
 
 agent_skills
   agent_id, team_id → agents (id, team_id) ON DELETE CASCADE
-  skill_id, team_id → skills (id, team_id) ON DELETE RESTRICT
+  skill_id, team_id → skills (id, team_id) ON DELETE NO ACTION
   PK (agent_id, skill_id)
 
 -- team_id on the link rows is forced by the triggers: during a team cascade
@@ -315,20 +315,14 @@ Nothing in the brain knows Ollama exists.
 One model for every team means one vector dimension per index. Changing the
 model is a rebuild, which is exactly the operation this design makes cheap.
 
-Embeddings are cached in Postgres, keyed by what produced them:
+Each embedded node carries what produced its vector — `model` and
+`content_sha256` of the embedded text — as properties. The projector reads
+them before embedding and skips the model call when both match, so editing an
+agent's instructions, which are not embedded, costs nothing.
 
-```sql
-embeddings
-  entity, entity_id
-  model          text
-  content_sha256 bytea   -- of the embedded text
-  vector         real[]
-  PRIMARY KEY (entity, entity_id)
-```
-
-The projector embeds only when the model or the text's hash differs from the
-cached row. A rebuild then costs no model calls unless the model changed, and
-editing an agent's instructions — which are not embedded — costs none either.
+There is no Postgres copy of the vectors. They are derived like the rest of
+the graph, and a rebuild — rare, since FalkorDB persists every write — simply
+embeds again: seconds against a local Ollama.
 
 ### Rebuild
 

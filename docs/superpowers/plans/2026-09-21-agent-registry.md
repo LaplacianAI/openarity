@@ -13,8 +13,8 @@ embeddings, into a per-team FalkorDB graph that can be rebuilt from Postgres.
 **Architecture:** Three `internal/api` packages following `channels`
 (handler → sqlc, no service layer). Triggers write a `graph_outbox` in the same
 transaction as every change; a DBOS job in `brain worker` drains it through
-`internal/graph`, which embeds via the gateway (cached in Postgres by content
-hash) and writes FalkorDB. `brain graph rebuild` projects everything from
+`internal/graph`, which embeds via the gateway — skipping text whose hash is
+already on the node — and writes FalkorDB. `brain graph rebuild` projects everything from
 scratch, and CI proves it equals the incremental result.
 
 **Tech Stack:** Go 1.26.6, pgx/v5, sqlc, goose, DBOS
@@ -70,8 +70,7 @@ them.
 | --- | --- |
 | `internal/store/migrations/…_add_agent_registry.sql` | agents, mcp_servers, mcp_tools, skills, the two link tables |
 | `internal/store/migrations/…_add_graph_outbox.sql` | graph_outbox and the triggers that fill it |
-| `internal/store/migrations/…_add_embeddings.sql` | the embedding cache |
-| `internal/store/queries/{agents,mcp_servers,mcp_tools,skills,graph_outbox,embeddings}.sql` | sqlc queries |
+| `internal/store/queries/{agents,mcp_servers,mcp_tools,skills,graph_outbox}.sql` | sqlc queries |
 | `internal/store/rbac.json` | `skill:write`, and every new route |
 | `internal/api/skills/` | skills CRUD |
 | `internal/api/mcpservers/` | MCP server CRUD, tools list, discover handler |
@@ -98,7 +97,6 @@ the graph tests stop skipping in CI before the projector is written.
 **Files:**
 - Create: `internal/store/migrations/<ts>_add_agent_registry.sql`
 - Create: `internal/store/migrations/<ts>_add_graph_outbox.sql`
-- Create: `internal/store/migrations/<ts>_add_embeddings.sql`
 - Test: `internal/store/registry_schema_test.go`
 
 Claude hands each migration over; the user creates it with
@@ -120,7 +118,7 @@ Claude hands each migration over; the user creates it with
 - **Link tables carry `team_id`**, because a trigger cannot see a parent above
   it in a cascade (`write-migration` step 5c). `(agent_id, team_id)` →
   agents `ON DELETE CASCADE`; `(mcp_server_id, team_id)` / `(skill_id,
-  team_id)` → servers / skills `ON DELETE RESTRICT`. **This makes Postgres
+  team_id)` → servers / skills `ON DELETE NO ACTION` (checked at end of statement, so a team cascade that removes the grants first is not refused mid-way). **This makes Postgres
   refuse a grant of another team's server or skill** (23503), so no query is
   needed to check it.
 - `graph_outbox(id bigint identity, team_id uuid, entity text CHECK IN
@@ -135,7 +133,6 @@ Claude hands each migration over; the user creates it with
   and `graph_outbox_enqueue_agent()` (reads `team_id, agent_id`) for the two
   link tables. Unverified in this shell — no Postgres; the schema tests are
   the proof.
-- `embeddings` as in the spec, plus `CHECK (entity IN ('agent','mcp_tool','skill'))`.
 
 - [ ] **Step 1:** Claude hands over the three migrations, one per reply; the user pastes each.
 - [ ] **Step 2:** Claude writes `registry_schema_test.go`. Tests:
@@ -148,7 +145,7 @@ Claude hands each migration over; the user creates it with
   - `TestAServerNameThatCannotPrefixAToolIsRefused` — `"my server"`, 65 chars.
   - `TestAToolCannotNameATeamItsServerIsNotIn` — 23503.
   - `TestAGrantOfAnotherTeamsServerOrSkillIsRefused` — 23503 on both link tables.
-  - `TestDeletingAGrantedSkillIsRefused` / `…GrantedServer…` — 23001, row still there.
+  - `TestDeletingAGrantedSkillIsRefused` / `…GrantedServer…` — 23503, row still there.
   - `TestDeletingAnAgentDropsItsGrants`.
   - `TestEveryWriteLeavesAnOutboxRow` — table-driven over insert/update/delete
     of each entity and link: the expected `(entity, entity_id)` appears.
@@ -161,8 +158,8 @@ Claude hands each migration over; the user creates it with
 ### Task 2: Queries
 
 **Files:**
-- Create: `internal/store/queries/{agents,mcp_servers,mcp_tools,skills,graph_outbox,embeddings}.sql`
-- Test: `internal/store/{agents,mcp_servers,mcp_tools,skills,graph_outbox,embeddings}_test.go`
+- Create: `internal/store/queries/{agents,mcp_servers,mcp_tools,skills,graph_outbox}.sql`
+- Test: `internal/store/{agents,mcp_servers,mcp_tools,skills,graph_outbox}_test.go`
 
 Claude hands each query file over; the user pastes it; `make generate` writes the Go.
 
@@ -183,7 +180,6 @@ skills.sql       CreateSkill :one  GetSkill :one  ListSkillsByTeam :many (no bod
 graph_outbox.sql ClaimGraphOutbox :many (oldest first, LIMIT, FOR UPDATE SKIP LOCKED)
                  ForgetGraphOutbox :exec (ids bigint[])  GraphOutboxBacklog :one
                  ListTeamIDs :many  -- for a full rebuild
-embeddings.sql   GetEmbedding :one  PutEmbedding :exec (upsert)
 ```
 
 - [ ] **Step 1:** User pastes the query files; `make generate`.
@@ -191,8 +187,7 @@ embeddings.sql   GetEmbedding :one  PutEmbedding :exec (upsert)
   list pages by `(created_at, id)` with no row twice across pages;
   `ListSkillsByTeam` returns no body; `DeleteMCPToolsNotIn` with an empty
   array deletes all of that server's tools and none of another's;
-  `ClaimGraphOutbox` in two concurrent transactions returns disjoint rows;
-  `PutEmbedding` twice keeps one row with the second vector.
+  `ClaimGraphOutbox` in two concurrent transactions returns disjoint rows.
 - [ ] **Step 3:** `make check db=postgres`. Commit
   `feat(brain): queries for agents, MCP servers, skills and the graph outbox`.
 
@@ -225,7 +220,7 @@ Wire: `skill{id, team_id, name, description, body?, created_at, updated_at}` —
 `body` present on create/get/put, absent in list. Request
 `{name, description, body}`, all required. Limits: name 200 bytes via
 `api.Name`, description 1536 (the SDK's listing limit — longer would be cut
-silently), body 256 KiB. Delete of a granted skill: the FK's 23001 → **409**
+silently), body 256 KiB. Delete of a granted skill: the FK's 23503 → **409**
 "the skill is granted to an agent".
 
 - [ ] **Step 1:** User adds `skill:write` (admin, member) and five route
@@ -505,8 +500,14 @@ type Node struct {
 	Label     string          // Team | Agent | Toolkit | Tool | Skill
 	ID        uuid.UUID
 	Props     map[string]any  // name, description, kind
-	Embedding []float32       // nil for Team, Toolkit
+	Embedding []float32       // nil: leave the stored vector as it is
+	Model     string          // with ContentSHA256, what produced Embedding
+	ContentSHA256 []byte
 }
+
+// Fingerprint reads model and content_sha256 off a node; found is false when
+// the node does not exist yet.
+func (g *Graph) Fingerprint(ctx context.Context, team uuid.UUID, label string, id uuid.UUID) (model string, sha []byte, found bool, err error)
 
 type Edge struct {
 	Type  string            // OWNS | GRANTED | CONTAINS | HAS_SKILL
@@ -535,7 +536,8 @@ from a row.
 - [ ] **Step 2:** Claude writes `integration_test.go` (`BRAIN_TEST_FALKOR_URL`,
   skip when unset, each test on a fresh random team id) and `falkor_test.go`:
   `TestPutNodeTwiceKeepsOneNode`, `TestSetOutEdgesRemovesARevokedGrant`,
-  `TestDeleteNodeTakesItsEdges`, `TestATeamsGraphCannotSeeAnothers`,
+  `TestDeleteNodeTakesItsEdges`, `TestPutNodeWithNoEmbeddingKeepsTheStoredOne`,
+  `TestFingerprintOfAMissingNodeIsNotFound`, `TestATeamsGraphCannotSeeAnothers`,
   `TestEnsureIndexesTwiceIsFine`, `TestAVectorQueryFindsTheNearestSkill`
   (proves the index is usable, not just created), `TestDropTeamOfNoGraphIsNotAnError`.
 - [ ] **Step 3:** `make check db=postgres` with Falkor running. Commit
@@ -549,6 +551,13 @@ from a row.
   `BRAIN_TEST_FALKOR_URL=redis://localhost:6379`.
 - `make check db=postgres` also accepts `falkor=<url>`; README says how.
 - Compose pins the same version in place of `latest`.
+- **FalkorDB persists every write before acknowledging it**: append-only file,
+  `appendfsync always`, in compose and k8s. Redis's default is periodic
+  snapshots, and a crash would drop writes the projector had already
+  acknowledged by deleting their outbox rows — silent drift. Confirm the
+  variable the `falkordb/falkordb` image reads for server arguments with a
+  probe, then assert it in a test that restarts the container and finds the
+  node.
 
 - [ ] **Step 1:** User edits, from what Claude hands over. **Step 2:** Confirm in the CI log that the Task 9
   tests ran rather than skipped; paste the line. Commit
@@ -571,8 +580,6 @@ type Store interface {
 	ListAgentMCPServers(ctx context.Context, agentID uuid.UUID) ([]db.AgentMcpServer, error)
 	ListAgentSkills(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error)
 	ListMCPToolsByServer(ctx context.Context, serverID uuid.UUID) ([]db.McpTool, error)
-	GetEmbedding(ctx context.Context, arg db.GetEmbeddingParams) (db.Embedding, error)
-	PutEmbedding(ctx context.Context, arg db.PutEmbeddingParams) error
 }
 
 type Projector struct { /* store Store; graph *Graph; embed *Embedder; logger */ }
@@ -585,13 +592,14 @@ func NewProjector(s Store, g *Graph, e *Embedder, logger *slog.Logger) *Projecto
 func (p *Projector) Drain(ctx context.Context, batch int32) (int, error)
 
 // Project makes the team's graph match Postgres for one entity:
-// row present → PutNode (+ OWNS from Team, + its out-edges); row gone → DeleteNode.
+// row present → PutNode (+ OWNS from Team, + its out-edges);
+// row gone → DeleteNode.
 // entity "team" with the team gone → DropTeam.
 func (p *Projector) Project(ctx context.Context, team uuid.UUID, entity string, id uuid.UUID) error
 
-// embedding returns the cached vector when model and sha256(text) match,
-// otherwise embeds and caches.
-func (p *Projector) embedding(ctx context.Context, entity string, id uuid.UUID, text string) ([]float32, error)
+// embedding returns nil, false when the node already carries this model and
+// sha256(text) — PutNode then keeps its vector — otherwise embeds.
+func (p *Projector) embedding(ctx context.Context, team uuid.UUID, label string, id uuid.UUID, text string) ([]float32, bool, error)
 ```
 
 Embedded text is `name + "\n" + description` for Agent, Tool, Skill (spec).
@@ -679,7 +687,7 @@ func (p *Projector) Rebuild(ctx context.Context, team uuid.UUID) error
   the proof — `TestARebuildEqualsTheIncrementalGraph`: seed a team through the
   API-level queries (create, grant, revoke, rename, delete some), drain,
   `Snapshot`; `Rebuild`; `Snapshot` again; the two are equal. And
-  `TestARebuildCostsNoEmbeddingsWhenNothingChanged`.
+  `TestARebuildReembedsEveryNode` (the fake server's count equals the node count).
 - [ ] **Step 4:** `make check`. Commit
   `feat(brain): rebuild a team's graph from Postgres`.
 
