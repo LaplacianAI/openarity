@@ -31,7 +31,7 @@ accepts. The SDK has three sources of what an agent can do:
 | --- | --- | --- |
 | `agent.Spec` | model, pattern, system prompt, step limits, output schema, parser | all of it — plain data |
 | `mcp.Server` | name, a URL **or** a command, env, `Bare` | all of it, with secrets as references |
-| `agent.Skill` | name, description, `Body func(ctx)` | name, description, body text |
+| `agent.Skill` | name, description, `Body func(ctx)` — and, after the SDK change below, resources | a parsed `SKILL.md` and the files beside it |
 | `agent.Tool` | name, description, schema, `Invoke` closure | **nothing usable** — `Invoke` is code |
 
 - **There is no generic tools table.** A standalone `agent.Tool` is a Go
@@ -46,9 +46,15 @@ accepts. The SDK has three sources of what an agent can do:
   node has a Postgres row behind it. They are discovered, never typed in — the
   brain connects with `mcp.Connect` and records what the server lists.
 
-A skill's `Body` is a function so that it can load lazily. The body lives in a
-Postgres column now; moving it to object storage later changes the runtime's
-closure, not the API.
+**A skill is a directory, not a document.** The [Agent Skills
+specification](https://agentskills.io/specification) — which Claude, Codex,
+LangChain and Microsoft's Agent Framework all read — defines a skill as a
+directory holding a `SKILL.md` (YAML frontmatter, then a markdown body) and any
+other files: `scripts/`, `references/`, `assets/`. A model loads it in three
+steps: the name and description are always listed; the body when the skill is
+chosen; a bundled file only when the body sends it there. The brain stores
+exactly that shape, so a skill written for any of those tools uploads here
+unchanged.
 
 ## Data model
 
@@ -92,11 +98,26 @@ mcp_tools
   input_schema        jsonb
   UNIQUE (mcp_server_id, name)
 
-skills
-  id, team_id, name     -- unique per team
-  description         text
-  body                text
+skills                -- one parsed SKILL.md
+  id, team_id
+  name                text        -- the spec's rule: 1-64, a-z 0-9 and -, no
+                                  -- leading, trailing or doubled hyphen; unique per team
+  description         text        -- 1-1024 characters
+  license             text NULL
+  compatibility       text NULL   -- 1-500 characters when present
+  metadata            jsonb       -- string to string, {} when absent
+  allowed_tools       text NULL   -- stored as written; experimental in the spec
+  body                text        -- the markdown after the frontmatter
   created_at, updated_at
+
+skill_files           -- every other file in the directory
+  skill_id, team_id → skills (id, team_id) ON DELETE CASCADE
+  path                text        -- relative to the skill root: references/forms.md
+  size                bigint
+  sha256              bytea
+  media_type          text        -- sniffed, as attachments are
+  object_key          text        -- teams/<team>/objects/<uuid>, ciphertext in MinIO
+  PRIMARY KEY (skill_id, path)
 
 agent_mcp_servers
   agent_id, team_id → agents (id, team_id) ON DELETE CASCADE
@@ -150,6 +171,7 @@ POST   /teams/{id}/mcp-servers/{serverID}/discover team, tool:write
 GET    /teams/{id}/mcp-servers/{serverID}/tools    member
 
 /teams/{id}/skills[/{skillID}]                     same five, skill:write
+GET    /teams/{id}/skills/{skillID}/files/{path...} member
 ```
 
 An agent's request and response carry its grants:
@@ -176,11 +198,52 @@ An agent's request and response carry its grants:
   and nothing is written.
 - Deleting a server or skill that an agent still grants is **409**. A silent
   detach would change what an agent can do without anyone changing the agent.
-- Skill bodies are omitted from list responses and returned by `GET` on one
-  skill.
+- Skill bodies and file lists are omitted from list responses and returned by
+  `GET` on one skill.
 - Everything else follows `channels`: handler straight to sqlc through a
   narrow `Store` interface, wire structs in `schema.go`, cursor pagination,
   404 for a row of another team, 409 on a duplicate name.
+
+### Skills are uploaded as a directory
+
+`POST` and `PUT` take `multipart/form-data` with one `files[]` part per file,
+each named by its path — the shape the Claude API's `POST /v1/skills` uses.
+Every path sits under one top-level directory, `SKILL.md` is at its root, and
+the directory is named what the frontmatter's `name` says. `oa skills create
+./review-a-pull-request/` builds that request from a folder.
+
+- **The brain parses `SKILL.md`; nobody types its fields into JSON.** The
+  frontmatter is YAML (`gopkg.in/yaml.v3`, already a dependency), validated
+  against the spec's rules, and an unknown key is refused rather than dropped:
+  a typo in `descripton` must not produce a skill with no description.
+- **Paths are checked before anything is written**: relative, no `..`, no
+  leading `/`, no backslash, no NUL, each segment non-empty, unique after
+  cleaning. The file's own name is never used as a storage key.
+- **Limits**: 5 MiB a file, 20 MiB and 200 files a skill, `SKILL.md` 256 KiB.
+  The request body is capped at the total before it is read.
+- **`PUT` replaces the directory whole.** A file absent from the new upload is
+  gone; there is no per-file edit, and no versions.
+- **`GET …/files/{path...}` serves one file's bytes** with the recorded type,
+  `nosniff`, and `Content-Disposition: attachment` — the same rules as an
+  attachment, because the same stranger may have written it.
+
+#### Writing bytes that Postgres cannot commit
+
+The files go to MinIO and the rows to Postgres, which cannot share a
+transaction. The order that loses nothing is **tombstone first**:
+
+1. Choose a fresh key per file and insert a `deleted_objects` tombstone for
+   each, committed. From here on the reaper owns them.
+2. Encrypt and `Put` every file.
+3. In one transaction, write the `skills` and `skill_files` rows.
+
+A crash after any step leaves only objects the reaper will delete. The reaper
+already asks whether a row still needs an object before deleting it; that check
+becomes `CountObjectReferences`, counting `skill_files` as well as
+`attachments`, so a committed skill's files are never swept. The tombstone
+stays and is dropped on the reaper's next pass, as a shared object's is today.
+Deleting a skill cascades to `skill_files`, and a trigger tombstones their keys
+exactly as `attachments` does.
 
 ### Discovery
 
@@ -341,6 +404,36 @@ test that "rebuildable from Postgres" is true.
   fails its start if it cannot.
 - Compose pins `falkordb/falkordb` to a version instead of `latest`.
 
+## The SDK change, which lands first
+
+The SDK's `agent.Skill` is name, description and a `Body` closure: levels one
+and two. Level three — reading `references/forms.md` because the body said to —
+has no way in, and the brain cannot supply what the loop cannot ask for. So a
+small change to `sdk/agent`, in its own pull request, before the brain's:
+
+```go
+type Skill struct {
+	Name        string
+	Description string
+	Body        func(context.Context) (string, error)
+
+	Resources []string                                          // paths, listed in the body's tool result
+	Read      func(ctx context.Context, path string) (string, error)
+}
+```
+
+and a second tool, `SkillResource{skill, path}`, **offered only when some skill
+has resources** — Microsoft's rule for `read_skill_resource`, and the reason
+is the same: every tool is paid for in the cached prefix whether used or not.
+A path not in `Resources` is refused before `Read` is called. A binary file
+reads as a one-line note of its type and size rather than its bytes.
+
+**No tool runs a script.** Everyone who executes skill scripts does it in a
+sandbox — the Claude API in a container with no network, LangChain only through
+sandbox backends, Microsoft calling its subprocess runner "for demonstration
+purposes only". The sandbox is an open question in `Agent-SDK.md`; until it is
+answered, `scripts/` are stored and readable as text, and nothing executes them.
+
 ## Testing
 
 - **Query tests** against a real Postgres (`BRAIN_TEST_POSTGRES_DSN`): the
@@ -360,6 +453,12 @@ test that "rebuildable from Postgres" is true.
   row is a no-op; an unchanged text is not re-embedded (counted with a fake
   embeddings server); another team's graph is untouched.
 - **Rebuild equals incremental**, as above.
+- **Skills**: a `SKILL.md` from Anthropic's published skills uploads
+  unchanged; each spec rule on `name`, `description` and `compatibility` is
+  refused with a sentence; an unknown frontmatter key is refused; every bad
+  path shape is refused before a byte reaches MinIO; a crash between each of
+  the three upload steps leaves only objects the reaper deletes, and never one
+  it deletes from under a committed skill.
 - **Mutation step:** each new guard is broken once to see a test fail.
 - `spec_test.go` keeps routes and `openapi.yaml` in step; the CLI client is
   regenerated in the same change.
@@ -372,6 +471,9 @@ test that "rebuildable from Postgres" is true.
 - Built-in Go tools and their catalogue.
 - `agent:invoke`, and grants from users to agents.
 - Discovering command (stdio) MCP servers.
+- Executing a skill's scripts, and skill versions.
+- Zip upload. The CLI turns a folder into `files[]` itself; an archive endpoint
+  would be a second parser of untrusted input for no new capability.
 - Wiring Ollama into `start-docker.sh`'s questions; `make ollama` is enough
   until someone asks for it there.
 - Learnings, capabilities, topics.
