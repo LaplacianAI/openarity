@@ -212,17 +212,22 @@ func withSkills(spec Spec) (Spec, error) {
 	}
 
 	for _, t := range spec.Tools {
-		if t.Name == SkillToolName {
-			return Spec{}, fmt.Errorf("a tool is already named %q, which is the name skills arrive under", SkillToolName)
+		if t.Name == SkillToolName || t.Name == SkillResourceToolName {
+			return Spec{}, fmt.Errorf("a tool is already named %q, which is a name skills arrive under", t.Name)
 		}
 	}
 
-	tool, listing, err := skillTool(spec.Skills)
+	loaded := newLoadedSkills()
+
+	tool, listing, err := skillTool(spec.Skills, loaded)
 	if err != nil {
 		return Spec{}, err
 	}
 
 	spec.Tools = append(slices.Clone(spec.Tools), tool)
+	if rt, ok := resourceTool(spec.Skills, loaded); ok {
+		spec.Tools = append(spec.Tools, rt)
+	}
 	spec.System = append(slices.Clone(spec.System), listing)
 
 	return spec, nil

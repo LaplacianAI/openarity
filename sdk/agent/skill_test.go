@@ -16,7 +16,7 @@ func body(text string) func(context.Context) (string, error) {
 
 func mustSkillTool(t *testing.T, skills ...Skill) (Tool, Content) {
 	t.Helper()
-	tool, listing, err := skillTool(skills)
+	tool, listing, err := skillTool(skills, newLoadedSkills())
 	if err != nil {
 		t.Fatalf("skillTool: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestTwoSkillsUnderOneNameAreRefused(t *testing.T) {
 	_, _, err := skillTool([]Skill{
 		{Name: "pdf-forms", Description: "Fill PDFs", Body: body("a")},
 		{Name: "pdf-forms", Description: "Something else entirely", Body: body("b")},
-	})
+	}, newLoadedSkills())
 	if err == nil {
 		t.Fatal("two skills under one name were accepted")
 	}
@@ -352,7 +352,7 @@ func TestTwoSkillsUnderOneNameAreRefused(t *testing.T) {
 func TestASkillWithNoNameIsRefused(t *testing.T) {
 	t.Parallel()
 
-	if _, _, err := skillTool([]Skill{{Description: "Fill PDFs", Body: body("a")}}); err == nil {
+	if _, _, err := skillTool([]Skill{{Description: "Fill PDFs", Body: body("a")}}, newLoadedSkills()); err == nil {
 		t.Error("a skill with no name was accepted")
 	}
 }

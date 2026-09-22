@@ -286,6 +286,24 @@ sixty of them costs one entry in the tool list — which matters because the too
 array is the front of the cached prefix, and a tool per skill would give every
 caller a different one.
 
+A skill may also carry `Resources`: named closures, like `Body`, that the
+model reads one at a time through a second tool, `SkillResource`. Their names
+are listed only once the body has been loaded, a resource is refused until its
+skill has been, and the second tool is offered only when some skill has
+resources — so a run without them sends exactly the tools it always did.
+
+```go
+agent.Skill{
+	Name:        "review",
+	Description: "Review a pull request. Use when asked to review a diff.",
+	Body:        readBody,
+	Resources:   []agent.Resource{{Name: "checklist", Read: readChecklist}},
+}
+```
+
+Nothing runs a skill's scripts. Where a resource comes from — a file, a row, a
+bucket — is the caller's, as a tool's credentials are.
+
 ## Models
 
 `models/openaicompat` speaks OpenAI chat completions, so it reaches LiteLLM,

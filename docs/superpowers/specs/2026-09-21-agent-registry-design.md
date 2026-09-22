@@ -416,17 +416,24 @@ type Skill struct {
 	Name        string
 	Description string
 	Body        func(context.Context) (string, error)
+	Resources   []Resource // listed when the body loads
+}
 
-	Resources []string                                          // paths, listed in the body's tool result
-	Read      func(ctx context.Context, path string) (string, error)
+type Resource struct {
+	Name string                                 // what the model asks for
+	Read func(context.Context) (string, error) // a file, a row, a literal — like Body
 }
 ```
 
 and a second tool, `SkillResource{skill, path}`, **offered only when some skill
 has resources** — Microsoft's rule for `read_skill_resource`, and the reason
 is the same: every tool is paid for in the cached prefix whether used or not.
-A path not in `Resources` is refused before `Read` is called. A binary file
-reads as a one-line note of its type and size rather than its bytes.
+A resource is a named closure rather than a path, so the SDK does no path
+handling at all: a name not listed is refused, and the brain builds one
+`Resource` per `skill_files` row. **A resource is refused until its skill's
+body has been loaded in that run**, which keeps the three levels in order
+rather than in order by convention. A binary file reads as a one-line note of
+its type and size, decided by the brain's `Read`.
 
 **No tool runs a script.** Everyone who executes skill scripts does it in a
 sandbox — the Claude API in a container with no network, LangChain only through
