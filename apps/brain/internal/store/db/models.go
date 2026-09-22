@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Agent struct {
@@ -20,15 +19,15 @@ type Agent struct {
 	Instructions       string
 	ModelName          string
 	MaxTokens          int32
-	Temperature        pgtype.Float8
+	Temperature        *float64
 	Pattern            string
 	MaxSteps           int32
 	SteerContinuations int32
 	OutputSchema       []byte
 	Parser             bool
 	ParserModelName    *string
-	ParserMaxTokens    pgtype.Int4
-	ParserTemperature  pgtype.Float8
+	ParserMaxTokens    *int32
+	ParserTemperature  *float64
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -92,11 +91,13 @@ type DeletedSecret struct {
 }
 
 type GraphOutbox struct {
-	ID        int64
-	TeamID    uuid.UUID
-	Entity    string
-	EntityID  uuid.UUID
-	CreatedAt time.Time
+	ID            int64
+	TeamID        uuid.UUID
+	Entity        string
+	EntityID      uuid.UUID
+	CreatedAt     time.Time
+	Attempts      int32
+	LastAttemptAt *time.Time
 }
 
 type McpServer struct {

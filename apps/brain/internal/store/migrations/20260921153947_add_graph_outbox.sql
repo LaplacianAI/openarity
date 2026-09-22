@@ -17,9 +17,17 @@ CREATE TABLE graph_outbox (
     entity_id  uuid NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
 
+    -- A row that keeps failing must not starve the rest, and must be visible.
+    -- The same pair, for the same reason, as deleted_objects.
+    attempts        integer NOT NULL DEFAULT 0,
+    last_attempt_at timestamptz,
+
     CONSTRAINT graph_outbox_entity_known CHECK (entity IN
         ('team', 'agent', 'mcp_server', 'mcp_tool', 'skill'))
 );
+
+-- Never-tried rows first, then oldest; a failing row sinks behind fresh work.
+CREATE INDEX graph_outbox_drain_idx ON graph_outbox (last_attempt_at NULLS FIRST, id);
 
 -- Every trigger below names its transition table changed_rows, whichever
 -- event it fires on, so one function serves insert, update and delete.

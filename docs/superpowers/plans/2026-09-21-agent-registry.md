@@ -170,7 +170,7 @@ agents.sql       CreateAgent :one  GetAgent :one  ListAgentsByTeam :many (cursor
                  UpdateAgent :one (all columns but id, team_id, kind; sets updated_at)
                  DeleteAgent :exec
                  AddAgentMCPServer :exec  ClearAgentMCPServers :exec  ListAgentMCPServers :many
-                 AddAgentSkill :exec      ClearAgentSkills :exec      ListAgentSkills :many
+                 AddAgentSkills :exec (unnest)  ClearAgentSkills :exec  ListAgentSkills :many
 mcp_servers.sql  CreateMCPServer :one  GetMCPServer :one  ListMCPServersByTeam :many
                  UpdateMCPServer :one  DeleteMCPServer :exec  MarkMCPServerDiscovered :exec
 mcp_tools.sql    ListMCPToolsByServer :many  UpsertMCPTool :exec
@@ -603,9 +603,9 @@ func (p *Projector) embedding(ctx context.Context, team uuid.UUID, label string,
 ```
 
 Embedded text is `name + "\n" + description` for Agent, Tool, Skill (spec).
-`GetMCPTool` is added to `mcp_tools.sql` in this task.
+`GetMCPTool` already exists (added with the other tool queries in Task 2).
 
-- [ ] **Step 1:** User adds `GetMCPTool`; `make generate`.
+- [ ] **Step 1:** (none — `GetMCPTool` landed in Task 2.)
 - [ ] **Step 2:** User writes `projector.go`.
 - [ ] **Step 3:** Claude tests against real Postgres + FalkorDB with a fake
   embeddings server that counts calls:
