@@ -108,6 +108,9 @@ skills                -- one parsed SKILL.md
   metadata            jsonb       -- string to string, {} when absent
   allowed_tools       text NULL   -- stored as written; experimental in the spec
   body                text        -- the markdown after the frontmatter
+  source              text        -- upload | github | url
+  source_ref          text NULL   -- github:owner/repo/path@ref, or the https URL
+  source_sha          text NULL   -- the commit imported, or sha256 of the zip
   created_at, updated_at
 
 skill_files           -- every other file in the directory
@@ -204,28 +207,78 @@ An agent's request and response carry its grants:
   narrow `Store` interface, wire structs in `schema.go`, cursor pagination,
   404 for a row of another team, 409 on a duplicate name.
 
-### Skills are uploaded as a directory
+### Four ways in, one way to store
 
-`POST` and `PUT` take `multipart/form-data` with one `files[]` part per file,
-each named by its path — the shape the Claude API's `POST /v1/skills` uses.
-Every path sits under one top-level directory, `SKILL.md` is at its root, and
-the directory is named what the frontmatter's `name` says. `oa skills create
-./review-a-pull-request/` builds that request from a folder.
+A skill is written in the dashboard's editor, in `$EDITOR` from the CLI,
+uploaded as a zip, or imported from a hub. Each of those only **assembles a
+directory in memory** — paths to bytes. From there every one takes the same
+path: parse `SKILL.md`, check every path and limit, sniff each file, then
+store. There is one validator, so nothing one entry point accepts is refused by
+another, and nothing is stored that the runtime cannot load.
 
-- **The brain parses `SKILL.md`; nobody types its fields into JSON.** The
-  frontmatter is YAML (`gopkg.in/yaml.v3`, already a dependency), validated
-  against the spec's rules, and an unknown key is refused rather than dropped:
-  a typo in `descripton` must not produce a skill with no description.
+| Entry point | Request | Assembles the directory from |
+| --- | --- | --- |
+| editor, CLI, folder upload | `POST /skills`, `multipart/form-data`, one `files[]` part per file | the parts; an editor sends one, `SKILL.md` |
+| zip | `POST /skills`, `Content-Type: application/zip` | the archive's entries |
+| hub | `POST /skills/import` `{"source": "…"}` | a download the brain makes itself |
+
+`PUT /skills/{skillID}` takes either upload form and replaces the directory
+whole. An imported skill replaced by an upload becomes `source = upload`: its
+origin no longer describes it, so it is cleared rather than left lying.
+
+- **The brain parses `SKILL.md`; nobody types its fields into JSON.** YAML
+  frontmatter (`gopkg.in/yaml.v3`, already a dependency), validated against the
+  spec, with an unknown key refused rather than dropped — a typo in
+  `descripton` must not produce a skill with no description.
+- **One top-level directory, named as the frontmatter's `name`.** A zip or an
+  import whose `SKILL.md` sits deeper, or that holds two, is refused with a
+  sentence rather than guessed at.
 - **Paths are checked before anything is written**: relative, no `..`, no
-  leading `/`, no backslash, no NUL, each segment non-empty, unique after
-  cleaning. The file's own name is never used as a storage key.
+  leading `/`, no backslash, no empty segment, unique after cleaning. A path is
+  never used as a storage key.
 - **Limits**: 5 MiB a file, 20 MiB and 200 files a skill, `SKILL.md` 256 KiB.
-  The request body is capped at the total before it is read.
-- **`PUT` replaces the directory whole.** A file absent from the new upload is
-  gone; there is no per-file edit, and no versions.
+  A zip is counted **while it is decompressed**, entry by entry, and abandoned
+  the moment either total is passed — a 40 KiB archive that inflates to 4 GiB
+  never reaches the heap. The request body is capped before it is read.
 - **`GET …/files/{path...}` serves one file's bytes** with the recorded type,
   `nosniff`, and `Content-Disposition: attachment` — the same rules as an
   attachment, because the same stranger may have written it.
+
+### Importing from a hub
+
+```text
+github:anthropics/skills/skills/pdf@main     a directory in a GitHub repository
+https://hub.example.com/skills/pdf.zip       a zip, from a host the operator allows
+```
+
+- **GitHub**: the ref is resolved to a commit through `api.github.com`, and
+  that commit's tarball fetched from `codeload.github.com`; only the named
+  directory is kept. The commit is recorded in `source_sha`, so what was
+  imported is exact even when `main` moves. A GitHub token is optional —
+  `OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF`, a `path#key` — for private
+  repositories and for the 60-requests-an-hour limit without one.
+- **Any HTTPS zip** from a host named in `OPENARITY_SKILL_IMPORT_HOSTS`, empty
+  by default. `source_sha` is the zip's sha256.
+- **`POST /skills/{skillID}/sync`** fetches the same `source_ref` again and
+  replaces the directory when `source_sha` has moved; an uploaded skill has
+  nothing to sync and answers 409.
+
+**The brain now makes outbound requests on a user's say-so**, which is
+server-side request forgery the moment it is careless. The fetch client:
+
+- speaks HTTPS only, to allowlisted hosts only — `api.github.com` and
+  `codeload.github.com` for GitHub, the operator's list for zips;
+- **refuses to connect to a private, loopback, link-local or unspecified
+  address**, checked at dial time on the resolved IP, so a hostname that
+  resolves to `169.254.169.254` or `10.0.0.5` is refused even if it is allowed
+  by name — DNS rebinding included;
+- follows a redirect only to another allowlisted host;
+- caps the download at the skill limit and the whole import at 30 seconds.
+
+An imported skill is third-party instructions, which is exactly what the
+Claude documentation warns about ("treat like installing software"). It is
+stored with its origin so the team can see where every skill came from, and
+nothing it contains is executed.
 
 #### Writing bytes that Postgres cannot commit
 
@@ -465,7 +518,11 @@ answered, `scripts/` are stored and readable as text, and nothing executes them.
   refused with a sentence; an unknown frontmatter key is refused; every bad
   path shape is refused before a byte reaches MinIO; a crash between each of
   the three upload steps leaves only objects the reaper deletes, and never one
-  it deletes from under a committed skill.
+  it deletes from under a committed skill. A zip that inflates past the limit
+  is abandoned before it is fully read; a zip entry named `../x` is refused.
+  The import client refuses a host off the list, a redirect off the list, and
+  a hostname resolving to a private address — tested against a local resolver,
+  not the internet.
 - **Mutation step:** each new guard is broken once to see a test fail.
 - `spec_test.go` keeps routes and `openapi.yaml` in step; the CLI client is
   regenerated in the same change.
@@ -479,8 +536,8 @@ answered, `scripts/` are stored and readable as text, and nothing executes them.
 - `agent:invoke`, and grants from users to agents.
 - Discovering command (stdio) MCP servers.
 - Executing a skill's scripts, and skill versions.
-- Zip upload. The CLI turns a folder into `files[]` itself; an archive endpoint
-  would be a second parser of untrusted input for no new capability.
+- Hubs other than GitHub and plain HTTPS zips — a registry with its own API
+  is a new source kind.
 - Wiring Ollama into `start-docker.sh`'s questions; `make ollama` is enough
   until someone asks for it there.
 - Learnings, capabilities, topics.
