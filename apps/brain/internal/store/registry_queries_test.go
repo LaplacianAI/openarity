@@ -56,6 +56,7 @@ func mustCreateSkill(t *testing.T, s *Store, teamID uuid.UUID, name string) db.S
 
 	sk, err := s.CreateSkill(t.Context(), db.CreateSkillParams{
 		TeamID: teamID, Name: name, Description: "Does " + name, Body: "# " + name,
+		Metadata: []byte(`{}`), Source: "upload",
 	})
 	if err != nil {
 		t.Fatalf("CreateSkill(%q): %v", name, err)
@@ -574,6 +575,7 @@ func TestReplacingASkillRewritesItsBody(t *testing.T) {
 
 	got, err := s.UpdateSkill(t.Context(), db.UpdateSkillParams{
 		ID: sk.ID, Name: "review", Description: "Review a pull request", Body: "# new",
+		Metadata: []byte(`{}`), Source: "upload",
 	})
 	if err != nil {
 		t.Fatalf("UpdateSkill: %v", err)
@@ -581,6 +583,76 @@ func TestReplacingASkillRewritesItsBody(t *testing.T) {
 	if got.Body != "# new" || got.Description != "Review a pull request" {
 		t.Errorf("after replace: %+v", got)
 	}
+}
+
+// Every optional frontmatter field, and the origin, has to come back as it
+// went in: a nil that returned as "" is a licence nobody declared.
+func TestASkillRoundTripsItsFrontmatterAndOrigin(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+
+	created, err := s.CreateSkill(t.Context(), db.CreateSkillParams{
+		TeamID: team.ID, Name: "pdf", Description: "Fill PDF forms. Use when handed a PDF.",
+		License: ref("Apache-2.0"), Compatibility: ref("Requires pdftk"),
+		Metadata:     []byte(`{"author":"example-org","version":"1.0"}`),
+		AllowedTools: ref("Bash(pdftk:*) Read"), Body: "# PDF",
+		Source: "github", SourceRef: ref("github:anthropics/skills/skills/pdf@main"), SourceSha: ref("3f2c9e1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSkill: %v", err)
+	}
+
+	got, err := s.GetSkill(t.Context(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSkill: %v", err)
+	}
+	if *got.License != "Apache-2.0" || *got.Compatibility != "Requires pdftk" ||
+		*got.AllowedTools != "Bash(pdftk:*) Read" || got.Source != "github" ||
+		*got.SourceRef != "github:anthropics/skills/skills/pdf@main" || *got.SourceSha != "3f2c9e1" ||
+		!sameJSON(got.Metadata, []byte(`{"author":"example-org","version":"1.0"}`)) {
+		t.Errorf("round trip: %+v", got)
+	}
+}
+
+// An upload over an imported skill makes it the team's own. The origin goes
+// with the rest of the replace, in the same statement.
+func TestReplacingAnImportWithAnUploadClearsItsOrigin(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+
+	imported, err := s.CreateSkill(t.Context(), db.CreateSkillParams{
+		TeamID: team.ID, Name: "pdf", Description: "d", Body: "b", Metadata: []byte(`{}`),
+		Source: "github", SourceRef: ref("github:a/b/c@main"), SourceSha: ref("abc"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSkill: %v", err)
+	}
+
+	got, err := s.UpdateSkill(t.Context(), db.UpdateSkillParams{
+		ID: imported.ID, Name: "pdf", Description: "mine now", Body: "b",
+		Metadata: []byte(`{}`), Source: "upload",
+	})
+	if err != nil {
+		t.Fatalf("UpdateSkill: %v", err)
+	}
+	if got.Source != "upload" || got.SourceRef != nil || got.SourceSha != nil {
+		t.Errorf("after an upload: source %q ref %v sha %v, want upload and no origin",
+			got.Source, got.SourceRef, got.SourceSha)
+	}
+}
+
+// A replace that sets the source but forgets half the origin is refused by
+// the CHECK, not stored — the query cannot write a half-recorded import.
+func TestAReplaceThatHalfRecordsAnImportIsRefused(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	sk := mustCreateSkill(t, s, team.ID, "pdf")
+
+	_, err := s.UpdateSkill(t.Context(), db.UpdateSkillParams{
+		ID: sk.ID, Name: "pdf", Description: "d", Body: "b", Metadata: []byte(`{}`),
+		Source: "github", SourceRef: ref("github:a/b/c@main"),
+	})
+	wantConstraint(t, err, checkViolation, "skills_source_recorded")
 }
 
 func TestListingSkillsReturnsOnlyThisTeams(t *testing.T) {

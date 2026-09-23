@@ -99,24 +99,115 @@ CREATE TABLE mcp_tools (
     CONSTRAINT mcp_tools_server_name_key UNIQUE (mcp_server_id, name)
 );
 
+-- One parsed SKILL.md. The columns are the Agent Skills specification's
+-- frontmatter, so a skill written for Claude Code, Codex or Agno uploads here
+-- unchanged, and the rules below are that spec's rather than ours.
 CREATE TABLE skills (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id     uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    name        text NOT NULL,
-    description text NOT NULL,
-    body        text NOT NULL,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    updated_at  timestamptz NOT NULL DEFAULT now(),
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_id       uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    name          text NOT NULL,
+    description   text NOT NULL,
+    license       text,
+    compatibility text,
+    metadata      jsonb NOT NULL DEFAULT '{}',
+    allowed_tools text,
+    body          text NOT NULL,
+    -- Where the directory came from. An imported skill is third-party
+    -- instructions; recording the origin is what lets a team see that, and
+    -- what lets sync fetch the same thing again.
+    source        text NOT NULL DEFAULT 'upload',
+    source_ref    text,
+    source_sha    text,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
 
-    CONSTRAINT skills_name_present CHECK (name <> ''),
-    -- The description is all the model sees when choosing a skill.
-    CONSTRAINT skills_description_present CHECK (description <> ''),
+    -- 1-64 characters, lower case alphanumerics and hyphens, never leading,
+    -- trailing or doubled. The regex says all of that at once.
+    CONSTRAINT skills_name_is_spec_shaped CHECK (
+        name ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(name) <= 64),
+    -- The description is all the model sees when choosing a skill, and the
+    -- spec caps it so a listing of many skills stays affordable.
+    CONSTRAINT skills_description_present CHECK (description <> '' AND length(description) <= 1024),
+    CONSTRAINT skills_compatibility_shaped CHECK (
+        compatibility IS NULL OR (compatibility <> '' AND length(compatibility) <= 500)),
+    CONSTRAINT skills_license_present CHECK (license IS NULL OR license <> ''),
+    CONSTRAINT skills_allowed_tools_present CHECK (allowed_tools IS NULL OR allowed_tools <> ''),
+    CONSTRAINT skills_metadata_object CHECK (jsonb_typeof(metadata) = 'object'),
+    CONSTRAINT skills_source_known CHECK (source IN ('upload', 'github', 'url')),
+    -- An upload has no origin to record; an import always has both halves.
+    CONSTRAINT skills_source_recorded CHECK (
+        (source = 'upload' AND source_ref IS NULL AND source_sha IS NULL)
+        OR (source <> 'upload' AND source_ref IS NOT NULL AND source_sha IS NOT NULL)),
 
     CONSTRAINT skills_id_team_key UNIQUE (id, team_id)
 );
 
-CREATE UNIQUE INDEX skills_team_name_key ON skills (team_id, lower(name));
+-- Names are lower case by constraint, so the index needs no lower().
+CREATE UNIQUE INDEX skills_team_name_key ON skills (team_id, name);
 CREATE INDEX skills_team_page_idx ON skills (team_id, created_at, id);
+
+-- Every file bundled beside the SKILL.md. The bytes are encrypted under the
+-- team's key and live in the object store; this row holds where and what.
+CREATE TABLE skill_files (
+    skill_id   uuid NOT NULL,
+    team_id    uuid NOT NULL,
+    path       text NOT NULL,
+    size       bigint NOT NULL,
+    sha256     bytea NOT NULL,
+    media_type text NOT NULL,
+    object_key text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+
+    PRIMARY KEY (skill_id, path),
+    CONSTRAINT skill_files_skill_in_team
+        FOREIGN KEY (skill_id, team_id) REFERENCES skills (id, team_id)
+        ON DELETE CASCADE,
+
+    -- A path is relative, inside the skill, and is never joined onto anything
+    -- here — but a row that still looks like a traversal invites the first
+    -- caller that does. Refused: absolute, a .. segment, an empty segment, a
+    -- trailing slash and a backslash. A NUL needs no clause: text cannot hold
+    -- one, so Postgres refuses it before any CHECK runs.
+    CONSTRAINT skill_files_path_is_inside CHECK (
+        path <> ''
+        AND left(path, 1) <> '/'
+        AND right(path, 1) <> '/'
+        AND path !~ '(^|/)\.\.(/|$)'
+        AND path !~ '//'
+        AND path !~ '\\'),
+
+    -- The SKILL.md is the skills row, not a file beside it.
+    CONSTRAINT skill_files_not_the_manifest CHECK (path <> 'SKILL.md'),
+    CONSTRAINT skill_files_size_nonneg CHECK (size >= 0),
+    CONSTRAINT skill_files_sha256_is_sha256 CHECK (octet_length(sha256) = 32),
+    CONSTRAINT skill_files_media_type_present CHECK (media_type <> ''),
+    CONSTRAINT skill_files_object_key_present CHECK (object_key <> '')
+);
+
+-- The reaper asks whether any row still needs an object before deleting it,
+-- and that question is now asked of this table as well as attachments.
+CREATE INDEX skill_files_object_key_idx ON skill_files (object_key);
+
+-- The same tombstone attachments get, for the same reason: a cascade never
+-- runs our SQL, and deleting a team removes its skills' files without any Go
+-- code seeing a row.
+-- +goose StatementBegin
+CREATE FUNCTION skill_files_record_deleted_object() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO deleted_objects (object_key, team_id)
+    SELECT object_key, team_id FROM deleted_rows
+    ON CONFLICT (object_key) DO NOTHING;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER skill_files_tombstone_deleted_objects
+    AFTER DELETE ON skill_files
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION skill_files_record_deleted_object();
 
 -- team_id is on the link rows because a trigger cannot see above it in a
 -- cascade: deleting a team removes the agent before its links' trigger fires.
@@ -167,6 +258,9 @@ CREATE INDEX agent_skills_skill_idx ON agent_skills (skill_id, team_id);
 -- +goose Down
 DROP TABLE agent_skills;
 DROP TABLE agent_mcp_servers;
+DROP TRIGGER skill_files_tombstone_deleted_objects ON skill_files;
+DROP FUNCTION skill_files_record_deleted_object();
+DROP TABLE skill_files;
 DROP TABLE skills;
 DROP TABLE mcp_tools;
 DROP TABLE mcp_servers;

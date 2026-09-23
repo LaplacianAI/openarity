@@ -13,16 +13,27 @@ import (
 )
 
 const createSkill = `-- name: CreateSkill :one
-INSERT INTO skills (team_id, name, description, body)
-VALUES ($1, $2, $3, $4)
-RETURNING id, team_id, name, description, body, created_at, updated_at
+INSERT INTO skills (
+    team_id, name, description, license, compatibility, metadata, allowed_tools,
+    body, source, source_ref, source_sha
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7,
+    $8, $9, $10, $11
+) RETURNING id, team_id, name, description, license, compatibility, metadata, allowed_tools, body, source, source_ref, source_sha, created_at, updated_at
 `
 
 type CreateSkillParams struct {
-	TeamID      uuid.UUID
-	Name        string
-	Description string
-	Body        string
+	TeamID        uuid.UUID
+	Name          string
+	Description   string
+	License       *string
+	Compatibility *string
+	Metadata      []byte
+	AllowedTools  *string
+	Body          string
+	Source        string
+	SourceRef     *string
+	SourceSha     *string
 }
 
 func (q *Queries) CreateSkill(ctx context.Context, arg CreateSkillParams) (Skill, error) {
@@ -30,7 +41,14 @@ func (q *Queries) CreateSkill(ctx context.Context, arg CreateSkillParams) (Skill
 		arg.TeamID,
 		arg.Name,
 		arg.Description,
+		arg.License,
+		arg.Compatibility,
+		arg.Metadata,
+		arg.AllowedTools,
 		arg.Body,
+		arg.Source,
+		arg.SourceRef,
+		arg.SourceSha,
 	)
 	var i Skill
 	err := row.Scan(
@@ -38,7 +56,14 @@ func (q *Queries) CreateSkill(ctx context.Context, arg CreateSkillParams) (Skill
 		&i.TeamID,
 		&i.Name,
 		&i.Description,
+		&i.License,
+		&i.Compatibility,
+		&i.Metadata,
+		&i.AllowedTools,
 		&i.Body,
+		&i.Source,
+		&i.SourceRef,
+		&i.SourceSha,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -55,7 +80,7 @@ func (q *Queries) DeleteSkill(ctx context.Context, id uuid.UUID) error {
 }
 
 const getSkill = `-- name: GetSkill :one
-SELECT id, team_id, name, description, body, created_at, updated_at FROM skills WHERE id = $1
+SELECT id, team_id, name, description, license, compatibility, metadata, allowed_tools, body, source, source_ref, source_sha, created_at, updated_at FROM skills WHERE id = $1
 `
 
 func (q *Queries) GetSkill(ctx context.Context, id uuid.UUID) (Skill, error) {
@@ -66,7 +91,14 @@ func (q *Queries) GetSkill(ctx context.Context, id uuid.UUID) (Skill, error) {
 		&i.TeamID,
 		&i.Name,
 		&i.Description,
+		&i.License,
+		&i.Compatibility,
+		&i.Metadata,
+		&i.AllowedTools,
 		&i.Body,
+		&i.Source,
+		&i.SourceRef,
+		&i.SourceSha,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -74,7 +106,7 @@ func (q *Queries) GetSkill(ctx context.Context, id uuid.UUID) (Skill, error) {
 }
 
 const listSkillsByTeam = `-- name: ListSkillsByTeam :many
-SELECT id, team_id, name, description, created_at, updated_at FROM skills
+SELECT id, team_id, name, description, source, created_at, updated_at FROM skills
 WHERE team_id = $1
   AND (NOT $2::bool
    OR (created_at, id) < ($3::timestamptz, $4::uuid))
@@ -95,12 +127,14 @@ type ListSkillsByTeamRow struct {
 	TeamID      uuid.UUID
 	Name        string
 	Description string
+	Source      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
 
 // The body is left out: a page of fifty skills is fifty descriptions to choose
-// between, not fifty documents nobody asked to read.
+// between, not fifty documents nobody asked to read. The origin stays in, so a
+// list shows at a glance which skills are the team's own.
 func (q *Queries) ListSkillsByTeam(ctx context.Context, arg ListSkillsByTeamParams) ([]ListSkillsByTeamRow, error) {
 	rows, err := q.db.Query(ctx, listSkillsByTeam,
 		arg.TeamID,
@@ -121,6 +155,7 @@ func (q *Queries) ListSkillsByTeam(ctx context.Context, arg ListSkillsByTeamPara
 			&i.TeamID,
 			&i.Name,
 			&i.Description,
+			&i.Source,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -136,26 +171,49 @@ func (q *Queries) ListSkillsByTeam(ctx context.Context, arg ListSkillsByTeamPara
 
 const updateSkill = `-- name: UpdateSkill :one
 UPDATE skills SET
-    name        = $1,
-    description = $2,
-    body        = $3,
-    updated_at  = now()
-WHERE id = $4
-RETURNING id, team_id, name, description, body, created_at, updated_at
+    name          = $1,
+    description   = $2,
+    license       = $3,
+    compatibility = $4,
+    metadata      = $5,
+    allowed_tools = $6,
+    body          = $7,
+    source        = $8,
+    source_ref    = $9,
+    source_sha    = $10,
+    updated_at    = now()
+WHERE id = $11
+RETURNING id, team_id, name, description, license, compatibility, metadata, allowed_tools, body, source, source_ref, source_sha, created_at, updated_at
 `
 
 type UpdateSkillParams struct {
-	Name        string
-	Description string
-	Body        string
-	ID          uuid.UUID
+	Name          string
+	Description   string
+	License       *string
+	Compatibility *string
+	Metadata      []byte
+	AllowedTools  *string
+	Body          string
+	Source        string
+	SourceRef     *string
+	SourceSha     *string
+	ID            uuid.UUID
 }
 
+// A replace is whole, the origin included: an upload over an imported skill
+// makes it the team's own, and a sync writes the new commit.
 func (q *Queries) UpdateSkill(ctx context.Context, arg UpdateSkillParams) (Skill, error) {
 	row := q.db.QueryRow(ctx, updateSkill,
 		arg.Name,
 		arg.Description,
+		arg.License,
+		arg.Compatibility,
+		arg.Metadata,
+		arg.AllowedTools,
 		arg.Body,
+		arg.Source,
+		arg.SourceRef,
+		arg.SourceSha,
 		arg.ID,
 	)
 	var i Skill
@@ -164,7 +222,14 @@ func (q *Queries) UpdateSkill(ctx context.Context, arg UpdateSkillParams) (Skill
 		&i.TeamID,
 		&i.Name,
 		&i.Description,
+		&i.License,
+		&i.Compatibility,
+		&i.Metadata,
+		&i.AllowedTools,
 		&i.Body,
+		&i.Source,
+		&i.SourceRef,
+		&i.SourceSha,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

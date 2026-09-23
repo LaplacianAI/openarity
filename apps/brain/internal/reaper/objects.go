@@ -15,7 +15,7 @@ type ObjectStore interface {
 
 type ObjectRows interface {
 	ClaimDeletedObjects(ctx context.Context, arg db.ClaimDeletedObjectsParams) ([]db.DeletedObject, error)
-	CountAttachmentsByObjectKey(ctx context.Context, objectKey string) (int64, error)
+	CountObjectReferences(ctx context.Context, objectKey string) (int64, error)
 	ForgetDeletedObject(ctx context.Context, objectKey string) error
 	DeletedObjectBacklog(ctx context.Context) ([]db.DeletedObjectBacklogRow, error)
 }
@@ -50,7 +50,7 @@ func (e objectEffect) Claim(ctx context.Context, retryBefore time.Time, batch in
 }
 
 func (e objectEffect) Do(ctx context.Context, item Item) (Outcome, error) {
-	count, err := e.rows.CountAttachmentsByObjectKey(ctx, item.Ref)
+	count, err := e.rows.CountObjectReferences(ctx, item.Ref)
 	if err != nil {
 		return 0, err
 	}

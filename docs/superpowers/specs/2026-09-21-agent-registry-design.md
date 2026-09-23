@@ -457,6 +457,60 @@ test that "rebuildable from Postgres" is true.
   fails its start if it cannot.
 - Compose pins `falkordb/falkordb` to a version instead of `latest`.
 
+## Learnings: designed here, built with the runtime
+
+A learning is what the brain writes back when a run succeeds in a way worth
+remembering. The HLD calls it "structurally a specialised skill" and
+Selection.md "economically the opposite", and the second decides everything:
+
+| | Skill | Learning |
+| --- | --- | --- |
+| Written by | a person | the brain, from a run |
+| Volume | tens, grows slowly | thousands a month on a busy team |
+| Reaches the model | all listed, body on demand | retrieved, ranked and budgeted per task, placed last so the cached prefix survives |
+| Scope | the agent's grants | a team-wide index filtered by `team_id` |
+
+So it is **its own table and its own path to the model**, not a `source` value
+on `skills` — the same reason there are two tombstone tables: one shape now
+would force the stricter set of rules onto both later. The shape, to be built
+in the runtime change:
+
+```sql
+learnings
+  id, team_id
+  skill_id            -- the skill it specialises; RESTRICT, as grants are
+  body                text
+  topics              text[]      -- narrow by default; broad is earned
+  session_id, run_id  -- derived from: provenance, impossible to backfill
+  agent_id
+  invoked_by          -- the person whose run produced it (Auth.md)
+  confidence          real
+  status              -- proposed | active | retired
+  uses, successes, failures  -- outcome tracking, for demotion
+  created_at, activated_at, activated_by
+```
+
+- **A learning is written `proposed` and reaches no model until a person
+  activates it.** HLD open question 2 names poisoning — a learning from a run
+  that succeeded by luck, surfaced broadly, so that selection *degrades with
+  use* — as the failure that would quietly kill the product, and lists human
+  activation among the defences to decide before any learning is written. It
+  is the only one of them that is safe before there are outcomes to measure,
+  so it is the default; the others arrive with data.
+- **It is brain-only.** No upload, editor or import creates one; the API reads,
+  activates and retires them. `skill:write` does not imply it.
+- **Retired, not deleted,** so an outcome record survives the learning it
+  demoted.
+
+### What this change must leave open
+
+- A skill's id is stable across a replace — `PUT` updates in place — so a
+  learning that specialises it survives its author editing it.
+- The graph outbox's entity list is a CHECK a later migration replaces, and the
+  `Learning` node, with its `SPECIALISES`, `DERIVED_FROM` and `ABOUT` edges, is
+  one more projection kind, not a new mechanism.
+- Nothing in the `skills` table or API anticipates learnings beyond that.
+
 ## The SDK change, which lands first
 
 The SDK's `agent.Skill` is name, description and a `Body` closure: levels one
@@ -540,5 +594,6 @@ answered, `scripts/` are stored and readable as text, and nothing executes them.
   is a new source kind.
 - Wiring Ollama into `start-docker.sh`'s questions; `make ollama` is enough
   until someone asks for it there.
-- Learnings, capabilities, topics.
+- Building learnings: designed above, built with the runtime, which is the
+  first thing that can produce one. Capabilities and topics come with them.
 - CLI commands (`oa agents …`), beyond regenerating the client.

@@ -75,11 +75,12 @@ type ChannelSender struct {
 }
 
 type DeletedObject struct {
-	ObjectKey     string
-	TeamID        uuid.UUID
-	DeletedAt     time.Time
-	Attempts      int32
-	LastAttemptAt *time.Time
+	ObjectKey      string
+	TeamID         uuid.UUID
+	DeletedAt      time.Time
+	Attempts       int32
+	LastAttemptAt  *time.Time
+	ClaimableAfter time.Time
 }
 
 type DeletedSecret struct {
@@ -180,13 +181,31 @@ type Session struct {
 }
 
 type Skill struct {
-	ID          uuid.UUID
-	TeamID      uuid.UUID
-	Name        string
-	Description string
-	Body        string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID            uuid.UUID
+	TeamID        uuid.UUID
+	Name          string
+	Description   string
+	License       *string
+	Compatibility *string
+	Metadata      []byte
+	AllowedTools  *string
+	Body          string
+	Source        string
+	SourceRef     *string
+	SourceSha     *string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type SkillFile struct {
+	SkillID   uuid.UUID
+	TeamID    uuid.UUID
+	Path      string
+	Size      int64
+	Sha256    []byte
+	MediaType string
+	ObjectKey string
+	CreatedAt time.Time
 }
 
 type Team struct {

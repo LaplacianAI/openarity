@@ -8,6 +8,8 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const claimDeletedObjects = `-- name: ClaimDeletedObjects :many
@@ -15,12 +17,13 @@ UPDATE deleted_objects
 SET attempts = attempts + 1, last_attempt_at = now()
 WHERE object_key IN (
     SELECT d.object_key FROM deleted_objects d
-    WHERE d.last_attempt_at IS NULL OR d.last_attempt_at < $1
+    WHERE (d.last_attempt_at IS NULL OR d.last_attempt_at < $1)
+      AND d.claimable_after <= now()
     ORDER BY d.last_attempt_at NULLS FIRST, d.deleted_at
     LIMIT $2
     FOR UPDATE SKIP LOCKED
 )
-RETURNING object_key, team_id, deleted_at, attempts, last_attempt_at
+RETURNING object_key, team_id, deleted_at, attempts, last_attempt_at, claimable_after
 `
 
 type ClaimDeletedObjectsParams struct {
@@ -55,6 +58,7 @@ func (q *Queries) ClaimDeletedObjects(ctx context.Context, arg ClaimDeletedObjec
 			&i.DeletedAt,
 			&i.Attempts,
 			&i.LastAttemptAt,
+			&i.ClaimableAfter,
 		); err != nil {
 			return nil, err
 		}
@@ -111,6 +115,21 @@ func (q *Queries) ClaimDeletedSecrets(ctx context.Context, arg ClaimDeletedSecre
 		return nil, err
 	}
 	return items, nil
+}
+
+const countObjectReferences = `-- name: CountObjectReferences :one
+SELECT ((SELECT count(*) FROM attachments a WHERE a.object_key = $1::text)
+    + (SELECT count(*) FROM skill_files f WHERE f.object_key = $1::text))::bigint AS refs
+`
+
+// Whether any row still needs an object, asked before the reaper deletes it.
+// Every table that names an object key is counted here; one missing is one
+// whose files are swept from under it.
+func (q *Queries) CountObjectReferences(ctx context.Context, objectKey string) (int64, error) {
+	row := q.db.QueryRow(ctx, countObjectReferences, objectKey)
+	var refs int64
+	err := row.Scan(&refs)
+	return refs, err
 }
 
 const deletedObjectBacklog = `-- name: DeletedObjectBacklog :many
@@ -203,5 +222,24 @@ DELETE FROM deleted_secrets WHERE path = $1
 
 func (q *Queries) ForgetDeletedSecret(ctx context.Context, path string) error {
 	_, err := q.db.Exec(ctx, forgetDeletedSecret, path)
+	return err
+}
+
+const reserveObjects = `-- name: ReserveObjects :exec
+INSERT INTO deleted_objects (object_key, team_id, claimable_after)
+SELECT unnest($1::text[]), $2, $3
+`
+
+type ReserveObjectsParams struct {
+	ObjectKeys     []string
+	TeamID         uuid.UUID
+	ClaimableAfter time.Time
+}
+
+// An upload's keys, tombstoned before their objects are written. Held back
+// until claimable_after so the reaper cannot sweep a file whose row is about
+// to be committed; after that, a key no row names is deleted like any other.
+func (q *Queries) ReserveObjects(ctx context.Context, arg ReserveObjectsParams) error {
+	_, err := q.db.Exec(ctx, reserveObjects, arg.ObjectKeys, arg.TeamID, arg.ClaimableAfter)
 	return err
 }

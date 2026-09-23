@@ -265,7 +265,6 @@ func TestNamesAreUniquePerTeamInAnyCase(t *testing.T) {
 
 	insertAgent(t, s, team.ID, "Triage")
 	insertServer(t, s, team.ID, "GitHub")
-	insertSkill(t, s, team.ID, "Review")
 
 	for _, tc := range []struct {
 		index, sql string
@@ -274,8 +273,6 @@ func TestNamesAreUniquePerTeamInAnyCase(t *testing.T) {
 			VALUES ($1, 'triage', 'm', 1, 'react', 1)`},
 		{"mcp_servers_team_name_key", `INSERT INTO mcp_servers (team_id, name, url)
 			VALUES ($1, 'github', 'https://a')`},
-		{"skills_team_name_key", `INSERT INTO skills (team_id, name, description, body)
-			VALUES ($1, 'review', 'd', 'b')`},
 	} {
 		t.Run(tc.index, func(t *testing.T) {
 			_, err := s.pool.Exec(t.Context(), tc.sql, team.ID)
@@ -283,6 +280,236 @@ func TestNamesAreUniquePerTeamInAnyCase(t *testing.T) {
 
 			if _, err := s.pool.Exec(t.Context(), tc.sql, other.ID); err != nil {
 				t.Errorf("another team could not use the name: %v", err)
+			}
+		})
+	}
+}
+
+// --- skills, as the Agent Skills specification shapes them ---
+
+// The spec's name rule, all of it: a skill named any other way is one that
+// Claude Code, Codex and Agno would all refuse to load, so it is refused here
+// before it is stored.
+func TestASkillNameFollowsTheSpec(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+
+	for _, name := range []string{
+		"Review", "-review", "review-", "re--view", "rev_iew", "re view", "",
+		strings.Repeat("a", 65),
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			_, err := s.pool.Exec(t.Context(),
+				`INSERT INTO skills (team_id, name, description, body) VALUES ($1, $2, 'd', 'b')`,
+				team.ID, name)
+			wantConstraint(t, err, checkViolation, "skills_name_is_spec_shaped")
+		})
+	}
+
+	for _, name := range []string{"a", "review-a-pull-request", "pdf2", strings.Repeat("a", 64)} {
+		insertSkill(t, s, team.ID, name)
+	}
+}
+
+// Lower case by rule, so plain uniqueness is enough — and another team may
+// use the same name.
+func TestSkillNamesAreUniquePerTeam(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	other := mustCreate(t, s, "support")
+	insertSkill(t, s, team.ID, "review")
+
+	_, err := s.pool.Exec(t.Context(),
+		`INSERT INTO skills (team_id, name, description, body) VALUES ($1, 'review', 'd', 'b')`, team.ID)
+	wantConstraint(t, err, uniqueViolation, "skills_team_name_key")
+
+	insertSkill(t, s, other.ID, "review")
+}
+
+func TestTheSpecsFieldLimitsAreRefused(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+
+	for constraint, sql := range map[string]string{
+		"skills_description_present": `INSERT INTO skills (team_id, name, description, body)
+			VALUES ($1, 'a', repeat('d', 1025), 'b')`,
+		"skills_compatibility_shaped": `INSERT INTO skills (team_id, name, description, body, compatibility)
+			VALUES ($1, 'a', 'd', 'b', repeat('c', 501))`,
+		"skills_metadata_object": `INSERT INTO skills (team_id, name, description, body, metadata)
+			VALUES ($1, 'a', 'd', 'b', '["not","a","map"]')`,
+		"skills_license_present": `INSERT INTO skills (team_id, name, description, body, license)
+			VALUES ($1, 'a', 'd', 'b', '')`,
+	} {
+		t.Run(constraint, func(t *testing.T) {
+			_, err := s.pool.Exec(t.Context(), sql, team.ID)
+			wantConstraint(t, err, checkViolation, constraint)
+		})
+	}
+
+	if _, err := s.pool.Exec(t.Context(), `INSERT INTO skills (team_id, name, description, body)
+		VALUES ($1, 'at-the-limit', repeat('d', 1024), 'b')`, team.ID); err != nil {
+		t.Errorf("a 1024-character description was refused: %v", err)
+	}
+}
+
+// An upload has no origin; an import always records both where it came from
+// and exactly what was taken. Every mixed combination is refused, because a
+// half-recorded import is one sync cannot repeat and a team cannot audit.
+func TestASkillsOriginIsRecordedWholeOrNotAtAll(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+
+	insert := func(name, source string, ref, sha *string) error {
+		_, err := s.pool.Exec(t.Context(), `
+			INSERT INTO skills (team_id, name, description, body, source, source_ref, source_sha)
+			VALUES ($1, $2, 'd', 'b', $3, $4, $5)`, team.ID, name, source, ref, sha)
+		return err
+	}
+	ref, sha := "github:anthropics/skills/skills/pdf@main", "3f2c9e1"
+
+	for name, tc := range map[string]struct {
+		source   string
+		ref, sha *string
+	}{
+		"an upload with a ref":   {"upload", &ref, nil},
+		"an upload with a sha":   {"upload", nil, &sha},
+		"an import with no ref":  {"github", nil, &sha},
+		"an import with no sha":  {"github", &ref, nil},
+		"an import with neither": {"url", nil, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// A name per case, so one wrongly accepted row cannot turn the
+			// rest into unique violations and hide how many were accepted.
+			slug := strings.ReplaceAll(name, " ", "-")
+			wantConstraint(t, insert(slug, tc.source, tc.ref, tc.sha), checkViolation, "skills_source_recorded")
+		})
+	}
+
+	wantConstraint(t, insert("unknown-hub", "clawhub", &ref, &sha), checkViolation, "skills_source_known")
+
+	if err := insert("uploaded", "upload", nil, nil); err != nil {
+		t.Errorf("a plain upload was refused: %v", err)
+	}
+	if err := insert("imported", "github", &ref, &sha); err != nil {
+		t.Errorf("a complete import was refused: %v", err)
+	}
+}
+
+// Today's CreateSkill names none of the three columns; the default is what
+// keeps it an upload rather than a refused row.
+func TestASkillWithNoOriginIsAnUpload(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	insertSkill(t, s, team.ID, "review")
+
+	if got := scalar[string](t, s, `SELECT source FROM skills WHERE name = 'review'`); got != "upload" {
+		t.Errorf("source = %q, want upload", got)
+	}
+}
+
+func insertSkillFile(t *testing.T, s *Store, skillID, teamID uuid.UUID, path, key string) error {
+	t.Helper()
+
+	_, err := s.pool.Exec(t.Context(), `
+		INSERT INTO skill_files (skill_id, team_id, path, size, sha256, media_type, object_key)
+		VALUES ($1, $2, $3, 3, sha256('abc'), 'text/markdown', $4)`,
+		skillID, teamID, path, key)
+	return err
+}
+
+// The handler checks paths first; this is what stops anything else — a bulk
+// import, a later migration, psql — from storing one that looks like a
+// traversal to the first caller that joins it onto a directory.
+func TestASkillFilePathStaysInsideTheSkill(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	skill := insertSkill(t, s, team.ID, "review")
+
+	for _, path := range []string{
+		"", "/etc/passwd", "references/", "../secret", "references/../../x",
+		"references//forms.md", `references\forms.md`, "a/..", "..",
+	} {
+		t.Run("refuses "+path, func(t *testing.T) {
+			wantConstraint(t, insertSkillFile(t, s, skill, team.ID, path, "k-"+path),
+				checkViolation, "skill_files_path_is_inside")
+		})
+	}
+
+	wantConstraint(t, insertSkillFile(t, s, skill, team.ID, "SKILL.md", "k-manifest"),
+		checkViolation, "skill_files_not_the_manifest")
+
+	for _, path := range []string{"forms.md", "references/forms.md", "scripts/fill.py", "a..b.md", ".hidden"} {
+		if err := insertSkillFile(t, s, skill, team.ID, path, "ok-"+path); err != nil {
+			t.Errorf("%q was refused: %v", path, err)
+		}
+	}
+}
+
+// There is no CHECK for a NUL because text cannot hold one: Postgres refuses
+// it on the way in. This pins that, so the missing clause stays a decision
+// rather than a gap — a clause calling chr(0) broke every insert once.
+func TestASkillFilePathWithANulIsRefused(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	skill := insertSkill(t, s, team.ID, "review")
+
+	if err := insertSkillFile(t, s, skill, team.ID, "forms\x00.md", "k"); err == nil {
+		t.Error("a path with a NUL byte was stored")
+	}
+}
+
+func TestASkillFileCannotNameATeamItsSkillIsNotIn(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	other := mustCreate(t, s, "support")
+	skill := insertSkill(t, s, team.ID, "review")
+
+	wantConstraint(t, insertSkillFile(t, s, skill, other.ID, "forms.md", "k"),
+		foreignKeyViolation, "skill_files_skill_in_team")
+}
+
+func tombstoned(t *testing.T, s *Store, key string) (uuid.UUID, bool) {
+	t.Helper()
+
+	var team uuid.UUID
+	err := s.pool.QueryRow(t.Context(), `SELECT team_id FROM deleted_objects WHERE object_key = $1`, key).Scan(&team)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return team, true
+}
+
+// A deleted skill's files are ciphertext in a bucket no cascade reaches. The
+// tombstone is what makes the reaper delete them — for a skill deleted
+// directly and for one taken with its team, which runs no Go at all.
+func TestDeletingASkillTombstonesItsFiles(t *testing.T) {
+	s := queryStore(t)
+
+	for name, del := range map[string]string{
+		"the skill": `DELETE FROM skills WHERE id = $1`,
+		"the team":  `DELETE FROM teams WHERE id = (SELECT team_id FROM skills WHERE id = $1)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			team := mustCreate(t, s, "t-"+uuid.NewString()[:8])
+			skill := insertSkill(t, s, team.ID, "review")
+			keys := []string{"teams/" + team.ID.String() + "/objects/1", "teams/" + team.ID.String() + "/objects/2"}
+			for i, k := range keys {
+				if err := insertSkillFile(t, s, skill, team.ID, "f"+string(rune('a'+i))+".md", k); err != nil {
+					t.Fatalf("insert file: %v", err)
+				}
+			}
+
+			if _, err := s.pool.Exec(t.Context(), del, skill); err != nil {
+				t.Fatalf("delete %s: %v", name, err)
+			}
+
+			for _, k := range keys {
+				got, ok := tombstoned(t, s, k)
+				if !ok {
+					t.Errorf("%s left no tombstone after deleting %s", k, name)
+				} else if got != team.ID {
+					t.Errorf("tombstone for %s names team %s, want %s", k, got, team.ID)
+				}
 			}
 		})
 	}

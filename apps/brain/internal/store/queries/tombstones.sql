@@ -16,12 +16,21 @@ UPDATE deleted_objects
 SET attempts = attempts + 1, last_attempt_at = now()
 WHERE object_key IN (
     SELECT d.object_key FROM deleted_objects d
-    WHERE d.last_attempt_at IS NULL OR d.last_attempt_at < sqlc.arg('retry_before')
+    WHERE (d.last_attempt_at IS NULL OR d.last_attempt_at < sqlc.arg('retry_before'))
+      AND d.claimable_after <= now()
     ORDER BY d.last_attempt_at NULLS FIRST, d.deleted_at
     LIMIT sqlc.arg('batch_size')
     FOR UPDATE SKIP LOCKED
 )
 RETURNING *;
+
+-- An upload's keys, tombstoned before their objects are written. Held back
+-- until claimable_after so the reaper cannot sweep a file whose row is about
+-- to be committed; after that, a key no row names is deleted like any other.
+--
+-- name: ReserveObjects :exec
+INSERT INTO deleted_objects (object_key, team_id, claimable_after)
+SELECT unnest(sqlc.arg('object_keys')::text[]), sqlc.arg('team_id'), sqlc.arg('claimable_after');
 
 -- The object is gone, so the record of work to do goes too. Called only after
 -- the object store confirms, or after the count above says another row still
@@ -69,3 +78,12 @@ SELECT count(*) OVER () AS outstanding, deleted_at AS oldest
 FROM deleted_secrets
 ORDER BY deleted_at
 LIMIT 1;
+
+-- Whether any row still needs an object, asked before the reaper deletes it.
+-- Every table that names an object key is counted here; one missing is one
+-- whose files are swept from under it.
+--
+-- name: CountObjectReferences :one
+SELECT ((SELECT count(*) FROM attachments a WHERE a.object_key = sqlc.arg('object_key')::text)
+    + (SELECT count(*) FROM skill_files f WHERE f.object_key = sqlc.arg('object_key')::text))::bigint AS refs;
+

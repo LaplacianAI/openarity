@@ -585,7 +585,7 @@ reinstalled.
   there is not, which is exactly the question the caller is asking.
 - **The object key is a fresh id, never a hash of the content.** Content
   addressing would let identical files share an object, which is what
-  `CountAttachmentsByObjectKey` anticipates — but it also tells anyone who can
+  `CountObjectReferences` anticipates — but it also tells anyone who can
   list the bucket that two teams hold the same file, and lets them confirm a
   guessed file is present by hashing it. That is the property the encryption
   exists to remove.
