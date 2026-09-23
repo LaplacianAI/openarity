@@ -278,7 +278,7 @@ func TestACorruptedEntryIsRefused(t *testing.T) {
 	at := bytes.Index(data, []byte("Fill PDF forms."))
 	data[at] = 'K'
 
-	zipRefused(t, data, `"SKILL.md" cannot be read from the zip`)
+	zipRefused(t, data, `"SKILL.md" cannot be read`)
 }
 
 func TestAZipFileOverFiveMiBIsRefusedByName(t *testing.T) {
