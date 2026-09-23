@@ -69,11 +69,21 @@ func servedRoutes(t *testing.T, environment config.Environment) []string {
 		if !ok {
 			t.Fatalf("%T does not expose Patterns, so it cannot be checked against the spec", r)
 		}
-		routes = append(routes, p.Patterns()...)
+		for _, pattern := range p.Patterns() {
+			routes = append(routes, asOpenAPI(pattern))
+		}
 	}
 
 	sort.Strings(routes)
 	return routes
+}
+
+// asOpenAPI spells a mux pattern the way the spec must. The mux writes a
+// wildcard that takes the rest of the path as {path...}; OpenAPI has no such
+// syntax and writes {path}. That is the one translation — anything else that
+// differs is drift, and is reported.
+func asOpenAPI(pattern string) string {
+	return strings.ReplaceAll(pattern, "...}", "}")
 }
 
 // specRoutes is every operation described in api/openapi.yaml, in the same
@@ -263,6 +273,22 @@ func TestEveryRouterExposesItsPatterns(t *testing.T) {
 	for _, r := range routers {
 		if _, ok := r.(patterned); !ok {
 			t.Errorf("%T does not expose Patterns", r)
+		}
+	}
+}
+
+// The translation touches only a trailing wildcard. Were it to rewrite more,
+// two different routes could compare equal to one described path.
+func TestOnlyARestOfPathWildcardIsTranslated(t *testing.T) {
+	t.Parallel()
+
+	for pattern, want := range map[string]string{
+		"GET /teams/{id}/skills/{skillID}/files/{path...}": "GET /teams/{id}/skills/{skillID}/files/{path}",
+		"GET /teams/{id}/skills/{skillID}":                 "GET /teams/{id}/skills/{skillID}",
+		"GET /docs/":                                       "GET /docs/",
+	} {
+		if got := asOpenAPI(pattern); got != want {
+			t.Errorf("asOpenAPI(%q) = %q, want %q", pattern, got, want)
 		}
 	}
 }

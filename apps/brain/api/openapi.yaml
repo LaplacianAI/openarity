@@ -35,6 +35,8 @@ tags:
     description: Teams and their membership
   - name: channels
     description: Where a team's messages arrive from
+  - name: skills
+    description: Instructions an agent loads when a task calls for them
   - name: sessions
     description: Conversations, and what was said in them
   - name: users
@@ -846,6 +848,303 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/skills:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listSkills
+      tags: [skills]
+      summary: List a team's skills
+      description: |
+        A read, so belonging to the team is enough: granting a skill to an
+        agent starts with seeing which exist.
+
+        Bodies and files are left out. A page is descriptions to choose
+        between; fetch one skill to read the rest.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of skills, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: createSkill
+      tags: [skills]
+      summary: Upload a skill
+      description: |
+        Requires `skill:write` in this team. The brain parses `SKILL.md`; its
+        frontmatter is the skill's name, description and the rest, so nothing
+        is typed twice.
+      requestBody:
+        required: true
+        description: |
+          The skill's directory, as the [Agent Skills
+          specification](https://agentskills.io/specification) lays it out:
+          `SKILL.md`, and any files beside it. `SKILL.md` sits at the top, or
+          inside one folder named as the skill, which is stripped.
+
+          Either a zip, or `multipart/form-data` with one `files` part per
+          file whose filename is its path — what a browser sends for a folder
+          upload, and what `curl -F "files=@SKILL.md;filename=SKILL.md"` sends.
+
+          Limits: 5 MiB a file, 20 MiB and 200 files a skill, `SKILL.md`
+          256 KiB, a path 1024 bytes. A path is refused rather than cleaned:
+          absolute, `.` or `..` segments, empty segments, backslashes and
+          control characters are all a 400 naming the path.
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/SkillUpload"
+          application/zip:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Stored, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          description: |
+            The upload is not a skill: `SKILL.md` is missing, misplaced or
+            breaks the specification, a path is not clean, a limit is passed,
+            or the archive or multipart body is malformed. The sentence names
+            the file and the rule.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['"scripts/../run.py" is not a relative path inside the skill']
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The team already has a skill with that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a skill with that name already exists"]
+        "413":
+          description: The request body is over 21 MiB
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an upload is at most 21 MiB"]
+        "415":
+          description: The body is neither a zip nor multipart/form-data
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["send the skill as multipart/form-data or application/zip"]
+
+  /teams/{id}/skills/{skillID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/SkillID"
+    get:
+      operationId: getSkill
+      tags: [skills]
+      summary: Read a skill
+      description: |
+        The manifest's fields, the body, where the skill came from, and a
+        description of each file beside `SKILL.md`. A file's bytes are a
+        separate request.
+
+        A skill of another team answers 404, not 403: confirming the id
+        exists would let anyone walk the uuid space.
+      responses:
+        "200":
+          description: The skill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    put:
+      operationId: replaceSkill
+      tags: [skills]
+      summary: Replace a skill
+      description: |
+        Requires `skill:write` in this team. The whole directory is replaced:
+        files the new upload leaves out are deleted. An imported skill
+        replaced by an upload becomes the team's own, and its origin is
+        cleared. Agents granted it see the new version from their next run.
+      requestBody:
+        required: true
+        description: |
+          The skill's directory, as the [Agent Skills
+          specification](https://agentskills.io/specification) lays it out:
+          `SKILL.md`, and any files beside it. `SKILL.md` sits at the top, or
+          inside one folder named as the skill, which is stripped.
+
+          Either a zip, or `multipart/form-data` with one `files` part per
+          file whose filename is its path — what a browser sends for a folder
+          upload, and what `curl -F "files=@SKILL.md;filename=SKILL.md"` sends.
+
+          Limits: 5 MiB a file, 20 MiB and 200 files a skill, `SKILL.md`
+          256 KiB, a path 1024 bytes. A path is refused rather than cleaned:
+          absolute, `.` or `..` segments, empty segments, backslashes and
+          control characters are all a 400 naming the path.
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/SkillUpload"
+          application/zip:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Replaced, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          description: |
+            The upload is not a skill: `SKILL.md` is missing, misplaced or
+            breaks the specification, a path is not clean, a limit is passed,
+            or the archive or multipart body is malformed. The sentence names
+            the file and the rule.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['"scripts/../run.py" is not a relative path inside the skill']
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another skill in the team already has that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a skill with that name already exists"]
+        "413":
+          description: The request body is over 21 MiB
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an upload is at most 21 MiB"]
+        "415":
+          description: The body is neither a zip nor multipart/form-data
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["send the skill as multipart/form-data or application/zip"]
+
+    delete:
+      operationId: deleteSkill
+      tags: [skills]
+      summary: Delete a skill
+      description: |
+        Requires `skill:write` in this team. Its files go with it.
+
+        A skill still granted to an agent is not deleted: removing it would
+        change what that agent can do without anyone changing the agent.
+        Revoke it from each agent first.
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: An agent is still granted this skill
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the skill is granted to an agent"]
+
+  /teams/{id}/skills/{skillID}/files/{path}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/SkillID"
+      - name: path
+        in: path
+        required: true
+        description: |
+          The file's path inside the skill, folders included, as `files`
+          lists it — `scripts/fill.py`. Its slashes are not escaped.
+        schema:
+          type: string
+    get:
+      operationId: getSkillFile
+      tags: [skills]
+      summary: Download one of a skill's files
+      description: |
+        The bytes, decrypted on the way out, as for an attachment.
+
+        `Content-Type` is the type recorded when the file was uploaded, sent
+        with `X-Content-Type-Options: nosniff`, never derived from the name.
+        `Content-Disposition` is always `attachment`: a skill's files are
+        scripts and references for an agent, and nothing is gained by
+        rendering one in a browser.
+      responses:
+        "200":
+          description: |
+            The file. The body is the bytes; everything about them is in the
+            headers.
+          headers:
+            Content-Disposition:
+              description: Always attachment, with the file's name
+              schema:
+                type: string
+            X-Content-Type-Options:
+              description: Always nosniff
+              schema:
+                type: string
+            Cache-Control:
+              description: Always `private, no-store`
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /users:
     get:
       operationId: listUsers
@@ -941,6 +1240,15 @@ components:
       in: path
       required: true
       description: The channel
+      schema:
+        type: string
+        format: uuid
+
+    SkillID:
+      name: skillID
+      in: path
+      required: true
+      description: The skill
       schema:
         type: string
         format: uuid
@@ -1548,6 +1856,115 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/User"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    SkillSummary:
+      type: object
+      required: [id, team_id, name, description, source, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: |
+            The frontmatter's name: 1-64 lower-case letters, digits and single
+            hyphens. Unique within the team.
+          examples: ["pdf-processing"]
+        description:
+          type: string
+          description: What the model reads when deciding whether to load it
+          examples: ["Extract PDF text, fill forms, merge files. Use when handling PDFs."]
+        source:
+          type: string
+          enum: [upload, github, url]
+          description: Where the directory came from
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Skill:
+      allOf:
+        - $ref: "#/components/schemas/SkillSummary"
+        - type: object
+          required: [metadata, body, files]
+          properties:
+            license:
+              type: string
+              description: Absent when the frontmatter sets none
+            compatibility:
+              type: string
+              description: Absent when the frontmatter sets none
+            metadata:
+              type: object
+              additionalProperties:
+                type: string
+              description: The frontmatter's metadata; empty when it sets none
+            allowed_tools:
+              type: string
+              description: Absent when the frontmatter sets none
+            source_ref:
+              type: string
+              description: What was imported; absent for an upload
+              examples: ["github:anthropics/skills/skills/pdf@main"]
+            source_sha:
+              type: string
+              description: The exact commit or digest imported; absent for an upload
+            body:
+              type: string
+              description: SKILL.md after its frontmatter, loaded only when the model asks for it
+            files:
+              type: array
+              description: Every file beside SKILL.md, in path order
+              items:
+                $ref: "#/components/schemas/SkillFile"
+
+    SkillFile:
+      type: object
+      required: [path, size, sha256, media_type]
+      properties:
+        path:
+          type: string
+          examples: ["scripts/fill.py"]
+        size:
+          type: integer
+          format: int64
+          description: Bytes
+        sha256:
+          type: string
+          description: Hex, as sha256sum prints it
+        media_type:
+          type: string
+          description: Sniffed from the bytes when uploaded, never from the name
+          examples: ["text/plain; charset=utf-8"]
+
+    SkillUpload:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          description: One part per file; each part's filename is its path in the skill
+          items:
+            type: string
+            format: binary
+
+    SkillPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillSummary"
         next_cursor:
           type: string
           description: Absent on the last page

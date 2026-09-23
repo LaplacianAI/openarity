@@ -29,6 +29,10 @@
       "description": "Create and change tools"
     },
     {
+      "name": "skill:write",
+      "description": "Create and change skills"
+    },
+    {
       "name": "channel:write",
       "description": "Connect and configure channels"
     },
@@ -52,6 +56,7 @@
       "permissions": [
         "agent:write",
         "tool:write",
+        "skill:write",
         "channel:write",
         "session:read_all",
         "membership:write",
@@ -63,6 +68,7 @@
       "description": "Create and change agents and tools within a team",
       "permissions": [
         "agent:write",
+        "skill:write",
         "tool:write"
       ]
     }
@@ -164,6 +170,39 @@
     {
       "method": "GET",
       "path": "/teams/{id}/sessions/{sessionID}/attachments/{attachmentID}",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/skills",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/skills",
+      "scope": "team",
+      "permission": "skill:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/skills/{skillID}",
+      "scope": "member"
+    },
+    {
+      "method": "PUT",
+      "path": "/teams/{id}/skills/{skillID}",
+      "scope": "team",
+      "permission": "skill:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/skills/{skillID}",
+      "scope": "team",
+      "permission": "skill:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/skills/{skillID}/files/{path...}",
       "scope": "member"
     },
     {

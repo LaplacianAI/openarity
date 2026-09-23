@@ -296,7 +296,7 @@ func TestARoleInTheFileGetsExactlyTheGrantsItLists(t *testing.T) {
 		t.Fatalf("LoadRBAC: %v", err)
 	}
 
-	want := []string{"agent:write", "tool:write"}
+	want := []string{"agent:write", "skill:write", "tool:write"}
 	if got := grantsOf(t, s, "member"); !slices.Equal(got, want) {
 		t.Errorf("member grants = %v, want %v", got, want)
 	}
@@ -483,6 +483,17 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// merely unconfigured.
 		"GET /teams/{id}/sessions/{sessionID}/attachments":                "member",
 		"GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID}": "member",
+
+		// Reading a skill is member-wide for the reason channels are: granting
+		// one to an agent starts with seeing which exist. Writing one is a
+		// member's job as well as an admin's — a skill is part of what an
+		// agent is made of, and agent:write is already both of theirs.
+		"GET /teams/{id}/skills":                           "member",
+		"POST /teams/{id}/skills":                          "team skill:write",
+		"GET /teams/{id}/skills/{skillID}":                 "member",
+		"PUT /teams/{id}/skills/{skillID}":                 "team skill:write",
+		"DELETE /teams/{id}/skills/{skillID}":              "team skill:write",
+		"GET /teams/{id}/skills/{skillID}/files/{path...}": "member",
 
 		"GET /users":  "any_team user:read",
 		"GET /whoami": "authenticated",
