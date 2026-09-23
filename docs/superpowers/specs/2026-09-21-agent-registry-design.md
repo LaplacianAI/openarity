@@ -230,11 +230,15 @@ origin no longer describes it, so it is cleared rather than left lying.
   frontmatter (`gopkg.in/yaml.v3`, already a dependency), validated against the
   spec, with an unknown key refused rather than dropped — a typo in
   `descripton` must not produce a skill with no description.
-- **One top-level directory, named as the frontmatter's `name`.** A zip or an
-  import whose `SKILL.md` sits deeper, or that holds two, is refused with a
+- **`SKILL.md` at the root, or inside one top-level directory named as the
+  frontmatter's `name`.** The editor and an import send the first; a zip made
+  by compressing a folder is the second, and the folder is stripped. A
+  directory whose `SKILL.md` sits deeper, or that holds two, is refused with a
   sentence rather than guessed at.
-- **Paths are checked before anything is written**: relative, no `..`, no
-  leading `/`, no backslash, no empty segment, unique after cleaning. A path is
+- **Paths are checked before anything is written**: valid UTF-8, at most
+  1024 bytes, relative, no `.` or `..` segment, no empty segment, no backslash,
+  no control character, sent once. Nothing is cleaned: a path that needs
+  cleaning is refused, so what is stored is exactly what was sent. A path is
   never used as a storage key.
 - **Limits**: 5 MiB a file, 20 MiB and 200 files a skill, `SKILL.md` 256 KiB.
   A zip is counted **while it is decompressed**, entry by entry, and abandoned
