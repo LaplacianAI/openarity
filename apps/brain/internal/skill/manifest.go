@@ -16,7 +16,7 @@ const (
 	MaxManifestBytes = 256 << 10
 
 	maxNameRunes          = 64
-	maxDescriptionRunes   = 1024
+	maxDescriptionRunes   = 1536
 	maxCompatibilityRunes = 500
 )
 

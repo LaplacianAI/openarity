@@ -130,9 +130,9 @@ func TestAbsentMetadataIsAnEmptyMap(t *testing.T) {
 func TestTheDescriptionIsTrimmedAndCountedInCharacters(t *testing.T) {
 	t.Parallel()
 
-	m := mustParse(t, "---\nname: a\ndescription: \"  "+strings.Repeat("é", 1024)+"  \"\n---\n")
-	if got := len([]rune(m.Description)); got != 1024 {
-		t.Errorf("description is %d characters, want the 1024 without the padding", got)
+	m := mustParse(t, "---\nname: a\ndescription: \"  "+strings.Repeat("é", 1536)+"  \"\n---\n")
+	if got := len([]rune(m.Description)); got != 1536 {
+		t.Errorf("description is %d characters, want the 1536 without the padding", got)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestAManifestTheSpecForbidsIsRefused(t *testing.T) {
 		"65 characters":           {"---\nname: " + long("a", 65) + "\ndescription: d\n---\n", "lower-case"},
 		"no description":          {"---\nname: a\n---\n", "no description"},
 		"blank description":       {"---\nname: a\ndescription: \"   \"\n---\n", "no description"},
-		"description over 1024":   {"---\nname: a\ndescription: " + long("d", 1025) + "\n---\n", "at most 1024"},
+		"description over 1536":   {"---\nname: a\ndescription: " + long("d", 1537) + "\n---\n", "at most 1536"},
 		"empty license":           {"---\nname: a\ndescription: d\nlicense: \"\"\n---\n", "license"},
 		"blank allowed-tools":     {"---\nname: a\ndescription: d\nallowed-tools: \" \"\n---\n", "allowed-tools"},
 		"empty compatibility":     {"---\nname: a\ndescription: d\ncompatibility: \"\"\n---\n", "compatibility"},
@@ -197,7 +197,7 @@ func TestTheLimitsThemselvesAreAllowed(t *testing.T) {
 
 	for name, doc := range map[string]string{
 		"64-character name":          "---\nname: " + strings.Repeat("a", 64) + "\ndescription: d\n---\n",
-		"1024-character description": "---\nname: a\ndescription: " + strings.Repeat("d", 1024) + "\n---\n",
+		"1536-character description": "---\nname: a\ndescription: " + strings.Repeat("d", 1536) + "\n---\n",
 		"500-character compatibility": "---\nname: a\ndescription: d\ncompatibility: " +
 			strings.Repeat("c", 500) + "\n---\n",
 		"a name of digits": "---\nname: 123\ndescription: d\n---\n",
@@ -211,4 +211,19 @@ func TestTheLimitsThemselvesAreAllowed(t *testing.T) {
 	exact := "---\nname: a\ndescription: d\n---\n"
 	exact += strings.Repeat("b", MaxManifestBytes-len(exact))
 	mustParse(t, exact)
+}
+
+// The spec says 1024, and the brain allows 1536 because what ships is longer:
+// Anthropic's own claude-api skill (anthropics/skills at 3337550) has a
+// 1068-character description, and our agent SDK already takes 1536. A limit
+// lowered back to the spec refuses that skill on import; this is the test
+// that says so, by name.
+func TestAPublishedSkillsDescriptionLengthIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	const claudeAPIDescription = 1068
+	m := mustParse(t, "---\nname: claude-api\ndescription: "+strings.Repeat("d", claudeAPIDescription)+"\n---\n")
+	if got := len([]rune(m.Description)); got != claudeAPIDescription {
+		t.Errorf("description is %d characters, want %d", got, claudeAPIDescription)
+	}
 }

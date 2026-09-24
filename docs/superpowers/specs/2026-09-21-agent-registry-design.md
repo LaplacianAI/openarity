@@ -102,7 +102,8 @@ skills                -- one parsed SKILL.md
   id, team_id
   name                text        -- the spec's rule: 1-64, a-z 0-9 and -, no
                                   -- leading, trailing or doubled hyphen; unique per team
-  description         text        -- 1-1024 characters
+  description         text        -- 1-1536 characters: the spec says 1024, but
+                                  -- the SDK and published skills go past it
   license             text NULL
   compatibility       text NULL   -- 1-500 characters when present
   metadata            jsonb       -- string to string, {} when absent

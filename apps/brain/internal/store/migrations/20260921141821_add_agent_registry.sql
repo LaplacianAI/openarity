@@ -125,9 +125,10 @@ CREATE TABLE skills (
     -- trailing or doubled. The regex says all of that at once.
     CONSTRAINT skills_name_is_spec_shaped CHECK (
         name ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(name) <= 64),
-    -- The description is all the model sees when choosing a skill, and the
-    -- spec caps it so a listing of many skills stays affordable.
-    CONSTRAINT skills_description_present CHECK (description <> '' AND length(description) <= 1024),
+    -- The description is all the model sees when choosing a skill. The spec
+    -- says 1024; the agent SDK and published skills go to 1536, and a limit
+    -- below what Anthropic ships would refuse its own skills on import.
+    CONSTRAINT skills_description_present CHECK (description <> '' AND length(description) <= 1536),
     CONSTRAINT skills_compatibility_shaped CHECK (
         compatibility IS NULL OR (compatibility <> '' AND length(compatibility) <= 500)),
     CONSTRAINT skills_license_present CHECK (license IS NULL OR license <> ''),

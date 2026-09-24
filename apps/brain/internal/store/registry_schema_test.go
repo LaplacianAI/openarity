@@ -332,7 +332,7 @@ func TestTheSpecsFieldLimitsAreRefused(t *testing.T) {
 
 	for constraint, sql := range map[string]string{
 		"skills_description_present": `INSERT INTO skills (team_id, name, description, body)
-			VALUES ($1, 'a', repeat('d', 1025), 'b')`,
+			VALUES ($1, 'a', repeat('d', 1537), 'b')`,
 		"skills_compatibility_shaped": `INSERT INTO skills (team_id, name, description, body, compatibility)
 			VALUES ($1, 'a', 'd', 'b', repeat('c', 501))`,
 		"skills_metadata_object": `INSERT INTO skills (team_id, name, description, body, metadata)
@@ -347,8 +347,8 @@ func TestTheSpecsFieldLimitsAreRefused(t *testing.T) {
 	}
 
 	if _, err := s.pool.Exec(t.Context(), `INSERT INTO skills (team_id, name, description, body)
-		VALUES ($1, 'at-the-limit', repeat('d', 1024), 'b')`, team.ID); err != nil {
-		t.Errorf("a 1024-character description was refused: %v", err)
+		VALUES ($1, 'at-the-limit', repeat('d', 1536), 'b')`, team.ID); err != nil {
+		t.Errorf("a 1536-character description was refused: %v", err)
 	}
 }
 
