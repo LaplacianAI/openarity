@@ -60,6 +60,10 @@ type Config struct {
 	ObjectsBucket    string         `env:"OBJECTS_BUCKET" envDefault:"openarity"`
 	ObjectsAccessKey string         `env:"OBJECTS_ACCESS_KEY" envDefault:""`
 	ObjectsSecretKey string         `env:"OBJECTS_SECRET_KEY" envDefault:""`
+
+	/* Skill Import Configuration */
+	SkillImportHosts          []string `env:"SKILL_IMPORT_HOSTS" envDefault:""`
+	SkillImportGitHubTokenRef string   `env:"SKILL_IMPORT_GITHUB_TOKEN_REF" envDefault:""`
 }
 
 func (c *Config) String() string {
@@ -68,7 +72,7 @@ func (c *Config) String() string {
 			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s "+
 			"SecretsBackend:%s SecretsAddr:%s "+
 			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
-			"OmniRouteURL:%s}",
+			"OmniRouteURL:%s SkillImportHosts:%v SkillImportGitHubTokenRef:%s}",
 		c.Environment,
 		c.LogLevel,
 		c.APIBind,
@@ -83,6 +87,8 @@ func (c *Config) String() string {
 		redactURL(c.ObjectsEndpoint),
 		c.ObjectsBucket,
 		redactURL(c.OmniRouteURL),
+		c.SkillImportHosts,
+		c.SkillImportGitHubTokenRef,
 	)
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -40,6 +41,28 @@ func checkURL(field, v string, schemes ...string) error {
 	}
 	if !slices.Contains(schemes, url.Scheme) {
 		return fmt.Errorf("%s must have one of the following schemes: %v", field, schemes)
+	}
+	return nil
+}
+
+var hostPattern = regexp.MustCompile(`(?i)^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
+func checkHosts(field string, hosts []string) error {
+	for i, h := range hosts {
+		if !hostPattern.MatchString(h) {
+			return fmt.Errorf("%s entry %d is %q — write a host name alone, such as hub.example.com, with no scheme, port or path", field, i, h)
+		}
+	}
+	return nil
+}
+
+func checkSecretRef(field, v string) error {
+	if v == "" {
+		return nil
+	}
+	path, key, ok := strings.Cut(v, "#")
+	if !ok || path == "" || key == "" || strings.Contains(key, "#") {
+		return fmt.Errorf("%s must name a secret as path#key, got %q", field, v)
 	}
 	return nil
 }
@@ -93,6 +116,14 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Errorf(
 				"SUPER_ADMINS entry %d is %q — entries must not be empty or padded with whitespace", i, sub))
 		}
+	}
+
+	if err := checkHosts("SKILL_IMPORT_HOSTS", c.SkillImportHosts); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := checkSecretRef("SKILL_IMPORT_GITHUB_TOKEN_REF", c.SkillImportGitHubTokenRef); err != nil {
+		errs = append(errs, err)
 	}
 
 	if c.DevToken != "" && c.Environment != EnvironmentDevelopment {
