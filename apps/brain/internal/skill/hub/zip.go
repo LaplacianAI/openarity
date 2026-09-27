@@ -42,7 +42,7 @@ func (z Zips) Fetch(ctx context.Context, address string) (string, []skill.Entry,
 
 	res, err := z.Client.Do(req)
 	if err != nil {
-		return "", nil, err
+		return "", nil, unreachable(err)
 	}
 	defer func() { _ = res.Body.Close() }()
 
@@ -50,14 +50,14 @@ func (z Zips) Fetch(ctx context.Context, address string) (string, []skill.Entry,
 	case res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusGone:
 		return "", nil, fmt.Errorf("%w: nothing is at %s", ErrNotFound, address)
 	case res.StatusCode != http.StatusOK:
-		return "", nil, fmt.Errorf("%s answered %d", req.URL.Host, res.StatusCode)
+		return "", nil, fmt.Errorf("%w: %s answered %d", ErrUnavailable, req.URL.Host, res.StatusCode)
 	}
 
 	tooBig := fmt.Errorf("the zip is over %d MiB", maxZipBytes>>20)
 	if res.ContentLength > maxZipBytes {
 		return "", nil, tooBig
 	}
-	data, err := io.ReadAll(&capped{r: res.Body, left: maxZipBytes, err: tooBig})
+	data, err := io.ReadAll(&capped{r: upstream{res.Body}, left: maxZipBytes, err: tooBig})
 	if err != nil {
 		return "", nil, err
 	}

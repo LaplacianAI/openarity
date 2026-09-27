@@ -114,7 +114,7 @@ func (g GitHub) resolve(ctx context.Context, src GitHubSource) (string, error) {
 	}
 	defer func() { _ = res.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(res.Body, 128))
+	body, err := io.ReadAll(io.LimitReader(upstream{res.Body}, 128))
 	if err != nil {
 		return "", fmt.Errorf("reading the commit from GitHub: %w", err)
 	}
@@ -134,7 +134,7 @@ func (g GitHub) download(ctx context.Context, src GitHubSource, sha string) ([]s
 	defer func() { _ = res.Body.Close() }()
 
 	tooBig := fmt.Errorf("the repository is over %d MiB to download; import from a smaller one", maxTarballBytes>>20)
-	gz, err := gzip.NewReader(&capped{r: res.Body, left: maxTarballBytes, err: tooBig})
+	gz, err := gzip.NewReader(&capped{r: upstream{res.Body}, left: maxTarballBytes, err: tooBig})
 	if err != nil {
 		return nil, fmt.Errorf("GitHub's tarball cannot be read: %w", err)
 	}
@@ -156,7 +156,7 @@ func (g GitHub) get(ctx context.Context, u, accept string) (*http.Response, erro
 
 	res, err := g.Client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, unreachable(err)
 	}
 	if res.StatusCode == http.StatusOK {
 		return res, nil
@@ -167,9 +167,9 @@ func (g GitHub) get(ctx context.Context, u, accept string) (*http.Response, erro
 	case http.StatusNotFound, http.StatusUnprocessableEntity:
 		return nil, fmt.Errorf("%w: GitHub has no such repository or ref, or cannot show it without a token", ErrNotFound)
 	case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
-		return nil, fmt.Errorf("GitHub refused the request (%d): the token is wrong, or the rate limit is reached", res.StatusCode)
+		return nil, fmt.Errorf("%w: GitHub refused the request (%d): the token is wrong, or the rate limit is reached", ErrUnavailable, res.StatusCode)
 	default:
-		return nil, fmt.Errorf("GitHub answered %d", res.StatusCode)
+		return nil, fmt.Errorf("%w: GitHub answered %d", ErrUnavailable, res.StatusCode)
 	}
 }
 
