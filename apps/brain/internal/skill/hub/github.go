@@ -235,13 +235,17 @@ type capped struct {
 }
 
 func (c *capped) Read(p []byte) (int, error) {
-	if c.left <= 0 {
+	if c.left < 0 {
 		return 0, c.err
 	}
-	if int64(len(p)) > c.left {
-		p = p[:c.left]
+	if int64(len(p)) > c.left+1 {
+		p = p[:c.left+1]
 	}
 	n, err := c.r.Read(p)
+	if int64(n) > c.left {
+		n, c.left = int(c.left), -1
+		return n, c.err
+	}
 	c.left -= int64(n)
 	return n, err
 }
