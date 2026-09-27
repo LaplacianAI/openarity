@@ -36,7 +36,11 @@ name: openarity
 
 services:
   omniroute:
-    image: diegosouzapw/omniroute:latest
+    # The -web variant, not plain latest. Web-based providers drive a browser
+    # through Playwright, and the plain image ships Playwright's code without
+    # its browsers or browsers.json, so every call to one fails with
+    # "Failed to load external module playwright". -web carries Chromium.
+    image: diegosouzapw/omniroute:latest-web
     environment:
       # The dashboard password. The image defaults it to CHANGEME and logs a
       # warning nobody reads, so it is required here instead.
@@ -53,6 +57,13 @@ services:
       # a timer is a surprise, and neither affects routing.
       ARENA_ELO_SYNC_ENABLED: "false"
       PRICING_SYNC_ENABLED: "false"
+
+      # How long a request may run once the per-provider rate limiter has
+      # dispatched it. The image's 15s suits API providers, but web providers
+      # (gemini-web and the like) emulate a chat session and routinely run
+      # past it, failing with a 504 that names requestQueue.maxWaitMs. A value
+      # saved under resilience settings in the dashboard takes precedence.
+      RATE_LIMIT_MAX_WAIT_MS: "120000"
     volumes:
       # Everything durable lives here: SQLite for state and logs, LowDB for
       # configuration, and two secrets the image generates on first run
