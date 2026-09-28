@@ -601,4 +601,9 @@ answered, `scripts/` are stored and readable as text, and nothing executes them.
   until someone asks for it there.
 - Building learnings: designed above, built with the runtime, which is the
   first thing that can produce one. Capabilities and topics come with them.
-- CLI commands (`oa agents …`), beyond regenerating the client.
+- CLI commands (`oa agents …`, `oa skills …`), beyond regenerating the
+  client, and the dashboard's screens for skills, agents and MCP servers.
+  Each is a follow-up PR on the API and generated client this one ships:
+  `oa skills edit` opening `SKILL.md` in `$EDITOR`, and the dashboard's
+  editor, folder and zip upload, and import, are two of the four ways in
+  above, and both only assemble a directory and call `POST /skills`.
