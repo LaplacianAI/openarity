@@ -40,3 +40,7 @@ type skillCursor struct {
 	CreatedAt time.Time `json:"c"`
 	ID        uuid.UUID `json:"i"`
 }
+
+type importRequest struct {
+	Source string `json:"source"`
+}

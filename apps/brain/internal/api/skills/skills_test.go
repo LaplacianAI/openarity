@@ -218,6 +218,8 @@ func skillRoutes(t *testing.T) authz.Routes {
 	add("PUT", "/teams/{id}/skills/{skillID}", "team", &write)
 	add("DELETE", "/teams/{id}/skills/{skillID}", "team", &write)
 	add("GET", "/teams/{id}/skills/{skillID}/files/{path...}", "member", nil)
+	add("POST", "/teams/{id}/skills/import", "team", &write)
+	add("POST", "/teams/{id}/skills/{skillID}/sync", "team", &write)
 	return rs
 }
 
@@ -232,8 +234,14 @@ var nothing = sent{}
 func call(t *testing.T, s *routeStore, b *bucket, a *fakeAuthz, u *auth.User, method, path string, in sent) *httptest.ResponseRecorder {
 	t.Helper()
 
+	return callWith(t, s, b, nil, a, u, method, path, in)
+}
+
+func callWith(t *testing.T, s *routeStore, b *bucket, imp Importer, a *fakeAuthz, u *auth.User, method, path string, in sent) *httptest.ResponseRecorder {
+	t.Helper()
+
 	mux := http.NewServeMux()
-	New(discardLogger(), s, b).Register(mux, api.NewGuard(skillRoutes(t), a, discardLogger()))
+	New(discardLogger(), s, b, imp).Register(mux, api.NewGuard(skillRoutes(t), a, discardLogger()))
 
 	req := httptest.NewRequestWithContext(t.Context(), method, path, in.body)
 	if in.contentType != "" {

@@ -1145,6 +1145,115 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/skills/import:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    post:
+      operationId: importSkill
+      tags: [skills]
+      summary: Import a skill from GitHub or a zip on the web
+      description: |
+        Requires `skill:write` in this team. The brain fetches the source
+        itself, then stores what it found exactly as an upload is stored, with
+        the source recorded so the skill can be synced later.
+
+        `github:owner/repo/path@ref` takes one folder of a repository. The ref
+        is resolved to a commit first, and the commit is what is fetched and
+        recorded, so a branch moving mid-import changes nothing. Without
+        `@ref` it is the default branch.
+
+        An `https://` address is a zip, fetched only from a host the operator
+        allows. It may not carry a user, password or query string: the
+        address is stored and shown to the team, and a signed link keeps its
+        credential in the query.
+
+        The fetch has 30 seconds, and connects only to public addresses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillImportRequest"
+      responses:
+        "201":
+          description: Imported, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          description: |
+            The body is malformed, the source is neither form, or it names a
+            host the operator does not allow.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["not a skill source: a zip source may not carry a query string; the address is stored and shown"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The team already has a skill with that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a skill with that name already exists"]
+        "422":
+          $ref: "#/components/responses/SourceNotASkill"
+        "502":
+          $ref: "#/components/responses/SourceUnavailable"
+        "504":
+          $ref: "#/components/responses/SourceTimedOut"
+
+  /teams/{id}/skills/{skillID}/sync:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/SkillID"
+    post:
+      operationId: syncSkill
+      tags: [skills]
+      summary: Fetch an imported skill's source again
+      description: |
+        Requires `skill:write` in this team. The recorded `source_ref` is
+        fetched again. When it names a different commit or digest than
+        `source_sha`, the whole directory is replaced; when it names the same
+        one, nothing is written and the skill is returned as it is.
+
+        A skill that was uploaded has no source, and answers 409.
+      responses:
+        "200":
+          description: The skill, replaced or unchanged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            The skill was uploaded and has no source, or the source now names
+            a skill another in the team already has the name of.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an uploaded skill has no source to sync from"]
+        "422":
+          $ref: "#/components/responses/SourceNotASkill"
+        "502":
+          $ref: "#/components/responses/SourceUnavailable"
+        "504":
+          $ref: "#/components/responses/SourceTimedOut"
+
   /users:
     get:
       operationId: listUsers
@@ -1289,6 +1398,34 @@ components:
             type: string
             examples: ["not found"]
 
+    SourceNotASkill:
+      description: |
+        The source was fetched and is not a skill the brain will store:
+        nothing is at that ref or address, `SKILL.md` is missing or breaks
+        the specification, a limit is passed, or the download is too large.
+        The sentence says which.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["not found: GitHub has no such repository or ref, or cannot show it without a token"]
+    SourceUnavailable:
+      description: |
+        The source failed to answer usefully: it is down, answered an error,
+        dropped the connection, or refused the brain's token or rate limit.
+        Nothing was stored; trying again later may work.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["the source could not be reached: GitHub answered 503"]
+    SourceTimedOut:
+      description: The source did not finish answering within 30 seconds. Nothing was stored.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["the source did not answer within 30s"]
     BadRequest:
       description: |
         The request is malformed. The reply names the problem and never echoes
@@ -1956,6 +2093,18 @@ components:
           items:
             type: string
             format: binary
+
+    SkillImportRequest:
+      type: object
+      required: [source]
+      additionalProperties: false
+      properties:
+        source:
+          type: string
+          description: A GitHub folder, or the https address of a zip
+          examples:
+            - "github:anthropics/skills/skills/pdf@main"
+            - "https://hub.example.com/skills/pdf.zip"
 
     SkillPage:
       type: object

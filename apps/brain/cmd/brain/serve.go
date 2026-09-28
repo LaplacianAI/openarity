@@ -68,8 +68,13 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 		return err
 	}
 
+	importer, err := newImporter(ctx, cfg, secretStore)
+	if err != nil {
+		return err
+	}
+
 	authorizer := authz.New(dbStore, cfg.SuperAdmins)
-	routers := newRouters(cfg, logger, dbStore, authorizer, secretWriter, registry, attachments)
+	routers := newRouters(cfg, logger, dbStore, authorizer, secretWriter, registry, attachments, importer)
 	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry, attachments)
 
 	guard, err := newGuard(ctx, logger, dbStore, authorizer)

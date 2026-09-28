@@ -494,6 +494,8 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"PUT /teams/{id}/skills/{skillID}":                 "team skill:write",
 		"DELETE /teams/{id}/skills/{skillID}":              "team skill:write",
 		"GET /teams/{id}/skills/{skillID}/files/{path...}": "member",
+		"POST /teams/{id}/skills/import":                   "team skill:write",
+		"POST /teams/{id}/skills/{skillID}/sync":           "team skill:write",
 
 		"GET /users":  "any_team user:read",
 		"GET /whoami": "authenticated",

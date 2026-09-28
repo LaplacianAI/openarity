@@ -31,12 +31,13 @@ func newRouters(
 	secretWriter secrets.Writer,
 	registry gateway.Registry,
 	attachments *objects.Encrypted,
+	importer skills.Importer,
 ) []server.Router {
 	routers := []server.Router{
 		whoami.New(logger),
 		teams.New(logger, dbStore, authorizer),
 		channels.New(logger, dbStore, secretWriter, registry),
-		skills.New(logger, skillStore{dbStore}, attachments),
+		skills.New(logger, skillStore{dbStore}, attachments, importer),
 		users.New(logger, dbStore),
 		sessions.New(logger, dbStore, authorizer, attachments),
 		authconfig.New(logger, cfg),

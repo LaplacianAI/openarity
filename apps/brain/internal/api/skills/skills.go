@@ -45,14 +45,15 @@ type ObjectStore interface {
 }
 
 type handler struct {
-	logger  *slog.Logger
-	store   Store
-	objects ObjectStore
-	writer  writer
+	logger   *slog.Logger
+	store    Store
+	objects  ObjectStore
+	importer Importer
+	writer   writer
 }
 
-func New(logger *slog.Logger, s Store, o ObjectStore) *api.Router {
-	h := &handler{logger: logger, store: s, objects: o, writer: writer{store: s, objects: o}}
+func New(logger *slog.Logger, s Store, o ObjectStore, imp Importer) *api.Router {
+	h := &handler{logger: logger, store: s, objects: o, importer: imp, writer: writer{store: s, objects: o}}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/skills", h.list)
@@ -61,6 +62,8 @@ func New(logger *slog.Logger, s Store, o ObjectStore) *api.Router {
 	r.Put("/{id}/skills/{skillID}", h.replace)
 	r.Delete("/{id}/skills/{skillID}", h.delete)
 	r.Get("/{id}/skills/{skillID}/files/{path...}", h.file)
+	r.Post("/{id}/skills/import", h.importSkill)
+	r.Post("/{id}/skills/{skillID}/sync", h.sync)
 
 	return r
 }
