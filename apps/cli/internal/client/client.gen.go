@@ -81,6 +81,48 @@ func (e SessionStatus) Valid() bool {
 	}
 }
 
+// Defines values for SkillSource.
+const (
+	SkillSourceGithub SkillSource = "github"
+	SkillSourceURL    SkillSource = "url"
+	SkillSourceUpload SkillSource = "upload"
+)
+
+// Valid indicates whether the value is a known member of the SkillSource enum.
+func (e SkillSource) Valid() bool {
+	switch e {
+	case SkillSourceGithub:
+		return true
+	case SkillSourceURL:
+		return true
+	case SkillSourceUpload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SkillSummarySource.
+const (
+	SkillSummarySourceGithub SkillSummarySource = "github"
+	SkillSummarySourceURL    SkillSummarySource = "url"
+	SkillSummarySourceUpload SkillSummarySource = "upload"
+)
+
+// Valid indicates whether the value is a known member of the SkillSummarySource enum.
+func (e SkillSummarySource) Valid() bool {
+	switch e {
+	case SkillSummarySourceGithub:
+		return true
+	case SkillSummarySourceURL:
+		return true
+	case SkillSummarySourceUpload:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WhoamiKind.
 const (
 	WhoamiKindDev     WhoamiKind = "dev"
@@ -470,6 +512,122 @@ type SessionPage struct {
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
+// Skill defines model for Skill.
+type Skill struct {
+	// AllowedTools Absent when the frontmatter sets none
+	AllowedTools *string `json:"allowed_tools,omitempty" yaml:"allowed_tools,omitempty"`
+
+	// Body SKILL.md after its frontmatter, loaded only when the model asks for it
+	Body string `json:"body" yaml:"body"`
+
+	// Compatibility Absent when the frontmatter sets none
+	Compatibility *string   `json:"compatibility,omitempty" yaml:"compatibility,omitempty"`
+	CreatedAt     time.Time `json:"created_at" yaml:"created_at"`
+
+	// Description What the model reads when deciding whether to load it
+	//
+	// Examples: Extract PDF text, fill forms, merge files. Use when handling PDFs.
+	Description string `json:"description" yaml:"description"`
+
+	// Files Every file beside SKILL.md, in path order
+	Files []SkillFile        `json:"files" yaml:"files"`
+	ID    openapi_types.UUID `json:"id" yaml:"id"`
+
+	// License Absent when the frontmatter sets none
+	License *string `json:"license,omitempty" yaml:"license,omitempty"`
+
+	// Metadata The frontmatter's metadata; empty when it sets none
+	Metadata map[string]string `json:"metadata" yaml:"metadata"`
+
+	// Name The frontmatter's name: 1-64 lower-case letters, digits and single
+	// hyphens. Unique within the team.
+	//
+	//
+	// Examples: pdf-processing
+	Name string `json:"name" yaml:"name"`
+
+	// Source Where the directory came from
+	Source SkillSource `json:"source" yaml:"source"`
+
+	// SourceRef What was imported; absent for an upload
+	//
+	// Examples: github:anthropics/skills/skills/pdf@main
+	SourceRef *string `json:"source_ref,omitempty" yaml:"source_ref,omitempty"`
+
+	// SourceSha The exact commit or digest imported; absent for an upload
+	SourceSha *string            `json:"source_sha,omitempty" yaml:"source_sha,omitempty"`
+	TeamID    openapi_types.UUID `json:"team_id" yaml:"team_id"`
+	UpdatedAt time.Time          `json:"updated_at" yaml:"updated_at"`
+}
+
+// SkillSource Where the directory came from
+type SkillSource string
+
+// SkillFile defines model for SkillFile.
+type SkillFile struct {
+	// MediaType Sniffed from the bytes when uploaded, never from the name
+	//
+	// Examples: text/plain; charset=utf-8
+	MediaType string `json:"media_type" yaml:"media_type"`
+
+	// Path Examples: scripts/fill.py
+	Path string `json:"path" yaml:"path"`
+
+	// Sha256 Hex, as sha256sum prints it
+	Sha256 string `json:"sha256" yaml:"sha256"`
+
+	// Size Bytes
+	Size int64 `json:"size" yaml:"size"`
+}
+
+// SkillImportRequest defines model for SkillImportRequest.
+type SkillImportRequest struct {
+	// Source A GitHub folder, or the https address of a zip
+	//
+	// Examples: github:anthropics/skills/skills/pdf@main, https://hub.example.com/skills/pdf.zip
+	Source string `json:"source" yaml:"source"`
+}
+
+// SkillPage defines model for SkillPage.
+type SkillPage struct {
+	Items []SkillSummary `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// SkillSummary defines model for SkillSummary.
+type SkillSummary struct {
+	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
+
+	// Description What the model reads when deciding whether to load it
+	//
+	// Examples: Extract PDF text, fill forms, merge files. Use when handling PDFs.
+	Description string             `json:"description" yaml:"description"`
+	ID          openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Name The frontmatter's name: 1-64 lower-case letters, digits and single
+	// hyphens. Unique within the team.
+	//
+	//
+	// Examples: pdf-processing
+	Name string `json:"name" yaml:"name"`
+
+	// Source Where the directory came from
+	Source    SkillSummarySource `json:"source" yaml:"source"`
+	TeamID    openapi_types.UUID `json:"team_id" yaml:"team_id"`
+	UpdatedAt time.Time          `json:"updated_at" yaml:"updated_at"`
+}
+
+// SkillSummarySource Where the directory came from
+type SkillSummarySource string
+
+// SkillUpload defines model for SkillUpload.
+type SkillUpload struct {
+	// Files One part per file; each part's filename is its path in the skill
+	Files []openapi_types.File `json:"files" yaml:"files"`
+}
+
 // Team defines model for Team.
 type Team struct {
 	ID openapi_types.UUID `json:"id" yaml:"id"`
@@ -558,6 +716,9 @@ type Cursor = string
 
 // Limit defines model for Limit.
 type Limit = int32
+
+// SkillID defines model for SkillID.
+type SkillID = openapi_types.UUID
 
 // TeamID defines model for TeamID.
 type TeamID = openapi_types.UUID
@@ -676,6 +837,18 @@ type ListSessionMessagesParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
 }
 
+// ListSkillsParams defines parameters for ListSkills.
+type ListSkillsParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
 // ListUsersParams defines parameters for ListUsers.
 type ListUsersParams struct {
 	// Subject The identifier at the provider, matched exactly. An unknown one is
@@ -703,6 +876,15 @@ type ApproveChannelSenderJSONRequestBody = ApproveSenderRequest
 
 // AddTeamMemberJSONRequestBody defines body for AddTeamMember for application/json ContentType.
 type AddTeamMemberJSONRequestBody = AddMemberRequest
+
+// CreateSkillMultipartRequestBody defines body for CreateSkill for multipart/form-data ContentType.
+type CreateSkillMultipartRequestBody = SkillUpload
+
+// ImportSkillJSONRequestBody defines body for ImportSkill for application/json ContentType.
+type ImportSkillJSONRequestBody = SkillImportRequest
+
+// ReplaceSkillMultipartRequestBody defines body for ReplaceSkill for multipart/form-data ContentType.
+type ReplaceSkillMultipartRequestBody = SkillUpload
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -1148,6 +1330,134 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 	ListSessionMessages(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSkills List a team's skills
+	//
+	// A read, so belonging to the team is enough: granting a skill to an
+	// agent starts with seeing which exist.
+	//
+	// Bodies and files are left out. A page is descriptions to choose
+	// between; fetch one skill to read the rest.
+	//
+	// Corresponds with GET /teams/{id}/skills (the `ListSkills` operationId).
+	ListSkills(ctx context.Context, id TeamID, params *ListSkillsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSkillWithBody Upload a skill
+	//
+	// Requires `skill:write` in this team. The brain parses `SKILL.md`; its
+	// frontmatter is the skill's name, description and the rest, so nothing
+	// is typed twice.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/skills (the `CreateSkill` operationId).
+	CreateSkillWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ImportSkillWithBody Import a skill from GitHub or a zip on the web
+	//
+	// Requires `skill:write` in this team. The brain fetches the source
+	// itself, then stores what it found exactly as an upload is stored, with
+	// the source recorded so the skill can be synced later.
+	//
+	// `github:owner/repo/path@ref` takes one folder of a repository. The ref
+	// is resolved to a commit first, and the commit is what is fetched and
+	// recorded, so a branch moving mid-import changes nothing. Without
+	// `@ref` it is the default branch.
+	//
+	// An `https://` address is a zip, fetched only from a host the operator
+	// allows. It may not carry a user, password or query string: the
+	// address is stored and shown to the team, and a signed link keeps its
+	// credential in the query.
+	//
+	// The fetch has 30 seconds, and connects only to public addresses.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/skills/import (the `ImportSkill` operationId).
+	ImportSkillWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ImportSkill Import a skill from GitHub or a zip on the web
+	//
+	// Requires `skill:write` in this team. The brain fetches the source
+	// itself, then stores what it found exactly as an upload is stored, with
+	// the source recorded so the skill can be synced later.
+	//
+	// `github:owner/repo/path@ref` takes one folder of a repository. The ref
+	// is resolved to a commit first, and the commit is what is fetched and
+	// recorded, so a branch moving mid-import changes nothing. Without
+	// `@ref` it is the default branch.
+	//
+	// An `https://` address is a zip, fetched only from a host the operator
+	// allows. It may not carry a user, password or query string: the
+	// address is stored and shown to the team, and a signed link keeps its
+	// credential in the query.
+	//
+	// The fetch has 30 seconds, and connects only to public addresses.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/skills/import (the `ImportSkill` operationId).
+	ImportSkill(ctx context.Context, id TeamID, body ImportSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteSkill Delete a skill
+	//
+	// Requires `skill:write` in this team. Its files go with it.
+	//
+	// A skill still granted to an agent is not deleted: removing it would
+	// change what that agent can do without anyone changing the agent.
+	// Revoke it from each agent first.
+	//
+	// Corresponds with DELETE /teams/{id}/skills/{skillID} (the `DeleteSkill` operationId).
+	DeleteSkill(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSkill Read a skill
+	//
+	// The manifest's fields, the body, where the skill came from, and a
+	// description of each file beside `SKILL.md`. A file's bytes are a
+	// separate request.
+	//
+	// A skill of another team answers 404, not 403: confirming the id
+	// exists would let anyone walk the uuid space.
+	//
+	// Corresponds with GET /teams/{id}/skills/{skillID} (the `GetSkill` operationId).
+	GetSkill(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceSkillWithBody Replace a skill
+	//
+	// Requires `skill:write` in this team. The whole directory is replaced:
+	// files the new upload leaves out are deleted. An imported skill
+	// replaced by an upload becomes the team's own, and its origin is
+	// cleared. Agents granted it see the new version from their next run.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /teams/{id}/skills/{skillID} (the `ReplaceSkill` operationId).
+	ReplaceSkillWithBody(ctx context.Context, id TeamID, skillID SkillID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSkillFile Download one of a skill's files
+	//
+	// The bytes, decrypted on the way out, as for an attachment.
+	//
+	// `Content-Type` is the type recorded when the file was uploaded, sent
+	// with `X-Content-Type-Options: nosniff`, never derived from the name.
+	// `Content-Disposition` is always `attachment`: a skill's files are
+	// scripts and references for an agent, and nothing is gained by
+	// rendering one in a browser.
+	//
+	// Corresponds with GET /teams/{id}/skills/{skillID}/files/{path} (the `GetSkillFile` operationId).
+	GetSkillFile(ctx context.Context, id TeamID, skillID SkillID, path string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SyncSkill Fetch an imported skill's source again
+	//
+	// Requires `skill:write` in this team. The recorded `source_ref` is
+	// fetched again. When it names a different commit or digest than
+	// `source_sha`, the whole directory is replaced; when it names the same
+	// one, nothing is written and the skill is returned as it is.
+	//
+	// A skill that was uploaded has no source, and answers 409.
+	//
+	// Corresponds with POST /teams/{id}/skills/{skillID}/sync (the `SyncSkill` operationId).
+	SyncSkill(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListUsers Find a user
 	//
@@ -1794,6 +2104,224 @@ func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID 
 // Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 func (c *Client) ListSessionMessages(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSessionMessagesRequest(c.Server, id, sessionID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSkills List a team's skills
+//
+// A read, so belonging to the team is enough: granting a skill to an
+// agent starts with seeing which exist.
+//
+// Bodies and files are left out. A page is descriptions to choose
+// between; fetch one skill to read the rest.
+//
+// Corresponds with GET /teams/{id}/skills (the `ListSkills` operationId).
+func (c *Client) ListSkills(ctx context.Context, id TeamID, params *ListSkillsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSkillsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSkillWithBody Upload a skill
+//
+// Requires `skill:write` in this team. The brain parses `SKILL.md`; its
+// frontmatter is the skill's name, description and the rest, so nothing
+// is typed twice.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/skills (the `CreateSkill` operationId).
+func (c *Client) CreateSkillWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSkillRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ImportSkillWithBody Import a skill from GitHub or a zip on the web
+//
+// Requires `skill:write` in this team. The brain fetches the source
+// itself, then stores what it found exactly as an upload is stored, with
+// the source recorded so the skill can be synced later.
+//
+// `github:owner/repo/path@ref` takes one folder of a repository. The ref
+// is resolved to a commit first, and the commit is what is fetched and
+// recorded, so a branch moving mid-import changes nothing. Without
+// `@ref` it is the default branch.
+//
+// An `https://` address is a zip, fetched only from a host the operator
+// allows. It may not carry a user, password or query string: the
+// address is stored and shown to the team, and a signed link keeps its
+// credential in the query.
+//
+// The fetch has 30 seconds, and connects only to public addresses.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/skills/import (the `ImportSkill` operationId).
+func (c *Client) ImportSkillWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImportSkillRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ImportSkill Import a skill from GitHub or a zip on the web
+//
+// Requires `skill:write` in this team. The brain fetches the source
+// itself, then stores what it found exactly as an upload is stored, with
+// the source recorded so the skill can be synced later.
+//
+// `github:owner/repo/path@ref` takes one folder of a repository. The ref
+// is resolved to a commit first, and the commit is what is fetched and
+// recorded, so a branch moving mid-import changes nothing. Without
+// `@ref` it is the default branch.
+//
+// An `https://` address is a zip, fetched only from a host the operator
+// allows. It may not carry a user, password or query string: the
+// address is stored and shown to the team, and a signed link keeps its
+// credential in the query.
+//
+// The fetch has 30 seconds, and connects only to public addresses.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/skills/import (the `ImportSkill` operationId).
+func (c *Client) ImportSkill(ctx context.Context, id TeamID, body ImportSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImportSkillRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteSkill Delete a skill
+//
+// Requires `skill:write` in this team. Its files go with it.
+//
+// A skill still granted to an agent is not deleted: removing it would
+// change what that agent can do without anyone changing the agent.
+// Revoke it from each agent first.
+//
+// Corresponds with DELETE /teams/{id}/skills/{skillID} (the `DeleteSkill` operationId).
+func (c *Client) DeleteSkill(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteSkillRequest(c.Server, id, skillID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSkill Read a skill
+//
+// The manifest's fields, the body, where the skill came from, and a
+// description of each file beside `SKILL.md`. A file's bytes are a
+// separate request.
+//
+// A skill of another team answers 404, not 403: confirming the id
+// exists would let anyone walk the uuid space.
+//
+// Corresponds with GET /teams/{id}/skills/{skillID} (the `GetSkill` operationId).
+func (c *Client) GetSkill(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSkillRequest(c.Server, id, skillID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceSkillWithBody Replace a skill
+//
+// Requires `skill:write` in this team. The whole directory is replaced:
+// files the new upload leaves out are deleted. An imported skill
+// replaced by an upload becomes the team's own, and its origin is
+// cleared. Agents granted it see the new version from their next run.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /teams/{id}/skills/{skillID} (the `ReplaceSkill` operationId).
+func (c *Client) ReplaceSkillWithBody(ctx context.Context, id TeamID, skillID SkillID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceSkillRequestWithBody(c.Server, id, skillID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSkillFile Download one of a skill's files
+//
+// The bytes, decrypted on the way out, as for an attachment.
+//
+// `Content-Type` is the type recorded when the file was uploaded, sent
+// with `X-Content-Type-Options: nosniff`, never derived from the name.
+// `Content-Disposition` is always `attachment`: a skill's files are
+// scripts and references for an agent, and nothing is gained by
+// rendering one in a browser.
+//
+// Corresponds with GET /teams/{id}/skills/{skillID}/files/{path} (the `GetSkillFile` operationId).
+func (c *Client) GetSkillFile(ctx context.Context, id TeamID, skillID SkillID, path string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSkillFileRequest(c.Server, id, skillID, path)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SyncSkill Fetch an imported skill's source again
+//
+// Requires `skill:write` in this team. The recorded `source_ref` is
+// fetched again. When it names a different commit or digest than
+// `source_sha`, the whole directory is replaced; when it names the same
+// one, nothing is written and the skill is returned as it is.
+//
+// A skill that was uploaded has no source, and answers 409.
+//
+// Corresponds with POST /teams/{id}/skills/{skillID}/sync (the `SyncSkill` operationId).
+func (c *Client) SyncSkill(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSyncSkillRequest(c.Server, id, skillID)
 	if err != nil {
 		return nil, err
 	}
@@ -3039,6 +3567,376 @@ func NewListSessionMessagesRequest(server string, id TeamID, sessionID openapi_t
 	return req, nil
 }
 
+// NewListSkillsRequest constructs an http.Request for the ListSkills method
+func NewListSkillsRequest(server string, id TeamID, params *ListSkillsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/skills", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateSkillRequestWithBody constructs an http.Request for the CreateSkill method, with any body, and a specified content type
+func NewCreateSkillRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/skills", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewImportSkillRequest calls the generic ImportSkill builder with application/json body
+func NewImportSkillRequest(server string, id TeamID, body ImportSkillJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewImportSkillRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewImportSkillRequestWithBody constructs an http.Request for the ImportSkill method, with any body, and a specified content type
+func NewImportSkillRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/skills/import", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteSkillRequest constructs an http.Request for the DeleteSkill method
+func NewDeleteSkillRequest(server string, id TeamID, skillID SkillID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "skillID", skillID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/skills/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetSkillRequest constructs an http.Request for the GetSkill method
+func NewGetSkillRequest(server string, id TeamID, skillID SkillID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "skillID", skillID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/skills/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReplaceSkillRequestWithBody constructs an http.Request for the ReplaceSkill method, with any body, and a specified content type
+func NewReplaceSkillRequestWithBody(server string, id TeamID, skillID SkillID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "skillID", skillID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/skills/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetSkillFileRequest constructs an http.Request for the GetSkillFile method
+func NewGetSkillFileRequest(server string, id TeamID, skillID SkillID, path string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "skillID", skillID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "path", path, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/skills/%s/files/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSyncSkillRequest constructs an http.Request for the SyncSkill method
+func NewSyncSkillRequest(server string, id TeamID, skillID SkillID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "skillID", skillID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/skills/%s/sync", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListUsersRequest constructs an http.Request for the ListUsers method
 func NewListUsersRequest(server string, params *ListUsersParams) (*http.Request, error) {
 	var err error
@@ -3592,6 +4490,144 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 	ListSessionMessagesWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*ListSessionMessagesResponse, error)
+
+	// ListSkillsWithResponse List a team's skills
+	//
+	// A read, so belonging to the team is enough: granting a skill to an
+	// agent starts with seeing which exist.
+	//
+	// Bodies and files are left out. A page is descriptions to choose
+	// between; fetch one skill to read the rest.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/skills (the `ListSkills` operationId).
+	ListSkillsWithResponse(ctx context.Context, id TeamID, params *ListSkillsParams, reqEditors ...RequestEditorFn) (*ListSkillsResponse, error)
+
+	// CreateSkillWithBodyWithResponse Upload a skill
+	//
+	// Requires `skill:write` in this team. The brain parses `SKILL.md`; its
+	// frontmatter is the skill's name, description and the rest, so nothing
+	// is typed twice.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/skills (the `CreateSkill` operationId).
+	CreateSkillWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSkillResponse, error)
+
+	// ImportSkillWithBodyWithResponse Import a skill from GitHub or a zip on the web
+	//
+	// Requires `skill:write` in this team. The brain fetches the source
+	// itself, then stores what it found exactly as an upload is stored, with
+	// the source recorded so the skill can be synced later.
+	//
+	// `github:owner/repo/path@ref` takes one folder of a repository. The ref
+	// is resolved to a commit first, and the commit is what is fetched and
+	// recorded, so a branch moving mid-import changes nothing. Without
+	// `@ref` it is the default branch.
+	//
+	// An `https://` address is a zip, fetched only from a host the operator
+	// allows. It may not carry a user, password or query string: the
+	// address is stored and shown to the team, and a signed link keeps its
+	// credential in the query.
+	//
+	// The fetch has 30 seconds, and connects only to public addresses.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/skills/import (the `ImportSkill` operationId).
+	ImportSkillWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportSkillResponse, error)
+
+	// ImportSkillWithResponse Import a skill from GitHub or a zip on the web
+	//
+	// Requires `skill:write` in this team. The brain fetches the source
+	// itself, then stores what it found exactly as an upload is stored, with
+	// the source recorded so the skill can be synced later.
+	//
+	// `github:owner/repo/path@ref` takes one folder of a repository. The ref
+	// is resolved to a commit first, and the commit is what is fetched and
+	// recorded, so a branch moving mid-import changes nothing. Without
+	// `@ref` it is the default branch.
+	//
+	// An `https://` address is a zip, fetched only from a host the operator
+	// allows. It may not carry a user, password or query string: the
+	// address is stored and shown to the team, and a signed link keeps its
+	// credential in the query.
+	//
+	// The fetch has 30 seconds, and connects only to public addresses.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/skills/import (the `ImportSkill` operationId).
+	ImportSkillWithResponse(ctx context.Context, id TeamID, body ImportSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*ImportSkillResponse, error)
+
+	// DeleteSkillWithResponse Delete a skill
+	//
+	// Requires `skill:write` in this team. Its files go with it.
+	//
+	// A skill still granted to an agent is not deleted: removing it would
+	// change what that agent can do without anyone changing the agent.
+	// Revoke it from each agent first.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id}/skills/{skillID} (the `DeleteSkill` operationId).
+	DeleteSkillWithResponse(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*DeleteSkillResponse, error)
+
+	// GetSkillWithResponse Read a skill
+	//
+	// The manifest's fields, the body, where the skill came from, and a
+	// description of each file beside `SKILL.md`. A file's bytes are a
+	// separate request.
+	//
+	// A skill of another team answers 404, not 403: confirming the id
+	// exists would let anyone walk the uuid space.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/skills/{skillID} (the `GetSkill` operationId).
+	GetSkillWithResponse(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*GetSkillResponse, error)
+
+	// ReplaceSkillWithBodyWithResponse Replace a skill
+	//
+	// Requires `skill:write` in this team. The whole directory is replaced:
+	// files the new upload leaves out are deleted. An imported skill
+	// replaced by an upload becomes the team's own, and its origin is
+	// cleared. Agents granted it see the new version from their next run.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/skills/{skillID} (the `ReplaceSkill` operationId).
+	ReplaceSkillWithBodyWithResponse(ctx context.Context, id TeamID, skillID SkillID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceSkillResponse, error)
+
+	// GetSkillFileWithResponse Download one of a skill's files
+	//
+	// The bytes, decrypted on the way out, as for an attachment.
+	//
+	// `Content-Type` is the type recorded when the file was uploaded, sent
+	// with `X-Content-Type-Options: nosniff`, never derived from the name.
+	// `Content-Disposition` is always `attachment`: a skill's files are
+	// scripts and references for an agent, and nothing is gained by
+	// rendering one in a browser.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/skills/{skillID}/files/{path} (the `GetSkillFile` operationId).
+	GetSkillFileWithResponse(ctx context.Context, id TeamID, skillID SkillID, path string, reqEditors ...RequestEditorFn) (*GetSkillFileResponse, error)
+
+	// SyncSkillWithResponse Fetch an imported skill's source again
+	//
+	// Requires `skill:write` in this team. The recorded `source_ref` is
+	// fetched again. When it names a different commit or digest than
+	// `source_sha`, the whole directory is replaced; when it names the same
+	// one, nothing is written and the skill is returned as it is.
+	//
+	// A skill that was uploaded has no source, and answers 409.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/skills/{skillID}/sync (the `SyncSkill` operationId).
+	SyncSkillWithResponse(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*SyncSkillResponse, error)
 
 	// ListUsersWithResponse Find a user
 	//
@@ -4571,6 +5607,385 @@ func (r ListSessionMessagesResponse) ContentType() string {
 	return ""
 }
 
+// ListSkillsResponse401Headers the declared response headers of an HTTP 401 response for ListSkills
+type ListSkillsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListSkillsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SkillPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListSkillsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSkillsResponse) GetJSON200() *SkillPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSkillsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSkillsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSkillsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSkillsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateSkillResponse401Headers the declared response headers of an HTTP 401 response for CreateSkill
+type CreateSkillResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateSkillResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Skill
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateSkillResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateSkillResponse) GetJSON201() *Skill {
+	return r.JSON201
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateSkillResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateSkillResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateSkillResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateSkillResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ImportSkillResponse401Headers the declared response headers of an HTTP 401 response for ImportSkill
+type ImportSkillResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ImportSkillResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Skill
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ImportSkillResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r ImportSkillResponse) GetJSON201() *Skill {
+	return r.JSON201
+}
+
+// GetBody returns the raw response body bytes
+func (r ImportSkillResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ImportSkillResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ImportSkillResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ImportSkillResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteSkillResponse401Headers the declared response headers of an HTTP 401 response for DeleteSkill
+type DeleteSkillResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DeleteSkillResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DeleteSkillResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteSkillResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteSkillResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteSkillResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteSkillResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetSkillResponse401Headers the declared response headers of an HTTP 401 response for GetSkill
+type GetSkillResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetSkillResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Skill
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetSkillResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetSkillResponse) GetJSON200() *Skill {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSkillResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSkillResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSkillResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSkillResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ReplaceSkillResponse401Headers the declared response headers of an HTTP 401 response for ReplaceSkill
+type ReplaceSkillResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ReplaceSkillResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Skill
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ReplaceSkillResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReplaceSkillResponse) GetJSON200() *Skill {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ReplaceSkillResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReplaceSkillResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReplaceSkillResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReplaceSkillResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetSkillFileResponse200Headers the declared response headers of an HTTP 200 response for GetSkillFile
+type GetSkillFileResponse200Headers struct {
+	CacheControl        *string
+	ContentDisposition  *string
+	XContentTypeOptions *string
+}
+
+// GetSkillFileResponse401Headers the declared response headers of an HTTP 401 response for GetSkillFile
+type GetSkillFileResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetSkillFileResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetSkillFileResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetSkillFileResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSkillFileResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSkillFileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSkillFileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSkillFileResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SyncSkillResponse401Headers the declared response headers of an HTTP 401 response for SyncSkill
+type SyncSkillResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type SyncSkillResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Skill
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *SyncSkillResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SyncSkillResponse) GetJSON200() *Skill {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r SyncSkillResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SyncSkillResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SyncSkillResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SyncSkillResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListUsersResponse401Headers the declared response headers of an HTTP 401 response for ListUsers
 type ListUsersResponse401Headers struct {
 	WWWAuthenticate *string
@@ -5220,6 +6635,198 @@ func (c *ClientWithResponses) ListSessionMessagesWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseListSessionMessagesResponse(rsp)
+}
+
+// ListSkillsWithResponse List a team's skills
+//
+// A read, so belonging to the team is enough: granting a skill to an
+// agent starts with seeing which exist.
+//
+// Bodies and files are left out. A page is descriptions to choose
+// between; fetch one skill to read the rest.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/skills (the `ListSkills` operationId).
+func (c *ClientWithResponses) ListSkillsWithResponse(ctx context.Context, id TeamID, params *ListSkillsParams, reqEditors ...RequestEditorFn) (*ListSkillsResponse, error) {
+	rsp, err := c.ListSkills(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSkillsResponse(rsp)
+}
+
+// CreateSkillWithBodyWithResponse Upload a skill
+//
+// Requires `skill:write` in this team. The brain parses `SKILL.md`; its
+// frontmatter is the skill's name, description and the rest, so nothing
+// is typed twice.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/skills (the `CreateSkill` operationId).
+func (c *ClientWithResponses) CreateSkillWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSkillResponse, error) {
+	rsp, err := c.CreateSkillWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSkillResponse(rsp)
+}
+
+// ImportSkillWithBodyWithResponse Import a skill from GitHub or a zip on the web
+//
+// Requires `skill:write` in this team. The brain fetches the source
+// itself, then stores what it found exactly as an upload is stored, with
+// the source recorded so the skill can be synced later.
+//
+// `github:owner/repo/path@ref` takes one folder of a repository. The ref
+// is resolved to a commit first, and the commit is what is fetched and
+// recorded, so a branch moving mid-import changes nothing. Without
+// `@ref` it is the default branch.
+//
+// An `https://` address is a zip, fetched only from a host the operator
+// allows. It may not carry a user, password or query string: the
+// address is stored and shown to the team, and a signed link keeps its
+// credential in the query.
+//
+// The fetch has 30 seconds, and connects only to public addresses.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/skills/import (the `ImportSkill` operationId).
+func (c *ClientWithResponses) ImportSkillWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportSkillResponse, error) {
+	rsp, err := c.ImportSkillWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseImportSkillResponse(rsp)
+}
+
+// ImportSkillWithResponse Import a skill from GitHub or a zip on the web
+//
+// Requires `skill:write` in this team. The brain fetches the source
+// itself, then stores what it found exactly as an upload is stored, with
+// the source recorded so the skill can be synced later.
+//
+// `github:owner/repo/path@ref` takes one folder of a repository. The ref
+// is resolved to a commit first, and the commit is what is fetched and
+// recorded, so a branch moving mid-import changes nothing. Without
+// `@ref` it is the default branch.
+//
+// An `https://` address is a zip, fetched only from a host the operator
+// allows. It may not carry a user, password or query string: the
+// address is stored and shown to the team, and a signed link keeps its
+// credential in the query.
+//
+// The fetch has 30 seconds, and connects only to public addresses.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/skills/import (the `ImportSkill` operationId).
+func (c *ClientWithResponses) ImportSkillWithResponse(ctx context.Context, id TeamID, body ImportSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*ImportSkillResponse, error) {
+	rsp, err := c.ImportSkill(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseImportSkillResponse(rsp)
+}
+
+// DeleteSkillWithResponse Delete a skill
+//
+// Requires `skill:write` in this team. Its files go with it.
+//
+// A skill still granted to an agent is not deleted: removing it would
+// change what that agent can do without anyone changing the agent.
+// Revoke it from each agent first.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id}/skills/{skillID} (the `DeleteSkill` operationId).
+func (c *ClientWithResponses) DeleteSkillWithResponse(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*DeleteSkillResponse, error) {
+	rsp, err := c.DeleteSkill(ctx, id, skillID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteSkillResponse(rsp)
+}
+
+// GetSkillWithResponse Read a skill
+//
+// The manifest's fields, the body, where the skill came from, and a
+// description of each file beside `SKILL.md`. A file's bytes are a
+// separate request.
+//
+// A skill of another team answers 404, not 403: confirming the id
+// exists would let anyone walk the uuid space.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/skills/{skillID} (the `GetSkill` operationId).
+func (c *ClientWithResponses) GetSkillWithResponse(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*GetSkillResponse, error) {
+	rsp, err := c.GetSkill(ctx, id, skillID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSkillResponse(rsp)
+}
+
+// ReplaceSkillWithBodyWithResponse Replace a skill
+//
+// Requires `skill:write` in this team. The whole directory is replaced:
+// files the new upload leaves out are deleted. An imported skill
+// replaced by an upload becomes the team's own, and its origin is
+// cleared. Agents granted it see the new version from their next run.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/skills/{skillID} (the `ReplaceSkill` operationId).
+func (c *ClientWithResponses) ReplaceSkillWithBodyWithResponse(ctx context.Context, id TeamID, skillID SkillID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceSkillResponse, error) {
+	rsp, err := c.ReplaceSkillWithBody(ctx, id, skillID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceSkillResponse(rsp)
+}
+
+// GetSkillFileWithResponse Download one of a skill's files
+//
+// The bytes, decrypted on the way out, as for an attachment.
+//
+// `Content-Type` is the type recorded when the file was uploaded, sent
+// with `X-Content-Type-Options: nosniff`, never derived from the name.
+// `Content-Disposition` is always `attachment`: a skill's files are
+// scripts and references for an agent, and nothing is gained by
+// rendering one in a browser.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/skills/{skillID}/files/{path} (the `GetSkillFile` operationId).
+func (c *ClientWithResponses) GetSkillFileWithResponse(ctx context.Context, id TeamID, skillID SkillID, path string, reqEditors ...RequestEditorFn) (*GetSkillFileResponse, error) {
+	rsp, err := c.GetSkillFile(ctx, id, skillID, path, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSkillFileResponse(rsp)
+}
+
+// SyncSkillWithResponse Fetch an imported skill's source again
+//
+// Requires `skill:write` in this team. The recorded `source_ref` is
+// fetched again. When it names a different commit or digest than
+// `source_sha`, the whole directory is replaced; when it names the same
+// one, nothing is written and the skill is returned as it is.
+//
+// A skill that was uploaded has no source, and answers 409.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/skills/{skillID}/sync (the `SyncSkill` operationId).
+func (c *ClientWithResponses) SyncSkillWithResponse(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*SyncSkillResponse, error) {
+	rsp, err := c.SyncSkill(ctx, id, skillID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSyncSkillResponse(rsp)
 }
 
 // ListUsersWithResponse Find a user
@@ -5982,6 +7589,322 @@ func ParseListSessionMessagesResponse(rsp *http.Response) (*ListSessionMessagesR
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ListSessionMessagesResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListSkillsResponse parses an HTTP response from a ListSkillsWithResponse call
+func ParseListSkillsResponse(rsp *http.Response) (*ListSkillsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSkillsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SkillPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListSkillsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateSkillResponse parses an HTTP response from a CreateSkillWithResponse call
+func ParseCreateSkillResponse(rsp *http.Response) (*CreateSkillResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateSkillResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Skill
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateSkillResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseImportSkillResponse parses an HTTP response from a ImportSkillWithResponse call
+func ParseImportSkillResponse(rsp *http.Response) (*ImportSkillResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ImportSkillResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Skill
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ImportSkillResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteSkillResponse parses an HTTP response from a DeleteSkillWithResponse call
+func ParseDeleteSkillResponse(rsp *http.Response) (*DeleteSkillResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteSkillResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DeleteSkillResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetSkillResponse parses an HTTP response from a GetSkillWithResponse call
+func ParseGetSkillResponse(rsp *http.Response) (*GetSkillResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSkillResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Skill
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetSkillResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReplaceSkillResponse parses an HTTP response from a ReplaceSkillWithResponse call
+func ParseReplaceSkillResponse(rsp *http.Response) (*ReplaceSkillResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReplaceSkillResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Skill
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ReplaceSkillResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetSkillFileResponse parses an HTTP response from a GetSkillFileWithResponse call
+func ParseGetSkillFileResponse(rsp *http.Response) (*GetSkillFileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSkillFileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetSkillFileResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		if values := rsp.Header.Values("Content-Disposition"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Disposition", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentDisposition = &value
+		}
+		if values := rsp.Header.Values("X-Content-Type-Options"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Content-Type-Options", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XContentTypeOptions = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers GetSkillFileResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSyncSkillResponse parses an HTTP response from a SyncSkillWithResponse call
+func ParseSyncSkillResponse(rsp *http.Response) (*SyncSkillResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SyncSkillResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Skill
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers SyncSkillResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
