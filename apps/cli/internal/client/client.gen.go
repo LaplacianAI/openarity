@@ -342,6 +342,99 @@ type CreatedChannel struct {
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
 }
 
+// MCPServer Exactly one of `url` and `command` is present.
+type MCPServer struct {
+	// AuthSecretRef A url server's bearer token. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
+	AuthSecretRef *string `json:"auth_secret_ref,omitempty" yaml:"auth_secret_ref,omitempty"`
+
+	// Bare Tools reach the model as `<tool>` rather than `<name>__<tool>`
+	Bare bool `json:"bare" yaml:"bare"`
+
+	// Command A local server, started with this argv and spoken to over stdio
+	//
+	// Examples: ["npx","-y","@modelcontextprotocol/server-filesystem"]
+	Command   *[]string `json:"command,omitempty" yaml:"command,omitempty"`
+	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
+
+	// DiscoveredAt When its tools were last listed, and null until then. Always sent;
+	// optional here only so a generated client decodes null as absent
+	// rather than as the zero time.
+	DiscoveredAt *time.Time `json:"discovered_at,omitempty" yaml:"discovered_at,omitempty"`
+
+	// Env Variables set for a command server, each a secret reference.
+	// Always an object; empty for a url server.
+	//
+	//
+	// Examples: {"GITHUB_TOKEN":"teams/\u003cteam_id\u003e/mcp/github#token"}
+	Env map[string]string  `json:"env" yaml:"env"`
+	ID  openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Name Unique within the team, case-insensitively. Each tool reaches the
+	// model as `<name>__<tool>`.
+	//
+	//
+	// Examples: github
+	Name      string             `json:"name" yaml:"name"`
+	TeamID    openapi_types.UUID `json:"team_id" yaml:"team_id"`
+	UpdatedAt time.Time          `json:"updated_at" yaml:"updated_at"`
+
+	// URL A remote server, spoken to over streamable HTTP
+	//
+	// Examples: https://mcp.example.com/v1
+	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
+// MCPServerPage defines model for MCPServerPage.
+type MCPServerPage struct {
+	Items []MCPServer `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// MCPServerRequest Exactly one of `url` and `command`. Every value that is a credential
+// is a secret reference rather than the secret, so none reaches the
+// database.
+type MCPServerRequest struct {
+	// AuthSecretRef Only with `url`. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
+	//
+	// Examples: teams/<team_id>/mcp/github#token
+	AuthSecretRef *string `json:"auth_secret_ref,omitempty" yaml:"auth_secret_ref,omitempty"`
+	Bare          *bool   `json:"bare,omitempty" yaml:"bare,omitempty"`
+
+	// Command The program and its arguments; the first is not empty
+	Command *[]string `json:"command,omitempty" yaml:"command,omitempty"`
+
+	// Env Only with `command`. Each key is a variable name and each value a secret reference.
+	Env *map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+
+	// Name Examples: github
+	Name string `json:"name" yaml:"name"`
+
+	// URL http or https, with no user, password, query string or fragment
+	//
+	// Examples: https://mcp.example.com/v1
+	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
+// MCPTool defines model for MCPTool.
+type MCPTool struct {
+	Description string `json:"description" yaml:"description"`
+
+	// InputSchema The JSON Schema of the tool's arguments, exactly as the server sent it
+	InputSchema map[string]interface{} `json:"input_schema" yaml:"input_schema"`
+
+	// Name As the server names it, without the server's prefix
+	//
+	// Examples: search_code
+	Name string `json:"name" yaml:"name"`
+}
+
+// MCPToolList defines model for MCPToolList.
+type MCPToolList struct {
+	Items []MCPTool `json:"items" yaml:"items"`
+}
+
 // Member defines model for Member.
 type Member struct {
 	// Email Absent when the provider released none
@@ -717,6 +810,9 @@ type Cursor = string
 // Limit defines model for Limit.
 type Limit = int32
 
+// ServerID defines model for ServerID.
+type ServerID = openapi_types.UUID
+
 // SkillID defines model for SkillID.
 type SkillID = openapi_types.UUID
 
@@ -779,6 +875,18 @@ type ListPendingSendersParams struct {
 
 // ListChannelSessionsParams defines parameters for ListChannelSessions.
 type ListChannelSessionsParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
+// ListMCPServersParams defines parameters for ListMCPServers.
+type ListMCPServersParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
 	// refused; zero, a negative and anything unparseable are 400.
 	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
@@ -873,6 +981,12 @@ type CreateChannelJSONRequestBody = CreateChannelRequest
 
 // ApproveChannelSenderJSONRequestBody defines body for ApproveChannelSender for application/json ContentType.
 type ApproveChannelSenderJSONRequestBody = ApproveSenderRequest
+
+// CreateMCPServerJSONRequestBody defines body for CreateMCPServer for application/json ContentType.
+type CreateMCPServerJSONRequestBody = MCPServerRequest
+
+// UpdateMCPServerJSONRequestBody defines body for UpdateMCPServer for application/json ContentType.
+type UpdateMCPServerJSONRequestBody = MCPServerRequest
 
 // AddTeamMemberJSONRequestBody defines body for AddTeamMember for application/json ContentType.
 type AddTeamMemberJSONRequestBody = AddMemberRequest
@@ -1201,6 +1315,95 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/channels/{channelID}/sessions (the `ListChannelSessions` operationId).
 	ListChannelSessions(ctx context.Context, id TeamID, channelID ChannelID, params *ListChannelSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMCPServers List a team's MCP servers
+	//
+	// A read, so belonging to the team is enough: granting a server to an
+	// agent starts with seeing which exist. A server holds references to
+	// secrets, never a secret, so there is nothing here to hide from a
+	// member.
+	//
+	// Corresponds with GET /teams/{id}/mcp-servers (the `ListMCPServers` operationId).
+	ListMCPServers(ctx context.Context, id TeamID, params *ListMCPServersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateMCPServerWithBody Register an MCP server
+	//
+	// Requires `tool:write` in this team. Nothing connects to the server
+	// here: its tools are listed once discovery has run, and
+	// `discovered_at` says when that was.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/mcp-servers (the `CreateMCPServer` operationId).
+	CreateMCPServerWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateMCPServer Register an MCP server
+	//
+	// Requires `tool:write` in this team. Nothing connects to the server
+	// here: its tools are listed once discovery has run, and
+	// `discovered_at` says when that was.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/mcp-servers (the `CreateMCPServer` operationId).
+	CreateMCPServer(ctx context.Context, id TeamID, body CreateMCPServerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteMCPServer Delete an MCP server
+	//
+	// Requires `tool:write` in this team. Its tools go with it. The secrets
+	// it referred to are not touched: they are the team's, and another
+	// server may name the same one.
+	//
+	// A server still granted to an agent is not deleted: removing it would
+	// change what that agent can do without anyone changing the agent.
+	// Revoke it from each agent first.
+	//
+	// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID} (the `DeleteMCPServer` operationId).
+	DeleteMCPServer(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetMCPServer Read an MCP server
+	//
+	// A server of another team answers 404, not 403: confirming the id
+	// exists would let anyone walk the uuid space.
+	//
+	// Corresponds with GET /teams/{id}/mcp-servers/{serverID} (the `GetMCPServer` operationId).
+	GetMCPServer(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateMCPServerWithBody Replace an MCP server
+	//
+	// Requires `tool:write` in this team. Every field is replaced, so a
+	// field left out is cleared. Pointing the server somewhere else — a
+	// different url or command — clears `discovered_at`; the tools already
+	// listed stay until the next discovery replaces them, so an agent
+	// granted this server keeps what it had rather than losing every tool
+	// to an edit.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /teams/{id}/mcp-servers/{serverID} (the `UpdateMCPServer` operationId).
+	UpdateMCPServerWithBody(ctx context.Context, id TeamID, serverID ServerID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateMCPServer Replace an MCP server
+	//
+	// Requires `tool:write` in this team. Every field is replaced, so a
+	// field left out is cleared. Pointing the server somewhere else — a
+	// different url or command — clears `discovered_at`; the tools already
+	// listed stay until the next discovery replaces them, so an agent
+	// granted this server keeps what it had rather than losing every tool
+	// to an edit.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /teams/{id}/mcp-servers/{serverID} (the `UpdateMCPServer` operationId).
+	UpdateMCPServer(ctx context.Context, id TeamID, serverID ServerID, body UpdateMCPServerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMCPTools List the tools a server offers
+	//
+	// What the last discovery found, by name. Not paged: a server offers
+	// tens of tools, not thousands. Empty until discovery has run.
+	//
+	// Corresponds with GET /teams/{id}/mcp-servers/{serverID}/tools (the `ListMCPTools` operationId).
+	ListMCPTools(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeamMembers List a team's members
 	//
@@ -1895,6 +2098,175 @@ func (c *Client) ListPendingSenders(ctx context.Context, id TeamID, channelID Ch
 // Corresponds with GET /teams/{id}/channels/{channelID}/sessions (the `ListChannelSessions` operationId).
 func (c *Client) ListChannelSessions(ctx context.Context, id TeamID, channelID ChannelID, params *ListChannelSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListChannelSessionsRequest(c.Server, id, channelID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListMCPServers List a team's MCP servers
+//
+// A read, so belonging to the team is enough: granting a server to an
+// agent starts with seeing which exist. A server holds references to
+// secrets, never a secret, so there is nothing here to hide from a
+// member.
+//
+// Corresponds with GET /teams/{id}/mcp-servers (the `ListMCPServers` operationId).
+func (c *Client) ListMCPServers(ctx context.Context, id TeamID, params *ListMCPServersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMCPServersRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateMCPServerWithBody Register an MCP server
+//
+// Requires `tool:write` in this team. Nothing connects to the server
+// here: its tools are listed once discovery has run, and
+// `discovered_at` says when that was.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/mcp-servers (the `CreateMCPServer` operationId).
+func (c *Client) CreateMCPServerWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMCPServerRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateMCPServer Register an MCP server
+//
+// Requires `tool:write` in this team. Nothing connects to the server
+// here: its tools are listed once discovery has run, and
+// `discovered_at` says when that was.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/mcp-servers (the `CreateMCPServer` operationId).
+func (c *Client) CreateMCPServer(ctx context.Context, id TeamID, body CreateMCPServerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMCPServerRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteMCPServer Delete an MCP server
+//
+// Requires `tool:write` in this team. Its tools go with it. The secrets
+// it referred to are not touched: they are the team's, and another
+// server may name the same one.
+//
+// A server still granted to an agent is not deleted: removing it would
+// change what that agent can do without anyone changing the agent.
+// Revoke it from each agent first.
+//
+// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID} (the `DeleteMCPServer` operationId).
+func (c *Client) DeleteMCPServer(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteMCPServerRequest(c.Server, id, serverID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetMCPServer Read an MCP server
+//
+// A server of another team answers 404, not 403: confirming the id
+// exists would let anyone walk the uuid space.
+//
+// Corresponds with GET /teams/{id}/mcp-servers/{serverID} (the `GetMCPServer` operationId).
+func (c *Client) GetMCPServer(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetMCPServerRequest(c.Server, id, serverID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateMCPServerWithBody Replace an MCP server
+//
+// Requires `tool:write` in this team. Every field is replaced, so a
+// field left out is cleared. Pointing the server somewhere else — a
+// different url or command — clears `discovered_at`; the tools already
+// listed stay until the next discovery replaces them, so an agent
+// granted this server keeps what it had rather than losing every tool
+// to an edit.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /teams/{id}/mcp-servers/{serverID} (the `UpdateMCPServer` operationId).
+func (c *Client) UpdateMCPServerWithBody(ctx context.Context, id TeamID, serverID ServerID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateMCPServerRequestWithBody(c.Server, id, serverID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateMCPServer Replace an MCP server
+//
+// Requires `tool:write` in this team. Every field is replaced, so a
+// field left out is cleared. Pointing the server somewhere else — a
+// different url or command — clears `discovered_at`; the tools already
+// listed stay until the next discovery replaces them, so an agent
+// granted this server keeps what it had rather than losing every tool
+// to an edit.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /teams/{id}/mcp-servers/{serverID} (the `UpdateMCPServer` operationId).
+func (c *Client) UpdateMCPServer(ctx context.Context, id TeamID, serverID ServerID, body UpdateMCPServerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateMCPServerRequest(c.Server, id, serverID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListMCPTools List the tools a server offers
+//
+// What the last discovery found, by name. Not paged: a server offers
+// tens of tools, not thousands. Empty until discovery has run.
+//
+// Corresponds with GET /teams/{id}/mcp-servers/{serverID}/tools (the `ListMCPTools` operationId).
+func (c *Client) ListMCPTools(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMCPToolsRequest(c.Server, id, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -3115,6 +3487,303 @@ func NewListChannelSessionsRequest(server string, id TeamID, channelID ChannelID
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
 		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListMCPServersRequest constructs an http.Request for the ListMCPServers method
+func NewListMCPServersRequest(server string, id TeamID, params *ListMCPServersParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-servers", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateMCPServerRequest calls the generic CreateMCPServer builder with application/json body
+func NewCreateMCPServerRequest(server string, id TeamID, body CreateMCPServerJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateMCPServerRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateMCPServerRequestWithBody constructs an http.Request for the CreateMCPServer method, with any body, and a specified content type
+func NewCreateMCPServerRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-servers", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteMCPServerRequest constructs an http.Request for the DeleteMCPServer method
+func NewDeleteMCPServerRequest(server string, id TeamID, serverID ServerID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "serverID", serverID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-servers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetMCPServerRequest constructs an http.Request for the GetMCPServer method
+func NewGetMCPServerRequest(server string, id TeamID, serverID ServerID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "serverID", serverID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-servers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateMCPServerRequest calls the generic UpdateMCPServer builder with application/json body
+func NewUpdateMCPServerRequest(server string, id TeamID, serverID ServerID, body UpdateMCPServerJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateMCPServerRequestWithBody(server, id, serverID, "application/json", bodyReader)
+}
+
+// NewUpdateMCPServerRequestWithBody constructs an http.Request for the UpdateMCPServer method, with any body, and a specified content type
+func NewUpdateMCPServerRequestWithBody(server string, id TeamID, serverID ServerID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "serverID", serverID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-servers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListMCPToolsRequest constructs an http.Request for the ListMCPTools method
+func NewListMCPToolsRequest(server string, id TeamID, serverID ServerID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "serverID", serverID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-servers/%s/tools", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -4350,6 +5019,103 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/channels/{channelID}/sessions (the `ListChannelSessions` operationId).
 	ListChannelSessionsWithResponse(ctx context.Context, id TeamID, channelID ChannelID, params *ListChannelSessionsParams, reqEditors ...RequestEditorFn) (*ListChannelSessionsResponse, error)
 
+	// ListMCPServersWithResponse List a team's MCP servers
+	//
+	// A read, so belonging to the team is enough: granting a server to an
+	// agent starts with seeing which exist. A server holds references to
+	// secrets, never a secret, so there is nothing here to hide from a
+	// member.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/mcp-servers (the `ListMCPServers` operationId).
+	ListMCPServersWithResponse(ctx context.Context, id TeamID, params *ListMCPServersParams, reqEditors ...RequestEditorFn) (*ListMCPServersResponse, error)
+
+	// CreateMCPServerWithBodyWithResponse Register an MCP server
+	//
+	// Requires `tool:write` in this team. Nothing connects to the server
+	// here: its tools are listed once discovery has run, and
+	// `discovered_at` says when that was.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/mcp-servers (the `CreateMCPServer` operationId).
+	CreateMCPServerWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMCPServerResponse, error)
+
+	// CreateMCPServerWithResponse Register an MCP server
+	//
+	// Requires `tool:write` in this team. Nothing connects to the server
+	// here: its tools are listed once discovery has run, and
+	// `discovered_at` says when that was.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/mcp-servers (the `CreateMCPServer` operationId).
+	CreateMCPServerWithResponse(ctx context.Context, id TeamID, body CreateMCPServerJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMCPServerResponse, error)
+
+	// DeleteMCPServerWithResponse Delete an MCP server
+	//
+	// Requires `tool:write` in this team. Its tools go with it. The secrets
+	// it referred to are not touched: they are the team's, and another
+	// server may name the same one.
+	//
+	// A server still granted to an agent is not deleted: removing it would
+	// change what that agent can do without anyone changing the agent.
+	// Revoke it from each agent first.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID} (the `DeleteMCPServer` operationId).
+	DeleteMCPServerWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*DeleteMCPServerResponse, error)
+
+	// GetMCPServerWithResponse Read an MCP server
+	//
+	// A server of another team answers 404, not 403: confirming the id
+	// exists would let anyone walk the uuid space.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/mcp-servers/{serverID} (the `GetMCPServer` operationId).
+	GetMCPServerWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*GetMCPServerResponse, error)
+
+	// UpdateMCPServerWithBodyWithResponse Replace an MCP server
+	//
+	// Requires `tool:write` in this team. Every field is replaced, so a
+	// field left out is cleared. Pointing the server somewhere else — a
+	// different url or command — clears `discovered_at`; the tools already
+	// listed stay until the next discovery replaces them, so an agent
+	// granted this server keeps what it had rather than losing every tool
+	// to an edit.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/mcp-servers/{serverID} (the `UpdateMCPServer` operationId).
+	UpdateMCPServerWithBodyWithResponse(ctx context.Context, id TeamID, serverID ServerID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateMCPServerResponse, error)
+
+	// UpdateMCPServerWithResponse Replace an MCP server
+	//
+	// Requires `tool:write` in this team. Every field is replaced, so a
+	// field left out is cleared. Pointing the server somewhere else — a
+	// different url or command — clears `discovered_at`; the tools already
+	// listed stay until the next discovery replaces them, so an agent
+	// granted this server keeps what it had rather than losing every tool
+	// to an edit.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/mcp-servers/{serverID} (the `UpdateMCPServer` operationId).
+	UpdateMCPServerWithResponse(ctx context.Context, id TeamID, serverID ServerID, body UpdateMCPServerJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateMCPServerResponse, error)
+
+	// ListMCPToolsWithResponse List the tools a server offers
+	//
+	// What the last discovery found, by name. Not paged: a server offers
+	// tens of tools, not thousands. Empty until discovery has run.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/mcp-servers/{serverID}/tools (the `ListMCPTools` operationId).
+	ListMCPToolsWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*ListMCPToolsResponse, error)
+
 	// ListTeamMembersWithResponse List a team's members
 	//
 	// A read, so seeing the team is enough — no action is required.
@@ -5277,6 +6043,287 @@ func (r ListChannelSessionsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListChannelSessionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListMCPServersResponse401Headers the declared response headers of an HTTP 401 response for ListMCPServers
+type ListMCPServersResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListMCPServersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MCPServerPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListMCPServersResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListMCPServersResponse) GetJSON200() *MCPServerPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListMCPServersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMCPServersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMCPServersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListMCPServersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateMCPServerResponse401Headers the declared response headers of an HTTP 401 response for CreateMCPServer
+type CreateMCPServerResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateMCPServerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *MCPServer
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateMCPServerResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateMCPServerResponse) GetJSON201() *MCPServer {
+	return r.JSON201
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateMCPServerResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateMCPServerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateMCPServerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateMCPServerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteMCPServerResponse401Headers the declared response headers of an HTTP 401 response for DeleteMCPServer
+type DeleteMCPServerResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DeleteMCPServerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DeleteMCPServerResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteMCPServerResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteMCPServerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteMCPServerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteMCPServerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetMCPServerResponse401Headers the declared response headers of an HTTP 401 response for GetMCPServer
+type GetMCPServerResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetMCPServerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MCPServer
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetMCPServerResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetMCPServerResponse) GetJSON200() *MCPServer {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetMCPServerResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetMCPServerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetMCPServerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetMCPServerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// UpdateMCPServerResponse401Headers the declared response headers of an HTTP 401 response for UpdateMCPServer
+type UpdateMCPServerResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type UpdateMCPServerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MCPServer
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *UpdateMCPServerResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateMCPServerResponse) GetJSON200() *MCPServer {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateMCPServerResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateMCPServerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateMCPServerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateMCPServerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListMCPToolsResponse401Headers the declared response headers of an HTTP 401 response for ListMCPTools
+type ListMCPToolsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListMCPToolsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MCPToolList
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListMCPToolsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListMCPToolsResponse) GetJSON200() *MCPToolList {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListMCPToolsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMCPToolsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMCPToolsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListMCPToolsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -6448,6 +7495,151 @@ func (c *ClientWithResponses) ListChannelSessionsWithResponse(ctx context.Contex
 	return ParseListChannelSessionsResponse(rsp)
 }
 
+// ListMCPServersWithResponse List a team's MCP servers
+//
+// A read, so belonging to the team is enough: granting a server to an
+// agent starts with seeing which exist. A server holds references to
+// secrets, never a secret, so there is nothing here to hide from a
+// member.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/mcp-servers (the `ListMCPServers` operationId).
+func (c *ClientWithResponses) ListMCPServersWithResponse(ctx context.Context, id TeamID, params *ListMCPServersParams, reqEditors ...RequestEditorFn) (*ListMCPServersResponse, error) {
+	rsp, err := c.ListMCPServers(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMCPServersResponse(rsp)
+}
+
+// CreateMCPServerWithBodyWithResponse Register an MCP server
+//
+// Requires `tool:write` in this team. Nothing connects to the server
+// here: its tools are listed once discovery has run, and
+// `discovered_at` says when that was.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/mcp-servers (the `CreateMCPServer` operationId).
+func (c *ClientWithResponses) CreateMCPServerWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMCPServerResponse, error) {
+	rsp, err := c.CreateMCPServerWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMCPServerResponse(rsp)
+}
+
+// CreateMCPServerWithResponse Register an MCP server
+//
+// Requires `tool:write` in this team. Nothing connects to the server
+// here: its tools are listed once discovery has run, and
+// `discovered_at` says when that was.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/mcp-servers (the `CreateMCPServer` operationId).
+func (c *ClientWithResponses) CreateMCPServerWithResponse(ctx context.Context, id TeamID, body CreateMCPServerJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMCPServerResponse, error) {
+	rsp, err := c.CreateMCPServer(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMCPServerResponse(rsp)
+}
+
+// DeleteMCPServerWithResponse Delete an MCP server
+//
+// Requires `tool:write` in this team. Its tools go with it. The secrets
+// it referred to are not touched: they are the team's, and another
+// server may name the same one.
+//
+// A server still granted to an agent is not deleted: removing it would
+// change what that agent can do without anyone changing the agent.
+// Revoke it from each agent first.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID} (the `DeleteMCPServer` operationId).
+func (c *ClientWithResponses) DeleteMCPServerWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*DeleteMCPServerResponse, error) {
+	rsp, err := c.DeleteMCPServer(ctx, id, serverID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteMCPServerResponse(rsp)
+}
+
+// GetMCPServerWithResponse Read an MCP server
+//
+// A server of another team answers 404, not 403: confirming the id
+// exists would let anyone walk the uuid space.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/mcp-servers/{serverID} (the `GetMCPServer` operationId).
+func (c *ClientWithResponses) GetMCPServerWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*GetMCPServerResponse, error) {
+	rsp, err := c.GetMCPServer(ctx, id, serverID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetMCPServerResponse(rsp)
+}
+
+// UpdateMCPServerWithBodyWithResponse Replace an MCP server
+//
+// Requires `tool:write` in this team. Every field is replaced, so a
+// field left out is cleared. Pointing the server somewhere else — a
+// different url or command — clears `discovered_at`; the tools already
+// listed stay until the next discovery replaces them, so an agent
+// granted this server keeps what it had rather than losing every tool
+// to an edit.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/mcp-servers/{serverID} (the `UpdateMCPServer` operationId).
+func (c *ClientWithResponses) UpdateMCPServerWithBodyWithResponse(ctx context.Context, id TeamID, serverID ServerID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateMCPServerResponse, error) {
+	rsp, err := c.UpdateMCPServerWithBody(ctx, id, serverID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateMCPServerResponse(rsp)
+}
+
+// UpdateMCPServerWithResponse Replace an MCP server
+//
+// Requires `tool:write` in this team. Every field is replaced, so a
+// field left out is cleared. Pointing the server somewhere else — a
+// different url or command — clears `discovered_at`; the tools already
+// listed stay until the next discovery replaces them, so an agent
+// granted this server keeps what it had rather than losing every tool
+// to an edit.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/mcp-servers/{serverID} (the `UpdateMCPServer` operationId).
+func (c *ClientWithResponses) UpdateMCPServerWithResponse(ctx context.Context, id TeamID, serverID ServerID, body UpdateMCPServerJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateMCPServerResponse, error) {
+	rsp, err := c.UpdateMCPServer(ctx, id, serverID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateMCPServerResponse(rsp)
+}
+
+// ListMCPToolsWithResponse List the tools a server offers
+//
+// What the last discovery found, by name. Not paged: a server offers
+// tens of tools, not thousands. Empty until discovery has run.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/mcp-servers/{serverID}/tools (the `ListMCPTools` operationId).
+func (c *ClientWithResponses) ListMCPToolsWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*ListMCPToolsResponse, error) {
+	rsp, err := c.ListMCPTools(ctx, id, serverID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMCPToolsResponse(rsp)
+}
+
 // ListTeamMembersWithResponse List a team's members
 //
 // A read, so seeing the team is enough — no action is required.
@@ -7322,6 +8514,230 @@ func ParseListChannelSessionsResponse(rsp *http.Response) (*ListChannelSessionsR
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ListChannelSessionsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListMCPServersResponse parses an HTTP response from a ListMCPServersWithResponse call
+func ParseListMCPServersResponse(rsp *http.Response) (*ListMCPServersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMCPServersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MCPServerPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListMCPServersResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateMCPServerResponse parses an HTTP response from a CreateMCPServerWithResponse call
+func ParseCreateMCPServerResponse(rsp *http.Response) (*CreateMCPServerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateMCPServerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest MCPServer
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateMCPServerResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteMCPServerResponse parses an HTTP response from a DeleteMCPServerWithResponse call
+func ParseDeleteMCPServerResponse(rsp *http.Response) (*DeleteMCPServerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteMCPServerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DeleteMCPServerResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetMCPServerResponse parses an HTTP response from a GetMCPServerWithResponse call
+func ParseGetMCPServerResponse(rsp *http.Response) (*GetMCPServerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetMCPServerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MCPServer
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetMCPServerResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUpdateMCPServerResponse parses an HTTP response from a UpdateMCPServerWithResponse call
+func ParseUpdateMCPServerResponse(rsp *http.Response) (*UpdateMCPServerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateMCPServerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MCPServer
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers UpdateMCPServerResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListMCPToolsResponse parses an HTTP response from a ListMCPToolsWithResponse call
+func ParseListMCPToolsResponse(rsp *http.Response) (*ListMCPToolsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMCPToolsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MCPToolList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListMCPToolsResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
