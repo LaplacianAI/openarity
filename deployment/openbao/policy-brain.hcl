@@ -103,6 +103,35 @@ path "secret/metadata/teams/+/attachments" {
   capabilities = ["delete"]
 }
 
+# The credentials a team's MCP servers need live under teams/<team_id>/mcp/,
+# and a server row holds only the reference: `teams/<t>/mcp/<name>#<key>`. The
+# brain reads them when it connects to a server and never writes one — the
+# team puts them there — so this rule is read and nothing else.
+#
+# `*` rather than `+` because a reference may nest (`mcp/github/prod#token`).
+# A glob sounds like it can be walked out of with `..`, and cannot. Measured
+# against this OpenBao under this rule alone, with a secret planted at the
+# target so a pass would read 200:
+#
+#   GET data/teams/<t>/mcp/github                200
+#   GET data/teams/<t>/mcp/a/b/c                 404   allowed, absent
+#   GET data/teams/<t>/mcp                       403   the root is not under it
+#   GET data/teams/<t>/mcpx/y                    403   the slash is part of it
+#   GET data/teams/<t>/mcp/../tokens/x           307   to tokens/x, then 403
+#   GET data/teams/<t>/mcp/%2e%2e/tokens/x       400   relative paths not supported
+#   list, metadata read, write, delete           403
+#
+# The brain refuses a reference with a dot in it before it is stored, so none
+# of the traversals is reachable through the API. This is the second wall, not
+# the first.
+#
+# Erasure is not granted, and that is a known gap rather than an oversight:
+# the names under mcp/ are the team's choice, so destroying them when a team is
+# deleted needs `list`, which the note at the bottom refuses for good reason.
+path "secret/data/teams/+/mcp/*" {
+  capabilities = ["read"]
+}
+
 # Renewing its own token is how the brain avoids logging in on every read.
 # The default policy already grants this, so it is redundant today — and it is
 # what keeps renewal working the day the role sets token_no_default_policy.

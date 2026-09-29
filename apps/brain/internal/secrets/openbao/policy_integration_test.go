@@ -206,6 +206,24 @@ func TestTheShippedPolicyRefusesEverythingElse(t *testing.T) {
 		"the version history of a team's attachment key": {
 			http.MethodGet, secret + "/metadata/teams/" + team + "/attachments",
 		},
+		"the MCP root itself, which is not under mcp/*": {
+			http.MethodGet, secret + "/data/teams/" + team + "/mcp",
+		},
+		"writing an MCP secret, which is the team's to do": {
+			http.MethodPut, secret + "/data/teams/" + team + "/mcp/github",
+		},
+		"soft-deleting an MCP secret": {
+			http.MethodDelete, secret + "/data/teams/" + team + "/mcp/github",
+		},
+		"destroying an MCP secret": {
+			http.MethodDelete, secret + "/metadata/teams/" + team + "/mcp/github",
+		},
+		"the version history of an MCP secret": {
+			http.MethodGet, secret + "/metadata/teams/" + team + "/mcp/github",
+		},
+		"listing a team's MCP secrets": {
+			http.MethodGet, secret + "/metadata/teams/" + team + "/mcp?list=true",
+		},
 		"administering OpenBao": {
 			http.MethodGet, "/v1/sys/policies/acl",
 		},
@@ -316,6 +334,66 @@ func TestTheShippedPolicyDestroysADeletedTeamsKey(t *testing.T) {
 	}
 }
 
+// Connecting to a team's MCP server reads the credential its row refers to,
+// under the policy that ships. A reference may nest, which is why the rule is
+// a glob; both shapes are read here so narrowing it to `+` fails a test rather
+// than a connection.
+func TestTheShippedPolicyReadsAnMCPServersSecret(t *testing.T) {
+	t.Parallel()
+
+	reader, _, _, addr := brainStore(t)
+	root := os.Getenv("BRAIN_TEST_SECRETS_TOKEN")
+	team := uuid.New()
+
+	for _, name := range []string{"github", "github/prod"} {
+		path := secrets.TeamPath(team, secrets.KindMCP) + "/" + name
+		admin{t: t, addr: addr, token: root}.do(http.MethodPost, "/v1/secret/data/"+path,
+			map[string]any{"data": map[string]string{"token": "ghp_" + name}})
+
+		got, err := reader.Get(t.Context(), path, "token")
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		if got != "ghp_"+name {
+			t.Errorf("%s token = %q, want %q", path, got, "ghp_"+name)
+		}
+	}
+}
+
+// A glob sounds like it can be walked out of with `..`. Each traversal here
+// aims at a secret that really exists, so a policy that let one through would
+// answer 200 rather than an ambiguous 404. OpenBao redirects a literal `..` to
+// the cleaned path, which the client follows and the policy then refuses, and
+// refuses an encoded one outright; either way, never the secret.
+func TestTheMCPGlobCannotBeWalkedOutOf(t *testing.T) {
+	t.Parallel()
+
+	_, _, token, addr := brainStore(t)
+	root := os.Getenv("BRAIN_TEST_SECRETS_TOKEN")
+	team := uuid.NewString()
+
+	admin{t: t, addr: addr, token: root}.do(http.MethodPost, "/v1/secret/data/teams/"+team+"/tokens/x",
+		map[string]any{"data": map[string]string{"k": "planted"}})
+
+	const data = "/v1/secret/data/teams/"
+	for name, path := range map[string]string{
+		"a literal ..":           data + team + "/mcp/../tokens/x",
+		"an encoded ..":          data + team + "/mcp/%2e%2e/tokens/x",
+		"an encoded slash":       data + team + "/mcp/..%2ftokens/x",
+		"out of the team, too":   data + team + "/mcp//../../" + team + "/tokens/x",
+		"the target, as a check": data + team + "/tokens/x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := statusAs(t, addr, token, http.MethodGet, path)
+			if got != http.StatusForbidden && got != http.StatusBadRequest {
+				t.Errorf("GET %s returned %d, want 403 or 400 — the mcp glob reached a sibling kind", path, got)
+			}
+		})
+	}
+}
+
 // The reason the file is read rather than copied. If it moves, this says so
 // instead of the tests above quietly falling back to something permissive.
 func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
@@ -327,6 +405,7 @@ func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
 		`path "secret/metadata/teams/+/channels/+"`,
 		`path "secret/data/teams/+/attachments"`,
 		`path "secret/metadata/teams/+/attachments"`,
+		`path "secret/data/teams/+/mcp/*"`,
 	} {
 		if !strings.Contains(hcl, want) {
 			t.Errorf("policy-brain.hcl no longer contains %s — the tests above are\n"+

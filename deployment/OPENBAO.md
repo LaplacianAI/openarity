@@ -101,6 +101,7 @@ of this file gets `null`.
 | `secret/metadata/teams/+/channels/+` | `delete` |
 | `secret/data/teams/+/attachments` | `read`, `create`, `update` |
 | `secret/metadata/teams/+/attachments` | `delete` |
+| `secret/data/teams/+/mcp/*` | `read` |
 | `auth/token/renew-self` | `update` |
 
 `+` matches exactly one path segment. That is the restriction: the brain
@@ -113,6 +114,21 @@ The attachments path holds one key per team, generated the first time that team
 stores something and used to encrypt every attachment before it reaches the
 object store. It is a leaf rather than a directory, which is why it has no
 trailing `+`.
+
+The `mcp/*` rule is where a team keeps the credentials its MCP servers need.
+A server row holds a reference such as `teams/<t>/mcp/github#token`, never the
+value, and the brain only reads it when connecting. The team writes these
+itself, for example:
+
+```sh
+bao kv put secret/teams/<team_id>/mcp/github token=<the token>
+```
+
+It is `*` rather than `+` so a reference can nest, and the glob cannot be
+walked out of: a literal `..` is redirected to the cleaned path and checked
+there, and an encoded one is refused as a relative path. These secrets are not
+destroyed when their team is deleted, because their names are the team's
+choice and finding them would need `list`.
 
 The `metadata` rule beside it is what lets `brain reap` destroy a deleted
 team's key, which is the half of an erasure that does not wait for the object

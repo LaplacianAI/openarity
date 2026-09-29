@@ -7,6 +7,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/authconfig"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/channels"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/docs"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpservers"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/sessions"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/skills"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teams"
@@ -38,6 +39,7 @@ func newRouters(
 		teams.New(logger, dbStore, authorizer),
 		channels.New(logger, dbStore, secretWriter, registry),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
+		mcpservers.New(logger, dbStore),
 		users.New(logger, dbStore),
 		sessions.New(logger, dbStore, authorizer, attachments),
 		authconfig.New(logger, cfg),

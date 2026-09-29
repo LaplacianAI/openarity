@@ -37,6 +37,8 @@ tags:
     description: Where a team's messages arrive from
   - name: skills
     description: Instructions an agent loads when a task calls for them
+  - name: mcp-servers
+    description: The MCP servers a team's agents may be granted, and the tools each offers
   - name: sessions
     description: Conversations, and what was said in them
   - name: users
@@ -1254,6 +1256,211 @@ paths:
         "504":
           $ref: "#/components/responses/SourceTimedOut"
 
+  /teams/{id}/mcp-servers:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listMCPServers
+      tags: [mcp-servers]
+      summary: List a team's MCP servers
+      description: |
+        A read, so belonging to the team is enough: granting a server to an
+        agent starts with seeing which exist. A server holds references to
+        secrets, never a secret, so there is nothing here to hide from a
+        member.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of servers, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPServerPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: createMCPServer
+      tags: [mcp-servers]
+      summary: Register an MCP server
+      description: |
+        Requires `tool:write` in this team. Nothing connects to the server
+        here: its tools are listed once discovery has run, and
+        `discovered_at` says when that was.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MCPServerRequest"
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPServer"
+        "400":
+          description: |
+            The body breaks a rule: the name, both or neither transport, a
+            url with a user, query or fragment, `env` on a url server or
+            `auth_secret_ref` on a command one, or a value that is not a
+            secret reference under this team's `mcp/` path. The sentence
+            names the field and never repeats its value.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["env GITHUB_TOKEN is a secret reference, teams/<team_id>/mcp/<name>#<key>, not a secret"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The team already has a server with that name, case-insensitively
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an MCP server with that name already exists"]
+
+  /teams/{id}/mcp-servers/{serverID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ServerID"
+    get:
+      operationId: getMCPServer
+      tags: [mcp-servers]
+      summary: Read an MCP server
+      description: |
+        A server of another team answers 404, not 403: confirming the id
+        exists would let anyone walk the uuid space.
+      responses:
+        "200":
+          description: The server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPServer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    put:
+      operationId: updateMCPServer
+      tags: [mcp-servers]
+      summary: Replace an MCP server
+      description: |
+        Requires `tool:write` in this team. Every field is replaced, so a
+        field left out is cleared. Pointing the server somewhere else — a
+        different url or command — clears `discovered_at`; the tools already
+        listed stay until the next discovery replaces them, so an agent
+        granted this server keeps what it had rather than losing every tool
+        to an edit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MCPServerRequest"
+      responses:
+        "200":
+          description: Replaced, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPServer"
+        "400":
+          description: |
+            The body breaks a rule: the name, both or neither transport, a
+            url with a user, query or fragment, `env` on a url server or
+            `auth_secret_ref` on a command one, or a value that is not a
+            secret reference under this team's `mcp/` path. The sentence
+            names the field and never repeats its value.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["env GITHUB_TOKEN is a secret reference, teams/<team_id>/mcp/<name>#<key>, not a secret"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another server in the team already has that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an MCP server with that name already exists"]
+
+    delete:
+      operationId: deleteMCPServer
+      tags: [mcp-servers]
+      summary: Delete an MCP server
+      description: |
+        Requires `tool:write` in this team. Its tools go with it. The secrets
+        it referred to are not touched: they are the team's, and another
+        server may name the same one.
+
+        A server still granted to an agent is not deleted: removing it would
+        change what that agent can do without anyone changing the agent.
+        Revoke it from each agent first.
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: An agent is still granted this server
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the MCP server is granted to an agent"]
+
+  /teams/{id}/mcp-servers/{serverID}/tools:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ServerID"
+    get:
+      operationId: listMCPTools
+      tags: [mcp-servers]
+      summary: List the tools a server offers
+      description: |
+        What the last discovery found, by name. Not paged: a server offers
+        tens of tools, not thousands. Empty until discovery has run.
+      responses:
+        "200":
+          description: The server's tools
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPToolList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /users:
     get:
       operationId: listUsers
@@ -1358,6 +1565,15 @@ components:
       in: path
       required: true
       description: The skill
+      schema:
+        type: string
+        format: uuid
+
+    ServerID:
+      name: serverID
+      in: path
+      required: true
+      description: The MCP server
       schema:
         type: string
         format: uuid
@@ -2117,3 +2333,137 @@ components:
         next_cursor:
           type: string
           description: Absent on the last page
+
+    MCPServer:
+      type: object
+      required: [id, team_id, name, env, bare, created_at, updated_at]
+      description: Exactly one of `url` and `command` is present.
+      properties:
+        id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: |
+            Unique within the team, case-insensitively. Each tool reaches the
+            model as `<name>__<tool>`.
+          examples: ["github"]
+        url:
+          type: string
+          format: uri
+          description: A remote server, spoken to over streamable HTTP
+          examples: ["https://mcp.example.com/v1"]
+        command:
+          type: array
+          items:
+            type: string
+          description: A local server, started with this argv and spoken to over stdio
+          examples: [["npx", "-y", "@modelcontextprotocol/server-filesystem"]]
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Variables set for a command server, each a secret reference.
+            Always an object; empty for a url server.
+          examples: [{"GITHUB_TOKEN": "teams/<team_id>/mcp/github#token"}]
+        auth_secret_ref:
+          type: string
+          description: |
+            A url server's bearer token. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
+        bare:
+          type: boolean
+          description: Tools reach the model as `<tool>` rather than `<name>__<tool>`
+        discovered_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            When its tools were last listed, and null until then. Always sent;
+            optional here only so a generated client decodes null as absent
+            rather than as the zero time.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MCPServerRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      description: |
+        Exactly one of `url` and `command`. Every value that is a credential
+        is a secret reference rather than the secret, so none reaches the
+        database.
+      properties:
+        name:
+          type: string
+          pattern: "^[a-zA-Z0-9_-]{1,64}$"
+          examples: ["github"]
+        url:
+          type: string
+          format: uri
+          description: http or https, with no user, password, query string or fragment
+          examples: ["https://mcp.example.com/v1"]
+        command:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: The program and its arguments; the first is not empty
+        env:
+          type: object
+          description: Only with `command`. Each key is a variable name and each value a secret reference.
+          additionalProperties:
+            type: string
+            pattern: "^teams/[0-9a-f-]{36}/mcp/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*#[A-Za-z0-9_-]+$"
+          propertyNames:
+            pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+        auth_secret_ref:
+          type: string
+          pattern: "^teams/[0-9a-f-]{36}/mcp/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*#[A-Za-z0-9_-]+$"
+          description: Only with `url`. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
+          examples: ["teams/<team_id>/mcp/github#token"]
+        bare:
+          type: boolean
+          default: false
+
+    MCPServerPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MCPServer"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    MCPTool:
+      type: object
+      required: [name, description, input_schema]
+      properties:
+        name:
+          type: string
+          description: As the server names it, without the server's prefix
+          examples: ["search_code"]
+        description:
+          type: string
+        input_schema:
+          type: object
+          description: The JSON Schema of the tool's arguments, exactly as the server sent it
+
+    MCPToolList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MCPTool"

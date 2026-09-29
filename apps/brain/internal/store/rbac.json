@@ -219,6 +219,39 @@
     },
     {
       "method": "GET",
+      "path": "/teams/{id}/mcp-servers",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/mcp-servers",
+      "scope": "team",
+      "permission": "tool:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/mcp-servers/{serverID}",
+      "scope": "member"
+    },
+    {
+      "method": "PUT",
+      "path": "/teams/{id}/mcp-servers/{serverID}",
+      "scope": "team",
+      "permission": "tool:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/mcp-servers/{serverID}",
+      "scope": "team",
+      "permission": "tool:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/mcp-servers/{serverID}/tools",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
       "path": "/users",
       "scope": "any_team",
       "permission": "user:read"

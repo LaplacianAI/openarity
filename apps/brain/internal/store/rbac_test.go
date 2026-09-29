@@ -497,6 +497,17 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"POST /teams/{id}/skills/import":                   "team skill:write",
 		"POST /teams/{id}/skills/{skillID}/sync":           "team skill:write",
 
+		// An MCP server is a tool source, so writing one is tool:write. Reading
+		// is member-wide for the reason skills are: granting a server to an
+		// agent starts with seeing which exist, and a row holds references,
+		// never a secret.
+		"GET /teams/{id}/mcp-servers":                  "member",
+		"POST /teams/{id}/mcp-servers":                 "team tool:write",
+		"GET /teams/{id}/mcp-servers/{serverID}":       "member",
+		"PUT /teams/{id}/mcp-servers/{serverID}":       "team tool:write",
+		"DELETE /teams/{id}/mcp-servers/{serverID}":    "team tool:write",
+		"GET /teams/{id}/mcp-servers/{serverID}/tools": "member",
+
 		"GET /users":  "any_team user:read",
 		"GET /whoami": "authenticated",
 	}
