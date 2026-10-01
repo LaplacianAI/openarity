@@ -142,13 +142,25 @@ func (q *Queries) ListMCPServersByTeam(ctx context.Context, arg ListMCPServersBy
 	return items, nil
 }
 
-const markMCPServerDiscovered = `-- name: MarkMCPServerDiscovered :exec
-UPDATE mcp_servers SET discovered_at = now() WHERE id = $1
+const markMCPServerDiscovered = `-- name: MarkMCPServerDiscovered :execrows
+UPDATE mcp_servers SET discovered_at = now()
+WHERE id = $1 AND updated_at = $2
 `
 
-func (q *Queries) MarkMCPServerDiscovered(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markMCPServerDiscovered, id)
-	return err
+type MarkMCPServerDiscoveredParams struct {
+	ID        uuid.UUID
+	UpdatedAt time.Time
+}
+
+// Only the version that was discovered is marked: a server edited or deleted
+// while discovery ran matches no row, and the caller rolls its tools back.
+// The row lock this takes makes a concurrent edit wait for the commit.
+func (q *Queries) MarkMCPServerDiscovered(ctx context.Context, arg MarkMCPServerDiscoveredParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markMCPServerDiscovered, arg.ID, arg.UpdatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateMCPServer = `-- name: UpdateMCPServer :one

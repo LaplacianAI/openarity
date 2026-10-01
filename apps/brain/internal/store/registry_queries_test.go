@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
@@ -429,9 +430,7 @@ func TestReplacingAServerKeepsItsDiscoveryWhileTheTransportIsTheSame(t *testing.
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
-	if err := s.MarkMCPServerDiscovered(t.Context(), srv.ID); err != nil {
-		t.Fatalf("MarkMCPServerDiscovered: %v", err)
-	}
+	mustMark(t, s, srv)
 
 	got, err := s.UpdateMCPServer(t.Context(), db.UpdateMCPServerParams{
 		ID: srv.ID, Name: "github-renamed", Url: srv.Url, Env: []byte(`{"TOKEN":"teams/x/mcp#token"}`),
@@ -441,6 +440,115 @@ func TestReplacingAServerKeepsItsDiscoveryWhileTheTransportIsTheSame(t *testing.
 	}
 	if got.DiscoveredAt == nil {
 		t.Error("renaming the server forgot that it had been discovered")
+	}
+}
+
+func mustMark(t *testing.T, s *Store, srv db.McpServer) {
+	t.Helper()
+
+	n, err := s.MarkMCPServerDiscovered(t.Context(), db.MarkMCPServerDiscoveredParams{ID: srv.ID, UpdatedAt: srv.UpdatedAt})
+	if err != nil || n != 1 {
+		t.Fatalf("MarkMCPServerDiscovered: %d rows, %v", n, err)
+	}
+}
+
+func TestMarkingTheVersionThatWasDiscoveredSetsDiscoveredAt(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
+
+	mustMark(t, s, srv)
+
+	got, err := s.GetMCPServer(t.Context(), srv.ID)
+	if err != nil {
+		t.Fatalf("GetMCPServer: %v", err)
+	}
+	if got.DiscoveredAt == nil {
+		t.Error("discovered_at is still null")
+	}
+}
+
+// Discovery runs outside the transaction, so the server can change under it.
+// The version it read is the only one it may mark: any edit, even one that
+// keeps the transport, moves updated_at and the mark matches nothing.
+func TestAServerEditedSinceItWasReadIsNotMarked(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	read := mustCreateServer(t, s, urlServer(team.ID, "github"))
+
+	if _, err := s.UpdateMCPServer(t.Context(), db.UpdateMCPServerParams{
+		ID: read.ID, Name: read.Name, Url: read.Url, Env: []byte(`{}`), Bare: true,
+	}); err != nil {
+		t.Fatalf("UpdateMCPServer: %v", err)
+	}
+
+	n, err := s.MarkMCPServerDiscovered(t.Context(), db.MarkMCPServerDiscoveredParams{ID: read.ID, UpdatedAt: read.UpdatedAt})
+	if err != nil || n != 0 {
+		t.Errorf("marking a stale version: %d rows, %v; want 0 and no error", n, err)
+	}
+	got, err := s.GetMCPServer(t.Context(), read.ID)
+	if err != nil {
+		t.Fatalf("GetMCPServer: %v", err)
+	}
+	if got.DiscoveredAt != nil {
+		t.Error("the edited server was marked discovered")
+	}
+}
+
+func TestADeletedServerIsNotMarked(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
+	if err := s.DeleteMCPServer(t.Context(), srv.ID); err != nil {
+		t.Fatalf("DeleteMCPServer: %v", err)
+	}
+
+	n, err := s.MarkMCPServerDiscovered(t.Context(), db.MarkMCPServerDiscoveredParams{ID: srv.ID, UpdatedAt: srv.UpdatedAt})
+	if err != nil || n != 0 {
+		t.Errorf("marking a deleted server: %d rows, %v; want 0 and no error", n, err)
+	}
+}
+
+// The mark goes first in the handler's transaction, and its row lock is what
+// keeps an edit from landing between the mark and the tools. So an edit must
+// wait until that transaction commits.
+func TestAnEditWaitsForTheMarkToCommit(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
+
+	edited := make(chan error, 1)
+	err := s.InTx(t.Context(), func(q *db.Queries) error {
+		n, err := q.MarkMCPServerDiscovered(t.Context(), db.MarkMCPServerDiscoveredParams{ID: srv.ID, UpdatedAt: srv.UpdatedAt})
+		if err != nil || n != 1 {
+			return fmt.Errorf("mark: %d rows, %w", n, err)
+		}
+
+		go func() {
+			_, err := s.UpdateMCPServer(t.Context(), db.UpdateMCPServerParams{
+				ID: srv.ID, Name: "renamed", Url: srv.Url, Env: []byte(`{}`),
+			})
+			edited <- err
+		}()
+
+		select {
+		case err := <-edited:
+			t.Errorf("the edit landed while the mark's transaction was open (err %v)", err)
+		case <-time.After(500 * time.Millisecond):
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("InTx: %v", err)
+	}
+
+	select {
+	case err := <-edited:
+		if err != nil {
+			t.Errorf("the edit failed once the lock was released: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the edit never landed after the commit")
 	}
 }
 
@@ -468,9 +576,7 @@ func TestReplacingAServersTransportForgetsItsDiscovery(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := mustCreateServer(t, s, urlServer(team.ID, "s"+uuid.NewString()[:8]))
-			if err := s.MarkMCPServerDiscovered(t.Context(), srv.ID); err != nil {
-				t.Fatalf("MarkMCPServerDiscovered: %v", err)
-			}
+			mustMark(t, s, srv)
 
 			got, err := s.UpdateMCPServer(t.Context(), change(srv))
 			if err != nil {

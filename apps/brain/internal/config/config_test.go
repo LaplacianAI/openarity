@@ -50,6 +50,7 @@ func TestLoadDefaults(t *testing.T) {
 		"BootstrapFirstUser":        "false",
 		"SkillImportHosts":          "0 entries",
 		"SkillImportGitHubTokenRef": "",
+		"MCPPrivateNetworks":        "0 entries",
 	}
 	got := map[string]string{
 		"Environment":               string(cfg.Environment),
@@ -80,6 +81,7 @@ func TestLoadDefaults(t *testing.T) {
 		"BootstrapFirstUser":        strconv.FormatBool(cfg.BootstrapFirstUser),
 		"SkillImportHosts":          fmt.Sprintf("%d entries", len(cfg.SkillImportHosts)),
 		"SkillImportGitHubTokenRef": cfg.SkillImportGitHubTokenRef,
+		"MCPPrivateNetworks":        fmt.Sprintf("%d entries", len(cfg.MCPPrivateNetworks)),
 	}
 	for k, w := range want {
 		if got[k] != w {

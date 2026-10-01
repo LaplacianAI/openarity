@@ -22,6 +22,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/discovery"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -43,6 +44,11 @@ type fakeStore struct {
 	tools   map[uuid.UUID][]db.McpTool
 
 	readErr, listErr, createErr, updateErr, deleteErr, toolsErr error
+	markErr, upsertErr, pruneErr                                error
+
+	txOpen    bool
+	committed int
+	marked    []db.MarkMCPServerDiscoveredParams
 
 	reads      int
 	created    []db.CreateMCPServerParams
@@ -60,12 +66,113 @@ func newFakeStore(existing ...db.McpServer) *fakeStore {
 	return s
 }
 
+// InTx stages every write and applies them only if fn succeeds, as a real
+// transaction would, so "nothing changed" is something a test can check.
+func (s *fakeStore) InTx(_ context.Context, fn func(Queries) error) error {
+	s.txOpen = true
+	defer func() { s.txOpen = false }()
+
+	tx := &fakeTx{store: s}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	for _, apply := range tx.staged {
+		apply()
+	}
+	s.committed++
+	return nil
+}
+
+type fakeTx struct {
+	store  *fakeStore
+	staged []func()
+}
+
+func (t *fakeTx) MarkMCPServerDiscovered(_ context.Context, arg db.MarkMCPServerDiscoveredParams) (int64, error) {
+	s := t.store
+	s.marked = append(s.marked, arg)
+	if s.markErr != nil {
+		return 0, s.markErr
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row, ok := s.servers[arg.ID]
+	if !ok || !row.UpdatedAt.Equal(arg.UpdatedAt) {
+		return 0, nil
+	}
+	t.staged = append(t.staged, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		now := time.Now()
+		row := s.servers[arg.ID]
+		row.DiscoveredAt = &now
+		s.servers[arg.ID] = row
+	})
+	return 1, nil
+}
+
+func (t *fakeTx) UpsertMCPTool(_ context.Context, arg db.UpsertMCPToolParams) error {
+	if t.store.upsertErr != nil {
+		return t.store.upsertErr
+	}
+	t.staged = append(t.staged, func() {
+		s := t.store
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		tool := db.McpTool{McpServerID: arg.McpServerID, TeamID: arg.TeamID, Name: arg.Name, Description: arg.Description, InputSchema: arg.InputSchema}
+		for i, existing := range s.tools[arg.McpServerID] {
+			if existing.Name == arg.Name {
+				s.tools[arg.McpServerID][i] = tool
+				return
+			}
+		}
+		s.tools[arg.McpServerID] = append(s.tools[arg.McpServerID], tool)
+	})
+	return nil
+}
+
+func (t *fakeTx) DeleteMCPToolsNotIn(_ context.Context, arg db.DeleteMCPToolsNotInParams) error {
+	if t.store.pruneErr != nil {
+		return t.store.pruneErr
+	}
+	t.staged = append(t.staged, func() {
+		s := t.store
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.tools[arg.McpServerID] = slices.DeleteFunc(s.tools[arg.McpServerID], func(tool db.McpTool) bool {
+			return !slices.Contains(arg.Names, tool.Name)
+		})
+	})
+	return nil
+}
+
+type fakeDiscoverer struct {
+	tools  []discovery.Tool
+	err    error
+	during func()
+	store  *fakeStore
+	calls  []db.McpServer
+	inTx   bool
+}
+
+func (d *fakeDiscoverer) Discover(_ context.Context, row db.McpServer) ([]discovery.Tool, error) {
+	d.calls = append(d.calls, row)
+	if d.store != nil && d.store.txOpen {
+		d.inTx = true
+	}
+	if d.during != nil {
+		d.during()
+	}
+	return d.tools, d.err
+}
+
 func (s *fakeStore) touched() bool {
 	return s.reads != 0 || len(s.listArgs) != 0 || len(s.toolsAsked) != 0 || s.wrote()
 }
 
 func (s *fakeStore) wrote() bool {
-	return len(s.created) != 0 || len(s.updated) != 0 || len(s.deleted) != 0
+	return len(s.created) != 0 || len(s.updated) != 0 || len(s.deleted) != 0 || len(s.marked) != 0 || s.committed != 0
 }
 
 func (s *fakeStore) CreateMCPServer(_ context.Context, arg db.CreateMCPServerParams) (db.McpServer, error) {
@@ -215,14 +322,21 @@ func serverRoutes(t *testing.T) authz.Routes {
 	add("PUT", "/teams/{id}/mcp-servers/{serverID}", "team", &write)
 	add("DELETE", "/teams/{id}/mcp-servers/{serverID}", "team", &write)
 	add("GET", "/teams/{id}/mcp-servers/{serverID}/tools", "member", nil)
+	add("POST", "/teams/{id}/mcp-servers/{serverID}/discover", "team", &write)
 	return rs
 }
 
 func call(t *testing.T, s *fakeStore, a *fakeAuthz, u *auth.User, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 
+	return callWith(t, s, &fakeDiscoverer{store: s}, discardLogger(), a, u, method, path, body)
+}
+
+func callWith(t *testing.T, s *fakeStore, d *fakeDiscoverer, logger *slog.Logger, a *fakeAuthz, u *auth.User, method, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+
 	mux := http.NewServeMux()
-	New(discardLogger(), s).Register(mux, api.NewGuard(serverRoutes(t), a, discardLogger()))
+	New(logger, s, d).Register(mux, api.NewGuard(serverRoutes(t), a, discardLogger()))
 
 	var in io.Reader = http.NoBody
 	switch b := body.(type) {
@@ -297,6 +411,8 @@ func one(teamID, id uuid.UUID) string { return collection(teamID) + "/" + id.Str
 
 func toolsOf(teamID, id uuid.UUID) string { return one(teamID, id) + "/tools" }
 
+func discoverOf(teamID, id uuid.UUID) string { return one(teamID, id) + "/discover" }
+
 func decodeServer(t *testing.T, rec *httptest.ResponseRecorder) server {
 	t.Helper()
 
@@ -320,9 +436,10 @@ func TestWritesNeedToolWrite(t *testing.T) {
 		body   func(db.McpServer) any
 		ok     int
 	}{
-		"create": {http.MethodPost, func(r db.McpServer) string { return collection(r.TeamID) }, func(r db.McpServer) any { return urlBody(r.TeamID, "linear") }, http.StatusCreated},
-		"update": {http.MethodPut, func(r db.McpServer) string { return one(r.TeamID, r.ID) }, func(r db.McpServer) any { return urlBody(r.TeamID, r.Name) }, http.StatusOK},
-		"delete": {http.MethodDelete, func(r db.McpServer) string { return one(r.TeamID, r.ID) }, func(db.McpServer) any { return nil }, http.StatusNoContent},
+		"create":   {http.MethodPost, func(r db.McpServer) string { return collection(r.TeamID) }, func(r db.McpServer) any { return urlBody(r.TeamID, "linear") }, http.StatusCreated},
+		"update":   {http.MethodPut, func(r db.McpServer) string { return one(r.TeamID, r.ID) }, func(r db.McpServer) any { return urlBody(r.TeamID, r.Name) }, http.StatusOK},
+		"delete":   {http.MethodDelete, func(r db.McpServer) string { return one(r.TeamID, r.ID) }, func(db.McpServer) any { return nil }, http.StatusNoContent},
+		"discover": {http.MethodPost, func(r db.McpServer) string { return discoverOf(r.TeamID, r.ID) }, func(db.McpServer) any { return nil }, http.StatusOK},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -391,12 +508,13 @@ func TestEveryRouteRefusesARequestWithNoUser(t *testing.T) {
 
 	teamID, id := uuid.New(), uuid.New()
 	for name, tc := range map[string]struct{ method, path string }{
-		"list":   {http.MethodGet, collection(teamID)},
-		"create": {http.MethodPost, collection(teamID)},
-		"get":    {http.MethodGet, one(teamID, id)},
-		"update": {http.MethodPut, one(teamID, id)},
-		"delete": {http.MethodDelete, one(teamID, id)},
-		"tools":  {http.MethodGet, toolsOf(teamID, id)},
+		"list":     {http.MethodGet, collection(teamID)},
+		"create":   {http.MethodPost, collection(teamID)},
+		"get":      {http.MethodGet, one(teamID, id)},
+		"update":   {http.MethodPut, one(teamID, id)},
+		"delete":   {http.MethodDelete, one(teamID, id)},
+		"tools":    {http.MethodGet, toolsOf(teamID, id)},
+		"discover": {http.MethodPost, discoverOf(teamID, id)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -428,6 +546,8 @@ func TestUndeclaredMethodsDoNotAnswer(t *testing.T) {
 		"POST on its tools":        {http.MethodPost, toolsOf(teamID, id)},
 		"PUT on its tools":         {http.MethodPut, toolsOf(teamID, id)},
 		"DELETE on its tools":      {http.MethodDelete, toolsOf(teamID, id)},
+		"GET on discover":          {http.MethodGet, discoverOf(teamID, id)},
+		"PUT on discover":          {http.MethodPut, discoverOf(teamID, id)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -682,10 +802,11 @@ func TestAnotherTeamsServerIsNotFound(t *testing.T) {
 		method, path string
 		body         any
 	}{
-		"get":    {http.MethodGet, one(mine, theirs.ID), nil},
-		"update": {http.MethodPut, one(mine, theirs.ID), urlBody(mine, "github")},
-		"delete": {http.MethodDelete, one(mine, theirs.ID), nil},
-		"tools":  {http.MethodGet, toolsOf(mine, theirs.ID), nil},
+		"get":      {http.MethodGet, one(mine, theirs.ID), nil},
+		"update":   {http.MethodPut, one(mine, theirs.ID), urlBody(mine, "github")},
+		"delete":   {http.MethodDelete, one(mine, theirs.ID), nil},
+		"tools":    {http.MethodGet, toolsOf(mine, theirs.ID), nil},
+		"discover": {http.MethodPost, discoverOf(mine, theirs.ID), nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

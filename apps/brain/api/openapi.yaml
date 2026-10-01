@@ -1461,6 +1461,82 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/mcp-servers/{serverID}/discover:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ServerID"
+    post:
+      operationId: discoverMCPServer
+      tags: [mcp-servers]
+      summary: Ask a server which tools it offers, and store them
+      description: |
+        Requires `tool:write` in this team. The brain connects to the server's
+        url, sending `auth_secret_ref`'s secret as a bearer token over https,
+        lists its tools within 15 seconds, and replaces the stored list in one
+        step: new tools are added, changed ones rewritten, and ones the server
+        no longer offers removed. Any failure leaves the previous list as it
+        was, so an agent granted the server keeps what it had.
+
+        The brain reaches public addresses only, plus the private ranges its
+        operator lists in `OPENARITY_MCP_PRIVATE_NETWORKS`. Link-local
+        addresses, where cloud metadata answers, are never reached. Redirects
+        are not followed.
+
+        No body is read.
+      responses:
+        "200":
+          description: Discovered and stored; the tools as the server listed them
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPToolList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            A command server, which cannot be discovered until agents run in a
+            sandbox; or the server was edited while it was being discovered,
+            and nothing was stored.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the server changed while it was being discovered; discover it again"]
+        "422":
+          description: |
+            The brain will not use this server as it is: its address is one
+            the brain may not reach, it redirected, its token would go over
+            plain http, `auth_secret_ref` names a missing or empty secret, or
+            what it offers cannot be stored — more than 500 tools, a name that
+            is not usable, a description over 16 KiB, a schema over 64 KiB, or
+            a NUL character. The address the brain resolved is logged, never
+            returned.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the server offers something that cannot be stored: search is offered twice"]
+        "502":
+          description: The server did not answer as an MCP server. The detail is logged.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the server did not answer as an MCP server"]
+        "504":
+          description: The server did not finish answering within 15 seconds.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the server did not answer in time"]
+
   /users:
     get:
       operationId: listUsers

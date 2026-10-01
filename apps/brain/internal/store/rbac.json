@@ -251,6 +251,12 @@
       "scope": "member"
     },
     {
+      "method": "POST",
+      "path": "/teams/{id}/mcp-servers/{serverID}/discover",
+      "scope": "team",
+      "permission": "tool:write"
+    },
+    {
       "method": "GET",
       "path": "/users",
       "scope": "any_team",

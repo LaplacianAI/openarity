@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"net/url"
 
 	"github.com/caarlos0/env/v11"
@@ -64,6 +65,9 @@ type Config struct {
 	/* Skill Import Configuration */
 	SkillImportHosts          []string `env:"SKILL_IMPORT_HOSTS" envDefault:""`
 	SkillImportGitHubTokenRef string   `env:"SKILL_IMPORT_GITHUB_TOKEN_REF" envDefault:""`
+
+	/* MCP Configuration */
+	MCPPrivateNetworks []netip.Prefix `env:"MCP_PRIVATE_NETWORKS" envDefault:""`
 }
 
 func (c *Config) String() string {
@@ -72,7 +76,7 @@ func (c *Config) String() string {
 			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s "+
 			"SecretsBackend:%s SecretsAddr:%s "+
 			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
-			"OmniRouteURL:%s SkillImportHosts:%v SkillImportGitHubTokenRef:%s}",
+			"OmniRouteURL:%s SkillImportHosts:%v SkillImportGitHubTokenRef:%s MCPPrivateNetworks:%v}",
 		c.Environment,
 		c.LogLevel,
 		c.APIBind,
@@ -89,6 +93,7 @@ func (c *Config) String() string {
 		redactURL(c.OmniRouteURL),
 		c.SkillImportHosts,
 		c.SkillImportGitHubTokenRef,
+		c.MCPPrivateNetworks,
 	)
 }
 

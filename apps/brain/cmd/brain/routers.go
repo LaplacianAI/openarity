@@ -33,13 +33,14 @@ func newRouters(
 	registry gateway.Registry,
 	attachments *objects.Encrypted,
 	importer skills.Importer,
+	discoverer mcpservers.Discoverer,
 ) []server.Router {
 	routers := []server.Router{
 		whoami.New(logger),
 		teams.New(logger, dbStore, authorizer),
 		channels.New(logger, dbStore, secretWriter, registry),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
-		mcpservers.New(logger, dbStore),
+		mcpservers.New(logger, mcpStore{dbStore}, discoverer),
 		users.New(logger, dbStore),
 		sessions.New(logger, dbStore, authorizer, attachments),
 		authconfig.New(logger, cfg),
@@ -77,5 +78,11 @@ func (i inbox) InTx(ctx context.Context, fn func(gateway.Queries) error) error {
 type skillStore struct{ *store.Store }
 
 func (s skillStore) InTx(ctx context.Context, fn func(skills.Queries) error) error {
+	return s.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
+}
+
+type mcpStore struct{ *store.Store }
+
+func (s mcpStore) InTx(ctx context.Context, fn func(mcpservers.Queries) error) error {
 	return s.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
 }

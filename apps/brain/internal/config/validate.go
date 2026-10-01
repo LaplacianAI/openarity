@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"slices"
@@ -67,6 +68,30 @@ func checkSecretRef(field, v string) error {
 	return nil
 }
 
+var linkLocal = []netip.Prefix{
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("fe80::/10"),
+}
+
+func checkPrivateNetworks(field string, nets []netip.Prefix) error {
+	for i, p := range nets {
+		switch {
+		case !p.IsValid():
+			return fmt.Errorf("%s entry %d is empty — check for a trailing comma", field, i)
+		case p.Addr().Is4In6():
+			return fmt.Errorf("%s entry %s is an IPv4-mapped prefix — write it as IPv4", field, p)
+		case p != p.Masked():
+			return fmt.Errorf("%s entry %s has host bits set — did you mean %s?", field, p, p.Masked())
+		}
+		for _, ll := range linkLocal {
+			if p.Overlaps(ll) {
+				return fmt.Errorf("%s entry %s overlaps %s, where cloud metadata services answer, which is never dialled", field, p, ll)
+			}
+		}
+	}
+	return nil
+}
+
 func (c *Config) Validate() error {
 	var errs []error
 
@@ -123,6 +148,10 @@ func (c *Config) Validate() error {
 	}
 
 	if err := checkSecretRef("SKILL_IMPORT_GITHUB_TOKEN_REF", c.SkillImportGitHubTokenRef); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := checkPrivateNetworks("MCP_PRIVATE_NETWORKS", c.MCPPrivateNetworks); err != nil {
 		errs = append(errs, err)
 	}
 

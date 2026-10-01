@@ -38,5 +38,9 @@ RETURNING *;
 -- name: DeleteMCPServer :exec
 DELETE FROM mcp_servers WHERE id = $1;
 
--- name: MarkMCPServerDiscovered :exec
-UPDATE mcp_servers SET discovered_at = now() WHERE id = $1;
+-- Only the version that was discovered is marked: a server edited or deleted
+-- while discovery ran matches no row, and the caller rolls its tools back.
+-- The row lock this takes makes a concurrent edit wait for the commit.
+-- name: MarkMCPServerDiscovered :execrows
+UPDATE mcp_servers SET discovered_at = now()
+WHERE id = sqlc.arg('id') AND updated_at = sqlc.arg('updated_at');

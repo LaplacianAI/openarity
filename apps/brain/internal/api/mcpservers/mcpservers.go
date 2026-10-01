@@ -28,15 +28,17 @@ type Store interface {
 	UpdateMCPServer(ctx context.Context, arg db.UpdateMCPServerParams) (db.McpServer, error)
 	DeleteMCPServer(ctx context.Context, id uuid.UUID) error
 	ListMCPToolsByServer(ctx context.Context, mcpServerID uuid.UUID) ([]db.McpTool, error)
+	InTx(ctx context.Context, fn func(Queries) error) error
 }
 
 type handler struct {
-	logger *slog.Logger
-	store  Store
+	logger     *slog.Logger
+	store      Store
+	discoverer Discoverer
 }
 
-func New(logger *slog.Logger, s Store) *api.Router {
-	h := &handler{logger: logger, store: s}
+func New(logger *slog.Logger, s Store, d Discoverer) *api.Router {
+	h := &handler{logger: logger, store: s, discoverer: d}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/mcp-servers", h.list)
@@ -45,6 +47,7 @@ func New(logger *slog.Logger, s Store) *api.Router {
 	r.Put("/{id}/mcp-servers/{serverID}", h.update)
 	r.Delete("/{id}/mcp-servers/{serverID}", h.delete)
 	r.Get("/{id}/mcp-servers/{serverID}/tools", h.tools)
+	r.Post("/{id}/mcp-servers/{serverID}/discover", h.discover)
 
 	return r
 }
