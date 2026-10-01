@@ -1397,6 +1397,25 @@ type ClientInterface interface {
 	// Corresponds with PUT /teams/{id}/mcp-servers/{serverID} (the `UpdateMCPServer` operationId).
 	UpdateMCPServer(ctx context.Context, id TeamID, serverID ServerID, body UpdateMCPServerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DiscoverMCPServer Ask a server which tools it offers, and store them
+	//
+	// Requires `tool:write` in this team. The brain connects to the server's
+	// url, sending `auth_secret_ref`'s secret as a bearer token over https,
+	// lists its tools within 15 seconds, and replaces the stored list in one
+	// step: new tools are added, changed ones rewritten, and ones the server
+	// no longer offers removed. Any failure leaves the previous list as it
+	// was, so an agent granted the server keeps what it had.
+	//
+	// The brain reaches public addresses only, plus the private ranges its
+	// operator lists in `OPENARITY_MCP_PRIVATE_NETWORKS`. Link-local
+	// addresses, where cloud metadata answers, are never reached. Redirects
+	// are not followed.
+	//
+	// No body is read.
+	//
+	// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/discover (the `DiscoverMCPServer` operationId).
+	DiscoverMCPServer(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListMCPTools List the tools a server offers
 	//
 	// What the last discovery found, by name. Not paged: a server offers
@@ -2249,6 +2268,35 @@ func (c *Client) UpdateMCPServerWithBody(ctx context.Context, id TeamID, serverI
 // Corresponds with PUT /teams/{id}/mcp-servers/{serverID} (the `UpdateMCPServer` operationId).
 func (c *Client) UpdateMCPServer(ctx context.Context, id TeamID, serverID ServerID, body UpdateMCPServerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateMCPServerRequest(c.Server, id, serverID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DiscoverMCPServer Ask a server which tools it offers, and store them
+//
+// Requires `tool:write` in this team. The brain connects to the server's
+// url, sending `auth_secret_ref`'s secret as a bearer token over https,
+// lists its tools within 15 seconds, and replaces the stored list in one
+// step: new tools are added, changed ones rewritten, and ones the server
+// no longer offers removed. Any failure leaves the previous list as it
+// was, so an agent granted the server keeps what it had.
+//
+// The brain reaches public addresses only, plus the private ranges its
+// operator lists in `OPENARITY_MCP_PRIVATE_NETWORKS`. Link-local
+// addresses, where cloud metadata answers, are never reached. Redirects
+// are not followed.
+//
+// No body is read.
+//
+// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/discover (the `DiscoverMCPServer` operationId).
+func (c *Client) DiscoverMCPServer(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDiscoverMCPServerRequest(c.Server, id, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -3753,6 +3801,47 @@ func NewUpdateMCPServerRequestWithBody(server string, id TeamID, serverID Server
 	return req, nil
 }
 
+// NewDiscoverMCPServerRequest constructs an http.Request for the DiscoverMCPServer method
+func NewDiscoverMCPServerRequest(server string, id TeamID, serverID ServerID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "serverID", serverID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-servers/%s/discover", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListMCPToolsRequest constructs an http.Request for the ListMCPTools method
 func NewListMCPToolsRequest(server string, id TeamID, serverID ServerID) (*http.Request, error) {
 	var err error
@@ -5106,6 +5195,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /teams/{id}/mcp-servers/{serverID} (the `UpdateMCPServer` operationId).
 	UpdateMCPServerWithResponse(ctx context.Context, id TeamID, serverID ServerID, body UpdateMCPServerJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateMCPServerResponse, error)
 
+	// DiscoverMCPServerWithResponse Ask a server which tools it offers, and store them
+	//
+	// Requires `tool:write` in this team. The brain connects to the server's
+	// url, sending `auth_secret_ref`'s secret as a bearer token over https,
+	// lists its tools within 15 seconds, and replaces the stored list in one
+	// step: new tools are added, changed ones rewritten, and ones the server
+	// no longer offers removed. Any failure leaves the previous list as it
+	// was, so an agent granted the server keeps what it had.
+	//
+	// The brain reaches public addresses only, plus the private ranges its
+	// operator lists in `OPENARITY_MCP_PRIVATE_NETWORKS`. Link-local
+	// addresses, where cloud metadata answers, are never reached. Redirects
+	// are not followed.
+	//
+	// No body is read.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/discover (the `DiscoverMCPServer` operationId).
+	DiscoverMCPServerWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*DiscoverMCPServerResponse, error)
+
 	// ListMCPToolsWithResponse List the tools a server offers
 	//
 	// What the last discovery found, by name. Not paged: a server offers
@@ -6276,6 +6386,54 @@ func (r UpdateMCPServerResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r UpdateMCPServerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DiscoverMCPServerResponse401Headers the declared response headers of an HTTP 401 response for DiscoverMCPServer
+type DiscoverMCPServerResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DiscoverMCPServerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MCPToolList
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DiscoverMCPServerResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DiscoverMCPServerResponse) GetJSON200() *MCPToolList {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r DiscoverMCPServerResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DiscoverMCPServerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DiscoverMCPServerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DiscoverMCPServerResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -7624,6 +7782,33 @@ func (c *ClientWithResponses) UpdateMCPServerWithResponse(ctx context.Context, i
 	return ParseUpdateMCPServerResponse(rsp)
 }
 
+// DiscoverMCPServerWithResponse Ask a server which tools it offers, and store them
+//
+// Requires `tool:write` in this team. The brain connects to the server's
+// url, sending `auth_secret_ref`'s secret as a bearer token over https,
+// lists its tools within 15 seconds, and replaces the stored list in one
+// step: new tools are added, changed ones rewritten, and ones the server
+// no longer offers removed. Any failure leaves the previous list as it
+// was, so an agent granted the server keeps what it had.
+//
+// The brain reaches public addresses only, plus the private ranges its
+// operator lists in `OPENARITY_MCP_PRIVATE_NETWORKS`. Link-local
+// addresses, where cloud metadata answers, are never reached. Redirects
+// are not followed.
+//
+// No body is read.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/discover (the `DiscoverMCPServer` operationId).
+func (c *ClientWithResponses) DiscoverMCPServerWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*DiscoverMCPServerResponse, error) {
+	rsp, err := c.DiscoverMCPServer(ctx, id, serverID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDiscoverMCPServerResponse(rsp)
+}
+
 // ListMCPToolsWithResponse List the tools a server offers
 //
 // What the last discovery found, by name. Not paged: a server offers
@@ -8699,6 +8884,45 @@ func ParseUpdateMCPServerResponse(rsp *http.Response) (*UpdateMCPServerResponse,
 	switch {
 	case rsp.StatusCode == 401:
 		var headers UpdateMCPServerResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDiscoverMCPServerResponse parses an HTTP response from a DiscoverMCPServerWithResponse call
+func ParseDiscoverMCPServerResponse(rsp *http.Response) (*DiscoverMCPServerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DiscoverMCPServerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MCPToolList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DiscoverMCPServerResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
