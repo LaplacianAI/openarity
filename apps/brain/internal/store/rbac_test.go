@@ -497,6 +497,14 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"POST /teams/{id}/skills/import":                   "team skill:write",
 		"POST /teams/{id}/skills/{skillID}/sync":           "team skill:write",
 
+		// Reading an agent is member-wide: it is what a member runs. Writing
+		// one is agent:write, which both shipped roles hold.
+		"GET /teams/{id}/agents":              "member",
+		"POST /teams/{id}/agents":             "team agent:write",
+		"GET /teams/{id}/agents/{agentID}":    "member",
+		"PUT /teams/{id}/agents/{agentID}":    "team agent:write",
+		"DELETE /teams/{id}/agents/{agentID}": "team agent:write",
+
 		// An MCP server is a tool source, so writing one is tool:write. Reading
 		// is member-wide for the reason skills are: granting a server to an
 		// agent starts with seeing which exist, and a row holds references,

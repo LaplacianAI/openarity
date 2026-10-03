@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/authconfig"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/channels"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/docs"
@@ -41,6 +42,7 @@ func newRouters(
 		channels.New(logger, dbStore, secretWriter, registry),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
 		mcpservers.New(logger, mcpStore{dbStore}, discoverer),
+		agents.New(logger, agentStore{dbStore}),
 		users.New(logger, dbStore),
 		sessions.New(logger, dbStore, authorizer, attachments),
 		authconfig.New(logger, cfg),
@@ -84,5 +86,11 @@ func (s skillStore) InTx(ctx context.Context, fn func(skills.Queries) error) err
 type mcpStore struct{ *store.Store }
 
 func (s mcpStore) InTx(ctx context.Context, fn func(mcpservers.Queries) error) error {
+	return s.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
+}
+
+type agentStore struct{ *store.Store }
+
+func (s agentStore) InTx(ctx context.Context, fn func(agents.Queries) error) error {
 	return s.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
 }

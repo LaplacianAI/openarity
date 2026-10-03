@@ -37,6 +37,8 @@ tags:
     description: Where a team's messages arrive from
   - name: skills
     description: Instructions an agent loads when a task calls for them
+  - name: agents
+    description: The agents a team defines, and the servers and skills each is granted
   - name: mcp-servers
     description: The MCP servers a team's agents may be granted, and the tools each offers
   - name: sessions
@@ -1256,6 +1258,168 @@ paths:
         "504":
           $ref: "#/components/responses/SourceTimedOut"
 
+  /teams/{id}/agents:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listAgents
+      tags: [agents]
+      summary: List a team's agents
+      description: |
+        A read, so belonging to the team is enough. Instructions, limits and
+        grants are left out; fetch one agent for the rest.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of agents, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: createAgent
+      tags: [agents]
+      summary: Define an agent
+      description: |
+        Requires `agent:write` in this team. The agent and its grants are
+        written in one step. Only `custom` agents are created here; the other
+        kinds are agents the brain provides.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRequest"
+      responses:
+        "201":
+          description: Created, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        "400":
+          description: |
+            The body breaks a rule, named in the sentence: a limit, a model
+            setting, the parser and its schema, a grant listed twice, a
+            pattern the brain does not run, or a granted server or skill that
+            is not this team's. Nothing is written.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a granted server or skill does not exist in this team"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The team already has an agent with that name, case-insensitively
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an agent with that name already exists"]
+
+  /teams/{id}/agents/{agentID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/AgentID"
+    get:
+      operationId: getAgent
+      tags: [agents]
+      summary: Read an agent, with its grants
+      description: |
+        An agent of another team answers 404, not 403: confirming the id
+        exists would let anyone walk the uuid space.
+      responses:
+        "200":
+          description: The agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    put:
+      operationId: replaceAgent
+      tags: [agents]
+      summary: Replace an agent and its grants
+      description: |
+        Requires `agent:write` in this team. Every field and every grant is
+        replaced in one step, so a field left out is cleared and a grant left
+        out is revoked. `kind` cannot change: leave it out, or send the kind
+        the agent already has.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRequest"
+      responses:
+        "200":
+          description: Replaced, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        "400":
+          description: |
+            The body breaks a rule, named in the sentence: a limit, a model
+            setting, the parser and its schema, a grant listed twice, a
+            pattern the brain does not run, or a granted server or skill that
+            is not this team's. Nothing is written.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a granted server or skill does not exist in this team"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another agent in the team already has that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an agent with that name already exists"]
+
+    delete:
+      operationId: deleteAgent
+      tags: [agents]
+      summary: Delete an agent
+      description: |
+        Requires `agent:write` in this team. Its grants go with it; the
+        servers and skills it was granted are untouched.
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/mcp-servers:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -1641,6 +1805,15 @@ components:
       in: path
       required: true
       description: The skill
+      schema:
+        type: string
+        format: uuid
+
+    AgentID:
+      name: agentID
+      in: path
+      required: true
+      description: The agent
       schema:
         type: string
         format: uuid
@@ -2543,3 +2716,198 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MCPTool"
+
+    ModelRef:
+      type: object
+      required: [name, max_tokens]
+      properties:
+        name:
+          type: string
+          description: As the model gateway names it
+          examples: ["anthropic/claude-opus-5"]
+        max_tokens:
+          type: integer
+          format: int32
+          minimum: 1
+        temperature:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 2
+
+    ParserModel:
+      type: object
+      required: [name]
+      description: Only with parser. max_tokens and temperature fall back to the SDK's defaults.
+      properties:
+        name:
+          type: string
+        max_tokens:
+          type: integer
+          format: int32
+          minimum: 1
+        temperature:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 2
+
+    OutputSchema:
+      type: object
+      required: [name, json]
+      properties:
+        name:
+          type: string
+          description: Names the schema to the model
+          examples: ["verdict"]
+        description:
+          type: string
+        json:
+          type: object
+          description: The JSON Schema the answer has to fit
+        strict:
+          type: boolean
+
+    MCPServerGrant:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: An MCP server of the same team
+        allow:
+          type: array
+          minItems: 1
+          description: The tools granted, by their server-side names. Left out, every tool is granted.
+          items:
+            type: string
+            pattern: "^[a-zA-Z0-9_-]{1,64}$"
+
+    AgentSummary:
+      type: object
+      required: [id, team_id, name, description, kind, model, pattern, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        kind:
+          type: string
+          description: custom for agents a team defines; the brain's own agents carry other kinds
+          examples: ["custom"]
+        model:
+          $ref: "#/components/schemas/ModelRef"
+        pattern:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Agent:
+      allOf:
+        - $ref: "#/components/schemas/AgentSummary"
+        - type: object
+          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills]
+          properties:
+            instructions:
+              type: string
+            max_steps:
+              type: integer
+              format: int32
+            steer_continuations:
+              type: integer
+              format: int32
+            output_schema:
+              $ref: "#/components/schemas/OutputSchema"
+            parser:
+              type: boolean
+            parser_model:
+              $ref: "#/components/schemas/ParserModel"
+            mcp_servers:
+              type: array
+              description: Ordered by id
+              items:
+                $ref: "#/components/schemas/MCPServerGrant"
+            skills:
+              type: array
+              description: Ordered by id
+              items:
+                type: string
+                format: uuid
+
+    AgentRequest:
+      type: object
+      required: [name, model, pattern, max_steps]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          description: Optional. custom on create; on replace, the kind the agent already has.
+        name:
+          type: string
+          maxLength: 200
+          description: Unique within the team, case-insensitively
+          examples: ["triage"]
+        description:
+          type: string
+          description: What it is for, shown where agents are chosen
+        instructions:
+          type: string
+          description: The system prompt
+          examples: ["You sort incoming issues."]
+        model:
+          $ref: "#/components/schemas/ModelRef"
+        pattern:
+          type: string
+          description: |
+            How the agent works through a task. The brain runs react, plan,
+            rewoo, reflection, code and custom today; the database holds the
+            authoritative list, and a pattern outside it is a 400.
+          examples: ["react"]
+        max_steps:
+          type: integer
+          format: int32
+          minimum: 1
+        steer_continuations:
+          type: integer
+          format: int32
+          minimum: 0
+          description: How many times a run may carry on for a message that arrived as it finished
+        output_schema:
+          $ref: "#/components/schemas/OutputSchema"
+        parser:
+          type: boolean
+          description: A second model fits the answer to output_schema; needs output_schema
+        parser_model:
+          $ref: "#/components/schemas/ParserModel"
+        mcp_servers:
+          type: array
+          items:
+            $ref: "#/components/schemas/MCPServerGrant"
+        skills:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    AgentPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentSummary"
+        next_cursor:
+          type: string
+          description: Absent on the last page

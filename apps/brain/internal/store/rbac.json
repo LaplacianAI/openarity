@@ -108,6 +108,34 @@
     },
     {
       "method": "GET",
+      "path": "/teams/{id}/agents",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/agents",
+      "scope": "team",
+      "permission": "agent:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/agents/{agentID}",
+      "scope": "member"
+    },
+    {
+      "method": "PUT",
+      "path": "/teams/{id}/agents/{agentID}",
+      "scope": "team",
+      "permission": "agent:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/agents/{agentID}",
+      "scope": "team",
+      "permission": "agent:write"
+    },
+    {
+      "method": "GET",
       "path": "/teams/{id}/channels",
       "scope": "member"
     },
