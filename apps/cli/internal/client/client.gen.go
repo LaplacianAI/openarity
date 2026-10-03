@@ -179,6 +179,103 @@ type AddMemberRequest struct {
 	UserID *openapi_types.UUID `json:"user_id,omitempty" yaml:"user_id,omitempty"`
 }
 
+// Agent defines model for Agent.
+type Agent struct {
+	CreatedAt    time.Time          `json:"created_at" yaml:"created_at"`
+	Description  string             `json:"description" yaml:"description"`
+	ID           openapi_types.UUID `json:"id" yaml:"id"`
+	Instructions string             `json:"instructions" yaml:"instructions"`
+
+	// Kind custom for agents a team defines; the brain's own agents carry other kinds
+	//
+	// Examples: custom
+	Kind     string `json:"kind" yaml:"kind"`
+	MaxSteps int32  `json:"max_steps" yaml:"max_steps"`
+
+	// McpServers Ordered by id
+	McpServers   []MCPServerGrant `json:"mcp_servers" yaml:"mcp_servers"`
+	Model        ModelRef         `json:"model" yaml:"model"`
+	Name         string           `json:"name" yaml:"name"`
+	OutputSchema *OutputSchema    `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
+	Parser       bool             `json:"parser" yaml:"parser"`
+
+	// ParserModel Only with parser. max_tokens and temperature fall back to the SDK's defaults.
+	ParserModel *ParserModel `json:"parser_model,omitempty" yaml:"parser_model,omitempty"`
+	Pattern     string       `json:"pattern" yaml:"pattern"`
+
+	// Skills Ordered by id
+	Skills             []openapi_types.UUID `json:"skills" yaml:"skills"`
+	SteerContinuations int32                `json:"steer_continuations" yaml:"steer_continuations"`
+	TeamID             openapi_types.UUID   `json:"team_id" yaml:"team_id"`
+	UpdatedAt          time.Time            `json:"updated_at" yaml:"updated_at"`
+}
+
+// AgentPage defines model for AgentPage.
+type AgentPage struct {
+	Items []AgentSummary `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// AgentRequest defines model for AgentRequest.
+type AgentRequest struct {
+	// Description What it is for, shown where agents are chosen
+	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+
+	// Instructions The system prompt
+	//
+	// Examples: You sort incoming issues.
+	Instructions *string `json:"instructions,omitempty" yaml:"instructions,omitempty"`
+
+	// Kind Optional. custom on create; on replace, the kind the agent already has.
+	Kind       *string           `json:"kind,omitempty" yaml:"kind,omitempty"`
+	MaxSteps   int32             `json:"max_steps" yaml:"max_steps"`
+	McpServers *[]MCPServerGrant `json:"mcp_servers,omitempty" yaml:"mcp_servers,omitempty"`
+	Model      ModelRef          `json:"model" yaml:"model"`
+
+	// Name Unique within the team, case-insensitively
+	//
+	// Examples: triage
+	Name         string        `json:"name" yaml:"name"`
+	OutputSchema *OutputSchema `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
+
+	// Parser A second model fits the answer to output_schema; needs output_schema
+	Parser *bool `json:"parser,omitempty" yaml:"parser,omitempty"`
+
+	// ParserModel Only with parser. max_tokens and temperature fall back to the SDK's defaults.
+	ParserModel *ParserModel `json:"parser_model,omitempty" yaml:"parser_model,omitempty"`
+
+	// Pattern How the agent works through a task. The brain runs react, plan,
+	// rewoo, reflection, code and custom today; the database holds the
+	// authoritative list, and a pattern outside it is a 400.
+	//
+	//
+	// Examples: react
+	Pattern string                `json:"pattern" yaml:"pattern"`
+	Skills  *[]openapi_types.UUID `json:"skills,omitempty" yaml:"skills,omitempty"`
+
+	// SteerContinuations How many times a run may carry on for a message that arrived as it finished
+	SteerContinuations *int32 `json:"steer_continuations,omitempty" yaml:"steer_continuations,omitempty"`
+}
+
+// AgentSummary defines model for AgentSummary.
+type AgentSummary struct {
+	CreatedAt   time.Time          `json:"created_at" yaml:"created_at"`
+	Description string             `json:"description" yaml:"description"`
+	ID          openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Kind custom for agents a team defines; the brain's own agents carry other kinds
+	//
+	// Examples: custom
+	Kind      string             `json:"kind" yaml:"kind"`
+	Model     ModelRef           `json:"model" yaml:"model"`
+	Name      string             `json:"name" yaml:"name"`
+	Pattern   string             `json:"pattern" yaml:"pattern"`
+	TeamID    openapi_types.UUID `json:"team_id" yaml:"team_id"`
+	UpdatedAt time.Time          `json:"updated_at" yaml:"updated_at"`
+}
+
 // ApproveSenderRequest defines model for ApproveSenderRequest.
 type ApproveSenderRequest struct {
 	// SenderRef Taken from the pending queue, or supplied directly when the
@@ -384,6 +481,15 @@ type MCPServer struct {
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
 }
 
+// MCPServerGrant defines model for MCPServerGrant.
+type MCPServerGrant struct {
+	// Allow The tools granted, by their server-side names. Left out, every tool is granted.
+	Allow *[]string `json:"allow,omitempty" yaml:"allow,omitempty"`
+
+	// ID An MCP server of the same team
+	ID openapi_types.UUID `json:"id" yaml:"id"`
+}
+
 // MCPServerPage defines model for MCPServerPage.
 type MCPServerPage struct {
 	Items []MCPServer `json:"items" yaml:"items"`
@@ -496,6 +602,17 @@ type MessagePage struct {
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
+// ModelRef defines model for ModelRef.
+type ModelRef struct {
+	MaxTokens int32 `json:"max_tokens" yaml:"max_tokens"`
+
+	// Name As the model gateway names it
+	//
+	// Examples: anthropic/claude-opus-5
+	Name        string   `json:"name" yaml:"name"`
+	Temperature *float64 `json:"temperature,omitempty" yaml:"temperature,omitempty"`
+}
+
 // OIDCConfig Absent when no identity provider is configured, rather than present
 // and blank: a client that branches on the key being there would
 // otherwise build a discovery URL out of an empty issuer.
@@ -512,6 +629,27 @@ type OIDCConfig struct {
 	//
 	// Examples: http://localhost:9000/application/o/openarity/
 	Issuer string `json:"issuer" yaml:"issuer"`
+}
+
+// OutputSchema defines model for OutputSchema.
+type OutputSchema struct {
+	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+
+	// JSON The JSON Schema the answer has to fit
+	JSON map[string]interface{} `json:"json" yaml:"json"`
+
+	// Name Names the schema to the model
+	//
+	// Examples: verdict
+	Name   string `json:"name" yaml:"name"`
+	Strict *bool  `json:"strict,omitempty" yaml:"strict,omitempty"`
+}
+
+// ParserModel Only with parser. max_tokens and temperature fall back to the SDK's defaults.
+type ParserModel struct {
+	MaxTokens   *int32   `json:"max_tokens,omitempty" yaml:"max_tokens,omitempty"`
+	Name        string   `json:"name" yaml:"name"`
+	Temperature *float64 `json:"temperature,omitempty" yaml:"temperature,omitempty"`
 }
 
 // PendingSender defines model for PendingSender.
@@ -801,6 +939,9 @@ type Whoami struct {
 // WhoamiKind How the caller authenticated
 type WhoamiKind string
 
+// AgentID defines model for AgentID.
+type AgentID = openapi_types.UUID
+
 // ChannelID defines model for ChannelID.
 type ChannelID = openapi_types.UUID
 
@@ -821,6 +962,18 @@ type TeamID = openapi_types.UUID
 
 // ListTeamsParams defines parameters for ListTeams.
 type ListTeamsParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
+// ListAgentsParams defines parameters for ListAgents.
+type ListAgentsParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
 	// refused; zero, a negative and anything unparseable are 400.
 	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
@@ -975,6 +1128,12 @@ type ListUsersParams struct {
 
 // CreateTeamJSONRequestBody defines body for CreateTeam for application/json ContentType.
 type CreateTeamJSONRequestBody = CreateTeamRequest
+
+// CreateAgentJSONRequestBody defines body for CreateAgent for application/json ContentType.
+type CreateAgentJSONRequestBody = AgentRequest
+
+// ReplaceAgentJSONRequestBody defines body for ReplaceAgent for application/json ContentType.
+type ReplaceAgentJSONRequestBody = AgentRequest
 
 // CreateChannelJSONRequestBody defines body for CreateChannel for application/json ContentType.
 type CreateChannelJSONRequestBody = CreateChannelRequest
@@ -1147,6 +1306,76 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id} (the `GetTeam` operationId).
 	GetTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAgents List a team's agents
+	//
+	// A read, so belonging to the team is enough. Instructions, limits and
+	// grants are left out; fetch one agent for the rest.
+	//
+	// Corresponds with GET /teams/{id}/agents (the `ListAgents` operationId).
+	ListAgents(ctx context.Context, id TeamID, params *ListAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateAgentWithBody Define an agent
+	//
+	// Requires `agent:write` in this team. The agent and its grants are
+	// written in one step. Only `custom` agents are created here; the other
+	// kinds are agents the brain provides.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/agents (the `CreateAgent` operationId).
+	CreateAgentWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateAgent Define an agent
+	//
+	// Requires `agent:write` in this team. The agent and its grants are
+	// written in one step. Only `custom` agents are created here; the other
+	// kinds are agents the brain provides.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/agents (the `CreateAgent` operationId).
+	CreateAgent(ctx context.Context, id TeamID, body CreateAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteAgent Delete an agent
+	//
+	// Requires `agent:write` in this team. Its grants go with it; the
+	// servers and skills it was granted are untouched.
+	//
+	// Corresponds with DELETE /teams/{id}/agents/{agentID} (the `DeleteAgent` operationId).
+	DeleteAgent(ctx context.Context, id TeamID, agentID AgentID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAgent Read an agent, with its grants
+	//
+	// An agent of another team answers 404, not 403: confirming the id
+	// exists would let anyone walk the uuid space.
+	//
+	// Corresponds with GET /teams/{id}/agents/{agentID} (the `GetAgent` operationId).
+	GetAgent(ctx context.Context, id TeamID, agentID AgentID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceAgentWithBody Replace an agent and its grants
+	//
+	// Requires `agent:write` in this team. Every field and every grant is
+	// replaced in one step, so a field left out is cleared and a grant left
+	// out is revoked. `kind` cannot change: leave it out, or send the kind
+	// the agent already has.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
+	ReplaceAgentWithBody(ctx context.Context, id TeamID, agentID AgentID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceAgent Replace an agent and its grants
+	//
+	// Requires `agent:write` in this team. Every field and every grant is
+	// replaced in one step, so a field left out is cleared and a grant left
+	// out is revoked. `kind` cannot change: leave it out, or send the kind
+	// the agent already has.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
+	ReplaceAgent(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListChannels List a team's channels
 	//
@@ -1849,6 +2078,146 @@ func (c *Client) CreateTeam(ctx context.Context, body CreateTeamJSONRequestBody,
 // Corresponds with GET /teams/{id} (the `GetTeam` operationId).
 func (c *Client) GetTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTeamRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAgents List a team's agents
+//
+// A read, so belonging to the team is enough. Instructions, limits and
+// grants are left out; fetch one agent for the rest.
+//
+// Corresponds with GET /teams/{id}/agents (the `ListAgents` operationId).
+func (c *Client) ListAgents(ctx context.Context, id TeamID, params *ListAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAgentsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateAgentWithBody Define an agent
+//
+// Requires `agent:write` in this team. The agent and its grants are
+// written in one step. Only `custom` agents are created here; the other
+// kinds are agents the brain provides.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/agents (the `CreateAgent` operationId).
+func (c *Client) CreateAgentWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAgentRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateAgent Define an agent
+//
+// Requires `agent:write` in this team. The agent and its grants are
+// written in one step. Only `custom` agents are created here; the other
+// kinds are agents the brain provides.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/agents (the `CreateAgent` operationId).
+func (c *Client) CreateAgent(ctx context.Context, id TeamID, body CreateAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAgentRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteAgent Delete an agent
+//
+// Requires `agent:write` in this team. Its grants go with it; the
+// servers and skills it was granted are untouched.
+//
+// Corresponds with DELETE /teams/{id}/agents/{agentID} (the `DeleteAgent` operationId).
+func (c *Client) DeleteAgent(ctx context.Context, id TeamID, agentID AgentID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteAgentRequest(c.Server, id, agentID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAgent Read an agent, with its grants
+//
+// An agent of another team answers 404, not 403: confirming the id
+// exists would let anyone walk the uuid space.
+//
+// Corresponds with GET /teams/{id}/agents/{agentID} (the `GetAgent` operationId).
+func (c *Client) GetAgent(ctx context.Context, id TeamID, agentID AgentID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAgentRequest(c.Server, id, agentID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceAgentWithBody Replace an agent and its grants
+//
+// Requires `agent:write` in this team. Every field and every grant is
+// replaced in one step, so a field left out is cleared and a grant left
+// out is revoked. `kind` cannot change: leave it out, or send the kind
+// the agent already has.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
+func (c *Client) ReplaceAgentWithBody(ctx context.Context, id TeamID, agentID AgentID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceAgentRequestWithBody(c.Server, id, agentID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceAgent Replace an agent and its grants
+//
+// Requires `agent:write` in this team. Every field and every grant is
+// replaced in one step, so a field left out is cleared and a grant left
+// out is revoked. `kind` cannot change: leave it out, or send the kind
+// the agent already has.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
+func (c *Client) ReplaceAgent(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceAgentRequest(c.Server, id, agentID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3022,6 +3391,262 @@ func NewGetTeamRequest(server string, id TeamID) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewListAgentsRequest constructs an http.Request for the ListAgents method
+func NewListAgentsRequest(server string, id TeamID, params *ListAgentsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/agents", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateAgentRequest calls the generic CreateAgent builder with application/json body
+func NewCreateAgentRequest(server string, id TeamID, body CreateAgentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateAgentRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateAgentRequestWithBody constructs an http.Request for the CreateAgent method, with any body, and a specified content type
+func NewCreateAgentRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/agents", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteAgentRequest constructs an http.Request for the DeleteAgent method
+func NewDeleteAgentRequest(server string, id TeamID, agentID AgentID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "agentID", agentID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/agents/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAgentRequest constructs an http.Request for the GetAgent method
+func NewGetAgentRequest(server string, id TeamID, agentID AgentID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "agentID", agentID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/agents/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReplaceAgentRequest calls the generic ReplaceAgent builder with application/json body
+func NewReplaceAgentRequest(server string, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReplaceAgentRequestWithBody(server, id, agentID, "application/json", bodyReader)
+}
+
+// NewReplaceAgentRequestWithBody constructs an http.Request for the ReplaceAgent method, with any body, and a specified content type
+func NewReplaceAgentRequestWithBody(server string, id TeamID, agentID AgentID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "agentID", agentID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/agents/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -4928,6 +5553,82 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id} (the `GetTeam` operationId).
 	GetTeamWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamResponse, error)
 
+	// ListAgentsWithResponse List a team's agents
+	//
+	// A read, so belonging to the team is enough. Instructions, limits and
+	// grants are left out; fetch one agent for the rest.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/agents (the `ListAgents` operationId).
+	ListAgentsWithResponse(ctx context.Context, id TeamID, params *ListAgentsParams, reqEditors ...RequestEditorFn) (*ListAgentsResponse, error)
+
+	// CreateAgentWithBodyWithResponse Define an agent
+	//
+	// Requires `agent:write` in this team. The agent and its grants are
+	// written in one step. Only `custom` agents are created here; the other
+	// kinds are agents the brain provides.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/agents (the `CreateAgent` operationId).
+	CreateAgentWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAgentResponse, error)
+
+	// CreateAgentWithResponse Define an agent
+	//
+	// Requires `agent:write` in this team. The agent and its grants are
+	// written in one step. Only `custom` agents are created here; the other
+	// kinds are agents the brain provides.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/agents (the `CreateAgent` operationId).
+	CreateAgentWithResponse(ctx context.Context, id TeamID, body CreateAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAgentResponse, error)
+
+	// DeleteAgentWithResponse Delete an agent
+	//
+	// Requires `agent:write` in this team. Its grants go with it; the
+	// servers and skills it was granted are untouched.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id}/agents/{agentID} (the `DeleteAgent` operationId).
+	DeleteAgentWithResponse(ctx context.Context, id TeamID, agentID AgentID, reqEditors ...RequestEditorFn) (*DeleteAgentResponse, error)
+
+	// GetAgentWithResponse Read an agent, with its grants
+	//
+	// An agent of another team answers 404, not 403: confirming the id
+	// exists would let anyone walk the uuid space.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/agents/{agentID} (the `GetAgent` operationId).
+	GetAgentWithResponse(ctx context.Context, id TeamID, agentID AgentID, reqEditors ...RequestEditorFn) (*GetAgentResponse, error)
+
+	// ReplaceAgentWithBodyWithResponse Replace an agent and its grants
+	//
+	// Requires `agent:write` in this team. Every field and every grant is
+	// replaced in one step, so a field left out is cleared and a grant left
+	// out is revoked. `kind` cannot change: leave it out, or send the kind
+	// the agent already has.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
+	ReplaceAgentWithBodyWithResponse(ctx context.Context, id TeamID, agentID AgentID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceAgentResponse, error)
+
+	// ReplaceAgentWithResponse Replace an agent and its grants
+	//
+	// Requires `agent:write` in this team. Every field and every grant is
+	// replaced in one step, so a field left out is cleared and a grant left
+	// out is revoked. `kind` cannot change: leave it out, or send the kind
+	// the agent already has.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
+	ReplaceAgentWithResponse(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentResponse, error)
+
 	// ListChannelsWithResponse List a team's channels
 	//
 	// A read, so belonging to the team is enough. A channel id is not a
@@ -5790,6 +6491,239 @@ func (r GetTeamResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetTeamResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListAgentsResponse401Headers the declared response headers of an HTTP 401 response for ListAgents
+type ListAgentsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListAgentsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListAgentsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAgentsResponse) GetJSON200() *AgentPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAgentsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAgentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAgentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAgentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateAgentResponse401Headers the declared response headers of an HTTP 401 response for CreateAgent
+type CreateAgentResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Agent
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateAgentResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateAgentResponse) GetJSON201() *Agent {
+	return r.JSON201
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteAgentResponse401Headers the declared response headers of an HTTP 401 response for DeleteAgent
+type DeleteAgentResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DeleteAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DeleteAgentResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetAgentResponse401Headers the declared response headers of an HTTP 401 response for GetAgent
+type GetAgentResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Agent
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetAgentResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAgentResponse) GetJSON200() *Agent {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ReplaceAgentResponse401Headers the declared response headers of an HTTP 401 response for ReplaceAgent
+type ReplaceAgentResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ReplaceAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Agent
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ReplaceAgentResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReplaceAgentResponse) GetJSON200() *Agent {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ReplaceAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReplaceAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReplaceAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReplaceAgentResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -7413,6 +8347,124 @@ func (c *ClientWithResponses) GetTeamWithResponse(ctx context.Context, id TeamID
 	return ParseGetTeamResponse(rsp)
 }
 
+// ListAgentsWithResponse List a team's agents
+//
+// A read, so belonging to the team is enough. Instructions, limits and
+// grants are left out; fetch one agent for the rest.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/agents (the `ListAgents` operationId).
+func (c *ClientWithResponses) ListAgentsWithResponse(ctx context.Context, id TeamID, params *ListAgentsParams, reqEditors ...RequestEditorFn) (*ListAgentsResponse, error) {
+	rsp, err := c.ListAgents(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAgentsResponse(rsp)
+}
+
+// CreateAgentWithBodyWithResponse Define an agent
+//
+// Requires `agent:write` in this team. The agent and its grants are
+// written in one step. Only `custom` agents are created here; the other
+// kinds are agents the brain provides.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/agents (the `CreateAgent` operationId).
+func (c *ClientWithResponses) CreateAgentWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAgentResponse, error) {
+	rsp, err := c.CreateAgentWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAgentResponse(rsp)
+}
+
+// CreateAgentWithResponse Define an agent
+//
+// Requires `agent:write` in this team. The agent and its grants are
+// written in one step. Only `custom` agents are created here; the other
+// kinds are agents the brain provides.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/agents (the `CreateAgent` operationId).
+func (c *ClientWithResponses) CreateAgentWithResponse(ctx context.Context, id TeamID, body CreateAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAgentResponse, error) {
+	rsp, err := c.CreateAgent(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAgentResponse(rsp)
+}
+
+// DeleteAgentWithResponse Delete an agent
+//
+// Requires `agent:write` in this team. Its grants go with it; the
+// servers and skills it was granted are untouched.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id}/agents/{agentID} (the `DeleteAgent` operationId).
+func (c *ClientWithResponses) DeleteAgentWithResponse(ctx context.Context, id TeamID, agentID AgentID, reqEditors ...RequestEditorFn) (*DeleteAgentResponse, error) {
+	rsp, err := c.DeleteAgent(ctx, id, agentID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteAgentResponse(rsp)
+}
+
+// GetAgentWithResponse Read an agent, with its grants
+//
+// An agent of another team answers 404, not 403: confirming the id
+// exists would let anyone walk the uuid space.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/agents/{agentID} (the `GetAgent` operationId).
+func (c *ClientWithResponses) GetAgentWithResponse(ctx context.Context, id TeamID, agentID AgentID, reqEditors ...RequestEditorFn) (*GetAgentResponse, error) {
+	rsp, err := c.GetAgent(ctx, id, agentID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAgentResponse(rsp)
+}
+
+// ReplaceAgentWithBodyWithResponse Replace an agent and its grants
+//
+// Requires `agent:write` in this team. Every field and every grant is
+// replaced in one step, so a field left out is cleared and a grant left
+// out is revoked. `kind` cannot change: leave it out, or send the kind
+// the agent already has.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
+func (c *ClientWithResponses) ReplaceAgentWithBodyWithResponse(ctx context.Context, id TeamID, agentID AgentID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceAgentResponse, error) {
+	rsp, err := c.ReplaceAgentWithBody(ctx, id, agentID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceAgentResponse(rsp)
+}
+
+// ReplaceAgentWithResponse Replace an agent and its grants
+//
+// Requires `agent:write` in this team. Every field and every grant is
+// replaced in one step, so a field left out is cleared and a grant left
+// out is revoked. `kind` cannot change: leave it out, or send the kind
+// the agent already has.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
+func (c *ClientWithResponses) ReplaceAgentWithResponse(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentResponse, error) {
+	rsp, err := c.ReplaceAgent(ctx, id, agentID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceAgentResponse(rsp)
+}
+
 // ListChannelsWithResponse List a team's channels
 //
 // A read, so belonging to the team is enough. A channel id is not a
@@ -8417,6 +9469,191 @@ func ParseGetTeamResponse(rsp *http.Response) (*GetTeamResponse, error) {
 	switch {
 	case rsp.StatusCode == 401:
 		var headers GetTeamResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListAgentsResponse parses an HTTP response from a ListAgentsWithResponse call
+func ParseListAgentsResponse(rsp *http.Response) (*ListAgentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAgentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListAgentsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateAgentResponse parses an HTTP response from a CreateAgentWithResponse call
+func ParseCreateAgentResponse(rsp *http.Response) (*CreateAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Agent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateAgentResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteAgentResponse parses an HTTP response from a DeleteAgentWithResponse call
+func ParseDeleteAgentResponse(rsp *http.Response) (*DeleteAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DeleteAgentResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetAgentResponse parses an HTTP response from a GetAgentWithResponse call
+func ParseGetAgentResponse(rsp *http.Response) (*GetAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Agent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetAgentResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReplaceAgentResponse parses an HTTP response from a ReplaceAgentWithResponse call
+func ParseReplaceAgentResponse(rsp *http.Response) (*ReplaceAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReplaceAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Agent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ReplaceAgentResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
