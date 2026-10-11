@@ -1,0 +1,1047 @@
+package graph
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"errors"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// liveGraph is a client at the given width and a team of its own, dropped
+// afterwards, so tests cannot see each other's nodes and may run in parallel.
+func liveGraph(t *testing.T, dims int) (*Graph, uuid.UUID) {
+	t.Helper()
+
+	g, err := Dial(liveFalkorURL(t), dims)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	team := uuid.New()
+	t.Cleanup(func() {
+		_ = g.DropTeam(context.WithoutCancel(t.Context()), team)
+		_ = g.Close()
+	})
+	return g, team
+}
+
+func skill(name string, vector []float32) Node {
+	sum := sha256.Sum256([]byte(name))
+	return Node{
+		Ref:       Ref{Label: LabelSkill, ID: uuid.New()},
+		Props:     map[string]any{"name": name, "description": "Does " + name},
+		Embedding: vector, Model: "test-model", ContentSHA256: sum[:],
+	}
+}
+
+func bare(label Label) Node { return Node{Ref: Ref{Label: label, ID: uuid.New()}} }
+
+func mustPut(t *testing.T, g *Graph, team uuid.UUID, nodes ...Node) {
+	t.Helper()
+	for _, n := range nodes {
+		if err := g.PutNode(t.Context(), team, n); err != nil {
+			t.Fatalf("PutNode(%s %s): %v", n.Label, n.ID, err)
+		}
+	}
+}
+
+func mustSnapshot(t *testing.T, g *Graph, team uuid.UUID) Snapshot {
+	t.Helper()
+	s, err := g.Snapshot(t.Context(), team)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	return s
+}
+
+func find(t *testing.T, s Snapshot, id uuid.UUID) Node {
+	t.Helper()
+	for _, n := range s.Nodes {
+		if n.ID == id {
+			return n
+		}
+	}
+	t.Fatalf("node %s is not in the snapshot of %d nodes", id, len(s.Nodes))
+	return Node{}
+}
+
+func targets(s Snapshot, typ EdgeType) []uuid.UUID {
+	var out []uuid.UUID
+	for _, e := range s.Edges {
+		if e.Type == typ {
+			out = append(out, e.To.ID)
+		}
+	}
+	slices.SortFunc(out, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
+	return out
+}
+
+func sorted(ids ...uuid.UUID) []uuid.UUID {
+	out := slices.Clone(ids)
+	slices.SortFunc(out, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
+	return out
+}
+
+// --- connecting ---
+
+// Making the client proves nothing: FromURL returns no error with nothing
+// listening. Ping is the proof, as it is for the Postgres pool.
+func TestDialOfADeadServerSucceedsAndPingFails(t *testing.T) {
+	t.Parallel()
+
+	g, err := Dial("redis://127.0.0.1:1", 3)
+	if err != nil {
+		t.Fatalf("Dial of a dead address failed, and it is expected to be lazy: %v", err)
+	}
+	t.Cleanup(func() { _ = g.Close() })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := g.Ping(ctx); err == nil {
+		t.Error("Ping succeeded against nothing")
+	}
+}
+
+func TestPingProvesTheServerIsThere(t *testing.T) {
+	t.Parallel()
+
+	g, _ := liveGraph(t, 3)
+	if err := g.Ping(t.Context()); err != nil {
+		t.Errorf("Ping: %v", err)
+	}
+}
+
+// FalkorDB creates a vector index of dimension 0 without complaint, and
+// nothing put in it is ever found.
+func TestDialRefusesAWidthNoIndexCanHave(t *testing.T) {
+	t.Parallel()
+
+	for _, dims := range []int{0, -1} {
+		if _, err := Dial("redis://127.0.0.1:6379", dims); err == nil || !strings.Contains(err.Error(), "EMBEDDING_DIMENSIONS") {
+			t.Errorf("Dial with %d dimensions: err = %v", dims, err)
+		}
+	}
+}
+
+// A DSN can carry a password, and an error reaches the log.
+func TestDialNeverRepeatsTheURL(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		"redis://user:s3cret@127.0.0.1:6379/not-a-number",
+		"http://user:s3cret@127.0.0.1:6379",
+		"redis://user:s3cret@[::1",
+	} {
+		_, err := Dial(raw, 3)
+		if err == nil {
+			t.Errorf("Dial(%q) succeeded", raw)
+			continue
+		}
+		if strings.Contains(err.Error(), "s3cret") {
+			t.Errorf("the error repeats the password: %v", err)
+		}
+	}
+}
+
+// --- indexes ---
+
+func TestEnsureIndexesTwiceIsFine(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	for range 3 {
+		if err := g.EnsureIndexes(t.Context(), team); err != nil {
+			t.Fatalf("EnsureIndexes: %v", err)
+		}
+	}
+}
+
+// Creating a second vector index of another width answers "already indexed",
+// which reads as success. Every vector of the new width would then be stored
+// and never found. So the width of the index that is there is read back.
+func TestEnsureIndexesRefusesAnIndexBuiltForAnotherWidth(t *testing.T) {
+	t.Parallel()
+
+	g3, team := liveGraph(t, 3)
+	if err := g3.EnsureIndexes(t.Context(), team); err != nil {
+		t.Fatalf("EnsureIndexes at 3: %v", err)
+	}
+
+	g5, err := Dial(liveFalkorURL(t), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = g5.Close() })
+
+	err = g5.EnsureIndexes(t.Context(), team)
+	if err == nil {
+		t.Fatal("an index of 3 dimensions was accepted for vectors of 5")
+	}
+	for _, want := range []string{"3 dimensions", "EMBEDDING_DIMENSIONS is 5", "brain graph rebuild"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to mention %q", err, want)
+		}
+	}
+}
+
+// The index is usable, not merely created: the nearest vector comes back
+// first, and a deleted node leaves the index with its node.
+func TestAVectorQueryFindsTheNearestSkill(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	if err := g.EnsureIndexes(t.Context(), team); err != nil {
+		t.Fatal(err)
+	}
+	pdf, docx, xlsx := skill("pdf", []float32{1, 0, 0}), skill("docx", []float32{0, 1, 0}), skill("xlsx", []float32{0, 0, 1})
+	mustPut(t, g, team, pdf, docx, xlsx)
+
+	nearest := func() []string {
+		res, err := g.run(t.Context(), team, true,
+			"CALL db.idx.vector.queryNodes('Skill', 'embedding', 2, vecf32($v)) YIELD node, score RETURN node.id, score ORDER BY score",
+			map[string]any{"v": []float32{0.9, 0.1, 0}})
+		if err != nil {
+			t.Fatalf("vector query: %v", err)
+		}
+		var ids []string
+		for res.Next() {
+			id, _ := res.Record().Values()[0].(string)
+			ids = append(ids, id)
+		}
+		return ids
+	}
+
+	if got := nearest(); len(got) != 2 || got[0] != pdf.ID.String() || got[1] != docx.ID.String() {
+		t.Errorf("nearest = %v, want pdf then docx", got)
+	}
+
+	if err := g.DeleteNode(t.Context(), team, pdf.Ref); err != nil {
+		t.Fatal(err)
+	}
+	if got := nearest(); slices.Contains(got, pdf.ID.String()) || len(got) != 2 {
+		t.Errorf("after deleting pdf, nearest = %v", got)
+	}
+}
+
+// --- nodes ---
+
+func TestPutNodeTwiceKeepsOneNode(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	n := skill("pdf", []float32{1, 0, 0})
+	mustPut(t, g, team, n)
+
+	n.Props = map[string]any{"name": "pdf-tools", "description": "Changed"}
+	mustPut(t, g, team, n)
+
+	s := mustSnapshot(t, g, team)
+	if len(s.Nodes) != 1 {
+		t.Fatalf("the graph holds %d nodes, want 1", len(s.Nodes))
+	}
+	if got := s.Nodes[0]; got.Props["name"] != "pdf-tools" || got.Props["description"] != "Changed" {
+		t.Errorf("props = %v", got.Props)
+	}
+}
+
+// Renaming a skill does not change what its description means, so the vector
+// it already has — and the fingerprint that says what made it — stay put.
+func TestPutNodeWithNoEmbeddingKeepsTheStoredOne(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	first := skill("pdf", []float32{0.5, 1e-7, -1})
+	mustPut(t, g, team, first)
+
+	renamed := Node{Ref: first.Ref, Props: map[string]any{"name": "pdf-tools"}}
+	mustPut(t, g, team, renamed)
+
+	got := find(t, mustSnapshot(t, g, team), first.ID)
+	if got.Props["name"] != "pdf-tools" {
+		t.Errorf("name = %v, want it changed", got.Props["name"])
+	}
+	if !slices.Equal(got.Embedding, first.Embedding) || got.Model != "test-model" || !bytes.Equal(got.ContentSHA256, first.ContentSHA256) {
+		t.Errorf("the vector or its fingerprint changed: %v %q %x", got.Embedding, got.Model, got.ContentSHA256)
+	}
+}
+
+func TestANodeIsStoredAsItWasPut(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 4)
+	n := skill("pdf", []float32{0.1, -0.25, 1e-7, 3.4e38})
+	n.Props = map[string]any{"name": "say \"hi\"", "description": "non\u00a0breaking, new\nline, back\\slash, 漢字 🙂", "kind": "custom"}
+	mustPut(t, g, team, n)
+
+	got := find(t, mustSnapshot(t, g, team), n.ID)
+	if got.Label != LabelSkill || !slices.Equal(got.Embedding, n.Embedding) || got.Model != n.Model || !bytes.Equal(got.ContentSHA256, n.ContentSHA256) {
+		t.Errorf("got %+v", got)
+	}
+	for k, want := range n.Props {
+		if got.Props[k] != want {
+			t.Errorf("%s = %q, want %q", k, got.Props[k], want)
+		}
+	}
+	// The graph's own properties are not handed back as the caller's.
+	for _, k := range reserved {
+		if _, leaked := got.Props[k]; leaked {
+			t.Errorf("Props carries the reserved %s", k)
+		}
+	}
+}
+
+// A property set to nil is removed, so a description that was cleared in
+// Postgres does not linger in the graph.
+func TestAPropertySetToNilIsRemoved(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	n := bare(LabelAgent)
+	n.Props = map[string]any{"name": "triage", "description": "Sorts issues"}
+	mustPut(t, g, team, n)
+
+	n.Props = map[string]any{"name": "triage", "description": nil}
+	mustPut(t, g, team, n)
+
+	got := find(t, mustSnapshot(t, g, team), n.ID)
+	if _, still := got.Props["description"]; still || got.Props["name"] != "triage" {
+		t.Errorf("props = %v, want the description gone", got.Props)
+	}
+}
+
+// FalkorDB stores a vector of the wrong width without error and leaves it out
+// of every search. It is refused here, and nothing is written.
+func TestAVectorOfTheWrongWidthIsRefusedAndNothingIsStored(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	for _, width := range []int{2, 4, 0} {
+		err := g.PutNode(t.Context(), team, skill("pdf", make([]float32, width)))
+		if width == 0 {
+			// An empty, non-nil vector is still a vector of the wrong width.
+			if err == nil {
+				t.Error("an empty vector was accepted")
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "index of 3") {
+			t.Errorf("width %d: err = %v", width, err)
+		}
+	}
+	if s := mustSnapshot(t, g, team); len(s.Nodes) != 0 {
+		t.Errorf("%d nodes were written", len(s.Nodes))
+	}
+}
+
+// Only agents, tools and skills have a vector index. A vector on anything
+// else would be stored and could never be searched.
+func TestAVectorOnALabelWithNoIndexIsRefused(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	for _, label := range []Label{LabelTeam, LabelToolkit} {
+		n := bare(label)
+		n.Embedding = []float32{1, 0, 0}
+		if err := g.PutNode(t.Context(), team, n); err == nil || !strings.Contains(err.Error(), "no vector index") {
+			t.Errorf("%s: err = %v", label, err)
+		}
+	}
+	for _, label := range embeddedLabels {
+		n := bare(label)
+		n.Embedding = []float32{1, 0, 0}
+		if err := g.PutNode(t.Context(), team, n); err != nil {
+			t.Errorf("%s: %v", label, err)
+		}
+	}
+}
+
+// The id, the vector and its fingerprint are the graph's to set. A caller's
+// props naming one would overwrite it through SET n += $props.
+func TestReservedPropertiesAreRefused(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	for _, key := range []string{"id", "embedding", "model", "content_sha256"} {
+		n := bare(LabelAgent)
+		n.Props = map[string]any{"name": "x", key: "mine"}
+		if err := g.PutNode(t.Context(), team, n); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s: err = %v", key, err)
+		}
+	}
+	if s := mustSnapshot(t, g, team); len(s.Nodes) != 0 {
+		t.Errorf("%d nodes were written", len(s.Nodes))
+	}
+}
+
+// --- fingerprints ---
+
+func TestFingerprintReadsBackWhatProducedTheVector(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	n := skill("pdf", []float32{1, 0, 0})
+	mustPut(t, g, team, n)
+
+	model, sha, found, err := g.Fingerprint(t.Context(), team, n.Ref)
+	if err != nil || !found || model != "test-model" || !bytes.Equal(sha, n.ContentSHA256) {
+		t.Errorf("Fingerprint = %q, %x, %v, %v", model, sha, found, err)
+	}
+}
+
+func TestFingerprintOfAMissingNodeIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+
+	// No graph at all: a team nothing has been projected for.
+	if _, _, found, err := g.Fingerprint(t.Context(), team, Ref{LabelSkill, uuid.New()}); found || err != nil {
+		t.Errorf("with no graph: found %v, err %v", found, err)
+	}
+
+	other := skill("pdf", []float32{1, 0, 0})
+	mustPut(t, g, team, other)
+
+	// A graph, and no such node.
+	if _, _, found, err := g.Fingerprint(t.Context(), team, Ref{LabelSkill, uuid.New()}); found || err != nil {
+		t.Errorf("with no such node: found %v, err %v", found, err)
+	}
+	// The id exists under another label, which is another node.
+	if _, _, found, err := g.Fingerprint(t.Context(), team, Ref{LabelAgent, other.ID}); found || err != nil {
+		t.Errorf("under another label: found %v, err %v", found, err)
+	}
+}
+
+// A node with no vector yet is found, with nothing to compare against — so
+// the projector embeds it.
+func TestFingerprintOfANodeWithNoVectorIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	n := bare(LabelSkill)
+	mustPut(t, g, team, n)
+
+	model, sha, found, err := g.Fingerprint(t.Context(), team, n.Ref)
+	if err != nil || !found || model != "" || len(sha) != 0 {
+		t.Errorf("Fingerprint = %q, %x, %v, %v", model, sha, found, err)
+	}
+}
+
+// --- edges ---
+
+func TestSetOutEdgesRemovesARevokedGrant(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	agent, github, linear := bare(LabelAgent), bare(LabelToolkit), bare(LabelToolkit)
+	mustPut(t, g, team, agent, github, linear)
+
+	both := []Edge{{To: github.ID, Props: map[string]any{"allow": []string{"search", "create"}}}, {To: linear.ID}}
+	if err := g.SetOutEdges(t.Context(), team, agent.Ref, EdgeGranted, LabelToolkit, both); err != nil {
+		t.Fatalf("grant both: %v", err)
+	}
+	if got := targets(mustSnapshot(t, g, team), EdgeGranted); !slices.Equal(got, sorted(github.ID, linear.ID)) {
+		t.Fatalf("granted %v, want both", got)
+	}
+
+	if err := g.SetOutEdges(t.Context(), team, agent.Ref, EdgeGranted, LabelToolkit, []Edge{{To: linear.ID}}); err != nil {
+		t.Fatalf("revoke github: %v", err)
+	}
+	s := mustSnapshot(t, g, team)
+	if got := targets(s, EdgeGranted); !slices.Equal(got, []uuid.UUID{linear.ID}) {
+		t.Errorf("granted %v, want only linear", got)
+	}
+	if e := s.Edges[0]; e.From != agent.Ref || e.To != github.Ref && e.To != linear.Ref || e.Type != EdgeGranted {
+		t.Errorf("edge = %+v", e)
+	}
+}
+
+func TestAnEdgeKeepsItsProperties(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	agent, github := bare(LabelAgent), bare(LabelToolkit)
+	mustPut(t, g, team, agent, github)
+
+	edges := []Edge{{To: github.ID, Props: map[string]any{"allow": []string{"search_code", "create-issue"}}}}
+	if err := g.SetOutEdges(t.Context(), team, agent.Ref, EdgeGranted, LabelToolkit, edges); err != nil {
+		t.Fatal(err)
+	}
+
+	s := mustSnapshot(t, g, team)
+	if len(s.Edges) != 1 {
+		t.Fatalf("%d edges", len(s.Edges))
+	}
+	allow, _ := s.Edges[0].Props["allow"].([]any)
+	if len(allow) != 2 || allow[0] != "search_code" || allow[1] != "create-issue" {
+		t.Errorf("allow = %v", s.Edges[0].Props["allow"])
+	}
+}
+
+// Replacing an agent's skills must not touch its granted servers, and
+// replacing its edges to one label must not touch the same type to another.
+func TestSetOutEdgesReplacesOnlyItsOwnTypeAndTarget(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	agent, kit, pdf, docx := bare(LabelAgent), bare(LabelToolkit), bare(LabelSkill), bare(LabelSkill)
+	other := bare(LabelAgent)
+	mustPut(t, g, team, agent, other, kit, pdf, docx)
+
+	set := func(from Ref, typ EdgeType, to Label, ids ...uuid.UUID) {
+		t.Helper()
+		edges := make([]Edge, len(ids))
+		for i, id := range ids {
+			edges[i] = Edge{To: id}
+		}
+		if err := g.SetOutEdges(t.Context(), team, from, typ, to, edges); err != nil {
+			t.Fatalf("SetOutEdges %s: %v", typ, err)
+		}
+	}
+	set(agent.Ref, EdgeGranted, LabelToolkit, kit.ID)
+	set(agent.Ref, EdgeHasSkill, LabelSkill, pdf.ID)
+	set(agent.Ref, EdgeOwns, LabelToolkit, kit.ID)
+	set(agent.Ref, EdgeOwns, LabelSkill, pdf.ID)
+	set(other.Ref, EdgeHasSkill, LabelSkill, pdf.ID)
+
+	set(agent.Ref, EdgeHasSkill, LabelSkill, docx.ID)
+	set(agent.Ref, EdgeOwns, LabelSkill)
+
+	s := mustSnapshot(t, g, team)
+	var got []string
+	for _, e := range s.Edges {
+		who := "agent"
+		if e.From == other.Ref {
+			who = "other"
+		}
+		what := map[uuid.UUID]string{kit.ID: "kit", pdf.ID: "pdf", docx.ID: "docx"}[e.To.ID]
+		got = append(got, who+" "+string(e.Type)+" "+what)
+	}
+	slices.Sort(got)
+	want := []string{"agent GRANTED kit", "agent HAS_SKILL docx", "agent OWNS kit", "other HAS_SKILL pdf"}
+	if !slices.Equal(got, want) {
+		t.Errorf("edges = %v, want %v", got, want)
+	}
+}
+
+func TestSetOutEdgesWithNoneRemovesThemAll(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	agent, pdf := bare(LabelAgent), bare(LabelSkill)
+	mustPut(t, g, team, agent, pdf)
+	if err := g.SetOutEdges(t.Context(), team, agent.Ref, EdgeHasSkill, LabelSkill, []Edge{{To: pdf.ID}}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, none := range [][]Edge{nil, {}} {
+		if err := g.SetOutEdges(t.Context(), team, agent.Ref, EdgeHasSkill, LabelSkill, none); err != nil {
+			t.Fatalf("clear: %v", err)
+		}
+	}
+	if s := mustSnapshot(t, g, team); len(s.Edges) != 0 || len(s.Nodes) != 2 {
+		t.Errorf("%d edges and %d nodes, want 0 and 2", len(s.Edges), len(s.Nodes))
+	}
+}
+
+// FalkorDB skips an edge whose end is not there, silently. Here it is an
+// error that says so, and the projector tries again once the node exists.
+func TestAnEdgeToOrFromANodeThatIsNotThereIsAnError(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	agent, pdf := bare(LabelAgent), bare(LabelSkill)
+	mustPut(t, g, team, agent, pdf)
+
+	err := g.SetOutEdges(t.Context(), team, agent.Ref, EdgeHasSkill, LabelSkill, []Edge{{To: pdf.ID}, {To: uuid.New()}})
+	if err == nil || !strings.Contains(err.Error(), "1 of 2 HAS_SKILL edges") {
+		t.Errorf("a missing target: err = %v", err)
+	}
+
+	ghost := Ref{LabelAgent, uuid.New()}
+	err = g.SetOutEdges(t.Context(), team, ghost, EdgeHasSkill, LabelSkill, []Edge{{To: pdf.ID}})
+	if err == nil || !strings.Contains(err.Error(), "0 of 1") {
+		t.Errorf("a missing source: err = %v", err)
+	}
+
+	// The target exists, under another label: that is not the node meant.
+	err = g.SetOutEdges(t.Context(), team, agent.Ref, EdgeGranted, LabelToolkit, []Edge{{To: pdf.ID}})
+	if err == nil {
+		t.Error("an edge to a skill was written as a grant of a toolkit")
+	}
+
+	// Nothing to write from nothing is not an error: an agent deleted before
+	// its grants were projected.
+	if err := g.SetOutEdges(t.Context(), team, ghost, EdgeHasSkill, LabelSkill, nil); err != nil {
+		t.Errorf("no edges from a missing node: %v", err)
+	}
+}
+
+// Two edges to one node would be two parallel grants. Refused before the
+// query runs, so the edges already there are untouched.
+func TestTheSameTargetTwiceIsRefusedBeforeAnythingChanges(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	agent, pdf, docx := bare(LabelAgent), bare(LabelSkill), bare(LabelSkill)
+	mustPut(t, g, team, agent, pdf, docx)
+	if err := g.SetOutEdges(t.Context(), team, agent.Ref, EdgeHasSkill, LabelSkill, []Edge{{To: docx.ID}}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := g.SetOutEdges(t.Context(), team, agent.Ref, EdgeHasSkill, LabelSkill, []Edge{{To: pdf.ID}, {To: pdf.ID}})
+	if err == nil || !strings.Contains(err.Error(), "two HAS_SKILL edges") {
+		t.Errorf("err = %v", err)
+	}
+	if got := targets(mustSnapshot(t, g, team), EdgeHasSkill); !slices.Equal(got, []uuid.UUID{docx.ID}) {
+		t.Errorf("edges are now %v, want the one that was there", got)
+	}
+}
+
+// --- deleting ---
+
+func TestDeleteNodeTakesItsEdges(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	agent, pdf, docx := bare(LabelAgent), bare(LabelSkill), bare(LabelSkill)
+	mustPut(t, g, team, agent, pdf, docx)
+	if err := g.SetOutEdges(t.Context(), team, agent.Ref, EdgeHasSkill, LabelSkill, []Edge{{To: pdf.ID}, {To: docx.ID}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.DeleteNode(t.Context(), team, pdf.Ref); err != nil {
+		t.Fatalf("DeleteNode: %v", err)
+	}
+
+	s := mustSnapshot(t, g, team)
+	if len(s.Nodes) != 2 || !slices.Equal(targets(s, EdgeHasSkill), []uuid.UUID{docx.ID}) {
+		t.Errorf("%d nodes, edges to %v; want 2 nodes and the edge to docx", len(s.Nodes), targets(s, EdgeHasSkill))
+	}
+}
+
+func TestDeletingWhatIsNotThereIsNotAnError(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	// No graph yet.
+	if err := g.DeleteNode(t.Context(), team, Ref{LabelSkill, uuid.New()}); err != nil {
+		t.Errorf("with no graph: %v", err)
+	}
+	n := bare(LabelSkill)
+	mustPut(t, g, team, n)
+	// The id, under the wrong label: a different node, so nothing goes.
+	if err := g.DeleteNode(t.Context(), team, Ref{LabelAgent, n.ID}); err != nil {
+		t.Errorf("under another label: %v", err)
+	}
+	if s := mustSnapshot(t, g, team); len(s.Nodes) != 1 {
+		t.Errorf("%d nodes, want the skill still there", len(s.Nodes))
+	}
+}
+
+func TestDropTeamRemovesEverything(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	n := skill("pdf", []float32{1, 0, 0})
+	mustPut(t, g, team, n)
+
+	if err := g.DropTeam(t.Context(), team); err != nil {
+		t.Fatalf("DropTeam: %v", err)
+	}
+	if s := mustSnapshot(t, g, team); len(s.Nodes) != 0 || len(s.Edges) != 0 {
+		t.Errorf("%d nodes and %d edges survive", len(s.Nodes), len(s.Edges))
+	}
+	if _, _, found, _ := g.Fingerprint(t.Context(), team, n.Ref); found {
+		t.Error("the node is still found")
+	}
+}
+
+func TestDropTeamOfNoGraphIsNotAnError(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	for range 2 {
+		if err := g.DropTeam(t.Context(), team); err != nil {
+			t.Errorf("DropTeam: %v", err)
+		}
+	}
+}
+
+// --- isolation ---
+
+func TestATeamsGraphCannotSeeAnothers(t *testing.T) {
+	t.Parallel()
+
+	g, mine := liveGraph(t, 3)
+	theirs := uuid.New()
+	t.Cleanup(func() { _ = g.DropTeam(context.WithoutCancel(t.Context()), theirs) })
+
+	// The same id in both, so a query that leaked would find it.
+	shared := uuid.New()
+	a := Node{Ref: Ref{LabelSkill, shared}, Props: map[string]any{"name": "mine"}}
+	b := Node{Ref: Ref{LabelSkill, shared}, Props: map[string]any{"name": "theirs"}}
+	mustPut(t, g, mine, a)
+	mustPut(t, g, theirs, b, bare(LabelAgent))
+
+	sm, st := mustSnapshot(t, g, mine), mustSnapshot(t, g, theirs)
+	if len(sm.Nodes) != 1 || sm.Nodes[0].Props["name"] != "mine" {
+		t.Errorf("my graph holds %+v", sm.Nodes)
+	}
+	if len(st.Nodes) != 2 {
+		t.Errorf("their graph holds %d nodes, want 2", len(st.Nodes))
+	}
+
+	if err := g.DropTeam(t.Context(), mine); err != nil {
+		t.Fatal(err)
+	}
+	if st := mustSnapshot(t, g, theirs); len(st.Nodes) != 2 {
+		t.Errorf("dropping my graph left theirs with %d nodes", len(st.Nodes))
+	}
+}
+
+// --- snapshots ---
+
+func TestSnapshotOfNoGraphIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	s, err := g.Snapshot(t.Context(), team)
+	if err != nil || len(s.Nodes) != 0 || len(s.Edges) != 0 {
+		t.Errorf("Snapshot = %+v, %v", s, err)
+	}
+}
+
+// Two snapshots of one graph are equal, whatever order things were written
+// in: that is what lets a rebuild be compared with incremental projection.
+func TestSnapshotIsOrdered(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	var nodes []Node
+	for _, label := range []Label{LabelSkill, LabelAgent, LabelToolkit, LabelSkill, LabelAgent} {
+		nodes = append(nodes, bare(label))
+	}
+	mustPut(t, g, team, nodes...)
+
+	s := mustSnapshot(t, g, team)
+	if !slices.IsSortedFunc(s.Nodes, func(a, b Node) int {
+		if c := strings.Compare(string(a.Label), string(b.Label)); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID.String(), b.ID.String())
+	}) {
+		t.Errorf("nodes are not ordered by label then id: %+v", s.Nodes)
+	}
+}
+
+// FalkorDB caps a result at 10000 rows by default, and would cut a large
+// snapshot short without saying so. Paging reads past any cap.
+func TestSnapshotReadsEveryPage(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	const n = 2*pageSize + 7
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = uuid.NewString()
+	}
+	if _, err := g.run(t.Context(), team, false, "UNWIND $ids AS id CREATE (:Tool {id: id})", map[string]any{"ids": ids}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	hub := bare(LabelToolkit)
+	mustPut(t, g, team, hub)
+	if _, err := g.run(t.Context(), team, false,
+		"MATCH (k:Toolkit {id: $hub}) MATCH (t:Tool) CREATE (k)-[:CONTAINS]->(t)", map[string]any{"hub": hub.ID.String()}); err != nil {
+		t.Fatalf("seed edges: %v", err)
+	}
+
+	s := mustSnapshot(t, g, team)
+	if len(s.Nodes) != n+1 || len(s.Edges) != n {
+		t.Fatalf("snapshot has %d nodes and %d edges, want %d and %d", len(s.Nodes), len(s.Edges), n+1, n)
+	}
+	seen := map[uuid.UUID]bool{}
+	for _, node := range s.Nodes {
+		if seen[node.ID] {
+			t.Fatalf("node %s appears twice", node.ID)
+		}
+		seen[node.ID] = true
+	}
+}
+
+// A node whose id is not a uuid was not written by this package. The
+// snapshot says so rather than returning a zero id.
+func TestSnapshotRefusesWhatItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	for name, seed := range map[string]string{
+		"an id that is not a uuid": `CREATE (:Skill {id: "not-a-uuid"})`,
+		"a hash that is not hex":   `CREATE (:Skill {id: "11111111-1111-1111-1111-111111111111", content_sha256: "zz"})`,
+		"an edge from a bad id":    `CREATE (:Agent {id: "nope"})-[:HAS_SKILL]->(:Skill {id: "11111111-1111-1111-1111-111111111111"})`,
+	} {
+		g, team := liveGraph(t, 3)
+		if _, err := g.run(t.Context(), team, false, seed, nil); err != nil {
+			t.Fatalf("%s: seed: %v", name, err)
+		}
+		if _, err := g.Snapshot(t.Context(), team); err == nil {
+			t.Errorf("%s: the snapshot was returned", name)
+		}
+	}
+}
+
+// --- what goes into the query text ---
+
+// A label and an edge type are written into the query, because Cypher takes
+// neither as a parameter. Each must be a plain identifier; the type system
+// alone would let Label("Skill) DETACH DELETE n //") through.
+func TestANameThatIsNotAnIdentifierNeverReachesTheQuery(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	canary, pdf := bare(LabelAgent), bare(LabelSkill)
+	mustPut(t, g, team, canary, pdf)
+
+	for _, bad := range []string{"", "Skill) DETACH DELETE n //", "Sk ill", "Skill:Agent", "`Skill`", "1Skill", "Skill\n"} {
+		evil := Ref{Label(bad), pdf.ID}
+		if err := g.PutNode(t.Context(), team, Node{Ref: evil}); err == nil {
+			t.Errorf("PutNode with label %q succeeded", bad)
+		}
+		if err := g.DeleteNode(t.Context(), team, evil); err == nil {
+			t.Errorf("DeleteNode with label %q succeeded", bad)
+		}
+		if _, _, _, err := g.Fingerprint(t.Context(), team, evil); err == nil {
+			t.Errorf("Fingerprint with label %q succeeded", bad)
+		}
+		for what, call := range map[string]func() error{
+			"from":   func() error { return g.SetOutEdges(t.Context(), team, evil, EdgeHasSkill, LabelSkill, nil) },
+			"type":   func() error { return g.SetOutEdges(t.Context(), team, canary.Ref, EdgeType(bad), LabelSkill, nil) },
+			"target": func() error { return g.SetOutEdges(t.Context(), team, canary.Ref, EdgeHasSkill, Label(bad), nil) },
+		} {
+			if err := call(); err == nil {
+				t.Errorf("SetOutEdges with %s %q succeeded", what, bad)
+			}
+		}
+	}
+
+	if s := mustSnapshot(t, g, team); len(s.Nodes) != 2 {
+		t.Errorf("the graph holds %d nodes after the attempts, want the 2 it had", len(s.Nodes))
+	}
+}
+
+// --- contexts ---
+
+func TestACancelledContextReachesNoQuery(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if err := g.PutNode(ctx, team, bare(LabelAgent)); !errors.Is(err, context.Canceled) {
+		t.Errorf("PutNode: err = %v, want context.Canceled", err)
+	}
+	if err := g.DropTeam(ctx, team); !errors.Is(err, context.Canceled) {
+		t.Errorf("DropTeam: err = %v", err)
+	}
+	if err := g.Ping(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("Ping: err = %v", err)
+	}
+	if s := mustSnapshot(t, g, team); len(s.Nodes) != 0 {
+		t.Error("a cancelled write was made")
+	}
+}
+
+// The library sends every command on a context of its own, so a query in
+// flight cannot be cancelled. The caller is released the moment its context
+// ends all the same, and a worker shutting down is not held for the query.
+func TestAwaitReleasesTheCallerWhenItsContextEnds(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := await(ctx, func() (int, error) {
+		<-release
+		return 1, nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want the deadline", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("the caller waited %v", time.Since(start))
+	}
+}
+
+func TestAwaitReturnsWhatTheFunctionDid(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("boom")
+	if v, err := await(t.Context(), func() (int, error) { return 7, nil }); v != 7 || err != nil {
+		t.Errorf("await = %v, %v", v, err)
+	}
+	if _, err := await(t.Context(), func() (int, error) { return 0, boom }); !errors.Is(err, boom) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// --- errors ---
+
+// A syntax error from FalkorDB repeats the query, parameters and all. That
+// can be a 16 KiB description, and it ends up in a log.
+func TestBriefCapsAnErrorAndKeepsItOneOfOurs(t *testing.T) {
+	t.Parallel()
+
+	// One byte, then three-byte characters: the cut at 300 bytes lands in
+	// the middle of one, which a two-byte character on an even cut would not.
+	long := errors.New("x" + strings.Repeat("漢", 2000))
+	got := brief(long)
+	if !strings.HasPrefix(got.Error(), "graph: ") || len(got.Error()) > maxErrorText+20 {
+		t.Errorf("brief gave %d bytes starting %.20q", len(got.Error()), got.Error())
+	}
+	if !strings.HasSuffix(got.Error(), "…") {
+		t.Errorf("a cut error does not say it was cut: %.40q", got.Error())
+	}
+	for i, r := range got.Error() {
+		if r == '�' {
+			t.Fatalf("the cut left half a character at byte %d", i)
+		}
+	}
+
+	if got := brief(errors.New("short")); got.Error() != "graph: short" {
+		t.Errorf("brief = %q", got)
+	}
+	if brief(nil) != nil {
+		t.Error("brief(nil) is not nil")
+	}
+	for _, ctxErr := range []error{context.Canceled, context.DeadlineExceeded} {
+		if got := brief(ctxErr); !errors.Is(got, ctxErr) {
+			t.Errorf("brief lost %v", ctxErr)
+		}
+	}
+}
+
+// A real error from the server is capped too, not only a constructed one.
+func TestAServerErrorIsCapped(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	_, err := g.run(t.Context(), team, false, "RETUR $v", map[string]any{"v": strings.Repeat("x", 5000)})
+	if err == nil {
+		t.Fatal("a syntax error was accepted")
+	}
+	if len(err.Error()) > maxErrorText+20 {
+		t.Errorf("the error is %d bytes", len(err.Error()))
+	}
+	// And it is marked as the graph's, so a log line says where it came from.
+	if !strings.HasPrefix(err.Error(), "graph: ") {
+		t.Errorf("err = %v, want it to begin graph:", err)
+	}
+}
+
+// A read must leave no trace. FalkorDB's plain GRAPH.QUERY creates the graph
+// it is asked about, so asking after a team nothing was projected for would
+// leave an empty graph behind for every team that was ever looked at.
+func TestReadingATeamWithNoGraphCreatesNone(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	if _, _, _, err := g.Fingerprint(t.Context(), team, Ref{LabelSkill, uuid.New()}); err != nil {
+		t.Fatal(err)
+	}
+	mustSnapshot(t, g, team)
+
+	graphs, err := g.db.ListGraphs()
+	if err != nil {
+		t.Fatalf("ListGraphs: %v", err)
+	}
+	if slices.Contains(graphs, graphName(team)) {
+		t.Error("reading a team with no graph created one")
+	}
+}
+
+// With its context already over, the work is never begun: the write must not
+// happen in the background after the caller was told it was cancelled.
+func TestAwaitNeverStartsWhenTheContextIsAlreadyOver(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	started := make(chan struct{}, 1)
+	_, err := await(ctx, func() (int, error) {
+		started <- struct{}{}
+		return 1, nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	select {
+	case <-started:
+		t.Error("the function ran although the context was already cancelled")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// --- reading rows ---
+
+// The rows are FalkorDB's, and an id that is not a uuid means something
+// other than this package wrote the node. Through the database the node pass
+// always meets a bad id first, so the edge reader is checked here, on rows.
+func TestEdgeOfRefusesAnEndThatIsNotAUUID(t *testing.T) {
+	t.Parallel()
+
+	good, other := uuid.NewString(), uuid.NewString()
+	e, err := edgeOf([]any{"GRANTED", "Agent", good, "Toolkit", other, map[string]any{"allow": []any{"x"}}})
+	if err != nil || e.Type != EdgeGranted || e.From != (Ref{LabelAgent, uuid.MustParse(good)}) ||
+		e.To != (Ref{LabelToolkit, uuid.MustParse(other)}) || len(e.Props) != 1 {
+		t.Errorf("edgeOf = %+v, %v", e, err)
+	}
+
+	if _, err := edgeOf([]any{"GRANTED", "Agent", "nope", "Toolkit", other, nil}); err == nil || !strings.Contains(err.Error(), "starts at") {
+		t.Errorf("a bad source: err = %v", err)
+	}
+	if _, err := edgeOf([]any{"GRANTED", "Agent", good, "Toolkit", "nope", nil}); err == nil || !strings.Contains(err.Error(), "ends at") {
+		t.Errorf("a bad target: err = %v", err)
+	}
+	// A null where an id belongs is not a uuid either.
+	if _, err := edgeOf([]any{"GRANTED", "Agent", nil, "Toolkit", other, nil}); err == nil {
+		t.Error("a null source was accepted")
+	}
+}
+
+func TestNodeOfSeparatesTheGraphsPropertiesFromTheCallers(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	n, err := nodeOf([]any{"Skill", id.String(), map[string]any{
+		"id": id.String(), "name": "pdf", "embedding": []float32{1, 2}, "model": "m", "content_sha256": "ab12",
+	}})
+	if err != nil {
+		t.Fatalf("nodeOf: %v", err)
+	}
+	if n.Ref != (Ref{LabelSkill, id}) || !slices.Equal(n.Embedding, []float32{1, 2}) || n.Model != "m" || !bytes.Equal(n.ContentSHA256, []byte{0xab, 0x12}) {
+		t.Errorf("node = %+v", n)
+	}
+	if len(n.Props) != 1 || n.Props["name"] != "pdf" {
+		t.Errorf("Props = %v, want only the caller's", n.Props)
+	}
+
+	if _, err := nodeOf([]any{"Skill", "nope", map[string]any{}}); err == nil {
+		t.Error("a bad id was accepted")
+	}
+	if _, err := nodeOf([]any{"Skill", id.String(), map[string]any{"content_sha256": "zz"}}); err == nil {
+		t.Error("a hash that is not hex was accepted")
+	}
+	// A node with no properties at all reads as an empty node, not a panic.
+	if n, err := nodeOf([]any{"Agent", id.String(), nil}); err != nil || n.Embedding != nil || n.Model != "" {
+		t.Errorf("nodeOf with no props = %+v, %v", n, err)
+	}
+}
