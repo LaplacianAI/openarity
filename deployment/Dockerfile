@@ -6,7 +6,7 @@
 # building, never the machine being built for. Without it, buildx runs the
 # whole arm64 stage under QEMU emulation and a Go compile takes minutes rather
 # than seconds. Go cross-compiles natively, so emulating it buys nothing.
-FROM --platform=$BUILDPLATFORM golang:1.26.6-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine AS build
 
 WORKDIR /src
 
