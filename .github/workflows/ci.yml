@@ -67,9 +67,10 @@ jobs:
       run:
         working-directory: apps/brain
 
-    # Tests that need a real database or a real secret store read
-    # BRAIN_TEST_POSTGRES_DSN and BRAIN_TEST_SECRETS_ADDR, and skip when they
-    # are unset, so `make test` still works locally with nothing running.
+    # Tests that need a real database, secret store or graph read
+    # BRAIN_TEST_POSTGRES_DSN, BRAIN_TEST_SECRETS_ADDR and
+    # BRAIN_TEST_FALKOR_URL, and skip when they are unset, so `make test`
+    # still works locally with nothing running.
     services:
       postgres:
         image: postgres:18
@@ -107,8 +108,25 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # The graph tests in internal/graph run against this and skip without
+      # it. The image and REDIS_ARGS are the ones deployment/docker-compose.yml
+      # ships, and a test fails if they drift apart — the point of testing
+      # against a real FalkorDB is lost on a version nobody deploys.
+      falkordb:
+        image: falkordb/falkordb:v4.20.6
+        env:
+          REDIS_ARGS: "--appendonly yes --appendfsync always"
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       BRAIN_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/openarity_test?sslmode=disable
+      BRAIN_TEST_FALKOR_URL: redis://localhost:6379
       BRAIN_TEST_SECRETS_ADDR: http://localhost:8200
       BRAIN_TEST_SECRETS_TOKEN: ci-root
       BRAIN_TEST_S3_ENDPOINT: http://localhost:9000

@@ -51,6 +51,19 @@ ifneq ($(db),)
 export BRAIN_TEST_POSTGRES_DSN := postgres://$(user)@$(host):$(port)/$(db)?sslmode=$(sslmode)
 endif
 
+# The FalkorDB for the graph tests in internal/graph. Unset means they skip,
+# for the same reason there is no default database above. Each test makes a
+# graph of its own and drops it, so the compose instance is safe to use:
+#
+#   make check db=openarity_test falkor=redis://127.0.0.1:6380
+#
+# Or export BRAIN_TEST_FALKOR_URL yourself; anything passed here wins.
+falkor ?=
+
+ifneq ($(falkor),)
+export BRAIN_TEST_FALKOR_URL := $(falkor)
+endif
+
 .DEFAULT_GOAL := help
 
 ## help: list available targets

@@ -97,14 +97,34 @@ services:
       retries: 10
       start_period: 10s
 
-  # Not used by the brain yet. It is here so the ports in the configuration
-  # table are real, and so the day the graph lands nobody has to find an image.
+  # The graph: an index of agents, tools and skills, rebuilt from Postgres
+  # at any time by `brain graph rebuild`.
+  #
+  # Pinned, and the same version CI tests against — a test in
+  # apps/brain/internal/graph fails if the two drift. `latest` resolved to
+  # this when it was pinned.
+  #
+  # REDIS_ARGS is what makes a write survive a crash. FalkorDB is Redis with
+  # a module, and Redis by default persists with periodic snapshots: the
+  # projector would be told a write succeeded, clear its outbox row, and a
+  # crash before the next snapshot would lose the write with nothing left to
+  # replay it. Measured on this image, with a node created and the container
+  # killed with SIGKILL straight after the write was acknowledged:
+  #
+  #   defaults                                    the graph is gone
+  #   --appendonly yes --appendfsync always       the node is there
+  #
+  # The volume is mounted where FalkorDB writes. It was at /data, and the
+  # server's directory is /var/lib/falkordb/data, so the volume held nothing
+  # and recreating the container discarded the graph whatever REDIS_ARGS said.
   falkordb:
-    image: falkordb/falkordb:latest
+    image: falkordb/falkordb:v4.20.6
+    environment:
+      REDIS_ARGS: "--appendonly yes --appendfsync always"
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${FALKORDB_PORT:-6380}:6379"
     volumes:
-      - falkordb-data:/data
+      - falkordb-data:/var/lib/falkordb/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
