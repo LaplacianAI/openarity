@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	falkordb "github.com/FalkorDB/falkordb-go/v2"
@@ -81,6 +82,9 @@ type Snapshot struct {
 type Graph struct {
 	db   *falkordb.FalkorDB
 	dims int
+
+	mu    sync.Mutex
+	turns map[uuid.UUID]chan struct{}
 }
 
 type outcome[T any] struct {
@@ -106,11 +110,12 @@ func Dial(rawURL string, dims int) (*Graph, error) {
 	if err != nil {
 		return nil, fmt.Errorf("graph: %w", err)
 	}
-	return &Graph{db: db, dims: dims}, nil
+
+	return &Graph{db: db, dims: dims, turns: map[uuid.UUID]chan struct{}{}}, nil
 }
 
 func (g *Graph) Ping(ctx context.Context) error {
-	_, err := await(ctx, func() (struct{}, error) {
+	_, err := ordered(ctx, make(chan struct{}, 1), func() (struct{}, error) {
 		return struct{}{}, g.db.Conn.Ping(ctx).Err()
 	})
 	return brief(err)
@@ -138,29 +143,7 @@ func (g *Graph) EnsureIndexes(ctx context.Context, team uuid.UUID) error {
 		}
 	}
 
-	return g.checkDimensions(ctx, team)
-}
-
-func (g *Graph) checkDimensions(ctx context.Context, team uuid.UUID) error {
-	res, err := g.run(ctx, team, true, "CALL db.indexes() YIELD label, options RETURN label, options", nil)
-	if err != nil {
-		return err
-	}
-
-	for res.Next() {
-		row := res.Record().Values()
-		options, _ := row[1].(map[string]any)
-		vector, ok := options["embedding"].(map[string]any)
-		if !ok {
-			continue
-		}
-		if stored, _ := vector["dimension"].(int64); stored != int64(g.dims) {
-			return fmt.Errorf("graph: the %v index holds vectors of %d dimensions and EMBEDDING_DIMENSIONS is %d; "+
-				"the model changed, so run `brain graph rebuild`", row[0], stored, g.dims)
-		}
-	}
-
-	return nil
+	return g.verifyIndexes(ctx, team)
 }
 
 func (g *Graph) PutNode(ctx context.Context, team uuid.UUID, n Node) error {
@@ -271,7 +254,7 @@ func (g *Graph) DeleteNode(ctx context.Context, team uuid.UUID, ref Ref) error {
 }
 
 func (g *Graph) DropTeam(ctx context.Context, team uuid.UUID) error {
-	_, err := await(ctx, func() (struct{}, error) {
+	_, err := ordered(ctx, g.turn(team), func() (struct{}, error) {
 		return struct{}{}, g.db.SelectGraph(graphName(team)).Delete()
 	})
 	if absent(err) {
@@ -309,6 +292,36 @@ func (g *Graph) Snapshot(ctx context.Context, team uuid.UUID) (Snapshot, error) 
 	return out, nil
 }
 
+func (g *Graph) verifyIndexes(ctx context.Context, team uuid.UUID) error {
+	res, err := g.run(ctx, team, true, "CALL db.indexes() YIELD label, options RETURN label, options", nil)
+	if err != nil {
+		return err
+	}
+
+	widths := map[Label]int64{}
+	for res.Next() {
+		row := res.Record().Values()
+		label, _ := row[0].(string)
+		options, _ := row[1].(map[string]any)
+		vector, _ := options["embedding"].(map[string]any)
+		if width, ok := vector["dimension"].(int64); ok {
+			widths[Label(label)] = width
+		}
+	}
+
+	for _, l := range embeddedLabels {
+		width, ok := widths[l]
+		switch {
+		case !ok:
+			return fmt.Errorf("graph: the %s vector index is missing, or its width cannot be read, after it was created", l)
+		case width != int64(g.dims):
+			return fmt.Errorf("graph: the %s index holds vectors of %d dimensions and EMBEDDING_DIMENSIONS is %d; "+
+				"the model changed, so run `brain graph rebuild`", l, width, g.dims)
+		}
+	}
+	return nil
+}
+
 func (g *Graph) pages(ctx context.Context, team uuid.UUID, cypher string, each func(row []any) error) error {
 	for skip := 0; ; skip += pageSize {
 		res, err := g.run(ctx, team, true, fmt.Sprintf("%s SKIP %d LIMIT %d", cypher, skip, pageSize), nil)
@@ -339,7 +352,7 @@ func (g *Graph) run(ctx context.Context, team uuid.UUID, readOnly bool, cypher s
 	}
 
 	graph := g.db.SelectGraph(graphName(team))
-	res, err := await(ctx, func() (*falkordb.QueryResult, error) {
+	res, err := ordered(ctx, g.turn(team), func() (*falkordb.QueryResult, error) {
 		if readOnly {
 			return graph.ROQuery(head+cypher, nil, nil)
 		}
@@ -351,14 +364,32 @@ func (g *Graph) run(ctx context.Context, team uuid.UUID, readOnly bool, cypher s
 	return res, nil
 }
 
-func await[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+func (g *Graph) turn(team uuid.UUID) chan struct{} {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.turns[team] == nil {
+		g.turns[team] = make(chan struct{}, 1)
+	}
+	return g.turns[team]
+}
+
+func ordered[T any](ctx context.Context, turn chan struct{}, fn func() (T, error)) (T, error) {
 	var zero T
+
+	select {
+	case turn <- struct{}{}:
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	}
 	if err := ctx.Err(); err != nil {
+		<-turn
 		return zero, err
 	}
 
 	done := make(chan outcome[T], 1)
 	go func() {
+		defer func() { <-turn }()
 		value, err := fn()
 		done <- outcome[T]{value: value, err: err}
 	}()

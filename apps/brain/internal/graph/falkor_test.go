@@ -136,6 +136,12 @@ func TestDialNeverRepeatsTheURL(t *testing.T) {
 		"redis://user:s3cret@127.0.0.1:6379/not-a-number",
 		"http://user:s3cret@127.0.0.1:6379",
 		"redis://user:s3cret@[::1",
+		"redis://user:s3cret@127.0.0.1:6379/0?nope=1",
+		"redis://user:s3cret@127.0.0.1:6379?db=abc",
+		"redis://user:s3cret@127.0.0.1:6379?dial_timeout=soon",
+		"redis://user:s3cret@127.0.0.1:6379/0/1",
+		"redis://user:s3cret@127.0.0.1:notaport",
+		"unix://user:s3cret@/tmp/x.sock?db=q",
 	} {
 		_, err := Dial(raw, 3)
 		if err == nil {
@@ -858,7 +864,7 @@ func TestACancelledContextReachesNoQuery(t *testing.T) {
 // The library sends every command on a context of its own, so a query in
 // flight cannot be cancelled. The caller is released the moment its context
 // ends all the same, and a worker shutting down is not held for the query.
-func TestAwaitReleasesTheCallerWhenItsContextEnds(t *testing.T) {
+func TestTheCallerIsReleasedWhenItsContextEnds(t *testing.T) {
 	t.Parallel()
 
 	release := make(chan struct{})
@@ -868,7 +874,7 @@ func TestAwaitReleasesTheCallerWhenItsContextEnds(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	_, err := await(ctx, func() (int, error) {
+	_, err := ordered(ctx, make(chan struct{}, 1), func() (int, error) {
 		<-release
 		return 1, nil
 	})
@@ -880,14 +886,14 @@ func TestAwaitReleasesTheCallerWhenItsContextEnds(t *testing.T) {
 	}
 }
 
-func TestAwaitReturnsWhatTheFunctionDid(t *testing.T) {
+func TestOrderedReturnsWhatTheFunctionDid(t *testing.T) {
 	t.Parallel()
 
 	boom := errors.New("boom")
-	if v, err := await(t.Context(), func() (int, error) { return 7, nil }); v != 7 || err != nil {
+	if v, err := ordered(t.Context(), make(chan struct{}, 1), func() (int, error) { return 7, nil }); v != 7 || err != nil {
 		t.Errorf("await = %v, %v", v, err)
 	}
-	if _, err := await(t.Context(), func() (int, error) { return 0, boom }); !errors.Is(err, boom) {
+	if _, err := ordered(t.Context(), make(chan struct{}, 1), func() (int, error) { return 0, boom }); !errors.Is(err, boom) {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -940,6 +946,11 @@ func TestAServerErrorIsCapped(t *testing.T) {
 	if len(err.Error()) > maxErrorText+20 {
 		t.Errorf("the error is %d bytes", len(err.Error()))
 	}
+	// FalkorDB repeats the query in a syntax error. It repeats the template,
+	// with $v in it, and not the value: a team's text does not reach a log.
+	if strings.Contains(err.Error(), "xxxxxxxx") {
+		t.Errorf("the error repeats the parameter's value: %.120v", err)
+	}
 	// And it is marked as the graph's, so a log line says where it came from.
 	if !strings.HasPrefix(err.Error(), "graph: ") {
 		t.Errorf("err = %v, want it to begin graph:", err)
@@ -969,14 +980,14 @@ func TestReadingATeamWithNoGraphCreatesNone(t *testing.T) {
 
 // With its context already over, the work is never begun: the write must not
 // happen in the background after the caller was told it was cancelled.
-func TestAwaitNeverStartsWhenTheContextIsAlreadyOver(t *testing.T) {
+func TestNothingStartsWhenTheContextIsAlreadyOver(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	started := make(chan struct{}, 1)
-	_, err := await(ctx, func() (int, error) {
+	_, err := ordered(ctx, make(chan struct{}, 1), func() (int, error) {
 		started <- struct{}{}
 		return 1, nil
 	})
@@ -987,6 +998,312 @@ func TestAwaitNeverStartsWhenTheContextIsAlreadyOver(t *testing.T) {
 	case <-started:
 		t.Error("the function ran although the context was already cancelled")
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// --- one team, one operation at a time ---
+
+// The library cannot cancel a query, so a caller that gives up leaves its
+// write in flight. FalkorDB runs queries on a thread pool, and two writes to
+// one graph that are both in flight commit in whichever order takes the lock.
+// If the abandoned one granted two servers and the next one revoked one of
+// them, the old write landing last brings the revoked grant back.
+//
+// So the next operation on a team waits until the one before has finished,
+// not merely been given up on.
+func TestTheNextOperationWaitsForAnAbandonedOneToFinish(t *testing.T) {
+	t.Parallel()
+
+	turn := make(chan struct{}, 1)
+	inFlight, finish := make(chan struct{}), make(chan struct{})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	_, err := ordered(ctx, turn, func() (int, error) {
+		close(inFlight)
+		<-finish
+		return 1, nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the first caller: err = %v, want it released by its deadline", err)
+	}
+	<-inFlight
+
+	started := make(chan struct{})
+	result := make(chan int, 1)
+	go func() {
+		v, _ := ordered(t.Context(), turn, func() (int, error) {
+			close(started)
+			return 2, nil
+		})
+		result <- v
+	}()
+
+	select {
+	case <-started:
+		t.Fatal("the second operation started while the abandoned first was still in flight")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(finish)
+	select {
+	case v := <-result:
+		if v != 2 {
+			t.Errorf("the second operation returned %d", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second operation never ran after the first finished")
+	}
+}
+
+// Waiting for a turn is still waiting on the caller's context: a team whose
+// last query is stuck does not hold a shutting-down worker.
+func TestACallerWaitingForItsTurnHonoursItsDeadline(t *testing.T) {
+	t.Parallel()
+
+	turn := make(chan struct{}, 1)
+	finish := make(chan struct{})
+	t.Cleanup(func() { close(finish) })
+	go func() {
+		_, _ = ordered(context.WithoutCancel(t.Context()), turn, func() (int, error) { <-finish; return 0, nil })
+	}()
+	// The holder has the turn once the channel is full.
+	for len(turn) == 0 {
+		time.Sleep(time.Millisecond)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
+	defer cancel()
+	ran := false
+	start := time.Now()
+	_, err := ordered(ctx, turn, func() (int, error) { ran = true; return 0, nil })
+
+	if !errors.Is(err, context.DeadlineExceeded) || ran {
+		t.Errorf("err = %v, ran = %v; want the deadline and nothing run", err, ran)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("waited %v for a turn with an 80ms deadline", time.Since(start))
+	}
+}
+
+// A turn that was cancelled before it began is handed back, or the team
+// would be locked for good by a caller that never did anything.
+func TestACancelledCallerGivesItsTurnBack(t *testing.T) {
+	t.Parallel()
+
+	turn := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for range 20 {
+		if _, err := ordered(ctx, turn, func() (int, error) { return 0, nil }); !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v", err)
+		}
+	}
+
+	if v, err := ordered(t.Context(), turn, func() (int, error) { return 9, nil }); v != 9 || err != nil {
+		t.Errorf("after cancelled callers, ordered = %v, %v; the turn was not given back", v, err)
+	}
+}
+
+// And a finished operation gives its turn back whether it succeeded or not.
+func TestAFinishedOperationGivesItsTurnBack(t *testing.T) {
+	t.Parallel()
+
+	turn := make(chan struct{}, 1)
+	for i := range 50 {
+		_, err := ordered(t.Context(), turn, func() (int, error) {
+			if i%2 == 0 {
+				return 0, errors.New("failed")
+			}
+			return i, nil
+		})
+		if (err != nil) != (i%2 == 0) {
+			t.Fatalf("call %d: err = %v", i, err)
+		}
+	}
+}
+
+// One team's stuck query is that team's problem alone.
+func TestEachTeamHasItsOwnTurn(t *testing.T) {
+	t.Parallel()
+
+	g, err := Dial("redis://127.0.0.1:1", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = g.Close() })
+
+	a, b := uuid.New(), uuid.New()
+	once, again := g.turn(a), g.turn(a)
+	if once != again {
+		t.Error("one team was given two turns, so its operations are not ordered")
+	}
+	if g.turn(a) == g.turn(b) {
+		t.Error("two teams share a turn, so one waits on the other")
+	}
+
+	// Many callers asking at once still get the one turn.
+	first := g.turn(uuid.Nil)
+	same := make(chan bool, 64)
+	for range 64 {
+		go func() { same <- g.turn(uuid.Nil) == first }()
+	}
+	for range 64 {
+		if !<-same {
+			t.Fatal("concurrent callers were given different turns for one team")
+		}
+	}
+}
+
+// Through the client itself: operations on one team from many goroutines all
+// land, none lost and none doubled.
+func TestConcurrentWritesToOneTeamAllLand(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	const n = 40
+	errs := make(chan error, n)
+	for range n {
+		go func() { errs <- g.PutNode(t.Context(), team, bare(LabelTool)) }()
+	}
+	for range n {
+		if err := <-errs; err != nil {
+			t.Fatalf("PutNode: %v", err)
+		}
+	}
+	if s := mustSnapshot(t, g, team); len(s.Nodes) != n {
+		t.Errorf("%d nodes, want %d", len(s.Nodes), n)
+	}
+}
+
+// The pieces above are right and prove nothing about the client: one that
+// made a fresh turn for every call would pass them all and order nothing. So
+// this holds a team's turn from outside, as an operation still in flight
+// does, and every operation on that team has to wait behind it.
+func TestEveryOperationOnATeamWaitsForItsTurn(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	n := bare(LabelAgent)
+	mustPut(t, g, team, n)
+
+	g.turn(team) <- struct{}{}
+	held := true
+	release := func() {
+		if held {
+			<-g.turn(team)
+			held = false
+		}
+	}
+	t.Cleanup(release)
+
+	short := func() context.Context {
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		t.Cleanup(cancel)
+		return ctx
+	}
+	for name, op := range map[string]func(context.Context) error{
+		"PutNode":       func(ctx context.Context) error { return g.PutNode(ctx, team, bare(LabelSkill)) },
+		"DeleteNode":    func(ctx context.Context) error { return g.DeleteNode(ctx, team, n.Ref) },
+		"SetOutEdges":   func(ctx context.Context) error { return g.SetOutEdges(ctx, team, n.Ref, EdgeHasSkill, LabelSkill, nil) },
+		"EnsureIndexes": func(ctx context.Context) error { return g.EnsureIndexes(ctx, team) },
+		"DropTeam":      func(ctx context.Context) error { return g.DropTeam(ctx, team) },
+		"Fingerprint": func(ctx context.Context) error {
+			_, _, _, err := g.Fingerprint(ctx, team, n.Ref)
+			return err
+		},
+		"Snapshot": func(ctx context.Context) error {
+			_, err := g.Snapshot(ctx, team)
+			return err
+		},
+	} {
+		if err := op(short()); !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("%s went ahead while the team's turn was held: err = %v", name, err)
+		}
+	}
+
+	// Another team is not held up by this one.
+	other := uuid.New()
+	t.Cleanup(func() { _ = g.DropTeam(context.WithoutCancel(t.Context()), other) })
+	if err := g.PutNode(short(), other, bare(LabelAgent)); err != nil {
+		t.Errorf("another team waited on this one: %v", err)
+	}
+
+	// Nothing above was done: the node is there, alone, and the graph was not dropped.
+	release()
+	if s := mustSnapshot(t, g, team); len(s.Nodes) != 1 || s.Nodes[0].ID != n.ID {
+		t.Errorf("after the turn was released the graph holds %+v, want only the first node", s.Nodes)
+	}
+}
+
+// --- indexes that are not there ---
+
+// The width check used to pass when it found no vector index at all, and
+// when it could not read the options of one it did find. Either way every
+// vector written afterwards is stored and never searched, with no error
+// anywhere. A missing index is now as loud as a wrong one.
+func TestAVectorIndexThatIsMissingIsAnError(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	// A graph with a node and no index of any kind.
+	mustPut(t, g, team, bare(LabelAgent))
+
+	err := g.verifyIndexes(t.Context(), team)
+	if err == nil || !strings.Contains(err.Error(), "vector index is missing") {
+		t.Errorf("err = %v, want the missing index named", err)
+	}
+}
+
+// One of the three missing is still an error: an index for skills does not
+// make tools searchable.
+func TestEveryEmbeddedLabelNeedsItsIndex(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	for _, l := range []Label{LabelAgent, LabelSkill} {
+		if _, err := g.run(t.Context(), team, false,
+			"CREATE VECTOR INDEX FOR (n:"+string(l)+") ON (n.embedding) OPTIONS {dimension:3, similarityFunction:'cosine'}", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Tool has an index, on its id, and so a row in db.indexes with no
+	// vector in it. That is a missing vector index, not one of width zero.
+	if _, err := g.run(t.Context(), team, false, "CREATE INDEX FOR (n:Tool) ON (n.id)", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	err := g.verifyIndexes(t.Context(), team)
+	if err == nil || !strings.Contains(err.Error(), "Tool vector index is missing") {
+		t.Errorf("err = %v, want the Tool index named", err)
+	}
+
+	// EnsureIndexes creates what is missing and then finds all three.
+	if err := g.EnsureIndexes(t.Context(), team); err != nil {
+		t.Errorf("EnsureIndexes: %v", err)
+	}
+	if err := g.verifyIndexes(t.Context(), team); err != nil {
+		t.Errorf("after EnsureIndexes: %v", err)
+	}
+}
+
+// EnsureIndexes must be the thing that does this check: a function that is
+// correct and never called protects nothing.
+func TestEnsureIndexesVerifiesWhatItCreated(t *testing.T) {
+	t.Parallel()
+
+	g3, team := liveGraph(t, 3)
+	// Two labels indexed at another width, the third not at all.
+	for _, l := range []Label{LabelAgent, LabelSkill} {
+		if _, err := g3.run(t.Context(), team, false,
+			"CREATE VECTOR INDEX FOR (n:"+string(l)+") ON (n.embedding) OPTIONS {dimension:7, similarityFunction:'cosine'}", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := g3.EnsureIndexes(t.Context(), team)
+	if err == nil || !strings.Contains(err.Error(), "7 dimensions") {
+		t.Errorf("err = %v, want the index of 7 dimensions refused", err)
 	}
 }
 
