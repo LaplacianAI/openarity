@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -16,6 +17,8 @@ var (
 	redisSchemes    = []string{"redis", "rediss"}
 	postgresSchemes = []string{"postgres", "postgresql"}
 )
+
+const maxEmbeddingDimensions = 4096
 
 func checkHostPort(field, v string) error {
 	_, port, err := net.SplitHostPort(v)
@@ -63,7 +66,8 @@ func checkSecretRef(field, v string) error {
 	}
 	path, key, ok := strings.Cut(v, "#")
 	if !ok || path == "" || key == "" || strings.Contains(key, "#") {
-		return fmt.Errorf("%s must name a secret as path#key, got %q", field, v)
+		return fmt.Errorf("%s must name a secret as path#key, such as platform/github#token; "+
+			"the value given is not repeated here, in case it is the secret itself", field)
 	}
 	return nil
 }
@@ -90,6 +94,21 @@ func checkPrivateNetworks(field string, nets []netip.Prefix) error {
 		}
 	}
 	return nil
+}
+
+func checkEmbedding(model string, dims int, keyRef string) error {
+	switch {
+	case model != strings.TrimSpace(model):
+		return fmt.Errorf("EMBEDDING_MODEL %q has a space at one end", model)
+	case (model == "") != (dims == 0):
+		return errors.New("EMBEDDING_MODEL and EMBEDDING_DIMENSIONS are set together or not at all: " +
+			"the index is built for one model's dimensions")
+	case dims < 0 || dims > maxEmbeddingDimensions:
+		return fmt.Errorf("EMBEDDING_DIMENSIONS is %d, and must be between 1 and %d", dims, maxEmbeddingDimensions)
+	case keyRef != "" && model == "":
+		return errors.New("EMBEDDING_KEY_REF is set but EMBEDDING_MODEL is not, so nothing would use it")
+	}
+	return checkSecretRef("EMBEDDING_KEY_REF", keyRef)
 }
 
 func (c *Config) Validate() error {
@@ -152,6 +171,10 @@ func (c *Config) Validate() error {
 	}
 
 	if err := checkPrivateNetworks("MCP_PRIVATE_NETWORKS", c.MCPPrivateNetworks); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := checkEmbedding(c.EmbeddingModel, c.EmbeddingDimensions, c.EmbeddingKeyRef); err != nil {
 		errs = append(errs, err)
 	}
 

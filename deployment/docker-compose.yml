@@ -61,6 +61,17 @@ x-brain-env: &brain-env
   OPENARITY_OIDC_ENABLED: ${OPENARITY_OIDC_ENABLED:-false}
   OPENARITY_OIDC_ISSUER: ${OPENARITY_OIDC_ISSUER-}
   OPENARITY_OIDC_AUDIENCE: ${OPENARITY_OIDC_AUDIENCE:-openarity}
+  # All empty by default, and each is a setting that can be left that way.
+  # Skills import from GitHub regardless; another host only when listed.
+  # MCP discovery reaches public addresses only, so a server running inside
+  # this compose network needs its range listed. No embedding model means
+  # the worker runs no projector, and says so when it starts.
+  OPENARITY_SKILL_IMPORT_HOSTS: ${OPENARITY_SKILL_IMPORT_HOSTS-}
+  OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF: ${OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF-}
+  OPENARITY_MCP_PRIVATE_NETWORKS: ${OPENARITY_MCP_PRIVATE_NETWORKS-}
+  OPENARITY_EMBEDDING_MODEL: ${OPENARITY_EMBEDDING_MODEL-}
+  OPENARITY_EMBEDDING_DIMENSIONS: ${OPENARITY_EMBEDDING_DIMENSIONS-0}
+  OPENARITY_EMBEDDING_KEY_REF: ${OPENARITY_EMBEDDING_KEY_REF-}
 
 services:
   postgres:

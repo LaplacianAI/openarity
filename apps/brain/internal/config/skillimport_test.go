@@ -87,6 +87,11 @@ func TestTheGitHubTokenIsASecretReference(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "SKILL_IMPORT_GITHUB_TOKEN_REF") || !strings.Contains(err.Error(), "path#key") {
 			t.Errorf("SKILL_IMPORT_GITHUB_TOKEN_REF=%q: err = %v, want a refusal naming the variable and the form", raw, err)
 		}
+		// A pasted token is the likeliest thing this check ever refuses, and
+		// an error reaches stderr and the log shipper.
+		if strings.HasPrefix(raw, "ghp_") && err != nil && strings.Contains(err.Error(), raw) {
+			t.Errorf("the refusal repeats the pasted token: %v", err)
+		}
 	}
 }
 

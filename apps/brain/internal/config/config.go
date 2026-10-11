@@ -68,6 +68,11 @@ type Config struct {
 
 	/* MCP Configuration */
 	MCPPrivateNetworks []netip.Prefix `env:"MCP_PRIVATE_NETWORKS" envDefault:""`
+
+	/* Embedding Configuration */
+	EmbeddingModel      string `env:"EMBEDDING_MODEL" envDefault:""`
+	EmbeddingDimensions int    `env:"EMBEDDING_DIMENSIONS" envDefault:"0"`
+	EmbeddingKeyRef     string `env:"EMBEDDING_KEY_REF" envDefault:""`
 }
 
 func (c *Config) String() string {
@@ -76,7 +81,8 @@ func (c *Config) String() string {
 			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s "+
 			"SecretsBackend:%s SecretsAddr:%s "+
 			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
-			"OmniRouteURL:%s SkillImportHosts:%v SkillImportGitHubTokenRef:%s MCPPrivateNetworks:%v}",
+			"OmniRouteURL:%s SkillImportHosts:%v SkillImportGitHubTokenRef:%s MCPPrivateNetworks:%v "+
+			"EmbeddingModel:%s EmbeddingDimensions:%d EmbeddingKeyRef:%s}",
 		c.Environment,
 		c.LogLevel,
 		c.APIBind,
@@ -94,6 +100,9 @@ func (c *Config) String() string {
 		c.SkillImportHosts,
 		c.SkillImportGitHubTokenRef,
 		c.MCPPrivateNetworks,
+		c.EmbeddingModel,
+		c.EmbeddingDimensions,
+		c.EmbeddingKeyRef,
 	)
 }
 

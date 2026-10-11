@@ -527,6 +527,27 @@ postgres://postgres:postgres@localhost:5432/openarity?sslmode=disable
 Secrets are never stored in Postgres or the graph. Rows hold secret-store path
 references only.
 
+### Skills, MCP servers and embeddings
+
+All empty by default, and each can stay that way.
+
+| Variable                                  | Default | What it does                                                   |
+| ----------------------------------------- | ------- | -------------------------------------------------------------- |
+| `OPENARITY_SKILL_IMPORT_HOSTS`            | empty   | Hosts a skill zip may be imported from, besides GitHub         |
+| `OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF` | empty   | `path#key` of a GitHub token, to raise the rate limit          |
+| `OPENARITY_MCP_PRIVATE_NETWORKS`          | empty   | CIDRs MCP discovery may reach, besides public addresses        |
+| `OPENARITY_EMBEDDING_MODEL`               | empty   | The model that embeds agents, tools and skills for the graph   |
+| `OPENARITY_EMBEDDING_DIMENSIONS`          | `0`     | The width of its vectors, `1` to `4096`; set with the model    |
+| `OPENARITY_EMBEDDING_KEY_REF`             | empty   | `path#key` of the embedding key, when the model router needs it |
+
+Discovering an MCP server's tools reaches public addresses only, so a team's
+self-hosted server needs its range listed. A range touching link-local
+(`169.254.0.0/16`, `fe80::/10`), where cloud metadata answers, is refused at
+startup whatever is listed.
+
+With no embedding model the worker runs no projector and says so when it
+starts. The index is built for one model's width, so the two are set together.
+
 ### Secrets and object storage
 
 Both pick an implementation by name. Nothing is inferred from which other

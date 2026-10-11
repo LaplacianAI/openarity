@@ -51,6 +51,9 @@ func TestLoadDefaults(t *testing.T) {
 		"SkillImportHosts":          "0 entries",
 		"SkillImportGitHubTokenRef": "",
 		"MCPPrivateNetworks":        "0 entries",
+		"EmbeddingModel":            "",
+		"EmbeddingDimensions":       "0",
+		"EmbeddingKeyRef":           "",
 	}
 	got := map[string]string{
 		"Environment":               string(cfg.Environment),
@@ -82,6 +85,9 @@ func TestLoadDefaults(t *testing.T) {
 		"SkillImportHosts":          fmt.Sprintf("%d entries", len(cfg.SkillImportHosts)),
 		"SkillImportGitHubTokenRef": cfg.SkillImportGitHubTokenRef,
 		"MCPPrivateNetworks":        fmt.Sprintf("%d entries", len(cfg.MCPPrivateNetworks)),
+		"EmbeddingModel":            cfg.EmbeddingModel,
+		"EmbeddingDimensions":       strconv.Itoa(cfg.EmbeddingDimensions),
+		"EmbeddingKeyRef":           cfg.EmbeddingKeyRef,
 	}
 	for k, w := range want {
 		if got[k] != w {
