@@ -45,9 +45,13 @@ COMPOSE := docker compose -f docker-compose.yml
 #   are deliberately absent from down, ps and destroy — their :? guards would
 #   make stopping the stack require both sets of credentials, which is the same
 #   trap $(BAO) already documents.
+#   OLLAMA is a local embedding model for either gateway to route to. It has
+#   no credentials and so no guards, which is why it is in down, ps and
+#   destroy where the gateways are not.
 IMAGE     := -f docker-compose.image.yml
 LITELLM   := -f docker-compose.litellm.yml
 OMNIROUTE := -f docker-compose.omniroute.yml
+OLLAMA    := -f docker-compose.ollama.yml
 OIDC    := -f docker-compose.authentik.yml
 DEX     := -f docker-compose.dex.yml
 BAO     := -f docker-compose.openbao.yml
@@ -166,6 +170,27 @@ omniroute-down:
 	$(COMPOSE) $(OMNIROUTE) stop omniroute
 
 # ---------------------------------------------------------------------------
+# A local embedding model. The brain asks the gateway for vectors and the
+# gateway asks this, so nothing here is the brain's configuration: see
+# README.md for registering it in LiteLLM or OmniRoute.
+#
+# The pull is inside the target because a server with no model answers every
+# embedding request with a 404 that reads like a wrong URL.
+
+## ollama: add a local embedding model — `make ollama model=mxbai-embed-large` for another
+ollama: model ?= nomic-embed-text
+ollama:
+	$(COMPOSE) $(OLLAMA) up -d --wait ollama
+	$(COMPOSE) $(OLLAMA) exec -T ollama ollama pull $(model)
+	@printf '\n%s\n%s\n\n' \
+	  "ollama     http://$${BIND_ADDR:-127.0.0.1}:$${OLLAMA_PORT:-11434}" \
+	  "gateways   http://ollama:11434  (on the compose network)"
+
+## ollama-down: stop Ollama, keeping its models
+ollama-down:
+	$(COMPOSE) $(OLLAMA) stop ollama
+
+# ---------------------------------------------------------------------------
 
 ## dev: dependencies and the brain, built from your working tree
 dev:
@@ -198,23 +223,23 @@ pull:
 
 ## ps: what is running, and on which ports
 ps:
-	@$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) ps
+	@$(COMPOSE) $(OIDC) $(OBJECTS) $(OLLAMA) $(IMAGE) $(PROFILE) ps
 
 ## logs: follow the brain — `make logs service=authentik-server` for another
 logs: service ?= brain
 logs:
-	$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) logs -f $(service)
+	$(COMPOSE) $(OIDC) $(OBJECTS) $(OLLAMA) $(IMAGE) $(PROFILE) logs -f $(service)
 
 ## down: stop everything. Volumes survive, so data does too
 down:
-	$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) down --remove-orphans
+	$(COMPOSE) $(OIDC) $(OBJECTS) $(OLLAMA) $(IMAGE) $(PROFILE) down --remove-orphans
 
 # Named destroy rather than `clean`: it deletes the databases, authentik's
 # configuration and every secret in OpenBao. There is no undo and nothing
 # warns you, so the target says what it does.
 ## destroy: down, and delete every volume — databases, authentik, OpenBao
 destroy:
-	$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) down --remove-orphans --volumes
+	$(COMPOSE) $(OIDC) $(OBJECTS) $(OLLAMA) $(IMAGE) $(PROFILE) down --remove-orphans --volumes
 
 # ---------------------------------------------------------------------------
 # A real OpenBao. See OPENBAO.md — these three run once, in this order, and
@@ -283,6 +308,6 @@ bao:
 	$(COMPOSE) $(BAO) $(PROFILE) up -d --build
 
 .PHONY: help up objects dex dex-hash dex-down litellm litellm-down \
-        omniroute omniroute-down dev image staging restart pull ps logs \
-        down destroy bao-up bao-init bao-status bao-approle \
+        omniroute omniroute-down ollama ollama-down dev image staging restart \
+        pull ps logs down destroy bao-up bao-init bao-status bao-approle \
         bao-policy bao

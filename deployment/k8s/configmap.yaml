@@ -34,7 +34,13 @@ data:
   # changing the model means `brain graph rebuild`.
   #
   # The key is a secret-store reference, path#key, never the key — which is
-  # why it may live in a ConfigMap at all.
+  # why it may live in a ConfigMap at all. The shipped OpenBao policy lets the
+  # brain read under platform/ and nowhere else that is not a team's.
+  #
+  # OPENARITY_OMNI_ROUTE_URL is where the embedding is asked for: anything
+  # answering OpenAI's /embeddings. Its default is localhost, which in a pod
+  # is the pod.
+  # OPENARITY_OMNI_ROUTE_URL: "http://model-gateway:4000/v1"
   # OPENARITY_EMBEDDING_MODEL: "text-embedding-3-small"
   # OPENARITY_EMBEDDING_DIMENSIONS: "1536"
   # OPENARITY_EMBEDDING_KEY_REF: "platform/embeddings#key"

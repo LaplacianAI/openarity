@@ -66,6 +66,13 @@ x-brain-env: &brain-env
   # MCP discovery reaches public addresses only, so a server running inside
   # this compose network needs its range listed. No embedding model means
   # the worker runs no projector, and says so when it starts.
+  #
+  # The router is where an embedding is asked for. The brain's own default is
+  # localhost, which inside a container is the container; this names the
+  # OmniRoute overlay instead. For LiteLLM it is http://litellm:4000/v1, and
+  # the Ollama overlay answers the same request at http://ollama:11434/v1
+  # with no gateway in front of it. See README.md.
+  OPENARITY_OMNI_ROUTE_URL: ${OPENARITY_OMNI_ROUTE_URL-http://omniroute:20128/v1}
   OPENARITY_SKILL_IMPORT_HOSTS: ${OPENARITY_SKILL_IMPORT_HOSTS-}
   OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF: ${OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF-}
   OPENARITY_MCP_PRIVATE_NETWORKS: ${OPENARITY_MCP_PRIVATE_NETWORKS-}
