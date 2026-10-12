@@ -475,3 +475,29 @@ func edgeOf(row []any) (StoredEdge, error) {
 		Props: props,
 	}, nil
 }
+
+func (g *Graph) Link(ctx context.Context, team uuid.UUID, from Ref, typ EdgeType, to Ref) error {
+	for _, name := range []string{string(from.Label), string(typ), string(to.Label)} {
+		if err := named(name); err != nil {
+			return err
+		}
+	}
+
+	cypher := fmt.Sprintf("MATCH (f:%s {id: $from}) MATCH (t:%s {id: $to}) MERGE (f)-[r:%s]->(t) RETURN count(r)",
+		from.Label, to.Label, typ)
+
+	res, err := g.run(ctx, team, false, cypher, map[string]any{"from": from.ID.String(), "to": to.ID.String()})
+	if err != nil {
+		return err
+	}
+
+	var linked int64
+	if res.Next() {
+		linked, _ = res.Record().Values()[0].(int64)
+	}
+	if linked != 1 {
+		return fmt.Errorf("graph: no %s edge was written; the %s %s or the %s %s is not in the graph yet",
+			typ, from.Label, from.ID, to.Label, to.ID)
+	}
+	return nil
+}

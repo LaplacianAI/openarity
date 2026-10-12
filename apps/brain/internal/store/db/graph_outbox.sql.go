@@ -12,6 +12,17 @@ import (
 	"github.com/google/uuid"
 )
 
+const advisoryUnlock = `-- name: AdvisoryUnlock :one
+SELECT pg_advisory_unlock($1::bigint) AS released
+`
+
+func (q *Queries) AdvisoryUnlock(ctx context.Context, key int64) (bool, error) {
+	row := q.db.QueryRow(ctx, advisoryUnlock, key)
+	var released bool
+	err := row.Scan(&released)
+	return released, err
+}
+
 const claimGraphOutbox = `-- name: ClaimGraphOutbox :many
 UPDATE graph_outbox
 SET attempts = attempts + 1, last_attempt_at = now()
@@ -130,4 +141,19 @@ func (q *Queries) ListTeamIDs(ctx context.Context) ([]uuid.UUID, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const tryAdvisoryLock = `-- name: TryAdvisoryLock :one
+SELECT pg_try_advisory_lock($1::bigint) AS acquired
+`
+
+// A session lock, taken and released on one pinned connection by
+// Store.WithAdvisoryLock. Session rather than transaction: the work it guards
+// crosses network calls, and a transaction held open that long pins a
+// snapshot.
+func (q *Queries) TryAdvisoryLock(ctx context.Context, key int64) (bool, error) {
+	row := q.db.QueryRow(ctx, tryAdvisoryLock, key)
+	var acquired bool
+	err := row.Scan(&acquired)
+	return acquired, err
 }

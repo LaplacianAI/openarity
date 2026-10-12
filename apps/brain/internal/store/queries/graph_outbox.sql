@@ -33,3 +33,14 @@ LIMIT 1;
 
 -- name: ListTeamIDs :many
 SELECT id FROM teams ORDER BY id;
+
+-- A session lock, taken and released on one pinned connection by
+-- Store.WithAdvisoryLock. Session rather than transaction: the work it guards
+-- crosses network calls, and a transaction held open that long pins a
+-- snapshot.
+--
+-- name: TryAdvisoryLock :one
+SELECT pg_try_advisory_lock(sqlc.arg('key')::bigint) AS acquired;
+
+-- name: AdvisoryUnlock :one
+SELECT pg_advisory_unlock(sqlc.arg('key')::bigint) AS released;

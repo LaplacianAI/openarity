@@ -608,6 +608,135 @@ func TestTheSameTargetTwiceIsRefusedBeforeAnythingChanges(t *testing.T) {
 	}
 }
 
+// --- one edge at a time ---
+
+func mustLink(t *testing.T, g *Graph, team uuid.UUID, from Ref, typ EdgeType, to Ref) {
+	t.Helper()
+	if err := g.Link(t.Context(), team, from, typ, to); err != nil {
+		t.Fatalf("Link(%s %s -> %s): %v", from.Label, typ, to.Label, err)
+	}
+}
+
+// An outbox row is replayed whenever a drain is interrupted, so linking what
+// is already linked has to leave one edge, pointing the way it was asked to.
+func TestLinkingTwiceKeepsOneEdge(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	kit, search := bare(LabelToolkit), bare(LabelTool)
+	mustPut(t, g, team, kit, search)
+
+	for range 3 {
+		mustLink(t, g, team, kit.Ref, EdgeContains, search.Ref)
+	}
+
+	s := mustSnapshot(t, g, team)
+	if len(s.Edges) != 1 {
+		t.Fatalf("%d edges after linking the same pair three times, want 1: %+v", len(s.Edges), s.Edges)
+	}
+	if e := s.Edges[0]; e.Type != EdgeContains || e.From != kit.Ref || e.To != search.Ref {
+		t.Errorf("edge = %+v, want CONTAINS from the toolkit to the tool", e)
+	}
+}
+
+// Link adds; it does not replace. Each tool says which toolkit it is in, one
+// outbox row at a time, and the second must not cost the first its edge.
+func TestLinkLeavesTheOtherEdgesAlone(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	kit, search, create, agent := bare(LabelToolkit), bare(LabelTool), bare(LabelTool), bare(LabelAgent)
+	mustPut(t, g, team, kit, search, create, agent)
+	if err := g.SetOutEdges(t.Context(), team, agent.Ref, EdgeGranted, LabelToolkit, []Edge{{To: kit.ID}}); err != nil {
+		t.Fatal(err)
+	}
+
+	mustLink(t, g, team, kit.Ref, EdgeContains, search.Ref)
+	mustLink(t, g, team, kit.Ref, EdgeContains, create.Ref)
+
+	s := mustSnapshot(t, g, team)
+	if got := targets(s, EdgeContains); !slices.Equal(got, sorted(search.ID, create.ID)) {
+		t.Errorf("the toolkit contains %v, want both tools", got)
+	}
+	if got := targets(s, EdgeGranted); !slices.Equal(got, []uuid.UUID{kit.ID}) {
+		t.Errorf("granted %v, want the grant that was there", got)
+	}
+}
+
+// A toolkit is projected again every time its row changes. Its tools were
+// linked by their own rows, which will not come round again, so writing the
+// node a second time must keep the edges it has.
+func TestPuttingANodeAgainKeepsItsLinks(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	kit, search := bare(LabelToolkit), bare(LabelTool)
+	mustPut(t, g, team, kit, search)
+	mustLink(t, g, team, kit.Ref, EdgeContains, search.Ref)
+
+	kit.Props = map[string]any{"name": "renamed"}
+	mustPut(t, g, team, kit, search)
+
+	s := mustSnapshot(t, g, team)
+	if got := targets(s, EdgeContains); !slices.Equal(got, []uuid.UUID{search.ID}) {
+		t.Errorf("after the toolkit was written again it contains %v, want its tool", got)
+	}
+	if find(t, s, kit.ID).Props["name"] != "renamed" {
+		t.Error("the second write of the toolkit did not land")
+	}
+}
+
+// FalkorDB matches nothing and reports success. Here a link with an end that
+// is not in the graph is an error, so the outbox row stays and the next drain
+// tries again once the other node has been projected.
+func TestALinkWithAMissingEndIsAnErrorAndWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	kit, search, pdf := bare(LabelToolkit), bare(LabelTool), bare(LabelSkill)
+	mustPut(t, g, team, kit, search, pdf)
+
+	for name, ends := range map[string][2]Ref{
+		"the target is missing":            {kit.Ref, {LabelTool, uuid.New()}},
+		"the source is missing":            {{LabelToolkit, uuid.New()}, search.Ref},
+		"both are missing":                 {{LabelToolkit, uuid.New()}, {LabelTool, uuid.New()}},
+		"the target is under another name": {kit.Ref, {LabelTool, pdf.ID}},
+		"the source is under another name": {{LabelToolkit, pdf.ID}, search.Ref},
+		"the ends are the wrong way round": {{LabelToolkit, search.ID}, {LabelTool, kit.ID}},
+	} {
+		err := g.Link(t.Context(), team, ends[0], EdgeContains, ends[1])
+		if err == nil || !strings.Contains(err.Error(), "no CONTAINS edge was written") {
+			t.Errorf("%s: err = %v", name, err)
+			continue
+		}
+		// The message names both ends: whoever reads the log needs to know
+		// which row to look for.
+		for _, id := range []uuid.UUID{ends[0].ID, ends[1].ID} {
+			if !strings.Contains(err.Error(), id.String()) {
+				t.Errorf("%s: the error does not name %s: %v", name, id, err)
+			}
+		}
+	}
+
+	if s := mustSnapshot(t, g, team); len(s.Edges) != 0 || len(s.Nodes) != 3 {
+		t.Errorf("%d edges and %d nodes after six refused links, want 0 and 3", len(s.Edges), len(s.Nodes))
+	}
+}
+
+// A link in a team with no graph is the same refusal, and it must not leave
+// an empty graph behind for a team that may since have been deleted.
+func TestALinkInATeamWithNoGraphIsAnError(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	if err := g.Link(t.Context(), team, Ref{LabelToolkit, uuid.New()}, EdgeContains, Ref{LabelTool, uuid.New()}); err == nil {
+		t.Error("a link between two nodes of an empty team succeeded")
+	}
+	if s := mustSnapshot(t, g, team); len(s.Nodes) != 0 || len(s.Edges) != 0 {
+		t.Errorf("the refused link wrote %+v", s)
+	}
+}
+
 // --- deleting ---
 
 func TestDeleteNodeTakesItsEdges(t *testing.T) {
@@ -831,10 +960,22 @@ func TestANameThatIsNotAnIdentifierNeverReachesTheQuery(t *testing.T) {
 				t.Errorf("SetOutEdges with %s %q succeeded", what, bad)
 			}
 		}
+		// "Skill\n" is the one that matters here: as query text it is still
+		// the label Skill, so without the check each of these links for real.
+		for what, call := range map[string]func() error{
+			"from":   func() error { return g.Link(t.Context(), team, evil, EdgeOwns, canary.Ref) },
+			"type":   func() error { return g.Link(t.Context(), team, canary.Ref, EdgeType(bad), pdf.Ref) },
+			"target": func() error { return g.Link(t.Context(), team, canary.Ref, EdgeHasSkill, evil) },
+		} {
+			if err := call(); err == nil {
+				t.Errorf("Link with %s %q succeeded", what, bad)
+			}
+		}
 	}
 
-	if s := mustSnapshot(t, g, team); len(s.Nodes) != 2 {
-		t.Errorf("the graph holds %d nodes after the attempts, want the 2 it had", len(s.Nodes))
+	if s := mustSnapshot(t, g, team); len(s.Nodes) != 2 || len(s.Edges) != 0 {
+		t.Errorf("the graph holds %d nodes and %d edges after the attempts, want the 2 nodes it had and no edge",
+			len(s.Nodes), len(s.Edges))
 	}
 }
 
@@ -1206,6 +1347,7 @@ func TestEveryOperationOnATeamWaitsForItsTurn(t *testing.T) {
 		"PutNode":       func(ctx context.Context) error { return g.PutNode(ctx, team, bare(LabelSkill)) },
 		"DeleteNode":    func(ctx context.Context) error { return g.DeleteNode(ctx, team, n.Ref) },
 		"SetOutEdges":   func(ctx context.Context) error { return g.SetOutEdges(ctx, team, n.Ref, EdgeHasSkill, LabelSkill, nil) },
+		"Link":          func(ctx context.Context) error { return g.Link(ctx, team, n.Ref, EdgeOwns, n.Ref) },
 		"EnsureIndexes": func(ctx context.Context) error { return g.EnsureIndexes(ctx, team) },
 		"DropTeam":      func(ctx context.Context) error { return g.DropTeam(ctx, team) },
 		"Fingerprint": func(ctx context.Context) error {
