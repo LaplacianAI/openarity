@@ -45,6 +45,7 @@ type Store interface {
 	GetSkill(ctx context.Context, id uuid.UUID) (db.Skill, error)
 	ListAgentMCPServers(ctx context.Context, agentID uuid.UUID) ([]db.AgentMcpServer, error)
 	ListAgentSkills(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error)
+	ListGraphEntities(ctx context.Context, teamID uuid.UUID) ([]db.ListGraphEntitiesRow, error)
 }
 
 type Projector struct {

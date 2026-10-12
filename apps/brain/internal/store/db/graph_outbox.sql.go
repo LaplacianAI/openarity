@@ -119,6 +119,43 @@ func (q *Queries) GraphOutboxBacklog(ctx context.Context) ([]GraphOutboxBacklogR
 	return items, nil
 }
 
+const listGraphEntities = `-- name: ListGraphEntities :many
+SELECT 'mcp_server'::text AS entity, id FROM mcp_servers WHERE mcp_servers.team_id = $1
+UNION ALL
+SELECT 'skill', id FROM skills WHERE skills.team_id = $1
+UNION ALL
+SELECT 'mcp_tool', id FROM mcp_tools WHERE mcp_tools.team_id = $1
+UNION ALL
+SELECT 'agent', id FROM agents WHERE agents.team_id = $1
+`
+
+type ListGraphEntitiesRow struct {
+	Entity string
+	ID     uuid.UUID
+}
+
+// Everything of a team that has a node in the graph, named as the outbox
+// names it, so a rebuild feeds the projector exactly what a drain would.
+func (q *Queries) ListGraphEntities(ctx context.Context, teamID uuid.UUID) ([]ListGraphEntitiesRow, error) {
+	rows, err := q.db.Query(ctx, listGraphEntities, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGraphEntitiesRow
+	for rows.Next() {
+		var i ListGraphEntitiesRow
+		if err := rows.Scan(&i.Entity, &i.ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTeamIDs = `-- name: ListTeamIDs :many
 SELECT id FROM teams ORDER BY id
 `

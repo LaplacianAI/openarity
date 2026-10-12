@@ -44,3 +44,15 @@ SELECT pg_try_advisory_lock(sqlc.arg('key')::bigint) AS acquired;
 
 -- name: AdvisoryUnlock :one
 SELECT pg_advisory_unlock(sqlc.arg('key')::bigint) AS released;
+
+-- Everything of a team that has a node in the graph, named as the outbox
+-- names it, so a rebuild feeds the projector exactly what a drain would.
+--
+-- name: ListGraphEntities :many
+SELECT 'mcp_server'::text AS entity, id FROM mcp_servers WHERE mcp_servers.team_id = sqlc.arg('team_id')
+UNION ALL
+SELECT 'skill', id FROM skills WHERE skills.team_id = sqlc.arg('team_id')
+UNION ALL
+SELECT 'mcp_tool', id FROM mcp_tools WHERE mcp_tools.team_id = sqlc.arg('team_id')
+UNION ALL
+SELECT 'agent', id FROM agents WHERE agents.team_id = sqlc.arg('team_id');

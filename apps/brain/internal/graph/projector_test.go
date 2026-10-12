@@ -116,8 +116,9 @@ func vectorOf(model, text string) []float32 {
 type faulty struct {
 	*store.Store
 
-	claim, forget, getTeam, backlog error
-	onGetSkill                      func()
+	claim, forget, getTeam, backlog, entities error
+	backwards                                 bool
+	onGetSkill                                func()
 }
 
 func (f *faulty) ClaimGraphOutbox(ctx context.Context, arg db.ClaimGraphOutboxParams) ([]db.GraphOutbox, error) {
@@ -139,6 +140,17 @@ func (f *faulty) GraphOutboxBacklog(ctx context.Context) ([]db.GraphOutboxBacklo
 		return nil, f.backlog
 	}
 	return f.Store.GraphOutboxBacklog(ctx)
+}
+
+func (f *faulty) ListGraphEntities(ctx context.Context, team uuid.UUID) ([]db.ListGraphEntitiesRow, error) {
+	if f.entities != nil {
+		return nil, f.entities
+	}
+	rows, err := f.Store.ListGraphEntities(ctx, team)
+	if f.backwards {
+		slices.Reverse(rows)
+	}
+	return rows, err
 }
 
 func (f *faulty) GetTeam(ctx context.Context, id uuid.UUID) (db.Team, error) {
