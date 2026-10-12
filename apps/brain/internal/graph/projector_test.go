@@ -116,8 +116,8 @@ func vectorOf(model, text string) []float32 {
 type faulty struct {
 	*store.Store
 
-	claim, forget, getTeam error
-	onGetSkill             func()
+	claim, forget, getTeam, backlog error
+	onGetSkill                      func()
 }
 
 func (f *faulty) ClaimGraphOutbox(ctx context.Context, arg db.ClaimGraphOutboxParams) ([]db.GraphOutbox, error) {
@@ -132,6 +132,13 @@ func (f *faulty) ForgetGraphOutbox(ctx context.Context, ids []int64) error {
 		return f.forget
 	}
 	return f.Store.ForgetGraphOutbox(ctx, ids)
+}
+
+func (f *faulty) GraphOutboxBacklog(ctx context.Context) ([]db.GraphOutboxBacklogRow, error) {
+	if f.backlog != nil {
+		return nil, f.backlog
+	}
+	return f.Store.GraphOutboxBacklog(ctx)
 }
 
 func (f *faulty) GetTeam(ctx context.Context, id uuid.UUID) (db.Team, error) {

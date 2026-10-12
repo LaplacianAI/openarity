@@ -18,7 +18,7 @@ import (
 
 const (
 	drainLockID int64 = 3384301360
-	retryAfter        = time.Minute
+	retryAfter        = 30 * time.Second
 )
 
 type entity string
@@ -37,6 +37,7 @@ type Store interface {
 	WithAdvisoryLock(ctx context.Context, key int64, fn func(context.Context) error) (bool, error)
 	ClaimGraphOutbox(ctx context.Context, arg db.ClaimGraphOutboxParams) ([]db.GraphOutbox, error)
 	ForgetGraphOutbox(ctx context.Context, ids []int64) error
+	GraphOutboxBacklog(ctx context.Context) ([]db.GraphOutboxBacklogRow, error)
 	GetTeam(ctx context.Context, id uuid.UUID) (db.Team, error)
 	GetAgent(ctx context.Context, id uuid.UUID) (db.Agent, error)
 	GetMCPServer(ctx context.Context, id uuid.UUID) (db.McpServer, error)
@@ -320,6 +321,14 @@ func (p *Projector) embedded(ctx context.Context, team uuid.UUID, ref Ref, name,
 	}
 	n.Embedding, n.Model, n.ContentSHA256 = vectors[0], p.embed.Model(), sum[:]
 	return n, nil
+}
+
+func (p *Projector) Backlog(ctx context.Context) (outstanding int64, oldest time.Time, err error) {
+	rows, err := p.store.GraphOutboxBacklog(ctx)
+	if err != nil || len(rows) == 0 {
+		return 0, time.Time{}, err
+	}
+	return rows[0].Outstanding, rows[0].Oldest, nil
 }
 
 func gone(err error, owner, team uuid.UUID) bool {
