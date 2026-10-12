@@ -268,10 +268,21 @@ bao-approle:
 	  echo "OPENARITY_SECRETS_APPROLE_ID=$$($$BAO read -field=role_id auth/approle/role/brain/role-id)"; \
 	  echo "OPENARITY_SECRETS_APPROLE_SECRET=$$($$BAO write -f -field=secret_id auth/approle/role/brain/secret-id)"
 
+# A token is checked against its policy by name on every request, so a policy
+# written again takes effect for the brain's existing token at once: no new
+# AppRole, no restart. bao-approle writes it too, and also mints a second
+# secret, which is not what a changed file calls for.
+## bao-policy: write policy-brain.hcl to the running OpenBao again — after the file changes
+bao-policy:
+	@test -f $(BAO_KEYS) || { echo "run make bao-init first"; exit 1; }
+	@ROOT=$$(jq -r .root_token $(BAO_KEYS)); \
+	  $(BAO_EXEC) -e BAO_TOKEN=$$ROOT openbao bao policy write brain /openbao/config/policy-brain.hcl
+
 ## bao: dependencies and the brain against the real OpenBao
 bao:
 	$(COMPOSE) $(BAO) $(PROFILE) up -d --build
 
 .PHONY: help up objects dex dex-hash dex-down litellm litellm-down \
         omniroute omniroute-down dev image staging restart pull ps logs \
-        down destroy bao-up bao-init bao-status bao-approle bao
+        down destroy bao-up bao-init bao-status bao-approle \
+        bao-policy bao
