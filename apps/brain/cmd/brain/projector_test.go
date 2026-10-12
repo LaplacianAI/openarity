@@ -286,6 +286,11 @@ type modelRouter struct {
 	*httptest.Server
 	mu   sync.Mutex
 	seen []modelRequest
+
+	// refuse fails any request whose text contains it; onRequest runs once,
+	// before the first answer.
+	refuse    string
+	onRequest func()
 }
 
 type modelRequest struct {
@@ -306,7 +311,18 @@ func newModelRouter(t *testing.T, dims int) *modelRouter {
 
 		r.mu.Lock()
 		r.seen = append(r.seen, modelRequest{req.URL.Path, req.Header.Get("Authorization"), body.Model, body.Input})
+		hook := r.onRequest
+		r.onRequest = nil
+		refused := r.refuse != "" && strings.Contains(strings.Join(body.Input, "\n"), r.refuse)
 		r.mu.Unlock()
+
+		if hook != nil {
+			hook()
+		}
+		if refused {
+			http.Error(w, `{"error":{"message":"refused by the test"}}`, http.StatusBadGateway)
+			return
+		}
 
 		type item struct {
 			Index     int       `json:"index"`
