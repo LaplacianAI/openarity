@@ -92,7 +92,7 @@ type outcome[T any] struct {
 	err   error
 }
 
-func Dial(rawURL string, dims int) (*Graph, error) {
+func Dial(ctx context.Context, rawURL string, dims int) (*Graph, error) {
 	if dims < 1 {
 		return nil, fmt.Errorf("graph: a vector index needs at least 1 dimension, and EMBEDDING_DIMENSIONS is %d", dims)
 	}
@@ -106,9 +106,11 @@ func Dial(rawURL string, dims int) (*Graph, error) {
 	q.Set("max_retries", "-1")
 	u.RawQuery = q.Encode()
 
-	db, err := falkordb.FromURL(u.String())
+	db, err := ordered(ctx, make(chan struct{}, 1), func() (*falkordb.FalkorDB, error) {
+		return falkordb.FromURL(u.String())
+	})
 	if err != nil {
-		return nil, fmt.Errorf("graph: %w", err)
+		return nil, brief(err)
 	}
 
 	return &Graph{db: db, dims: dims, turns: map[uuid.UUID]chan struct{}{}}, nil

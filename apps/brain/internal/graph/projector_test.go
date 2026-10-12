@@ -177,7 +177,7 @@ func newWorld(t *testing.T) *world {
 	t.Helper()
 
 	s, raw := liveSchema(t)
-	g, err := Dial(liveFalkorURL(t), 3)
+	g, err := Dial(t.Context(), liveFalkorURL(t), 3)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -1229,7 +1229,7 @@ func TestAGraphBuiltForAnotherWidthIsLeftAlone(t *testing.T) {
 	a := w.acme()
 	w.drained()
 
-	wide, err := Dial(liveFalkorURL(t), 4)
+	wide, err := Dial(t.Context(), liveFalkorURL(t), 4)
 	if err != nil {
 		t.Fatal(err)
 	}

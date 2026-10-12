@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"net"
 	"slices"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ import (
 func liveGraph(t *testing.T, dims int) (*Graph, uuid.UUID) {
 	t.Helper()
 
-	g, err := Dial(liveFalkorURL(t), dims)
+	g, err := Dial(t.Context(), liveFalkorURL(t), dims)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -94,7 +95,7 @@ func sorted(ids ...uuid.UUID) []uuid.UUID {
 func TestDialOfADeadServerSucceedsAndPingFails(t *testing.T) {
 	t.Parallel()
 
-	g, err := Dial("redis://127.0.0.1:1", 3)
+	g, err := Dial(t.Context(), "redis://127.0.0.1:1", 3)
 	if err != nil {
 		t.Fatalf("Dial of a dead address failed, and it is expected to be lazy: %v", err)
 	}
@@ -104,6 +105,52 @@ func TestDialOfADeadServerSucceedsAndPingFails(t *testing.T) {
 	defer cancel()
 	if err := g.Ping(ctx); err == nil {
 		t.Error("Ping succeeded against nothing")
+	}
+}
+
+// Making the client is not free of the network after all: the library asks
+// the server whether it is a sentinel before it returns, on a context of its
+// own, and a server that accepts and says nothing holds it for the whole read
+// timeout. Measured, ten seconds. The caller's deadline has to cover it.
+func TestDialOfAServerThatSaysNothingHonoursItsDeadline(t *testing.T) {
+	t.Parallel()
+
+	var lc net.ListenConfig
+	l, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	g, err := Dial(ctx, "redis://"+l.Addr().String(), 3)
+	if !errors.Is(err, context.DeadlineExceeded) || g != nil {
+		t.Errorf("Dial = %v, %v; want the deadline", g != nil, err)
+	}
+	if took := time.Since(started); took > 3*time.Second {
+		t.Errorf("Dial returned after %v with a deadline of 500ms", took)
+	}
+}
+
+func TestDialWithItsContextAlreadyOverDialsNothing(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if g, err := Dial(ctx, "redis://127.0.0.1:1", 3); !errors.Is(err, context.Canceled) || g != nil {
+		t.Errorf("Dial = %v, %v", g != nil, err)
 	}
 }
 
@@ -122,7 +169,7 @@ func TestDialRefusesAWidthNoIndexCanHave(t *testing.T) {
 	t.Parallel()
 
 	for _, dims := range []int{0, -1} {
-		if _, err := Dial("redis://127.0.0.1:6379", dims); err == nil || !strings.Contains(err.Error(), "EMBEDDING_DIMENSIONS") {
+		if _, err := Dial(t.Context(), "redis://127.0.0.1:6379", dims); err == nil || !strings.Contains(err.Error(), "EMBEDDING_DIMENSIONS") {
 			t.Errorf("Dial with %d dimensions: err = %v", dims, err)
 		}
 	}
@@ -143,9 +190,9 @@ func TestDialNeverRepeatsTheURL(t *testing.T) {
 		"redis://user:s3cret@127.0.0.1:notaport",
 		"unix://user:s3cret@/tmp/x.sock?db=q",
 	} {
-		_, err := Dial(raw, 3)
+		_, err := Dial(t.Context(), raw, 3)
 		if err == nil {
-			t.Errorf("Dial(%q) succeeded", raw)
+			t.Errorf("Dial(t.Context(), %q) succeeded", raw)
 			continue
 		}
 		if strings.Contains(err.Error(), "s3cret") {
@@ -178,7 +225,7 @@ func TestEnsureIndexesRefusesAnIndexBuiltForAnotherWidth(t *testing.T) {
 		t.Fatalf("EnsureIndexes at 3: %v", err)
 	}
 
-	g5, err := Dial(liveFalkorURL(t), 5)
+	g5, err := Dial(t.Context(), liveFalkorURL(t), 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1268,7 +1315,7 @@ func TestAFinishedOperationGivesItsTurnBack(t *testing.T) {
 func TestEachTeamHasItsOwnTurn(t *testing.T) {
 	t.Parallel()
 
-	g, err := Dial("redis://127.0.0.1:1", 3)
+	g, err := Dial(t.Context(), "redis://127.0.0.1:1", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
