@@ -389,7 +389,16 @@ graph_outbox
 - A row names what changed, not what it changed to. The projector reads the
   current Postgres state and makes the team's graph match it for that entity:
   upsert if the row exists, delete the node and its edges if it does not. That
-  makes every outbox row idempotent and their order irrelevant.
+  makes every outbox row idempotent, and their order irrelevant **to one
+  reader**.
+
+  This said "their order irrelevant" without the qualifier, and that was
+  wrong. Two drains at once can finish with the graph behind and the outbox
+  empty: A claims a row and reads version 1, an edit writes a second row, B
+  claims that and writes version 2, then A writes version 1, and both clear
+  their rows. Nothing is left to say the graph is stale. So only one drain
+  runs at a time, across every worker, under a Postgres session advisory
+  lock; a drain that cannot have it skips its turn.
 - Link-table changes enqueue the agent they belong to.
 
 ### The projector
@@ -398,6 +407,22 @@ A DBOS job on the existing `worker`, alongside the reaper. It drains the outbox
 in batches: coalesce by `(team_id, entity, entity_id)`, embed what needs
 embedding, write to FalkorDB, delete the drained rows. A row is deleted only
 after its write succeeded, so a crash replays rather than loses.
+
+As built:
+
+- **Once a minute.** DBOS keeps a row for every tick and deletes none, about
+  560 bytes of row data each, measured. A minute is 1,440 a day where ten
+  seconds would be 8,640, for a job whose durable state is the outbox. It
+  does not replay missed ticks, since a missed tick has no work of its own.
+- **A team is looked up once per batch.** If it is gone its graph is dropped
+  and every one of its rows cleared; otherwise the cascade's rows would each
+  run a delete, and FalkorDB creates a graph for any query sent to one that is
+  not there.
+- **Within a batch a team's rows are projected servers, skills, tools,
+  agents**, so an edge finds the node it points at. One that does not is an
+  error rather than FalkorDB's silent no-op: the row stays and is tried again.
+- **A failed row is retried after thirty seconds**, which is the next tick,
+  and is logged as a warning three times and an error after.
 
 A graph that is behind is the alarm the tombstones already set the pattern for:
 an outbox that stops shrinking is a projector that stopped.
@@ -424,14 +449,20 @@ as the authentik, LiteLLM and OmniRoute ones:
 
 - One `ollama` service, bound to `BIND_ADDR`, its models in a named volume, and
   a healthcheck.
-- `make ollama` starts it and pulls `OLLAMA_EMBEDDING_MODEL` (default
-  `nomic-embed-text`); `make ollama-down` stops it and keeps the volume.
+- `make ollama` starts it and pulls `nomic-embed-text`, or
+  `make ollama model=<name>` for another; `make ollama-down` stops it and
+  keeps the volume.
 - The gateway reaches it as `http://ollama:11434` on the compose network. The
   README section says how to register it as a provider in LiteLLM and in
   OmniRoute.
 - The image is pinned to a version.
 
 Nothing in the brain knows Ollama exists.
+
+Ollama answers OpenAI's `/v1/embeddings` itself, which was not planned for and
+is the cheapest local path: `OPENARITY_OMNI_ROUTE_URL=http://ollama:11434/v1`
+with no gateway in between. That is the path the end-to-end run used. The
+brain still only knows a URL that answers `/embeddings`.
 
 One model for every team means one vector dimension per index. Changing the
 model is a rebuild, which is exactly the operation this design makes cheap.
@@ -449,14 +480,24 @@ embeds again: seconds against a local Ollama.
 
 `brain graph rebuild [--team <id>]` is a standalone one-shot command, like
 `brain reap`: drop the team's graph, recreate its indexes, project every row.
-CI runs it against a seeded database and compares the result to what the
+A test runs it against a seeded database and compares the result to what the
 incremental projector produced from the same writes. The two agreeing is the
 test that "rebuildable from Postgres" is true.
+
+As built, a rebuild is the same projection a drain runs: one query lists a
+team's things as `(entity, id)` and each goes through the function an outbox
+row goes through. It reads everything before it drops anything, takes the
+drain's lock and waits for it, leaves the outbox alone, and exits non-zero if
+any team could not be rebuilt. A team that does not exist is an error.
 
 ### FalkorDB in the brain
 
 - The Go client is `github.com/FalkorDB/falkordb-go`, dialled from the existing
-  `FALKOR_DB_URL`.
+  `FALKOR_DB_URL`. It is used for its connection and for reading results, and
+  not for writing a parameter: its own quoting corrupts eight of twenty-four
+  test strings and panics on a `[]float32`, so the brain writes the
+  `CYPHER k=v` header itself. Its constructor also makes a network call on a
+  context of its own, so connecting is wrapped to honour the caller's.
 - The API does not depend on FalkorDB being up: it writes Postgres and the
   outbox. Only the worker and `brain graph rebuild` dial it, and the worker
   fails its start if it cannot.

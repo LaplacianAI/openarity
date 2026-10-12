@@ -201,11 +201,20 @@ for a day, and a deployment that never runs it never erases anything outside
 Postgres.
 
 `brain worker` is the fourth command, and it is what normally runs the third. It
-hosts the background work — the reaper today on a fifteen-minute schedule,
-agent runs later — replays the ticks it missed while it was down, sweeps once
-at startup so a fresh deployment is not idle for an interval, and refuses to
-start if the secret store cannot delete. See
-[deployment/SCHEDULING.md](deployment/SCHEDULING.md).
+hosts the background work — the reaper on a fifteen-minute schedule, the graph
+projector once a minute, agent runs later — replays the reaper's ticks it
+missed while it was down, sweeps once at startup so a fresh deployment is not
+idle for an interval, and refuses to start if the secret store cannot delete.
+See [deployment/SCHEDULING.md](deployment/SCHEDULING.md).
+
+`brain graph rebuild [--team <id>]` is the fifth. Agents, MCP tools and skills
+are copied into FalkorDB so they can be found by meaning, one graph per team,
+and Postgres stays the truth: every change leaves a row saying the graph is
+behind, in the same transaction, and the worker catches it up. A rebuild drops
+a team's graph and builds it again from Postgres, which is what changing the
+embedding model requires. It is off until `OPENARITY_EMBEDDING_MODEL` is set;
+[deployment/README.md](deployment/README.md#the-graph) has the settings and a
+model that runs on your machine.
 
 Every other setting has a working default. The service refuses to start with no
 authentication configured rather than serving an open API — set
@@ -508,9 +517,9 @@ variable prefixed `OPENARITY_`:
 | `OPENARITY_API_BIND`             | `127.0.0.1:21120`           | API listener address             |
 | `OPENARITY_WEBHOOK_BIND`         | `127.0.0.1:21121`           | Webhook listener address         |
 | `OPENARITY_POSTGRES_DSN`         | see below                   | Relational store                 |
-| `OPENARITY_FALKOR_DB_URL`        | `redis://127.0.0.1:6380`    | Graph store — not used yet       |
+| `OPENARITY_FALKOR_DB_URL`        | `redis://127.0.0.1:6380`    | Graph store, once a model is set |
 | `OPENARITY_REDIS_URL`            | `redis://127.0.0.1:6379`    | Cache and queues — not used yet  |
-| `OPENARITY_OMNI_ROUTE_URL`       | `http://localhost:20128/v1` | Model router — not used yet      |
+| `OPENARITY_OMNI_ROUTE_URL`       | `http://localhost:20128/v1` | Model router, for embeddings     |
 | `OPENARITY_OIDC_ENABLED`         | `false`                     | Verify tokens against an IdP     |
 | `OPENARITY_OIDC_ISSUER`          | empty                       | Issuer URL, required if enabled  |
 | `OPENARITY_OIDC_AUDIENCE`        | `openarity`                 | Audience the token must carry    |
@@ -546,7 +555,11 @@ self-hosted server needs its range listed. A range touching link-local
 startup whatever is listed.
 
 With no embedding model the worker runs no projector and says so when it
-starts. The index is built for one model's width, so the two are set together.
+starts. The index is built for one model's width, so the two are set together,
+and changing the model means `brain graph rebuild`.
+
+The two `path#key` settings name a secret, never hold one. The shipped OpenBao
+policy lets the brain read under `platform/` for exactly these.
 
 ### Secrets and object storage
 

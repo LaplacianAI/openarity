@@ -25,6 +25,23 @@ use it).
 
 **Spec:** [`docs/superpowers/specs/2026-09-21-agent-registry-design.md`](../specs/2026-09-21-agent-registry-design.md)
 
+## What changed while it was built
+
+The tasks below are the plan as written. Where the code differs, this is the
+record; the spec carries the reasons.
+
+| Task | Planned | Built |
+| --- | --- | --- |
+| 5 | discovery through the SDK's `tools/mcp` | the MCP `go-sdk` directly, behind a dial guard: public addresses plus `MCP_PRIVATE_NETWORKS` |
+| 6 | Go lists of agent kinds and patterns | patterns live only in the database CHECK, mapped to a 400 by constraint name |
+| 9 | `falkordb-go` as the client | `falkordb-go` for the connection and results; parameters written by `params.go`. `Ref`-based API, `SetOutEdges` per type and target label, `Link` for one edge, `Dial` takes a context |
+| 11 | `Drain` returns an `int`; outbox order irrelevant | `Drain` returns a `Result` and runs until the outbox is empty, under an advisory lock, one drain at a time |
+| 12 | every ten seconds, `*/10 * * * * *` | once a minute, `0 * * * * *`, no backfill; `newJobs` lists the worker's jobs |
+| 13 | list-by-team queries per entity | one `ListGraphEntities` query feeding the drain's own projection |
+| 14 | `OLLAMA_EMBEDDING_MODEL` | `make ollama model=<name>`; the brain may point straight at Ollama |
+| — | — | `secret/data/platform/*` read in the OpenBao policy, without which neither key reference could be read |
+| — | — | Go 1.26.9, for the standard-library advisories |
+
 ## How this plan differs from the template
 
 Tests are specified by **name and the exact behaviour asserted**, not as full
