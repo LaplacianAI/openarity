@@ -60,6 +60,12 @@ func TestWriteRawRefusesAnEscapeOnlyOnATerminal(t *testing.T) {
 		"an RLO to a terminal":         {[]byte("a\u202eb"), true, false, true},
 		"bytes that are not UTF-8":     {[]byte{0x89, 'P', 'N', 'G'}, true, false, true},
 		"a NUL to a terminal":          {[]byte("a\x00b"), true, false, true},
+		"CRLF line endings":            {[]byte("one\r\ntwo\r\n"), true, false, false},
+		"a lone carriage return":       {[]byte("safe\rrm -rf ~ # looks like this"), true, false, true},
+		"a carriage return at the end": {[]byte("text\r"), true, false, true},
+		"a line separator":             {[]byte("a\u2028b"), true, false, true},
+		"a paragraph separator":        {[]byte("a\u2029b"), true, false, true},
+		"a directional isolate":        {[]byte("a\u2066b"), true, false, true},
 	} {
 		var out strings.Builder
 		err := writeRaw(&out, tc.terminal, tc.body, tc.force)

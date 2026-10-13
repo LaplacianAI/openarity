@@ -57,16 +57,23 @@ func writeRaw(w io.Writer, terminal bool, body []byte, force bool) error {
 }
 
 // actsOnTerminal reports bytes a terminal interprets rather than shows: any
-// control character but tab, line feed and carriage return, the C1 controls
-// a UTF-8 terminal also honours, and bytes that are not UTF-8 at all.
+// control character but tab and line feed, the C1 controls a UTF-8 terminal
+// also honours, a carriage return that does not end a line — alone it moves
+// back to the start and lets the rest overwrite what was printed — line and
+// paragraph separators, bidirectional controls, and bytes that are not UTF-8.
 func actsOnTerminal(body []byte) bool {
 	if !utf8.Valid(body) {
 		return true
 	}
-	for _, r := range string(body) {
+	text := string(body)
+	for i, r := range text {
 		switch {
-		case r == '\t' || r == '\n' || r == '\r':
-		case unicode.IsControl(r), unicode.Is(unicode.Bidi_Control, r):
+		case r == '\t' || r == '\n':
+		case r == '\r':
+			if i+1 >= len(text) || text[i+1] != '\n' {
+				return true
+			}
+		case unicode.IsControl(r), unicode.Is(unicode.Bidi_Control, r), unicode.In(r, unicode.Zl, unicode.Zp):
 			return true
 		}
 	}
