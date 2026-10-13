@@ -59,6 +59,12 @@ export class ApiError extends Error {
 type RequestOptions = {
   method?: string;
   body?: unknown;
+  /**
+   * Sent as it is: a FormData for a folder upload, a File for a zip. The
+   * browser sets a FormData's Content-Type itself, boundary included, so
+   * nothing here may set one for it.
+   */
+  upload?: FormData | Blob;
   signal?: AbortSignal;
   /** For /auth/config, which answers before anyone has a token. */
   anonymous?: boolean;
@@ -88,12 +94,21 @@ async function send<T>(path: string, options: RequestOptions): Promise<T> {
     const token = getToken();
     if (token) headers.set("Authorization", `Bearer ${token}`);
   }
-  if (options.body !== undefined) headers.set("Content-Type", "application/json");
+  let body: BodyInit | undefined;
+  if (options.upload !== undefined) {
+    body = options.upload;
+    if (!(options.upload instanceof FormData)) {
+      headers.set("Content-Type", options.upload.type || "application/octet-stream");
+    }
+  } else if (options.body !== undefined) {
+    headers.set("Content-Type", "application/json");
+    body = JSON.stringify(options.body);
+  }
 
   const res = await fetch(path, {
     method: options.method ?? "GET",
     headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body,
     ...(options.signal ? { signal: options.signal } : {}),
   });
 

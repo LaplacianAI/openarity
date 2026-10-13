@@ -8,16 +8,26 @@
  */
 import { pageQuery, request } from "./client";
 import type {
+  Agent,
+  AgentRequest,
+  AgentSummary,
   ApprovedSender,
   Attachment,
   AuthConfig,
   Channel,
+  MCPServer,
+  MCPServerRequest,
+  MCPTool,
   Member,
   Message,
   Page,
   PendingSender,
   Session,
+  Skill,
+  SkillSummary,
   Team,
+  TeamGraph,
+  TeamPermissions,
   User,
 } from "./types";
 
@@ -157,4 +167,102 @@ export function listAttachments(
   return request<Page<Attachment>>(
     `/teams/${teamId}/sessions/${sessionId}/attachments${pageQuery(cursor)}`,
   );
+}
+
+/* ------------------------------------------------------------ permissions */
+
+/**
+ * What the caller may do in a team, so a screen offers only what the brain
+ * will allow. Every route still checks for itself.
+ */
+export function getPermissions(teamId: string, signal?: AbortSignal): Promise<TeamPermissions> {
+  return request<TeamPermissions>(`/teams/${teamId}/permissions`, signal ? { signal } : {});
+}
+
+/* ----------------------------------------------------------------- skills */
+
+export function listSkills(teamId: string, cursor?: string | null): Promise<Page<SkillSummary>> {
+  return request<Page<SkillSummary>>(`/teams/${teamId}/skills${pageQuery(cursor)}`);
+}
+
+export function getSkill(teamId: string, skillId: string): Promise<Skill> {
+  return request<Skill>(`/teams/${teamId}/skills/${skillId}`);
+}
+
+/**
+ * A folder is sent as one `files` part per file, named by its path inside
+ * the folder — what the brain reads — and a zip is sent as it is.
+ */
+export function uploadSkill(teamId: string, upload: SkillUpload): Promise<Skill> {
+  return request<Skill>(`/teams/${teamId}/skills`, { method: "POST", upload: skillBody(upload) });
+}
+
+export function importSkill(teamId: string, source: string): Promise<Skill> {
+  return request<Skill>(`/teams/${teamId}/skills/import`, { method: "POST", body: { source } });
+}
+
+export function syncSkill(teamId: string, skillId: string): Promise<Skill> {
+  return request<Skill>(`/teams/${teamId}/skills/${skillId}/sync`, { method: "POST" });
+}
+
+export function deleteSkill(teamId: string, skillId: string): Promise<void> {
+  return request<void>(`/teams/${teamId}/skills/${skillId}`, { method: "DELETE" });
+}
+
+/** Either a zip, or the files of a folder each with the path they sit at. */
+export type SkillUpload = { zip: File } | { files: { path: string; file: File }[] };
+
+export function skillBody(upload: SkillUpload): FormData | File {
+  if ("zip" in upload) return upload.zip;
+  const form = new FormData();
+  for (const { path, file } of upload.files) form.append("files", file, path);
+  return form;
+}
+
+/* ----------------------------------------------------------------- agents */
+
+export function listAgents(teamId: string, cursor?: string | null): Promise<Page<AgentSummary>> {
+  return request<Page<AgentSummary>>(`/teams/${teamId}/agents${pageQuery(cursor)}`);
+}
+
+export function getAgent(teamId: string, agentId: string): Promise<Agent> {
+  return request<Agent>(`/teams/${teamId}/agents/${agentId}`);
+}
+
+export function createAgent(teamId: string, agent: AgentRequest): Promise<Agent> {
+  return request<Agent>(`/teams/${teamId}/agents`, { method: "POST", body: agent });
+}
+
+export function deleteAgent(teamId: string, agentId: string): Promise<void> {
+  return request<void>(`/teams/${teamId}/agents/${agentId}`, { method: "DELETE" });
+}
+
+/* ------------------------------------------------------------ mcp servers */
+
+export function listMCPServers(teamId: string, cursor?: string | null): Promise<Page<MCPServer>> {
+  return request<Page<MCPServer>>(`/teams/${teamId}/mcp-servers${pageQuery(cursor)}`);
+}
+
+export function createMCPServer(teamId: string, server: MCPServerRequest): Promise<MCPServer> {
+  return request<MCPServer>(`/teams/${teamId}/mcp-servers`, { method: "POST", body: server });
+}
+
+export function deleteMCPServer(teamId: string, serverId: string): Promise<void> {
+  return request<void>(`/teams/${teamId}/mcp-servers/${serverId}`, { method: "DELETE" });
+}
+
+export function listMCPTools(teamId: string, serverId: string): Promise<{ items: MCPTool[] }> {
+  return request<{ items: MCPTool[] }>(`/teams/${teamId}/mcp-servers/${serverId}/tools`);
+}
+
+export function discoverMCPServer(teamId: string, serverId: string): Promise<{ items: MCPTool[] }> {
+  return request<{ items: MCPTool[] }>(`/teams/${teamId}/mcp-servers/${serverId}/discover`, {
+    method: "POST",
+  });
+}
+
+/* ------------------------------------------------------------------ graph */
+
+export function getGraph(teamId: string, limit: number, signal?: AbortSignal): Promise<TeamGraph> {
+  return request<TeamGraph>(`/teams/${teamId}/graph?limit=${limit}`, signal ? { signal } : {});
 }

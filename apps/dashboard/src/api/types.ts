@@ -109,3 +109,137 @@ export type AuthConfig = {
   dev_token_accepted: boolean;
   oidc?: { issuer: string; client_id: string };
 };
+
+/* --------------------------------------------------------------- registry */
+
+/** GET /teams/{id}/permissions — advice for what to offer, never authority. */
+export type TeamPermissions = {
+  actions: string[];
+  super_admin: boolean;
+};
+
+/** GET /teams/{id}/skills */
+export type SkillSummary = {
+  id: string;
+  team_id: string;
+  name: string;
+  description: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SkillFile = {
+  path: string;
+  size: number;
+  sha256: string;
+  media_type: string;
+};
+
+/** GET /teams/{id}/skills/{skillID} */
+export type Skill = SkillSummary & {
+  body: string;
+  files: SkillFile[];
+  metadata: Record<string, string>;
+  license?: string;
+  compatibility?: string;
+  allowed_tools?: string;
+  source_ref?: string;
+  source_sha?: string;
+};
+
+export type ModelRef = { name: string; max_tokens: number; temperature?: number };
+
+export type MCPServerGrant = { id: string; allow?: string[] };
+
+/** GET /teams/{id}/agents */
+export type AgentSummary = {
+  id: string;
+  team_id: string;
+  name: string;
+  description: string;
+  kind: string;
+  model: ModelRef;
+  pattern: string;
+  created_at: string;
+  updated_at: string;
+};
+
+/** GET /teams/{id}/agents/{agentID} */
+export type Agent = AgentSummary & {
+  instructions: string;
+  max_steps: number;
+  steer_continuations: number;
+  parser: boolean;
+  mcp_servers: MCPServerGrant[];
+  skills: string[];
+};
+
+/** POST /teams/{id}/agents. The fields a form sets; the rest default. */
+export type AgentRequest = {
+  name: string;
+  description?: string;
+  instructions?: string;
+  model: ModelRef;
+  pattern: string;
+  max_steps: number;
+  mcp_servers?: MCPServerGrant[];
+  skills?: string[];
+};
+
+/** GET /teams/{id}/mcp-servers. Credentials are references, never values. */
+export type MCPServer = {
+  id: string;
+  team_id: string;
+  name: string;
+  url?: string;
+  command?: string[];
+  env: Record<string, string>;
+  auth_secret_ref?: string;
+  bare: boolean;
+  discovered_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MCPServerRequest = {
+  name: string;
+  url?: string;
+  command?: string[];
+  env?: Record<string, string>;
+  auth_secret_ref?: string;
+  bare?: boolean;
+};
+
+/** GET /teams/{id}/mcp-servers/{serverID}/tools. The server's own words. */
+export type MCPTool = {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+};
+
+export type GraphLabel = "Team" | "Agent" | "Toolkit" | "Tool" | "Skill";
+export type GraphEdgeType = "OWNS" | "GRANTED" | "CONTAINS" | "HAS_SKILL";
+
+/** GET /teams/{id}/graph — the index as it is, which may lag Postgres. */
+export type GraphNode = {
+  id: string;
+  label: GraphLabel;
+  name?: string;
+  description?: string;
+  kind?: string;
+  model?: string;
+};
+
+export type GraphEdge = {
+  type: GraphEdgeType;
+  from: string;
+  to: string;
+  only?: string[];
+};
+
+export type TeamGraph = {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  truncated: boolean;
+};

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { addMember, createTeam, listMembers, listTeams, listUsers, removeMember } from "@/api";
 import { ApiError } from "@/api/client";
+import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -117,6 +118,9 @@ function Teams() {
 
 function Members({ teamId }: { teamId: string }) {
   const qc = useQueryClient();
+  // Adding and removing people is membership:write in that team. Without it
+  // the list is still worth seeing; the controls are not offered.
+  const canManage = usePermissions(teamId).can("membership:write");
   const [userId, setUserId] = useState("");
   const [role, setRole] = useState("member");
 
@@ -158,15 +162,17 @@ function Members({ teamId }: { teamId: string }) {
               {m.email ? <Mono>{m.subject}</Mono> : null}
             </div>
             <span className="text-xs text-muted-foreground">{m.role}</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs"
-              disabled={remove.isPending}
-              onClick={() => remove.mutate(m.user_id)}
-            >
-              Remove
-            </Button>
+            {canManage ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs"
+                disabled={remove.isPending}
+                onClick={() => remove.mutate(m.user_id)}
+              >
+                Remove
+              </Button>
+            ) : null}
           </li>
         ))}
         {rows.length === 0 && !members.isPending ? (
@@ -174,38 +180,40 @@ function Members({ teamId }: { teamId: string }) {
         ) : null}
       </ul>
 
-      <form
-        className="flex items-center gap-2 pt-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (userId) add.mutate();
-        }}
-      >
-        <Select value={userId} onValueChange={setUserId}>
-          <SelectTrigger className="h-8 w-56 text-xs" aria-label="User to add">
-            <SelectValue placeholder="Add a user…" />
-          </SelectTrigger>
-          <SelectContent>
-            {(users.data?.items ?? []).map((u) => (
-              <SelectItem key={u.id} value={u.id}>
-                {u.email ?? u.subject}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={role} onValueChange={setRole}>
-          <SelectTrigger className="h-8 w-28 text-xs" aria-label="Role">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="member">member</SelectItem>
-            <SelectItem value="admin">admin</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button type="submit" size="sm" disabled={!userId || add.isPending}>
-          Add
-        </Button>
-      </form>
+      {canManage ? (
+        <form
+          className="flex items-center gap-2 pt-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (userId) add.mutate();
+          }}
+        >
+          <Select value={userId} onValueChange={setUserId}>
+            <SelectTrigger className="h-8 w-56 text-xs" aria-label="User to add">
+              <SelectValue placeholder="Add a user…" />
+            </SelectTrigger>
+            <SelectContent>
+              {(users.data?.items ?? []).map((u) => (
+                <SelectItem key={u.id} value={u.id}>
+                  {u.email ?? u.subject}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={role} onValueChange={setRole}>
+            <SelectTrigger className="h-8 w-28 text-xs" aria-label="Role">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="member">member</SelectItem>
+              <SelectItem value="admin">admin</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button type="submit" size="sm" disabled={!userId || add.isPending}>
+            Add
+          </Button>
+        </form>
+      ) : null}
     </div>
   );
 }
