@@ -2,7 +2,7 @@
 #
 # The alternative to the LiteLLM overlay, answering the same endpoint. Run one
 # or the other — both publish a gateway the brain reaches at a single URL, and
-# starting both means deciding which one OPENARITY_MODELS_BASE_URL points at.
+# starting both means deciding which one OPENARITY_LLM_BASE_URL points at.
 #
 #   cd deployment
 #   cp .env.example .env                        # then fill in the OmniRoute block
@@ -11,8 +11,8 @@
 # This file brings the gateway and nothing else — the brain's settings live in
 # x-brain-env in docker-compose.yml. When the brain reads them, the values are:
 #
-#   OPENARITY_MODELS_BASE_URL=http://omniroute:20128/v1
-#   OPENARITY_MODELS_API_KEY=<a key issued in the dashboard>
+#   OPENARITY_LLM_BASE_URL=http://omniroute:20128/v1
+#   OPENARITY_LLM_API_KEY=<a key issued in the dashboard>
 #
 # Dashboard at http://127.0.0.1:20128/dashboard — providers, routing, keys and
 # call logs, signed in with the password below.

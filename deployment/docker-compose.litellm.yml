@@ -19,8 +19,8 @@
 # files to read to know how it is configured. When the brain reads them, the
 # values are:
 #
-#   OPENARITY_MODELS_BASE_URL=http://litellm:4000/v1
-#   OPENARITY_MODELS_API_KEY=<a virtual key minted in the dashboard>
+#   OPENARITY_LLM_BASE_URL=http://litellm:4000/v1
+#   OPENARITY_LLM_API_KEY=<a virtual key minted in the dashboard>
 #
 # Dashboard at http://127.0.0.1:14000/ui — virtual keys, per-team budgets,
 # rate limits and spend, signed in with UI_USERNAME and UI_PASSWORD.

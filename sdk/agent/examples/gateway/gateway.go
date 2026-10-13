@@ -57,17 +57,17 @@ func Model() string {
 // nothing installed. The returned function shuts the stub down; for a real
 // gateway it does nothing.
 //
-//	OPENARITY_MODELS_BASE_URL=http://127.0.0.1:20128/v1 \
-//	OPENARITY_MODELS_API_KEY=sk-… \
+//	OPENARITY_LLM_BASE_URL=http://127.0.0.1:20128/v1 \
+//	OPENARITY_LLM_API_KEY=sk-… \
 //	OPENARITY_MODEL=cc/claude-opus-4-8 \
 //	go run ./examples/skills
 func Resolve(script ...Turn) (agent.Endpoint, func()) {
-	if url := os.Getenv("OPENARITY_MODELS_BASE_URL"); url != "" {
-		return agent.Endpoint{BaseURL: url, APIKey: os.Getenv("OPENARITY_MODELS_API_KEY")}, func() {}
+	if url := os.Getenv("OPENARITY_LLM_BASE_URL"); url != "" {
+		return agent.Endpoint{BaseURL: url, APIKey: os.Getenv("OPENARITY_LLM_API_KEY")}, func() {}
 	}
 
 	srv := httptest.NewServer(stub(script))
-	fmt.Println("no OPENARITY_MODELS_BASE_URL set — using an in-process stub gateway")
+	fmt.Println("no OPENARITY_LLM_BASE_URL set — using an in-process stub gateway")
 	return agent.Endpoint{BaseURL: srv.URL, APIKey: "sk-stub"}, srv.Close
 }
 

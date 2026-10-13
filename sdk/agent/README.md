@@ -316,7 +316,7 @@ as well; `ClientFactory` is the seam.
 go run ./examples/tools
 ```
 
-Each runs with nothing installed — with no `OPENARITY_MODELS_BASE_URL` set they
+Each runs with nothing installed — with no `OPENARITY_LLM_BASE_URL` set they
 start a stub gateway in-process that speaks the streaming protocol, so the
 pattern, the accumulator and the tool dispatch are all real. See
 [`examples/README.md`](examples/README.md).
