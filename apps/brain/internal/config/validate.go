@@ -36,7 +36,8 @@ func checkHostPort(field, v string) error {
 func checkURL(field, v string, schemes ...string) error {
 	url, err := url.Parse(v)
 	if err != nil {
-		return fmt.Errorf("%s is invalid: %w", field, err)
+		return fmt.Errorf("%s cannot be parsed as a URL — a password holding / ? # @ : or %% has to be "+
+			"percent-encoded; the value is not repeated here, in case it carries one", field)
 	}
 	if url.Scheme == "" {
 		return fmt.Errorf("%s must have a scheme", field)
@@ -54,7 +55,11 @@ var hostPattern = regexp.MustCompile(`(?i)^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0
 
 func checkHosts(field string, hosts []string) error {
 	for i, h := range hosts {
-		if !hostPattern.MatchString(h) {
+		switch {
+		case strings.Contains(h, "@"):
+			return fmt.Errorf("%s entry %d holds an @, so it may carry a credential and is not repeated here — "+
+				"write a host name alone, such as hub.example.com", field, i)
+		case !hostPattern.MatchString(h):
 			return fmt.Errorf("%s entry %d is %q — write a host name alone, such as hub.example.com, with no scheme, port or path", field, i, h)
 		}
 	}

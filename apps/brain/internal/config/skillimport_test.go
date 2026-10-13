@@ -64,6 +64,29 @@ func TestSkillImportHostsErrorIdentifiesTheEntry(t *testing.T) {
 	}
 }
 
+// The commonest way a credential reaches this list is a clone URL pasted
+// whole: https://x-access-token:<token>@github.com. An entry that is merely
+// malformed is echoed, because seeing it is how it gets fixed; one with an @
+// in it is not.
+func TestAHostEntryCarryingACredentialIsNotRepeated(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		"https://x-access-token:ghp_hostsecret@github.com",
+		"ghp_hostsecret@hub.example.com",
+		"good.example.com,deploy:ghp_hostsecret@files.example.org",
+	} {
+		_, err := load(map[string]string{"OPENARITY_SKILL_IMPORT_HOSTS": raw})
+		if err == nil || !strings.Contains(err.Error(), "SKILL_IMPORT_HOSTS entry") {
+			t.Errorf("%q accepted, or refused without naming the entry: %v", raw, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "hostsecret") {
+			t.Errorf("the refusal repeats the credential: %v", err)
+		}
+	}
+}
+
 // The token is the token. One carrying a space or a line break is a paste
 // gone wrong — a trailing newline from a file, a quoted blank — and would be
 // refused by the first request that tried to send it as a header, long after
