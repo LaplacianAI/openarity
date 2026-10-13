@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
@@ -487,5 +488,67 @@ func TestTheWiredProjectorUsesEverySetting(t *testing.T) {
 	}
 	if res, err := p.Drain(t.Context(), 100); err != nil || res.Failed != 1 {
 		t.Errorf("after closing the graph, Drain = %+v, %v; want the row left", res, err)
+	}
+}
+
+// --- the graph the API reads ---
+
+func TestNoModelMeansNoGraphView(t *testing.T) {
+	t.Parallel()
+
+	// A width is set, so the missing model is the only reason not to dial.
+	cfg := &config.Config{FalkorDBURL: deadFalkorURL(t), EmbeddingDimensions: 3}
+	viewer, closeGraph := newGraphViewer(t.Context(), cfg, discardLogger())
+	defer closeGraph()
+	if viewer != nil {
+		t.Error("a graph view was built with no embedding model")
+	}
+}
+
+// The API serves without its graph. A FalkorDB that cannot be reached at
+// start leaves the graph route answering 503, and serve still starts.
+func TestAGraphStoreThatSaysNothingLeavesTheViewOff(t *testing.T) {
+	t.Parallel()
+
+	var lc net.ListenConfig
+	l, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+		}
+	}()
+
+	var logs bytes.Buffer
+	cfg := &config.Config{FalkorDBURL: "redis://" + l.Addr().String(), EmbeddingModel: "m", EmbeddingDimensions: 3}
+	viewer, closeGraph := newGraphViewer(t.Context(), cfg, slog.New(slog.NewTextHandler(&logs, nil)))
+	defer closeGraph()
+
+	if viewer != nil {
+		t.Error("a view was built on a FalkorDB that never answered")
+	}
+	if !strings.Contains(logs.String(), "graph view is off") {
+		t.Errorf("serve did not say the view is off:\n%s", logs.String())
+	}
+}
+
+func TestTheGraphViewReadsTheConfiguredFalkorDB(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{FalkorDBURL: liveFalkorURL(t), EmbeddingModel: "m", EmbeddingDimensions: 3}
+	viewer, closeGraph := newGraphViewer(t.Context(), cfg, discardLogger())
+	defer closeGraph()
+	if viewer == nil {
+		t.Fatal("no view on a FalkorDB that is there")
+	}
+	if _, _, err := viewer.View(t.Context(), uuid.New(), 10); err != nil {
+		t.Errorf("View: %v", err)
 	}
 }

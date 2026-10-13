@@ -1551,3 +1551,129 @@ func TestNodeOfSeparatesTheGraphsPropertiesFromTheCallers(t *testing.T) {
 		t.Errorf("nodeOf with no props = %+v, %v", n, err)
 	}
 }
+
+// --- the view the API serves ---
+
+// What a dashboard is shown: every node's label, id and the three properties
+// it displays, which model embedded it, and the edges between the nodes
+// returned. Never a vector: 768 floats a node is the whole cost of the read.
+func TestViewReturnsNodesWithoutVectorsAndTheirEdges(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	agent := Node{
+		Ref: Ref{LabelAgent, uuid.New()}, Props: map[string]any{"name": "triage", "description": "Sorts", "kind": "custom"},
+		Embedding: []float32{1, 0, 0}, Model: "m", ContentSHA256: []byte{1},
+	}
+	kit := Node{Ref: Ref{LabelToolkit, uuid.New()}, Props: map[string]any{"name": "github", "kind": "mcp"}}
+	mustPut(t, g, team, Node{Ref: Ref{LabelTeam, team}}, agent, kit)
+	if err := g.EnsureIndexes(t.Context(), team); err != nil {
+		t.Fatal(err)
+	}
+	mustLink(t, g, team, Ref{LabelTeam, team}, EdgeOwns, agent.Ref)
+	if err := g.SetOutEdges(t.Context(), team, agent.Ref, EdgeGranted, LabelToolkit,
+		[]Edge{{To: kit.ID, Props: map[string]any{"only": []string{"search"}}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	view, truncated, err := g.View(t.Context(), team, 10)
+	if err != nil || truncated {
+		t.Fatalf("View = %v, %v", truncated, err)
+	}
+	if len(view.Nodes) != 3 || len(view.Edges) != 2 {
+		t.Fatalf("%d nodes and %d edges", len(view.Nodes), len(view.Edges))
+	}
+
+	got := find(t, view, agent.ID)
+	if got.Label != LabelAgent || got.Props["name"] != "triage" || got.Props["description"] != "Sorts" ||
+		got.Props["kind"] != "custom" || got.Model != "m" {
+		t.Errorf("agent = %+v", got)
+	}
+	if got.Embedding != nil || got.ContentSHA256 != nil {
+		t.Error("the view carries a vector")
+	}
+	if _, has := find(t, view, kit.ID).Props["description"]; has {
+		t.Error("a property the node does not have came back")
+	}
+
+	for _, e := range view.Edges {
+		if e.Type == EdgeGranted {
+			only, _ := e.Props["only"].([]any)
+			if e.From != agent.Ref || e.To != kit.Ref || len(only) != 1 || only[0] != "search" {
+				t.Errorf("granted = %+v", e)
+			}
+		}
+	}
+}
+
+// At most limit nodes, truncated saying when there were more, and only the
+// edges whose two ends were both returned.
+func TestViewIsBoundedAndDropsEdgesToNodesItDidNotReturn(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	kit := bare(LabelToolkit)
+	mustPut(t, g, team, kit)
+	for range 5 {
+		tool := bare(LabelTool)
+		mustPut(t, g, team, tool)
+		mustLink(t, g, team, kit.Ref, EdgeContains, tool.Ref)
+	}
+
+	view, truncated, err := g.View(t.Context(), team, 3)
+	if err != nil || !truncated || len(view.Nodes) != 3 {
+		t.Fatalf("View = %d nodes, truncated %v, %v", len(view.Nodes), truncated, err)
+	}
+	returned := map[uuid.UUID]bool{}
+	for _, n := range view.Nodes {
+		returned[n.ID] = true
+	}
+	for _, e := range view.Edges {
+		if !returned[e.From.ID] || !returned[e.To.ID] {
+			t.Errorf("an edge to a node that was not returned: %+v", e)
+		}
+	}
+
+	all, truncated, err := g.View(t.Context(), team, 6)
+	if err != nil || truncated || len(all.Nodes) != 6 || len(all.Edges) != 5 {
+		t.Errorf("exactly the limit: %d nodes, %d edges, truncated %v, %v", len(all.Nodes), len(all.Edges), truncated, err)
+	}
+}
+
+func TestViewOfATeamWithNoGraphIsEmptyAndMakesNone(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	view, truncated, err := g.View(t.Context(), team, 10)
+	if err != nil || truncated || len(view.Nodes) != 0 || len(view.Edges) != 0 {
+		t.Errorf("View = %+v, %v, %v", view, truncated, err)
+	}
+	if graphs, _ := g.db.ListGraphs(); slices.Contains(graphs, graphName(team)) {
+		t.Error("looking at a team with no graph made one")
+	}
+}
+
+func TestViewRefusesALimitBelowOne(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	for _, limit := range []int{0, -1} {
+		if _, _, err := g.View(t.Context(), team, limit); err == nil {
+			t.Errorf("View with limit %d succeeded", limit)
+		}
+	}
+}
+
+func TestViewWaitsForItsTurn(t *testing.T) {
+	t.Parallel()
+
+	g, team := liveGraph(t, 3)
+	g.turn(team) <- struct{}{}
+	t.Cleanup(func() { <-g.turn(team) })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	if _, _, err := g.View(ctx, team, 10); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("View went ahead while the team's turn was held: %v", err)
+	}
+}

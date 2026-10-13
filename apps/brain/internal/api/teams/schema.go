@@ -38,3 +38,8 @@ type memberCursor struct {
 	Subject string    `json:"s"`
 	ID      uuid.UUID `json:"i"`
 }
+
+type permissions struct {
+	Actions    []string `json:"actions"`
+	SuperAdmin bool     `json:"super_admin"`
+}

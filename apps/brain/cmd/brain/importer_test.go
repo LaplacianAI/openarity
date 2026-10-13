@@ -58,7 +58,7 @@ func skillsMux(t *testing.T, importer *recordingImporter) *http.ServeMux {
 	t.Helper()
 
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
-	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil, importer, nil) {
+	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil, importer, nil, nil) {
 		rr, ok := r.(registrable)
 		if !ok || !strings.Contains(strings.Join(rr.Patterns(), " "), "/skills/import") {
 			continue

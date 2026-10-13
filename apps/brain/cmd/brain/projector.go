@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamgraph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
@@ -70,4 +71,20 @@ func embeddingKey(
 		return nil, fmt.Errorf("EMBEDDING_KEY_REF names %s, which cannot be read: %w", cfg.EmbeddingKeyRef, err)
 	}
 	return read, nil
+}
+
+func newGraphViewer(ctx context.Context, cfg *config.Config, logger *slog.Logger) (teamgraph.Viewer, func()) {
+	if cfg.EmbeddingModel == "" {
+		return nil, func() {}
+	}
+
+	dialCtx, cancel := context.WithTimeout(ctx, graphStartTimeout)
+	defer cancel()
+
+	g, err := graph.Dial(dialCtx, cfg.FalkorDBURL, cfg.EmbeddingDimensions)
+	if err != nil {
+		logger.WarnContext(ctx, "The graph view is off: FalkorDB could not be reached", "error", err)
+		return nil, func() {}
+	}
+	return g, func() { _ = g.Close() }
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpservers"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/sessions"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/skills"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamgraph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teams"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/ui"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/users"
@@ -35,6 +36,7 @@ func newRouters(
 	attachments *objects.Encrypted,
 	importer skills.Importer,
 	discoverer mcpservers.Discoverer,
+	graphs teamgraph.Viewer,
 ) []server.Router {
 	routers := []server.Router{
 		whoami.New(logger),
@@ -43,6 +45,7 @@ func newRouters(
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
 		mcpservers.New(logger, mcpStore{dbStore}, discoverer),
 		agents.New(logger, agentStore{dbStore}),
+		teamgraph.New(logger, graphs),
 		users.New(logger, dbStore),
 		sessions.New(logger, dbStore, authorizer, attachments),
 		authconfig.New(logger, cfg),

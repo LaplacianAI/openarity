@@ -41,6 +41,8 @@ tags:
     description: The agents a team defines, and the servers and skills each is granted
   - name: mcp-servers
     description: The MCP servers a team's agents may be granted, and the tools each offers
+  - name: graph
+    description: A team's agents, tools and skills as the graph index holds them
   - name: sessions
     description: Conversations, and what was said in them
   - name: users
@@ -217,6 +219,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Team"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/permissions:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: getTeamPermissions
+      tags: [teams]
+      summary: What the caller may do in a team
+      description: |
+        The permissions the caller holds in this team, from their role, so
+        a client can offer only the actions the brain will allow. Advice,
+        not authority: every route still checks for itself.
+
+        Requires only membership. A super admin may do everything in every
+        team whatever `actions` lists, and `super_admin` says so; a client
+        treats it as holding every permission.
+      responses:
+        "200":
+          description: The caller's permissions in the team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamPermissions"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1701,6 +1732,59 @@ paths:
                 type: string
                 examples: ["the server did not answer in time"]
 
+  /teams/{id}/graph:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: getTeamGraph
+      tags: [graph]
+      summary: The team's graph
+      description: |
+        The team's agents, toolkits, tools and skills, and the edges between
+        them, as the graph index holds them now. Not as Postgres holds them:
+        the graph catches up within about a minute of a change, and what is
+        shown here is what selection will search.
+
+        Vectors are not returned. `model` says which model embedded a node,
+        and is absent for a node that carries no vector.
+
+        Requires only membership. At most `limit` nodes are returned, and
+        `truncated` says when there were more; an edge is returned only when
+        both of its ends are.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 2000
+            default: 500
+      responses:
+        "200":
+          description: The graph
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamGraph"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: |
+            There is no graph to show: no embedding model is configured, so
+            nothing is projected, or the graph store cannot be reached. The
+            rest of the API does not depend on it.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the graph is not enabled on this brain"]
+
   /users:
     get:
       operationId: listUsers
@@ -1902,6 +1986,84 @@ components:
             examples: ["id must be a uuid"]
 
   schemas:
+    TeamPermissions:
+      type: object
+      additionalProperties: false
+      required: [actions, super_admin]
+      properties:
+        actions:
+          type: array
+          description: |
+            The permissions the caller's role grants in this team, sorted.
+            Empty for a super admin who is not a member.
+          items:
+            type: string
+          examples: [["agent:write", "skill:write", "tool:write"]]
+        super_admin:
+          type: boolean
+          description: Holds every permission in every team, whatever the role
+
+    TeamGraph:
+      type: object
+      additionalProperties: false
+      required: [nodes, edges, truncated]
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphEdge"
+        truncated:
+          type: boolean
+          description: More nodes exist than were returned
+
+    GraphNode:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The id of the row behind it; the team's own id for the team
+        label:
+          type: string
+          enum: [Team, Agent, Toolkit, Tool, Skill]
+          description: A Toolkit is an MCP server
+        name:
+          type: string
+        description:
+          type: string
+        kind:
+          type: string
+          description: An agent's kind, or a toolkit's transport family
+        model:
+          type: string
+          description: The model that embedded it; absent when it carries no vector
+
+    GraphEdge:
+      type: object
+      additionalProperties: false
+      required: [type, from, to]
+      properties:
+        type:
+          type: string
+          enum: [OWNS, GRANTED, CONTAINS, HAS_SKILL]
+        from:
+          type: string
+          format: uuid
+        to:
+          type: string
+          format: uuid
+        only:
+          type: array
+          description: On GRANTED, the tools granted; absent when every tool is
+          items:
+            type: string
+
     AuthConfig:
       type: object
       required: [environment, dev_token_accepted]

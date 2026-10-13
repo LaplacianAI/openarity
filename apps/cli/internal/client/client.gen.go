@@ -42,6 +42,57 @@ func (e AuthConfigEnvironment) Valid() bool {
 	}
 }
 
+// Defines values for GraphEdgeType.
+const (
+	CONTAINS GraphEdgeType = "CONTAINS"
+	GRANTED  GraphEdgeType = "GRANTED"
+	HASSKILL GraphEdgeType = "HAS_SKILL"
+	OWNS     GraphEdgeType = "OWNS"
+)
+
+// Valid indicates whether the value is a known member of the GraphEdgeType enum.
+func (e GraphEdgeType) Valid() bool {
+	switch e {
+	case CONTAINS:
+		return true
+	case GRANTED:
+		return true
+	case HASSKILL:
+		return true
+	case OWNS:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GraphNodeLabel.
+const (
+	GraphNodeLabelAgent   GraphNodeLabel = "Agent"
+	GraphNodeLabelSkill   GraphNodeLabel = "Skill"
+	GraphNodeLabelTeam    GraphNodeLabel = "Team"
+	GraphNodeLabelTool    GraphNodeLabel = "Tool"
+	GraphNodeLabelToolkit GraphNodeLabel = "Toolkit"
+)
+
+// Valid indicates whether the value is a known member of the GraphNodeLabel enum.
+func (e GraphNodeLabel) Valid() bool {
+	switch e {
+	case GraphNodeLabelAgent:
+		return true
+	case GraphNodeLabelSkill:
+		return true
+	case GraphNodeLabelTeam:
+		return true
+	case GraphNodeLabelTool:
+		return true
+	case GraphNodeLabelToolkit:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionKind.
 const (
 	Direct SessionKind = "direct"
@@ -438,6 +489,40 @@ type CreatedChannel struct {
 	SigningSecret *string            `json:"signing_secret,omitempty" yaml:"signing_secret,omitempty"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
 }
+
+// GraphEdge defines model for GraphEdge.
+type GraphEdge struct {
+	From openapi_types.UUID `json:"from" yaml:"from"`
+
+	// Only On GRANTED, the tools granted; absent when every tool is
+	Only *[]string          `json:"only,omitempty" yaml:"only,omitempty"`
+	To   openapi_types.UUID `json:"to" yaml:"to"`
+	Type GraphEdgeType      `json:"type" yaml:"type"`
+}
+
+// GraphEdgeType defines model for GraphEdge.Type.
+type GraphEdgeType string
+
+// GraphNode defines model for GraphNode.
+type GraphNode struct {
+	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+
+	// ID The id of the row behind it; the team's own id for the team
+	ID openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Kind An agent's kind, or a toolkit's transport family
+	Kind *string `json:"kind,omitempty" yaml:"kind,omitempty"`
+
+	// Label A Toolkit is an MCP server
+	Label GraphNodeLabel `json:"label" yaml:"label"`
+
+	// Model The model that embedded it; absent when it carries no vector
+	Model *string `json:"model,omitempty" yaml:"model,omitempty"`
+	Name  *string `json:"name,omitempty" yaml:"name,omitempty"`
+}
+
+// GraphNodeLabel A Toolkit is an MCP server
+type GraphNodeLabel string
 
 // MCPServer Exactly one of `url` and `command` is present.
 type MCPServer struct {
@@ -874,6 +959,15 @@ type Team struct {
 	Role *string `json:"role,omitempty" yaml:"role,omitempty"`
 }
 
+// TeamGraph defines model for TeamGraph.
+type TeamGraph struct {
+	Edges []GraphEdge `json:"edges" yaml:"edges"`
+	Nodes []GraphNode `json:"nodes" yaml:"nodes"`
+
+	// Truncated More nodes exist than were returned
+	Truncated bool `json:"truncated" yaml:"truncated"`
+}
+
 // TeamPage defines model for TeamPage.
 type TeamPage struct {
 	Items []Team `json:"items" yaml:"items"`
@@ -881,6 +975,19 @@ type TeamPage struct {
 	// NextCursor Absent on the last page. Its absence is the only end-of-collection
 	// signal — there is no separate flag to disagree with it.
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// TeamPermissions defines model for TeamPermissions.
+type TeamPermissions struct {
+	// Actions The permissions the caller's role grants in this team, sorted.
+	// Empty for a super admin who is not a member.
+	//
+	//
+	// Examples: ["agent:write","skill:write","tool:write"]
+	Actions []string `json:"actions" yaml:"actions"`
+
+	// SuperAdmin Holds every permission in every team, whatever the role
+	SuperAdmin bool `json:"super_admin" yaml:"super_admin"`
 }
 
 // User defines model for User.
@@ -1036,6 +1143,11 @@ type ListChannelSessionsParams struct {
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
+// GetTeamGraphParams defines parameters for GetTeamGraph.
+type GetTeamGraphParams struct {
+	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
 }
 
 // ListMCPServersParams defines parameters for ListMCPServers.
@@ -1545,6 +1657,23 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/channels/{channelID}/sessions (the `ListChannelSessions` operationId).
 	ListChannelSessions(ctx context.Context, id TeamID, channelID ChannelID, params *ListChannelSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetTeamGraph The team's graph
+	//
+	// The team's agents, toolkits, tools and skills, and the edges between
+	// them, as the graph index holds them now. Not as Postgres holds them:
+	// the graph catches up within about a minute of a change, and what is
+	// shown here is what selection will search.
+	//
+	// Vectors are not returned. `model` says which model embedded a node,
+	// and is absent for a node that carries no vector.
+	//
+	// Requires only membership. At most `limit` nodes are returned, and
+	// `truncated` says when there were more; an edge is returned only when
+	// both of its ends are.
+	//
+	// Corresponds with GET /teams/{id}/graph (the `GetTeamGraph` operationId).
+	GetTeamGraph(ctx context.Context, id TeamID, params *GetTeamGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListMCPServers List a team's MCP servers
 	//
 	// A read, so belonging to the team is enough: granting a server to an
@@ -1699,6 +1828,19 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /teams/{id}/members/{userID} (the `RemoveTeamMember` operationId).
 	RemoveTeamMember(ctx context.Context, id TeamID, userID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTeamPermissions What the caller may do in a team
+	//
+	// The permissions the caller holds in this team, from their role, so
+	// a client can offer only the actions the brain will allow. Advice,
+	// not authority: every route still checks for itself.
+	//
+	// Requires only membership. A super admin may do everything in every
+	// team whatever `actions` lists, and `super_admin` says so; a client
+	// treats it as holding every permission.
+	//
+	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
+	GetTeamPermissions(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSessions List every conversation in a team
 	//
@@ -2496,6 +2638,33 @@ func (c *Client) ListChannelSessions(ctx context.Context, id TeamID, channelID C
 	return c.Client.Do(req)
 }
 
+// GetTeamGraph The team's graph
+//
+// The team's agents, toolkits, tools and skills, and the edges between
+// them, as the graph index holds them now. Not as Postgres holds them:
+// the graph catches up within about a minute of a change, and what is
+// shown here is what selection will search.
+//
+// Vectors are not returned. `model` says which model embedded a node,
+// and is absent for a node that carries no vector.
+//
+// Requires only membership. At most `limit` nodes are returned, and
+// `truncated` says when there were more; an edge is returned only when
+// both of its ends are.
+//
+// Corresponds with GET /teams/{id}/graph (the `GetTeamGraph` operationId).
+func (c *Client) GetTeamGraph(ctx context.Context, id TeamID, params *GetTeamGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTeamGraphRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListMCPServers List a team's MCP servers
 //
 // A read, so belonging to the team is enough: granting a server to an
@@ -2771,6 +2940,29 @@ func (c *Client) AddTeamMember(ctx context.Context, id TeamID, body AddTeamMembe
 // Corresponds with DELETE /teams/{id}/members/{userID} (the `RemoveTeamMember` operationId).
 func (c *Client) RemoveTeamMember(ctx context.Context, id TeamID, userID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRemoveTeamMemberRequest(c.Server, id, userID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetTeamPermissions What the caller may do in a team
+//
+// The permissions the caller holds in this team, from their role, so
+// a client can offer only the actions the brain will allow. Advice,
+// not authority: every route still checks for itself.
+//
+// Requires only membership. A super admin may do everything in every
+// team whatever `actions` lists, and `super_admin` says so; a client
+// treats it as holding every permission.
+//
+// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
+func (c *Client) GetTeamPermissions(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTeamPermissionsRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -4170,6 +4362,67 @@ func NewListChannelSessionsRequest(server string, id TeamID, channelID ChannelID
 	return req, nil
 }
 
+// NewGetTeamGraphRequest constructs an http.Request for the GetTeamGraph method
+func NewGetTeamGraphRequest(server string, id TeamID, params *GetTeamGraphParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/graph", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListMCPServersRequest constructs an http.Request for the ListMCPServers method
 func NewListMCPServersRequest(server string, id TeamID, params *ListMCPServersParams) (*http.Request, error) {
 	var err error
@@ -4662,6 +4915,40 @@ func NewRemoveTeamMemberRequest(server string, id TeamID, userID openapi_types.U
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetTeamPermissionsRequest constructs an http.Request for the GetTeamPermissions method
+func NewGetTeamPermissionsRequest(server string, id TeamID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/permissions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -5809,6 +6096,25 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/channels/{channelID}/sessions (the `ListChannelSessions` operationId).
 	ListChannelSessionsWithResponse(ctx context.Context, id TeamID, channelID ChannelID, params *ListChannelSessionsParams, reqEditors ...RequestEditorFn) (*ListChannelSessionsResponse, error)
 
+	// GetTeamGraphWithResponse The team's graph
+	//
+	// The team's agents, toolkits, tools and skills, and the edges between
+	// them, as the graph index holds them now. Not as Postgres holds them:
+	// the graph catches up within about a minute of a change, and what is
+	// shown here is what selection will search.
+	//
+	// Vectors are not returned. `model` says which model embedded a node,
+	// and is absent for a node that carries no vector.
+	//
+	// Requires only membership. At most `limit` nodes are returned, and
+	// `truncated` says when there were more; an edge is returned only when
+	// both of its ends are.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/graph (the `GetTeamGraph` operationId).
+	GetTeamGraphWithResponse(ctx context.Context, id TeamID, params *GetTeamGraphParams, reqEditors ...RequestEditorFn) (*GetTeamGraphResponse, error)
+
 	// ListMCPServersWithResponse List a team's MCP servers
 	//
 	// A read, so belonging to the team is enough: granting a server to an
@@ -5977,6 +6283,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /teams/{id}/members/{userID} (the `RemoveTeamMember` operationId).
 	RemoveTeamMemberWithResponse(ctx context.Context, id TeamID, userID openapi_types.UUID, reqEditors ...RequestEditorFn) (*RemoveTeamMemberResponse, error)
+
+	// GetTeamPermissionsWithResponse What the caller may do in a team
+	//
+	// The permissions the caller holds in this team, from their role, so
+	// a client can offer only the actions the brain will allow. Advice,
+	// not authority: every route still checks for itself.
+	//
+	// Requires only membership. A super admin may do everything in every
+	// team whatever `actions` lists, and `super_admin` says so; a client
+	// treats it as holding every permission.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
+	GetTeamPermissionsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamPermissionsResponse, error)
 
 	// ListSessionsWithResponse List every conversation in a team
 	//
@@ -7093,6 +7414,54 @@ func (r ListChannelSessionsResponse) ContentType() string {
 	return ""
 }
 
+// GetTeamGraphResponse401Headers the declared response headers of an HTTP 401 response for GetTeamGraph
+type GetTeamGraphResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetTeamGraphResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TeamGraph
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetTeamGraphResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTeamGraphResponse) GetJSON200() *TeamGraph {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTeamGraphResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTeamGraphResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTeamGraphResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTeamGraphResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListMCPServersResponse401Headers the declared response headers of an HTTP 401 response for ListMCPServers
 type ListMCPServersResponse401Headers struct {
 	WWWAuthenticate *string
@@ -7546,6 +7915,54 @@ func (r RemoveTeamMemberResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RemoveTeamMemberResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetTeamPermissionsResponse401Headers the declared response headers of an HTTP 401 response for GetTeamPermissions
+type GetTeamPermissionsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetTeamPermissionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TeamPermissions
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetTeamPermissionsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTeamPermissionsResponse) GetJSON200() *TeamPermissions {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTeamPermissionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTeamPermissionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTeamPermissionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTeamPermissionsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -8705,6 +9122,31 @@ func (c *ClientWithResponses) ListChannelSessionsWithResponse(ctx context.Contex
 	return ParseListChannelSessionsResponse(rsp)
 }
 
+// GetTeamGraphWithResponse The team's graph
+//
+// The team's agents, toolkits, tools and skills, and the edges between
+// them, as the graph index holds them now. Not as Postgres holds them:
+// the graph catches up within about a minute of a change, and what is
+// shown here is what selection will search.
+//
+// Vectors are not returned. `model` says which model embedded a node,
+// and is absent for a node that carries no vector.
+//
+// Requires only membership. At most `limit` nodes are returned, and
+// `truncated` says when there were more; an edge is returned only when
+// both of its ends are.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/graph (the `GetTeamGraph` operationId).
+func (c *ClientWithResponses) GetTeamGraphWithResponse(ctx context.Context, id TeamID, params *GetTeamGraphParams, reqEditors ...RequestEditorFn) (*GetTeamGraphResponse, error) {
+	rsp, err := c.GetTeamGraph(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTeamGraphResponse(rsp)
+}
+
 // ListMCPServersWithResponse List a team's MCP servers
 //
 // A read, so belonging to the team is enough: granting a server to an
@@ -8950,6 +9392,27 @@ func (c *ClientWithResponses) RemoveTeamMemberWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseRemoveTeamMemberResponse(rsp)
+}
+
+// GetTeamPermissionsWithResponse What the caller may do in a team
+//
+// The permissions the caller holds in this team, from their role, so
+// a client can offer only the actions the brain will allow. Advice,
+// not authority: every route still checks for itself.
+//
+// Requires only membership. A super admin may do everything in every
+// team whatever `actions` lists, and `super_admin` says so; a client
+// treats it as holding every permission.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
+func (c *ClientWithResponses) GetTeamPermissionsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamPermissionsResponse, error) {
+	rsp, err := c.GetTeamPermissions(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTeamPermissionsResponse(rsp)
 }
 
 // ListSessionsWithResponse List every conversation in a team
@@ -9949,6 +10412,45 @@ func ParseListChannelSessionsResponse(rsp *http.Response) (*ListChannelSessionsR
 	return response, nil
 }
 
+// ParseGetTeamGraphResponse parses an HTTP response from a GetTeamGraphWithResponse call
+func ParseGetTeamGraphResponse(rsp *http.Response) (*GetTeamGraphResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTeamGraphResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TeamGraph
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetTeamGraphResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseListMCPServersResponse parses an HTTP response from a ListMCPServersWithResponse call
 func ParseListMCPServersResponse(rsp *http.Response) (*ListMCPServersResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -10296,6 +10798,45 @@ func ParseRemoveTeamMemberResponse(rsp *http.Response) (*RemoveTeamMemberRespons
 	switch {
 	case rsp.StatusCode == 401:
 		var headers RemoveTeamMemberResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetTeamPermissionsResponse parses an HTTP response from a GetTeamPermissionsWithResponse call
+func ParseGetTeamPermissionsResponse(rsp *http.Response) (*GetTeamPermissionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTeamPermissionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TeamPermissions
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetTeamPermissionsResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

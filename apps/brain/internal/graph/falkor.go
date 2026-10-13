@@ -503,3 +503,66 @@ func (g *Graph) Link(ctx context.Context, team uuid.UUID, from Ref, typ EdgeType
 	}
 	return nil
 }
+
+func (g *Graph) View(ctx context.Context, team uuid.UUID, limit int) (Snapshot, bool, error) {
+	if limit < 1 {
+		return Snapshot{}, false, fmt.Errorf("graph: a view needs at least one node, and %d were asked for", limit)
+	}
+
+	res, err := g.run(ctx, team, true,
+		"MATCH (n) RETURN labels(n)[0], n.id, n.name, n.description, n.kind, n.model "+
+			"ORDER BY labels(n)[0], n.id LIMIT $limit",
+		map[string]any{"limit": limit + 1})
+	if absent(err) {
+		return Snapshot{}, false, nil
+	}
+	if err != nil {
+		return Snapshot{}, false, err
+	}
+
+	var out Snapshot
+	ids := []string{}
+	for res.Next() {
+		row := res.Record().Values()
+		label, _ := row[0].(string)
+		rawID, _ := row[1].(string)
+		id, err := uuid.Parse(rawID)
+		if err != nil {
+			return Snapshot{}, false, fmt.Errorf("graph: a %s node has the id %q, which is not a uuid", label, rawID)
+		}
+
+		n := Node{Ref: Ref{Label: Label(label), ID: id}, Props: map[string]any{}}
+		for i, key := range []string{"name", "description", "kind"} {
+			if v, ok := row[2+i].(string); ok {
+				n.Props[key] = v
+			}
+		}
+		n.Model, _ = row[5].(string)
+
+		out.Nodes = append(out.Nodes, n)
+		ids = append(ids, rawID)
+	}
+
+	truncated := len(out.Nodes) > limit
+	if truncated {
+		out.Nodes = out.Nodes[:limit]
+		ids = ids[:limit]
+	}
+
+	edges, err := g.run(ctx, team, true,
+		"MATCH (a)-[r]->(b) WHERE a.id IN $ids AND b.id IN $ids "+
+			"RETURN type(r), labels(a)[0], a.id, labels(b)[0], b.id, properties(r) ORDER BY type(r), a.id, b.id",
+		map[string]any{"ids": ids})
+	if err != nil {
+		return Snapshot{}, false, err
+	}
+	for edges.Next() {
+		e, err := edgeOf(edges.Record().Values())
+		if err != nil {
+			return Snapshot{}, false, err
+		}
+		out.Edges = append(out.Edges, e)
+	}
+
+	return out, truncated, nil
+}

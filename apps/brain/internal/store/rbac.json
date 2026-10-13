@@ -279,6 +279,16 @@
       "scope": "member"
     },
     {
+      "method": "GET",
+      "path": "/teams/{id}/permissions",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/graph",
+      "scope": "member"
+    },
+    {
       "method": "POST",
       "path": "/teams/{id}/mcp-servers/{serverID}/discover",
       "scope": "team",

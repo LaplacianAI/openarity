@@ -515,6 +515,10 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"PUT /teams/{id}/mcp-servers/{serverID}":       "team tool:write",
 		"DELETE /teams/{id}/mcp-servers/{serverID}":    "team tool:write",
 		"GET /teams/{id}/mcp-servers/{serverID}/tools": "member",
+		// Reading what you may do, and what the graph holds, needs only to be in
+		// the team: neither shows anything the member routes do not already.
+		"GET /teams/{id}/permissions": "member",
+		"GET /teams/{id}/graph":       "member",
 		// Discovery dials an address the team chose and rewrites what its
 		// agents can call, so it is a write, not a read.
 		"POST /teams/{id}/mcp-servers/{serverID}/discover": "team tool:write",
