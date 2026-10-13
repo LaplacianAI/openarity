@@ -355,7 +355,6 @@ ensure_litellm() {
 	wait_answering "http://$REACH_ADDR:$LITELLM_PORT/health/liveliness"
 
 	GATEWAY_URL="http://$REACH_ADDR:$LITELLM_PORT/v1"
-	GATEWAY_KEY=$(env_value LITELLM_MASTER_KEY)
 	GATEWAY_DASHBOARD="http://$REACH_ADDR:$LITELLM_PORT/ui"
 
 	# .env is what compose hands the brain, and the brain is a container: it
@@ -363,7 +362,20 @@ ensure_litellm() {
 	# the network. GATEWAY_URL above is the same gateway from this machine,
 	# where REACH_ADDR may be 127.0.0.1 — which in a container is itself.
 	env_set OPENARITY_LLM_BASE_URL "http://litellm:4000/v1"
-	env_set OPENARITY_LLM_API_KEY "$GATEWAY_KEY"
+
+	# Never the master key. It is LiteLLM's root credential: it mints keys,
+	# edits models and reads every team's spend, and .env is what compose
+	# hands the brain, the worker and the migrate step. They are given a
+	# virtual key, minted in the console and limited to calling models, or no
+	# key at all. This script wrote the master key here for one commit; if it
+	# is still there, take it back out.
+	local master
+	master=$(env_value LITELLM_MASTER_KEY || true)
+	if [ -n "$master" ] && [ "$(env_value OPENARITY_LLM_API_KEY || true)" = "$master" ]; then
+		env_set OPENARITY_LLM_API_KEY ""
+		note "OPENARITY_LLM_API_KEY held LiteLLM's master key, and has been emptied"
+	fi
+	GATEWAY_KEY=$(env_value OPENARITY_LLM_API_KEY || true)
 	note "LiteLLM answering on $LITELLM_PORT"
 }
 
@@ -595,6 +607,12 @@ if [ -n "$GATEWAY_URL" ]; then
 			say ""
 			say "  It routes nothing until a provider key is in deployment/.env"
 			say "  — ANTHROPIC_API_KEY or OPENAI_API_KEY — and litellm restarts."
+			if [ -z "$GATEWAY_KEY" ]; then
+				say ""
+				say "  The brain has no key for it yet. Mint a virtual key in that"
+				say "  console and put it in deployment/.env as OPENARITY_LLM_API_KEY."
+				say "  Not LITELLM_MASTER_KEY: that one administers the gateway."
+			fi
 			;;
 	esac
 	say ""
