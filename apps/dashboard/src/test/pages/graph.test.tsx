@@ -13,6 +13,9 @@ const handed = vi.hoisted(() => ({
   config: [] as unknown[],
   nodeLabel: null as null | ((n: unknown) => unknown),
   linkLabel: null as null | ((l: unknown) => unknown),
+  refreshed: 0,
+  layouts: [] as string[],
+  fitted: 0,
 }));
 vi.mock("@falkordb/canvas", () => {
   class FakeCanvas extends HTMLElement {
@@ -21,6 +24,18 @@ vi.mock("@falkordb/canvas", () => {
     }
     setConfig(c: unknown) {
       handed.config.push(c);
+    }
+    refresh() {
+      handed.refreshed += 1;
+    }
+    getZoom() {
+      return 1;
+    }
+    setLayout(mode: string) {
+      handed.layouts.push(mode);
+    }
+    zoomToFit() {
+      handed.fitted += 1;
     }
     getGraph() {
       return {
@@ -54,7 +69,10 @@ afterEach(() => {
   handed.data.length = 0;
   handed.config.length = 0;
   handed.nodeLabel = null;
+  handed.refreshed = 0;
   handed.linkLabel = null;
+  handed.layouts.length = 0;
+  handed.fitted = 0;
 });
 
 const graph: TeamGraph = {
@@ -120,11 +138,19 @@ describe("what the canvas is handed", () => {
     expect(data.links).toHaveLength(graph.edges.length);
   });
 
-  it("hides a kind and every edge touching it", () => {
+  // Left out, not drawn invisible: the tree and radial layouts place every
+  // node they are given, so a hidden team would still root the tree.
+  it("leaves out a hidden kind and every edge touching it, keeping the others' numbers", () => {
+    const all = toCanvas(graph, new Set(), "light");
     const data = toCanvas(graph, new Set(["Tool"]), "light");
-    expect(data.nodes.find((n) => n.labels[0] === "Tool")?.visible).toBe(false);
-    expect(data.links.find((l) => l.relationship === "CONTAINS")?.visible).toBe(false);
-    expect(data.links.find((l) => l.relationship === "GRANTED")?.visible).toBe(true);
+    expect(data.nodes.find((n) => n.labels[0] === "Tool")).toBeUndefined();
+    expect(data.links.find((l) => l.relationship === "CONTAINS")).toBeUndefined();
+    expect(data.links.find((l) => l.relationship === "GRANTED")).toMatchObject({
+      source: 2,
+      target: 3,
+    });
+    const skill = (d: typeof data) => d.nodes.find((n) => n.labels[0] === "Skill")?.id;
+    expect(skill(data)).toBe(skill(all));
   });
 
   it("names a node that has no name", () => {
@@ -140,8 +166,9 @@ it("draws the team's graph and counts each kind", async () => {
   expect(await screen.findByRole("button", { name: /agents\s*1/i })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /mcp servers\s*1/i })).toBeInTheDocument();
   await waitFor(() => expect(handed.data.length).toBeGreaterThan(0));
+  // The team starts hidden.
   const last = handed.data.at(-1) as { nodes: unknown[] };
-  expect(last.nodes).toHaveLength(5);
+  expect(last.nodes).toHaveLength(4);
 });
 
 it("asks for a bounded graph", async () => {
@@ -196,7 +223,7 @@ it("hides a kind when its legend entry is pressed", async () => {
 
   await waitFor(() => {
     const last = handed.data.at(-1) as { nodes: { labels: string[]; visible: boolean }[] };
-    expect(last.nodes.find((n) => n.labels[0] === "Tool")?.visible).toBe(false);
+    expect(last.nodes.find((n) => n.labels[0] === "Tool")).toBeUndefined();
   });
 });
 
@@ -254,4 +281,85 @@ it("puts a node's name in its tooltip as text, never as markup", async () => {
   const link = handed.linkLabel?.({ relationship: "<b>GRANTED</b>" }) as HTMLElement;
   expect(link.textContent).toBe("<b>GRANTED</b>");
   expect(link.children).toHaveLength(0);
+});
+
+// The team owns everything; shown, its spokes bury the edges that matter.
+it("starts with the team hidden, and shows it on request", async () => {
+  brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
+  show(Graph);
+
+  const chip = await screen.findByRole("button", { name: /team\s*1/i });
+  expect(chip).toHaveAttribute("aria-pressed", "false");
+  await waitFor(() => {
+    const last = handed.data.at(-1) as { nodes: { labels: string[]; visible: boolean }[] };
+    expect(last.nodes.find((n) => n.labels[0] === "Team")).toBeUndefined();
+  });
+
+  await userEvent.click(chip);
+  await waitFor(() => {
+    const last = handed.data.at(-1) as { nodes: { labels: string[]; visible: boolean }[] };
+    expect(last.nodes.find((n) => n.labels[0] === "Team")).toBeDefined();
+  });
+});
+
+it("draws nodes and edges itself, and repaints when one is selected", async () => {
+  brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
+  show(Graph);
+
+  await waitFor(() => expect(handed.config.length).toBeGreaterThan(0));
+  const config = handed.config.at(-1) as {
+    node: { nodeCanvasObject: unknown };
+    link: { linkCanvasObject: unknown };
+    eventHandlers: { onNodeClick: (n: unknown) => void };
+  };
+  expect(typeof config.node.nodeCanvasObject).toBe("function");
+  expect(typeof config.link.linkCanvasObject).toBe("function");
+
+  const before = handed.refreshed;
+  config.eventHandlers.onNodeClick({ data: { uuid: "a1" } });
+  await waitFor(() => expect(handed.refreshed).toBeGreaterThan(before));
+});
+
+it("says what points at a node in words that read from it", async () => {
+  brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
+  show(Graph);
+
+  await waitFor(() => expect(handed.config.length).toBeGreaterThan(0));
+  const config = handed.config.at(-1) as { eventHandlers: { onNodeClick: (n: unknown) => void } };
+  config.eventHandlers.onNodeClick({ data: { uuid: "s1" } });
+
+  expect(await screen.findByText(/a skill of/)).toBeInTheDocument();
+  expect(screen.queryByText(/has the skill it/)).not.toBeInTheDocument();
+});
+
+// setConfig only records a layout; nothing moves until setLayout is called.
+it("lays the graph out again when another layout is chosen", async () => {
+  brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
+  show(Graph);
+
+  await waitFor(() => expect(handed.data.length).toBeGreaterThan(0));
+  expect(handed.layouts).toEqual([]);
+
+  await userEvent.click(screen.getByRole("radio", { name: "tree" }));
+  await waitFor(() => expect(handed.layouts).toEqual(["tree"]));
+  await userEvent.click(screen.getByRole("radio", { name: "radial" }));
+  await waitFor(() => expect(handed.layouts).toEqual(["tree", "radial"]));
+});
+
+// Fitted once the forces settle, and once only: a drag reheats the
+// simulation, and refitting after it would move the view under the pointer.
+it("fits the view when the layout settles, and not after every drag", async () => {
+  brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
+  show(Graph);
+
+  await waitFor(() => expect(handed.data.length).toBeGreaterThan(0));
+  const config = handed.config.at(-1) as { eventHandlers: { onEngineStop: () => void } };
+  config.eventHandlers.onEngineStop();
+  config.eventHandlers.onEngineStop();
+  expect(handed.fitted).toBe(1);
+
+  await userEvent.click(screen.getByRole("radio", { name: "tree" }));
+  await waitFor(() => expect(handed.layouts).toEqual(["tree"]));
+  (handed.config.at(-1) as typeof config).eventHandlers.onEngineStop();
+  expect(handed.fitted).toBe(2);
 });

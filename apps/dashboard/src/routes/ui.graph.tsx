@@ -9,6 +9,7 @@ import { useCurrentTeam } from "@/api/session";
 import type { GraphEdge, GraphLabel, GraphNode as Node, TeamGraph } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { EmptyState, Mono, PageHeader } from "@/components/ui-bits";
+import { type DrawState, drawLink, drawNode, paintLinkArea, paintNodeArea } from "@/lib/graph-draw";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -29,11 +30,11 @@ const STYLE: Record<
   GraphLabel,
   { light: string; dark: string; size: number; shape: "circle" | "square"; plural: string }
 > = {
-  Agent: { light: "#2a78d6", dark: "#3987e5", size: 11, shape: "circle", plural: "Agents" },
-  Skill: { light: "#1baf7a", dark: "#199e70", size: 9, shape: "circle", plural: "Skills" },
-  Toolkit: { light: "#eb6834", dark: "#d95926", size: 11, shape: "square", plural: "MCP servers" },
-  Tool: { light: "#eb6834", dark: "#d95926", size: 6, shape: "circle", plural: "Tools" },
-  Team: { light: "#8a8986", dark: "#6f6e69", size: 13, shape: "circle", plural: "Team" },
+  Agent: { light: "#2a78d6", dark: "#3987e5", size: 14, shape: "circle", plural: "Agents" },
+  Skill: { light: "#1baf7a", dark: "#199e70", size: 11, shape: "circle", plural: "Skills" },
+  Toolkit: { light: "#eb6834", dark: "#d95926", size: 13, shape: "square", plural: "MCP servers" },
+  Tool: { light: "#eb6834", dark: "#d95926", size: 8, shape: "circle", plural: "Tools" },
+  Team: { light: "#8a8986", dark: "#6f6e69", size: 15, shape: "circle", plural: "Team" },
 };
 
 const LABELS: GraphLabel[] = ["Agent", "Skill", "Toolkit", "Tool", "Team"];
@@ -43,6 +44,14 @@ const EDGE_WORDS: Record<GraphEdge["type"], string> = {
   GRANTED: "is granted",
   CONTAINS: "contains",
   HAS_SKILL: "has the skill",
+};
+
+/** The same edges read from their target: "a skill of triage". */
+const EDGE_WORDS_INTO: Record<GraphEdge["type"], string> = {
+  OWNS: "owned by",
+  GRANTED: "granted to",
+  CONTAINS: "a tool of",
+  HAS_SKILL: "a skill of",
 };
 
 /**
@@ -87,21 +96,25 @@ const PAGE: Partial<Record<GraphLabel, string>> = {
  * The API's graph as the canvas takes it. The canvas numbers its nodes, so
  * each uuid is given a number and kept in the node's data; an edge whose ends
  * are not both present — a truncated graph — is dropped rather than drawn
- * to nothing.
+ * to nothing. A hidden kind is left out rather than drawn invisible: the
+ * tree and radial layouts place every node they are given, and an invisible
+ * team would still be the root everything else hangs from. Numbers come from
+ * the whole graph, so a node keeps its number when a kind is toggled.
  */
 export function toCanvas(graph: TeamGraph, hidden: Set<GraphLabel>, theme: "light" | "dark"): Data {
   const numbers = new Map<string, number>();
   for (const [i, n] of graph.nodes.entries()) numbers.set(n.id, i + 1);
 
-  const nodes = graph.nodes.map((n) => {
+  const nodes = graph.nodes.flatMap((n) => {
+    if (hidden.has(n.label)) return [];
     const style = STYLE[n.label];
-    return {
+    const node = {
       id: numbers.get(n.id) as number,
       labels: [n.label],
       color: style[theme],
       size: style.size,
       shape: style.shape,
-      visible: !hidden.has(n.label),
+      visible: true,
       data: {
         name: n.name ?? (n.label === "Team" ? "team" : n.id.slice(0, 8)),
         uuid: n.id,
@@ -110,6 +123,7 @@ export function toCanvas(graph: TeamGraph, hidden: Set<GraphLabel>, theme: "ligh
         ...(n.model ? { model: n.model } : {}),
       },
     };
+    return [node];
   });
 
   const muted = theme === "dark" ? "#77766f" : "#a9a8a2";
@@ -119,6 +133,7 @@ export function toCanvas(graph: TeamGraph, hidden: Set<GraphLabel>, theme: "ligh
     if (source === undefined || target === undefined) return [];
     const from = graph.nodes[source - 1];
     const to = graph.nodes[target - 1];
+    if (!from || !to || hidden.has(from.label) || hidden.has(to.label)) return [];
     return [
       {
         id: i + 1,
@@ -126,7 +141,7 @@ export function toCanvas(graph: TeamGraph, hidden: Set<GraphLabel>, theme: "ligh
         color: muted,
         source,
         target,
-        visible: Boolean(from && to && !hidden.has(from.label) && !hidden.has(to.label)),
+        visible: true,
         data: e.only ? { only: e.only.join(", ") } : {},
       },
     ];
@@ -137,7 +152,9 @@ export function toCanvas(graph: TeamGraph, hidden: Set<GraphLabel>, theme: "ligh
 
 function Graph() {
   const { teamId } = useCurrentTeam();
-  const [hidden, setHidden] = useState<Set<GraphLabel>>(() => new Set());
+  // The team owns everything, so shown it is a hub whose spokes say nothing.
+  // Off to start with; its legend entry brings it back.
+  const [hidden, setHidden] = useState<Set<GraphLabel>>(() => new Set(["Team"]));
   const [layout, setLayout] = useState<LayoutMode>("force");
   const [selected, setSelected] = useState<string | null>(null);
   const [asList, setAsList] = useState(false);
@@ -247,7 +264,13 @@ function Graph() {
             <GraphList graph={graph.data} hidden={hidden} />
           ) : (
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
-              <Canvas graph={graph.data} hidden={hidden} layout={layout} onSelect={setSelected} />
+              <Canvas
+                graph={graph.data}
+                hidden={hidden}
+                layout={layout}
+                selected={selected}
+                onSelect={setSelected}
+              />
               <Selection graph={graph.data} selected={selected} />
             </div>
           )}
@@ -305,11 +328,13 @@ function Canvas({
   graph,
   hidden,
   layout,
+  selected,
   onSelect,
 }: {
   graph: TeamGraph;
   hidden: Set<GraphLabel>;
   layout: LayoutMode;
+  selected: string | null;
   onSelect: (id: string | null) => void;
 }) {
   const { theme } = useTheme();
@@ -319,6 +344,22 @@ function Canvas({
   const [failed, setFailed] = useState<string | null>(null);
   const select = useRef(onSelect);
   select.current = onSelect;
+  const fit = useRef(true);
+
+  // Read by the drawing on every frame, so a selection repaints without the
+  // canvas being configured again.
+  const draw = useRef<DrawState>({
+    palette: {
+      surface: "#ffffff",
+      ink: "#1a1a19",
+      edge: "#c9c8c2",
+      edgeStrong: "#6f6e69",
+      font: "sans-serif",
+    },
+    zoom: () => canvas.current?.getZoom() ?? 1,
+    focus: null,
+    near: new Set(),
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -345,19 +386,49 @@ function Canvas({
     const el = canvas.current;
     if (!ready || !el || !host.current) return;
     const styles = getComputedStyle(document.documentElement);
+    const surface =
+      styles.getPropertyValue("--card").trim() || (theme === "dark" ? "#1f1f1d" : "#ffffff");
+    const ink =
+      styles.getPropertyValue("--foreground").trim() || (theme === "dark" ? "#f5f5f4" : "#1a1a19");
+    draw.current.palette = {
+      surface,
+      ink,
+      edge: theme === "dark" ? "#4a4944" : "#d3d2cc",
+      edgeStrong: theme === "dark" ? "#a9a8a2" : "#6f6e69",
+      font: getComputedStyle(document.body).fontFamily || "sans-serif",
+    };
     el.setConfig({
       width: host.current.clientWidth,
       height: host.current.clientHeight,
-      backgroundColor:
-        styles.getPropertyValue("--card").trim() || (theme === "dark" ? "#1f1f1d" : "#ffffff"),
-      foregroundColor:
-        styles.getPropertyValue("--foreground").trim() ||
-        (theme === "dark" ? "#f5f5f4" : "#1a1a19"),
+      backgroundColor: surface,
+      foregroundColor: ink,
       captionsKeys: [["name", true]],
       layoutMode: layout,
+      layoutOptions: {
+        force: { linkDistance: 110, collisionPadding: 34 },
+        tree: { direction: "lr", levelDistance: 220, nodeSpacing: 70 },
+        radial: { levelDistance: 170, nodeSpacing: 40 },
+      },
+      simulation: { chargeStrength: -900 },
+      node: {
+        nodeCanvasObject: (node, ctx) => drawNode(draw.current, node, ctx),
+        nodePointerAreaPaint: paintNodeArea,
+      },
+      link: {
+        linkCanvasObject: (link, ctx, scale) => drawLink(draw.current, link, ctx, scale),
+        linkPointerAreaPaint: paintLinkArea,
+      },
       eventHandlers: {
         onNodeClick: (node: GraphNode) => select.current(String(node.data.uuid)),
         onBackgroundClick: () => select.current(null),
+        // The canvas fits the view 50ms in, while the forces are still
+        // spreading the nodes out; fitting again once they settle keeps the
+        // whole graph on screen. Once per layout, so a drag is not undone.
+        onEngineStop: () => {
+          if (!fit.current) return;
+          fit.current = false;
+          canvas.current?.zoomToFit();
+        },
       },
     });
   }, [ready, theme, layout]);
@@ -365,12 +436,37 @@ function Canvas({
   useEffect(() => {
     const el = canvas.current;
     if (!ready || !el) return;
+    fit.current = true;
     el.setData(toCanvas(graph, hidden, theme));
     safeLabels(el);
   }, [ready, graph, hidden, theme]);
 
+  // setConfig records a layout without moving anything; setLayout lays the
+  // nodes out again. The first layout is applied by setData.
+  const applied = useRef(layout);
+  useEffect(() => {
+    if (!ready || layout === applied.current) return;
+    applied.current = layout;
+    fit.current = true;
+    canvas.current?.setLayout(layout);
+  }, [ready, layout]);
+
+  // A selected node and the nodes joined to it stay lit; the rest fade.
+  useEffect(() => {
+    const near = new Set<string>();
+    if (selected) {
+      for (const e of graph.edges) {
+        if (e.from === selected) near.add(e.to);
+        if (e.to === selected) near.add(e.from);
+      }
+    }
+    draw.current.focus = selected;
+    draw.current.near = near;
+    if (ready) canvas.current?.refresh();
+  }, [ready, selected, graph]);
+
   return (
-    <div className="relative h-[65vh] min-h-96 overflow-hidden rounded-md border border-border bg-card">
+    <div className="relative h-[calc(100dvh-15rem)] min-h-[440px] overflow-hidden rounded-md border border-border bg-card">
       <div ref={host} className="absolute inset-0" data-testid="graph-canvas" />
       {failed ? (
         <p className="absolute inset-0 flex items-center justify-center p-6 text-sm text-destructive">
@@ -439,8 +535,8 @@ function Selection({ graph, selected }: { graph: TeamGraph; selected: string | n
           ))}
           {into.map((e) => (
             <li key={`i-${e.type}-${e.from}`} className="text-muted-foreground">
-              <span className="font-medium text-foreground">{nameOf(byId.get(e.from))}</span>{" "}
-              {EDGE_WORDS[e.type]} it
+              {EDGE_WORDS_INTO[e.type]}{" "}
+              <span className="font-medium text-foreground">{nameOf(byId.get(e.from))}</span>
             </li>
           ))}
         </ul>
