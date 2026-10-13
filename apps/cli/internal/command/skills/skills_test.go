@@ -332,3 +332,19 @@ func TestDeletePrintsWhatItDeleted(t *testing.T) {
 		t.Errorf("delete: %v\n%s", err, out)
 	}
 }
+
+func TestASkillsEscapeSequencesDoNotReachTheTerminal(t *testing.T) {
+	evil := strings.ReplaceAll(twoSkills, `"name":"pdf"`, `"name":"p\u001b[2Jdf"`)
+	clitest.Routes(t, map[string]clitest.Reply{
+		"GET /teams":             {Status: http.StatusOK, Body: oneTeam},
+		"GET /teams/{id}/skills": {Status: http.StatusOK, Body: evil},
+	})
+
+	out, err := clitest.Execute(t, commands, "skills", "list", "platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("a raw escape reached the terminal:\n%q", out)
+	}
+}

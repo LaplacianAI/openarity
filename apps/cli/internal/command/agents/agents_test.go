@@ -264,3 +264,24 @@ func TestAGrantOfAServerTheTeamLacksIsReported(t *testing.T) {
 		t.Error("the agent was created without the grant")
 	}
 }
+
+func TestAnAgentsEscapeSequencesDoNotReachTheTerminal(t *testing.T) {
+	evil := strings.NewReplacer(`"name":"triage"`, `"name":"tri\u001b[2Jage"`,
+		`"name":"anthropic/claude-sonnet-5-5"`, `"name":"m\u001b]0;x\u0007"`,
+		`"pattern":"react"`, `"pattern":"re\u001b[31mact"`,
+		`"allow":["search_code"]`, `"allow":["search\u001b[2J"]`)
+	clitest.Routes(t, routes(map[string]clitest.Reply{
+		"GET /teams/{id}/agents":           {Status: http.StatusOK, Body: evil.Replace(oneAgentPage)},
+		"GET /teams/{id}/agents/{agentID}": {Status: http.StatusOK, Body: evil.Replace(oneAgent)},
+	}))
+
+	for _, args := range [][]string{{"agents", "list", "platform"}, {"agents", "get", "platform", agentID}} {
+		out, err := clitest.Execute(t, commands, args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if strings.ContainsAny(out, "\x1b\x07") {
+			t.Errorf("%v printed a raw escape:\n%q", args, out)
+		}
+	}
+}

@@ -71,7 +71,7 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 				Empty:      "no MCP servers",
 				More:       "oa mcp-servers list " + args[0],
 				Row: func(table *printer.Table, s client.MCPServer) {
-					table.Row(opts.Styles.Value.Render(s.Name), transport(s), discovered(s),
+					table.Row(opts.Styles.Value.Render(cli.Safe(s.Name)), transport(s), discovered(s),
 						opts.Styles.Muted.Render(s.ID.String()))
 				},
 			})
@@ -284,7 +284,7 @@ func newDeleteCmd(opts *cli.Options) *cobra.Command {
 				printer.Options{
 					Table: func(table *printer.Table) {
 						table.Row(opts.Styles.OK.Render("deleted"),
-							opts.Styles.Value.Render(args[1]),
+							opts.Styles.Value.Render(cli.Safe(args[1])),
 							opts.Styles.Muted.Render(id.String()))
 					},
 				})
@@ -377,18 +377,18 @@ func printServer(opts *cli.Options, s *client.MCPServer, did string) error {
 			if did != "" {
 				head = opts.Styles.OK.Render(did)
 			}
-			table.Row(head, opts.Styles.Value.Render(s.Name), opts.Styles.Muted.Render(s.ID.String()))
+			table.Row(head, opts.Styles.Value.Render(cli.Safe(s.Name)), opts.Styles.Muted.Render(s.ID.String()))
 			if s.URL != nil {
-				table.Row("url", *s.URL, "")
+				table.Row("url", cli.Safe(*s.URL), "")
 			}
 			if s.AuthSecretRef != nil {
-				table.Row("auth", *s.AuthSecretRef, "")
+				table.Row("auth", cli.Safe(*s.AuthSecretRef), "")
 			}
 			if s.Command != nil {
-				table.Row("command", strings.Join(*s.Command, " "), "")
+				table.Row("command", cli.Safe(strings.Join(*s.Command, " ")), "")
 			}
 			for k, v := range s.Env {
-				table.Row("env", k, v)
+				table.Row("env", cli.Safe(k), cli.Safe(v))
 			}
 			table.Row("discovered", discovered(*s), "")
 		},

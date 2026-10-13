@@ -219,3 +219,30 @@ func TestGetShowsTheReferencesNotSecrets(t *testing.T) {
 		t.Errorf("get: %v\n%s", err, out)
 	}
 }
+
+// A member with tool:write writes a server's name, URL, command and
+// references, and whoever lists the servers reads them. One that carries an
+// escape sequence must not reach that reader's terminal raw.
+func TestATeamMembersEscapeSequencesDoNotReachTheTerminal(t *testing.T) {
+	evil := `{"id":"` + serverID + `","team_id":"` + teamID + `","name":"git\u001b[2Jhub","url":"https://a.b/\u001b]0;pwned\u0007",
+	  "auth_secret_ref":"teams/x/mcp/g#k\u001b[31m","command":["npx","\u001b[2J"],"env":{"A\u001b[2J":"r\u001b[2J#k"},
+	  "bare":false,"created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:00:00Z"}`
+	clitest.Routes(t, map[string]clitest.Reply{
+		"GET /teams":                             {Status: http.StatusOK, Body: oneTeam},
+		"GET /teams/{id}/mcp-servers":            {Status: http.StatusOK, Body: `{"items":[` + evil + `]}`},
+		"GET /teams/{id}/mcp-servers/{serverID}": {Status: http.StatusOK, Body: evil},
+	})
+
+	for _, args := range [][]string{
+		{"mcp-servers", "list", "platform"},
+		{"mcp-servers", "get", "platform", serverID},
+	} {
+		out, err := clitest.Execute(t, commands, args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if strings.ContainsAny(out, "\x1b\x07") {
+			t.Errorf("%v printed a raw escape:\n%q", args, out)
+		}
+	}
+}

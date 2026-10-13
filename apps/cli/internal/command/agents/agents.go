@@ -74,7 +74,7 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 				Empty:      "no agents",
 				More:       "oa agents list " + args[0],
 				Row: func(table *printer.Table, a client.AgentSummary) {
-					table.Row(opts.Styles.Value.Render(a.Name), a.Model.Name, a.Pattern,
+					table.Row(opts.Styles.Value.Render(cli.Safe(a.Name)), cli.Safe(a.Model.Name), cli.Safe(a.Pattern),
 						opts.Styles.Muted.Render(a.ID.String()))
 				},
 			})
@@ -327,7 +327,7 @@ func newDeleteCmd(opts *cli.Options) *cobra.Command {
 				printer.Options{
 					Table: func(table *printer.Table) {
 						table.Row(opts.Styles.OK.Render("deleted"),
-							opts.Styles.Value.Render(args[1]),
+							opts.Styles.Value.Render(cli.Safe(args[1])),
 							opts.Styles.Muted.Render(id.String()))
 					},
 				})
@@ -338,18 +338,18 @@ func newDeleteCmd(opts *cli.Options) *cobra.Command {
 func printAgent(opts *cli.Options, a *client.Agent, did string) error {
 	return opts.Out.Print(a, printer.Options{
 		Table: func(table *printer.Table) {
-			head := a.Kind
+			head := cli.Safe(a.Kind)
 			if did != "" {
 				head = opts.Styles.OK.Render(did)
 			}
-			table.Row(head, opts.Styles.Value.Render(a.Name), opts.Styles.Muted.Render(a.ID.String()))
+			table.Row(head, opts.Styles.Value.Render(cli.Safe(a.Name)), opts.Styles.Muted.Render(a.ID.String()))
 			table.Row("description", strconv.QuoteToGraphic(a.Description), "")
-			table.Row("model", a.Model.Name, strconv.Itoa(int(a.Model.MaxTokens))+" tokens")
-			table.Row("pattern", a.Pattern, strconv.Itoa(int(a.MaxSteps))+" steps")
+			table.Row("model", cli.Safe(a.Model.Name), strconv.Itoa(int(a.Model.MaxTokens))+" tokens")
+			table.Row("pattern", cli.Safe(a.Pattern), strconv.Itoa(int(a.MaxSteps))+" steps")
 			for _, g := range a.McpServers {
 				only := "every tool"
 				if g.Allow != nil {
-					only = strings.Join(*g.Allow, ", ")
+					only = cli.Safe(strings.Join(*g.Allow, ", "))
 				}
 				table.Row("mcp server", g.ID.String(), only)
 			}

@@ -85,7 +85,7 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 				Empty:      "no skills",
 				More:       "oa skills list " + args[0],
 				Row: func(table *printer.Table, s client.SkillSummary) {
-					table.Row(opts.Styles.Value.Render(s.Name), string(s.Source),
+					table.Row(opts.Styles.Value.Render(cli.Safe(s.Name)), cli.Safe(string(s.Source)),
 						opts.Styles.Muted.Render(s.ID.String()))
 				},
 			})
@@ -265,11 +265,16 @@ func newSyncCmd(opts *cli.Options) *cobra.Command {
 }
 
 func newCatCmd(opts *cli.Options) *cobra.Command {
-	return &cobra.Command{
+	var raw bool
+
+	cmd := &cobra.Command{
 		Use:   "cat <team> <skill> <path>",
 		Short: "Print one of a skill's files",
 		Long: "Writes the file's bytes to stdout as they are stored, whatever -o says,\n" +
-			"so it can be redirected to a file. `oa skills get` lists the paths.",
+			"so it can be redirected to a file. `oa skills get` lists the paths.\n\n" +
+			"To a terminal, a file holding control characters — an escape sequence\n" +
+			"that would act on the terminal rather than be read — is refused unless\n" +
+			"--raw is given. A skill's files are written by its team or its author.",
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			api, err := opts.API(cmd.Context())
@@ -292,10 +297,13 @@ func newCatCmd(opts *cli.Options) *cobra.Command {
 			if res.StatusCode() != http.StatusOK {
 				return cli.APIError(res.StatusCode(), res.Body)
 			}
-			_, err = opts.Stdout.Write(res.Body)
-			return err
+			return cli.WriteRaw(opts, res.Body, raw)
 		},
 	}
+
+	cmd.Flags().BoolVar(&raw, "raw", false,
+		"print to a terminal even a file holding control characters")
+	return cmd
 }
 
 func newDeleteCmd(opts *cli.Options) *cobra.Command {
@@ -330,7 +338,7 @@ func newDeleteCmd(opts *cli.Options) *cobra.Command {
 				printer.Options{
 					Table: func(table *printer.Table) {
 						table.Row(opts.Styles.OK.Render("deleted"),
-							opts.Styles.Value.Render(args[1]),
+							opts.Styles.Value.Render(cli.Safe(args[1])),
 							opts.Styles.Muted.Render(id.String()))
 					},
 				})
@@ -342,10 +350,10 @@ func printSkill(opts *cli.Options, skill *client.Skill, did string) error {
 	return opts.Out.Print(skill, printer.Options{
 		Table: func(table *printer.Table) {
 			if did != "" {
-				table.Row(opts.Styles.OK.Render(did), opts.Styles.Value.Render(skill.Name),
+				table.Row(opts.Styles.OK.Render(did), opts.Styles.Value.Render(cli.Safe(skill.Name)),
 					opts.Styles.Muted.Render(skill.ID.String()))
 			} else {
-				table.Row(opts.Styles.Value.Render(skill.Name), string(skill.Source),
+				table.Row(opts.Styles.Value.Render(cli.Safe(skill.Name)), cli.Safe(string(skill.Source)),
 					opts.Styles.Muted.Render(skill.ID.String()))
 			}
 			table.Row("description", strconv.QuoteToGraphic(skill.Description), "")
