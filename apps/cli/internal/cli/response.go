@@ -12,6 +12,21 @@ const (
 	noSuchRoute      = "404 page not found"
 )
 
+// ErrForbidden is a 403. It is a value rather than a sentence so a command
+// that knows which permission its route needs can say so: the brain answers
+// a refusal without naming it, and "not allowed" alone sends somebody to
+// guess.
+var ErrForbidden = errors.New("you are not allowed to do that")
+
+// Needs names the permission a refused command required. Permissions are
+// granted to roles per team, so the sentence says where to ask as well.
+func Needs(err error, permission string) error {
+	if errors.Is(err, ErrForbidden) {
+		return fmt.Errorf("%w — it needs %s in that team, which a team admin can grant", err, permission)
+	}
+	return err
+}
+
 type (
 	okResponse[T any] interface {
 		GetJSON200() *T
@@ -66,7 +81,7 @@ func APIError(status int, body []byte) error {
 	case http.StatusUnauthorized:
 		return errors.New("not authenticated — run `oa login`")
 	case http.StatusForbidden:
-		return errors.New("you are not allowed to do that")
+		return ErrForbidden
 	case http.StatusNotFound:
 		if detail == noSuchRoute {
 			return errors.New("this brain has no such endpoint — it is probably " +

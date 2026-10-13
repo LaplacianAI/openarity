@@ -68,7 +68,7 @@ apps/cli/
     options.go         Options — the whole surface a command may reach
     response.go        Result, Created, NoContent: a call becomes a value
     page.go            Paging and PrintPage: a page becomes a table
-    lookup.go          ResolveTeam, ResolveMember: a name becomes an id
+    lookup.go          ResolveTeam, ResolveMember, …: a name becomes an id
   internal/command/
     whoami/            oa whoami
     config/            oa config show|set|unset|path
@@ -77,6 +77,9 @@ apps/cli/
     channels/          oa channels list|create|delete, oa channels senders …
     sessions/          oa sessions list|read — the conversations, and their messages
     users/             oa users list — who has logged in, and their id
+    skills/            oa skills list|get|upload|replace|import|sync|cat|delete
+    agents/            oa agents list|get|create|replace|delete — a file, grants by name
+    mcpservers/        oa mcp-servers list|get|create|replace|delete|tools|discover
     login/             oa login — the device flow, start to stored
     logout/            oa logout — discard this context's credential
   internal/theme/      what a theme is — one Parse, zero dependencies
@@ -273,6 +276,11 @@ is the test harness, well covered enough that counting it flatters the total.
   `oa login` because their VPN is down sends them down the wrong path.
 - **403 never says "log in again".** The caller is authenticated and not
   allowed; suggesting a re-login is a loop they cannot escape.
+- **A refused write names the permission it needed.** The brain answers a
+  403 without saying which permission was missing, and permissions are data
+  granted to roles per team, so "not allowed" alone sends someone to guess.
+  A command that knows its route wraps the error with `cli.Needs(err,
+  "skill:write")`; a read is never told it needed a write permission.
 - **The printers are a strategy, not a switch.** Three types behind one
   interface, picked by a factory, sharing `base` by embedding. Go has no virtual
   dispatch, so `base` must never call a method a child overrides — it does not,
