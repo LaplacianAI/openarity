@@ -1,4 +1,4 @@
-import type { Data, FalkorDBCanvas, GraphNode, LayoutMode } from "@falkordb/canvas";
+import type { Data, FalkorDBCanvas, GraphLink, GraphNode, LayoutMode } from "@falkordb/canvas";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -44,6 +44,36 @@ const EDGE_WORDS: Record<GraphEdge["type"], string> = {
   CONTAINS: "contains",
   HAS_SKILL: "has the skill",
 };
+
+/**
+ * A tooltip's content, as text. force-graph hands a label string to its
+ * tooltip, which writes it with innerHTML — so a node named
+ * `<img src=x onerror=…>` by a team member, or a tool named that way by an
+ * MCP server, would run in this page, which holds the session's token. An
+ * element is appended as it is and never parsed, so the name is set as its
+ * text and stays text.
+ */
+export function textLabel(text: string): HTMLElement {
+  const span = document.createElement("span");
+  span.textContent = text;
+  return span;
+}
+
+/**
+ * Replaces the canvas's own tooltip labels, which are strings and so are
+ * parsed as HTML, with ones that are text. The canvas sets them when it
+ * builds its graph, on the first setData, so this runs after every one.
+ */
+export function safeLabels(el: FalkorDBCanvas): void {
+  const graph = el.getGraph() as unknown as
+    | {
+        nodeLabel: (fn: (n: GraphNode) => HTMLElement) => unknown;
+        linkLabel: (fn: (l: GraphLink) => HTMLElement) => unknown;
+      }
+    | undefined;
+  graph?.nodeLabel((n) => textLabel(String(n.data?.name ?? "")));
+  graph?.linkLabel((l) => textLabel(String(l.relationship ?? "")));
+}
 
 /** Where a node is managed, so a click in the graph leads somewhere. */
 const PAGE: Partial<Record<GraphLabel, string>> = {
@@ -333,7 +363,10 @@ function Canvas({
   }, [ready, theme, layout]);
 
   useEffect(() => {
-    if (ready) canvas.current?.setData(toCanvas(graph, hidden, theme));
+    const el = canvas.current;
+    if (!ready || !el) return;
+    el.setData(toCanvas(graph, hidden, theme));
+    safeLabels(el);
   }, [ready, graph, hidden, theme]);
 
   return (

@@ -8,7 +8,12 @@ import { brain, pageOf, show, TEAM, team } from "@/test/brain";
 
 // jsdom has no canvas to draw on, so the component is replaced by an element
 // that records what it was handed. What the page gives it is the contract.
-const handed = vi.hoisted(() => ({ data: [] as unknown[], config: [] as unknown[] }));
+const handed = vi.hoisted(() => ({
+  data: [] as unknown[],
+  config: [] as unknown[],
+  nodeLabel: null as null | ((n: unknown) => unknown),
+  linkLabel: null as null | ((l: unknown) => unknown),
+}));
 vi.mock("@falkordb/canvas", () => {
   class FakeCanvas extends HTMLElement {
     setData(d: unknown) {
@@ -16,6 +21,16 @@ vi.mock("@falkordb/canvas", () => {
     }
     setConfig(c: unknown) {
       handed.config.push(c);
+    }
+    getGraph() {
+      return {
+        nodeLabel: (fn: (n: unknown) => unknown) => {
+          handed.nodeLabel = fn;
+        },
+        linkLabel: (fn: (l: unknown) => unknown) => {
+          handed.linkLabel = fn;
+        },
+      };
     }
   }
   if (!customElements.get("falkordb-canvas")) customElements.define("falkordb-canvas", FakeCanvas);
@@ -38,6 +53,8 @@ afterEach(() => {
   setToken(null);
   handed.data.length = 0;
   handed.config.length = 0;
+  handed.nodeLabel = null;
+  handed.linkLabel = null;
 });
 
 const graph: TeamGraph = {
@@ -212,4 +229,29 @@ it("describes the node clicked in the canvas", async () => {
     "href",
     "/ui/agents",
   );
+});
+
+// A name is written by a team member, and a tool's name by an MCP server. The
+// canvas's own tooltip would parse it as HTML, in the page that holds the
+// session's token. The labels the page installs are text.
+it("puts a node's name in its tooltip as text, never as markup", async () => {
+  const evil = '<img src=x onerror="alert(1)">';
+  brain({
+    ...team([]),
+    "GET /teams/{id}/graph": {
+      body: { ...graph, nodes: graph.nodes.map((n) => (n.id === "a1" ? { ...n, name: evil } : n)) },
+    },
+  });
+  show(Graph);
+
+  await waitFor(() => expect(handed.nodeLabel).not.toBeNull());
+  const label = handed.nodeLabel?.({ data: { name: evil } }) as HTMLElement;
+  expect(label).toBeInstanceOf(HTMLElement);
+  expect(label.textContent).toBe(evil);
+  expect(label.children).toHaveLength(0);
+  expect(label.innerHTML).not.toContain("<img");
+
+  const link = handed.linkLabel?.({ relationship: "<b>GRANTED</b>" }) as HTMLElement;
+  expect(link.textContent).toBe("<b>GRANTED</b>");
+  expect(link.children).toHaveLength(0);
 });
