@@ -102,7 +102,6 @@ of this file gets `null`.
 | `secret/data/teams/+/attachments` | `read`, `create`, `update` |
 | `secret/metadata/teams/+/attachments` | `delete` |
 | `secret/data/teams/+/mcp/*` | `read` |
-| `secret/data/platform/*` | `read` |
 | `auth/token/renew-self` | `update` |
 
 `+` matches exactly one path segment. That is the restriction: the brain
@@ -131,36 +130,21 @@ there, and an encoded one is refused as a relative path. These secrets are not
 destroyed when their team is deleted, because their names are the team's
 choice and finding them would need `list`.
 
-The `platform/*` rule is for credentials that are the brain's rather than a
-team's. Two settings name one, each as a reference and never a value: the key
-for the embedding model and the token skill imports present to GitHub.
+The brain's own credentials are not in here. The key for the embedding model,
+the key for the chat models and the token skill imports present to GitHub are
+environment variables — `OPENARITY_EMBEDDING_API_KEY`, `OPENARITY_LLM_API_KEY`
+and `OPENARITY_SKILL_IMPORT_GITHUB_TOKEN` — set by whoever deploys, by
+whatever puts the rest of the environment there. What lives in OpenBao is what
+cannot be an environment variable: a secret a team creates through the API
+while the brain is running.
 
-```sh
-bao kv put secret/platform/embeddings key=<the gateway's key>
-bao kv put secret/platform/github token=<a read-only token>
-```
-
-```sh
-OPENARITY_EMBEDDING_KEY_REF=platform/embeddings#key
-OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF=platform/github#token
-```
-
-The brain reads these and does nothing else to them: not write, list, delete
-or read their history. Anything stored under `platform/` is readable by every
-brain process, so a team's own secret does not belong there, and nothing in
-the API can put one there.
-
-This rule was added after the first AppRole was minted. A server set up before
-it needs the policy written again, which takes effect for the brain's existing
-token at once:
+When `policy-brain.hcl` changes, a server set up before the change needs the
+policy written again, which takes effect for the brain's existing token at
+once:
 
 ```sh
 make bao-policy
 ```
-
-Without it both references above are well-formed and unreadable: the read
-answers 403, and a worker with an embedding model and a key reference refuses
-to start.
 
 The `metadata` rule beside it is what lets `brain reap` destroy a deleted
 team's key, which is the half of an erasure that does not wait for the object

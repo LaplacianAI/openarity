@@ -64,33 +64,34 @@ func TestSkillImportHostsErrorIdentifiesTheEntry(t *testing.T) {
 	}
 }
 
-// The token is a reference into the secret store, never the token itself: a
-// value that is not path#key is refused, so a pasted token fails the boot
-// rather than being read as a path that holds nothing.
-func TestTheGitHubTokenIsASecretReference(t *testing.T) {
+// The token is the token. One carrying a space or a line break is a paste
+// gone wrong — a trailing newline from a file, a quoted blank — and would be
+// refused by the first request that tried to send it as a header, long after
+// the boot that could have said so.
+func TestTheGitHubTokenIsCheckedAsAValue(t *testing.T) {
 	t.Parallel()
 
-	for _, raw := range []string{"platform/github#token", "github#token", "a/b/c#key-1"} {
-		if _, err := load(map[string]string{"OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF": raw}); err != nil {
-			t.Errorf("SKILL_IMPORT_GITHUB_TOKEN_REF=%q: %v", raw, err)
+	for _, raw := range []string{"ghp_0123456789abcdefghijklmnopqrstuvwxyz", "github_pat_11ABC_def-ghi"} {
+		cfg, err := load(map[string]string{"OPENARITY_SKILL_IMPORT_GITHUB_TOKEN": raw})
+		if err != nil {
+			t.Errorf("SKILL_IMPORT_GITHUB_TOKEN: %v", err)
+			continue
+		}
+		if cfg.SkillImportGitHubToken != raw {
+			t.Errorf("loaded %q, want the token as given", cfg.SkillImportGitHubToken)
 		}
 	}
 
-	for _, raw := range []string{
-		"ghp_0123456789abcdefghijklmnopqrstuvwxyz",
-		"platform/github",
-		"#token",
-		"platform/github#",
-		"platform/github#token#again",
-	} {
-		_, err := load(map[string]string{"OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF": raw})
-		if err == nil || !strings.Contains(err.Error(), "SKILL_IMPORT_GITHUB_TOKEN_REF") || !strings.Contains(err.Error(), "path#key") {
-			t.Errorf("SKILL_IMPORT_GITHUB_TOKEN_REF=%q: err = %v, want a refusal naming the variable and the form", raw, err)
+	const token = "ghp_0123456789abcdefghijklmnopqrstuvwxyz"
+	for _, raw := range []string{token + "\n", " " + token, token + " ", "ghp_0123 456789", token + "\r", token + "\x00", "\t"} {
+		_, err := load(map[string]string{"OPENARITY_SKILL_IMPORT_GITHUB_TOKEN": raw})
+		if err == nil || !strings.Contains(err.Error(), "SKILL_IMPORT_GITHUB_TOKEN") {
+			t.Errorf("SKILL_IMPORT_GITHUB_TOKEN=%q: err = %v, want a refusal naming the variable", raw, err)
+			continue
 		}
-		// A pasted token is the likeliest thing this check ever refuses, and
-		// an error reaches stderr and the log shipper.
-		if strings.HasPrefix(raw, "ghp_") && err != nil && strings.Contains(err.Error(), raw) {
-			t.Errorf("the refusal repeats the pasted token: %v", err)
+		// An error reaches stderr and the log shipper.
+		if strings.Contains(err.Error(), "ghp_0123") {
+			t.Errorf("the refusal repeats the token: %v", err)
 		}
 	}
 }
@@ -102,8 +103,8 @@ func TestSkillImportSettingsAreCheckedInEveryEnvironment(t *testing.T) {
 
 	for _, env := range []string{"development", "production"} {
 		for name, value := range map[string]string{
-			"OPENARITY_SKILL_IMPORT_HOSTS":            "https://hub.example.com",
-			"OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF": "platform/github",
+			"OPENARITY_SKILL_IMPORT_HOSTS":        "https://hub.example.com",
+			"OPENARITY_SKILL_IMPORT_GITHUB_TOKEN": "ghp_abc\n",
 		} {
 			_, err := load(map[string]string{"OPENARITY_ENVIRONMENT": env, name: value})
 			if err == nil || !strings.Contains(err.Error(), strings.TrimPrefix(name, "OPENARITY_")) {
@@ -113,22 +114,24 @@ func TestSkillImportSettingsAreCheckedInEveryEnvironment(t *testing.T) {
 	}
 }
 
-// Both are printed: the hosts are an operator's list, and the reference is a
-// path, which is the point of keeping a reference rather than the token.
-func TestStringShowsTheSkillImportSettings(t *testing.T) {
+// The hosts are an operator's list and are printed. The token is a bearer
+// credential with nothing about it worth keeping in a log line, so String()
+// does not list it at all. If it ever does, this says so.
+func TestStringShowsTheImportHostsAndNeverTheToken(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := load(map[string]string{
-		"OPENARITY_SKILL_IMPORT_HOSTS":            "hub.example.com,files.example.org",
-		"OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF": "platform/github#token",
+		"OPENARITY_SKILL_IMPORT_HOSTS":        "hub.example.com,files.example.org",
+		"OPENARITY_SKILL_IMPORT_GITHUB_TOKEN": "ghp_importtokenvalue",
 	})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	s := cfg.String()
-	for _, want := range []string{"SkillImportHosts:[hub.example.com files.example.org]", "SkillImportGitHubTokenRef:platform/github#token"} {
-		if !strings.Contains(s, want) {
-			t.Errorf("String() = %s, want it to contain %q", s, want)
-		}
+	if !strings.Contains(s, "SkillImportHosts:[hub.example.com files.example.org]") {
+		t.Errorf("String() = %s, want the hosts", s)
+	}
+	if strings.Contains(s, "ghp_importtokenvalue") {
+		t.Errorf("String() printed the GitHub token: %s", s)
 	}
 }

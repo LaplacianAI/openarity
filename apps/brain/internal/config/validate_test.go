@@ -40,11 +40,11 @@ func TestValidateRejectsWrongSchemePerField(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"OPENARITY_POSTGRES_DSN":   "redis://127.0.0.1:6379",
-		"OPENARITY_REDIS_URL":      "http://127.0.0.1:6379",
-		"OPENARITY_FALKOR_DB_URL":  "postgres://127.0.0.1:6380",
-		"OPENARITY_SECRETS_ADDR":   "redis://127.0.0.1:8200",
-		"OPENARITY_OMNI_ROUTE_URL": "redis://127.0.0.1:20128",
+		"OPENARITY_POSTGRES_DSN":  "redis://127.0.0.1:6379",
+		"OPENARITY_REDIS_URL":     "http://127.0.0.1:6379",
+		"OPENARITY_FALKOR_DB_URL": "postgres://127.0.0.1:6380",
+		"OPENARITY_SECRETS_ADDR":  "redis://127.0.0.1:8200",
+		"OPENARITY_LLM_BASE_URL":  "redis://127.0.0.1:20128",
 	}
 	for key, bad := range tests {
 		if cfg, err := load(map[string]string{key: bad}); err == nil {

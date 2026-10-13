@@ -16,8 +16,6 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets/static"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill/hub"
 )
 
@@ -116,69 +114,34 @@ func TestTheImporterServeBuildsIsTheOneTheRoutesUse(t *testing.T) {
 
 // --- newImporter ---
 
-func importConfig(hosts []string, ref string) *config.Config {
-	return &config.Config{SkillImportHosts: hosts, SkillImportGitHubTokenRef: ref}
+func importConfig(hosts []string, token string) *config.Config {
+	return &config.Config{SkillImportHosts: hosts, SkillImportGitHubToken: token}
 }
 
-// With no reference there is no token: GitHub is asked anonymously, and
-// nothing reads the secret store for one.
-func TestWithoutATokenRefTheImporterHasNoToken(t *testing.T) {
+// With no token there is no token function, and GitHub is asked anonymously:
+// an Authorization header with nothing in it is a 401 where no header at all
+// would have been answered.
+func TestWithoutATokenTheImporterHasNoToken(t *testing.T) {
 	t.Parallel()
 
-	h, err := newImporter(t.Context(), importConfig(nil, ""), static.New())
-	if err != nil {
-		t.Fatalf("newImporter: %v", err)
-	}
+	h := newImporter(importConfig(nil, ""))
 	if h.Token != nil {
-		t.Error("an importer with no token ref has a token function")
+		t.Error("an importer with no token has a token function")
 	}
 	if h.GitHub.API != hub.GitHubAPI {
 		t.Errorf("GitHub API = %q, want %q", h.GitHub.API, hub.GitHubAPI)
 	}
 }
 
-// A reference that names nothing fails serve, naming the reference, rather
-// than the first private import answering "no such repository".
-func TestATokenRefThatCannotBeReadFailsTheBoot(t *testing.T) {
+func TestTheTokenPresentedIsTheOneConfigured(t *testing.T) {
 	t.Parallel()
 
-	_, err := newImporter(t.Context(), importConfig(nil, "platform/github#token"), static.New())
-	if err == nil || !strings.Contains(err.Error(), "SKILL_IMPORT_GITHUB_TOKEN_REF") || !strings.Contains(err.Error(), "platform/github#token") {
-		t.Errorf("err = %v, want it to name the variable and the reference", err)
+	h := newImporter(importConfig(nil, "ghp_configured"))
+	if h.Token == nil {
+		t.Fatal("no token function for a configured token")
 	}
-	if !errors.Is(err, secrets.ErrNotFound) {
-		t.Errorf("err = %v, want the store's own error kept", err)
-	}
-}
-
-// The reference splits at the #: the path is where the secret lives and the
-// key is which field of it. Swapped, it reads a secret that does not exist.
-// And the token is read on every call, so a rotated one is used next time.
-func TestTheTokenIsReadFromTheReferenceOnEveryCall(t *testing.T) {
-	t.Parallel()
-
-	store := static.New()
-	writer, ok := store.(secrets.Writer)
-	if !ok {
-		t.Fatalf("%T cannot write", store)
-	}
-	if err := writer.Put(t.Context(), "platform/github", "token", "first"); err != nil {
-		t.Fatal(err)
-	}
-
-	h, err := newImporter(t.Context(), importConfig(nil, "platform/github#token"), store)
-	if err != nil {
-		t.Fatalf("newImporter: %v", err)
-	}
-	if got, err := h.Token(t.Context()); got != "first" || err != nil {
-		t.Errorf("Token = %q, %v; want first", got, err)
-	}
-
-	if err := writer.Put(t.Context(), "platform/github", "token", "rotated"); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := h.Token(t.Context()); got != "rotated" || err != nil {
-		t.Errorf("after rotation Token = %q, %v; want rotated", got, err)
+	if got, err := h.Token(t.Context()); got != "ghp_configured" || err != nil {
+		t.Errorf("Token = %q, %v", got, err)
 	}
 }
 
@@ -188,10 +151,7 @@ func TestTheTokenIsReadFromTheReferenceOnEveryCall(t *testing.T) {
 func TestEachClientReachesOnlyItsOwnHosts(t *testing.T) {
 	t.Parallel()
 
-	h, err := newImporter(t.Context(), importConfig([]string{"hub.example.com"}, ""), static.New())
-	if err != nil {
-		t.Fatalf("newImporter: %v", err)
-	}
+	h := newImporter(importConfig([]string{"hub.example.com"}, ""))
 
 	for name, tc := range map[string]struct {
 		client *http.Client

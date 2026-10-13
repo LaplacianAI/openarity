@@ -39,7 +39,7 @@ record; the spec carries the reasons.
 | 12 | every ten seconds, `*/10 * * * * *` | once a minute, `0 * * * * *`, no backfill; `newJobs` lists the worker's jobs |
 | 13 | list-by-team queries per entity | one `ListGraphEntities` query feeding the drain's own projection |
 | 14 | `OLLAMA_EMBEDDING_MODEL` | `make ollama model=<name>`; the brain may point straight at Ollama |
-| — | — | `secret/data/platform/*` read in the OpenBao policy, without which neither key reference could be read |
+| 2, 8 | `EMBEDDING_KEY_REF` and `SKILL_IMPORT_GITHUB_TOKEN_REF`, `path#key` into the secret store, over `OMNI_ROUTE_URL` | `EMBEDDING_API_KEY` and `SKILL_IMPORT_GITHUB_TOKEN` as environment variables; `EMBEDDING_BASE_URL` for embeddings, and `LLM_BASE_URL` with `LLM_API_KEY` in place of `OMNI_ROUTE_URL` |
 | — | — | Go 1.26.9, for the standard-library advisories |
 
 ## How this plan differs from the template

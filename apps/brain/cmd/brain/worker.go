@@ -8,7 +8,6 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/reaper"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/worker"
 )
@@ -21,7 +20,7 @@ func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbS
 		return err
 	}
 
-	jobs, closeJobs, err := newJobs(ctx, cfg, logger, dbStore, secretStore, effects)
+	jobs, closeJobs, err := newJobs(ctx, cfg, logger, dbStore, effects)
 	if err != nil {
 		return err
 	}
@@ -39,7 +38,7 @@ func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbS
 
 func newJobs(
 	ctx context.Context, cfg *config.Config, logger *slog.Logger,
-	dbStore *store.Store, secretStore secrets.Store, effects []reaper.Effect,
+	dbStore *store.Store, effects []reaper.Effect,
 ) ([]worker.Job, func(), error) {
 	jobs := []worker.Job{reaper.SweepJob(logger, effects...)}
 
@@ -48,7 +47,7 @@ func newJobs(
 		return jobs, func() {}, nil
 	}
 
-	projector, closeGraph, err := newProjector(ctx, cfg, logger, dbStore, secretStore)
+	projector, closeGraph, err := newProjector(ctx, cfg, logger, dbStore)
 	if err != nil {
 		return nil, nil, err
 	}

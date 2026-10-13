@@ -132,35 +132,6 @@ path "secret/data/teams/+/mcp/*" {
   capabilities = ["read"]
 }
 
-# Credentials that belong to the brain rather than to a team live under
-# platform/. Two settings name one, each as a reference and never a value:
-#
-#   OPENARITY_EMBEDDING_KEY_REF=platform/embeddings#key
-#   OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF=platform/github#token
-#
-# Without this rule both are well-formed and unreadable. Measured under the
-# policy as it was: the reference above reads 403, and a worker with an
-# embedding model configured refuses to start, which is the right behaviour
-# for the wrong reason.
-#
-# Read only. An operator puts these here; the brain never writes, lists or
-# destroys one. `*` because a deployment may want platform/models/prod, and
-# the walks that glob invites are refused the same way they are under mcp/:
-#
-#   GET data/platform/embeddings                   200
-#   GET data/platform                              403   the root is not under it
-#   GET data/platforms/embeddings                  403   the slash is part of it
-#   GET data/platform/../teams/<t>/tokens/x        307   to teams/<t>/tokens/x, then 403
-#   GET data/platform/%2e%2e/teams/<t>/tokens/x    400   relative paths not supported
-#   list, metadata read, write, delete             403
-#
-# What this path is for is the limit on it: anything stored under platform/ is
-# readable by every brain process, so a team's own secret does not belong
-# here, and nothing in the API can put one here.
-path "secret/data/platform/*" {
-  capabilities = ["read"]
-}
-
 # Renewing its own token is how the brain avoids logging in on every read.
 # The default policy already grants this, so it is redundant today — and it is
 # what keeps renewal working the day the role sets token_no_default_policy.

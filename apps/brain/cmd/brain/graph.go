@@ -20,7 +20,7 @@ func rebuildGraph(
 		return errors.New("EMBEDDING_MODEL is not set, so there is no model to build the graph with")
 	}
 
-	projector, closeGraph, err := newProjector(ctx, cfg, logger, dbStore, newSecretStore(cfg, logger))
+	projector, closeGraph, err := newProjector(ctx, cfg, logger, dbStore)
 	if err != nil {
 		return err
 	}

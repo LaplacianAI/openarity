@@ -351,11 +351,22 @@ reinstalled.
   and `SetOutEdges` count what they wrote, so the outbox row stays and is
   tried again once the other node has been projected. Same for a vector of
   the wrong width, which FalkorDB stores and never searches.
-- **A brain-wide credential lives under `platform/`, and the policy says so.**
-  `EMBEDDING_KEY_REF` and `SKILL_IMPORT_GITHUB_TOKEN_REF` are references, and
-  for a while nothing let the brain read what they named: 403 under the
-  shipped policy, with every test using a convenient credential passing. The
-  rule is read-only, and the policy test binds an AppRole to the file.
+- **A secret is a reference when a team made it, and a value when the
+  operator did.** An MCP server's credential or a channel's signing secret is
+  created through the API while the brain runs, so no environment variable
+  can hold it and Postgres must not: the row keeps a path. `EMBEDDING_API_KEY`,
+  `LLM_API_KEY` and `SKILL_IMPORT_GITHUB_TOKEN` are set once by whoever
+  deploys, exactly like the DSN's password and `OBJECTS_SECRET_KEY`, and are
+  environment variables for the same reason. They were references first, and
+  that cost more than it bought: a brain on the static store could not be
+  given a key at all, and the OpenBao policy needed a read rule nothing else
+  used — one that shipped missing, 403 under the real policy with every test
+  on a convenient credential passing. None of the three is in `String()`.
+- **The LLM and the embedding model are two endpoints with two keys.** They
+  are often two services, and the shapes are identical, so the wired test
+  sets both and asserts the LLM one received nothing. `EMBEDDING_BASE_URL`
+  has no default and does not fall back to `LLM_BASE_URL`: it is set with the
+  model or not at all.
 - **The test suite's Postgres floor is 18; the brain's is 13.** Both measured,
   not read off a changelog. 13 is where `gen_random_uuid()` became built-in, and
   every migration applies and rolls back on 13 through 18. 18 is the first

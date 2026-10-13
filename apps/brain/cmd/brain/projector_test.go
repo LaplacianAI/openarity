@@ -21,28 +21,9 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets/static"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
-
-const embeddingRef = "brain/embedding#api_key"
-
-// secretsWith is a secret store already holding one value.
-func secretsWith(t *testing.T, path, key, value string) secrets.Store {
-	t.Helper()
-
-	s := static.New()
-	w, ok := s.(secrets.Writer)
-	if !ok {
-		t.Fatal("the static store cannot be written")
-	}
-	if err := w.Put(t.Context(), path, key, value); err != nil {
-		t.Fatal(err)
-	}
-	return s
-}
 
 func liveFalkorURL(t *testing.T) string {
 	t.Helper()
@@ -63,82 +44,28 @@ func deadFalkorURL(t *testing.T) string {
 
 // --- the key ---
 
-func TestNoKeyRefMeansNoKeyAndNoRead(t *testing.T) {
+// No key is no function at all, which is what makes the embedder send no
+// Authorization header: a local model wants none, and "Bearer " with nothing
+// after it is refused by servers that would have answered without it.
+func TestNoKeySetMeansNoKeyIsSent(t *testing.T) {
 	t.Parallel()
 
-	// A nil store: with no reference there is nothing to read, and reading
-	// anyway would panic here.
-	key, err := embeddingKey(t.Context(), &config.Config{}, nil)
-	if err != nil || key != nil {
-		t.Errorf("embeddingKey = %v, %v; want none", key != nil, err)
+	if key := embeddingKey(&config.Config{}); key != nil {
+		t.Error("with EMBEDDING_API_KEY empty there is still a key function")
 	}
 }
 
-// The key is read when it is used, not copied at startup: one rotated in the
-// secret store reaches the next embedding without a restart.
-func TestTheKeyIsReadFromTheSecretStoreEachTime(t *testing.T) {
+func TestTheKeySentIsTheOneConfigured(t *testing.T) {
 	t.Parallel()
 
-	s := secretsWith(t, "brain/embedding", "api_key", "first")
-	key, err := embeddingKey(t.Context(), &config.Config{EmbeddingKeyRef: embeddingRef}, s)
-	if err != nil {
-		t.Fatalf("embeddingKey: %v", err)
+	// The LLM's key is a different credential for a different endpoint.
+	key := embeddingKey(&config.Config{EmbeddingAPIKey: "sk-embedding", LLMAPIKey: "sk-llm"})
+	if key == nil {
+		t.Fatal("no key function for a configured key")
 	}
-	if got, err := key(t.Context()); err != nil || got != "first" {
+	if got, err := key(t.Context()); err != nil || got != "sk-embedding" {
 		t.Errorf("key = %q, %v", got, err)
 	}
-
-	w, _ := s.(secrets.Writer)
-	if err := w.Put(t.Context(), "brain/embedding", "api_key", "rotated"); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := key(t.Context()); got != "rotated" {
-		t.Errorf("after a rotation the key is %q", got)
-	}
-}
-
-// A reference to nothing fails the start, where it is read by whoever set
-// it, and not at the first embedding as a row that never projects.
-func TestAKeyRefThatCannotBeReadFailsTheStart(t *testing.T) {
-	t.Parallel()
-
-	for name, s := range map[string]secrets.Store{
-		"nothing at the path":       static.New(),
-		"the path, without the key": secretsWith(t, "brain/embedding", "another_key", "sk-secret-value"),
-		"an empty value":            secretsWith(t, "brain/embedding", "api_key", ""),
-		"the key, at another path":  secretsWith(t, "brain/embeddings", "api_key", "sk-secret-value"),
-	} {
-		key, err := embeddingKey(t.Context(), &config.Config{EmbeddingKeyRef: embeddingRef}, s)
-		if err == nil || key != nil {
-			t.Errorf("%s: embeddingKey succeeded", name)
-			continue
-		}
-		if !strings.Contains(err.Error(), "EMBEDDING_KEY_REF") || !strings.Contains(err.Error(), embeddingRef) {
-			t.Errorf("%s: the error does not say which setting and which reference: %v", name, err)
-		}
-		if strings.Contains(err.Error(), "sk-secret-value") {
-			t.Errorf("%s: the error carries a secret: %v", name, err)
-		}
-	}
-}
-
-func TestAKeyReadDoesNotOutliveItsContext(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err := embeddingKey(ctx, &config.Config{EmbeddingKeyRef: embeddingRef}, blockingSecrets{})
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("err = %v, want the cancellation", err)
-	}
-}
-
-// blockingSecrets answers only when its context ends.
-type blockingSecrets struct{}
-
-func (blockingSecrets) Get(ctx context.Context, _, _ string) (string, error) {
-	<-ctx.Done()
-	return "", ctx.Err()
 }
 
 // --- the graph ---
@@ -150,7 +77,7 @@ func TestAProjectorIsNotBuiltOnAFalkorDBThatIsNotThere(t *testing.T) {
 
 	cfg := &config.Config{FalkorDBURL: deadFalkorURL(t), EmbeddingModel: "test-model", EmbeddingDimensions: 3}
 	started := time.Now()
-	p, closeGraph, err := newProjector(t.Context(), cfg, discardLogger(), nil, static.New())
+	p, closeGraph, err := newProjector(t.Context(), cfg, discardLogger(), nil)
 	if err == nil || p != nil || closeGraph != nil {
 		t.Fatal("newProjector succeeded with nothing listening")
 	}
@@ -188,7 +115,7 @@ func TestAFalkorDBThatSaysNothingDoesNotHoldTheStart(t *testing.T) {
 
 	cfg := &config.Config{FalkorDBURL: "redis://" + l.Addr().String(), EmbeddingModel: "test-model", EmbeddingDimensions: 3}
 	started := time.Now()
-	_, _, err = newProjector(t.Context(), cfg, discardLogger(), nil, static.New())
+	_, _, err = newProjector(t.Context(), cfg, discardLogger(), nil)
 	if err == nil || !strings.Contains(err.Error(), "FalkorDB") || !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v, want FalkorDB named and the deadline", err)
 	}
@@ -201,24 +128,9 @@ func TestAProjectorIsNotBuiltOnAWidthNoIndexCanHave(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{FalkorDBURL: deadFalkorURL(t), EmbeddingModel: "test-model"}
-	if _, _, err := newProjector(t.Context(), cfg, discardLogger(), nil, static.New()); err == nil ||
+	if _, _, err := newProjector(t.Context(), cfg, discardLogger(), nil); err == nil ||
 		!strings.Contains(err.Error(), "EMBEDDING_DIMENSIONS") {
 		t.Errorf("err = %v, want the width refused by name", err)
-	}
-}
-
-// The key is checked before anything is dialled: the cheaper failure first,
-// and it is the one a person fixes by editing a setting.
-func TestABadKeyRefIsReportedBeforeFalkorDBIsTried(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.Config{
-		FalkorDBURL: deadFalkorURL(t), EmbeddingModel: "test-model", EmbeddingDimensions: 3,
-		EmbeddingKeyRef: embeddingRef,
-	}
-	_, _, err := newProjector(t.Context(), cfg, discardLogger(), nil, static.New())
-	if err == nil || !strings.Contains(err.Error(), "EMBEDDING_KEY_REF") {
-		t.Errorf("err = %v, want the key reference named", err)
 	}
 }
 
@@ -233,7 +145,7 @@ func TestTheWorkerDoesNotDrainWhenNoModelIsSet(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	cfg := &config.Config{FalkorDBURL: deadFalkorURL(t), EmbeddingDimensions: 3}
 
-	jobs, closeJobs, err := newJobs(t.Context(), cfg, logger, nil, static.New(), nil)
+	jobs, closeJobs, err := newJobs(t.Context(), cfg, logger, nil, nil)
 	if err != nil {
 		t.Fatalf("newJobs: %v", err)
 	}
@@ -253,7 +165,7 @@ func TestTheWorkerDrainsWhenAModelIsSet(t *testing.T) {
 	var logs bytes.Buffer
 	cfg := &config.Config{FalkorDBURL: liveFalkorURL(t), EmbeddingModel: "test-model", EmbeddingDimensions: 3}
 
-	jobs, closeJobs, err := newJobs(t.Context(), cfg, slog.New(slog.NewTextHandler(&logs, nil)), nil, static.New(), nil)
+	jobs, closeJobs, err := newJobs(t.Context(), cfg, slog.New(slog.NewTextHandler(&logs, nil)), nil, nil)
 	if err != nil {
 		t.Fatalf("newJobs: %v", err)
 	}
@@ -273,7 +185,7 @@ func TestTheWorkerDoesNotStartWithAModelAndNoFalkorDB(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{FalkorDBURL: deadFalkorURL(t), EmbeddingModel: "test-model", EmbeddingDimensions: 3}
-	jobs, closeJobs, err := newJobs(t.Context(), cfg, discardLogger(), nil, static.New(), nil)
+	jobs, closeJobs, err := newJobs(t.Context(), cfg, discardLogger(), nil, nil)
 	if err == nil || jobs != nil || closeJobs != nil {
 		t.Errorf("newJobs = %d jobs, %v; want the failure", len(jobs), err)
 	}
@@ -406,21 +318,27 @@ func registrySchema(t *testing.T) *store.Store {
 }
 
 // Every setting reaches the thing it configures. A skill written to Postgres
-// is embedded through OMNI_ROUTE_URL, as EMBEDDING_MODEL, with the key that
-// EMBEDDING_KEY_REF names, and lands in the FalkorDB at FALKOR_DB_URL at the
-// width of EMBEDDING_DIMENSIONS.
+// is embedded at EMBEDDING_BASE_URL, as EMBEDDING_MODEL, with
+// EMBEDDING_API_KEY, and lands in the FalkorDB at FALKOR_DB_URL at the width
+// of EMBEDDING_DIMENSIONS.
+//
+// The LLM's address and key are set to something else on purpose: they are
+// the same shape, one field name away, and an embedding sent there with that
+// key is a credential handed to the wrong service.
 //
 // Not parallel: it drains under the lock every worker shares.
 func TestTheWiredProjectorUsesEverySetting(t *testing.T) {
 	router := newModelRouter(t, 5)
+	llm := newModelRouter(t, 5)
 	dbStore := registrySchema(t)
 	cfg := &config.Config{
-		FalkorDBURL: liveFalkorURL(t), OmniRouteURL: router.URL + "/v1",
-		EmbeddingModel: "wired-model", EmbeddingDimensions: 5, EmbeddingKeyRef: embeddingRef,
+		FalkorDBURL: liveFalkorURL(t),
+		LLMBaseURL:  llm.URL + "/v1", LLMAPIKey: "sk-llm",
+		EmbeddingBaseURL: router.URL + "/v1", EmbeddingAPIKey: "sk-wired",
+		EmbeddingModel: "wired-model", EmbeddingDimensions: 5,
 	}
 
-	p, closeGraph, err := newProjector(t.Context(), cfg, discardLogger(),
-		dbStore, secretsWith(t, "brain/embedding", "api_key", "sk-wired"))
+	p, closeGraph, err := newProjector(t.Context(), cfg, discardLogger(), dbStore)
 	if err != nil {
 		t.Fatalf("newProjector: %v", err)
 	}
@@ -458,6 +376,9 @@ func TestTheWiredProjectorUsesEverySetting(t *testing.T) {
 	}
 	if got := asked[0]; got.path != "/v1/embeddings" || got.auth != "Bearer sk-wired" || got.model != "wired-model" {
 		t.Errorf("the router was asked %+v", got)
+	}
+	if sent := llm.requests(); len(sent) != 0 {
+		t.Errorf("the LLM endpoint was asked for an embedding: %+v", sent)
 	}
 
 	snapshot, err := reader.Snapshot(t.Context(), team.ID)

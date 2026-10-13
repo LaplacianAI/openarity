@@ -2,17 +2,14 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamgraph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 )
 
@@ -22,14 +19,8 @@ const (
 )
 
 func newProjector(
-	ctx context.Context, cfg *config.Config, logger *slog.Logger,
-	dbStore *store.Store, secretStore secrets.Store,
+	ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore *store.Store,
 ) (*graph.Projector, func(), error) {
-	key, err := embeddingKey(ctx, cfg, secretStore)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	startCtx, cancel := context.WithTimeout(ctx, graphStartTimeout)
 	defer cancel()
 
@@ -42,35 +33,17 @@ func newProjector(
 		return nil, nil, fmt.Errorf("FalkorDB unreachable at startup: %w", err)
 	}
 
-	embedder := graph.NewEmbedder(cfg.OmniRouteURL, cfg.EmbeddingModel, cfg.EmbeddingDimensions,
-		key, &http.Client{Timeout: embeddingTimeout})
+	embedder := graph.NewEmbedder(cfg.EmbeddingBaseURL, cfg.EmbeddingModel, cfg.EmbeddingDimensions,
+		embeddingKey(cfg), &http.Client{Timeout: embeddingTimeout})
 
 	return graph.NewProjector(dbStore, g, embedder, logger), func() { _ = g.Close() }, nil
 }
 
-func embeddingKey(
-	ctx context.Context, cfg *config.Config, secretStore secrets.Store,
-) (func(context.Context) (string, error), error) {
-	if cfg.EmbeddingKeyRef == "" {
-		return nil, nil
+func embeddingKey(cfg *config.Config) func(context.Context) (string, error) {
+	if cfg.EmbeddingAPIKey == "" {
+		return nil
 	}
-
-	path, name, _ := strings.Cut(cfg.EmbeddingKeyRef, "#")
-	read := func(ctx context.Context) (string, error) {
-		return secretStore.Get(ctx, path, name)
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, secretStoreTimeout)
-	defer cancel()
-
-	value, err := read(ctx)
-	if err == nil && value == "" {
-		err = errors.New("it is empty")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("EMBEDDING_KEY_REF names %s, which cannot be read: %w", cfg.EmbeddingKeyRef, err)
-	}
-	return read, nil
+	return func(context.Context) (string, error) { return cfg.EmbeddingAPIKey, nil }
 }
 
 func newGraphViewer(ctx context.Context, cfg *config.Config, logger *slog.Logger) (teamgraph.Viewer, func()) {

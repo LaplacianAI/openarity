@@ -260,8 +260,8 @@ https://hub.example.com/skills/pdf.zip       a zip, from a host the operator all
   that commit's tarball fetched from `codeload.github.com`; only the named
   directory is kept. The commit is recorded in `source_sha`, so what was
   imported is exact even when `main` moves. A GitHub token is optional —
-  `OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF`, a `path#key` — for private
-  repositories and for the 60-requests-an-hour limit without one.
+  `OPENARITY_SKILL_IMPORT_GITHUB_TOKEN` — for private repositories and for
+  the 60-requests-an-hour limit without one.
 - **Any HTTPS zip** from a host named in `OPENARITY_SKILL_IMPORT_HOSTS`, empty
   by default. `source_sha` is the zip's sha256.
 - **`POST /skills/{skillID}/sync`** fetches the same `source_ref` again and
@@ -429,18 +429,31 @@ an outbox that stops shrinking is a projector that stopped.
 
 ### Embeddings
 
-Brain-wide, over `OMNI_ROUTE_URL`'s OpenAI-compatible `/embeddings`:
+Brain-wide, from anything that answers OpenAI's `/embeddings`:
 
 ```text
-OPENARITY_EMBEDDING_MODEL       the gateway's name for it, e.g. ollama/nomic-embed-text
+OPENARITY_EMBEDDING_BASE_URL    where to ask, e.g. http://ollama:11434/v1
+OPENARITY_EMBEDDING_API_KEY     sent as a bearer token; empty for an endpoint
+                                that takes none
+OPENARITY_EMBEDDING_MODEL       the endpoint's name for it, e.g. nomic-embed-text
 OPENARITY_EMBEDDING_DIMENSIONS  e.g. 768
-OPENARITY_EMBEDDING_KEY_REF     path#key of the gateway key; empty for a
-                                gateway that takes none. The key is never in config.
 ```
 
-The brain only ever talks to the gateway. Where the gateway gets the embedding
-from — a hosted provider, or the local Ollama below — is the gateway's
-configuration, not the brain's.
+The base URL, the model and the dimensions are set together or not at all.
+The chat models are a separate endpoint, `OPENARITY_LLM_BASE_URL` with
+`OPENARITY_LLM_API_KEY`, because they are often a separate service; one does
+not fall back to the other.
+
+The key was first designed as a secret-store reference, `path#key`, on the
+rule that config holds no credential. That rule is for secrets a team creates
+through the API at runtime, which no environment variable can hold. This one
+is set once by whoever deploys, like the database password, and as a reference
+it could not be supplied at all to a brain running on the static secret
+store. It is an environment variable, kept out of every log line. The same
+holds for `OPENARITY_SKILL_IMPORT_GITHUB_TOKEN`.
+
+The brain only ever talks to that one URL. Whether it is a gateway, a hosted
+provider or the local Ollama below is not something the brain knows.
 
 ### A local embedding model
 
@@ -460,7 +473,7 @@ as the authentik, LiteLLM and OmniRoute ones:
 Nothing in the brain knows Ollama exists.
 
 Ollama answers OpenAI's `/v1/embeddings` itself, which was not planned for and
-is the cheapest local path: `OPENARITY_OMNI_ROUTE_URL=http://ollama:11434/v1`
+is the cheapest local path: `OPENARITY_EMBEDDING_BASE_URL=http://ollama:11434/v1`
 with no gateway in between. That is the path the end-to-end run used. The
 brain still only knows a URL that answers `/embeddings`.
 

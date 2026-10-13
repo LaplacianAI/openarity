@@ -67,18 +67,24 @@ x-brain-env: &brain-env
   # this compose network needs its range listed. No embedding model means
   # the worker runs no projector, and says so when it starts.
   #
-  # The router is where an embedding is asked for. The brain's own default is
-  # localhost, which inside a container is the container; this names the
-  # OmniRoute overlay instead. For LiteLLM it is http://litellm:4000/v1, and
-  # the Ollama overlay answers the same request at http://ollama:11434/v1
-  # with no gateway in front of it. See README.md.
-  OPENARITY_OMNI_ROUTE_URL: ${OPENARITY_OMNI_ROUTE_URL-http://omniroute:20128/v1}
+  # Two endpoints, each with a key of its own, because they are often two
+  # services: chat models at one provider, embeddings at another or on this
+  # machine. Both speak OpenAI's API. The brain's own default for the first
+  # is localhost, which inside a container is the container; this names the
+  # OmniRoute overlay instead, and for LiteLLM it is http://litellm:4000/v1.
+  #
+  # The embedding endpoint has no default: it is set with the model or not at
+  # all. The Ollama overlay answers at http://ollama:11434/v1 with no gateway
+  # in front of it and no key. See README.md.
+  OPENARITY_LLM_BASE_URL: ${OPENARITY_LLM_BASE_URL-http://omniroute:20128/v1}
+  OPENARITY_LLM_API_KEY: ${OPENARITY_LLM_API_KEY-}
   OPENARITY_SKILL_IMPORT_HOSTS: ${OPENARITY_SKILL_IMPORT_HOSTS-}
-  OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF: ${OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF-}
+  OPENARITY_SKILL_IMPORT_GITHUB_TOKEN: ${OPENARITY_SKILL_IMPORT_GITHUB_TOKEN-}
   OPENARITY_MCP_PRIVATE_NETWORKS: ${OPENARITY_MCP_PRIVATE_NETWORKS-}
+  OPENARITY_EMBEDDING_BASE_URL: ${OPENARITY_EMBEDDING_BASE_URL-}
+  OPENARITY_EMBEDDING_API_KEY: ${OPENARITY_EMBEDDING_API_KEY-}
   OPENARITY_EMBEDDING_MODEL: ${OPENARITY_EMBEDDING_MODEL-}
   OPENARITY_EMBEDDING_DIMENSIONS: ${OPENARITY_EMBEDDING_DIMENSIONS-0}
-  OPENARITY_EMBEDDING_KEY_REF: ${OPENARITY_EMBEDDING_KEY_REF-}
 
 services:
   postgres:

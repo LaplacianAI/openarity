@@ -31,7 +31,7 @@ func newRebuildWorld(t *testing.T) *rebuildWorld {
 
 	w := &rebuildWorld{t: t, router: newModelRouter(t, 3), store: registrySchema(t)}
 	w.cfg = &config.Config{
-		FalkorDBURL: liveFalkorURL(t), OmniRouteURL: w.router.URL + "/v1",
+		FalkorDBURL: liveFalkorURL(t), EmbeddingBaseURL: w.router.URL + "/v1",
 		EmbeddingModel: "test-model", EmbeddingDimensions: 3,
 		SecretsBackend: config.SecretsBackendStatic,
 	}

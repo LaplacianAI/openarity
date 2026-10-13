@@ -486,9 +486,9 @@ It is off until an embedding model is named. Three settings turn it on, and
 the worker says so at start when they are missing:
 
 ```sh
-OPENARITY_OMNI_ROUTE_URL=http://ollama:11434/v1   # anything answering OpenAI's /embeddings
-OPENARITY_EMBEDDING_MODEL=nomic-embed-text        # as that server names it
-OPENARITY_EMBEDDING_DIMENSIONS=768                # the width of its vectors
+OPENARITY_EMBEDDING_BASE_URL=http://ollama:11434/v1   # anything answering OpenAI's /embeddings
+OPENARITY_EMBEDDING_MODEL=nomic-embed-text            # as that server names it
+OPENARITY_EMBEDDING_DIMENSIONS=768                    # the width of its vectors
 ```
 
 ### A model on this machine
@@ -528,13 +528,29 @@ that is an entry in `litellm/config.yaml`:
       api_base: http://ollama:11434
 ```
 
-with `OPENARITY_OMNI_ROUTE_URL=http://litellm:4000/v1`. In OmniRoute it is a
-provider added in the dashboard with the same base URL. A gateway wants a key,
-and the key is never a setting: it is a secret-store reference,
-`OPENARITY_EMBEDDING_KEY_REF=platform/embeddings#key`, which the shipped
-OpenBao policy lets the brain read. The direct path is the one exercised in
-this repository's tests and the run below; the gateway entries are the
-gateways' own configuration and are not.
+with `OPENARITY_EMBEDDING_BASE_URL=http://litellm:4000/v1`. In OmniRoute it is
+a provider added in the dashboard with the same base URL. A gateway wants a
+key, and so does a provider reached directly:
+
+```sh
+OPENARITY_EMBEDDING_BASE_URL=https://api.openai.com/v1
+OPENARITY_EMBEDDING_API_KEY=<the key>
+OPENARITY_EMBEDDING_MODEL=text-embedding-3-small
+OPENARITY_EMBEDDING_DIMENSIONS=1536    # the model's own width; the brain does not ask for a shorter one
+```
+
+The key is sent as a bearer token, appears in no log line, and is refused at
+boot if it carries a space or a line break — the usual sign of a paste that
+picked up a newline. It is an environment variable like the database password
+is, so in production it comes from wherever the rest of the environment does.
+
+The chat models have an endpoint and a key of their own,
+`OPENARITY_LLM_BASE_URL` and `OPENARITY_LLM_API_KEY`, because they are often a
+different service. Nothing in the brain calls it until the agent runtime does.
+
+The direct path to Ollama is the one exercised in this repository's tests and
+the run below; the gateway entries are the gateways' own configuration, and a
+provider with a key has not been run from here.
 
 ### What a run looks like
 

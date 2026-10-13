@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -60,14 +61,10 @@ func checkHosts(field string, hosts []string) error {
 	return nil
 }
 
-func checkSecretRef(field, v string) error {
-	if v == "" {
-		return nil
-	}
-	path, key, ok := strings.Cut(v, "#")
-	if !ok || path == "" || key == "" || strings.Contains(key, "#") {
-		return fmt.Errorf("%s must name a secret as path#key, such as platform/github#token; "+
-			"the value given is not repeated here, in case it is the secret itself", field)
+func checkAPIKey(field, v string) error {
+	if strings.ContainsFunc(v, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return fmt.Errorf("%s holds a space, a line break or a control character, which no key has — "+
+			"check for a trailing newline or quotes around a blank; the value is not repeated here", field)
 	}
 	return nil
 }
@@ -96,7 +93,7 @@ func checkPrivateNetworks(field string, nets []netip.Prefix) error {
 	return nil
 }
 
-func checkEmbedding(model string, dims int, keyRef string) error {
+func checkEmbedding(baseURL, apiKey, model string, dims int) error {
 	switch {
 	case model != strings.TrimSpace(model):
 		return fmt.Errorf("EMBEDDING_MODEL %q has a space at one end", model)
@@ -105,10 +102,19 @@ func checkEmbedding(model string, dims int, keyRef string) error {
 			"the index is built for one model's dimensions")
 	case dims < 0 || dims > maxEmbeddingDimensions:
 		return fmt.Errorf("EMBEDDING_DIMENSIONS is %d, and must be between 1 and %d", dims, maxEmbeddingDimensions)
-	case keyRef != "" && model == "":
-		return errors.New("EMBEDDING_KEY_REF is set but EMBEDDING_MODEL is not, so nothing would use it")
+	case model != "" && baseURL == "":
+		return errors.New("EMBEDDING_MODEL is set but EMBEDDING_BASE_URL is not, so there is nowhere to ask for a vector")
+	case model == "" && baseURL != "":
+		return errors.New("EMBEDDING_BASE_URL is set but EMBEDDING_MODEL is not, so nothing would use it")
+	case model == "" && apiKey != "":
+		return errors.New("EMBEDDING_API_KEY is set but EMBEDDING_MODEL is not, so nothing would use it")
+	case model == "":
+		return nil
 	}
-	return checkSecretRef("EMBEDDING_KEY_REF", keyRef)
+	if err := checkURL("EMBEDDING_BASE_URL", baseURL, httpSchemes...); err != nil {
+		return err
+	}
+	return checkAPIKey("EMBEDDING_API_KEY", apiKey)
 }
 
 func (c *Config) Validate() error {
@@ -138,7 +144,11 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
-	if err := checkURL("OMNI_ROUTE_URL", c.OmniRouteURL, httpSchemes...); err != nil {
+	if err := checkURL("LLM_BASE_URL", c.LLMBaseURL, httpSchemes...); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := checkAPIKey("LLM_API_KEY", c.LLMAPIKey); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -166,7 +176,7 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
-	if err := checkSecretRef("SKILL_IMPORT_GITHUB_TOKEN_REF", c.SkillImportGitHubTokenRef); err != nil {
+	if err := checkAPIKey("SKILL_IMPORT_GITHUB_TOKEN", c.SkillImportGitHubToken); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -174,7 +184,7 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
-	if err := checkEmbedding(c.EmbeddingModel, c.EmbeddingDimensions, c.EmbeddingKeyRef); err != nil {
+	if err := checkEmbedding(c.EmbeddingBaseURL, c.EmbeddingAPIKey, c.EmbeddingModel, c.EmbeddingDimensions); err != nil {
 		errs = append(errs, err)
 	}
 

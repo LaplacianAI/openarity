@@ -224,26 +224,16 @@ func TestTheShippedPolicyRefusesEverythingElse(t *testing.T) {
 		"listing a team's MCP secrets": {
 			http.MethodGet, secret + "/metadata/teams/" + team + "/mcp?list=true",
 		},
-		"the platform root itself, which is not under platform/*": {
-			http.MethodGet, secret + "/data/platform",
+		// The brain's own credentials are environment variables. A path
+		// outside teams/ is somebody else's, whatever it is called.
+		"a secret that is not a team's": {
+			http.MethodGet, secret + "/data/platform/embeddings",
 		},
-		"writing a brain-wide credential, which is the operator's to do": {
+		"writing one": {
 			http.MethodPut, secret + "/data/platform/embeddings",
 		},
-		"soft-deleting a brain-wide credential": {
-			http.MethodDelete, secret + "/data/platform/embeddings",
-		},
-		"destroying a brain-wide credential": {
-			http.MethodDelete, secret + "/metadata/platform/embeddings",
-		},
-		"the version history of a brain-wide credential": {
-			http.MethodGet, secret + "/metadata/platform/embeddings",
-		},
-		"listing the brain-wide credentials": {
+		"listing them": {
 			http.MethodGet, secret + "/metadata/platform?list=true",
-		},
-		"a sibling of platform": {
-			http.MethodGet, secret + "/data/platforms/embeddings",
 		},
 		"administering OpenBao": {
 			http.MethodGet, "/v1/sys/policies/acl",
@@ -381,35 +371,6 @@ func TestTheShippedPolicyReadsAnMCPServersSecret(t *testing.T) {
 	}
 }
 
-// Two settings name a credential that belongs to the brain and not to a team:
-// the key for the embedding model, and the token skill imports present to
-// GitHub. Both are references, path#key, and both examples in the
-// documentation live under platform/. Without a rule for that path the
-// references are well-formed and unreadable, and the worker refuses to start.
-//
-// Each name carries a fresh id: these tests share one server with every other
-// run against it.
-func TestTheShippedPolicyReadsABrainWideCredential(t *testing.T) {
-	t.Parallel()
-
-	reader, _, _, addr := brainStore(t)
-	root := os.Getenv("BRAIN_TEST_SECRETS_TOKEN")
-	fresh := uuid.NewString()
-
-	for _, path := range []string{"platform/embeddings-" + fresh, "platform/models/" + fresh + "/prod"} {
-		admin{t: t, addr: addr, token: root}.do(http.MethodPost, "/v1/secret/data/"+path,
-			map[string]any{"data": map[string]string{"key": "sk-" + path}})
-
-		got, err := reader.Get(t.Context(), path, "key")
-		if err != nil {
-			t.Fatalf("reading %s: %v", path, err)
-		}
-		if got != "sk-"+path {
-			t.Errorf("%s key = %q", path, got)
-		}
-	}
-}
-
 // A glob sounds like it can be walked out of with `..`. Each traversal here
 // aims at a secret that really exists, so a policy that let one through would
 // answer 200 rather than an ambiguous 404. OpenBao redirects a literal `..` to
@@ -432,10 +393,6 @@ func TestTheMCPGlobCannotBeWalkedOutOf(t *testing.T) {
 		"an encoded slash":       data + team + "/mcp/..%2ftokens/x",
 		"out of the team, too":   data + team + "/mcp//../../" + team + "/tokens/x",
 		"the target, as a check": data + team + "/tokens/x",
-		// The same walks from the other glob in the policy.
-		"out of platform, literally": "/v1/secret/data/platform/../teams/" + team + "/tokens/x",
-		"out of platform, encoded":   "/v1/secret/data/platform/%2e%2e/teams/" + team + "/tokens/x",
-		"out of platform, slashed":   "/v1/secret/data/platform/..%2fteams%2f" + team + "%2ftokens%2fx",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

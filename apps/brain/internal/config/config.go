@@ -30,8 +30,9 @@ type Config struct {
 	SecretsAppRoleSecret string         `env:"SECRETS_APPROLE_SECRET" envDefault:""`
 	SecretsKVMount       string         `env:"SECRETS_KV_MOUNT" envDefault:"secret"`
 
-	/* Model Router Configuration */
-	OmniRouteURL string `env:"OMNI_ROUTE_URL" envDefault:"http://localhost:20128/v1"`
+	/* LLM Configuration */
+	LLMBaseURL string `env:"LLM_BASE_URL" envDefault:"http://localhost:20128/v1"`
+	LLMAPIKey  string `env:"LLM_API_KEY" envDefault:""`
 
 	/* Authentication Configuration */
 	OIDCEnabled  bool     `env:"OIDC_ENABLED" envDefault:"false"`
@@ -63,16 +64,17 @@ type Config struct {
 	ObjectsSecretKey string         `env:"OBJECTS_SECRET_KEY" envDefault:""`
 
 	/* Skill Import Configuration */
-	SkillImportHosts          []string `env:"SKILL_IMPORT_HOSTS" envDefault:""`
-	SkillImportGitHubTokenRef string   `env:"SKILL_IMPORT_GITHUB_TOKEN_REF" envDefault:""`
+	SkillImportHosts       []string `env:"SKILL_IMPORT_HOSTS" envDefault:""`
+	SkillImportGitHubToken string   `env:"SKILL_IMPORT_GITHUB_TOKEN" envDefault:""`
 
 	/* MCP Configuration */
 	MCPPrivateNetworks []netip.Prefix `env:"MCP_PRIVATE_NETWORKS" envDefault:""`
 
 	/* Embedding Configuration */
+	EmbeddingBaseURL    string `env:"EMBEDDING_BASE_URL" envDefault:""`
+	EmbeddingAPIKey     string `env:"EMBEDDING_API_KEY" envDefault:""`
 	EmbeddingModel      string `env:"EMBEDDING_MODEL" envDefault:""`
 	EmbeddingDimensions int    `env:"EMBEDDING_DIMENSIONS" envDefault:"0"`
-	EmbeddingKeyRef     string `env:"EMBEDDING_KEY_REF" envDefault:""`
 }
 
 func (c *Config) String() string {
@@ -81,8 +83,8 @@ func (c *Config) String() string {
 			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s "+
 			"SecretsBackend:%s SecretsAddr:%s "+
 			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
-			"OmniRouteURL:%s SkillImportHosts:%v SkillImportGitHubTokenRef:%s MCPPrivateNetworks:%v "+
-			"EmbeddingModel:%s EmbeddingDimensions:%d EmbeddingKeyRef:%s}",
+			"LLMBaseURL:%s SkillImportHosts:%v MCPPrivateNetworks:%v "+
+			"EmbeddingBaseURL:%s EmbeddingModel:%s EmbeddingDimensions:%d}",
 		c.Environment,
 		c.LogLevel,
 		c.APIBind,
@@ -96,13 +98,12 @@ func (c *Config) String() string {
 		c.ObjectsPath,
 		redactURL(c.ObjectsEndpoint),
 		c.ObjectsBucket,
-		redactURL(c.OmniRouteURL),
+		redactURL(c.LLMBaseURL),
 		c.SkillImportHosts,
-		c.SkillImportGitHubTokenRef,
 		c.MCPPrivateNetworks,
+		redactURL(c.EmbeddingBaseURL),
 		c.EmbeddingModel,
 		c.EmbeddingDimensions,
-		c.EmbeddingKeyRef,
 	)
 }
 

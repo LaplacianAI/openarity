@@ -113,7 +113,7 @@ func TestEmbedSendsTheModelAndEveryTextInOneRequest(t *testing.T) {
 	}
 }
 
-// OMNI_ROUTE_URL is written with and without a trailing slash; both must
+// EMBEDDING_BASE_URL is written with and without a trailing slash; both must
 // reach the same path, and neither a doubled one.
 func TestTheBaseURLMayEndInASlash(t *testing.T) {
 	t.Parallel()
