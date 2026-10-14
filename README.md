@@ -575,9 +575,9 @@ quietly.
 | `OPENARITY_SECRETS_APPROLE_ID`     | empty                   | AppRole id, required outside `static`    |
 | `OPENARITY_SECRETS_APPROLE_SECRET` | empty                   | AppRole secret                           |
 | `OPENARITY_SECRETS_KV_MOUNT`       | `secret`                | The KV v2 mount to read and write        |
-| `OPENARITY_OBJECTS_BACKEND`        | `memory`                | `memory`, `filesystem`, `s3`             |
+| `OPENARITY_OBJECTS_BACKEND`        | `memory`                | `memory`, `filesystem`, `s3`, `seaweedfs` |
 | `OPENARITY_OBJECTS_PATH`           | see below               | Where `filesystem` writes                |
-| `OPENARITY_OBJECTS_ENDPOINT`       | empty                   | Required by `s3`                         |
+| `OPENARITY_OBJECTS_ENDPOINT`       | empty                   | Required by `s3` and `seaweedfs`         |
 | `OPENARITY_OBJECTS_REGION`         | `us-east-1`             | Sent by `s3`, ignored by most clones     |
 | `OPENARITY_OBJECTS_BUCKET`         | `openarity`             | The one bucket the brain uses            |
 | `OPENARITY_OBJECTS_ACCESS_KEY`     | empty                   | `s3` credential                          |
@@ -594,6 +594,11 @@ worse than one that does not start.
 last MPL-2.0 Vault, so the API and the KV v2 semantics are unchanged. They are
 two names because the two are developed separately now, and what sits behind
 one should be able to change without anybody editing their configuration.
+
+`seaweedfs` is the S3 adapter under its own name, for the same reason:
+SeaweedFS is reached through its S3 gateway today, and naming it means a
+difference found later is a change behind the name, not to everyone's
+configuration. It is what `make objects` starts for local development.
 
 `s3` speaks the S3 API, which is a de-facto interface rather than a standard.
 MinIO, Garage, Ceph, SeaweedFS, Cloudflare R2, Backblaze B2 and Google Cloud

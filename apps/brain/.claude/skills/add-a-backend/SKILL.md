@@ -200,7 +200,7 @@ string-based test, and attachments are photographs.
 If the adapter talks to a real service, add `integration_test.go` that skips
 unless its env var is set, and assert against the real thing what a stub
 cannot prove: what *this* store returns for an absent key. `make objects`
-starts MinIO for the object store; `make bao` for the secret store.
+starts SeaweedFS for the object store; `make bao` for the secret store.
 
 Then the wiring tests in `cmd/brain`, which are the ones that catch the real
 failure:
@@ -228,7 +228,7 @@ attachments not appearing" before anything else does.
 - `deployment/` — a compose overlay and a `make` target if it needs a service,
   following `docker-compose.objects.yml`. Publish on a `1`-prefixed host port
   (15432, 16379, 19000): the stack must be able to run all its own overlays at
-  once, and MinIO's 9000 collides with authentik.
+  once, and a store's default 9000 collides with authentik.
 - `apps/brain/CLAUDE.md` — one line, if the choice changes how the brain is
   run locally.
 

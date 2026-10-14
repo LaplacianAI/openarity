@@ -243,11 +243,11 @@ The same shape again. Tests in `internal/objects/s3` read
 `BRAIN_TEST_S3_SECRET_KEY` fill in the rest.
 
 ```sh
-cd deployment && make objects   # MinIO on 19000, bucket created
+cd deployment && make objects   # SeaweedFS on 19000, bucket created
 ```
 
-It prints the four exports. 19000 rather than MinIO's own 9000, because
-authentik already publishes 9000 in this stack.
+It prints the four exports. 19000 rather than the gateway's own 8333, so it
+sits with the stack's other 1-prefixed ports and every overlay can run at once.
 
 The other two object backends need nothing: `inmemory` and `filesystem` are
 tested with a `t.TempDir()` and always run. Only the S3 adapter has a belief

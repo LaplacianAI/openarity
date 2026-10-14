@@ -42,7 +42,7 @@ make start-docker BUILD=1         # build the brain from this tree, not the imag
 ```
 
 The stack it brings up is a staging one: OIDC only, no development token, the
-real OpenBao rather than the in-memory one, and MinIO for attachments.
+real OpenBao rather than the in-memory one, and SeaweedFS for attachments.
 
 **It publishes on your LAN address, not loopback.** A token carries the issuer
 that minted it and the brain rejects one that disagrees, so the browser and
@@ -71,7 +71,7 @@ make dev        # and the brain, built from your working tree
 make image      # and the brain, from the image CI published
 make dex        # and dex: OIDC from a committed config, one small container
 make staging    # image plus authentik: OIDC only, no development token
-make objects    # add MinIO and create the bucket — for the object store tests
+make objects    # add SeaweedFS and create the bucket — for the object store tests
 make ollama     # add a local embedding model, for the graph
 make ps         # what is running, and on which ports
 make logs       # follow the brain; make logs service=authentik-server
@@ -116,7 +116,7 @@ that survives a reboot, `deployment/docker-compose.openbao.yml` is an overlay
 with file storage and a seal that opens itself. See
 [OPENBAO.md](OPENBAO.md).
 
-MinIO is not started by the everyday targets. Nothing writes attachments yet,
+SeaweedFS is not started by the everyday targets. Nothing writes attachments yet,
 so a store nobody uses is a container to remember to stop — `make objects` adds
 it when the object store tests need one:
 

@@ -105,7 +105,7 @@ apps/brain/
   internal/objects/    the port: Store, Writer, object keys and team prefixes
     encrypt.go         AES-256-GCM over any backend — a layer, not a backend
     sniff.go           what a file is, and whether it may be stored
-    s3/                the S3 API — MinIO, Ceph, R2, GCS, AWS
+    s3/                the S3 API — SeaweedFS, MinIO, Ceph, R2, GCS, AWS; also built for seaweedfs
     filesystem/        a volume, for a single-host deployment with no S3
     inmemory/          the in-process fallback; attachments die with the process
   internal/skill/      a skill as the Agent Skills specification lays it out
@@ -275,7 +275,7 @@ reinstalled.
   Kubernetes injects env natively, and the config surface stays small because
   secrets live in Vault rather than here.
 - **Every pluggable subsystem names its backend in env.** `SECRETS_BACKEND` is
-  static, openbao or vault; `OBJECTS_BACKEND` is memory, filesystem or s3. Never
+  static, openbao or vault; `OBJECTS_BACKEND` is memory, filesystem, s3 or seaweedfs. Never
   inferred from which settings happen to be filled in — that works for two
   options where one is clearly "not configured", and breaks at three, where
   "endpoint set" and "path set" can both be true, both false, or disagree. The

@@ -1,8 +1,8 @@
-# MinIO as the object store for local development.
+# SeaweedFS as the object store for local development.
 #
 # The brain speaks the S3 API, which is a de-facto interface rather than a
 # standard — there is no specification body and no conformance suite. This file
-# is the reference shape, not a dependency: MinIO, Garage, Ceph, SeaweedFS,
+# is the reference shape, not a dependency: SeaweedFS, MinIO, Garage, Ceph,
 # Cloudflare R2, Backblaze B2 and Google Cloud Storage (at
 # https://storage.googleapis.com, with an HMAC key from its interoperability
 # settings) all serve it. Swapping one for another changes five settings on the
@@ -13,6 +13,12 @@
 # lifecycle rules and presigned POST policies are where compatibility stops
 # being reliable, and none of them are used.
 #
+# SeaweedFS rather than MinIO because MinIO withdrew its images from Docker Hub
+# and then from quay.io, so a pinned MinIO tag stopped pulling and took CI with
+# it. SeaweedFS publishes versioned tags under Apache-2.0. The brain reaches it
+# with OPENARITY_OBJECTS_BACKEND=seaweedfs, which is the S3 adapter under its
+# own name; s3 works too.
+#
 #   cd deployment
 #   docker compose -f docker-compose.yml -f docker-compose.objects.yml up -d
 #
@@ -21,26 +27,30 @@
 name: openarity
 
 services:
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: server /data --console-address ":9001"
+  # One process running the master, a volume server, the filer and the S3
+  # gateway. The S3 gateway takes its admin identity from the two AWS_
+  # variables, so no config file is needed, and refuses anything unsigned.
+  # Bump the tag here and in .github/workflows/ci.yml together.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    command: server -dir=/data -s3
     environment:
-      MINIO_ROOT_USER: ${OBJECTS_ACCESS_KEY:-openarity}
-      MINIO_ROOT_PASSWORD: ${OBJECTS_SECRET_KEY:-openarity-dev-secret}
+      AWS_ACCESS_KEY_ID: ${OBJECTS_ACCESS_KEY:-openarity}
+      AWS_SECRET_ACCESS_KEY: ${OBJECTS_SECRET_KEY:-openarity-dev-secret}
     ports:
-      # 19000 and 19001 on the host, not MinIO's own 9000 and 9001: authentik
-      # already takes 9000 in docker-compose.authentik.yml, and a stack that
-      # cannot run two of its own overlays together is a trap. The 1-prefix
-      # follows Postgres on 15432 and Redis on 16379.
+      # 19000 on the host, not the gateway's own 8333, following Postgres on
+      # 15432 and Redis on 16379 so every overlay can run at once.
       #
       # BIND_ADDR defaults to loopback, as everything else here does. A store
       # holding message attachments is not something to expose by forgetting.
-      - "${BIND_ADDR:-127.0.0.1}:19000:9000"
-      - "${BIND_ADDR:-127.0.0.1}:19001:9001"
+      # The master and filer UIs are not published: they have no login.
+      - "${BIND_ADDR:-127.0.0.1}:19000:8333"
     volumes:
-      - minio-data:/data
+      - seaweedfs-data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # 127.0.0.1, not localhost: in this image localhost resolves to ::1 and
+      # the gateway listens on IPv4, so a localhost probe is refused forever.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -52,19 +62,25 @@ services:
   # the brain's should only be able to read and write objects in one bucket.
   # Provisioning is an operator action, the same reasoning the OpenBao policy
   # follows.
-  minio-bucket:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+  #
+  # `weed shell` exits 1 when the bucket already exists, so a second `up`
+  # would leave this marked failed. "already exists" counts as done; anything
+  # else is printed and fails.
+  seaweedfs-bucket:
+    image: chrislusf/seaweedfs:4.48
     depends_on:
-      minio:
+      seaweedfs:
         condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        out=$$(echo "s3.bucket.create -name $${BUCKET}" | weed shell -master=seaweedfs:9333 2>&1)
+        echo "$$out"
+        case "$$out" in *"created bucket"*|*"already exists"*) exit 0 ;; esac
+        exit 1
     environment:
-      # MC_HOST_<alias> is how mc takes a target from the environment. The
-      # image's entrypoint is mc itself, so `command:` here is a list of mc
-      # arguments — reaching for a shell to run `mc alias set` first is what
-      # made this fail in CI, where the entrypoint was not overridden.
-      MC_HOST_local: http://${OBJECTS_ACCESS_KEY:-openarity}:${OBJECTS_SECRET_KEY:-openarity-dev-secret}@minio:9000
-    command: mb --ignore-existing local/${OBJECTS_BUCKET:-openarity}
+      BUCKET: ${OBJECTS_BUCKET:-openarity}
     restart: "no"
 
 volumes:
-  minio-data:
+  seaweedfs-data:

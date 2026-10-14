@@ -19,7 +19,7 @@ COMPOSE := docker compose -f docker-compose.yml
 #   laptop, where OIDC is the staging one. They are alternatives: two issuers
 #   on one stack means the brain trusts one and rejects the other's tokens.
 #   BAO swaps the in-memory OpenBao for the one with file
-#   storage and a seal that opens itself. OBJECTS adds MinIO and creates the
+#   storage and a seal that opens itself. OBJECTS adds SeaweedFS and creates the
 #   bucket. PROFILE opts the brain and its migrate step in — without it the
 #   stack is dependencies only.
 #
@@ -93,12 +93,12 @@ start-docker:
 up:
 	$(COMPOSE) up -d
 
-## objects: add MinIO and create the bucket — for the object store tests
+## objects: add SeaweedFS and create the bucket — for the object store tests
 #
 # The live tests in internal/objects/s3 skip unless they are pointed at a
 # store, which this prints the settings for.
 objects:
-	$(COMPOSE) $(OBJECTS) up -d minio minio-bucket
+	$(COMPOSE) $(OBJECTS) up -d seaweedfs seaweedfs-bucket
 	@printf '\n%s\n%s\n%s\n%s\n\n' \
 	  "export BRAIN_TEST_S3_ENDPOINT=http://127.0.0.1:19000" \
 	  "export BRAIN_TEST_S3_BUCKET=$${OBJECTS_BUCKET:-openarity}" \
@@ -209,7 +209,7 @@ image:
 #
 # It refuses to start without OPENARITY_SECRETS_APPROLE_ID and _SECRET, which
 # is the point. See OPENBAO.md; `make bao-approle` prints them.
-## staging: published image, authentik, real OpenBao and MinIO — needs .env
+## staging: published image, authentik, real OpenBao and SeaweedFS — needs .env
 staging:
 	$(COMPOSE) $(OIDC) $(IMAGE) $(BAO) $(OBJECTS) $(PROFILE) up -d
 

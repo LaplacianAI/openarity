@@ -243,10 +243,10 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.ObjectsBackend {
-	case ObjectsBackendS3:
+	case ObjectsBackendS3, ObjectsBackendSeaweedFS:
 		if c.ObjectsEndpoint == "" {
 			errs = append(errs, fmt.Errorf(
-				"OBJECTS_ENDPOINT is required when OBJECTS_BACKEND=s3: message "+
+				"OBJECTS_ENDPOINT is required when OBJECTS_BACKEND=s3 or OBJECTS_BACKEND=seaweedfs: message "+
 					"attachments have nowhere to go without it"))
 		}
 	case ObjectsBackendFilesystem:
