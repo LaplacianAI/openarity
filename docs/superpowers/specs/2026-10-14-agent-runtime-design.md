@@ -2,7 +2,7 @@
 
 **Status:** overall design, not built. Each slice below gets its own spec and
 plan; this document is what keeps them from painting each other into a corner.
-**Modules:** `apps/brain`, and `sdk/agent` for one slice
+**Modules:** `apps/brain`, and `sdk/agent` for two slices
 
 ## The problem
 
@@ -29,7 +29,9 @@ and not taken.
 | Where delegation lives | two tools the brain adds to an agent, with their functions in the brain | inside the SDK behind `AgentResolver`; the planner |
 | How selection works | one `graph` tool the agent drives: cosine similarity over stored embeddings, then Cypher hops | three tools, each a fixed pipeline the brain drives |
 | Who writes the Cypher | the brain, from the agent's parameters | the agent, as Text2Cypher does |
-| Build order | five slices: a run, the graph tool, delegation, loading, background | delegation first; one spec and one plan |
+| Where compaction lives | in the SDK, a step beside the one that saves the transcript | in the brain, rewriting history between turns |
+| Who writes the summary | the agent's own model through its own endpoint, no tools, a fixed prompt the agent can extend | a separate cheaper model; a compaction agent in the registry |
+| Build order | six slices: a run, compaction, the graph tool, delegation, loading, background | delegation first; one spec and one plan |
 
 ## What this changes in the HLD
 
@@ -39,7 +41,7 @@ They are not wrong; this is a change of scope, made knowingly.
 - **`Scope-V1.md` defers multi-agent delegation and agentic graph RAG.** Both
   start here. Its reason for deferring delegation — that authorisation,
   cross-agent context and partial failure all arrive together — is why
-  delegation is slice 3 and not slice 1, and why each of the three has a
+  delegation is slice 4 and not slice 1, and why each of the three has a
   section below.
 - **`Planner.md`'s fixed plan stays deferred, and is not what runs first.** A
   run is one agent deciding turn by turn. Nothing here prevents a planner
@@ -85,6 +87,38 @@ needs authorising. A team here can hold hundreds, and `Selection.md` already
 cites selection accuracy falling past 30 to 50 options. The graph replaces the
 list.
 
+### How Claude Code compacts
+
+From its documentation (`how-claude-code-works`, `context-window`,
+`model-config`, `sub-agents`, `hooks`), not its code.
+
+- **It triggers on tokens, not turns.** It compacts as the context nears the
+  model's limit, a window the user can set (`autoCompactWindow`). A turn limit
+  is a separate guard: a subagent that hits `maxTurns` is marked partial and
+  can be resumed.
+- **It clears before it summarises.** Older tool outputs go first; the
+  conversation is summarised only if that is not enough.
+- **The summary keeps** the requests and intent, key concepts, files and
+  important snippets, errors and their fixes, pending tasks and the current
+  work. Full tool outputs and intermediate reasoning are gone.
+- **Some things are put back afterwards**: the most recently modified files are
+  re-read, invoked skills re-injected (up to 5,000 tokens each), and the
+  project instructions reloaded. Instructions given only in conversation can be
+  lost, which is why it tells users to keep standing rules in a file.
+- **It can be steered**: a "Compact Instructions" section in the project file,
+  or a focus given with `/compact`.
+- **The transcript is kept.** A `compact_boundary` entry, with what triggered it
+  and the token count before, marks where the summary takes over.
+- **Each subagent compacts in its own transcript.** The parent compacting does
+  not touch a subagent's.
+- **It refuses to thrash.** If one output refills the context after a few
+  attempts, it stops with an error instead of looping.
+
+The Anthropic API also compacts on the server (`compaction: {type:
+"summarize"}`, returning a signed block that replaces the messages it
+summarises). It is not used here: the SDK reaches models through an
+OpenAI-compatible endpoint, and a signed block does not survive a gateway.
+
 ### Agentic GraphRAG
 
 The term is not standardised and most descriptions are vendor posts. The
@@ -107,7 +141,7 @@ dependencies. Both sets of numbers are the authors' own evaluations.
 | `internal/runtime` | Turns an agent row into an `agent.Spec`, supplies the `graph` and `delegate` tools, and holds the worker job that executes runs. |
 | `internal/graph` | Gains its read side: cosine similarity and hops over a team's graph. |
 | Postgres | `runs`, a tree; `run_events`; delegation settings on agents. Transcripts in the SDK's session tables. |
-| `sdk/agent` | Unchanged until slice 4, which needs a tool set that can grow during a run. |
+| `sdk/agent` | Gains compaction in slice 2, and in slice 5 a tool set that can grow during a run. |
 
 One run, with one delegation:
 
@@ -285,11 +319,11 @@ What does not vary:
 
 | Kind | Action | Slice |
 | --- | --- | --- |
-| an agent | `delegate(agent, brief)` | 3 |
-| a tool | load it; its definition joins the run's tool set | 4 |
-| a skill | load it, as the SDK's skill tool does today | 4 |
+| an agent | `delegate(agent, brief)` | 4 |
+| a tool | load it; its definition joins the run's tool set | 5 |
+| a skill | load it, as the SDK's skill tool does today | 5 |
 
-Until slice 4 a run binds all of its agent's granted tools and skills at the
+Until slice 5 a run binds all of its agent's granted tools and skills at the
 start, as the SDK does now. The `graph` tool still returns tools and skills
 before then, because what an agent holds is how another agent chooses it.
 
@@ -358,7 +392,7 @@ cost the durable-sessions design already states.
 
 **Delegates run in one of two ways.**
 
-| | Foreground, slice 3 | Background, slice 5 |
+| | Foreground, slice 4 | Background, slice 6 |
 | --- | --- | --- |
 | Where it runs | inside the parent's tool call, same worker | its own queued run, any worker |
 | Parent | waits for the report | gets the child's run id at once and continues |
@@ -378,6 +412,71 @@ background delegates in the tree are marked the same way. `worker` and
 **Events.** The worker appends to `run_events`. The API streams from the
 table.
 
+## Compaction
+
+A run that outgrows its model's context window would fail on its next request.
+Compaction lets it carry on: the oldest part of the transcript is replaced by
+a summary, and the run continues from there. This is the SDK's, so every
+consumer gets it; the brain turns it on and records it.
+
+### When
+
+Before each model request, the SDK estimates the request's size from the last
+response's token usage plus what has been added since. Past the agent's
+threshold, it compacts first. The threshold is tokens, below the model's
+window, with room left for the reply and for the summary call itself. Turns are
+not the trigger: a turn can be ten tokens or a hundred thousand.
+
+### How, cheapest first
+
+1. **Clear old tool results.** A result older than the last few turns is
+   replaced by a short stub naming the tool and the `run_events` entry that
+   holds it in full. Tool calls are kept, so the history still makes sense to
+   the model and to the API. If that brings the request under the threshold,
+   nothing is summarised.
+2. **Summarise.** One call to the agent's own model, through its own endpoint,
+   with no tools. Everything but the last few turns is summarised; those stay
+   word for word. The prompt is fixed, and an agent can add to it, as Claude
+   Code's Compact Instructions do.
+
+The summary comes back in two parts, because `Runtime.md` decided that
+references survive and summaries do not:
+
+```text
+summary     what was asked, what has been decided, what was done, what failed
+            and why, what is still to do, what the agent is doing now
+references  every identifier the run has touched: issue numbers, URLs,
+            run ids, file paths, record ids
+```
+
+### What is kept
+
+- **The system prompt and tool definitions are never summarised.** They are
+  sent fresh on every request, as they are today.
+- **Skills loaded during the run are loaded again** after the summary, so a
+  skill's instructions are not reduced to a paraphrase.
+- **Nothing is deleted.** The session store gets a compaction entry, a
+  boundary like Claude Code's: loading the session returns the summary, the
+  references, and every message after the boundary. The messages before it stay
+  in the store, so the run remains a complete record for audit.
+- **`run_events` records it**: a `compacted` event with what triggered it, the
+  token count before and after, and whether a summary was needed.
+
+### Around it
+
+- **A delegate compacts its own transcript.** A parent never compacts a
+  child's, and a child's report reaches its parent already short.
+- **Compacting again** summarises the previous summary and what came after it;
+  the references are merged, not summarised.
+- **Crash safety.** The compaction entry is written in the same save as the
+  transcript, so a run that dies mid-compaction resumes either before it or
+  after it, never half-way.
+- **No thrashing.** If compaction cannot bring the request under the threshold,
+  because a single recent result is larger than the room left, the run fails
+  and says which result. It does not compact again in a loop.
+- **The summary call counts.** Its tokens join the run's and the tree's totals,
+  and the budget check reads them.
+
 ## Limits
 
 Constants in code to start with, as the server timeouts are, and promoted to
@@ -386,8 +485,10 @@ configuration only when a deployment needs a different value.
 | Limit | Start |
 | --- | --- |
 | Delegation depth | 3 |
-| Runs in one tree | to be set in slice 3 |
-| Background delegates at once, per tree | to be set in slice 5 |
+| Compaction threshold | a fraction of the agent's context window; to be set in slice 2 |
+| Turns kept word for word | to be set in slice 2 |
+| Runs in one tree | to be set in slice 4 |
+| Background delegates at once, per tree | to be set in slice 6 |
 | Tokens per tree | to be set in slice 1 |
 | Wall-clock per tree | to be set in slice 1 |
 
@@ -403,6 +504,8 @@ knows prices.
 | The graph is down or behind | the `graph` tool says it is unavailable; delegating by name still works |
 | A limit is hit | refused as a tool result, recorded as an event |
 | A worker dies | the run resumes from its transcript on another worker |
+| The context window fills | the run compacts and continues; if compaction cannot make room, it fails and names the result that is too large |
+| The summary call fails | the run carries on uncompacted if there is room, and fails naming the model setting if there is not |
 
 ## Testing
 
@@ -413,22 +516,32 @@ knows prices.
 - A resumed run and an uninterrupted one produce the same record.
 - The wired object is driven, not only its parts: a `graph` or `delegate` tool
   that is built and never added to a spec passes every unit test.
+- Compaction against the scripted endpoint: a run that crosses its threshold
+  clears before it summarises, keeps the last turns and every reference word for
+  word, and a run killed mid-compaction resumes to the same record as one that
+  was not. A result too large to make room for fails the run instead of looping.
 
 ## The slices
 
-Each works end to end before the next begins.
+Each works end to end before anything built on it begins.
 
 ```text
 1. A run          start one through the API, one agent executes it with all its
                   granted tools and skills, events stream, the run is recorded
-2. The graph tool cosine similarity and hops over agents, tools and skills
-3. Delegation     the delegate tool, its checks, the report, nesting
-4. Loading        selecting a tool or a skill mid-run; the SDK's growable tool set
-5. Background     delegates that do not block, resume by id, cancel across workers
+2. Compaction     a run that outgrows its context window carries on; in the SDK
+3. The graph tool cosine similarity and hops over agents, tools and skills
+4. Delegation     the delegate tool, its checks, the report, nesting
+5. Loading        selecting a tool or a skill mid-run; the SDK's growable tool set
+6. Background     delegates that do not block, resume by id, cancel across workers
 ```
 
 Slice 1 is first because nothing in the brain calls a model or records a run,
 and every later slice sits on both.
+
+Slice 2 is SDK work and touches neither the graph nor delegation, so it can be
+built alongside slice 1; the brain's part is a setting and an event. It comes
+before delegation because a long run is what an orchestrator is, and an
+orchestrator that fails at its context window cannot hand anything on.
 
 ### To probe at the start of slice 1
 
@@ -449,21 +562,44 @@ and every later slice sits on both.
 3. Whether skills are listed up to a threshold and searched above it, and
    where the threshold sits.
 4. How a channel names its entry agent. Channels start runs after slice 1.
+5. Where an agent's additions to the summary prompt are kept: a column on
+   `agents`, or a section of its instructions that compaction reads.
+6. How the size of a request is estimated when an endpoint reports no token
+   usage. Most OpenAI-compatible gateways report it; a few do not.
+7. **The vector search's cut comes before the scope.** In the Cypher under "The
+   `graph` tool", `queryNodes(…, 5, …)` takes the five nearest skills in the
+   whole team before `WHERE a.id IN $reach` runs, so the cut can be spent on
+   what the agent cannot reach — what "Scope is inside the query" says must
+   not happen. Either fetch more than is returned and cut after the scope, or
+   filter inside the vector query if FalkorDB allows it.
+8. **What `root_run_id` holds on the root run**: its own id, or null. Its own id
+   makes "every run in this tree" one equality; null matches `parent_run_id`.
 
 ## Not in scope
+
+- **Session memory across runs**: the rolling summary and references a
+  *session* carries from one run to the next. Compaction is within one run's
+  transcript; the two share the summary-and-references shape, and session
+  memory needs a design of its own.
 
 - **The planner**, branches and loops. `Planner.md` stands as written.
 - **Learnings.** The registry design gives their shape; they need runs to
   learn from, which this provides, and a design of their own.
 - **Workspaces and large tool results.** `Runtime.md` describes them; nothing
   here stores a file.
-- **Session memory**: the rolling summary and references across runs.
 - **Channels starting runs**, and replies going back out through a channel.
 - **A delegate asking the person a question.**
 - **Agent teams and scripted workflows**, the other two ways Claude Code
   orchestrates.
 
 ## Sources
+
+- Claude Code documentation on compaction:
+  [how Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up),
+  [the context window](https://code.claude.com/docs/en/context-window),
+  [model configuration](https://code.claude.com/docs/en/model-config#set-the-auto-compact-window),
+  [hooks](https://code.claude.com/docs/en/hooks)
+- [Compaction on demand, Claude API](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand)
 
 - Claude Code documentation: [subagents](https://code.claude.com/docs/en/sub-agents),
   [Agent SDK subagents](https://code.claude.com/docs/en/agent-sdk/subagents),
