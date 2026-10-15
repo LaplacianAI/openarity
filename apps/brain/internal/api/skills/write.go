@@ -108,7 +108,7 @@ func (w writer) upload(ctx context.Context, teamID uuid.UUID, files []skill.File
 	}
 
 	if err := w.store.ReserveObjects(ctx, db.ReserveObjectsParams{
-		ObjectKeys: keys, TeamID: teamID, ClaimableAfter: time.Now().Add(reservationHold),
+		ObjectKeys: keys, TeamID: teamID, HoldSeconds: reservationHold.Seconds(),
 	}); err != nil {
 		return nil, fmt.Errorf("reserve objects: %w", err)
 	}

@@ -27,11 +27,11 @@ func claimedKeys(t *testing.T, s *Store) []string {
 	return keys
 }
 
-func reserve(t *testing.T, s *Store, teamID uuid.UUID, after time.Time, keys ...string) {
+func reserve(t *testing.T, s *Store, teamID uuid.UUID, hold time.Duration, keys ...string) {
 	t.Helper()
 
 	if err := s.ReserveObjects(t.Context(), db.ReserveObjectsParams{
-		ObjectKeys: keys, TeamID: teamID, ClaimableAfter: after,
+		ObjectKeys: keys, TeamID: teamID, HoldSeconds: hold.Seconds(),
 	}); err != nil {
 		t.Fatalf("ReserveObjects: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestAReservationIsNotClaimedWhileTheUploadMayStillCommit(t *testing.T) {
 	team := mustCreate(t, s, "platform")
 	key := "teams/" + team.ID.String() + "/objects/uploading"
 
-	reserve(t, s, team.ID, time.Now().Add(10*time.Minute), key)
+	reserve(t, s, team.ID, 10*time.Minute, key)
 
 	if got := claimedKeys(t, s); slices.Contains(got, key) {
 		t.Errorf("a reservation was claimed before it was claimable: %v", got)
@@ -60,7 +60,7 @@ func TestAReservationIsClaimedOnceItsHoldHasPassed(t *testing.T) {
 	team := mustCreate(t, s, "platform")
 	key := "teams/" + team.ID.String() + "/objects/abandoned"
 
-	reserve(t, s, team.ID, time.Now().Add(-time.Second), key)
+	reserve(t, s, team.ID, -time.Second, key)
 
 	if got := claimedKeys(t, s); !slices.Contains(got, key) {
 		t.Errorf("a reservation past its hold was not claimed: %v", got)
@@ -95,7 +95,7 @@ func TestANeverTriedReservationIsStillHeld(t *testing.T) {
 	team := mustCreate(t, s, "platform")
 	key := "teams/" + team.ID.String() + "/objects/fresh"
 
-	reserve(t, s, team.ID, time.Now().Add(time.Hour), key)
+	reserve(t, s, team.ID, time.Hour, key)
 
 	var tried bool
 	if err := s.pool.QueryRow(t.Context(),
@@ -139,6 +139,29 @@ func TestObjectReferencesCountSkillFilesAndAttachments(t *testing.T) {
 	}
 }
 
+// The hold is counted on the database's clock, the one the claim reads. Written
+// from the brain's clock, a database running ahead of it by more than the hold
+// would find a fresh reservation already claimable, and the reaper would
+// delete an object whose row was about to commit. Measured against Postgres's
+// own now(), so skew between this machine and the database cannot pass it.
+func TestTheHoldIsCountedOnTheDatabasesClock(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	key := "teams/" + team.ID.String() + "/objects/held"
+
+	reserve(t, s, team.ID, time.Hour, key)
+
+	var left float64
+	if err := s.pool.QueryRow(t.Context(),
+		`SELECT extract(epoch FROM claimable_after - now()) FROM deleted_objects WHERE object_key = $1`,
+		key).Scan(&left); err != nil {
+		t.Fatalf("read reservation: %v", err)
+	}
+	if hold := time.Hour.Seconds(); left > hold || left < hold-30 {
+		t.Errorf("claimable in %.0fs by the database's clock, want about %.0fs", left, hold)
+	}
+}
+
 // A key reserved twice is refused. Keys are fresh per upload, so a second
 // reservation means two uploads chose one key — and both would believe they
 // own the object. Failing the second is the only answer that stays true.
@@ -147,10 +170,10 @@ func TestReservingTheSameKeyTwiceFails(t *testing.T) {
 	team := mustCreate(t, s, "platform")
 	key := "teams/" + team.ID.String() + "/objects/twice"
 
-	reserve(t, s, team.ID, time.Now().Add(time.Minute), key)
+	reserve(t, s, team.ID, time.Minute, key)
 
 	err := s.ReserveObjects(t.Context(), db.ReserveObjectsParams{
-		ObjectKeys: []string{key}, TeamID: team.ID, ClaimableAfter: time.Now().Add(time.Minute),
+		ObjectKeys: []string{key}, TeamID: team.ID, HoldSeconds: time.Minute.Seconds(),
 	})
 	wantPGCode(t, err, uniqueViolation, "a key reserved twice")
 }

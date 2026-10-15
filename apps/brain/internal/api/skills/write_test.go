@@ -319,15 +319,14 @@ func TestAReservationIsHeldForTheWholeHold(t *testing.T) {
 	t.Parallel()
 
 	s := newTxStore()
-	before := time.Now()
 	if _, err := (writer{store: s, objects: newBucket(s)}).create(t.Context(), uuid.New(), pdfSkill(t), uploaded); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	after := time.Now()
 
-	got := s.reserved[0].ClaimableAfter
-	if got.Before(before.Add(reservationHold)) || got.After(after.Add(reservationHold)) {
-		t.Errorf("claimable after %v, want %v from now", got.Sub(before), reservationHold)
+	// A duration, not a time: the database adds it to its own now(), so the
+	// brain's clock has no say in when the hold ends.
+	if got := s.reserved[0].HoldSeconds; got != reservationHold.Seconds() {
+		t.Errorf("held for %vs, want %vs", got, reservationHold.Seconds())
 	}
 }
 

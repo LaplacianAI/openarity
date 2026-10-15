@@ -30,7 +30,8 @@ RETURNING *;
 --
 -- name: ReserveObjects :exec
 INSERT INTO deleted_objects (object_key, team_id, claimable_after)
-SELECT unnest(sqlc.arg('object_keys')::text[]), sqlc.arg('team_id'), sqlc.arg('claimable_after');
+SELECT unnest(sqlc.arg('object_keys')::text[]), sqlc.arg('team_id'),
+       now() + make_interval(secs => sqlc.arg('hold_seconds')::float8);
 
 -- The object is gone, so the record of work to do goes too. Called only after
 -- the object store confirms, or after the count above says another row still

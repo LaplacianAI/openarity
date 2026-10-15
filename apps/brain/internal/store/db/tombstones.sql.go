@@ -227,19 +227,20 @@ func (q *Queries) ForgetDeletedSecret(ctx context.Context, path string) error {
 
 const reserveObjects = `-- name: ReserveObjects :exec
 INSERT INTO deleted_objects (object_key, team_id, claimable_after)
-SELECT unnest($1::text[]), $2, $3
+SELECT unnest($1::text[]), $2,
+       now() + make_interval(secs => $3::float8)
 `
 
 type ReserveObjectsParams struct {
-	ObjectKeys     []string
-	TeamID         uuid.UUID
-	ClaimableAfter time.Time
+	ObjectKeys  []string
+	TeamID      uuid.UUID
+	HoldSeconds float64
 }
 
 // An upload's keys, tombstoned before their objects are written. Held back
 // until claimable_after so the reaper cannot sweep a file whose row is about
 // to be committed; after that, a key no row names is deleted like any other.
 func (q *Queries) ReserveObjects(ctx context.Context, arg ReserveObjectsParams) error {
-	_, err := q.db.Exec(ctx, reserveObjects, arg.ObjectKeys, arg.TeamID, arg.ClaimableAfter)
+	_, err := q.db.Exec(ctx, reserveObjects, arg.ObjectKeys, arg.TeamID, arg.HoldSeconds)
 	return err
 }
