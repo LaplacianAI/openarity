@@ -2,7 +2,7 @@
 
 **Status:** overall design, not built. Each slice below gets its own spec and
 plan; this document is what keeps them from painting each other into a corner.
-**Modules:** `apps/brain`, and `sdk/agent` for two slices
+**Modules:** `apps/brain`; `apps/sandbox` from slice 2; `sdk/agent` for two slices
 
 ## The problem
 
@@ -31,7 +31,9 @@ and not taken.
 | Who writes the Cypher | the brain, from the agent's parameters | the agent, as Text2Cypher does |
 | Where compaction lives | in the SDK, a step beside the one that saves the transcript | in the brain, rewriting history between turns |
 | Who writes the summary | the agent's own model through its own endpoint, no tools, a fixed prompt the agent can extend | a separate cheaper model; a compaction agent in the registry |
-| Build order | six slices: a run, compaction, the graph tool, delegation, loading, background | delegation first; one spec and one plan |
+| What a tool is | three kinds: MCP, custom (a script the team adds), built-in (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`); the runner sees one `agent.Tool` for each | MCP only, with team code wrapped as an MCP server |
+| Where code runs | one container per session, in a separate sandbox service the brain calls over HTTP | the brain driving Docker itself; a hosted sandbox |
+| Build order | seven slices: a run, the workspace, compaction, the graph tool, delegation, loading, background | delegation first; one spec and one plan; the workspace last |
 
 ## What this changes in the HLD
 
@@ -41,7 +43,7 @@ They are not wrong; this is a change of scope, made knowingly.
 - **`Scope-V1.md` defers multi-agent delegation and agentic graph RAG.** Both
   start here. Its reason for deferring delegation — that authorisation,
   cross-agent context and partial failure all arrive together — is why
-  delegation is slice 4 and not slice 1, and why each of the three has a
+  delegation is slice 5 and not slice 1, and why each of the three has a
   section below.
 - **`Planner.md`'s fixed plan stays deferred, and is not what runs first.** A
   run is one agent deciding turn by turn. Nothing here prevents a planner
@@ -141,7 +143,8 @@ dependencies. Both sets of numbers are the authors' own evaluations.
 | `internal/runtime` | Turns an agent row into an `agent.Spec`, supplies the `graph` and `delegate` tools, and holds the worker job that executes runs. |
 | `internal/graph` | Gains its read side: cosine similarity and hops over a team's graph. |
 | Postgres | `runs`, a tree; `run_events`; delegation settings on agents. Transcripts in the SDK's session tables. |
-| `sdk/agent` | Gains compaction in slice 2, and in slice 5 a tool set that can grow during a run. |
+| `apps/sandbox` | Slice 2. Holds the container runtime; runs a session's workspace and answers exec, read and write over HTTP. |
+| `sdk/agent` | Gains compaction in slice 3, and in slice 6 a tool set that can grow during a run. |
 
 One run, with one delegation:
 
@@ -256,6 +259,50 @@ Data in `rbac.json`, as every permission is.
   attachments do. There is no `run:read`: it could be granted to a role that
   cannot open the conversation the run is in.
 
+## Tools and the workspace
+
+An agent's tools come in three kinds. The runner sees no difference: each is an
+`agent.Tool`, a name, a schema and a function.
+
+| Kind | What the team adds | Where it runs |
+| --- | --- | --- |
+| MCP | a server, as today | on the server; the brain calls it |
+| Custom | a name, a description, an input schema, and a script with the files beside it | in the session's workspace: the arguments as JSON on stdin, stdout is the result |
+| Built-in | nothing; each is granted to an agent by name | `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, in the session's workspace |
+
+Skills do not change. A granted skill's files are copied into the workspace, so
+a skill whose instructions say "run `scripts/build.py`" is followed with `Bash`,
+as Claude Code follows it. An agent writes and runs its own scripts the same
+way: `Write`, then `Bash`.
+
+```text
+run ──► sdk Runner ──► Bash("python /skills/report/scripts/build.py")
+                            │  HTTP
+                            ▼
+                   apps/sandbox ──► the session's container
+                                      /workspace     what the agent writes
+                                      /skills/<name> granted skills' files
+                                      /tools/<name>  custom tools' scripts
+```
+
+- **One workspace per session, not per run.** A later run in the same session
+  finds what an earlier one left, and a delegate works in its parent's. This is
+  `Runtime.md`'s rule that the session is the unit of memory.
+- **A container.** Teams need native Python packages, which rules out WASM.
+  gVisor's `runsc` is used where the host has it.
+- **In its own service.** `apps/sandbox` alone holds the container runtime; the
+  brain reaches it over HTTP. Docker's socket is root on the host, and a
+  process that can be talked into running code must not hold it. This answers
+  `Agent-SDK.md`'s open question of where the sandbox lives.
+- **Closed by default.** No network unless allowed, and a secret a custom tool
+  needs is injected for that one call, never written to the workspace.
+- **Checked like the rest.** A built-in or custom tool is bound only when it is
+  granted to the agent, read from Postgres when the run starts.
+
+Slice 2 gets its own spec, which settles what this section leaves open: how a
+built-in is granted, where a custom tool's script is stored, the network
+allow-list, and when an idle container stops and what happens to its files.
+
 ## The `graph` tool
 
 ```text
@@ -307,7 +354,7 @@ What does not vary:
   | Kind | May be returned |
   | --- | --- |
   | agents | those the caller's delegation setting reaches |
-  | tools | those on MCP servers granted to the caller, honouring a grant's allow-list |
+  | tools | MCP tools on servers granted to the caller, honouring a grant's allow-list; custom and built-in tools granted to the caller |
   | skills | those granted to the caller |
 
 - **A grant's allow-list is honoured on the hop.** A `GRANTED` edge may carry
@@ -319,11 +366,11 @@ What does not vary:
 
 | Kind | Action | Slice |
 | --- | --- | --- |
-| an agent | `delegate(agent, brief)` | 4 |
-| a tool | load it; its definition joins the run's tool set | 5 |
-| a skill | load it, as the SDK's skill tool does today | 5 |
+| an agent | `delegate(agent, brief)` | 5 |
+| a tool | load it; its definition joins the run's tool set | 6 |
+| a skill | load it, as the SDK's skill tool does today | 6 |
 
-Until slice 5 a run binds all of its agent's granted tools and skills at the
+Until slice 6 a run binds all of its agent's granted tools and skills at the
 start, as the SDK does now. The `graph` tool still returns tools and skills
 before then, because what an agent holds is how another agent chooses it.
 
@@ -392,7 +439,7 @@ cost the durable-sessions design already states.
 
 **Delegates run in one of two ways.**
 
-| | Foreground, slice 4 | Background, slice 6 |
+| | Foreground, slice 5 | Background, slice 7 |
 | --- | --- | --- |
 | Where it runs | inside the parent's tool call, same worker | its own queued run, any worker |
 | Parent | waits for the report | gets the child's run id at once and continues |
@@ -485,10 +532,11 @@ configuration only when a deployment needs a different value.
 | Limit | Start |
 | --- | --- |
 | Delegation depth | 3 |
-| Compaction threshold | a fraction of the agent's context window; to be set in slice 2 |
-| Turns kept word for word | to be set in slice 2 |
-| Runs in one tree | to be set in slice 4 |
-| Background delegates at once, per tree | to be set in slice 6 |
+| Compaction threshold | a fraction of the agent's context window; to be set in slice 3 |
+| Turns kept word for word | to be set in slice 3 |
+| CPU, memory, disk and time per workspace call | to be set in slice 2 |
+| Runs in one tree | to be set in slice 5 |
+| Background delegates at once, per tree | to be set in slice 7 |
 | Tokens per tree | to be set in slice 1 |
 | Wall-clock per tree | to be set in slice 1 |
 
@@ -526,20 +574,26 @@ knows prices.
 Each works end to end before anything built on it begins.
 
 ```text
-1. A run          start one through the API, one agent executes it with all its
-                  granted tools and skills, events stream, the run is recorded
-2. Compaction     a run that outgrows its context window carries on; in the SDK
-3. The graph tool cosine similarity and hops over agents, tools and skills
-4. Delegation     the delegate tool, its checks, the report, nesting
-5. Loading        selecting a tool or a skill mid-run; the SDK's growable tool set
-6. Background     delegates that do not block, resume by id, cancel across workers
+1. A run          start one through the API, one agent executes it with its
+                  granted MCP tools and skills, events stream, the run is recorded
+2. The workspace  a container per session in apps/sandbox; the built-ins, custom
+                  script tools, and skill scripts run through Bash
+3. Compaction     a run that outgrows its context window carries on; in the SDK
+4. The graph tool cosine similarity and hops over agents, tools and skills
+5. Delegation     the delegate tool, its checks, the report, nesting
+6. Loading        selecting a tool or a skill mid-run; the SDK's growable tool set
+7. Background     delegates that do not block, resume by id, cancel across workers
 ```
 
 Slice 1 is first because nothing in the brain calls a model or records a run,
 and every later slice sits on both.
 
-Slice 2 is SDK work and touches neither the graph nor delegation, so it can be
-built alongside slice 1; the brain's part is a setting and an event. It comes
+Slice 2 is second because a skill that ships scripts, a custom tool and an
+agent that writes its own code all need somewhere to run, and every later slice
+assumes an agent can do what Claude Code's can.
+
+Slice 3 is SDK work and touches neither the graph nor delegation, so it can be
+built alongside slices 1 and 2; the brain's part is a setting and an event. It comes
 before delegation because a long run is what an orchestrator is, and an
 orchestrator that fails at its context window cannot hand anything on.
 
@@ -585,8 +639,8 @@ orchestrator that fails at its context window cannot hand anything on.
 - **The planner**, branches and loops. `Planner.md` stands as written.
 - **Learnings.** The registry design gives their shape; they need runs to
   learn from, which this provides, and a design of their own.
-- **Workspaces and large tool results.** `Runtime.md` describes them; nothing
-  here stores a file.
+- **Large tool results going to the workspace.** `Runtime.md` describes it;
+  slice 2 builds the workspace, not that.
 - **Channels starting runs**, and replies going back out through a channel.
 - **A delegate asking the person a question.**
 - **Agent teams and scripted workflows**, the other two ways Claude Code
