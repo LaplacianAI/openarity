@@ -537,8 +537,8 @@ configuration only when a deployment needs a different value.
 | CPU, memory, disk and time per workspace call | to be set in slice 2 |
 | Runs in one tree | to be set in slice 5 |
 | Background delegates at once, per tree | to be set in slice 7 |
-| Tokens per tree | to be set in slice 1 |
-| Wall-clock per tree | to be set in slice 1 |
+| Tokens per tree | 1,000,000 |
+| Wall-clock per tree | 30 minutes |
 
 The budget is counted in tokens and time, not currency. Nothing in the brain
 knows prices.
@@ -597,21 +597,38 @@ built alongside slices 1 and 2; the brain's part is a setting and an event. It c
 before delegation because a long run is what an orchestrator is, and an
 orchestrator that fails at its context window cannot hand anything on.
 
-### To probe at the start of slice 1
+### Probed at the start of slice 1
 
-`Background-Work.md` lists the first and last of these as unvalidated.
+Run on 2026-10-15 against DBOS v1.2.0 and Postgres 18, from a throwaway program.
 
-1. That DBOS treats a repeated workflow id as the same workflow.
-2. How the worker is woken promptly for a new run without writing a schedule
-   row every second. The graph drain moved to once a minute because DBOS keeps
-   a row per tick.
-3. How DBOS recovery behaves with two worker processes.
-4. That DBOS can share the brain's connection pool.
+1. **A repeated workflow id is the same workflow.** A second `RunWorkflow`
+   with the id returns the first one's result without running it, and five
+   concurrent calls ran it once. Enqueuing an id that exists is a silent no-op.
+2. **Waking the worker needs no schedule row per second.** The API enqueues on
+   a DBOS queue through a `dbos.Client` after its transaction commits, with the
+   run id as the workflow id. The queue is polled every second, a read rather
+   than a row, so a run starts about a second after it is created. A sweep once
+   a minute enqueues any run still `queued`, which covers an enqueue lost
+   between the commit and the call.
+3. **Two workers must not share an executor id.** At launch DBOS re-enqueues
+   every pending workflow carrying its own executor id, and the default id is
+   `local`, so a second worker re-queued the first one's run while it was still
+   running; only the first worker happening to dequeue it again prevented a
+   second copy. With an id per process nothing is recovered automatically, and
+   `ResumeWorkflow` from another worker carried a killed worker's run on from
+   the step after the last one it finished. So each worker has its own id, and
+   the brain decides when a run's worker is dead: `heartbeat_at`, compared with
+   the database's clock, and a takeover that only one worker can win.
+4. **DBOS can share the brain's pool, and does not.** It works, but it holds
+   one connection for `LISTEN` and `dbos.Shutdown` closes the pool it was given,
+   which would close the brain's store under any run still writing. The worker
+   keeps DBOS on its own pool.
 
 ## Open
 
-1. How `runs.agent_id` behaves when its agent is deleted. The brain's Postgres
-   floor is 13, which rules out a column-level `SET NULL` on a composite key.
+1. ~~How `runs.agent_id` behaves when its agent is deleted.~~ Slice 1: a
+   single-column foreign key to `agents (id)`, `ON DELETE SET NULL`, with the
+   team checked by the insert; `agent_name` keeps the record readable.
 2. The values of the limits marked "to be set".
 3. Whether skills are listed up to a threshold and searched above it, and
    where the threshold sits.
@@ -626,8 +643,8 @@ orchestrator that fails at its context window cannot hand anything on.
    what the agent cannot reach — what "Scope is inside the query" says must
    not happen. Either fetch more than is returned and cut after the scope, or
    filter inside the vector query if FalkorDB allows it.
-8. **What `root_run_id` holds on the root run**: its own id, or null. Its own id
-   makes "every run in this tree" one equality; null matches `parent_run_id`.
+8. ~~What `root_run_id` holds on the root run.~~ Slice 1: its own id, so
+   "every run in this tree" is one equality.
 
 ## Not in scope
 
