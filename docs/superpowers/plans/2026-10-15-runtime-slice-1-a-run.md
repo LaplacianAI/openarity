@@ -55,13 +55,14 @@ the spec and are built into Tasks 3, 7, 8 and 10:
 - **`oa run`.** The CLI gets its own small plan once `openapi.yaml` carries
   these routes; its client is generated from that file.
 - **Steering a run, and listing a session's runs.**
-- **Command MCP servers, built-ins and custom tools.** These belong to slice 2,
+- **Command MCP servers, built-ins and custom tools.** These belong to slice 3,
   the workspace. A granted command server is recorded as unavailable, not bound.
-- **Delegation settings, the `graph` tool and compaction** belong to slices 3–5.
-- **Loops a team writes and uploads.** Task 5 makes the loops an agent may
-  choose the ones the brain's `Runner` registers, so a deployment adds its own
-  in Go. A team writing one without rebuilding the brain, as a script in the
-  workspace or as data, is a later design, built on slice 2.
+- **Compaction, the `graph` tool and delegation settings** belong to slices 4–6.
+- **Loops a team writes and uploads.** These are slice 2: Go from a template,
+  compiled to WebAssembly and run by wazero behind an `agent.Pattern` adapter
+  (spec, *Loops*). This plan makes the ground ready. Task 5 makes the loops an
+  agent may choose a list the brain owns, not a database CHECK. That list is
+  `GET /teams/{id}/loops`, under a team because a team's loops will join it.
 
 ## Global Constraints
 
@@ -545,7 +546,7 @@ How `Build` maps a row:
 - `Session` is the one passed in.
 - `Pattern` is copied as stored. The builder does not judge it: the SDK's `Runner` refuses a name it has not registered, and lists the ones it has.
 - **MCP:**
-  - A command server is not bound, and goes in `Unavailable` with "a command server runs in the workspace, which slice 2 adds".
+  - A command server is not bound, and goes in `Unavailable` with "a command server runs in the workspace, which slice 3 adds".
   - A URL server is bound with `mcp.Connect(ctx, mcp.Server{Name, URL, HTTPClient, Bare})`. Its tools are kept only where `allow` is null or holds the tool's unprefixed name.
   - An unreachable URL server fails the build with an error naming it.
   - `mcp.Gather` refuses a duplicate tool name.

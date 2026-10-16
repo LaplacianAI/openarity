@@ -2,7 +2,7 @@
 
 **Status:** overall design, not built. Each slice below gets its own spec and
 plan; this document is what keeps them from painting each other into a corner.
-**Modules:** `apps/brain`; `apps/sandbox` from slice 2; `sdk/agent` for two slices
+**Modules:** `apps/brain`; `apps/sandbox` from slice 3; `sdk/agent` for two slices
 
 ## The problem
 
@@ -32,9 +32,10 @@ and not taken.
 | Where compaction lives | in the SDK, a step beside the one that saves the transcript | in the brain, rewriting history between turns |
 | Who writes the summary | the agent's own model through its own endpoint, no tools, a fixed prompt the agent can extend | a separate cheaper model; a compaction agent in the registry |
 | What a tool is | three kinds: MCP, custom (a script the team adds), built-in (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`); the runner sees one `agent.Tool` for each | MCP only, with team code wrapped as an MCP server |
-| Which loops an agent may use | the patterns the brain's `Runner` registers; a deployment adds its own in Go; the API checks against them | a fixed list in a database CHECK; loops a team uploads, which wait for the workspace |
+| Which loops an agent may use | the built-in patterns, plus loops its team writes in Go from a template and uploads; the API checks against both | a fixed list in a database CHECK; loops only a deployment can add |
+| How a team's loop runs | compiled once to WebAssembly (`GOOS=wasip1`) and run in-process by wazero, behind an `agent.Pattern` adapter | a Go interpreter (yaegi) inside the worker; a process in the session's container; Go plugins |
 | Where code runs | one container per session, in a separate sandbox service the brain calls over HTTP | the brain driving Docker itself; a hosted sandbox |
-| Build order | seven slices: a run, the workspace, compaction, the graph tool, delegation, loading, background | delegation first; one spec and one plan; the workspace last |
+| Build order | eight slices: a run, team loops, the workspace, compaction, the graph tool, delegation, loading, background | delegation first; one spec and one plan; the workspace last |
 
 ## What this changes in the HLD
 
@@ -44,7 +45,7 @@ They are not wrong; this is a change of scope, made knowingly.
 - **`Scope-V1.md` defers multi-agent delegation and agentic graph RAG.** Both
   start here. Its reason for deferring delegation — that authorisation,
   cross-agent context and partial failure all arrive together — is why
-  delegation is slice 5 and not slice 1, and why each of the three has a
+  delegation is slice 6 and not slice 1, and why each of the three has a
   section below.
 - **`Planner.md`'s fixed plan stays deferred, and is not what runs first.** A
   run is one agent deciding turn by turn. Nothing here prevents a planner
@@ -144,8 +145,9 @@ dependencies. Both sets of numbers are the authors' own evaluations.
 | `internal/runtime` | Turns an agent row into an `agent.Spec`, supplies the `graph` and `delegate` tools, and holds the worker job that executes runs. |
 | `internal/graph` | Gains its read side: cosine similarity and hops over a team's graph. |
 | Postgres | `runs`, a tree; `run_events`; delegation settings on agents. Transcripts in the SDK's session tables. |
-| `apps/sandbox` | Slice 2. Holds the container runtime; runs a session's workspace and answers exec, read and write over HTTP. |
-| `sdk/agent` | Gains compaction in slice 3, and in slice 6 a tool set that can grow during a run. |
+| `internal/loops` | Slice 2. Stores a team's loop, compiles it to WebAssembly, and adapts it to an `agent.Pattern` that runs in wazero. |
+| `apps/sandbox` | Slice 3. Holds the container runtime; runs a session's workspace and answers exec, read and write over HTTP. |
+| `sdk/agent` | Gains compaction in slice 4, and in slice 7 a tool set that can grow during a run. |
 
 One run, with one delegation:
 
@@ -260,6 +262,56 @@ Data in `rbac.json`, as every permission is.
   attachments do. There is no `run:read`: it could be granted to a role that
   cannot open the conversation the run is in.
 
+## Loops
+
+A loop decides the order of an agent's model and tool calls: ReAct, plan then
+act, reflection. Four are built in. A team can also write its own, in Go, from
+a template in the UI:
+
+```go
+func Run(ctx context.Context, in loop.Input) (loop.Result, error) {
+	msgs := in.Messages
+	for step := 1; step <= in.MaxSteps; step++ {
+		resp, err := in.Model.Complete(ctx, msgs, in.Tools)
+		if err != nil { return loop.Result{}, err }
+		msgs = append(msgs, resp.Message)
+		if len(resp.Message.ToolCalls) == 0 { return loop.Done(resp, msgs), nil }
+		for _, c := range resp.Message.ToolCalls {
+			msgs = append(msgs, in.Tools.Call(ctx, c))
+		}
+	}
+	return loop.Result{}, loop.ErrMaxSteps
+}
+```
+
+- **An agent names its loop.** The choices are the built-ins plus its team's
+  loops, listed by `GET /teams/{id}/loops`; the API refuses anything else.
+- **Uploading compiles.** The source is kept in Postgres; it is compiled once,
+  to WebAssembly with `GOOS=wasip1`, and the module is stored encrypted beside
+  it. A loop that does not compile is refused at upload with the compiler's
+  message, not discovered at run time.
+- **Running registers it with the SDK.** A run builds its `Runner` from the
+  built-ins and its team's loops. Each team loop is an `agent.Pattern` adapter
+  around its module, run by wazero inside the worker.
+- **The loop reaches nothing but the brain.** It has its own memory and no
+  system calls. `Model.Complete`, `Tools.Call` and event reporting are host
+  functions the brain answers through the same client the built-in loops use,
+  so the transcript, steering, the token budget and `run_events` hold for code
+  the brain did not write. A loop that hangs is stopped through its context.
+- **A team loop cannot take a built-in's name.** The built-ins are the same for
+  every team, and a loop called `react` that is not ReAct would mislead whoever
+  reads the agent.
+
+Slice 2 gets its own spec, which settles what this section leaves open:
+
+- **The guest library.** `loop.Input`, `loop.Result`, `loop.Done` and the host
+  functions they call, as a small Go package the template imports.
+- **Where the compiler runs.** A Go toolchain in the brain's image, or a build
+  step elsewhere.
+- **Limits.** Memory pages, module size, and compile time.
+- **Versions.** Whether an agent follows the latest upload of its loop or pins
+  one, and what a run already started keeps using.
+
 ## Tools and the workspace
 
 An agent's tools come in three kinds. The runner sees no difference: each is an
@@ -300,7 +352,7 @@ run ──► sdk Runner ──► Bash("python /skills/report/scripts/build.py"
 - **Checked like the rest.** A built-in or custom tool is bound only when it is
   granted to the agent, read from Postgres when the run starts.
 
-Slice 2 gets its own spec, which settles what this section leaves open: how a
+Slice 3 gets its own spec, which settles what this section leaves open: how a
 built-in is granted, where a custom tool's script is stored, the network
 allow-list, and when an idle container stops and what happens to its files.
 
@@ -367,11 +419,11 @@ What does not vary:
 
 | Kind | Action | Slice |
 | --- | --- | --- |
-| an agent | `delegate(agent, brief)` | 5 |
-| a tool | load it; its definition joins the run's tool set | 6 |
-| a skill | load it, as the SDK's skill tool does today | 6 |
+| an agent | `delegate(agent, brief)` | 6 |
+| a tool | load it; its definition joins the run's tool set | 7 |
+| a skill | load it, as the SDK's skill tool does today | 7 |
 
-Until slice 6 a run binds all of its agent's granted tools and skills at the
+Until slice 7 a run binds all of its agent's granted tools and skills at the
 start, as the SDK does now. The `graph` tool still returns tools and skills
 before then, because what an agent holds is how another agent chooses it.
 
@@ -440,7 +492,7 @@ cost the durable-sessions design already states.
 
 **Delegates run in one of two ways.**
 
-| | Foreground, slice 5 | Background, slice 7 |
+| | Foreground, slice 6 | Background, slice 8 |
 | --- | --- | --- |
 | Where it runs | inside the parent's tool call, same worker | its own queued run, any worker |
 | Parent | waits for the report | gets the child's run id at once and continues |
@@ -533,11 +585,11 @@ configuration only when a deployment needs a different value.
 | Limit | Start |
 | --- | --- |
 | Delegation depth | 3 |
-| Compaction threshold | a fraction of the agent's context window; to be set in slice 3 |
-| Turns kept word for word | to be set in slice 3 |
-| CPU, memory, disk and time per workspace call | to be set in slice 2 |
-| Runs in one tree | to be set in slice 5 |
-| Background delegates at once, per tree | to be set in slice 7 |
+| Compaction threshold | a fraction of the agent's context window; to be set in slice 4 |
+| Turns kept word for word | to be set in slice 4 |
+| CPU, memory, disk and time per workspace call | to be set in slice 3 |
+| Runs in one tree | to be set in slice 6 |
+| Background delegates at once, per tree | to be set in slice 8 |
 | Tokens per tree | 1,000,000 |
 | Wall-clock per tree | 30 minutes |
 
@@ -577,24 +629,31 @@ Each works end to end before anything built on it begins.
 ```text
 1. A run          start one through the API, one agent executes it with its
                   granted MCP tools and skills, events stream, the run is recorded
-2. The workspace  a container per session in apps/sandbox; the built-ins, custom
+2. Team loops     a team writes a loop in Go from a template and uploads it; it is
+                  compiled to WebAssembly and run by wazero for the agents using it
+3. The workspace  a container per session in apps/sandbox; the built-ins, custom
                   script tools, and skill scripts run through Bash
-3. Compaction     a run that outgrows its context window carries on; in the SDK
-4. The graph tool cosine similarity and hops over agents, tools and skills
-5. Delegation     the delegate tool, its checks, the report, nesting
-6. Loading        selecting a tool or a skill mid-run; the SDK's growable tool set
-7. Background     delegates that do not block, resume by id, cancel across workers
+4. Compaction     a run that outgrows its context window carries on; in the SDK
+5. The graph tool cosine similarity and hops over agents, tools and skills
+6. Delegation     the delegate tool, its checks, the report, nesting
+7. Loading        selecting a tool or a skill mid-run; the SDK's growable tool set
+8. Background     delegates that do not block, resume by id, cancel across workers
 ```
 
 Slice 1 is first because nothing in the brain calls a model or records a run,
 and every later slice sits on both.
 
-Slice 2 is second because a skill that ships scripts, a custom tool and an
+Slice 2 is second because it sits only on a run: a loop is how a run proceeds,
+and a team that needs its own shape of loop should not wait for a sandbox it
+does not use. WebAssembly is what makes that possible; a container would tie it
+to slice 3.
+
+Slice 3 comes next because a skill that ships scripts, a custom tool and an
 agent that writes its own code all need somewhere to run, and every later slice
 assumes an agent can do what Claude Code's can.
 
-Slice 3 is SDK work and touches neither the graph nor delegation, so it can be
-built alongside slices 1 and 2; the brain's part is a setting and an event. It comes
+Slice 4 is SDK work and touches neither the graph nor delegation, so it can be
+built alongside slices 1 to 3; the brain's part is a setting and an event. It comes
 before delegation because a long run is what an orchestrator is, and an
 orchestrator that fails at its context window cannot hand anything on.
 
@@ -658,7 +717,7 @@ Run on 2026-10-15 against DBOS v1.2.0 and Postgres 18, from a throwaway program.
 - **Learnings.** The registry design gives their shape; they need runs to
   learn from, which this provides, and a design of their own.
 - **Large tool results going to the workspace.** `Runtime.md` describes it;
-  slice 2 builds the workspace, not that.
+  slice 3 builds the workspace, not that.
 - **Channels starting runs**, and replies going back out through a channel.
 - **A delegate asking the person a question.**
 - **Agent teams and scripted workflows**, the other two ways Claude Code
