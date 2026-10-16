@@ -185,6 +185,45 @@ func (q *Queries) GetAgent(ctx context.Context, id uuid.UUID) (Agent, error) {
 	return i, err
 }
 
+const getAgentByName = `-- name: GetAgentByName :one
+SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at FROM agents
+WHERE team_id = $1 AND lower(name) = lower($2::text)
+`
+
+type GetAgentByNameParams struct {
+	TeamID uuid.UUID
+	Name   string
+}
+
+// A run names its agent; names are unique per team in any case, and
+// agents_team_name_key is on (team_id, lower(name)), so this reads one entry.
+func (q *Queries) GetAgentByName(ctx context.Context, arg GetAgentByNameParams) (Agent, error) {
+	row := q.db.QueryRow(ctx, getAgentByName, arg.TeamID, arg.Name)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Name,
+		&i.Description,
+		&i.Kind,
+		&i.Instructions,
+		&i.ModelName,
+		&i.MaxTokens,
+		&i.Temperature,
+		&i.Pattern,
+		&i.MaxSteps,
+		&i.SteerContinuations,
+		&i.OutputSchema,
+		&i.Parser,
+		&i.ParserModelName,
+		&i.ParserMaxTokens,
+		&i.ParserTemperature,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listAgentMCPServers = `-- name: ListAgentMCPServers :many
 SELECT agent_id, mcp_server_id, team_id, allow FROM agent_mcp_servers WHERE agent_id = $1 ORDER BY mcp_server_id
 `
@@ -288,6 +327,97 @@ func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamPara
 			&i.ParserModelName,
 			&i.ParserMaxTokens,
 			&i.ParserTemperature,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGrantedMCPServers = `-- name: ListGrantedMCPServers :many
+SELECT s.id, s.team_id, s.name, s.url, s.command, s.env, s.auth_secret_ref, s.bare, s.discovered_at, s.created_at, s.updated_at, g.allow
+FROM agent_mcp_servers g
+JOIN mcp_servers s ON s.id = g.mcp_server_id
+WHERE g.agent_id = $1
+ORDER BY s.name
+`
+
+type ListGrantedMCPServersRow struct {
+	McpServer McpServer
+	Allow     []string
+}
+
+// What a run binds, read when it starts: each granted server with the grant's
+// allow-list, which is null for every tool on the server.
+func (q *Queries) ListGrantedMCPServers(ctx context.Context, agentID uuid.UUID) ([]ListGrantedMCPServersRow, error) {
+	rows, err := q.db.Query(ctx, listGrantedMCPServers, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGrantedMCPServersRow
+	for rows.Next() {
+		var i ListGrantedMCPServersRow
+		if err := rows.Scan(
+			&i.McpServer.ID,
+			&i.McpServer.TeamID,
+			&i.McpServer.Name,
+			&i.McpServer.Url,
+			&i.McpServer.Command,
+			&i.McpServer.Env,
+			&i.McpServer.AuthSecretRef,
+			&i.McpServer.Bare,
+			&i.McpServer.DiscoveredAt,
+			&i.McpServer.CreatedAt,
+			&i.McpServer.UpdatedAt,
+			&i.Allow,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGrantedSkills = `-- name: ListGrantedSkills :many
+SELECT id, team_id, name, description, license, compatibility, metadata, allowed_tools, body, source, source_ref, source_sha, created_at, updated_at FROM skills
+WHERE id IN (SELECT skill_id FROM agent_skills WHERE agent_id = $1)
+ORDER BY name
+`
+
+// With the body, unlike ListSkillsByTeam: a run hands it to the model when
+// the skill is loaded. One table in the FROM, so sqlc returns db.Skill.
+func (q *Queries) ListGrantedSkills(ctx context.Context, agentID uuid.UUID) ([]Skill, error) {
+	rows, err := q.db.Query(ctx, listGrantedSkills, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Skill
+	for rows.Next() {
+		var i Skill
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.Name,
+			&i.Description,
+			&i.License,
+			&i.Compatibility,
+			&i.Metadata,
+			&i.AllowedTools,
+			&i.Body,
+			&i.Source,
+			&i.SourceRef,
+			&i.SourceSha,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

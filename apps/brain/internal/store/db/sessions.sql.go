@@ -12,6 +12,38 @@ import (
 	"github.com/google/uuid"
 )
 
+const createDirectSession = `-- name: CreateDirectSession :one
+INSERT INTO sessions (team_id, kind, user_id)
+VALUES ($1, 'direct', $2::uuid)
+RETURNING id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id
+`
+
+type CreateDirectSessionParams struct {
+	TeamID uuid.UUID
+	UserID uuid.UUID
+}
+
+// A run started through the API with no session gets one of its own: direct,
+// with no channel, owned by whoever started it. So by the rule above only they
+// and a moderator can read it, which is the right default for a conversation
+// nobody else was invited to.
+func (q *Queries) CreateDirectSession(ctx context.Context, arg CreateDirectSessionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, createDirectSession, arg.TeamID, arg.UserID)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.ChannelID,
+		&i.ProviderRef,
+		&i.Kind,
+		&i.Status,
+		&i.StartedAt,
+		&i.LastMessageAt,
+		&i.UserID,
+	)
+	return i, err
+}
+
 const ensureSession = `-- name: EnsureSession :one
 INSERT INTO sessions (team_id, channel_id, provider_ref, kind, user_id)
 VALUES (
@@ -78,6 +110,46 @@ SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_mes
 
 func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (Session, error) {
 	row := q.db.QueryRow(ctx, getSession, id)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.ChannelID,
+		&i.ProviderRef,
+		&i.Kind,
+		&i.Status,
+		&i.StartedAt,
+		&i.LastMessageAt,
+		&i.UserID,
+	)
+	return i, err
+}
+
+const getSessionVisible = `-- name: GetSessionVisible :one
+SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id FROM sessions
+WHERE id = $1 AND team_id = $2
+  AND (kind <> 'direct'
+   OR $3::bool
+   OR user_id = $4::uuid)
+`
+
+type GetSessionVisibleParams struct {
+	ID        uuid.UUID
+	TeamID    uuid.UUID
+	Moderator bool
+	Viewer    uuid.UUID
+}
+
+// One session, under the same rule as ListSessionsByTeam. Starting a run in a
+// session uses this, so a run cannot be put into a conversation its caller
+// could not read.
+func (q *Queries) GetSessionVisible(ctx context.Context, arg GetSessionVisibleParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionVisible,
+		arg.ID,
+		arg.TeamID,
+		arg.Moderator,
+		arg.Viewer,
+	)
 	var i Session
 	err := row.Scan(
 		&i.ID,

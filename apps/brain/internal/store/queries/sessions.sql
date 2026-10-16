@@ -1,3 +1,21 @@
+-- A run started through the API with no session gets one of its own: direct,
+-- with no channel, owned by whoever started it. So by the rule above only they
+-- and a moderator can read it, which is the right default for a conversation
+-- nobody else was invited to.
+-- name: CreateDirectSession :one
+INSERT INTO sessions (team_id, kind, user_id)
+VALUES (sqlc.arg('team_id'), 'direct', sqlc.arg('user_id')::uuid)
+RETURNING *;
+
+-- One session, under the same rule as ListSessionsByTeam. Starting a run in a
+-- session uses this, so a run cannot be put into a conversation its caller
+-- could not read.
+-- name: GetSessionVisible :one
+SELECT * FROM sessions
+WHERE id = sqlc.arg('id') AND team_id = sqlc.arg('team_id')
+  AND (kind <> 'direct'
+   OR sqlc.arg('moderator')::bool
+   OR user_id = sqlc.arg('viewer')::uuid);
 -- EnsureSession is find-or-create and "somebody spoke" in one statement.
 --
 -- ON CONFLICT names the partial index's predicate, so Postgres infers that
