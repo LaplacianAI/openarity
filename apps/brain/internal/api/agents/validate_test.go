@@ -10,6 +10,9 @@ import (
 
 func ptr[T any](v T) *T { return &v }
 
+// testLoops is a brain that runs two built-in loops and one of its own.
+var testLoops = []string{"react", "plan", "critic-pass"}
+
 // valid is the smallest agent the brain accepts. Each test changes one thing.
 func valid() agentRequest {
 	return agentRequest{
@@ -27,7 +30,7 @@ func schema() *outputSchema {
 func TestTheSmallestAgentIsValid(t *testing.T) {
 	t.Parallel()
 
-	if err := validate(valid()); err != nil {
+	if err := validate(valid(), testLoops); err != nil {
 		t.Errorf("validate: %v", err)
 	}
 }
@@ -49,7 +52,7 @@ func TestAFullAgentIsValid(t *testing.T) {
 	req.MCPServers = []serverGrant{{ID: uuid.New(), Allow: []string{"search_issues", "create-issue"}}, {ID: uuid.New()}}
 	req.Skills = []uuid.UUID{uuid.New(), uuid.New()}
 
-	if err := validate(req); err != nil {
+	if err := validate(req, testLoops); err != nil {
 		t.Errorf("validate: %v", err)
 	}
 }
@@ -70,12 +73,16 @@ func TestEachRuleHasItsSentence(t *testing.T) {
 		"a padded name":              {func(r *agentRequest) { r.Name = " triage" }, "no space at either end"},
 		"a name ending in a newline": {func(r *agentRequest) { r.Name = "triage\n" }, "no space at either end"},
 		"no pattern":                 {func(r *agentRequest) { r.Pattern = "" }, "pattern is required"},
-		"zero steps":                 {func(r *agentRequest) { r.MaxSteps = 0 }, "max_steps must be greater than 0"},
-		"negative steps":             {func(r *agentRequest) { r.MaxSteps = -1 }, "max_steps must be greater than 0"},
-		"negative steering":          {func(r *agentRequest) { r.SteerContinuations = -1 }, "steer_continuations must not be negative"},
-		"NUL in the name":            {func(r *agentRequest) { r.Name = "tri\x00age" }, "NUL"},
-		"NUL in the description":     {func(r *agentRequest) { r.Description = "a\x00b" }, "NUL"},
-		"NUL in the instructions":    {func(r *agentRequest) { r.Instructions = "a\x00b" }, "NUL"},
+		"a loop the brain does not run": {
+			func(r *agentRequest) { r.Pattern = "code" }, "pattern must be a loop the brain runs: react, plan, critic-pass",
+		},
+		"a loop in another case":  {func(r *agentRequest) { r.Pattern = "React" }, "pattern must be a loop the brain runs"},
+		"zero steps":              {func(r *agentRequest) { r.MaxSteps = 0 }, "max_steps must be greater than 0"},
+		"negative steps":          {func(r *agentRequest) { r.MaxSteps = -1 }, "max_steps must be greater than 0"},
+		"negative steering":       {func(r *agentRequest) { r.SteerContinuations = -1 }, "steer_continuations must not be negative"},
+		"NUL in the name":         {func(r *agentRequest) { r.Name = "tri\x00age" }, "NUL"},
+		"NUL in the description":  {func(r *agentRequest) { r.Description = "a\x00b" }, "NUL"},
+		"NUL in the instructions": {func(r *agentRequest) { r.Instructions = "a\x00b" }, "NUL"},
 
 		"no model":               {func(r *agentRequest) { r.Model.Name = "" }, "model.name must name a model"},
 		"a padded model":         {func(r *agentRequest) { r.Model.Name = "gpt " }, "model.name must name a model"},
@@ -124,7 +131,7 @@ func TestEachRuleHasItsSentence(t *testing.T) {
 	} {
 		req := valid()
 		tc.change(&req)
-		err := validate(req)
+		err := validate(req, testLoops)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want it to say %q", name, err, tc.want)
 		}
@@ -154,12 +161,12 @@ func TestTheEdgesThatAreAllowed(t *testing.T) {
 			r.OutputSchema = schema()
 			r.OutputSchema.JSON = json.RawMessage(`{"pattern":"\\d+"}`)
 		},
-		"any pattern string": func(r *agentRequest) { r.Pattern = "something-new" },
-		"any kind string":    func(r *agentRequest) { r.Kind = "orchestrator" },
+		"a deployment's own loop": func(r *agentRequest) { r.Pattern = "critic-pass" },
+		"any kind string":         func(r *agentRequest) { r.Kind = "orchestrator" },
 	} {
 		req := valid()
 		change(&req)
-		if err := validate(req); err != nil {
+		if err := validate(req, testLoops); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -172,7 +179,7 @@ func TestARefusalDoesNotEchoTheValue(t *testing.T) {
 
 	req := valid()
 	req.Name = "\x00evil"
-	if err := validate(req); err == nil || strings.Contains(err.Error(), "evil") {
+	if err := validate(req, testLoops); err == nil || strings.Contains(err.Error(), "evil") {
 		t.Errorf("err = %v, want a refusal that does not repeat the name", err)
 	}
 }

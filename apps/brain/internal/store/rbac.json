@@ -142,6 +142,11 @@
     },
     {
       "method": "GET",
+      "path": "/teams/{id}/loops",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
       "path": "/teams/{id}/channels",
       "scope": "member"
     },

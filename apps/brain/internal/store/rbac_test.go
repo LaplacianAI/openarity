@@ -505,6 +505,10 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"PUT /teams/{id}/agents/{agentID}":    "team agent:write",
 		"DELETE /teams/{id}/agents/{agentID}": "team agent:write",
 
+		// The loops are the values an agent's pattern takes, so anyone who
+		// can read an agent can read what its pattern may be.
+		"GET /teams/{id}/loops": "member",
+
 		// An MCP server is a tool source, so writing one is tool:write. Reading
 		// is member-wide for the reason skills are: granting a server to an
 		// agent starts with seeing which exist, and a row holds references,

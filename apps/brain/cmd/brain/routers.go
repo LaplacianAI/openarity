@@ -8,6 +8,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/authconfig"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/channels"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/docs"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/loops"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpservers"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/sessions"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/skills"
@@ -20,6 +21,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/server"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
@@ -44,7 +46,8 @@ func newRouters(
 		channels.New(logger, dbStore, secretWriter, registry),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
 		mcpservers.New(logger, mcpStore{dbStore}, discoverer),
-		agents.New(logger, agentStore{dbStore}),
+		agents.New(logger, agentStore{dbStore}, runtime.Loops()),
+		loops.New(logger, runtime.Loops()),
 		teamgraph.New(logger, graphs),
 		users.New(logger, dbStore),
 		sessions.New(logger, dbStore, authorizer, attachments),

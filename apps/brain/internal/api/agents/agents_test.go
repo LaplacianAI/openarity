@@ -23,6 +23,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -328,8 +329,15 @@ func agentRoutes(t *testing.T) authz.Routes {
 func call(t *testing.T, s *fakeStore, a *fakeAuthz, u *auth.User, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 
+	return callWith(t, testLoops, s, a, u, method, path, body)
+}
+
+// callWith is call for a brain that runs the given loops.
+func callWith(t *testing.T, loops []string, s *fakeStore, a *fakeAuthz, u *auth.User, method, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+
 	mux := http.NewServeMux()
-	New(discardLogger(), s).Register(mux, api.NewGuard(agentRoutes(t), a, discardLogger()))
+	New(discardLogger(), s, loops).Register(mux, api.NewGuard(agentRoutes(t), a, discardLogger()))
 
 	var in io.Reader = http.NoBody
 	switch b := body.(type) {
@@ -766,8 +774,61 @@ func TestADuplicateNameIsAConflict(t *testing.T) {
 	}
 }
 
-// The database holds the list of patterns, so a pattern it refuses is a
-// caller's mistake by its constraint's name — and only that constraint's.
+// The database accepts any well-formed loop name now, so this check is the
+// only thing between a caller and an agent no worker can run.
+func TestALoopTheBrainDoesNotRunIsRefusedListingThoseItDoes(t *testing.T) {
+	t.Parallel()
+
+	team := uuid.New()
+	mine := anAgent(team, "triage")
+	b := body("triage")
+	b["pattern"] = "code"
+
+	for method, path := range map[string]string{
+		http.MethodPost: collection(team),
+		http.MethodPut:  one(team, mine.ID),
+	} {
+		s := newFakeStore(mine)
+		rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(team), method, path, b)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d (%s), want 400", method, rec.Code, rec.Body)
+		}
+		for _, loop := range testLoops {
+			if !strings.Contains(rec.Body.String(), loop) {
+				t.Errorf("%s: %q does not name %q", method, rec.Body, loop)
+			}
+		}
+		if s.txs != 0 {
+			t.Errorf("%s: %d transactions for a refused loop", method, s.txs)
+		}
+	}
+}
+
+func TestEveryLoopTheBrainRunsCanBeChosen(t *testing.T) {
+	t.Parallel()
+
+	for _, loop := range runtime.Loops() {
+		team := uuid.New()
+		mine := anAgent(team, "triage")
+		b := body("reviewer")
+		b["pattern"] = loop
+
+		s := newFakeStore(mine)
+		rec := callWith(t, runtime.Loops(), s, &fakeAuthz{allowed: true}, memberOf(team), http.MethodPost, collection(team), b)
+		if rec.Code != http.StatusCreated || len(s.created) != 1 || s.created[0].Pattern != loop {
+			t.Errorf("create on %q: status %d (%s)", loop, rec.Code, rec.Body)
+		}
+		fresh := newFakeStore(mine)
+		rec = callWith(t, runtime.Loops(), fresh, &fakeAuthz{allowed: true}, memberOf(team), http.MethodPut, one(team, mine.ID), b)
+		if rec.Code != http.StatusOK || len(fresh.updated) != 1 || fresh.updated[0].Pattern != loop {
+			t.Errorf("replace on %q: status %d (%s)", loop, rec.Code, rec.Body)
+		}
+	}
+}
+
+// A constraint is a caller's mistake only by its name. The loop rule is not
+// one: the API has already checked the loop, so a name the database refuses
+// was registered in Go, and that is the brain's bug to log.
 func TestConstraintsAreAnsweredByName(t *testing.T) {
 	t.Parallel()
 
@@ -776,12 +837,12 @@ func TestConstraintsAreAnsweredByName(t *testing.T) {
 		code int
 		says string
 	}{
-		"an unknown pattern":       {constraint("23514", "agents_pattern_known"), http.StatusBadRequest, "pattern is not one the brain runs"},
+		"a malformed loop name":    {constraint("23514", "agents_pattern_named"), http.StatusInternalServerError, "internal server error"},
 		"another check":            {constraint("23514", "agents_max_steps_positive"), http.StatusInternalServerError, "internal server error"},
 		"another foreign key":      {constraint("23503", "agents_team_id_fkey"), http.StatusInternalServerError, "internal server error"},
 		"a uniqueness by any name": {constraint("23505", "whatever"), http.StatusConflict, "already exists"},
 		"no such row":              {pgx.ErrNoRows, http.StatusNotFound, "not found"},
-		"a wrapped constraint":     {errors.Join(errAny, constraint("23514", "agents_pattern_known")), http.StatusBadRequest, "pattern"},
+		"a wrapped constraint":     {errors.Join(errAny, constraint("23505", "agents_team_name_key")), http.StatusConflict, "already exists"},
 	} {
 		team := uuid.New()
 		s := newFakeStore()

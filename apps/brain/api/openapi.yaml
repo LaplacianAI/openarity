@@ -1451,6 +1451,32 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/loops:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listLoops
+      tags: [agents]
+      summary: List the loops an agent may use
+      description: |
+        A read, so belonging to the team is enough. These are the loops the
+        brain runs, sorted by name, and the only values an agent's `pattern`
+        accepts. The list is short and always whole, so it takes no `limit`
+        or `cursor` and never has a `next_cursor`.
+      responses:
+        "200":
+          description: Every loop the brain runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/mcp-servers:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -3032,9 +3058,9 @@ components:
         pattern:
           type: string
           description: |
-            How the agent works through a task. The brain runs react, plan,
-            rewoo, reflection, code and custom today; the database holds the
-            authoritative list, and a pattern outside it is a 400.
+            The loop the agent works through a task with. It must be one the
+            brain runs — `GET /teams/{id}/loops` lists them — and any other is
+            a 400 naming those it does run.
           examples: ["react"]
         max_steps:
           type: integer
@@ -3073,3 +3099,21 @@ components:
         next_cursor:
           type: string
           description: Absent on the last page
+
+    Loop:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: The value an agent's `pattern` takes to use this loop
+          examples: ["react"]
+
+    LoopPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Loop"

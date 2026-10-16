@@ -43,6 +43,7 @@ type Queries interface {
 type handler struct {
 	logger *slog.Logger
 	store  Store
+	loops  []string
 }
 
 type grants struct {
@@ -50,8 +51,8 @@ type grants struct {
 	skills  []uuid.UUID
 }
 
-func New(logger *slog.Logger, s Store) *api.Router {
-	h := &handler{logger: logger, store: s}
+func New(logger *slog.Logger, s Store, loops []string) *api.Router {
+	h := &handler{logger: logger, store: s, loops: loops}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/agents", h.list)
@@ -71,7 +72,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, ok := readRequest(w, r)
+	req, ok := readRequest(w, r, h.loops)
 	if !ok {
 		return
 	}
@@ -110,7 +111,7 @@ func (h *handler) replace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, ok := readRequest(w, r)
+	req, ok := readRequest(w, r, h.loops)
 	if !ok {
 		return
 	}
@@ -269,8 +270,6 @@ func (h *handler) writeFailed(w http.ResponseWriter, u *auth.User, err error) bo
 		http.Error(w, "an agent with that name already exists", http.StatusConflict)
 	case isPG && slices.Contains(grantConstraints, pgErr.ConstraintName):
 		http.Error(w, "a granted server or skill does not exist in this team", http.StatusBadRequest)
-	case isPG && pgErr.ConstraintName == "agents_pattern_known":
-		http.Error(w, "pattern is not one the brain runs", http.StatusBadRequest)
 	default:
 		api.Fail(w, h.logger, u, "failed to write agent", err)
 	}
@@ -287,13 +286,13 @@ func (h *handler) write(w http.ResponseWriter, u *auth.User, status int, row db.
 	api.WriteJSON(w, h.logger, status, out)
 }
 
-func readRequest(w http.ResponseWriter, r *http.Request) (agentRequest, bool) {
+func readRequest(w http.ResponseWriter, r *http.Request, loops []string) (agentRequest, bool) {
 	var req agentRequest
 	if !api.DecodeJSON(w, r, &req) {
 		return agentRequest{}, false
 	}
 
-	if err := validate(req); err != nil {
+	if err := validate(req, loops); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return agentRequest{}, false
 	}
