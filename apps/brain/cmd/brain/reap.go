@@ -13,9 +13,8 @@ import (
 
 func newEffects(
 	ctx context.Context, cfg *config.Config,
-	logger *slog.Logger, dbStore *store.Store,
+	logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store,
 ) ([]reaper.Effect, error) {
-	secretStore := newSecretStore(cfg, logger)
 	if err := checkSecretStore(ctx, secretStore); err != nil {
 		return nil, err
 	}
@@ -38,7 +37,7 @@ func newEffects(
 }
 
 func reap(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore *store.Store) error {
-	effects, err := newEffects(ctx, cfg, logger, dbStore)
+	effects, err := newEffects(ctx, cfg, logger, dbStore, newSecretStore(cfg, logger))
 	if err != nil {
 		return err
 	}

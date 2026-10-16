@@ -35,6 +35,14 @@ tags:
     description: Teams and their membership
   - name: channels
     description: Where a team's messages arrive from
+  - name: skills
+    description: Instructions an agent loads when a task calls for them
+  - name: agents
+    description: The agents a team defines, and the servers and skills each is granted
+  - name: mcp-servers
+    description: The MCP servers a team's agents may be granted, and the tools each offers
+  - name: graph
+    description: A team's agents, tools and skills as the graph index holds them
   - name: sessions
     description: Conversations, and what was said in them
   - name: users
@@ -211,6 +219,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Team"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/permissions:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: getTeamPermissions
+      tags: [teams]
+      summary: What the caller may do in a team
+      description: |
+        The permissions the caller holds in this team, from their role, so
+        a client can offer only the actions the brain will allow. Advice,
+        not authority: every route still checks for itself.
+
+        Requires only membership. A super admin may do everything in every
+        team whatever `actions` lists, and `super_admin` says so; a client
+        treats it as holding every permission.
+      responses:
+        "200":
+          description: The caller's permissions in the team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamPermissions"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -846,6 +883,908 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/skills:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listSkills
+      tags: [skills]
+      summary: List a team's skills
+      description: |
+        A read, so belonging to the team is enough: granting a skill to an
+        agent starts with seeing which exist.
+
+        Bodies and files are left out. A page is descriptions to choose
+        between; fetch one skill to read the rest.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of skills, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: createSkill
+      tags: [skills]
+      summary: Upload a skill
+      description: |
+        Requires `skill:write` in this team. The brain parses `SKILL.md`; its
+        frontmatter is the skill's name, description and the rest, so nothing
+        is typed twice.
+      requestBody:
+        required: true
+        description: |
+          The skill's directory, as the [Agent Skills
+          specification](https://agentskills.io/specification) lays it out:
+          `SKILL.md`, and any files beside it. `SKILL.md` sits at the top, or
+          inside one folder named as the skill, which is stripped.
+
+          Either a zip, or `multipart/form-data` with one `files` part per
+          file whose filename is its path — what a browser sends for a folder
+          upload, and what `curl -F "files=@SKILL.md;filename=SKILL.md"` sends.
+
+          Limits: 5 MiB a file, 20 MiB and 200 files a skill, `SKILL.md`
+          256 KiB, a path 1024 bytes. A path is refused rather than cleaned:
+          absolute, `.` or `..` segments, empty segments, backslashes and
+          control characters are all a 400 naming the path.
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/SkillUpload"
+          application/zip:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Stored, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          description: |
+            The upload is not a skill: `SKILL.md` is missing, misplaced or
+            breaks the specification, a path is not clean, a limit is passed,
+            or the archive or multipart body is malformed. The sentence names
+            the file and the rule.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['"scripts/../run.py" is not a relative path inside the skill']
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The team already has a skill with that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a skill with that name already exists"]
+        "413":
+          description: The request body is over 21 MiB
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an upload is at most 21 MiB"]
+        "415":
+          description: The body is neither a zip nor multipart/form-data
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["send the skill as multipart/form-data or application/zip"]
+
+  /teams/{id}/skills/{skillID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/SkillID"
+    get:
+      operationId: getSkill
+      tags: [skills]
+      summary: Read a skill
+      description: |
+        The manifest's fields, the body, where the skill came from, and a
+        description of each file beside `SKILL.md`. A file's bytes are a
+        separate request.
+
+        A skill of another team answers 404, not 403: confirming the id
+        exists would let anyone walk the uuid space.
+      responses:
+        "200":
+          description: The skill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    put:
+      operationId: replaceSkill
+      tags: [skills]
+      summary: Replace a skill
+      description: |
+        Requires `skill:write` in this team. The whole directory is replaced:
+        files the new upload leaves out are deleted. An imported skill
+        replaced by an upload becomes the team's own, and its origin is
+        cleared. Agents granted it see the new version from their next run.
+      requestBody:
+        required: true
+        description: |
+          The skill's directory, as the [Agent Skills
+          specification](https://agentskills.io/specification) lays it out:
+          `SKILL.md`, and any files beside it. `SKILL.md` sits at the top, or
+          inside one folder named as the skill, which is stripped.
+
+          Either a zip, or `multipart/form-data` with one `files` part per
+          file whose filename is its path — what a browser sends for a folder
+          upload, and what `curl -F "files=@SKILL.md;filename=SKILL.md"` sends.
+
+          Limits: 5 MiB a file, 20 MiB and 200 files a skill, `SKILL.md`
+          256 KiB, a path 1024 bytes. A path is refused rather than cleaned:
+          absolute, `.` or `..` segments, empty segments, backslashes and
+          control characters are all a 400 naming the path.
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/SkillUpload"
+          application/zip:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Replaced, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          description: |
+            The upload is not a skill: `SKILL.md` is missing, misplaced or
+            breaks the specification, a path is not clean, a limit is passed,
+            or the archive or multipart body is malformed. The sentence names
+            the file and the rule.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['"scripts/../run.py" is not a relative path inside the skill']
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another skill in the team already has that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a skill with that name already exists"]
+        "413":
+          description: The request body is over 21 MiB
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an upload is at most 21 MiB"]
+        "415":
+          description: The body is neither a zip nor multipart/form-data
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["send the skill as multipart/form-data or application/zip"]
+
+    delete:
+      operationId: deleteSkill
+      tags: [skills]
+      summary: Delete a skill
+      description: |
+        Requires `skill:write` in this team. Its files go with it.
+
+        A skill still granted to an agent is not deleted: removing it would
+        change what that agent can do without anyone changing the agent.
+        Revoke it from each agent first.
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: An agent is still granted this skill
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the skill is granted to an agent"]
+
+  /teams/{id}/skills/{skillID}/files/{path}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/SkillID"
+      - name: path
+        in: path
+        required: true
+        description: |
+          The file's path inside the skill, folders included, as `files`
+          lists it — `scripts/fill.py`. Its slashes are not escaped.
+        schema:
+          type: string
+    get:
+      operationId: getSkillFile
+      tags: [skills]
+      summary: Download one of a skill's files
+      description: |
+        The bytes, decrypted on the way out, as for an attachment.
+
+        `Content-Type` is the type recorded when the file was uploaded, sent
+        with `X-Content-Type-Options: nosniff`, never derived from the name.
+        `Content-Disposition` is always `attachment`: a skill's files are
+        scripts and references for an agent, and nothing is gained by
+        rendering one in a browser.
+      responses:
+        "200":
+          description: |
+            The file. The body is the bytes; everything about them is in the
+            headers.
+          headers:
+            Content-Disposition:
+              description: Always attachment, with the file's name
+              schema:
+                type: string
+            X-Content-Type-Options:
+              description: Always nosniff
+              schema:
+                type: string
+            Cache-Control:
+              description: Always `private, no-store`
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/skills/import:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    post:
+      operationId: importSkill
+      tags: [skills]
+      summary: Import a skill from GitHub or a zip on the web
+      description: |
+        Requires `skill:write` in this team. The brain fetches the source
+        itself, then stores what it found exactly as an upload is stored, with
+        the source recorded so the skill can be synced later.
+
+        `github:owner/repo/path@ref` takes one folder of a repository. The ref
+        is resolved to a commit first, and the commit is what is fetched and
+        recorded, so a branch moving mid-import changes nothing. Without
+        `@ref` it is the default branch.
+
+        An `https://` address is a zip, fetched only from a host the operator
+        allows. It may not carry a user, password or query string: the
+        address is stored and shown to the team, and a signed link keeps its
+        credential in the query.
+
+        The fetch has 30 seconds, and connects only to public addresses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillImportRequest"
+      responses:
+        "201":
+          description: Imported, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          description: |
+            The body is malformed, the source is neither form, or it names a
+            host the operator does not allow.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["not a skill source: a zip source may not carry a query string; the address is stored and shown"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The team already has a skill with that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a skill with that name already exists"]
+        "422":
+          $ref: "#/components/responses/SourceNotASkill"
+        "502":
+          $ref: "#/components/responses/SourceUnavailable"
+        "504":
+          $ref: "#/components/responses/SourceTimedOut"
+
+  /teams/{id}/skills/{skillID}/sync:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/SkillID"
+    post:
+      operationId: syncSkill
+      tags: [skills]
+      summary: Fetch an imported skill's source again
+      description: |
+        Requires `skill:write` in this team. The recorded `source_ref` is
+        fetched again. When it names a different commit or digest than
+        `source_sha`, the whole directory is replaced; when it names the same
+        one, nothing is written and the skill is returned as it is.
+
+        A skill that was uploaded has no source, and answers 409.
+      responses:
+        "200":
+          description: The skill, replaced or unchanged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            The skill was uploaded and has no source, or the source now names
+            a skill another in the team already has the name of.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an uploaded skill has no source to sync from"]
+        "422":
+          $ref: "#/components/responses/SourceNotASkill"
+        "502":
+          $ref: "#/components/responses/SourceUnavailable"
+        "504":
+          $ref: "#/components/responses/SourceTimedOut"
+
+  /teams/{id}/agents:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listAgents
+      tags: [agents]
+      summary: List a team's agents
+      description: |
+        A read, so belonging to the team is enough. Instructions, limits and
+        grants are left out; fetch one agent for the rest.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of agents, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: createAgent
+      tags: [agents]
+      summary: Define an agent
+      description: |
+        Requires `agent:write` in this team. The agent and its grants are
+        written in one step. Only `custom` agents are created here; the other
+        kinds are agents the brain provides.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRequest"
+      responses:
+        "201":
+          description: Created, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        "400":
+          description: |
+            The body breaks a rule, named in the sentence: a limit, a model
+            setting, the parser and its schema, a grant listed twice, a
+            pattern the brain does not run, or a granted server or skill that
+            is not this team's. Nothing is written.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a granted server or skill does not exist in this team"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The team already has an agent with that name, case-insensitively
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an agent with that name already exists"]
+
+  /teams/{id}/agents/{agentID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/AgentID"
+    get:
+      operationId: getAgent
+      tags: [agents]
+      summary: Read an agent, with its grants
+      description: |
+        An agent of another team answers 404, not 403: confirming the id
+        exists would let anyone walk the uuid space.
+      responses:
+        "200":
+          description: The agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    put:
+      operationId: replaceAgent
+      tags: [agents]
+      summary: Replace an agent and its grants
+      description: |
+        Requires `agent:write` in this team. Every field and every grant is
+        replaced in one step, so a field left out is cleared and a grant left
+        out is revoked. `kind` cannot change: leave it out, or send the kind
+        the agent already has.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRequest"
+      responses:
+        "200":
+          description: Replaced, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        "400":
+          description: |
+            The body breaks a rule, named in the sentence: a limit, a model
+            setting, the parser and its schema, a grant listed twice, a
+            pattern the brain does not run, or a granted server or skill that
+            is not this team's. Nothing is written.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a granted server or skill does not exist in this team"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another agent in the team already has that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an agent with that name already exists"]
+
+    delete:
+      operationId: deleteAgent
+      tags: [agents]
+      summary: Delete an agent
+      description: |
+        Requires `agent:write` in this team. Its grants go with it; the
+        servers and skills it was granted are untouched.
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/mcp-servers:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listMCPServers
+      tags: [mcp-servers]
+      summary: List a team's MCP servers
+      description: |
+        A read, so belonging to the team is enough: granting a server to an
+        agent starts with seeing which exist. A server holds references to
+        secrets, never a secret, so there is nothing here to hide from a
+        member.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of servers, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPServerPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: createMCPServer
+      tags: [mcp-servers]
+      summary: Register an MCP server
+      description: |
+        Requires `tool:write` in this team. Nothing connects to the server
+        here: its tools are listed once discovery has run, and
+        `discovered_at` says when that was.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MCPServerRequest"
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPServer"
+        "400":
+          description: |
+            The body breaks a rule: the name, both or neither transport, a
+            url with a user, query or fragment, `env` on a url server or
+            `auth_secret_ref` on a command one, or a value that is not a
+            secret reference under this team's `mcp/` path. The sentence
+            names the field and never repeats its value.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["env GITHUB_TOKEN is a secret reference, teams/<team_id>/mcp/<name>#<key>, not a secret"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The team already has a server with that name, case-insensitively
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an MCP server with that name already exists"]
+
+  /teams/{id}/mcp-servers/{serverID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ServerID"
+    get:
+      operationId: getMCPServer
+      tags: [mcp-servers]
+      summary: Read an MCP server
+      description: |
+        A server of another team answers 404, not 403: confirming the id
+        exists would let anyone walk the uuid space.
+      responses:
+        "200":
+          description: The server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPServer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    put:
+      operationId: updateMCPServer
+      tags: [mcp-servers]
+      summary: Replace an MCP server
+      description: |
+        Requires `tool:write` in this team. Every field is replaced, so a
+        field left out is cleared. Pointing the server somewhere else — a
+        different url or command — clears `discovered_at`; the tools already
+        listed stay until the next discovery replaces them, so an agent
+        granted this server keeps what it had rather than losing every tool
+        to an edit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MCPServerRequest"
+      responses:
+        "200":
+          description: Replaced, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPServer"
+        "400":
+          description: |
+            The body breaks a rule: the name, both or neither transport, a
+            url with a user, query or fragment, `env` on a url server or
+            `auth_secret_ref` on a command one, or a value that is not a
+            secret reference under this team's `mcp/` path. The sentence
+            names the field and never repeats its value.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["env GITHUB_TOKEN is a secret reference, teams/<team_id>/mcp/<name>#<key>, not a secret"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another server in the team already has that name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["an MCP server with that name already exists"]
+
+    delete:
+      operationId: deleteMCPServer
+      tags: [mcp-servers]
+      summary: Delete an MCP server
+      description: |
+        Requires `tool:write` in this team. Its tools go with it. The secrets
+        it referred to are not touched: they are the team's, and another
+        server may name the same one.
+
+        A server still granted to an agent is not deleted: removing it would
+        change what that agent can do without anyone changing the agent.
+        Revoke it from each agent first.
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: An agent is still granted this server
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the MCP server is granted to an agent"]
+
+  /teams/{id}/mcp-servers/{serverID}/tools:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ServerID"
+    get:
+      operationId: listMCPTools
+      tags: [mcp-servers]
+      summary: List the tools a server offers
+      description: |
+        What the last discovery found, by name. Not paged: a server offers
+        tens of tools, not thousands. Empty until discovery has run.
+      responses:
+        "200":
+          description: The server's tools
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPToolList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/mcp-servers/{serverID}/discover:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ServerID"
+    post:
+      operationId: discoverMCPServer
+      tags: [mcp-servers]
+      summary: Ask a server which tools it offers, and store them
+      description: |
+        Requires `tool:write` in this team. The brain connects to the server's
+        url, sending `auth_secret_ref`'s secret as a bearer token over https,
+        lists its tools within 15 seconds, and replaces the stored list in one
+        step: new tools are added, changed ones rewritten, and ones the server
+        no longer offers removed. Any failure leaves the previous list as it
+        was, so an agent granted the server keeps what it had.
+
+        The brain reaches public addresses only, plus the private ranges its
+        operator lists in `OPENARITY_MCP_PRIVATE_NETWORKS`. Link-local
+        addresses, where cloud metadata answers, are never reached. Redirects
+        are not followed.
+
+        No body is read.
+      responses:
+        "200":
+          description: Discovered and stored; the tools as the server listed them
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPToolList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            A command server, which cannot be discovered until agents run in a
+            sandbox; or the server was edited while it was being discovered,
+            and nothing was stored.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the server changed while it was being discovered; discover it again"]
+        "422":
+          description: |
+            The brain will not use this server as it is: its address is one
+            the brain may not reach, it redirected, its token would go over
+            plain http, `auth_secret_ref` names a missing or empty secret, or
+            what it offers cannot be stored — more than 500 tools, a name that
+            is not usable, a description over 16 KiB, a schema over 64 KiB, or
+            a NUL character. The address the brain resolved is logged, never
+            returned.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the server offers something that cannot be stored: search is offered twice"]
+        "502":
+          description: The server did not answer as an MCP server. The detail is logged.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the server did not answer as an MCP server"]
+        "504":
+          description: The server did not finish answering within 15 seconds.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the server did not answer in time"]
+
+  /teams/{id}/graph:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: getTeamGraph
+      tags: [graph]
+      summary: The team's graph
+      description: |
+        The team's agents, toolkits, tools and skills, and the edges between
+        them, as the graph index holds them now. Not as Postgres holds them:
+        the graph catches up within about a minute of a change, and what is
+        shown here is what selection will search.
+
+        Vectors are not returned. `model` says which model embedded a node,
+        and is absent for a node that carries no vector.
+
+        Requires only membership. At most `limit` nodes are returned, and
+        `truncated` says when there were more; an edge is returned only when
+        both of its ends are.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 2000
+            default: 500
+      responses:
+        "200":
+          description: The graph
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamGraph"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: |
+            There is no graph to show: no embedding model is configured, so
+            nothing is projected, or the graph store cannot be reached. The
+            rest of the API does not depend on it.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the graph is not enabled on this brain"]
+
   /users:
     get:
       operationId: listUsers
@@ -945,6 +1884,33 @@ components:
         type: string
         format: uuid
 
+    SkillID:
+      name: skillID
+      in: path
+      required: true
+      description: The skill
+      schema:
+        type: string
+        format: uuid
+
+    AgentID:
+      name: agentID
+      in: path
+      required: true
+      description: The agent
+      schema:
+        type: string
+        format: uuid
+
+    ServerID:
+      name: serverID
+      in: path
+      required: true
+      description: The MCP server
+      schema:
+        type: string
+        format: uuid
+
   responses:
     Unauthenticated:
       description: |
@@ -981,6 +1947,34 @@ components:
             type: string
             examples: ["not found"]
 
+    SourceNotASkill:
+      description: |
+        The source was fetched and is not a skill the brain will store:
+        nothing is at that ref or address, `SKILL.md` is missing or breaks
+        the specification, a limit is passed, or the download is too large.
+        The sentence says which.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["not found: GitHub has no such repository or ref, or cannot show it without a token"]
+    SourceUnavailable:
+      description: |
+        The source failed to answer usefully: it is down, answered an error,
+        dropped the connection, or refused the brain's token or rate limit.
+        Nothing was stored; trying again later may work.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["the source could not be reached: GitHub answered 503"]
+    SourceTimedOut:
+      description: The source did not finish answering within 30 seconds. Nothing was stored.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["the source did not answer within 30s"]
     BadRequest:
       description: |
         The request is malformed. The reply names the problem and never echoes
@@ -992,6 +1986,84 @@ components:
             examples: ["id must be a uuid"]
 
   schemas:
+    TeamPermissions:
+      type: object
+      additionalProperties: false
+      required: [actions, super_admin]
+      properties:
+        actions:
+          type: array
+          description: |
+            The permissions the caller's role grants in this team, sorted.
+            Empty for a super admin who is not a member.
+          items:
+            type: string
+          examples: [["agent:write", "skill:write", "tool:write"]]
+        super_admin:
+          type: boolean
+          description: Holds every permission in every team, whatever the role
+
+    TeamGraph:
+      type: object
+      additionalProperties: false
+      required: [nodes, edges, truncated]
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphEdge"
+        truncated:
+          type: boolean
+          description: More nodes exist than were returned
+
+    GraphNode:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The id of the row behind it; the team's own id for the team
+        label:
+          type: string
+          enum: [Team, Agent, Toolkit, Tool, Skill]
+          description: A Toolkit is an MCP server
+        name:
+          type: string
+        description:
+          type: string
+        kind:
+          type: string
+          description: An agent's kind, or a toolkit's transport family
+        model:
+          type: string
+          description: The model that embedded it; absent when it carries no vector
+
+    GraphEdge:
+      type: object
+      additionalProperties: false
+      required: [type, from, to]
+      properties:
+        type:
+          type: string
+          enum: [OWNS, GRANTED, CONTAINS, HAS_SKILL]
+        from:
+          type: string
+          format: uuid
+        to:
+          type: string
+          format: uuid
+        only:
+          type: array
+          description: On GRANTED, the tools granted; absent when every tool is
+          items:
+            type: string
+
     AuthConfig:
       type: object
       required: [environment, dev_token_accepted]
@@ -1548,6 +2620,456 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/User"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    SkillSummary:
+      type: object
+      required: [id, team_id, name, description, source, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: |
+            The frontmatter's name: 1-64 lower-case letters, digits and single
+            hyphens. Unique within the team.
+          examples: ["pdf-processing"]
+        description:
+          type: string
+          description: What the model reads when deciding whether to load it
+          examples: ["Extract PDF text, fill forms, merge files. Use when handling PDFs."]
+        source:
+          type: string
+          enum: [upload, github, url]
+          description: Where the directory came from
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Skill:
+      allOf:
+        - $ref: "#/components/schemas/SkillSummary"
+        - type: object
+          required: [metadata, body, files]
+          properties:
+            license:
+              type: string
+              description: Absent when the frontmatter sets none
+            compatibility:
+              type: string
+              description: Absent when the frontmatter sets none
+            metadata:
+              type: object
+              additionalProperties:
+                type: string
+              description: The frontmatter's metadata; empty when it sets none
+            allowed_tools:
+              type: string
+              description: Absent when the frontmatter sets none
+            source_ref:
+              type: string
+              description: What was imported; absent for an upload
+              examples: ["github:anthropics/skills/skills/pdf@main"]
+            source_sha:
+              type: string
+              description: The exact commit or digest imported; absent for an upload
+            body:
+              type: string
+              description: SKILL.md after its frontmatter, loaded only when the model asks for it
+            files:
+              type: array
+              description: Every file beside SKILL.md, in path order
+              items:
+                $ref: "#/components/schemas/SkillFile"
+
+    SkillFile:
+      type: object
+      required: [path, size, sha256, media_type]
+      properties:
+        path:
+          type: string
+          examples: ["scripts/fill.py"]
+        size:
+          type: integer
+          format: int64
+          description: Bytes
+        sha256:
+          type: string
+          description: Hex, as sha256sum prints it
+        media_type:
+          type: string
+          description: Sniffed from the bytes when uploaded, never from the name
+          examples: ["text/plain; charset=utf-8"]
+
+    SkillUpload:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          description: One part per file; each part's filename is its path in the skill
+          items:
+            type: string
+            format: binary
+
+    SkillImportRequest:
+      type: object
+      required: [source]
+      additionalProperties: false
+      properties:
+        source:
+          type: string
+          description: A GitHub folder, or the https address of a zip
+          examples:
+            - "github:anthropics/skills/skills/pdf@main"
+            - "https://hub.example.com/skills/pdf.zip"
+
+    SkillPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillSummary"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    MCPServer:
+      type: object
+      required: [id, team_id, name, env, bare, created_at, updated_at]
+      description: Exactly one of `url` and `command` is present.
+      properties:
+        id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: |
+            Unique within the team, case-insensitively. Each tool reaches the
+            model as `<name>__<tool>`.
+          examples: ["github"]
+        url:
+          type: string
+          format: uri
+          description: A remote server, spoken to over streamable HTTP
+          examples: ["https://mcp.example.com/v1"]
+        command:
+          type: array
+          items:
+            type: string
+          description: A local server, started with this argv and spoken to over stdio
+          examples: [["npx", "-y", "@modelcontextprotocol/server-filesystem"]]
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Variables set for a command server, each a secret reference.
+            Always an object; empty for a url server.
+          examples: [{"GITHUB_TOKEN": "teams/<team_id>/mcp/github#token"}]
+        auth_secret_ref:
+          type: string
+          description: |
+            A url server's bearer token. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
+        bare:
+          type: boolean
+          description: Tools reach the model as `<tool>` rather than `<name>__<tool>`
+        discovered_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            When its tools were last listed, and null until then. Always sent;
+            optional here only so a generated client decodes null as absent
+            rather than as the zero time.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MCPServerRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      description: |
+        Exactly one of `url` and `command`. Every value that is a credential
+        is a secret reference rather than the secret, so none reaches the
+        database.
+      properties:
+        name:
+          type: string
+          pattern: "^[a-zA-Z0-9_-]{1,64}$"
+          examples: ["github"]
+        url:
+          type: string
+          format: uri
+          description: http or https, with no user, password, query string or fragment
+          examples: ["https://mcp.example.com/v1"]
+        command:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: The program and its arguments; the first is not empty
+        env:
+          type: object
+          description: Only with `command`. Each key is a variable name and each value a secret reference.
+          additionalProperties:
+            type: string
+            pattern: "^teams/[0-9a-f-]{36}/mcp/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*#[A-Za-z0-9_-]+$"
+          propertyNames:
+            pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+        auth_secret_ref:
+          type: string
+          pattern: "^teams/[0-9a-f-]{36}/mcp/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*#[A-Za-z0-9_-]+$"
+          description: Only with `url`. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
+          examples: ["teams/<team_id>/mcp/github#token"]
+        bare:
+          type: boolean
+          default: false
+
+    MCPServerPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MCPServer"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    MCPTool:
+      type: object
+      required: [name, description, input_schema]
+      properties:
+        name:
+          type: string
+          description: As the server names it, without the server's prefix
+          examples: ["search_code"]
+        description:
+          type: string
+        input_schema:
+          type: object
+          description: The JSON Schema of the tool's arguments, exactly as the server sent it
+
+    MCPToolList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MCPTool"
+
+    ModelRef:
+      type: object
+      required: [name, max_tokens]
+      properties:
+        name:
+          type: string
+          description: As the model gateway names it
+          examples: ["anthropic/claude-opus-5"]
+        max_tokens:
+          type: integer
+          format: int32
+          minimum: 1
+        temperature:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 2
+
+    ParserModel:
+      type: object
+      required: [name]
+      description: Only with parser. max_tokens and temperature fall back to the SDK's defaults.
+      properties:
+        name:
+          type: string
+        max_tokens:
+          type: integer
+          format: int32
+          minimum: 1
+        temperature:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 2
+
+    OutputSchema:
+      type: object
+      required: [name, json]
+      properties:
+        name:
+          type: string
+          description: Names the schema to the model
+          examples: ["verdict"]
+        description:
+          type: string
+        json:
+          type: object
+          description: The JSON Schema the answer has to fit
+        strict:
+          type: boolean
+
+    MCPServerGrant:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: An MCP server of the same team
+        allow:
+          type: array
+          minItems: 1
+          description: The tools granted, by their server-side names. Left out, every tool is granted.
+          items:
+            type: string
+            pattern: "^[a-zA-Z0-9_-]{1,64}$"
+
+    AgentSummary:
+      type: object
+      required: [id, team_id, name, description, kind, model, pattern, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        kind:
+          type: string
+          description: custom for agents a team defines; the brain's own agents carry other kinds
+          examples: ["custom"]
+        model:
+          $ref: "#/components/schemas/ModelRef"
+        pattern:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Agent:
+      allOf:
+        - $ref: "#/components/schemas/AgentSummary"
+        - type: object
+          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills]
+          properties:
+            instructions:
+              type: string
+            max_steps:
+              type: integer
+              format: int32
+            steer_continuations:
+              type: integer
+              format: int32
+            output_schema:
+              $ref: "#/components/schemas/OutputSchema"
+            parser:
+              type: boolean
+            parser_model:
+              $ref: "#/components/schemas/ParserModel"
+            mcp_servers:
+              type: array
+              description: Ordered by id
+              items:
+                $ref: "#/components/schemas/MCPServerGrant"
+            skills:
+              type: array
+              description: Ordered by id
+              items:
+                type: string
+                format: uuid
+
+    AgentRequest:
+      type: object
+      required: [name, model, pattern, max_steps]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          description: Optional. custom on create; on replace, the kind the agent already has.
+        name:
+          type: string
+          maxLength: 200
+          description: Unique within the team, case-insensitively
+          examples: ["triage"]
+        description:
+          type: string
+          description: What it is for, shown where agents are chosen
+        instructions:
+          type: string
+          description: The system prompt
+          examples: ["You sort incoming issues."]
+        model:
+          $ref: "#/components/schemas/ModelRef"
+        pattern:
+          type: string
+          description: |
+            How the agent works through a task. The brain runs react, plan,
+            rewoo, reflection, code and custom today; the database holds the
+            authoritative list, and a pattern outside it is a 400.
+          examples: ["react"]
+        max_steps:
+          type: integer
+          format: int32
+          minimum: 1
+        steer_continuations:
+          type: integer
+          format: int32
+          minimum: 0
+          description: How many times a run may carry on for a message that arrived as it finished
+        output_schema:
+          $ref: "#/components/schemas/OutputSchema"
+        parser:
+          type: boolean
+          description: A second model fits the answer to output_schema; needs output_schema
+        parser_model:
+          $ref: "#/components/schemas/ParserModel"
+        mcp_servers:
+          type: array
+          items:
+            $ref: "#/components/schemas/MCPServerGrant"
+        skills:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    AgentPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentSummary"
         next_cursor:
           type: string
           description: Absent on the last page

@@ -55,15 +55,16 @@ const (
 	ObjectsBackendMemory     ObjectsBackend = "memory"
 	ObjectsBackendFilesystem ObjectsBackend = "filesystem"
 	ObjectsBackendS3         ObjectsBackend = "s3"
+	ObjectsBackendSeaweedFS  ObjectsBackend = "seaweedfs"
 )
 
 func (b *ObjectsBackend) UnmarshalText(text []byte) error {
 	switch v := ObjectsBackend(text); v {
-	case ObjectsBackendMemory, ObjectsBackendFilesystem, ObjectsBackendS3:
+	case ObjectsBackendMemory, ObjectsBackendFilesystem, ObjectsBackendS3, ObjectsBackendSeaweedFS:
 		*b = v
 		return nil
 	default:
 		return fmt.Errorf(
-			"invalid objects backend: %s (want memory, filesystem or s3)", v)
+			"invalid objects backend: %s (want memory, filesystem, s3 or seaweedfs)", v)
 	}
 }

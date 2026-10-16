@@ -150,8 +150,8 @@ build:
 
 ## example: run every example against a stub gateway, or a real one via the environment
 #
-#   OPENARITY_MODELS_BASE_URL=http://127.0.0.1:14000/v1 \
-#   OPENARITY_MODELS_API_KEY=sk-… make example
+#   OPENARITY_LLM_BASE_URL=http://127.0.0.1:14000/v1 \
+#   OPENARITY_LLM_API_KEY=sk-… make example
 #
 # Discovered rather than listed, so a new example under examples/ is run by CI
 # the moment it exists rather than the moment somebody remembers this file.

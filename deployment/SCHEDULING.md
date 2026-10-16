@@ -75,6 +75,42 @@ its parser with seconds enabled, so `*/15 * * * *` is refused outright:
 A test parses the constant with the same parser DBOS builds, so a well-meaning
 "fix" to the five-field form fails in CI rather than at worker start.
 
+## The second job, and what a tick costs
+
+The worker's second job drains the graph outbox: every change to an agent, an
+MCP server, a tool or a skill leaves a row there, and the drain copies it into
+FalkorDB. It runs once a minute, and only when an embedding model is set.
+
+Once a minute rather than more often, because a tick is not free. DBOS keeps a
+row for every workflow it runs and another for every step, and nothing in the
+library deletes them outside its hosted Conductor. Measured with a throwaway
+schedule ticking once a second:
+
+```text
+98 ticks    98 rows in dbos.workflow_status      394 bytes each
+            98 rows in dbos.operation_outputs    168 bytes each
+```
+
+About 560 bytes of row data a tick before indexes. At ten seconds that is
+8,640 ticks a day for a job whose real state is already the outbox; at a
+minute it is 1,440, and the reaper's fifteen minutes is 96. None of it is ever
+removed, so a long-lived deployment should expect to prune `dbos.workflow_status`
+by hand or by policy. That is a gap, and it is the reaper's too.
+
+Two ways this job differs from the reaper, both on purpose:
+
+- **It does not replay missed ticks.** A drain takes whatever is in the outbox,
+  so a missed tick has no work of its own, and replaying an hour of them after
+  a restart would start sixty workflows of which fifty-nine find nothing.
+- **Only one drain runs at a time, across every worker.** Deletes commute, so
+  two reapers are a division of labour. Graph writes do not: two drains can
+  finish with the graph behind and the outbox empty. A Postgres advisory lock
+  makes the second one skip its turn, which is why a second worker replica is
+  safe and adds no throughput here.
+
+`brain graph rebuild` takes the same lock and waits for it, so it is safe to
+run beside a worker.
+
 ## If you would rather the platform owned the clock
 
 Delete `k8s/worker.yaml`, run `brain reap` from a `CronJob`, and change four

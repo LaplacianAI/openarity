@@ -29,6 +29,10 @@
       "description": "Create and change tools"
     },
     {
+      "name": "skill:write",
+      "description": "Create and change skills"
+    },
+    {
       "name": "channel:write",
       "description": "Connect and configure channels"
     },
@@ -52,6 +56,7 @@
       "permissions": [
         "agent:write",
         "tool:write",
+        "skill:write",
         "channel:write",
         "session:read_all",
         "membership:write",
@@ -63,6 +68,7 @@
       "description": "Create and change agents and tools within a team",
       "permissions": [
         "agent:write",
+        "skill:write",
         "tool:write"
       ]
     }
@@ -99,6 +105,34 @@
       "path": "/teams/{id}/members/{userID}",
       "scope": "team",
       "permission": "membership:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/agents",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/agents",
+      "scope": "team",
+      "permission": "agent:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/agents/{agentID}",
+      "scope": "member"
+    },
+    {
+      "method": "PUT",
+      "path": "/teams/{id}/agents/{agentID}",
+      "scope": "team",
+      "permission": "agent:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/agents/{agentID}",
+      "scope": "team",
+      "permission": "agent:write"
     },
     {
       "method": "GET",
@@ -165,6 +199,100 @@
       "method": "GET",
       "path": "/teams/{id}/sessions/{sessionID}/attachments/{attachmentID}",
       "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/skills",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/skills",
+      "scope": "team",
+      "permission": "skill:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/skills/{skillID}",
+      "scope": "member"
+    },
+    {
+      "method": "PUT",
+      "path": "/teams/{id}/skills/{skillID}",
+      "scope": "team",
+      "permission": "skill:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/skills/{skillID}",
+      "scope": "team",
+      "permission": "skill:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/skills/{skillID}/files/{path...}",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/skills/import",
+      "scope": "team",
+      "permission": "skill:write"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/skills/{skillID}/sync",
+      "scope": "team",
+      "permission": "skill:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/mcp-servers",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/mcp-servers",
+      "scope": "team",
+      "permission": "tool:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/mcp-servers/{serverID}",
+      "scope": "member"
+    },
+    {
+      "method": "PUT",
+      "path": "/teams/{id}/mcp-servers/{serverID}",
+      "scope": "team",
+      "permission": "tool:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/mcp-servers/{serverID}",
+      "scope": "team",
+      "permission": "tool:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/mcp-servers/{serverID}/tools",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/permissions",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/graph",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/mcp-servers/{serverID}/discover",
+      "scope": "team",
+      "permission": "tool:write"
     },
     {
       "method": "GET",

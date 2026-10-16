@@ -64,16 +64,26 @@ func servedRoutes(t *testing.T, environment config.Environment) []string {
 	cfg := &config.Config{Environment: environment}
 
 	routes := slices.Clone(probeRoutes)
-	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil) {
+	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil, nil, nil, nil) {
 		p, ok := r.(patterned)
 		if !ok {
 			t.Fatalf("%T does not expose Patterns, so it cannot be checked against the spec", r)
 		}
-		routes = append(routes, p.Patterns()...)
+		for _, pattern := range p.Patterns() {
+			routes = append(routes, asOpenAPI(pattern))
+		}
 	}
 
 	sort.Strings(routes)
 	return routes
+}
+
+// asOpenAPI spells a mux pattern the way the spec must. The mux writes a
+// wildcard that takes the rest of the path as {path...}; OpenAPI has no such
+// syntax and writes {path}. That is the one translation — anything else that
+// differs is drift, and is reported.
+func asOpenAPI(pattern string) string {
+	return strings.ReplaceAll(pattern, "...}", "}")
 }
 
 // specRoutes is every operation described in api/openapi.yaml, in the same
@@ -209,7 +219,7 @@ func TestOnlyDeclaredRoutesArePublic(t *testing.T) {
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
 	allowed := slices.Concat(devOnlyRoutes, publicRoutes, uiRoutes)
 
-	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil) {
+	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil, nil, nil, nil) {
 		if !r.Public() {
 			continue
 		}
@@ -254,7 +264,7 @@ func TestEveryRouterExposesItsPatterns(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
-	routers := newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil)
+	routers := newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil, nil, nil, nil)
 
 	if len(routers) == 0 {
 		t.Fatal("newRouters returned nothing")
@@ -263,6 +273,22 @@ func TestEveryRouterExposesItsPatterns(t *testing.T) {
 	for _, r := range routers {
 		if _, ok := r.(patterned); !ok {
 			t.Errorf("%T does not expose Patterns", r)
+		}
+	}
+}
+
+// The translation touches only a trailing wildcard. Were it to rewrite more,
+// two different routes could compare equal to one described path.
+func TestOnlyARestOfPathWildcardIsTranslated(t *testing.T) {
+	t.Parallel()
+
+	for pattern, want := range map[string]string{
+		"GET /teams/{id}/skills/{skillID}/files/{path...}": "GET /teams/{id}/skills/{skillID}/files/{path}",
+		"GET /teams/{id}/skills/{skillID}":                 "GET /teams/{id}/skills/{skillID}",
+		"GET /docs/":                                       "GET /docs/",
+	} {
+		if got := asOpenAPI(pattern); got != want {
+			t.Errorf("asOpenAPI(%q) = %q, want %q", pattern, got, want)
 		}
 	}
 }

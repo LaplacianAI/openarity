@@ -171,7 +171,7 @@ brain answers, and prints the address and the sign-in. See
 **The brain on its own**, which is what you want while writing code — no
 identity provider to configure, no container to rebuild.
 
-Requires Go 1.26.6 and a Postgres 13 or newer you can reach — 13 is where
+Requires Go 1.26.9 and a Postgres 13 or newer you can reach — 13 is where
 `gen_random_uuid()` became built-in, which the first migration needs. Running
 the *tests* needs 18; see [CONTRIBUTING.md](CONTRIBUTING.md). CI runs against
 Postgres 18.
@@ -201,11 +201,20 @@ for a day, and a deployment that never runs it never erases anything outside
 Postgres.
 
 `brain worker` is the fourth command, and it is what normally runs the third. It
-hosts the background work — the reaper today on a fifteen-minute schedule,
-agent runs later — replays the ticks it missed while it was down, sweeps once
-at startup so a fresh deployment is not idle for an interval, and refuses to
-start if the secret store cannot delete. See
-[deployment/SCHEDULING.md](deployment/SCHEDULING.md).
+hosts the background work — the reaper on a fifteen-minute schedule, the graph
+projector once a minute, agent runs later — replays the reaper's ticks it
+missed while it was down, sweeps once at startup so a fresh deployment is not
+idle for an interval, and refuses to start if the secret store cannot delete.
+See [deployment/SCHEDULING.md](deployment/SCHEDULING.md).
+
+`brain graph rebuild [--team <id>]` is the fifth. Agents, MCP tools and skills
+are copied into FalkorDB so they can be found by meaning, one graph per team,
+and Postgres stays the truth: every change leaves a row saying the graph is
+behind, in the same transaction, and the worker catches it up. A rebuild drops
+a team's graph and builds it again from Postgres, which is what changing the
+embedding model requires. It is off until `OPENARITY_EMBEDDING_MODEL` is set;
+[deployment/README.md](deployment/README.md#the-graph) has the settings and a
+model that runs on your machine.
 
 Every other setting has a working default. The service refuses to start with no
 authentication configured rather than serving an open API — set
@@ -246,7 +255,7 @@ database:
 go get github.com/LaplacianAI/openarity/sdk/agent
 ```
 
-Needs Go 1.26.6. The core links one dependency, `github.com/openai/openai-go/v3`.
+Needs Go 1.26.9. The core links one dependency, `github.com/openai/openai-go/v3`.
 Importing `tools/mcp` adds the official MCP SDK; nothing else does.
 
 A whole agent, against any gateway speaking OpenAI chat completions:
@@ -508,9 +517,9 @@ variable prefixed `OPENARITY_`:
 | `OPENARITY_API_BIND`             | `127.0.0.1:21120`           | API listener address             |
 | `OPENARITY_WEBHOOK_BIND`         | `127.0.0.1:21121`           | Webhook listener address         |
 | `OPENARITY_POSTGRES_DSN`         | see below                   | Relational store                 |
-| `OPENARITY_FALKOR_DB_URL`        | `redis://127.0.0.1:6380`    | Graph store — not used yet       |
+| `OPENARITY_FALKOR_DB_URL`        | `redis://127.0.0.1:6380`    | Graph store, once a model is set |
 | `OPENARITY_REDIS_URL`            | `redis://127.0.0.1:6379`    | Cache and queues — not used yet  |
-| `OPENARITY_OMNI_ROUTE_URL`       | `http://localhost:20128/v1` | Model router — not used yet      |
+| `OPENARITY_OMNI_ROUTE_URL`       | `http://localhost:20128/v1` | Model router, for embeddings     |
 | `OPENARITY_OIDC_ENABLED`         | `false`                     | Verify tokens against an IdP     |
 | `OPENARITY_OIDC_ISSUER`          | empty                       | Issuer URL, required if enabled  |
 | `OPENARITY_OIDC_AUDIENCE`        | `openarity`                 | Audience the token must carry    |
@@ -527,6 +536,31 @@ postgres://postgres:postgres@localhost:5432/openarity?sslmode=disable
 Secrets are never stored in Postgres or the graph. Rows hold secret-store path
 references only.
 
+### Skills, MCP servers and embeddings
+
+All empty by default, and each can stay that way.
+
+| Variable                                  | Default | What it does                                                   |
+| ----------------------------------------- | ------- | -------------------------------------------------------------- |
+| `OPENARITY_SKILL_IMPORT_HOSTS`            | empty   | Hosts a skill zip may be imported from, besides GitHub         |
+| `OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF` | empty   | `path#key` of a GitHub token, to raise the rate limit          |
+| `OPENARITY_MCP_PRIVATE_NETWORKS`          | empty   | CIDRs MCP discovery may reach, besides public addresses        |
+| `OPENARITY_EMBEDDING_MODEL`               | empty   | The model that embeds agents, tools and skills for the graph   |
+| `OPENARITY_EMBEDDING_DIMENSIONS`          | `0`     | The width of its vectors, `1` to `4096`; set with the model    |
+| `OPENARITY_EMBEDDING_KEY_REF`             | empty   | `path#key` of the embedding key, when the model router needs it |
+
+Discovering an MCP server's tools reaches public addresses only, so a team's
+self-hosted server needs its range listed. A range touching link-local
+(`169.254.0.0/16`, `fe80::/10`), where cloud metadata answers, is refused at
+startup whatever is listed.
+
+With no embedding model the worker runs no projector and says so when it
+starts. The index is built for one model's width, so the two are set together,
+and changing the model means `brain graph rebuild`.
+
+The two `path#key` settings name a secret, never hold one. The shipped OpenBao
+policy lets the brain read under `platform/` for exactly these.
+
 ### Secrets and object storage
 
 Both pick an implementation by name. Nothing is inferred from which other
@@ -541,9 +575,9 @@ quietly.
 | `OPENARITY_SECRETS_APPROLE_ID`     | empty                   | AppRole id, required outside `static`    |
 | `OPENARITY_SECRETS_APPROLE_SECRET` | empty                   | AppRole secret                           |
 | `OPENARITY_SECRETS_KV_MOUNT`       | `secret`                | The KV v2 mount to read and write        |
-| `OPENARITY_OBJECTS_BACKEND`        | `memory`                | `memory`, `filesystem`, `s3`             |
+| `OPENARITY_OBJECTS_BACKEND`        | `memory`                | `memory`, `filesystem`, `s3`, `seaweedfs` |
 | `OPENARITY_OBJECTS_PATH`           | see below               | Where `filesystem` writes                |
-| `OPENARITY_OBJECTS_ENDPOINT`       | empty                   | Required by `s3`                         |
+| `OPENARITY_OBJECTS_ENDPOINT`       | empty                   | Required by `s3` and `seaweedfs`         |
 | `OPENARITY_OBJECTS_REGION`         | `us-east-1`             | Sent by `s3`, ignored by most clones     |
 | `OPENARITY_OBJECTS_BUCKET`         | `openarity`             | The one bucket the brain uses            |
 | `OPENARITY_OBJECTS_ACCESS_KEY`     | empty                   | `s3` credential                          |
@@ -560,6 +594,11 @@ worse than one that does not start.
 last MPL-2.0 Vault, so the API and the KV v2 semantics are unchanged. They are
 two names because the two are developed separately now, and what sits behind
 one should be able to change without anybody editing their configuration.
+
+`seaweedfs` is the S3 adapter under its own name, for the same reason:
+SeaweedFS is reached through its S3 gateway today, and naming it means a
+difference found later is a change behind the name, not to everyone's
+configuration. It is what `make objects` starts for local development.
 
 `s3` speaks the S3 API, which is a de-facto interface rather than a standard.
 MinIO, Garage, Ceph, SeaweedFS, Cloudflare R2, Backblaze B2 and Google Cloud

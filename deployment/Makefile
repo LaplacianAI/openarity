@@ -19,7 +19,7 @@ COMPOSE := docker compose -f docker-compose.yml
 #   laptop, where OIDC is the staging one. They are alternatives: two issuers
 #   on one stack means the brain trusts one and rejects the other's tokens.
 #   BAO swaps the in-memory OpenBao for the one with file
-#   storage and a seal that opens itself. OBJECTS adds MinIO and creates the
+#   storage and a seal that opens itself. OBJECTS adds SeaweedFS and creates the
 #   bucket. PROFILE opts the brain and its migrate step in — without it the
 #   stack is dependencies only.
 #
@@ -45,9 +45,13 @@ COMPOSE := docker compose -f docker-compose.yml
 #   are deliberately absent from down, ps and destroy — their :? guards would
 #   make stopping the stack require both sets of credentials, which is the same
 #   trap $(BAO) already documents.
+#   OLLAMA is a local embedding model for either gateway to route to. It has
+#   no credentials and so no guards, which is why it is in down, ps and
+#   destroy where the gateways are not.
 IMAGE     := -f docker-compose.image.yml
 LITELLM   := -f docker-compose.litellm.yml
 OMNIROUTE := -f docker-compose.omniroute.yml
+OLLAMA    := -f docker-compose.ollama.yml
 OIDC    := -f docker-compose.authentik.yml
 DEX     := -f docker-compose.dex.yml
 BAO     := -f docker-compose.openbao.yml
@@ -89,12 +93,12 @@ start-docker:
 up:
 	$(COMPOSE) up -d
 
-## objects: add MinIO and create the bucket — for the object store tests
+## objects: add SeaweedFS and create the bucket — for the object store tests
 #
 # The live tests in internal/objects/s3 skip unless they are pointed at a
 # store, which this prints the settings for.
 objects:
-	$(COMPOSE) $(OBJECTS) up -d minio minio-bucket
+	$(COMPOSE) $(OBJECTS) up -d seaweedfs seaweedfs-bucket
 	@printf '\n%s\n%s\n%s\n%s\n\n' \
 	  "export BRAIN_TEST_S3_ENDPOINT=http://127.0.0.1:19000" \
 	  "export BRAIN_TEST_S3_BUCKET=$${OBJECTS_BUCKET:-openarity}" \
@@ -166,6 +170,27 @@ omniroute-down:
 	$(COMPOSE) $(OMNIROUTE) stop omniroute
 
 # ---------------------------------------------------------------------------
+# A local embedding model. The brain asks the gateway for vectors and the
+# gateway asks this, so nothing here is the brain's configuration: see
+# README.md for registering it in LiteLLM or OmniRoute.
+#
+# The pull is inside the target because a server with no model answers every
+# embedding request with a 404 that reads like a wrong URL.
+
+## ollama: add a local embedding model — `make ollama model=mxbai-embed-large` for another
+ollama: model ?= nomic-embed-text
+ollama:
+	$(COMPOSE) $(OLLAMA) up -d --wait ollama
+	$(COMPOSE) $(OLLAMA) exec -T ollama ollama pull $(model)
+	@printf '\n%s\n%s\n\n' \
+	  "ollama     http://$${BIND_ADDR:-127.0.0.1}:$${OLLAMA_PORT:-11434}" \
+	  "gateways   http://ollama:11434  (on the compose network)"
+
+## ollama-down: stop Ollama, keeping its models
+ollama-down:
+	$(COMPOSE) $(OLLAMA) stop ollama
+
+# ---------------------------------------------------------------------------
 
 ## dev: dependencies and the brain, built from your working tree
 dev:
@@ -184,7 +209,7 @@ image:
 #
 # It refuses to start without OPENARITY_SECRETS_APPROLE_ID and _SECRET, which
 # is the point. See OPENBAO.md; `make bao-approle` prints them.
-## staging: published image, authentik, real OpenBao and MinIO — needs .env
+## staging: published image, authentik, real OpenBao and SeaweedFS — needs .env
 staging:
 	$(COMPOSE) $(OIDC) $(IMAGE) $(BAO) $(OBJECTS) $(PROFILE) up -d
 
@@ -198,23 +223,23 @@ pull:
 
 ## ps: what is running, and on which ports
 ps:
-	@$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) ps
+	@$(COMPOSE) $(OIDC) $(OBJECTS) $(OLLAMA) $(IMAGE) $(PROFILE) ps
 
 ## logs: follow the brain — `make logs service=authentik-server` for another
 logs: service ?= brain
 logs:
-	$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) logs -f $(service)
+	$(COMPOSE) $(OIDC) $(OBJECTS) $(OLLAMA) $(IMAGE) $(PROFILE) logs -f $(service)
 
 ## down: stop everything. Volumes survive, so data does too
 down:
-	$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) down --remove-orphans
+	$(COMPOSE) $(OIDC) $(OBJECTS) $(OLLAMA) $(IMAGE) $(PROFILE) down --remove-orphans
 
 # Named destroy rather than `clean`: it deletes the databases, authentik's
 # configuration and every secret in OpenBao. There is no undo and nothing
 # warns you, so the target says what it does.
 ## destroy: down, and delete every volume — databases, authentik, OpenBao
 destroy:
-	$(COMPOSE) $(OIDC) $(OBJECTS) $(IMAGE) $(PROFILE) down --remove-orphans --volumes
+	$(COMPOSE) $(OIDC) $(OBJECTS) $(OLLAMA) $(IMAGE) $(PROFILE) down --remove-orphans --volumes
 
 # ---------------------------------------------------------------------------
 # A real OpenBao. See OPENBAO.md — these three run once, in this order, and
@@ -268,10 +293,21 @@ bao-approle:
 	  echo "OPENARITY_SECRETS_APPROLE_ID=$$($$BAO read -field=role_id auth/approle/role/brain/role-id)"; \
 	  echo "OPENARITY_SECRETS_APPROLE_SECRET=$$($$BAO write -f -field=secret_id auth/approle/role/brain/secret-id)"
 
+# A token is checked against its policy by name on every request, so a policy
+# written again takes effect for the brain's existing token at once: no new
+# AppRole, no restart. bao-approle writes it too, and also mints a second
+# secret, which is not what a changed file calls for.
+## bao-policy: write policy-brain.hcl to the running OpenBao again — after the file changes
+bao-policy:
+	@test -f $(BAO_KEYS) || { echo "run make bao-init first"; exit 1; }
+	@ROOT=$$(jq -r .root_token $(BAO_KEYS)); \
+	  $(BAO_EXEC) -e BAO_TOKEN=$$ROOT openbao bao policy write brain /openbao/config/policy-brain.hcl
+
 ## bao: dependencies and the brain against the real OpenBao
 bao:
 	$(COMPOSE) $(BAO) $(PROFILE) up -d --build
 
 .PHONY: help up objects dex dex-hash dex-down litellm litellm-down \
-        omniroute omniroute-down dev image staging restart pull ps logs \
-        down destroy bao-up bao-init bao-status bao-approle bao
+        omniroute omniroute-down ollama ollama-down dev image staging restart \
+        pull ps logs down destroy bao-up bao-init bao-status bao-approle \
+        bao-policy bao

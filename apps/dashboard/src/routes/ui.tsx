@@ -1,6 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { Inbox, LayoutGrid, MessagesSquare, Moon, Radio, Sun, Users } from "lucide-react";
+import {
+  BookOpen,
+  Bot,
+  Inbox,
+  LayoutGrid,
+  MessagesSquare,
+  Moon,
+  Network,
+  Radio,
+  Server,
+  Sun,
+  Users,
+} from "lucide-react";
 import { fetchWhoami } from "@/api";
 import { useCurrentTeam, useToken } from "@/api/session";
 import { setToken } from "@/api/token";
@@ -26,6 +38,10 @@ const NAV = [
   { to: "/ui/channels", label: "Channels", icon: Radio, exact: false },
   { to: "/ui/approvals", label: "Approvals", icon: Inbox, exact: false },
   { to: "/ui/sessions", label: "Sessions", icon: MessagesSquare, exact: false },
+  { to: "/ui/agents", label: "Agents", icon: Bot, exact: false },
+  { to: "/ui/servers", label: "MCP servers", icon: Server, exact: false },
+  { to: "/ui/skills", label: "Skills", icon: BookOpen, exact: false },
+  { to: "/ui/graph", label: "Graph", icon: Network, exact: false },
 ] as const;
 
 function UiLayout() {

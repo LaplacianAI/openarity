@@ -131,3 +131,91 @@ func ResolveChannel(
 		"gave up looking for a channel named %q after %d pages — pass its id instead",
 		ref, maxLookupPages)
 }
+
+// byName walks a paged list until an item's name matches. Every resolver
+// below is this loop with a different list, so a skill, an agent and a server
+// cannot drift apart in how they look one up or in what they say on a miss.
+func byName[T any](
+	ctx context.Context, ref, kind, hint string,
+	list func(ctx context.Context, limit int32, cursor *string) ([]T, *string, error),
+	name func(T) string, id func(T) uuid.UUID,
+) (uuid.UUID, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return uuid.Nil, fmt.Errorf("name a %s by name or id", kind)
+	}
+	if parsed, err := uuid.Parse(ref); err == nil {
+		return parsed, nil
+	}
+
+	var cursor *string
+	for range maxLookupPages {
+		items, next, err := list(ctx, lookupPageSize, cursor)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("look up the %s %q: %w", kind, ref, err)
+		}
+
+		for _, item := range items {
+			if name(item) == ref {
+				return id(item), nil
+			}
+		}
+
+		if next == nil {
+			return uuid.Nil, fmt.Errorf("no %s named %q in that team — `%s` shows them", kind, ref, hint)
+		}
+		cursor = next
+	}
+
+	return uuid.Nil, fmt.Errorf(
+		"gave up looking for a %s named %q after %d pages — pass its id instead",
+		kind, ref, maxLookupPages)
+}
+
+func ResolveSkill(
+	ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, ref string,
+) (uuid.UUID, error) {
+	return byName(ctx, ref, "skill", "oa skills list",
+		func(ctx context.Context, limit int32, cursor *string) ([]client.SkillSummary, *string, error) {
+			page, err := Result(api.ListSkillsWithResponse(ctx, team,
+				&client.ListSkillsParams{Limit: &limit, Cursor: cursor}))
+			if err != nil {
+				return nil, nil, err
+			}
+			return page.Items, page.NextCursor, nil
+		},
+		func(s client.SkillSummary) string { return s.Name },
+		func(s client.SkillSummary) uuid.UUID { return s.ID })
+}
+
+func ResolveAgent(
+	ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, ref string,
+) (uuid.UUID, error) {
+	return byName(ctx, ref, "agent", "oa agents list",
+		func(ctx context.Context, limit int32, cursor *string) ([]client.AgentSummary, *string, error) {
+			page, err := Result(api.ListAgentsWithResponse(ctx, team,
+				&client.ListAgentsParams{Limit: &limit, Cursor: cursor}))
+			if err != nil {
+				return nil, nil, err
+			}
+			return page.Items, page.NextCursor, nil
+		},
+		func(a client.AgentSummary) string { return a.Name },
+		func(a client.AgentSummary) uuid.UUID { return a.ID })
+}
+
+func ResolveMCPServer(
+	ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, ref string,
+) (uuid.UUID, error) {
+	return byName(ctx, ref, "MCP server", "oa mcp-servers list",
+		func(ctx context.Context, limit int32, cursor *string) ([]client.MCPServer, *string, error) {
+			page, err := Result(api.ListMCPServersWithResponse(ctx, team,
+				&client.ListMCPServersParams{Limit: &limit, Cursor: cursor}))
+			if err != nil {
+				return nil, nil, err
+			}
+			return page.Items, page.NextCursor, nil
+		},
+		func(s client.MCPServer) string { return s.Name },
+		func(s client.MCPServer) uuid.UUID { return s.ID })
+}

@@ -12,21 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const countAttachmentsByObjectKey = `-- name: CountAttachmentsByObjectKey :one
-SELECT count(*) FROM attachments WHERE object_key = $1
-`
-
-// The sweeper asks this before removing an object: another row pointing at the
-// same key means the bytes are still somebody's, and the tombstone is dropped
-// rather than acted on. Always 1 today, and not always 1 once identical files
-// share one.
-func (q *Queries) CountAttachmentsByObjectKey(ctx context.Context, objectKey string) (int64, error) {
-	row := q.db.QueryRow(ctx, countAttachmentsByObjectKey, objectKey)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const createAttachment = `-- name: CreateAttachment :one
 INSERT INTO attachments (
     message_id, session_id, team_id,

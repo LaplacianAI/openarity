@@ -79,7 +79,11 @@ apps/brain/
     serve.go           the serve role
     migrate.go         the migrate role
     reap.go            the reap role, and newEffects for both it and the worker
-    worker.go          the worker role
+    worker.go          the worker role, and newJobs: every job it runs
+    graph.go           the graph role: rebuild one team, or every team
+    projector.go       newProjector, for the worker and the graph role
+    importer.go        newImporter: where a skill may be imported from
+    discoverer.go      newDiscoverer: what MCP discovery may reach
     logger.go          newLogger()
   internal/config/     configuration: load, validate, redact
   internal/server/     the two listeners: build, run, shut down; mounts Routers
@@ -101,9 +105,19 @@ apps/brain/
   internal/objects/    the port: Store, Writer, object keys and team prefixes
     encrypt.go         AES-256-GCM over any backend — a layer, not a backend
     sniff.go           what a file is, and whether it may be stored
-    s3/                the S3 API — MinIO, Ceph, R2, GCS, AWS
+    s3/                the S3 API — SeaweedFS, MinIO, Ceph, R2, GCS, AWS; also built for seaweedfs
     filesystem/        a volume, for a single-host deployment with no S3
     inmemory/          the in-process fallback; attachments die with the process
+  internal/skill/      a skill as the Agent Skills specification lays it out
+    hub/               importing one: GitHub, or a zip from an allowed host
+  internal/discovery/  asking an MCP server for its tools, and what it may reach
+  internal/graph/      FalkorDB as an index over Postgres
+    falkor.go          the client: one graph per team, nodes, edges, indexes
+    params.go          query parameters, written here rather than by the library
+    embed.go           vectors from the model router
+    projector.go       the outbox in, the graph out
+    rebuild.go         a team's graph from nothing
+    job.go             the drain as background work
   internal/reaper/     the sweep: one loop, one Effect per outside system
     job.go             the reaper as background work: SweepAll, and its Job
   internal/worker/     the background process: a registry of Jobs, and Run
@@ -261,7 +275,7 @@ reinstalled.
   Kubernetes injects env natively, and the config surface stays small because
   secrets live in Vault rather than here.
 - **Every pluggable subsystem names its backend in env.** `SECRETS_BACKEND` is
-  static, openbao or vault; `OBJECTS_BACKEND` is memory, filesystem or s3. Never
+  static, openbao or vault; `OBJECTS_BACKEND` is memory, filesystem, s3 or seaweedfs. Never
   inferred from which settings happen to be filled in — that works for two
   options where one is clearly "not configured", and breaks at three, where
   "endpoint set" and "path set" can both be true, both false, or disagree. The
@@ -281,7 +295,78 @@ reinstalled.
   than an ambient capability.
 - **Postgres is truth, the graph is an index.** Nothing is written only to
   FalkorDB; every node has a Postgres row behind it and the graph is
-  rebuildable at any time.
+  rebuildable at any time. `TestARebuildEqualsTheIncrementalGraph` is what
+  makes that a fact: a team's history is drained as it happens, the team is
+  rebuilt from nothing, and the two graphs are compared node by node, vector
+  by vector.
+- **The graph is caught up through an outbox, and the row says what changed,
+  never what it changed to.** A trigger writes `(team, entity, id)` in the
+  transaction that made the change; the projector reads the row as it is now
+  and makes the graph match. That makes a replayed row harmless, which is what
+  lets the row be cleared last — a crash repeats work and never loses it. A
+  trigger rather than Go for the tombstones' reason: a cascade runs no Go.
+- **One drain at a time, across every worker, because graph writes do not
+  commute.** Worker A claims a row and reads version 1; an edit writes a
+  second row; worker B claims that, writes version 2 and clears it; A then
+  writes version 1 and clears its own. The graph is behind and the outbox is
+  empty, so nothing will ever fix it. The tombstones need no such thing —
+  deletes commute — and this is the "second mechanism sharing a word" that
+  note warned of. `Store.WithAdvisoryLock` is a session lock on its own key;
+  a drain that cannot have it skips its turn, a rebuild waits for it.
+- **A rebuild runs the same projection a drain does.** One query lists a
+  team's things as `(entity, id)`, named as the outbox names them, and each
+  goes through the function an outbox row goes through. Two code paths that
+  must agree is what the equality test would otherwise be policing forever.
+- **The five entity names are in Go as well as in the CHECK, and that is not
+  the duplication the registry avoids elsewhere.** Agent patterns live only in
+  their constraint because Go does nothing different per pattern. Here each
+  name runs different code. A name the projector does not know keeps its row
+  and logs, and a test reads the names from what the triggers actually write.
+- **A vector is asked for only when the embedded text or the model changed.**
+  Each node carries the model and a hash of `name + "\n" + description`; a
+  match skips the call, so replaying the outbox costs a read and editing an
+  agent's instructions costs nothing. When the router fails nothing of the
+  node is written: a new description beside a stale vector would be
+  searchable and wrong.
+- **A deleted team is checked once per batch, before any of its rows.** Its
+  cascade leaves a row for everything it held, each meaning "delete this
+  node", and FalkorDB creates a graph for any query sent to one that is not
+  there. Run one by one they would drop the graph and leave an empty one.
+- **The drain ticks once a minute, not every ten seconds.** DBOS keeps a row
+  per tick and deletes none: measured, 98 ticks left 98 workflow rows and 98
+  step rows, about 560 bytes a tick before indexes. The job's durable state is
+  the outbox, so a tick buys only freshness. It does not backfill either — a
+  missed tick has no work of its own. `retryAfter` is half a tick so a failed
+  row is due by the next one whichever of two timestamps came first.
+- **`falkordb-go` is used for its connection and its result parsing, and for
+  nothing that writes a parameter.** Its own parameter writing quotes with
+  `strconv.Quote`, which turns a non-breaking space into six characters, and
+  panics on a `[]float32`. `params.go` writes the `CYPHER k=v` header itself
+  and passes `nil`. Its constructor is not lazy either: it asks the server
+  whether it is a sentinel before returning, on a context of its own, and a
+  server that accepts and says nothing holds it for ten seconds. `Dial` takes
+  a context for that reason.
+- **A missing end is an error, where FalkorDB reports success.** An edge to a
+  node that is not there matches nothing and writes nothing, silently. `Link`
+  and `SetOutEdges` count what they wrote, so the outbox row stays and is
+  tried again once the other node has been projected. Same for a vector of
+  the wrong width, which FalkorDB stores and never searches.
+- **A secret is a reference when a team made it, and a value when the
+  operator did.** An MCP server's credential or a channel's signing secret is
+  created through the API while the brain runs, so no environment variable
+  can hold it and Postgres must not: the row keeps a path. `EMBEDDING_API_KEY`,
+  `LLM_API_KEY` and `SKILL_IMPORT_GITHUB_TOKEN` are set once by whoever
+  deploys, exactly like the DSN's password and `OBJECTS_SECRET_KEY`, and are
+  environment variables for the same reason. They were references first, and
+  that cost more than it bought: a brain on the static store could not be
+  given a key at all, and the OpenBao policy needed a read rule nothing else
+  used — one that shipped missing, 403 under the real policy with every test
+  on a convenient credential passing. None of the three is in `String()`.
+- **The LLM and the embedding model are two endpoints with two keys.** They
+  are often two services, and the shapes are identical, so the wired test
+  sets both and asserts the LLM one received nothing. `EMBEDDING_BASE_URL`
+  has no default and does not fall back to `LLM_BASE_URL`: it is set with the
+  model or not at all.
 - **The test suite's Postgres floor is 18; the brain's is 13.** Both measured,
   not read off a changelog. 13 is where `gen_random_uuid()` became built-in, and
   every migration applies and rolls back on 13 through 18. 18 is the first
@@ -438,7 +523,9 @@ reinstalled.
   schedule needs a running scheduler, so that has to happen after. `Job` is
   `Name()` plus `Register(dbos.Context) ([]dbos.ScheduleSpec, error)` — it
   declares, and hands back what it wants scheduled. `internal/worker` knows the
-  interface and no job; `cmd/brain/worker.go` is the index, one line each.
+  interface and no job; `newJobs` in `cmd/brain/worker.go` is the index, one
+  line each, and is a function of its own so "which jobs does this
+  configuration run" can be tested without a durable runtime.
   Structural typing means a domain never imports `internal/worker` back.
 - **A job lives with its module, not in a jobs package.** `internal/reaper/job.go`
   today, `internal/runtime/job.go` when agent runs land. A separate package
@@ -585,7 +672,7 @@ reinstalled.
   there is not, which is exactly the question the caller is asking.
 - **The object key is a fresh id, never a hash of the content.** Content
   addressing would let identical files share an object, which is what
-  `CountAttachmentsByObjectKey` anticipates — but it also tells anyone who can
+  `CountObjectReferences` anticipates — but it also tells anyone who can
   list the bucket that two teams hold the same file, and lets them confirm a
   guessed file is present by hashing it. That is the property the encryption
   exists to remove.

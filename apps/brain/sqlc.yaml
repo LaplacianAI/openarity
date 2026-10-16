@@ -44,3 +44,13 @@ sql:
               import: time
               type: Time
               pointer: true
+          - db_type: pg_catalog.float8
+            nullable: true
+            go_type:
+              type: float64
+              pointer: true
+          - db_type: pg_catalog.int4
+            nullable: true
+            go_type:
+              type: int32
+              pointer: true

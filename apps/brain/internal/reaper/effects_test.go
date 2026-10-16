@@ -33,7 +33,7 @@ func (f *fakeObjectRows) ClaimDeletedObjects(
 	return f.rows, nil
 }
 
-func (f *fakeObjectRows) CountAttachmentsByObjectKey(_ context.Context, key string) (int64, error) {
+func (f *fakeObjectRows) CountObjectReferences(_ context.Context, key string) (int64, error) {
 	if f.countErr != nil {
 		return 0, f.countErr
 	}

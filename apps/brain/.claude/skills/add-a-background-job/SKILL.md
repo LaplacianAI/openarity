@@ -123,20 +123,32 @@ ticks missed while the process was down, which is the one thing a Kubernetes
 ## Step 6 — wire it into `cmd/brain/worker.go`
 
 ```go
-return worker.New(cfg.PostgresDSN, logger,
-	reaper.SweepJob(logger, effects...),
-	runtime.AgentRunsJob(...),
-).Run(ctx)
+func newJobs(...) ([]worker.Job, func(), error) {
+	jobs := []worker.Job{reaper.SweepJob(logger, effects...)}
+
+	if cfg.EmbeddingModel == "" {
+		logger.WarnContext(ctx, "EMBEDDING_MODEL is not set, so the graph is not being projected")
+		return jobs, func() {}, nil
+	}
+	...
+	return append(jobs, graph.DrainJob(projector, logger)), closeGraph, nil
+}
 ```
 
-One constructor per job, listed individually. A module returning `[]Job` cannot
-be spread here — Go will not convert a slice of one interface type to another
-even when every element satisfies both — and the individual form keeps this
-call a complete index.
+`newJobs` is the index: every job the worker runs is named in it, one
+constructor each, and `runWorker` hands the result to `worker.New`. It is a
+function of its own because `runWorker` cannot run in a test without a live
+durable runtime, and "which jobs does this configuration run" is a question
+worth a test — a job left out registers nothing, fails nothing, and never
+fires.
+
+A job that depends on optional configuration is added conditionally there,
+and says in the log when it is not. It does not register and then do nothing.
 
 Build dependencies **before** `Run`, in `cmd/brain`, so a misconfigured store
 fails at boot rather than fifteen minutes later inside a workflow where the
-error is a row in a table.
+error is a row in a table. What a job opens, the function `newJobs` returns
+closes.
 
 ## Step 7 — what a long-lived process must not do
 

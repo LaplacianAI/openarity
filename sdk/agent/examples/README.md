@@ -1,6 +1,6 @@
 # Examples
 
-Each runs end to end with nothing installed: with no `OPENARITY_MODELS_BASE_URL`
+Each runs end to end with nothing installed: with no `OPENARITY_LLM_BASE_URL`
 set they start a stub gateway in-process that speaks the OpenAI streaming
 protocol, so the pattern, the accumulator and the tool dispatch are all real.
 
@@ -44,8 +44,8 @@ Both take the same three variables, so the same command works for LiteLLM,
 OmniRoute, or a provider directly:
 
 ```sh
-OPENARITY_MODELS_BASE_URL=http://127.0.0.1:20128/v1 \
-OPENARITY_MODELS_API_KEY=sk-… \
+OPENARITY_LLM_BASE_URL=http://127.0.0.1:20128/v1 \
+OPENARITY_LLM_API_KEY=sk-… \
 OPENARITY_MODEL=cc/claude-opus-4-8 \
 go run ./examples/skills
 ```

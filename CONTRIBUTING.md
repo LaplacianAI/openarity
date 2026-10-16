@@ -11,7 +11,7 @@ about to change.
 
 | Tool     | Version | Notes                                                  |
 | -------- | ------- | ------------------------------------------------------ |
-| Go       | 1.26.6  | pinned by `go.work` and each app's `go.mod`            |
+| Go       | 1.26.9  | pinned by `go.work` and each app's `go.mod`            |
 | make     | any     |                                                        |
 | Postgres | 13+     | optional — database tests skip without one; CI runs 18 |
 
@@ -210,6 +210,31 @@ sees it. Dev mode keeps everything in memory, so a restart is a clean slate.
 rather not manage the container by hand. CI runs an OpenBao service container,
 so these tests always run there.
 
+## Tests that need a graph
+
+The same shape again. Tests in `apps/brain/internal/graph` read
+`BRAIN_TEST_FALKOR_URL` and **skip** when it is unset:
+
+```sh
+make check db=openarity_test falkor=redis://127.0.0.1:6380   # the compose FalkorDB
+```
+
+Each test makes a graph of its own, named `team:<a random id>`, and drops it
+afterwards, so they run in parallel and the compose instance is safe to point
+them at. For a throwaway one instead:
+
+```sh
+docker run -d --name falkordb -p 6380:6379 \
+  -e REDIS_ARGS="--appendonly yes --appendfsync always" \
+  falkordb/falkordb:v4.20.6
+```
+
+Use the pinned version rather than `latest`. The graph client depends on what
+this version does with things it could have refused — a vector of the wrong
+width, an edge to a node that is not there — and its tests are what would
+notice a release that changed one.
+
+
 ## Tests that need an object store
 
 The same shape again. Tests in `internal/objects/s3` read
@@ -218,11 +243,11 @@ The same shape again. Tests in `internal/objects/s3` read
 `BRAIN_TEST_S3_SECRET_KEY` fill in the rest.
 
 ```sh
-cd deployment && make objects   # MinIO on 19000, bucket created
+cd deployment && make objects   # SeaweedFS on 19000, bucket created
 ```
 
-It prints the four exports. 19000 rather than MinIO's own 9000, because
-authentik already publishes 9000 in this stack.
+It prints the four exports. 19000 rather than the gateway's own 8333, so it
+sits with the stack's other 1-prefixed ports and every overlay can run at once.
 
 The other two object backends need nothing: `inmemory` and `filesystem` are
 tested with a `t.TempDir()` and always run. Only the S3 adapter has a belief

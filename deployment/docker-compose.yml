@@ -37,14 +37,14 @@ x-brain-env: &brain-env
   OPENARITY_SECRETS_APPROLE_ID: ${OPENARITY_SECRETS_APPROLE_ID-}
   OPENARITY_SECRETS_APPROLE_SECRET: ${OPENARITY_SECRETS_APPROLE_SECRET-}
   # memory by default, and refused outside development for the same
-  # reason. docker-compose.objects.yml brings a MinIO the brain reaches at
-  # minio:9000 — inside the network, so the host port it is published on
-  # does not matter here.
+  # reason. docker-compose.objects.yml brings a SeaweedFS the brain reaches
+  # at seaweedfs:8333 — inside the network, so the host port it is published
+  # on does not matter here. Set the backend to seaweedfs to use it.
   #
-  # The bucket and credentials are the same three variables MinIO itself
-  # reads, so one pair of values configures both ends.
+  # The bucket and credentials are the same three variables the overlay
+  # seeds SeaweedFS with, so one pair of values configures both ends.
   OPENARITY_OBJECTS_BACKEND: ${OPENARITY_OBJECTS_BACKEND:-memory}
-  OPENARITY_OBJECTS_ENDPOINT: ${OPENARITY_OBJECTS_ENDPOINT:-http://minio:9000}
+  OPENARITY_OBJECTS_ENDPOINT: ${OPENARITY_OBJECTS_ENDPOINT:-http://seaweedfs:8333}
   OPENARITY_OBJECTS_BUCKET: ${OBJECTS_BUCKET:-openarity}
   OPENARITY_OBJECTS_ACCESS_KEY: ${OBJECTS_ACCESS_KEY-}
   OPENARITY_OBJECTS_SECRET_KEY: ${OBJECTS_SECRET_KEY-}
@@ -61,6 +61,30 @@ x-brain-env: &brain-env
   OPENARITY_OIDC_ENABLED: ${OPENARITY_OIDC_ENABLED:-false}
   OPENARITY_OIDC_ISSUER: ${OPENARITY_OIDC_ISSUER-}
   OPENARITY_OIDC_AUDIENCE: ${OPENARITY_OIDC_AUDIENCE:-openarity}
+  # All empty by default, and each is a setting that can be left that way.
+  # Skills import from GitHub regardless; another host only when listed.
+  # MCP discovery reaches public addresses only, so a server running inside
+  # this compose network needs its range listed. No embedding model means
+  # the worker runs no projector, and says so when it starts.
+  #
+  # Two endpoints, each with a key of its own, because they are often two
+  # services: chat models at one provider, embeddings at another or on this
+  # machine. Both speak OpenAI's API. The brain's own default for the first
+  # is localhost, which inside a container is the container; this names the
+  # OmniRoute overlay instead, and for LiteLLM it is http://litellm:4000/v1.
+  #
+  # The embedding endpoint has no default: it is set with the model or not at
+  # all. The Ollama overlay answers at http://ollama:11434/v1 with no gateway
+  # in front of it and no key. See README.md.
+  OPENARITY_LLM_BASE_URL: ${OPENARITY_LLM_BASE_URL-http://omniroute:20128/v1}
+  OPENARITY_LLM_API_KEY: ${OPENARITY_LLM_API_KEY-}
+  OPENARITY_SKILL_IMPORT_HOSTS: ${OPENARITY_SKILL_IMPORT_HOSTS-}
+  OPENARITY_SKILL_IMPORT_GITHUB_TOKEN: ${OPENARITY_SKILL_IMPORT_GITHUB_TOKEN-}
+  OPENARITY_MCP_PRIVATE_NETWORKS: ${OPENARITY_MCP_PRIVATE_NETWORKS-}
+  OPENARITY_EMBEDDING_BASE_URL: ${OPENARITY_EMBEDDING_BASE_URL-}
+  OPENARITY_EMBEDDING_API_KEY: ${OPENARITY_EMBEDDING_API_KEY-}
+  OPENARITY_EMBEDDING_MODEL: ${OPENARITY_EMBEDDING_MODEL-}
+  OPENARITY_EMBEDDING_DIMENSIONS: ${OPENARITY_EMBEDDING_DIMENSIONS-0}
 
 services:
   postgres:
@@ -86,14 +110,34 @@ services:
       retries: 10
       start_period: 10s
 
-  # Not used by the brain yet. It is here so the ports in the configuration
-  # table are real, and so the day the graph lands nobody has to find an image.
+  # The graph: an index of agents, tools and skills, rebuilt from Postgres
+  # at any time by `brain graph rebuild`.
+  #
+  # Pinned, and the same version CI tests against — a test in
+  # apps/brain/internal/graph fails if the two drift. `latest` resolved to
+  # this when it was pinned.
+  #
+  # REDIS_ARGS is what makes a write survive a crash. FalkorDB is Redis with
+  # a module, and Redis by default persists with periodic snapshots: the
+  # projector would be told a write succeeded, clear its outbox row, and a
+  # crash before the next snapshot would lose the write with nothing left to
+  # replay it. Measured on this image, with a node created and the container
+  # killed with SIGKILL straight after the write was acknowledged:
+  #
+  #   defaults                                    the graph is gone
+  #   --appendonly yes --appendfsync always       the node is there
+  #
+  # The volume is mounted where FalkorDB writes. It was at /data, and the
+  # server's directory is /var/lib/falkordb/data, so the volume held nothing
+  # and recreating the container discarded the graph whatever REDIS_ARGS said.
   falkordb:
-    image: falkordb/falkordb:latest
+    image: falkordb/falkordb:v4.20.6
+    environment:
+      REDIS_ARGS: "--appendonly yes --appendfsync always"
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${FALKORDB_PORT:-6380}:6379"
     volumes:
-      - falkordb-data:/data
+      - falkordb-data:/var/lib/falkordb/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

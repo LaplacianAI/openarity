@@ -67,9 +67,10 @@ jobs:
       run:
         working-directory: apps/brain
 
-    # Tests that need a real database or a real secret store read
-    # BRAIN_TEST_POSTGRES_DSN and BRAIN_TEST_SECRETS_ADDR, and skip when they
-    # are unset, so `make test` still works locally with nothing running.
+    # Tests that need a real database, secret store or graph read
+    # BRAIN_TEST_POSTGRES_DSN, BRAIN_TEST_SECRETS_ADDR and
+    # BRAIN_TEST_FALKOR_URL, and skip when they are unset, so `make test`
+    # still works locally with nothing running.
     services:
       postgres:
         image: postgres:18
@@ -107,8 +108,25 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # The graph tests in internal/graph run against this and skip without
+      # it. The image and REDIS_ARGS are the ones deployment/docker-compose.yml
+      # ships, and a test fails if they drift apart — the point of testing
+      # against a real FalkorDB is lost on a version nobody deploys.
+      falkordb:
+        image: falkordb/falkordb:v4.20.6
+        env:
+          REDIS_ARGS: "--appendonly yes --appendfsync always"
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       BRAIN_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/openarity_test?sslmode=disable
+      BRAIN_TEST_FALKOR_URL: redis://localhost:6379
       BRAIN_TEST_SECRETS_ADDR: http://localhost:8200
       BRAIN_TEST_SECRETS_TOKEN: ci-root
       BRAIN_TEST_S3_ENDPOINT: http://localhost:9000
@@ -119,36 +137,41 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # MinIO is a step rather than a service container because it needs
-      # `server /data` as its command, and a service container can set the
+      # SeaweedFS is a step rather than a service container because it needs
+      # `server -s3` as its command, and a service container can set the
       # image, the environment and docker options but never the command.
       #
       # It is here at all because the live object store tests skip when
       # BRAIN_TEST_S3_ENDPOINT is unset, and a test that only ever runs on
       # somebody's laptop is a test that stops running. The same reasoning put
       # OpenBao in this file.
-      # quay.io rather than Docker Hub: MinIO withdrew minio/minio and minio/mc
-      # from Hub, so an unauthenticated pull now answers "pull access denied
-      # ... repository does not exist". quay.io serves the same tags, and it is
-      # the registry MinIO's own install instructions use.
+      #
+      # SeaweedFS rather than MinIO: MinIO withdrew its images from Docker Hub
+      # and then from quay.io, where every pull answered "unauthorized" and
+      # failed this job before a test ran. Bump the tag here and in
+      # deployment/docker-compose.objects.yml together.
+      #
+      # The S3 gateway takes its admin identity from the two AWS_ variables.
+      # `weed shell` makes the bucket from inside the same image, so no client
+      # image is needed; it can only run once the master is up, so it retries.
       - name: Start the object store
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=openarity \
-            -e MINIO_ROOT_PASSWORD=openarity-ci-secret \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
-          for _ in $(seq 1 30); do
-            curl -sf http://localhost:9000/minio/health/live > /dev/null && break
+          docker run -d --name seaweedfs -p 9000:8333 \
+            -e AWS_ACCESS_KEY_ID=openarity \
+            -e AWS_SECRET_ACCESS_KEY=openarity-ci-secret \
+            chrislusf/seaweedfs:4.48 server -dir=/data -s3
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:9000/healthz > /dev/null && break
             sleep 1
           done
-          # MC_HOST_<alias> rather than `mc alias set`, because the image's
-          # entrypoint is mc itself: anything after the image name is an mc
-          # subcommand, so `sh -c ...` reached it as `mc sh` and it said so.
-          # The alias in the environment needs no shell and no second command.
-          docker run --rm --network host \
-            -e MC_HOST_ci=http://openarity:openarity-ci-secret@localhost:9000 \
-            quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z \
-            mb --ignore-existing ci/openarity
+          for _ in $(seq 1 30); do
+            out=$(docker exec seaweedfs sh -c \
+              'echo "s3.bucket.create -name openarity" | weed shell -master=127.0.0.1:9333' 2>&1) || true
+            case "$out" in *"created bucket"*|*"already exists"*) echo "$out"; exit 0 ;; esac
+            sleep 1
+          done
+          echo "$out"
+          exit 1
 
       # Node before Go, because `make ui` writes into the tree that `make
       # check` then compiles. Without this step the brain still builds and

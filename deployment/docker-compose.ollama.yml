@@ -1,0 +1,43 @@
+# A local embedding model, for the gateway to route to.
+#
+# The brain embeds agents, tools and skills so they can be found by meaning.
+# It asks the model gateway for those vectors and nothing else: where the
+# gateway gets them is the gateway's configuration. This file is one answer
+# that needs no account and sends nothing off the machine.
+#
+#   cd deployment
+#   make ollama          # start it, wait until it answers, pull the model
+#
+# Nothing in the brain knows this exists. It is reached by whichever gateway
+# is running, at http://ollama:11434 on the compose network, and the brain's
+# three embedding settings name the model as the gateway knows it. README.md
+# has the steps for both gateways.
+#
+# No credentials and no `:?` guards, so unlike the gateway overlays this one
+# is in down, ps and destroy.
+
+name: openarity
+
+services:
+  ollama:
+    # Pinned. The brain's vectors are only comparable with each other while
+    # the model that made them is the same one, and an image that moves is one
+    # more way for that to stop being true without anybody deciding it.
+    image: ollama/ollama:0.40.3
+    volumes:
+      # Models live here. Without it every recreated container pulls again.
+      - ollama-data:/root/.ollama
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${OLLAMA_PORT:-11434}:11434"
+    healthcheck:
+      # The image carries no curl and no wget. Its own client asks the server
+      # for its models, which answers only once the server is serving.
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  ollama-data:

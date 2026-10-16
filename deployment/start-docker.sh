@@ -355,11 +355,27 @@ ensure_litellm() {
 	wait_answering "http://$REACH_ADDR:$LITELLM_PORT/health/liveliness"
 
 	GATEWAY_URL="http://$REACH_ADDR:$LITELLM_PORT/v1"
-	GATEWAY_KEY=$(env_value LITELLM_MASTER_KEY)
 	GATEWAY_DASHBOARD="http://$REACH_ADDR:$LITELLM_PORT/ui"
 
-	env_set OPENARITY_MODELS_BASE_URL "$GATEWAY_URL"
-	env_set OPENARITY_MODELS_API_KEY "$GATEWAY_KEY"
+	# .env is what compose hands the brain, and the brain is a container: it
+	# reaches the gateway by service name, on the port it listens on inside
+	# the network. GATEWAY_URL above is the same gateway from this machine,
+	# where REACH_ADDR may be 127.0.0.1 — which in a container is itself.
+	env_set OPENARITY_LLM_BASE_URL "http://litellm:4000/v1"
+
+	# Never the master key. It is LiteLLM's root credential: it mints keys,
+	# edits models and reads every team's spend, and .env is what compose
+	# hands the brain, the worker and the migrate step. They are given a
+	# virtual key, minted in the console and limited to calling models, or no
+	# key at all. This script wrote the master key here for one commit; if it
+	# is still there, take it back out.
+	local master
+	master=$(env_value LITELLM_MASTER_KEY || true)
+	if [ -n "$master" ] && [ "$(env_value OPENARITY_LLM_API_KEY || true)" = "$master" ]; then
+		env_set OPENARITY_LLM_API_KEY ""
+		note "OPENARITY_LLM_API_KEY held LiteLLM's master key, and has been emptied"
+	fi
+	GATEWAY_KEY=$(env_value OPENARITY_LLM_API_KEY || true)
 	note "LiteLLM answering on $LITELLM_PORT"
 }
 
@@ -374,31 +390,37 @@ ensure_omniroute() {
 	GATEWAY_KEY=$(env_value OMNIROUTE_API_KEY || true)
 	GATEWAY_DASHBOARD="http://$REACH_ADDR:$OMNIROUTE_PORT/dashboard"
 
-	env_set OPENARITY_MODELS_BASE_URL "$GATEWAY_URL"
-	[ -n "$GATEWAY_KEY" ] && env_set OPENARITY_MODELS_API_KEY "$GATEWAY_KEY"
+	# The in-network address, for the reason given in ensure_litellm.
+	env_set OPENARITY_LLM_BASE_URL "http://omniroute:20128/v1"
+	[ -n "$GATEWAY_KEY" ] && env_set OPENARITY_LLM_API_KEY "$GATEWAY_KEY"
 	note "OmniRoute answering on $OMNIROUTE_PORT"
 }
 
 ensure_existing() {
-	GATEWAY_URL=${MODELS_BASE_URL:-}
-	GATEWAY_KEY=${MODELS_API_KEY:-}
+	GATEWAY_URL=${LLM_BASE_URL:-}
+	GATEWAY_KEY=${LLM_API_KEY:-}
 	GATEWAY_DASHBOARD=""
 
 	if [ -z "$GATEWAY_URL" ]; then
-		[ -t 0 ] || die "GATEWAY=existing needs MODELS_BASE_URL, and there is no terminal to ask at.
-  MODELS_BASE_URL=http://host:port/v1 MODELS_API_KEY=… make start-docker GATEWAY=existing"
+		[ -t 0 ] || die "GATEWAY=existing needs LLM_BASE_URL, and there is no terminal to ask at.
+  LLM_BASE_URL=http://host:port/v1 LLM_API_KEY=… make start-docker GATEWAY=existing"
 		printf '  base URL (ending in /v1): '
 		read -r GATEWAY_URL
 	fi
 	[ -n "$GATEWAY_URL" ] || die "No base URL given."
+	case "$GATEWAY_URL" in
+		*://localhost*|*://127.*)
+			note "the brain runs in a container, where $GATEWAY_URL is the container itself —"
+			note "use an address it can reach, such as host.docker.internal or this machine's" ;;
+	esac
 
 	if [ -z "$GATEWAY_KEY" ] && [ -t 0 ]; then
 		printf '  API key (blank if it needs none): '
 		read -r GATEWAY_KEY
 	fi
 
-	env_set OPENARITY_MODELS_BASE_URL "$GATEWAY_URL"
-	env_set OPENARITY_MODELS_API_KEY "$GATEWAY_KEY"
+	env_set OPENARITY_LLM_BASE_URL "$GATEWAY_URL"
+	env_set OPENARITY_LLM_API_KEY "$GATEWAY_KEY"
 
 	local code
 	code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
@@ -585,11 +607,20 @@ if [ -n "$GATEWAY_URL" ]; then
 			say ""
 			say "  It routes nothing until a provider key is in deployment/.env"
 			say "  — ANTHROPIC_API_KEY or OPENAI_API_KEY — and litellm restarts."
+			if [ -z "$GATEWAY_KEY" ]; then
+				say ""
+				say "  The brain has no key for it yet. Mint a virtual key in that"
+				say "  console and put it in deployment/.env as OPENARITY_LLM_API_KEY."
+				say "  Not LITELLM_MASTER_KEY: that one administers the gateway."
+			fi
 			;;
 	esac
 	say ""
-	say "${dim}  export OPENARITY_MODELS_BASE_URL=$GATEWAY_URL${plain}"
-	say "${dim}  export OPENARITY_MODELS_API_KEY=…   # in deployment/.env${plain}"
+	say "  The brain is given it through deployment/.env. To run the SDK's"
+	say "  examples against it from this machine:"
+	say ""
+	say "${dim}  export OPENARITY_LLM_BASE_URL=$GATEWAY_URL${plain}"
+	say "${dim}  export OPENARITY_LLM_API_KEY=…   # in deployment/.env${plain}"
 fi
 
 say ""

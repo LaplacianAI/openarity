@@ -51,6 +51,16 @@ func TestEachObjectBackendProducesAWorkingStore(t *testing.T) {
 				}
 			},
 		},
+		"seaweedfs": {
+			config.ObjectsBackendSeaweedFS,
+			func(*testing.T) *config.Config {
+				return &config.Config{
+					ObjectsEndpoint: "http://127.0.0.1:19000",
+					ObjectsRegion:   "us-east-1",
+					ObjectsBucket:   "openarity",
+				}
+			},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -122,6 +132,41 @@ func TestEachObjectBackendProducesADifferentStore(t *testing.T) {
 	}
 }
 
+// seaweedfs is a second name for the S3 adapter, the way vault is for OpenBao:
+// SeaweedFS is reached through its S3 gateway. It must build that adapter and
+// not fall through to the in-memory fallback, which would pass every test
+// above and lose every attachment.
+func TestSeaweedFSIsBuiltByTheS3Adapter(t *testing.T) {
+	t.Parallel()
+
+	at := func(backend config.ObjectsBackend) objects.Store {
+		t.Helper()
+		store, err := newObjectStore(&config.Config{
+			ObjectsBackend:  backend,
+			ObjectsEndpoint: "http://127.0.0.1:19000",
+			ObjectsRegion:   "us-east-1",
+			ObjectsBucket:   "openarity",
+		}, discardLogger())
+		if err != nil {
+			t.Fatalf("%s: %v", backend, err)
+		}
+		return store
+	}
+
+	seaweed, s3store := at(config.ObjectsBackendSeaweedFS), at(config.ObjectsBackendS3)
+	if kind(seaweed) != kind(s3store) {
+		t.Errorf("seaweedfs produced %s, want the S3 adapter's %s", kind(seaweed), kind(s3store))
+	}
+
+	memory, err := newObjectStore(&config.Config{ObjectsBackend: config.ObjectsBackendMemory}, discardLogger())
+	if err != nil {
+		t.Fatalf("memory: %v", err)
+	}
+	if kind(seaweed) == kind(memory) {
+		t.Errorf("seaweedfs produced the in-memory fallback, %s", kind(memory))
+	}
+}
+
 // The package a store came from, which is what distinguishes the adapters now
 // that each of their types is unexported and called the same thing.
 func kind(s objects.Store) string {
@@ -140,6 +185,10 @@ func TestAMisconfiguredObjectBackendFailsAtStartup(t *testing.T) {
 		"s3 with no bucket": {
 			ObjectsBackend:  config.ObjectsBackendS3,
 			ObjectsEndpoint: "http://127.0.0.1:19000",
+		},
+		"seaweedfs with no endpoint": {
+			ObjectsBackend: config.ObjectsBackendSeaweedFS,
+			ObjectsBucket:  "openarity",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -28,6 +28,23 @@ data:
   # OPENARITY_OIDC_ISSUER is deployment-specific; set it here.
   OPENARITY_OIDC_ISSUER: "https://example.okta.com"
 
+  # The model that embeds agents, tools and skills for the graph: where to
+  # ask for it, its name there, and the width of its vectors. Set all three
+  # or none: with none, the worker runs no projector and says so at start.
+  # The index is built for one width, so changing the model means
+  # `brain graph rebuild`.
+  #
+  # The endpoint is anything answering OpenAI's /embeddings. Its key is
+  # OPENARITY_EMBEDDING_API_KEY, and that is a value: it belongs in
+  # secret.yaml, never here.
+  # OPENARITY_EMBEDDING_BASE_URL: "http://model-gateway:4000/v1"
+  # OPENARITY_EMBEDDING_MODEL: "text-embedding-3-small"
+  # OPENARITY_EMBEDDING_DIMENSIONS: "1536"
+  #
+  # The chat models, for the agent runtime. Its default is localhost, which
+  # in a pod is the pod. The key is OPENARITY_LLM_API_KEY, in secret.yaml.
+  # OPENARITY_LLM_BASE_URL: "http://model-gateway:4000/v1"
+
   # Token subjects, not email addresses. A super admin bypasses every
   # team-scoped check, so this list is a privileged one — keep it short.
   OPENARITY_SUPER_ADMINS: ""

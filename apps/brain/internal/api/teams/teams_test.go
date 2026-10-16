@@ -49,6 +49,19 @@ type fakeStore struct {
 	subjectArgs  []db.FindUsersBySubjectParams
 	listedUser   int
 	getTeamCalls int
+
+	// actions is what each role is granted, as rbac.json would; askedFor
+	// records which roles were looked up.
+	actions  map[string][]string
+	askedFor []string
+}
+
+func (f *fakeStore) ActionsFor(_ context.Context, role string) ([]string, error) {
+	f.askedFor = append(f.askedFor, role)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.actions[role], nil
 }
 
 func (f *fakeStore) FindUsersBySubject(
@@ -190,6 +203,7 @@ func teamRoutes(t *testing.T) authz.Routes {
 	add("GET", "/teams", "authenticated", nil)
 	add("GET", "/teams/{id}", "member", nil)
 	add("GET", "/teams/{id}/members", "member", nil)
+	add("GET", "/teams/{id}/permissions", "member", nil)
 	add("POST", "/teams/{id}/members", "team", &membership)
 	add("DELETE", "/teams/{id}/members/{userID}", "team", &membership)
 	return rs
@@ -1710,5 +1724,116 @@ func TestListGivesASuperAdminTheirOwnRole(t *testing.T) {
 	// absent rather than becoming an empty string.
 	if roles[theirs] != nil {
 		t.Errorf("Role = %q for a team the caller does not belong to", *roles[theirs])
+	}
+}
+
+// --- GET /teams/{id}/permissions ------------------------------------------
+
+func permissionsOf(t *testing.T, rec *httptest.ResponseRecorder) permissions {
+	t.Helper()
+
+	var got permissions
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body is not permissions: %v (%s)", err, rec.Body)
+	}
+	return got
+}
+
+// What a member's role grants in this team, sorted, so a client can offer
+// only what the brain will allow. Which role holds what is data: the handler
+// asks for the role it found, and returns what the store says.
+func TestPermissionsAreWhatTheCallersRoleGrants(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	s := &fakeStore{actions: map[string][]string{
+		"member": {"tool:write", "agent:write", "skill:write"},
+		"admin":  {"membership:write"},
+	}}
+	rec := call(t, s, &fakeAuthz{}, memberOf(teamID, "member"), http.MethodGet, "/teams/"+teamID.String()+"/permissions", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	got := permissionsOf(t, rec)
+	if !slices.Equal(got.Actions, []string{"agent:write", "skill:write", "tool:write"}) || got.SuperAdmin {
+		t.Errorf("got %+v", got)
+	}
+	if !slices.Equal(s.askedFor, []string{"member"}) {
+		t.Errorf("roles looked up = %v, want the caller's own", s.askedFor)
+	}
+}
+
+// The role is the one in this team. Somebody who is an admin elsewhere and a
+// member here holds a member's permissions here.
+func TestPermissionsAreForTheTeamInThePath(t *testing.T) {
+	t.Parallel()
+
+	here, elsewhere := uuid.New(), uuid.New()
+	u := memberOf(here, "member")
+	u.Teams = append(u.Teams, auth.Membership{TeamID: elsewhere, Name: "other", Role: "admin"})
+	s := &fakeStore{actions: map[string][]string{"member": {"skill:write"}, "admin": {"membership:write"}}}
+
+	got := permissionsOf(t, call(t, s, &fakeAuthz{}, u, http.MethodGet, "/teams/"+here.String()+"/permissions", ""))
+	if !slices.Equal(got.Actions, []string{"skill:write"}) {
+		t.Errorf("actions = %v, want the member role's", got.Actions)
+	}
+}
+
+// A super admin may do everything in every team. The flag says so, and a
+// super admin who is not a member holds no role here, so lists nothing.
+func TestASuperAdminIsSaidToBeOne(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	s := &fakeStore{actions: map[string][]string{"member": {"skill:write"}}}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodGet, "/teams/"+teamID.String()+"/permissions", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	got := permissionsOf(t, rec)
+	if !got.SuperAdmin || len(got.Actions) != 0 {
+		t.Errorf("got %+v", got)
+	}
+	if len(s.askedFor) != 0 {
+		t.Errorf("a role was looked up for somebody with none here: %v", s.askedFor)
+	}
+	// An empty list, not null: a client reads it with .includes.
+	if !strings.Contains(rec.Body.String(), `"actions":[]`) {
+		t.Errorf("body = %s", rec.Body)
+	}
+}
+
+func TestARoleWithNoPermissionsListsNone(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	rec := call(t, &fakeStore{}, &fakeAuthz{}, memberOf(teamID, "viewer"), http.MethodGet, "/teams/"+teamID.String()+"/permissions", "")
+	if !strings.Contains(rec.Body.String(), `"actions":[]`) {
+		t.Errorf("body = %s", rec.Body)
+	}
+}
+
+// A team you do not belong to is not confirmed to exist, here as on every
+// member route.
+func TestPermissionsOfAnotherTeamAreNotFound(t *testing.T) {
+	t.Parallel()
+
+	s := &fakeStore{actions: map[string][]string{"member": {"skill:write"}}}
+	rec := call(t, s, &fakeAuthz{}, memberOf(uuid.New(), "member"), http.MethodGet, "/teams/"+uuid.NewString()+"/permissions", "")
+	if rec.Code != http.StatusNotFound || len(s.askedFor) != 0 {
+		t.Errorf("status = %d, roles looked up = %v", rec.Code, s.askedFor)
+	}
+}
+
+func TestPermissionsThatCannotBeReadAreAnError(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	s := &fakeStore{err: errors.New("the database went away")}
+	rec := call(t, s, &fakeAuthz{}, memberOf(teamID, "member"), http.MethodGet, "/teams/"+teamID.String()+"/permissions", "")
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "database") {
+		t.Errorf("status = %d, body = %s", rec.Code, rec.Body)
 	}
 }

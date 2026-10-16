@@ -18,11 +18,13 @@ type Kind string
 const (
 	KindChannel     Kind = "channels"
 	KindAttachments Kind = "attachments"
+	KindMCP         Kind = "mcp"
 )
 
 var AllKinds = []Kind{
 	KindChannel,
 	KindAttachments,
+	KindMCP,
 }
 
 type Store interface {

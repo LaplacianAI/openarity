@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -32,6 +33,7 @@ type Store interface {
 	AddTeamMember(ctx context.Context, arg db.AddTeamMemberParams) (db.TeamMember, error)
 	RemoveTeamMember(ctx context.Context, arg db.RemoveTeamMemberParams) error
 	FindUsersBySubject(ctx context.Context, arg db.FindUsersBySubjectParams) ([]db.FindUsersBySubjectRow, error)
+	ActionsFor(ctx context.Context, role string) ([]string, error)
 }
 
 type SuperAdmins interface {
@@ -51,6 +53,7 @@ func New(logger *slog.Logger, s Store, a SuperAdmins) *api.Router {
 	r.Post("", h.create)
 	r.Get("", h.list)
 	r.Get("/{id}", h.get)
+	r.Get("/{id}/permissions", h.permissions)
 	r.Get("/{id}/members", h.listMembers)
 	r.Post("/{id}/members", h.addMember)
 	r.Delete("/{id}/members/{userID}", h.removeMember)
@@ -384,4 +387,28 @@ func (h *handler) failMembership(w http.ResponseWriter, u *auth.User, err error)
 	default:
 		api.Fail(w, h.logger, u, "failed to add member", err)
 	}
+}
+
+func (h *handler) permissions(w http.ResponseWriter, r *http.Request) {
+	u := api.Caller(r)
+	teamID, ok := api.RequireTeam(w, r, h.logger)
+	if !ok {
+		return
+	}
+
+	actions := []string{}
+	if role, member := u.RoleIn(teamID); member {
+		granted, err := h.store.ActionsFor(r.Context(), role)
+		if err != nil {
+			api.Fail(w, h.logger, u, "failed to read the role's permissions", err)
+			return
+		}
+		actions = append(actions, granted...)
+		slices.Sort(actions)
+	}
+
+	api.WriteJSON(w, h.logger, http.StatusOK, permissions{
+		Actions:    actions,
+		SuperAdmin: h.superAdmins.IsSuperAdmin(u),
+	})
 }

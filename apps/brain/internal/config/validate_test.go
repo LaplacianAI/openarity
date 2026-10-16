@@ -40,11 +40,11 @@ func TestValidateRejectsWrongSchemePerField(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"OPENARITY_POSTGRES_DSN":   "redis://127.0.0.1:6379",
-		"OPENARITY_REDIS_URL":      "http://127.0.0.1:6379",
-		"OPENARITY_FALKOR_DB_URL":  "postgres://127.0.0.1:6380",
-		"OPENARITY_SECRETS_ADDR":   "redis://127.0.0.1:8200",
-		"OPENARITY_OMNI_ROUTE_URL": "redis://127.0.0.1:20128",
+		"OPENARITY_POSTGRES_DSN":  "redis://127.0.0.1:6379",
+		"OPENARITY_REDIS_URL":     "http://127.0.0.1:6379",
+		"OPENARITY_FALKOR_DB_URL": "postgres://127.0.0.1:6380",
+		"OPENARITY_SECRETS_ADDR":  "redis://127.0.0.1:8200",
+		"OPENARITY_LLM_BASE_URL":  "redis://127.0.0.1:20128",
 	}
 	for key, bad := range tests {
 		if cfg, err := load(map[string]string{key: bad}); err == nil {
@@ -135,5 +135,63 @@ func TestErrorsNameTheField(t *testing.T) {
 	err = checkURL("SECRETS_ADDR", "nonsense", httpSchemes...)
 	if err == nil || !strings.Contains(err.Error(), "SECRETS_ADDR") {
 		t.Errorf("error should name SECRETS_ADDR, got: %v", err)
+	}
+}
+
+// url.Parse quotes the whole URL in its error, and the parts it names are
+// often the password itself: one holding a / ends the host early, so the
+// parser reports the start of the password as a bad port. An error reaches
+// stderr and the log shipper, so a URL that will not parse is refused
+// without the parser's words.
+func TestAURLThatWillNotParseIsNotRepeated(t *testing.T) {
+	t.Parallel()
+
+	for _, field := range []string{
+		"POSTGRES_DSN", "REDIS_URL", "FALKOR_DB_URL", "SECRETS_ADDR",
+		"LLM_BASE_URL", "EMBEDDING_BASE_URL", "OIDC_ISSUER",
+	} {
+		for name, raw := range map[string]string{
+			"a bad port":                 "http://user:urlsecret@host:abc/v1",
+			"a slash in the password":    "http://user:url/secret@host/v1",
+			"a bad escape":               "http://user:urlsecret%zz@host/v1",
+			"a trailing newline":         "http://user:urlsecret@host/v1\n",
+			"a control character inside": "http://user:url\x7fsecret@host/v1",
+		} {
+			_, err := load(map[string]string{
+				"OPENARITY_" + field:             raw,
+				"OPENARITY_OIDC_ENABLED":         "true",
+				"OPENARITY_EMBEDDING_MODEL":      "m",
+				"OPENARITY_EMBEDDING_DIMENSIONS": "3",
+			})
+			if err == nil || !strings.Contains(err.Error(), field+" cannot be parsed as a URL") {
+				t.Errorf("%s, %s: err = %v, want the setting named as unparseable", field, name, err)
+				continue
+			}
+			for _, part := range []string{"secret", "user", "%zz", ":url", "host"} {
+				if strings.Contains(err.Error(), part) {
+					t.Errorf("%s, %s: the refusal repeats %q from the value: %v", field, name, part, err)
+				}
+			}
+		}
+	}
+}
+
+// The checks that pass the parser name what is missing and never the value.
+func TestAURLRefusedForItsShapeIsNotRepeated(t *testing.T) {
+	t.Parallel()
+
+	for name, raw := range map[string]string{
+		"no scheme":    "user:urlsecret@gateway.example.com/v1",
+		"no host":      "http://user:urlsecret@/v1",
+		"wrong scheme": "redis://user:urlsecret@gateway.example.com",
+	} {
+		_, err := load(map[string]string{"OPENARITY_LLM_BASE_URL": raw})
+		if err == nil || !strings.Contains(err.Error(), "LLM_BASE_URL") {
+			t.Errorf("%s: err = %v, want a refusal naming the setting", name, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "urlsecret") {
+			t.Errorf("%s: the refusal repeats the password: %v", name, err)
+		}
 	}
 }

@@ -44,6 +44,9 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // A form test types into several fields; under coverage on a busy
+    // machine that outlasts the default five seconds.
+    testTimeout: 20_000,
     css: false,
     coverage: {
       provider: "v8",

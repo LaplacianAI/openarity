@@ -11,12 +11,15 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/agents"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/channels"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/config"
 	cmdcontext "github.com/LaplacianAI/openarity/apps/cli/internal/command/context"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/login"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/logout"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/mcpservers"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/sessions"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/skills"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/teams"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/users"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/whoami"
@@ -47,6 +50,9 @@ func commands(opts *cli.Options) []*cobra.Command {
 		cmdcontext.New(opts),
 		teams.New(opts),
 		channels.New(opts),
+		agents.New(opts),
+		mcpservers.New(opts),
+		skills.New(opts),
 		sessions.New(opts),
 		users.New(opts),
 		login.New(opts),

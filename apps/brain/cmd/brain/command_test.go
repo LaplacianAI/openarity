@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // No arguments means serve, so the container image needs no explicit command
@@ -145,6 +148,111 @@ func TestParseReturnsAZeroCommandOnError(t *testing.T) {
 	}
 }
 
+// --- graph ---
+
+const someTeam = "3f2c1b6a-9d4e-4f70-8a55-0c1d2e3f4a5b"
+
+// No team means every team, and it is said by leaving the flag off, never by
+// a value of it.
+func TestParseGraphRebuildOfEveryTeam(t *testing.T) {
+	t.Parallel()
+
+	cmd, err := parse([]string{"graph", "rebuild"})
+	if err != nil {
+		t.Fatalf("graph rebuild rejected: %v", err)
+	}
+	if cmd.name != commandGraph || cmd.team != uuid.Nil || cmd.direction != "" {
+		t.Errorf("graph rebuild parsed as %+v", cmd)
+	}
+}
+
+func TestParseGraphRebuildOfOneTeam(t *testing.T) {
+	t.Parallel()
+
+	cmd, err := parse([]string{"graph", "rebuild", "--team", someTeam})
+	if err != nil {
+		t.Fatalf("rejected: %v", err)
+	}
+	if cmd.name != commandGraph || cmd.team != uuid.MustParse(someTeam) {
+		t.Errorf("parsed as %+v", cmd)
+	}
+}
+
+// A rebuild drops a graph before it builds one. Anything that is not exactly
+// one of the two forms is refused: an argument this cannot read must never
+// widen "this team" into "every team".
+func TestParseRejectsEveryOtherGraphCommand(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"graph"},
+		{"graph", ""},
+		{"graph", "Rebuild"},
+		{"graph", "drop"},
+		{"graph", "--team", someTeam},
+		{"graph", "rebuild", "--team"},
+		{"graph", "rebuild", "--team", ""},
+		{"graph", "rebuild", "--team", "acme"},
+		{"graph", "rebuild", "--team", someTeam[:35]},
+		{"graph", "rebuild", "--team", someTeam, "extra"},
+		{"graph", "rebuild", "--team", someTeam, "--team", someTeam},
+		{"graph", "rebuild", "--teams", someTeam},
+		{"graph", "rebuild", "-team", someTeam},
+		{"graph", "rebuild", "--team=" + someTeam},
+		{"graph", "rebuild", someTeam},
+		{"graph", "rebuild", "--all"},
+		{"graph", "rebuild", "extra"},
+		// The id of no team. Taken as a value it would mean every team.
+		{"graph", "rebuild", "--team", uuid.Nil.String()},
+	} {
+		cmd, err := parse(args)
+		if err == nil {
+			t.Errorf("%q accepted as %+v", args, cmd)
+			continue
+		}
+		if !errors.Is(err, errGraphUsage) || !strings.Contains(err.Error(), "brain graph rebuild [--team <id>]") {
+			t.Errorf("%q gave no usage: %v", args, err)
+		}
+		if cmd != (command{}) {
+			t.Errorf("%q returned a usable command with its error: %+v", args, cmd)
+		}
+	}
+}
+
+// uuid.Parse reads more than the one familiar form. Each of these is the
+// same id written another way, so accepting them widens nothing; pinned so
+// that it is a decision.
+func TestATeamIDMayBeWrittenAnyWayAUUIDIs(t *testing.T) {
+	t.Parallel()
+
+	for _, written := range []string{
+		strings.ToUpper(someTeam),
+		"urn:uuid:" + someTeam,
+		"{" + someTeam + "}",
+		strings.ReplaceAll(someTeam, "-", ""),
+	} {
+		cmd, err := parse([]string{"graph", "rebuild", "--team", written})
+		if err != nil || cmd.team != uuid.MustParse(someTeam) {
+			t.Errorf("%q parsed as %v, %v", written, cmd.team, err)
+		}
+	}
+	for _, written := range []string{" " + someTeam, someTeam + " ", someTeam + "0", "0x" + strings.ReplaceAll(someTeam, "-", "")} {
+		if cmd, err := parse([]string{"graph", "rebuild", "--team", written}); err == nil {
+			t.Errorf("%q accepted as %v", written, cmd.team)
+		}
+	}
+}
+
+// What was typed is in the error, so a bad id is seen for what it is.
+func TestABadTeamIDIsQuotedBack(t *testing.T) {
+	t.Parallel()
+
+	_, err := parse([]string{"graph", "rebuild", "--team", "acme"})
+	if err == nil || !strings.Contains(err.Error(), `"acme"`) {
+		t.Errorf("err = %v", err)
+	}
+}
+
 // The error a typo produces has to list what is actually accepted. It is the
 // only place a person learns the command names, and it is a string nothing
 // else checks — `brain reapp` said "want serve or migrate" for a while after
@@ -157,7 +265,7 @@ func TestTheUnknownCommandErrorNamesEveryCommand(t *testing.T) {
 		t.Fatal("parse accepted a command that does not exist")
 	}
 
-	for _, name := range []commandName{commandServe, commandMigrate, commandReap, commandWorker} {
+	for _, name := range []commandName{commandServe, commandMigrate, commandReap, commandWorker, commandGraph} {
 		if !strings.Contains(err.Error(), string(name)) {
 			t.Errorf("%q is a command and the error does not mention it: %v", name, err)
 		}

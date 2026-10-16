@@ -1,12 +1,16 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -14,6 +18,8 @@ var (
 	redisSchemes    = []string{"redis", "rediss"}
 	postgresSchemes = []string{"postgres", "postgresql"}
 )
+
+const maxEmbeddingDimensions = 4096
 
 func checkHostPort(field, v string) error {
 	_, port, err := net.SplitHostPort(v)
@@ -30,7 +36,8 @@ func checkHostPort(field, v string) error {
 func checkURL(field, v string, schemes ...string) error {
 	url, err := url.Parse(v)
 	if err != nil {
-		return fmt.Errorf("%s is invalid: %w", field, err)
+		return fmt.Errorf("%s cannot be parsed as a URL — a password holding / ? # @ : or %% has to be "+
+			"percent-encoded; the value is not repeated here, in case it carries one", field)
 	}
 	if url.Scheme == "" {
 		return fmt.Errorf("%s must have a scheme", field)
@@ -42,6 +49,77 @@ func checkURL(field, v string, schemes ...string) error {
 		return fmt.Errorf("%s must have one of the following schemes: %v", field, schemes)
 	}
 	return nil
+}
+
+var hostPattern = regexp.MustCompile(`(?i)^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
+func checkHosts(field string, hosts []string) error {
+	for i, h := range hosts {
+		switch {
+		case strings.Contains(h, "@"):
+			return fmt.Errorf("%s entry %d holds an @, so it may carry a credential and is not repeated here — "+
+				"write a host name alone, such as hub.example.com", field, i)
+		case !hostPattern.MatchString(h):
+			return fmt.Errorf("%s entry %d is %q — write a host name alone, such as hub.example.com, with no scheme, port or path", field, i, h)
+		}
+	}
+	return nil
+}
+
+func checkAPIKey(field, v string) error {
+	if strings.ContainsFunc(v, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return fmt.Errorf("%s holds a space, a line break or a control character, which no key has — "+
+			"check for a trailing newline or quotes around a blank; the value is not repeated here", field)
+	}
+	return nil
+}
+
+var linkLocal = []netip.Prefix{
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("fe80::/10"),
+}
+
+func checkPrivateNetworks(field string, nets []netip.Prefix) error {
+	for i, p := range nets {
+		switch {
+		case !p.IsValid():
+			return fmt.Errorf("%s entry %d is empty — check for a trailing comma", field, i)
+		case p.Addr().Is4In6():
+			return fmt.Errorf("%s entry %s is an IPv4-mapped prefix — write it as IPv4", field, p)
+		case p != p.Masked():
+			return fmt.Errorf("%s entry %s has host bits set — did you mean %s?", field, p, p.Masked())
+		}
+		for _, ll := range linkLocal {
+			if p.Overlaps(ll) {
+				return fmt.Errorf("%s entry %s overlaps %s, where cloud metadata services answer, which is never dialled", field, p, ll)
+			}
+		}
+	}
+	return nil
+}
+
+func checkEmbedding(baseURL, apiKey, model string, dims int) error {
+	switch {
+	case model != strings.TrimSpace(model):
+		return fmt.Errorf("EMBEDDING_MODEL %q has a space at one end", model)
+	case (model == "") != (dims == 0):
+		return errors.New("EMBEDDING_MODEL and EMBEDDING_DIMENSIONS are set together or not at all: " +
+			"the index is built for one model's dimensions")
+	case dims < 0 || dims > maxEmbeddingDimensions:
+		return fmt.Errorf("EMBEDDING_DIMENSIONS is %d, and must be between 1 and %d", dims, maxEmbeddingDimensions)
+	case model != "" && baseURL == "":
+		return errors.New("EMBEDDING_MODEL is set but EMBEDDING_BASE_URL is not, so there is nowhere to ask for a vector")
+	case model == "" && baseURL != "":
+		return errors.New("EMBEDDING_BASE_URL is set but EMBEDDING_MODEL is not, so nothing would use it")
+	case model == "" && apiKey != "":
+		return errors.New("EMBEDDING_API_KEY is set but EMBEDDING_MODEL is not, so nothing would use it")
+	case model == "":
+		return nil
+	}
+	if err := checkURL("EMBEDDING_BASE_URL", baseURL, httpSchemes...); err != nil {
+		return err
+	}
+	return checkAPIKey("EMBEDDING_API_KEY", apiKey)
 }
 
 func (c *Config) Validate() error {
@@ -71,7 +149,11 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
-	if err := checkURL("OMNI_ROUTE_URL", c.OmniRouteURL, httpSchemes...); err != nil {
+	if err := checkURL("LLM_BASE_URL", c.LLMBaseURL, httpSchemes...); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := checkAPIKey("LLM_API_KEY", c.LLMAPIKey); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -93,6 +175,22 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Errorf(
 				"SUPER_ADMINS entry %d is %q — entries must not be empty or padded with whitespace", i, sub))
 		}
+	}
+
+	if err := checkHosts("SKILL_IMPORT_HOSTS", c.SkillImportHosts); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := checkAPIKey("SKILL_IMPORT_GITHUB_TOKEN", c.SkillImportGitHubToken); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := checkPrivateNetworks("MCP_PRIVATE_NETWORKS", c.MCPPrivateNetworks); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := checkEmbedding(c.EmbeddingBaseURL, c.EmbeddingAPIKey, c.EmbeddingModel, c.EmbeddingDimensions); err != nil {
+		errs = append(errs, err)
 	}
 
 	if c.DevToken != "" && c.Environment != EnvironmentDevelopment {
@@ -145,10 +243,10 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.ObjectsBackend {
-	case ObjectsBackendS3:
+	case ObjectsBackendS3, ObjectsBackendSeaweedFS:
 		if c.ObjectsEndpoint == "" {
 			errs = append(errs, fmt.Errorf(
-				"OBJECTS_ENDPOINT is required when OBJECTS_BACKEND=s3: message "+
+				"OBJECTS_ENDPOINT is required when OBJECTS_BACKEND=s3 or OBJECTS_BACKEND=seaweedfs: message "+
 					"attachments have nowhere to go without it"))
 		}
 	case ObjectsBackendFilesystem:

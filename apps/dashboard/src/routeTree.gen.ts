@@ -14,8 +14,12 @@ import { Route as UiRouteImport } from './routes/ui'
 import { Route as UiIndexRouteImport } from './routes/ui.index'
 import { Route as UiApprovalsRouteImport } from './routes/ui.approvals'
 import { Route as UiCallbackRouteImport } from './routes/ui.callback'
+import { Route as UiGraphRouteImport } from './routes/ui.graph'
+import { Route as UiAgentsIndexRouteImport } from './routes/ui.agents.index'
 import { Route as UiChannelsIndexRouteImport } from './routes/ui.channels.index'
+import { Route as UiServersIndexRouteImport } from './routes/ui.servers.index'
 import { Route as UiSessionsIndexRouteImport } from './routes/ui.sessions.index'
+import { Route as UiSkillsIndexRouteImport } from './routes/ui.skills.index'
 import { Route as UiTeamsIndexRouteImport } from './routes/ui.teams.index'
 
 const IndexRoute = IndexRouteImport.update({
@@ -43,14 +47,34 @@ const UiCallbackRoute = UiCallbackRouteImport.update({
   path: '/callback',
   getParentRoute: () => UiRoute,
 } as any)
+const UiGraphRoute = UiGraphRouteImport.update({
+  id: '/graph',
+  path: '/graph',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiAgentsIndexRoute = UiAgentsIndexRouteImport.update({
+  id: '/agents/',
+  path: '/agents/',
+  getParentRoute: () => UiRoute,
+} as any)
 const UiChannelsIndexRoute = UiChannelsIndexRouteImport.update({
   id: '/channels/',
   path: '/channels/',
   getParentRoute: () => UiRoute,
 } as any)
+const UiServersIndexRoute = UiServersIndexRouteImport.update({
+  id: '/servers/',
+  path: '/servers/',
+  getParentRoute: () => UiRoute,
+} as any)
 const UiSessionsIndexRoute = UiSessionsIndexRouteImport.update({
   id: '/sessions/',
   path: '/sessions/',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiSkillsIndexRoute = UiSkillsIndexRouteImport.update({
+  id: '/skills/',
+  path: '/skills/',
   getParentRoute: () => UiRoute,
 } as any)
 const UiTeamsIndexRoute = UiTeamsIndexRouteImport.update({
@@ -64,18 +88,26 @@ export interface FileRoutesByFullPath {
   '/ui': typeof UiRouteWithChildren
   '/ui/approvals': typeof UiApprovalsRoute
   '/ui/callback': typeof UiCallbackRoute
+  '/ui/graph': typeof UiGraphRoute
   '/ui/': typeof UiIndexRoute
+  '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
+  '/ui/servers/': typeof UiServersIndexRoute
   '/ui/sessions/': typeof UiSessionsIndexRoute
+  '/ui/skills/': typeof UiSkillsIndexRoute
   '/ui/teams/': typeof UiTeamsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ui/approvals': typeof UiApprovalsRoute
   '/ui/callback': typeof UiCallbackRoute
+  '/ui/graph': typeof UiGraphRoute
   '/ui': typeof UiIndexRoute
+  '/ui/agents': typeof UiAgentsIndexRoute
   '/ui/channels': typeof UiChannelsIndexRoute
+  '/ui/servers': typeof UiServersIndexRoute
   '/ui/sessions': typeof UiSessionsIndexRoute
+  '/ui/skills': typeof UiSkillsIndexRoute
   '/ui/teams': typeof UiTeamsIndexRoute
 }
 export interface FileRoutesById {
@@ -84,9 +116,13 @@ export interface FileRoutesById {
   '/ui': typeof UiRouteWithChildren
   '/ui/approvals': typeof UiApprovalsRoute
   '/ui/callback': typeof UiCallbackRoute
+  '/ui/graph': typeof UiGraphRoute
   '/ui/': typeof UiIndexRoute
+  '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
+  '/ui/servers/': typeof UiServersIndexRoute
   '/ui/sessions/': typeof UiSessionsIndexRoute
+  '/ui/skills/': typeof UiSkillsIndexRoute
   '/ui/teams/': typeof UiTeamsIndexRoute
 }
 export interface FileRouteTypes {
@@ -96,18 +132,26 @@ export interface FileRouteTypes {
     | '/ui'
     | '/ui/approvals'
     | '/ui/callback'
+    | '/ui/graph'
     | '/ui/'
+    | '/ui/agents/'
     | '/ui/channels/'
+    | '/ui/servers/'
     | '/ui/sessions/'
+    | '/ui/skills/'
     | '/ui/teams/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/ui/approvals'
     | '/ui/callback'
+    | '/ui/graph'
     | '/ui'
+    | '/ui/agents'
     | '/ui/channels'
+    | '/ui/servers'
     | '/ui/sessions'
+    | '/ui/skills'
     | '/ui/teams'
   id:
     | '__root__'
@@ -115,9 +159,13 @@ export interface FileRouteTypes {
     | '/ui'
     | '/ui/approvals'
     | '/ui/callback'
+    | '/ui/graph'
     | '/ui/'
+    | '/ui/agents/'
     | '/ui/channels/'
+    | '/ui/servers/'
     | '/ui/sessions/'
+    | '/ui/skills/'
     | '/ui/teams/'
   fileRoutesById: FileRoutesById
 }
@@ -163,6 +211,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiCallbackRouteImport
       parentRoute: typeof UiRoute
     }
+    '/ui/graph': {
+      id: '/ui/graph'
+      path: '/graph'
+      fullPath: '/ui/graph'
+      preLoaderRoute: typeof UiGraphRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/agents/': {
+      id: '/ui/agents/'
+      path: '/agents'
+      fullPath: '/ui/agents/'
+      preLoaderRoute: typeof UiAgentsIndexRouteImport
+      parentRoute: typeof UiRoute
+    }
     '/ui/channels/': {
       id: '/ui/channels/'
       path: '/channels'
@@ -170,11 +232,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiChannelsIndexRouteImport
       parentRoute: typeof UiRoute
     }
+    '/ui/servers/': {
+      id: '/ui/servers/'
+      path: '/servers'
+      fullPath: '/ui/servers/'
+      preLoaderRoute: typeof UiServersIndexRouteImport
+      parentRoute: typeof UiRoute
+    }
     '/ui/sessions/': {
       id: '/ui/sessions/'
       path: '/sessions'
       fullPath: '/ui/sessions/'
       preLoaderRoute: typeof UiSessionsIndexRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/skills/': {
+      id: '/ui/skills/'
+      path: '/skills'
+      fullPath: '/ui/skills/'
+      preLoaderRoute: typeof UiSkillsIndexRouteImport
       parentRoute: typeof UiRoute
     }
     '/ui/teams/': {
@@ -190,18 +266,26 @@ declare module '@tanstack/react-router' {
 interface UiRouteChildren {
   UiApprovalsRoute: typeof UiApprovalsRoute
   UiCallbackRoute: typeof UiCallbackRoute
+  UiGraphRoute: typeof UiGraphRoute
   UiIndexRoute: typeof UiIndexRoute
+  UiAgentsIndexRoute: typeof UiAgentsIndexRoute
   UiChannelsIndexRoute: typeof UiChannelsIndexRoute
+  UiServersIndexRoute: typeof UiServersIndexRoute
   UiSessionsIndexRoute: typeof UiSessionsIndexRoute
+  UiSkillsIndexRoute: typeof UiSkillsIndexRoute
   UiTeamsIndexRoute: typeof UiTeamsIndexRoute
 }
 
 const UiRouteChildren: UiRouteChildren = {
   UiApprovalsRoute: UiApprovalsRoute,
   UiCallbackRoute: UiCallbackRoute,
+  UiGraphRoute: UiGraphRoute,
   UiIndexRoute: UiIndexRoute,
+  UiAgentsIndexRoute: UiAgentsIndexRoute,
   UiChannelsIndexRoute: UiChannelsIndexRoute,
+  UiServersIndexRoute: UiServersIndexRoute,
   UiSessionsIndexRoute: UiSessionsIndexRoute,
+  UiSkillsIndexRoute: UiSkillsIndexRoute,
   UiTeamsIndexRoute: UiTeamsIndexRoute,
 }
 

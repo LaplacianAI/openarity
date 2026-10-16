@@ -54,14 +54,14 @@ func TestEveryBackendValueParses(t *testing.T) {
 	}
 
 	for _, backend := range []ObjectsBackend{
-		ObjectsBackendMemory, ObjectsBackendFilesystem, ObjectsBackendS3,
+		ObjectsBackendMemory, ObjectsBackendFilesystem, ObjectsBackendS3, ObjectsBackendSeaweedFS,
 	} {
 		t.Run("objects/"+string(backend), func(t *testing.T) {
 			t.Parallel()
 
 			environ := map[string]string{"OPENARITY_OBJECTS_BACKEND": string(backend)}
-			if backend == ObjectsBackendS3 {
-				environ["OPENARITY_OBJECTS_ENDPOINT"] = "http://minio:9000"
+			if backend == ObjectsBackendS3 || backend == ObjectsBackendSeaweedFS {
+				environ["OPENARITY_OBJECTS_ENDPOINT"] = "http://objects:9000"
 			}
 
 			cfg, err := load(environ)
@@ -82,10 +82,11 @@ func TestAnUnknownBackendIsRefusedByName(t *testing.T) {
 	t.Parallel()
 
 	for name, tc := range map[string]struct{ key, value, wants string }{
-		"secrets, wrong case": {"OPENARITY_SECRETS_BACKEND", "OpenBao", "openbao"},
-		"secrets, invented":   {"OPENARITY_SECRETS_BACKEND", "consul", "vault"},
-		"objects, wrong case": {"OPENARITY_OBJECTS_BACKEND", "S3", "s3"},
-		"objects, invented":   {"OPENARITY_OBJECTS_BACKEND", "gcs", "filesystem"},
+		"secrets, wrong case":               {"OPENARITY_SECRETS_BACKEND", "OpenBao", "openbao"},
+		"secrets, invented":                 {"OPENARITY_SECRETS_BACKEND", "consul", "vault"},
+		"objects, wrong case":               {"OPENARITY_OBJECTS_BACKEND", "S3", "s3"},
+		"objects, invented":                 {"OPENARITY_OBJECTS_BACKEND", "gcs", "filesystem"},
+		"objects, seaweedfs's own spelling": {"OPENARITY_OBJECTS_BACKEND", "SeaweedFS", "seaweedfs"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -201,6 +202,30 @@ func TestVaultNeedsAnAppRoleJustAsOpenBaoDoes(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "SECRETS_APPROLE_ID") {
 				t.Errorf("the error does not name SECRETS_APPROLE_ID: %v", err)
+			}
+		})
+	}
+}
+
+// seaweedfs and s3 are one adapter, so they need the same endpoint. This is the
+// object-store twin of the vault test above: a second name added to the enum
+// and left out of the rule would start, and fail at the first attachment.
+func TestSeaweedFSNeedsAnEndpointJustAsS3Does(t *testing.T) {
+	t.Parallel()
+
+	for _, backend := range []ObjectsBackend{ObjectsBackendS3, ObjectsBackendSeaweedFS} {
+		t.Run(string(backend), func(t *testing.T) {
+			t.Parallel()
+
+			_, err := load(map[string]string{"OPENARITY_OBJECTS_BACKEND": string(backend)})
+			if err == nil {
+				t.Fatalf("load accepted OBJECTS_BACKEND=%s with no endpoint", backend)
+			}
+			if !strings.Contains(err.Error(), "OBJECTS_ENDPOINT") {
+				t.Errorf("the error does not name OBJECTS_ENDPOINT: %v", err)
+			}
+			if !strings.Contains(err.Error(), string(backend)) {
+				t.Errorf("the error does not name the backend that was chosen, %s: %v", backend, err)
 			}
 		})
 	}

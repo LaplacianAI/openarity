@@ -35,7 +35,7 @@ endpoint, shutdown := gateway.Resolve(
 defer shutdown()
 ```
 
-`Resolve` uses a real gateway when `OPENARITY_MODELS_BASE_URL` is set and an
+`Resolve` uses a real gateway when `OPENARITY_LLM_BASE_URL` is set and an
 in-process stub otherwise. The stub speaks real SSE, so the run is real: only
 the model's judgement is scripted.
 
@@ -129,8 +129,8 @@ the package it demonstrates.
 Then run it against a real gateway before committing:
 
 ```sh
-OPENARITY_MODELS_BASE_URL=http://127.0.0.1:20128/v1 \
-OPENARITY_MODELS_API_KEY=sk-… \
+OPENARITY_LLM_BASE_URL=http://127.0.0.1:20128/v1 \
+OPENARITY_LLM_API_KEY=sk-… \
 OPENARITY_MODEL=cc/claude-opus-4-8 \
 go run ./examples/yours
 ```

@@ -13,7 +13,7 @@ import (
 
 func newObjectStore(cfg *config.Config, logger *slog.Logger) (objects.Store, error) {
 	switch cfg.ObjectsBackend {
-	case config.ObjectsBackendS3:
+	case config.ObjectsBackendS3, config.ObjectsBackendSeaweedFS:
 		return s3.New(s3.Config{
 			Endpoint:  cfg.ObjectsEndpoint,
 			Region:    cfg.ObjectsRegion,

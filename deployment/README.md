@@ -42,7 +42,7 @@ make start-docker BUILD=1         # build the brain from this tree, not the imag
 ```
 
 The stack it brings up is a staging one: OIDC only, no development token, the
-real OpenBao rather than the in-memory one, and MinIO for attachments.
+real OpenBao rather than the in-memory one, and SeaweedFS for attachments.
 
 **It publishes on your LAN address, not loopback.** A token carries the issuer
 that minted it and the brain rejects one that disagrees, so the browser and
@@ -71,7 +71,8 @@ make dev        # and the brain, built from your working tree
 make image      # and the brain, from the image CI published
 make dex        # and dex: OIDC from a committed config, one small container
 make staging    # image plus authentik: OIDC only, no development token
-make objects    # add MinIO and create the bucket — for the object store tests
+make objects    # add SeaweedFS and create the bucket — for the object store tests
+make ollama     # add a local embedding model, for the graph
 make ps         # what is running, and on which ports
 make logs       # follow the brain; make logs service=authentik-server
 make down       # stop everything, keeping the data
@@ -95,9 +96,9 @@ OPENARITY_DEV_TOKEN=letmein OPENARITY_SUPER_ADMINS=dev go run ./cmd/brain
 ```
 
 Ports match the defaults in `internal/config`, so nothing else needs setting.
-OpenBao holds the brain's secrets; FalkorDB and Redis are running but unused —
-they are here so the day one of them is needed, it is configuration rather than
-archaeology.
+OpenBao holds the brain's secrets. FalkorDB holds the graph, once an embedding
+model is named — see [The graph](#the-graph). Redis is running but unused: it
+is here so the day it is needed, that is configuration rather than archaeology.
 
 If you already run Postgres or Redis on your machine, the published ports
 collide. Every one of them can be moved without editing the file:
@@ -115,7 +116,7 @@ that survives a reboot, `deployment/docker-compose.openbao.yml` is an overlay
 with file storage and a seal that opens itself. See
 [OPENBAO.md](OPENBAO.md).
 
-MinIO is not started by the everyday targets. Nothing writes attachments yet,
+SeaweedFS is not started by the everyday targets. Nothing writes attachments yet,
 so a store nobody uses is a container to remember to stop — `make objects` adds
 it when the object store tests need one:
 
@@ -474,6 +475,125 @@ Postgres is already up and the schema is already applied.
 [SCHEDULING.md](SCHEDULING.md) covers both routes, the four Kubernetes
 `CronJob` defaults that are wrong if you would rather the cluster owned the
 clock, and what the durable runtime costs.
+
+## The graph
+
+Agents, MCP tools and skills are copied into FalkorDB so they can be found by
+meaning rather than by name. Postgres stays the truth: the graph is an index
+over it, one graph per team, and it can be dropped and rebuilt at any time.
+
+It is off until an embedding model is named. Three settings turn it on, and
+the worker says so at start when they are missing:
+
+```sh
+OPENARITY_EMBEDDING_BASE_URL=http://ollama:11434/v1   # anything answering OpenAI's /embeddings
+OPENARITY_EMBEDDING_MODEL=nomic-embed-text            # as that server names it
+OPENARITY_EMBEDDING_DIMENSIONS=768                    # the width of its vectors
+```
+
+### A model on this machine
+
+```sh
+make ollama                      # start Ollama, wait for it, pull nomic-embed-text
+make ollama model=mxbai-embed-large
+make ollama-down                 # stop it; the models stay in its volume
+```
+
+The image is 2.8 GB to download and the model 274 MB. With the model loaded
+the container holds about 380 MB. It needs no account and no key, and nothing
+leaves the machine.
+
+Ollama answers OpenAI's `/v1/embeddings` itself, so for local work the brain
+can point straight at it, as above, with no gateway in between. Measured
+against the pinned image:
+
+```text
+POST /v1/embeddings  {"model":"nomic-embed-text","input":["a","b"]}
+  200  two vectors of 768, each carrying its index
+POST /v1/embeddings  {"model":"no-such-model", ...}
+  404  {"error":{"message":"model \"no-such-model\" not found, try pulling it first"}}
+```
+
+That 404 is why the pull is inside `make ollama`: a server with no model
+answers every request the way a wrong URL would.
+
+Through a gateway the request is the same and only the names change: the URL
+is the gateway's, and the model is whatever the gateway calls it. In LiteLLM
+that is an entry in `litellm/config.yaml`:
+
+```yaml
+  - model_name: nomic-embed-text
+    litellm_params:
+      model: ollama/nomic-embed-text
+      api_base: http://ollama:11434
+```
+
+with `OPENARITY_EMBEDDING_BASE_URL=http://litellm:4000/v1`. In OmniRoute it is
+a provider added in the dashboard with the same base URL. A gateway wants a
+key, and so does a provider reached directly:
+
+```sh
+OPENARITY_EMBEDDING_BASE_URL=https://api.openai.com/v1
+OPENARITY_EMBEDDING_API_KEY=<the key>
+OPENARITY_EMBEDDING_MODEL=text-embedding-3-small
+OPENARITY_EMBEDDING_DIMENSIONS=1536    # the model's own width; the brain does not ask for a shorter one
+```
+
+The key is sent as a bearer token, appears in no log line, and is refused at
+boot if it carries a space or a line break — the usual sign of a paste that
+picked up a newline. It is an environment variable like the database password
+is, so in production it comes from wherever the rest of the environment does.
+
+The chat models have an endpoint and a key of their own,
+`OPENARITY_LLM_BASE_URL` and `OPENARITY_LLM_API_KEY`, because they are often a
+different service. Nothing in the brain calls it until the agent runtime does.
+
+The direct path to Ollama is the one exercised in this repository's tests and
+the run below; the gateway entries are the gateways' own configuration, and a
+provider with a key has not been run from here.
+
+### What a run looks like
+
+With those settings, a brain and a worker running, and a team holding three
+skills, one MCP server and an agent granted the server and one skill:
+
+```text
+worker    "Graph drained" projected=11 failed=0
+
+GRAPH.QUERY team:<id> "MATCH (a:Agent)-[r]->(n) RETURN a.name, type(r), labels(n)[0], n.name"
+          triage  GRANTED    Toolkit  deepwiki
+          triage  HAS_SKILL  Skill    pdf-reader
+
+nearest skills to "pull the totals out of an xlsx file"
+          spreadsheet-analyst   0.427
+          pdf-reader            0.520
+          release-notes         0.526
+```
+
+The score is a distance, so smaller is nearer. The first drain comes within
+about a minute and a half of the worker starting, and one a minute after that.
+
+### Rebuilding
+
+```sh
+docker compose -f docker-compose.yml run --rm --no-deps brain graph rebuild
+docker compose -f docker-compose.yml run --rm --no-deps brain graph rebuild --team <id>
+```
+
+A rebuild drops a team's graph and builds it again from Postgres, embedding
+everything. It is what changing the embedding model requires, because the
+index is built for one width: a worker started with a new width leaves the
+graph alone and says to run this. It is safe beside a running worker — the
+two take turns — and it exits non-zero if any team could not be rebuilt.
+
+Two things the worker's log says, and what they mean:
+
+- **`The graph is behind`**, every quarter of an hour while the oldest pending
+  change is more than fifteen minutes old. The age is the signal, never the
+  count: a busy import is hundreds of rows a minute old.
+- **`a change was not projected`**, with the row it names. A warning the first
+  three times, since it is usually something arriving out of order, and an
+  error after.
 
 ## Kubernetes
 

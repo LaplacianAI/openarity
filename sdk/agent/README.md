@@ -14,7 +14,7 @@ into any Go program: a web service, a CLI, a worker, a test.
 go get github.com/LaplacianAI/openarity/sdk/agent
 ```
 
-Needs Go 1.26.6. Nothing else from this repository comes with it, and there is
+Needs Go 1.26.9. Nothing else from this repository comes with it, and there is
 no database, no server and no configuration file to set up.
 
 Two direct dependencies, and which of them you build depends on what you
@@ -286,6 +286,24 @@ sixty of them costs one entry in the tool list — which matters because the too
 array is the front of the cached prefix, and a tool per skill would give every
 caller a different one.
 
+A skill may also carry `Resources`: named closures, like `Body`, that the
+model reads one at a time through a second tool, `SkillResource`. Their names
+are listed only once the body has been loaded, a resource is refused until its
+skill has been, and the second tool is offered only when some skill has
+resources — so a run without them sends exactly the tools it always did.
+
+```go
+agent.Skill{
+	Name:        "review",
+	Description: "Review a pull request. Use when asked to review a diff.",
+	Body:        readBody,
+	Resources:   []agent.Resource{{Name: "checklist", Read: readChecklist}},
+}
+```
+
+Nothing runs a skill's scripts. Where a resource comes from — a file, a row, a
+bucket — is the caller's, as a tool's credentials are.
+
 ## Models
 
 `models/openaicompat` speaks OpenAI chat completions, so it reaches LiteLLM,
@@ -298,7 +316,7 @@ as well; `ClientFactory` is the seam.
 go run ./examples/tools
 ```
 
-Each runs with nothing installed — with no `OPENARITY_MODELS_BASE_URL` set they
+Each runs with nothing installed — with no `OPENARITY_LLM_BASE_URL` set they
 start a stub gateway in-process that speaks the streaming protocol, so the
 pattern, the accumulator and the tool dispatch are all real. See
 [`examples/README.md`](examples/README.md).

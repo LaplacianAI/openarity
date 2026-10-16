@@ -37,11 +37,3 @@ LIMIT sqlc.arg('page_size');
 -- name: GetAttachmentInSession :one
 SELECT * FROM attachments
 WHERE id = $1 AND session_id = $2;
-
--- The sweeper asks this before removing an object: another row pointing at the
--- same key means the bytes are still somebody's, and the tombstone is dropped
--- rather than acted on. Always 1 today, and not always 1 once identical files
--- share one.
---
--- name: CountAttachmentsByObjectKey :one
-SELECT count(*) FROM attachments WHERE object_key = $1;

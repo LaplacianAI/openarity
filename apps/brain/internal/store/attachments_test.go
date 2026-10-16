@@ -231,7 +231,7 @@ func TestListAttachmentsByMessage(t *testing.T) {
 // Deletion asks this before removing an object. Two rows pointing at one key
 // is not hypothetical bookkeeping — it is what content-addressed names produce
 // when the same file is forwarded twice.
-func TestCountAttachmentsByObjectKey(t *testing.T) {
+func TestObjectReferencesCountEveryAttachmentNamingAKey(t *testing.T) {
 	s := queryStore(t)
 
 	first, firstSession, _ := seedMessage(t, s, "count-a")
@@ -247,9 +247,9 @@ func TestCountAttachmentsByObjectKey(t *testing.T) {
 		"teams/x/objects/lonely": 1,
 		"teams/x/objects/absent": 0,
 	} {
-		got, err := s.CountAttachmentsByObjectKey(t.Context(), key)
+		got, err := s.CountObjectReferences(t.Context(), key)
 		if err != nil {
-			t.Fatalf("CountAttachmentsByObjectKey(%q): %v", key, err)
+			t.Fatalf("CountObjectReferences(%q): %v", key, err)
 		}
 		if got != want {
 			t.Errorf("count(%q) = %d, want %d", key, got, want)

@@ -101,6 +101,7 @@ of this file gets `null`.
 | `secret/metadata/teams/+/channels/+` | `delete` |
 | `secret/data/teams/+/attachments` | `read`, `create`, `update` |
 | `secret/metadata/teams/+/attachments` | `delete` |
+| `secret/data/teams/+/mcp/*` | `read` |
 | `auth/token/renew-self` | `update` |
 
 `+` matches exactly one path segment. That is the restriction: the brain
@@ -113,6 +114,37 @@ The attachments path holds one key per team, generated the first time that team
 stores something and used to encrypt every attachment before it reaches the
 object store. It is a leaf rather than a directory, which is why it has no
 trailing `+`.
+
+The `mcp/*` rule is where a team keeps the credentials its MCP servers need.
+A server row holds a reference such as `teams/<t>/mcp/github#token`, never the
+value, and the brain only reads it when connecting. The team writes these
+itself, for example:
+
+```sh
+bao kv put secret/teams/<team_id>/mcp/github token=<the token>
+```
+
+It is `*` rather than `+` so a reference can nest, and the glob cannot be
+walked out of: a literal `..` is redirected to the cleaned path and checked
+there, and an encoded one is refused as a relative path. These secrets are not
+destroyed when their team is deleted, because their names are the team's
+choice and finding them would need `list`.
+
+The brain's own credentials are not in here. The key for the embedding model,
+the key for the chat models and the token skill imports present to GitHub are
+environment variables — `OPENARITY_EMBEDDING_API_KEY`, `OPENARITY_LLM_API_KEY`
+and `OPENARITY_SKILL_IMPORT_GITHUB_TOKEN` — set by whoever deploys, by
+whatever puts the rest of the environment there. What lives in OpenBao is what
+cannot be an environment variable: a secret a team creates through the API
+while the brain is running.
+
+When `policy-brain.hcl` changes, a server set up before the change needs the
+policy written again, which takes effect for the brain's existing token at
+once:
+
+```sh
+make bao-policy
+```
 
 The `metadata` rule beside it is what lets `brain reap` destroy a deleted
 team's key, which is the half of an erasure that does not wait for the object

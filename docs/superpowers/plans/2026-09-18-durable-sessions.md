@@ -1788,8 +1788,8 @@ Expected: exit 0, and the four lines above with real numbers.
 - [ ] **Step 3: Run it against a real gateway**
 
 ```sh
-OPENARITY_MODELS_BASE_URL=http://127.0.0.1:20128/v1 \
-OPENARITY_MODELS_API_KEY=… \
+OPENARITY_LLM_BASE_URL=http://127.0.0.1:20128/v1 \
+OPENARITY_LLM_API_KEY=… \
 OPENARITY_MODEL=… \
 go run ./examples/sessions
 ```

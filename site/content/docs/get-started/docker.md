@@ -100,7 +100,7 @@ address for every URL it writes when the bind address is a wildcard.
 | Identity provider | `5556` for dex, `9000` for authentik |
 | Postgres | `15432` |
 | OpenBao | not published — the brain reaches it inside the network |
-| MinIO | `19000`, console on `19001` |
+| SeaweedFS (S3 gateway) | `19000` |
 
 The dashboard is not a separate service. The brain serves it from its own
 binary, so there is nothing extra to start and nothing to keep in sync.
@@ -112,7 +112,7 @@ still talk to each other on the standard ports.
 ## What it is, once it is up
 
 A staging stack, not a development one: OIDC only with the shared token
-refused outright, the real OpenBao rather than the in-memory one, and MinIO
+refused outright, the real OpenBao rather than the in-memory one, and SeaweedFS
 for attachments. Those are the settings that decide whether anything survives
 a restart, so the one command that new people run is the one that gets them
 right.
