@@ -52,7 +52,7 @@ func New(sec Secrets, p Policy, timeout time.Duration) *Discoverer {
 	return &Discoverer{
 		secrets:   sec,
 		transport: newTransport(p, headerTimeout),
-		calls:     newTransport(p, 0),
+		calls:     newTransport(p, callHeaderTimeout),
 		timeout:   timeout,
 	}
 }
