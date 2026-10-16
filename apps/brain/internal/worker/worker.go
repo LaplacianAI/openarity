@@ -2,14 +2,31 @@ package worker
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/dbos-inc/dbos-transact-golang/dbos"
 )
 
-const shutdownGrace = 30 * time.Second
+const (
+	shutdownGrace = 30 * time.Second
+	AppName       = "openarity-brain"
+)
+
+func executorID() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "worker"
+	}
+
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return host + "-" + hex.EncodeToString(b)
+}
 
 type Job interface {
 	Name() string
@@ -26,17 +43,22 @@ func New(dsn string, logger *slog.Logger, jobs ...Job) *Worker {
 	return &Worker{dsn: dsn, logger: logger, jobs: jobs}
 }
 
+func (w *Worker) config() dbos.Config {
+	return dbos.Config{
+		AppName:     AppName,
+		DatabaseURL: w.dsn,
+		Logger:      w.logger,
+		ExecutorID:  executorID(),
+	}
+}
+
 func (w *Worker) Run(ctx context.Context) error {
 	if len(w.jobs) == 0 {
 		return fmt.Errorf("the worker has no jobs, so it would run forever " +
 			"doing nothing — a process that looks healthy and erases nothing")
 	}
 
-	d, err := dbos.NewContext(ctx, dbos.Config{
-		AppName:     "openarity-brain",
-		DatabaseURL: w.dsn,
-		Logger:      w.logger,
-	})
+	d, err := dbos.NewContext(ctx, w.config())
 	if err != nil {
 		return fmt.Errorf("start the durable runtime: %w", err)
 	}
