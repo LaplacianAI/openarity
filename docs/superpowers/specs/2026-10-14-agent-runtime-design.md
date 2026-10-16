@@ -591,7 +591,7 @@ configuration only when a deployment needs a different value.
 | Runs in one tree | to be set in slice 6 |
 | Background delegates at once, per tree | to be set in slice 8 |
 | Tokens per tree | 1,000,000 |
-| Wall-clock per tree | 30 minutes |
+| Wall-clock per tree | 6 hours, so an orchestrator can run long; the token budget usually binds first |
 
 The budget is counted in tokens and time, not currency. Nothing in the brain
 knows prices.
