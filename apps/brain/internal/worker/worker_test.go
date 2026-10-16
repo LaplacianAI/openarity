@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 
@@ -184,5 +185,56 @@ func TestAJobMayRegisterNoSchedules(t *testing.T) {
 	}
 	if len(specs) != 1 {
 		t.Errorf("register returned %d schedules, want 1", len(specs))
+	}
+}
+
+// Two workers sharing an executor id re-run each other's runs: DBOS
+// re-queues every pending workflow carrying its own id when it launches, and
+// a probe watched a second worker do it to a run the first was still running.
+func TestEveryWorkerProcessHasItsOwnExecutorID(t *testing.T) {
+	host, err := os.Hostname()
+	if err != nil {
+		t.Skipf("no hostname to compare against: %v", err)
+	}
+
+	first, second := executorID(), executorID()
+
+	if first == second {
+		t.Errorf("two calls both gave %q, so two workers would share an id", first)
+	}
+	for _, id := range []string{first, second} {
+		if !strings.HasPrefix(id, host+"-") || len(id) <= len(host)+1 {
+			t.Errorf("executor id %q does not name this host (%q) and a suffix", id, host)
+		}
+	}
+}
+
+// The reaper's and the graph drain's schedules are stored under this name.
+// A different one leaves them pointing at an application nothing runs, and
+// the API's client would enqueue runs no worker dequeues.
+func TestTheAPIAndTheWorkerActForOneApplication(t *testing.T) {
+	if AppName != "openarity-brain" {
+		t.Errorf("AppName = %q; the schedules already stored are under openarity-brain", AppName)
+	}
+}
+
+// executorID can be right and still never reach DBOS. Run builds its config
+// through this method, so this is the wiring, read without a database.
+func TestTheWorkerHandsDBOSItsOwnExecutorID(t *testing.T) {
+	w := New("postgres://brain@db.internal/brain", discardLogger(), &fakeJob{name: "reaper"})
+
+	first, second := w.config(), w.config()
+
+	if first.ExecutorID == "" {
+		t.Fatal("the config carries no executor id, so DBOS falls back to its shared default, local")
+	}
+	if first.ExecutorID == second.ExecutorID {
+		t.Errorf("two configs share the executor id %q", first.ExecutorID)
+	}
+	if first.AppName != AppName {
+		t.Errorf("AppName = %q, want %q", first.AppName, AppName)
+	}
+	if first.DatabaseURL != "postgres://brain@db.internal/brain" {
+		t.Errorf("DatabaseURL = %q, want the DSN the worker was given", first.DatabaseURL)
 	}
 }
