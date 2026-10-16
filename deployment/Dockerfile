@@ -1,4 +1,5 @@
-# Build context is the repository root, so this file can see apps/brain.
+# Build context is the repository root, so this file can see apps/brain and
+# the agent SDK it builds against.
 #
 #   docker build -f deployment/Dockerfile -t openarity/brain .
 
@@ -8,7 +9,9 @@
 # than seconds. Go cross-compiles natively, so emulating it buys nothing.
 FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine AS build
 
-WORKDIR /src
+# The repository's layout, not a flat /src: go.mod replaces the agent SDK with
+# ../../sdk/agent, and that path has to resolve inside the image too.
+WORKDIR /src/apps/brain
 
 # Set by buildx for each platform it is asked for: arm64, amd64. Declaring the
 # ARG is what brings it into scope — an undeclared TARGETARCH expands to empty
@@ -25,7 +28,9 @@ ARG TARGETOS
 ENV GOWORK=off CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH
 
 # Dependencies first: they change far less often than the code, so this layer
-# survives most rebuilds.
+# survives most rebuilds. The SDK is a dependency the replace points at, so it
+# has to be in place before the download resolves the graph.
+COPY sdk/agent/ /src/sdk/agent/
 COPY apps/brain/go.mod apps/brain/go.sum ./
 RUN go mod download
 

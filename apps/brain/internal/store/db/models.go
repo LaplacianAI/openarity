@@ -39,10 +39,22 @@ type AgentMcpServer struct {
 	Allow       []string
 }
 
+type AgentMessage struct {
+	Session  string
+	Position int32
+	Body     []byte
+}
+
 type AgentSkill struct {
 	AgentID uuid.UUID
 	SkillID uuid.UUID
 	TeamID  uuid.UUID
+}
+
+type AgentSteer struct {
+	ID      int64
+	Session string
+	Text    string
 }
 
 type Attachment struct {
@@ -166,6 +178,39 @@ type RoutePermission struct {
 	Path       string
 	Permission *string
 	Scope      string
+}
+
+type Run struct {
+	ID                uuid.UUID
+	TeamID            uuid.UUID
+	SessionID         uuid.UUID
+	ParentRunID       *uuid.UUID
+	RootRunID         uuid.UUID
+	ParentToolCall    *string
+	Depth             int32
+	AgentID           *uuid.UUID
+	AgentName         string
+	UserID            *uuid.UUID
+	Status            string
+	Input             string
+	Output            *string
+	Error             *string
+	InputTokens       int64
+	OutputTokens      int64
+	Worker            *string
+	HeartbeatAt       *time.Time
+	CancelRequestedAt *time.Time
+	CreatedAt         time.Time
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
+}
+
+type RunEvent struct {
+	RunID     uuid.UUID
+	Seq       int32
+	Kind      string
+	Payload   []byte
+	CreatedAt time.Time
 }
 
 type Session struct {

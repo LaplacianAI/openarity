@@ -296,7 +296,7 @@ func TestARoleInTheFileGetsExactlyTheGrantsItLists(t *testing.T) {
 		t.Fatalf("LoadRBAC: %v", err)
 	}
 
-	want := []string{"agent:write", "skill:write", "tool:write"}
+	want := []string{"agent:write", "run:write", "skill:write", "tool:write"}
 	if got := grantsOf(t, s, "member"); !slices.Equal(got, want) {
 		t.Errorf("member grants = %v, want %v", got, want)
 	}
