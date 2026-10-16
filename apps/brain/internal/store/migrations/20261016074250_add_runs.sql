@@ -5,7 +5,7 @@ CREATE TABLE runs (
     id                  uuid PRIMARY KEY,
     team_id             uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     session_id          uuid NOT NULL,
-    parent_run_id       uuid REFERENCES runs(id) ON DELETE CASCADE,
+    parent_run_id       uuid,
     root_run_id         uuid NOT NULL,
     parent_tool_call    text,
     depth               integer NOT NULL DEFAULT 0,
@@ -43,7 +43,18 @@ CREATE TABLE runs (
     CONSTRAINT runs_error_when_failed CHECK ((status = 'failed') = (error IS NOT NULL)),
     CONSTRAINT runs_held_while_running CHECK (
         status <> 'running' OR (worker IS NOT NULL AND heartbeat_at IS NOT NULL)),
-    CONSTRAINT runs_tokens_nonneg CHECK (input_tokens >= 0 AND output_tokens >= 0)
+    CONSTRAINT runs_tokens_nonneg CHECK (input_tokens >= 0 AND output_tokens >= 0),
+
+    -- What a run links to is in its own team, refused by the database rather
+    -- than remembered by every writer. agent_id keeps its own key for SET NULL;
+    -- this one only checks, and a null agent_id satisfies it.
+    CONSTRAINT runs_id_team_key UNIQUE (id, team_id),
+    CONSTRAINT runs_agent_in_team
+        FOREIGN KEY (agent_id, team_id) REFERENCES agents (id, team_id),
+    CONSTRAINT runs_parent_in_team
+        FOREIGN KEY (parent_run_id, team_id) REFERENCES runs (id, team_id) ON DELETE CASCADE,
+    CONSTRAINT runs_root_in_team
+        FOREIGN KEY (root_run_id, team_id) REFERENCES runs (id, team_id) ON DELETE CASCADE
 );
 
 -- A parent that resumes and repeats a delegate call finds the child it made.
@@ -56,6 +67,8 @@ CREATE INDEX runs_unfinished_idx ON runs (status, heartbeat_at)
 -- The SET NULLs on agent and user delete would otherwise scan.
 CREATE INDEX runs_agent_idx ON runs (agent_id);
 CREATE INDEX runs_user_idx ON runs (user_id);
+-- Deleting a run looks up its tree by root; without this that is a scan.
+CREATE INDEX runs_root_idx ON runs (root_run_id);
 
 CREATE TABLE run_events (
     run_id     uuid NOT NULL REFERENCES runs(id) ON DELETE CASCADE,

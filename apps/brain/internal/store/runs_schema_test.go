@@ -170,6 +170,73 @@ func TestARunCannotNameASessionInAnotherTeam(t *testing.T) {
 	wantConstraint(t, insertRun(t, s, r), "23503", "runs_session_in_team")
 }
 
+// The worker builds a run from its agent: that agent's instructions, its
+// grants and its servers' tokens. Another team's agent would run inside this
+// team's run, so the database refuses the pair rather than trusting the insert.
+func TestARunCannotUseAnotherTeamsAgent(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	other := newRunFixture(t, s, "billing")
+
+	r := f.root()
+	r.agent = &other.agent
+	wantConstraint(t, insertRun(t, s, r), "23503", "runs_agent_in_team")
+}
+
+// Delegation writes children. A child filed under another team's parent would
+// show up in that team's tree and be cancelled by its cancels.
+func TestADelegateCannotHangUnderAnotherTeamsRun(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	other := newRunFixture(t, s, "billing")
+	theirs := mustInsertRun(t, s, other.root())
+
+	r := f.child(theirs, "call_1")
+	wantConstraint(t, insertRun(t, s, r), "23503", "runs_parent_in_team")
+}
+
+// root_run_id is how "every run in this tree" is asked. A root in another
+// team would pull this run into that team's answer.
+func TestARunCannotNameARootInAnotherTeam(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	other := newRunFixture(t, s, "billing")
+	theirs := mustInsertRun(t, s, other.root())
+	ours := mustInsertRun(t, s, f.root())
+
+	// A delegate of our own run whose root claims to be theirs: the parent
+	// is in the team, so only the root's key can refuse it.
+	r := f.child(ours, "call_1")
+	r.root = theirs
+	wantConstraint(t, insertRun(t, s, r), "23503", "runs_root_in_team")
+}
+
+// Deleting a root takes its whole tree, including a grandchild whose parent
+// is not the root. In a consistent tree either key's cascade does this alone,
+// so this fails only when neither cascades; the keys' team checks have their
+// own tests above.
+func TestDeletingARootDeletesItsWholeTree(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	root := mustInsertRun(t, s, f.root())
+	child := mustInsertRun(t, s, f.child(root, "call_1"))
+
+	grandchild := f.child(child, "call_2")
+	grandchild.root, grandchild.depth = root, 2
+	mustInsertRun(t, s, grandchild)
+	kept := mustInsertRun(t, s, f.root())
+
+	if _, err := s.pool.Exec(t.Context(), `DELETE FROM runs WHERE id = $1`, root); err != nil {
+		t.Fatalf("delete root: %v", err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM runs WHERE root_run_id = $1`, root); n != 0 {
+		t.Errorf("%d runs of the tree outlived its root", n)
+	}
+	if n := count(t, s, `SELECT count(*) FROM runs WHERE id = $1`, kept); n != 1 {
+		t.Error("deleting one tree took another run with it")
+	}
+}
+
 // A running row with no worker or no heartbeat can never be judged stale, so
 // the sweep would never take it over and it would run forever on paper.
 func TestARunningRunNeedsAWorkerAndAHeartbeat(t *testing.T) {
