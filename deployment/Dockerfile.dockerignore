@@ -1,4 +1,4 @@
-# The build only needs apps/brain. Everything else is either irrelevant to the
+# The build needs apps/brain and sdk/agent. Everything else is either irrelevant to the
 # binary or actively unwanted in an image.
 .git
 .github

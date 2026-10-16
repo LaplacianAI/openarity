@@ -41,10 +41,10 @@ func TestSeededPermissions(t *testing.T) {
 
 	for role, want := range map[string][]string{
 		"admin": {
-			"agent:write", "channel:write", "membership:write",
+			"agent:write", "channel:write", "membership:write", "run:write",
 			"session:read_all", "skill:write", "tool:write", "user:read",
 		},
-		"member": {"agent:write", "skill:write", "tool:write"},
+		"member": {"agent:write", "run:write", "skill:write", "tool:write"},
 	} {
 		got, err := s.ListRolePermissions(t.Context(), role)
 		if err != nil {
