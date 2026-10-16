@@ -15,9 +15,12 @@ import (
 )
 
 const (
-	dialTimeout   = 10 * time.Second
-	headerTimeout = 15 * time.Second
-	maxBodyBytes  = 8 << 20
+	dialTimeout       = 10 * time.Second
+	headerTimeout     = 15 * time.Second
+	callHeaderTimeout = 5 * time.Minute
+	idleTimeout       = 90 * time.Second
+	maxIdleConns      = 100
+	maxBodyBytes      = 8 << 20
 )
 
 var (
@@ -53,6 +56,8 @@ func newTransport(p Policy, headerTimeout time.Duration) http.RoundTripper {
 		TLSHandshakeTimeout:   dialTimeout,
 		ResponseHeaderTimeout: headerTimeout,
 		ForceAttemptHTTP2:     true,
+		IdleConnTimeout:       idleTimeout,
+		MaxIdleConns:          maxIdleConns,
 	}
 }
 

@@ -690,8 +690,8 @@ func TestARunsMCPClientHasNoDeadlineOfItsOwn(t *testing.T) {
 
 // A tool call's headers arrive when the tool finishes. Discovery gives up
 // after headerTimeout because listing tools should be quick; a run's calls
-// must not, or every tool slower than that fails.
-func TestARunsCallsWaitForASlowToolsHeaders(t *testing.T) {
+// wait for a tool, up to callHeaderTimeout, and never without any bound.
+func TestARunsCallsWaitForASlowToolButNotForever(t *testing.T) {
 	t.Parallel()
 
 	d := New(&fakeSecrets{}, Policy{Allow: allowAll}, 5*time.Second)
@@ -701,11 +701,36 @@ func TestARunsCallsWaitForASlowToolsHeaders(t *testing.T) {
 		t.Errorf("discovery's header timeout = %v, want %v", discovery.ResponseHeaderTimeout, headerTimeout)
 	}
 	calls, ok := d.calls.(*http.Transport)
-	if !ok || calls.ResponseHeaderTimeout != 0 {
-		t.Errorf("a run's header timeout = %v, want none", calls.ResponseHeaderTimeout)
+	if !ok || calls.ResponseHeaderTimeout != callHeaderTimeout {
+		t.Errorf("a run's header timeout = %v, want %v", calls.ResponseHeaderTimeout, callHeaderTimeout)
+	}
+	if callHeaderTimeout <= headerTimeout {
+		t.Errorf("a tool may take %v, no longer than discovery's %v", callHeaderTimeout, headerTimeout)
 	}
 	if calls == discovery {
 		t.Error("runs share discovery's transport, and with it its header timeout")
+	}
+}
+
+// Every run on a worker shares one pool. A hand-built http.Transport keeps
+// idle connections with no limit on count or age, so without these it holds
+// every server any run ever reached for the life of the process.
+func TestIdleConnectionsAreClosedAndCapped(t *testing.T) {
+	t.Parallel()
+
+	d := New(&fakeSecrets{}, Policy{Allow: allowAll}, 5*time.Second)
+
+	for name, rt := range map[string]http.RoundTripper{"discovery": d.transport, "runs": d.calls} {
+		tr, ok := rt.(*http.Transport)
+		if !ok {
+			t.Fatalf("%s: transport is %T", name, rt)
+		}
+		if tr.IdleConnTimeout != idleTimeout || tr.IdleConnTimeout == 0 {
+			t.Errorf("%s: idle connections live %v, want %v", name, tr.IdleConnTimeout, idleTimeout)
+		}
+		if tr.MaxIdleConns != maxIdleConns || tr.MaxIdleConns == 0 {
+			t.Errorf("%s: up to %d idle connections, want %d", name, tr.MaxIdleConns, maxIdleConns)
+		}
 	}
 }
 
