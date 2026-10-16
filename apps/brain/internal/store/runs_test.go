@@ -13,7 +13,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
-const wallClock = 30 * 60 // seconds, the slice 1 limit
+const wallClock = 6 * 60 * 60 // seconds, the slice 1 limit for a run tree
 
 func createRun(t *testing.T, s *Store, f runFixture) db.Run {
 	t.Helper()

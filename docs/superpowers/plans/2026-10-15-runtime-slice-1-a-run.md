@@ -704,7 +704,7 @@ type Store interface {
 
 const (
 	heartbeatEvery = 15 * time.Second
-	maxWallClock   = 30 * time.Minute
+	maxWallClock   = 6 * time.Hour
 )
 
 var ErrCancelled = errors.New("the run was cancelled")
@@ -764,7 +764,7 @@ The order inside `Execute`:
   - `TestARunWhoseAgentWasDeletedFailsNamingIt`: Review Focus 4.
   - `TestAnAgentWhoseLoopIsNotRegisteredFailsNamingTheLoopsThatAre`: the row is written with a well-formed name that no runner registers.
   - `TestAnUnreachableModelEndpointFailsNamingTheSetting`.
-  - `TestTheWallClockIsTheOneLeftNotAFreshThirtyMinutes`: `remaining_seconds` is set near zero; the run fails on the wall clock.
+  - `TestTheWallClockIsTheOneLeftNotAFreshSixHours`: `remaining_seconds` is set near zero; the run fails on the wall clock.
 - [ ] **Step 3:** Break each of these in turn and see its test fail:
   - delete the lost-run early return;
   - drop the cancel check from the heartbeat;
