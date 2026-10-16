@@ -42,7 +42,7 @@ func (c *counting) handler(body []byte) http.HandlerFunc {
 // clientFor is the client discovery builds, with a deadline far enough away
 // that only the tests about deadlines meet it.
 func clientFor(p Policy, token string) *http.Client {
-	return newClient(newTransport(p), token, time.Now().Add(time.Minute))
+	return newClient(newTransport(p, headerTimeout), token, time.Now().Add(time.Minute))
 }
 
 func trusting(srv *httptest.Server) *x509.CertPool {
@@ -211,7 +211,7 @@ func TestAZoneIsDroppedBeforeAnyCheck(t *testing.T) {
 func TestTheEnvironmentsProxyIsNeverUsed(t *testing.T) {
 	t.Parallel()
 
-	tr, ok := newTransport(Policy{Allow: allowAll}).(*http.Transport)
+	tr, ok := newTransport(Policy{Allow: allowAll}, headerTimeout).(*http.Transport)
 	if !ok {
 		t.Fatalf("newTransport returned %T", tr)
 	}
@@ -462,7 +462,7 @@ func TestARequestAfterTheDeadlineNeverLeaves(t *testing.T) {
 	s := httptest.NewServer(srv.handler(nil))
 	t.Cleanup(s.Close)
 
-	c := newClient(newTransport(Policy{Allow: allowAll}), "", time.Now().Add(-time.Second))
+	c := newClient(newTransport(Policy{Allow: allowAll}, headerTimeout), "", time.Now().Add(-time.Second))
 	_, err := get(t, c, s.URL)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v, want the deadline", err)
@@ -488,7 +488,7 @@ func TestARequestInFlightEndsAtTheDeadline(t *testing.T) {
 	t.Cleanup(func() { close(release) })
 
 	start := time.Now()
-	_, err := get(t, newClient(newTransport(Policy{Allow: allowAll}), "", start.Add(200*time.Millisecond)), s.URL)
+	_, err := get(t, newClient(newTransport(Policy{Allow: allowAll}, headerTimeout), "", start.Add(200*time.Millisecond)), s.URL)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v, want the deadline", err)
 	}
@@ -516,7 +516,7 @@ func TestTheBodyStaysReadableUntilClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := newClient(newTransport(Policy{Allow: allowAll}), "", time.Now().Add(time.Minute)).Do(req)
+	resp, err := newClient(newTransport(Policy{Allow: allowAll}, headerTimeout), "", time.Now().Add(time.Minute)).Do(req)
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
