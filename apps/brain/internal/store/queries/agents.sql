@@ -65,3 +65,25 @@ DELETE FROM agent_skills WHERE agent_id = $1;
 
 -- name: ListAgentSkills :many
 SELECT skill_id FROM agent_skills WHERE agent_id = $1 ORDER BY skill_id;
+
+-- A run names its agent; names are unique per team in any case, and
+-- agents_team_name_key is on (team_id, lower(name)), so this reads one entry.
+-- name: GetAgentByName :one
+SELECT * FROM agents
+WHERE team_id = sqlc.arg('team_id') AND lower(name) = lower(sqlc.arg('name')::text);
+
+-- What a run binds, read when it starts: each granted server with the grant's
+-- allow-list, which is null for every tool on the server.
+-- name: ListGrantedMCPServers :many
+SELECT sqlc.embed(s), g.allow
+FROM agent_mcp_servers g
+JOIN mcp_servers s ON s.id = g.mcp_server_id
+WHERE g.agent_id = $1
+ORDER BY s.name;
+
+-- With the body, unlike ListSkillsByTeam: a run hands it to the model when
+-- the skill is loaded. One table in the FROM, so sqlc returns db.Skill.
+-- name: ListGrantedSkills :many
+SELECT * FROM skills
+WHERE id IN (SELECT skill_id FROM agent_skills WHERE agent_id = $1)
+ORDER BY name;
