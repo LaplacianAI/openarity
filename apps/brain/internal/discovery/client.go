@@ -35,7 +35,7 @@ type Policy struct {
 	RootCAs *x509.CertPool
 }
 
-func newTransport(p Policy) http.RoundTripper {
+func newTransport(p Policy, headerTimeout time.Duration) http.RoundTripper {
 	dialer := &net.Dialer{
 		Timeout: dialTimeout,
 		Control: func(_, address string, _ syscall.RawConn) error {
@@ -67,7 +67,10 @@ func dialable(a netip.Addr, allow func(netip.Addr) bool) bool {
 }
 
 func newClient(base http.RoundTripper, token string, deadline time.Time) *http.Client {
-	var rt http.RoundTripper = bounded{deadline: deadline, next: capped{next: base}}
+	var rt http.RoundTripper = capped{next: base}
+	if !deadline.IsZero() {
+		rt = bounded{deadline: deadline, next: rt}
+	}
 	if token != "" {
 		rt = bearer{token: token, next: rt}
 	}
