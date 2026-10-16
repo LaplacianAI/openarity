@@ -38,13 +38,13 @@ file after it is pasted. The **schema, the queries the design depends on, and
 every interface** are exact, because neighbouring tasks rely on them.
 
 The four DBOS probes the spec asked for are already done. Their results are in
-the spec and are built into Tasks 3, 6, 7 and 9:
+the spec and are built into Tasks 3, 7, 8 and 10:
 
 | Probe | Result | Where it lands |
 | --- | --- | --- |
-| A repeated workflow id | the same workflow; enqueuing it again is a no-op | Tasks 7 and 8: the run id is the workflow id, so the sweep can enqueue freely |
-| Waking the worker | the API enqueues through `dbos.Client` after its commit; about 1 s to start; no schedule row per tick | Tasks 7 and 9 |
-| Two workers | a shared executor id re-queues a live worker's run; `ResumeWorkflow` from another worker continues a dead one's | Task 3 gives each worker its own id; Task 7 does the takeover |
+| A repeated workflow id | the same workflow; enqueuing it again is a no-op | Tasks 8 and 9: the run id is the workflow id, so the sweep can enqueue freely |
+| Waking the worker | the API enqueues through `dbos.Client` after its commit; about 1 s to start; no schedule row per tick | Tasks 8 and 10 |
+| Two workers | a shared executor id re-queues a live worker's run; `ResumeWorkflow` from another worker continues a dead one's | Task 3 gives each worker its own id; Task 8 does the takeover |
 | Sharing the pool | works, but `dbos.Shutdown` closes the pool it was given | the worker keeps DBOS on its own pool; nothing changes |
 
 ## Not in this plan
@@ -58,6 +58,10 @@ the spec and are built into Tasks 3, 6, 7 and 9:
 - **Command MCP servers, built-ins and custom tools.** These belong to slice 2,
   the workspace. A granted command server is recorded as unavailable, not bound.
 - **Delegation settings, the `graph` tool and compaction** belong to slices 3–5.
+- **Loops a team writes and uploads.** Task 5 makes the loops an agent may
+  choose the ones the brain's `Runner` registers, so a deployment adds its own
+  in Go. A team writing one without rebuilding the brain, as a script in the
+  workspace or as data, is a later design, built on slice 2.
 
 ## Global Constraints
 
@@ -106,27 +110,27 @@ reaches. Each line names the test that pins it and the task that owns it.
 1. **Someone else's direct session.** Starting a run in a direct session the
    caller cannot see, or reading or cancelling a run that lives in one, returns
    404 and writes nothing. `TestARunCannotBeStartedInSomeoneElsesDirectSession`
-   and `TestAnotherPersonsDirectRunIsNotFound` (Task 8).
+   and `TestAnotherPersonsDirectRunIsNotFound` (Task 9).
 2. **A worker that lost its run keeps going.** After another worker takes over
    a stalled run, the first worker must stop at its next heartbeat and write no
    further event and no finish. `TestAWorkerThatLostItsRunStopsAndWritesNothing`
-   (Task 6).
+   (Task 7).
 3. **Cancel against every state.** A queued run is cancelled at once, with no
    worker involved, and its later dequeue does nothing. A finished run answers
    409. Cancelling twice is not an error.
    `TestCancellingAQueuedRunNeedsNoWorker` and
-   `TestCancellingAFinishedRunIsAConflict` (Task 8);
-   `TestADequeuedRunThatWasCancelledDoesNothing` (Task 6).
+   `TestCancellingAFinishedRunIsAConflict` (Task 9);
+   `TestADequeuedRunThatWasCancelledDoesNothing` (Task 7).
 4. **The agent changes between POST and start.** If the agent was deleted, the
    run fails with an error naming it, and `agent_name` keeps the record
    readable. If a grant was removed, the run binds what is granted at start.
-   `TestARunWhoseAgentWasDeletedFailsNamingIt` (Task 6);
+   `TestARunWhoseAgentWasDeletedFailsNamingIt` (Task 7);
    `TestToolsAreThoseGrantedWhenTheRunStarts` (Task 4).
 5. **Long streams and large results.** An event stream held open past the
    server's 30 s `WriteTimeout` keeps delivering. A tool result over 64 KiB is
    cut and marked `truncated`.
-   `TestAnEventStreamOutlivesTheServersWriteTimeout` (Task 8);
-   `TestALargeToolResultIsCutAndSaysSo` (Task 5).
+   `TestAnEventStreamOutlivesTheServersWriteTimeout` (Task 9);
+   `TestALargeToolResultIsCutAndSaysSo` (Task 6).
 
 ## File Structure
 
@@ -136,22 +140,24 @@ reaches. Each line names the test that pins it and the task that owns it.
 | `internal/store/queries/runs.sql` | create, read-if-visible, claim, heartbeat, usage, finish, cancel, and the sweep's two queries |
 | `internal/store/queries/run_events.sql` | append, guarded by who holds the run; list after a sequence number |
 | `internal/store/queries/{agents,sessions}.sql` | `GetAgentByName`, `ListGrantedMCPServers`, `ListGrantedSkills`; `CreateDirectSession`, `GetSessionVisible` |
-| `internal/store/rbac.json` | `run:write`, granted to admin and member; four route rows |
+| `internal/store/rbac.json` | `run:write`, granted to admin and member; five route rows |
 | `internal/worker/worker.go` | an executor id per process; `AppName` exported |
 | `internal/discovery/discovery.go` | `Client`: the same dial guard and token for a run's MCP connections |
-| `internal/runtime/build.go` | an agent row and its grants become an `agent.Spec`, plus what could not be bound |
+| `internal/runtime/build.go` | an agent row and its grants become an `agent.Spec`, plus what could not be bound; `Patterns` and `Loops`, the one list of loops |
+| `internal/store/migrations/<ts>_name_loops_by_the_runner.sql` | the hard-coded pattern list becomes a name-format check |
+| `internal/api/agents/`, `internal/api/loops/` | a pattern is checked against the runner's loops; `GET /teams/{id}/loops` |
 | `internal/runtime/events.go` | SDK events become `run_events` rows; usage is counted against the budget |
 | `internal/runtime/execute.go` | one run: claim, heartbeat, build, run, finish |
 | `internal/runtime/job.go` | the workflow, the queue, the sweep schedule, and `Enqueuer` for the API |
 | `internal/api/runs/` | start, read, cancel, and stream events |
 | `cmd/brain/{serve,worker,routers}.go`, `go.mod` | wiring, the SDK dependency |
-| `api/openapi.yaml` | the four routes and their schemas |
+| `api/openapi.yaml` | the four run routes and the loops route, with their schemas; the corrected `pattern` description |
 | `apps/brain/CLAUDE.md`, `.claude/skills/add-a-background-job` | the layout line for `internal/runtime`, and the executor-id rule |
 
-There are ten tasks. **Tasks 1–2 unblock everything.** Task 3 is small, but it
+There are eleven tasks. **Tasks 1–2 unblock everything.** Task 3 is small, but it
 must land before any run executes, because a shared executor id can run a run
-twice. Nothing executes until Task 6. Nothing is reachable through the API until
-Task 9.
+twice. Nothing executes until Task 7. Nothing is reachable through the API until
+Task 10.
 
 ---
 
@@ -159,7 +165,7 @@ Task 9.
 
 **Files:**
 - Create: `internal/store/migrations/<ts>_add_runs.sql` (`make migration name=add_runs`)
-- Modify: `internal/store/rbac.json`. Add the `run:write` permission, and add it to `admin` and `member`. Route rows come in Task 8.
+- Modify: `internal/store/rbac.json`. Add the `run:write` permission, and add it to `admin` and `member`. Route rows come in Task 9.
 - Test: `internal/store/runs_schema_test.go`
 
 **Produces:** this migration.
@@ -465,7 +471,7 @@ func executorID() string // "<hostname>-<8 random hex>"
 ```
 
 `Run` sets `dbos.Config{AppName: AppName, ExecutorID: executorID(), …}`.
-DBOS lets `DBOS__VMID` override it. The skill change in Task 10 says that
+DBOS lets `DBOS__VMID` override it. The skill change in Task 11 says that
 replicas must never be given the same value.
 
 - [ ] **Step 1:** Claude hands over the edit; the user pastes it.
@@ -523,9 +529,12 @@ func (b Built) Close()
 
 func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session) (Built, error)
 
-// Patterns the brain's Runner registers, and the error for the rest.
+// The loops the brain's Runner registers: the one list of what an agent may
+// choose. A deployment adds a loop of its own here, in Go, and nowhere else.
 func Patterns() []agent.Pattern // ReAct, Plan, ReWOO, Reflection(1)
-var ErrPatternCannotRun = errors.New("this agent's pattern cannot run yet")
+
+// Loops is the name of every pattern in Patterns, sorted.
+func Loops() []string
 ```
 
 How `Build` maps a row:
@@ -534,7 +543,7 @@ How `Build` maps a row:
 - `MaxSteps` and `SteerContinuations` are copied.
 - `OutputSchema` becomes `{Name: "output", JSON: …}` when it is not null. `Parser` and `ParserModel` are copied.
 - `Session` is the one passed in.
-- Pattern `code` or `custom` is wrapped as `ErrPatternCannotRun` and names the pattern.
+- `Pattern` is copied as stored. The builder does not judge it: the SDK's `Runner` refuses a name it has not registered, and lists the ones it has.
 - **MCP:**
   - A command server is not bound, and goes in `Unavailable` with "a command server runs in the workspace, which slice 2 adds".
   - A URL server is bound with `mcp.Connect(ctx, mcp.Server{Name, URL, HTTPClient, Bare})`. Its tools are kept only where `allow` is null or holds the tool's unprefixed name.
@@ -554,12 +563,74 @@ How `Build` maps a row:
   - `TestACommandServerIsReportedNotBound`.
   - `TestAnUnreachableServerFailsTheBuildNamingIt`.
   - `TestASkillsFilesAreReadOnlyWhenAsked`: `Objects.Get` is not called until the resource tool is invoked.
-  - `TestACodePatternAgentIsRefusedByName`.
+  - `TestLoopsNamesEveryRegisteredPatternOnce`: the names from `Patterns()`, sorted, and no duplicate.
   - `TestARunWhoseAgentIsGoneIsRefusedNamingIt`.
   - `TestBuildClosesWhatItOpenedWhenALaterServerFails`.
 - [ ] **Step 4:** Break the allow-list filter, the command-server branch, and the close-on-failure path in turn. Then run the gate and commit `feat(brain): an agent row and its grants become a spec the SDK can run`.
 
-### Task 5: Recording events
+### Task 5: The loops an agent may choose are the ones the brain runs
+
+The SDK's `Runner` is already the list of loops: `agent.New` takes the patterns
+and refuses a duplicate name, and `Run` refuses an unregistered one by listing
+the names it has. The database keeps a second, hard-coded list of six,
+`agents_pattern_known`. That list can disagree with the runner: it accepts
+`code` and `custom`, which nothing registers, and it refuses a loop a
+deployment adds in Go. The API should check against the runner's list, and the
+database should only check that a name is shaped like one.
+
+**Files:**
+- Create: `internal/store/migrations/<ts>_name_loops_by_the_runner.sql`
+- Modify: `internal/api/agents/{agents.go,validate.go}`
+- Create: `internal/api/loops/{loops.go,schema.go}`
+- Modify: `internal/store/rbac.json` (one route row) and `api/openapi.yaml` (the `pattern` description, which today wrongly says the brain runs `code` and `custom`; and the new route)
+- Test: `internal/store/registry_schema_test.go`, `internal/api/agents/agents_test.go`, `internal/api/loops/loops_test.go`
+
+**Produces:**
+
+```sql
+-- +goose Up
+SET lock_timeout = '3s';
+ALTER TABLE agents DROP CONSTRAINT agents_pattern_known;
+-- Which loops exist is the brain's Runner's to say; the API checks it. This
+-- only keeps a name a name.
+ALTER TABLE agents ADD CONSTRAINT agents_pattern_named
+    CHECK (pattern ~ '^[a-z][a-z0-9-]{0,63}$');
+
+-- +goose Down
+SET lock_timeout = '3s';
+ALTER TABLE agents DROP CONSTRAINT agents_pattern_named;
+ALTER TABLE agents ADD CONSTRAINT agents_pattern_known CHECK (pattern IN
+    ('react', 'plan', 'rewoo', 'reflection', 'code', 'custom'));
+```
+
+```go
+// agents
+func New(logger *slog.Logger, s Store, loops []string) *api.Router
+// create and update: a pattern outside loops is a 400 naming the loops there are.
+// The agents_pattern_known branch of the error mapping becomes agents_pattern_named.
+
+// loops: GET /teams/{id}/loops, scope member
+func New(logger *slog.Logger, loops []string) *api.Router
+// {"items": [{"name": "plan"}, {"name": "react"}, …]}, an api.Page with no next_cursor
+```
+
+The route is under a team, which is where team-written loops will list later.
+`cmd/brain` passes `runtime.Loops()` to both routers (Task 10). The worker
+registers `runtime.Patterns()`, so the API and the worker read one list from
+one binary. During a rolling deploy, a worker one version behind may lack a new
+loop; its run fails with the SDK's message, which names the loops it has.
+
+- [ ] **Step 1:** Claude hands over the migration, then the edits to `agents`, then `loops.go` and `schema.go`, then the `rbac.json` row, then `openapi.yaml`. One per reply.
+- [ ] **Step 2:** Tests:
+  - `TestALoopNameMustBeWellFormed`: `"Plan!"`, `""`, and 65 characters are 23514 `agents_pattern_named`; `"critic-pass"` is inserted.
+  - `TestExistingAgentsSurviveTheChange`: rows holding each of the six old names are still there after `up`.
+  - `TestALoopTheBrainDoesNotRunIsRefusedListingThoseItDoes`: create and update both return 400, and the body names every loop.
+  - `TestEveryLoopTheBrainRunsCanBeChosen`: table-driven over `runtime.Loops()`.
+  - `TestTheLoopsRouteListsWhatTheRunnerRegisters`: equal to `runtime.Loops()`, and `items` is `[]`-shaped, never `null`.
+  - `TestTheLoopsRouteIsForMembersOnly`: a non-member gets 404.
+- [ ] **Step 3:** Delete the API check. `TestALoopTheBrainDoesNotRunIsRefusedListingThoseItDoes` fails: the new CHECK accepts any well-formed name, so the API is the only guard. Then run the gate and commit `feat(brain): an agent chooses from the loops the brain runs, and a deployment's own loop is one of them`.
+
+### Task 6: Recording events
 
 **Files:**
 - Create: `internal/runtime/events.go`
@@ -613,7 +684,7 @@ TextEvent and SteerEvent are not stored. Token-by-token text never is.
   - `TestTheRecorderDrainsEverythingBeforeItSaysDone`.
 - [ ] **Step 3:** Break the truncation, the `>` budget comparison (to `>=` and to an always-false check), and the lost-run branch in turn. Then run the gate and commit `feat(brain): what a run does is recorded as it happens, within its token budget`.
 
-### Task 6: Executing one run
+### Task 7: Executing one run
 
 **Files:**
 - Create: `internal/runtime/execute.go`
@@ -690,6 +761,7 @@ The order inside `Execute`:
   - `TestADequeuedRunThatWasCancelledDoesNothing`: no event and no model call (Review Focus 3).
   - `TestAWorkerThatLostItsRunStopsAndWritesNothing`: another worker takes the row mid-run. After it, the first worker writes no event and no finish (Review Focus 2).
   - `TestARunWhoseAgentWasDeletedFailsNamingIt`: Review Focus 4.
+  - `TestAnAgentWhoseLoopIsNotRegisteredFailsNamingTheLoopsThatAre`: the row is written with a well-formed name that no runner registers.
   - `TestAnUnreachableModelEndpointFailsNamingTheSetting`.
   - `TestTheWallClockIsTheOneLeftNotAFreshThirtyMinutes`: `remaining_seconds` is set near zero; the run fails on the wall clock.
 - [ ] **Step 3:** Break each of these in turn and see its test fail:
@@ -699,7 +771,7 @@ The order inside `Execute`:
   - use `maxWallClock` instead of `remaining_seconds`.
 - [ ] **Step 4:** Run the gate and commit `feat(brain): a worker runs an agent to its end, and stops when the run is no longer its own`.
 
-### Task 7: The job, the queue and the sweep
+### Task 8: The job, the queue and the sweep
 
 **Files:**
 - Create: `internal/runtime/job.go`
@@ -761,7 +833,7 @@ func (q *Enqueuer) Enqueue(ctx context.Context, runID uuid.UUID) error
 - [ ] **Step 3:** Break each of these in turn and see its test fail: drop `WithWorkflowID` from the sweep's enqueue, drop the takeover step, and set `runsPerWorker` to 0.
 - [ ] **Step 4:** Run the gate and commit `feat(brain): runs are queued, picked up within a second, and taken over when their worker dies`.
 
-### Task 8: The runs API
+### Task 9: The runs API
 
 **Files:**
 - Create: `internal/api/runs/runs.go`, `internal/api/runs/schema.go`, `internal/api/runs/events.go`
@@ -845,13 +917,14 @@ Handler rules:
 - [ ] **Step 3:** Break each of these in turn and see its test fail: the session visibility check on start, the moderator term, and the deadline push.
 - [ ] **Step 4:** Run the gate and commit `feat(brain): a run is started, read, cancelled and followed through the API`.
 
-### Task 9: Wiring
+### Task 10: Wiring
 
 **Files:**
 - Modify: `apps/brain/go.mod`. Add `require github.com/LaplacianAI/openarity/sdk/agent` and `replace … => ../../sdk/agent`, so CI and the image build outside `go.work`.
 - Modify: `cmd/brain/worker.go`
   - In `newJobs`, add `runtime.RunJob(…)` with its `Builder` and `Executor`.
   - The runner is `agent.New(openaicompat factory, runtime.Patterns()…)`.
+  - `routers.go` passes `runtime.Loops()` to `agents.New` and `loops.New`.
   - The endpoint is `cfg.LLMBaseURL` with `cfg.LLMAPIKey`.
   - The session store is `postgres.New(dbStore.Pool())`.
 - Modify: `cmd/brain/serve.go` and `routers.go`
@@ -864,15 +937,16 @@ Handler rules:
 - [ ] **Step 2:** Tests:
   - `TestTheWorkerRunsTheRuntimeJob`: `newJobs` includes `runtime`, with or without `EMBEDDING_MODEL`.
   - `TestTheRunsRouterIsMounted`.
+  - `TestTheAPIOffersTheLoopsTheWorkerRegisters`: `GET /teams/{id}/loops` through `newRouters` equals the names `newJobs`'s runner was built with.
   - `TestServeStartsOnADatabaseNoWorkerHasTouched`: an empty schema. The DBOS client creates its tables, and `serve` boots before any worker exists.
   - `TestServeAndAWorkerStartingTogetherDoNotFightOverDBOSsTables`: started concurrently on an empty schema; both come up.
 - [ ] **Step 3:** Run the gate and commit `feat(brain): the worker runs agents and the API can start them`.
 
-### Task 10: End to end, and the documents
+### Task 11: End to end, and the documents
 
 **Files:**
 - Test: `cmd/brain/integration_test.go` (a new test)
-- Modify: `apps/brain/CLAUDE.md` (layout: `internal/runtime/`, `internal/api/runs/`), `.claude/skills/add-a-background-job/SKILL.md` (a new step 7 rule: an executor id per process, never a shared `DBOS__VMID`), and the spec's status line for slice 1.
+- Modify: `apps/brain/CLAUDE.md` (layout: `internal/runtime/`, `internal/api/runs/`, `internal/api/loops/`; a line that a deployment adds a loop in `runtime.Patterns`), `.claude/skills/add-a-background-job/SKILL.md` (a new step 7 rule: an executor id per process, never a shared `DBOS__VMID`), and the spec's status line for slice 1.
 
 - [ ] **Step 1:** Claude writes `TestARunStartedThroughTheAPIIsExecutedAndStreamed`. It uses real Postgres, a real `serve` and `worker` in-process, a scripted model endpoint on httptest speaking `/chat/completions`, an MCP server on httptest, and a granted skill.
   - POST answers 202. The event stream shows `started`, a tool call and result, a skill load, then `finished` and `end`.
@@ -890,27 +964,29 @@ Handler rules:
 
   | Requirement | Task |
   | --- | --- |
-  | API start, read, events, cancel | 8 |
+  | API start, read, events, cancel | 9 |
   | `runs` as a tree, and `run_events` | 1, 2 |
-  | Transcripts in the SDK's tables, keyed by run id | 1, 6 |
-  | A session created when none is named | 2, 8 |
-  | `run:write`; reading through session visibility | 1, 8 |
+  | Transcripts in the SDK's tables, keyed by run id | 1, 7 |
+  | A session created when none is named | 2, 9 |
+  | `run:write`; reading through session visibility | 1, 9 |
   | The worker builds the agent with its granted MCP tools and skills | 4 |
-  | `Runner.Run` | 6 |
-  | Crash, resume and takeover | 6, 7 |
-  | Cancel, including queued runs | 2, 6, 8 |
-  | Token and wall-clock limits | 5, 6 |
-  | Failure rows: endpoint down, limit hit, worker dies | 6, 7 |
-  | Testing: a scripted endpoint, a resumed run equals an uninterrupted one, the wired object driven | 6, 7, 10 |
+  | The agent's loop is one the brain registers (added after review) | 4, 5, 7 |
+  | `Runner.Run` | 7 |
+  | Crash, resume and takeover | 7, 8 |
+  | Cancel, including queued runs | 2, 7, 9 |
+  | Token and wall-clock limits | 6, 7 |
+  | Failure rows: endpoint down, limit hit, worker dies | 7, 8 |
+  | Testing: a scripted endpoint, a resumed run equals an uninterrupted one, the wired object driven | 7, 8, 11 |
 
-  Deliberately left out and listed above: the default entry agent, steering, and `oa run`.
+  Deliberately left out and listed above: the default entry agent, steering, `oa run`, and loops a team uploads.
 - **Placeholder scan:** the one deferred value is the status code for an
   unknown agent, which the `add-route` skill decides; it is named, not left
   blank. Migration timestamps are `make migration`'s.
 - **Type consistency:**
-  - `ClaimRunRow.RemainingSeconds` is produced in Task 2 and consumed in Task 6.
-  - `Built.Unavailable` is produced in Task 4 and becomes `tool_unavailable` events in Task 6, a kind the CHECK in Task 1 allows.
-  - `ErrLostRun` and `ErrBudget` (Task 5) and `ErrCancelled` (Task 6) are decided on in Task 6's table.
-  - `RunQueue` and `RunWorkflow` (Task 7) are used by `Enqueuer` (Task 7) and the wiring (Task 9).
-  - `worker.AppName` (Task 3) is used in Task 9.
+  - `ClaimRunRow.RemainingSeconds` is produced in Task 2 and consumed in Task 7.
+  - `Built.Unavailable` is produced in Task 4 and becomes `tool_unavailable` events in Task 7, a kind the CHECK in Task 1 allows.
+  - `ErrLostRun` and `ErrBudget` (Task 6) and `ErrCancelled` (Task 7) are decided on in Task 7's table.
+  - `RunQueue` and `RunWorkflow` (Task 8) are used by `Enqueuer` (Task 8) and the wiring (Task 10).
+  - `worker.AppName` (Task 3) is used in Task 10.
+  - `runtime.Patterns` and `runtime.Loops` (Task 4) feed the runner (Task 10), `agents.New` and `loops.New` (Task 5, wired in Task 10).
 - **Review Focus:** each of the five lines names its test, and that test sits in the owning task's step list.

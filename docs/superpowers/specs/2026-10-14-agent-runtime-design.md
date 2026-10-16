@@ -32,6 +32,7 @@ and not taken.
 | Where compaction lives | in the SDK, a step beside the one that saves the transcript | in the brain, rewriting history between turns |
 | Who writes the summary | the agent's own model through its own endpoint, no tools, a fixed prompt the agent can extend | a separate cheaper model; a compaction agent in the registry |
 | What a tool is | three kinds: MCP, custom (a script the team adds), built-in (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`); the runner sees one `agent.Tool` for each | MCP only, with team code wrapped as an MCP server |
+| Which loops an agent may use | the patterns the brain's `Runner` registers; a deployment adds its own in Go; the API checks against them | a fixed list in a database CHECK; loops a team uploads, which wait for the workspace |
 | Where code runs | one container per session, in a separate sandbox service the brain calls over HTTP | the brain driving Docker itself; a hosted sandbox |
 | Build order | seven slices: a run, the workspace, compaction, the graph tool, delegation, loading, background | delegation first; one spec and one plan; the workspace last |
 
