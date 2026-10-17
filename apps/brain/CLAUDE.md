@@ -84,6 +84,7 @@ apps/brain/
     projector.go       newProjector, for the worker and the graph role
     importer.go        newImporter: where a skill may be imported from
     discoverer.go      newDiscoverer: what MCP discovery may reach
+    runtime.go         newRunJob: the builder, the runner and the executor, for the worker
     logger.go          newLogger()
   internal/config/     configuration: load, validate, redact
   internal/server/     the two listeners: build, run, shut down; mounts Routers
@@ -95,6 +96,8 @@ apps/brain/
     <domain>/          one package per domain, each its own Router
       <domain>.go      handler, New, the handlers
       schema.go        request and response structs — the wire contract
+    runs/              start, read, cancel and follow a run; events.go is the stream
+    loops/             the loops an agent may choose, which are the runner's
   internal/gateway/    a provider's webhook in, normalised messages out
     providertest/      the conformance suite every adapter runs
     <provider>/        one package per platform; custom is the reference
@@ -120,6 +123,11 @@ apps/brain/
     job.go             the drain as background work
   internal/reaper/     the sweep: one loop, one Effect per outside system
     job.go             the reaper as background work: SweepAll, and its Job
+  internal/runtime/    a run: the agent built from its row, executed, recorded
+    build.go           the Spec, its granted MCP tools and skills; Patterns and Loops
+    events.go          what a run does, as run_events, within its token budget
+    execute.go         one run: claim, heartbeat, run to the end, finish
+    job.go             the run queue, the sweep that takes over stale runs, the Enqueuer
   internal/worker/     the background process: a registry of Jobs, and Run
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary
@@ -318,8 +326,9 @@ reinstalled.
   goes through the function an outbox row goes through. Two code paths that
   must agree is what the equality test would otherwise be policing forever.
 - **The five entity names are in Go as well as in the CHECK, and that is not
-  the duplication the registry avoids elsewhere.** Agent patterns live only in
-  their constraint because Go does nothing different per pattern. Here each
+  the duplication the registry avoids elsewhere.** Agent patterns are named
+  once, by the loops `runtime.Patterns` registers, and the database checks
+  only that a name is well formed. Here each
   name runs different code. A name the projector does not know keeps its row
   and logs, and a test reads the names from what the triggers actually write.
 - **A vector is asked for only when the embedded text or the model changed.**
@@ -394,9 +403,12 @@ reinstalled.
   open to Slowloris — `gosec` G112 fails the build on a missing
   `ReadHeaderTimeout`. The same values are right in every environment, so they
   stay named constants. Promote one to config only when a real deployment needs
-  a different value. Note that `WriteTimeout` bounds handler execution too: the
-  streaming endpoints will need `http.NewResponseController(w).SetWriteDeadline`
-  to opt out per route.
+  a different value. `WriteTimeout` bounds handler execution too, so a run's
+  event stream pushes its own deadline forward with
+  `http.NewResponseController(w).SetWriteDeadline` before every write. That
+  reaches the connection only through `Unwrap`: the logging middleware's
+  recorder had none, and every stream closed after its first frame while the
+  handler's own tests, on a bare mux, passed.
 - **Secrets are references.** A row or config field holds a Vault path, never a
   value. Only `internal/secrets/openbao` reaches a secret backend.
 - **Attachments are encrypted before they leave the process.** AES-256-GCM
@@ -544,10 +556,19 @@ reinstalled.
   must not be fatal there: refusing to start would deadlock the only thing that
   can clear the backlog. Same error, opposite handling from `brain reap`, whose
   exit code *is* its report.
-- **`brain migrate up` is no longer the only thing that changes the database.**
-  DBOS creates and migrates its own schema — eleven tables under `dbos` — at
-  `Launch`. That is the price of a library instead of a cluster, and it is
-  worth knowing before debugging a schema diff.
+- **`brain migrate up` creates DBOS's tables as well as ours.** DBOS keeps
+  eleven tables under `dbos` and migrates them itself, with no lock: `serve`
+  and a worker starting together on a fresh database failed with `duplicate
+  key value violates unique constraint "pg_type_typname_nsp_index"`. The
+  migrate Job runs before anything rolls, so both find the tables current,
+  which DBOS checks without writing. Both still run that check, so a database
+  that skipped `migrate up` works too, with the race back. That is the price
+  of a library instead of a cluster, and worth knowing before debugging a
+  schema diff.
+- **A deployment adds a loop in `runtime.Patterns`, and nowhere else.** The
+  runner, `GET /teams/{id}/loops` and the check on an agent's `pattern` all
+  read the names from there; the database only checks that a name is well
+  formed, so a new loop needs no migration.
 - **The cron expression has six fields.** DBOS builds its parser with seconds
   enabled, so `*/15 * * * *` is refused with "expected exactly 6 fields, found
   5". A test parses the constant with the same parser, because the refusal

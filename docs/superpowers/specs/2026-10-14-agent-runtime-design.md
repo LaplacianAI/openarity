@@ -1,6 +1,7 @@
 # The agent runtime: runs, the graph tool and delegation
 
-**Status:** overall design, not built. Each slice below gets its own spec and
+**Status:** overall design. Slice 1, a run, is built; the slices after it are
+not. Each slice below gets its own spec and
 plan; this document is what keeps them from painting each other into a corner.
 **Modules:** `apps/brain`; `apps/sandbox` from slice 3; `sdk/agent` for two slices
 

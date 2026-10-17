@@ -162,6 +162,13 @@ closes.
   than a race, and no leader election is needed — which is only true because
   the work commutes. Work that does not commute needs a partition key and one
   worker per partition.
+- **Do not share an executor id between processes.** At `Launch`, DBOS
+  recovers the pending workflows recorded under its own executor id, so two
+  processes with one id would both pick up the same interrupted work.
+  `internal/worker` gives each process `hostname-<random>`; never set
+  `DBOS__VMID` or `ExecutorID` to anything replicas share. Work a dead worker
+  left behind is taken over by a sweep that reads the work's own state, as
+  `runtime.Job` does with a heartbeat, not by recovery.
 - **Do not rely on `LISTEN`/`NOTIFY` alone.** Measured: a notification sent
   while the listener was down is gone, and the payload is capped at 8000 bytes.
   Push cuts latency; the periodic poll is what makes the work happen at all.
