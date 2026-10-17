@@ -402,7 +402,7 @@ func TestTakeOverStaleRunsLeavesALiveRunAlone(t *testing.T) {
 	r := createRun(t, s, f)
 	claim(t, s, r.ID, "w1")
 
-	got, err := s.TakeOverStaleRuns(t.Context(), db.TakeOverStaleRunsParams{Worker: "w2", StaleSeconds: 90})
+	got, err := s.TakeOverStaleRuns(t.Context(), 90)
 	if err != nil || len(got) != 0 {
 		t.Errorf("took %v, %v; want nothing from a live worker", got, err)
 	}
@@ -415,17 +415,43 @@ func TestTakeOverStaleRunsTakesAStalledRun(t *testing.T) {
 	claim(t, s, r.ID, "w1")
 	age(t, s, r.ID, "heartbeat_at", 120)
 
-	got, err := s.TakeOverStaleRuns(t.Context(), db.TakeOverStaleRunsParams{Worker: "w2", StaleSeconds: 90})
+	got, err := s.TakeOverStaleRuns(t.Context(), 90)
 	if err != nil || !slices.Equal(got, []uuid.UUID{r.ID}) {
 		t.Fatalf("took %v, %v; want the stalled run", got, err)
 	}
 
-	// The old worker's next heartbeat is how it learns, so it must fail now,
-	// and the new holder's must succeed.
+	// Handed back to the queue, so whichever worker dequeues it can claim it:
+	// naming the sweeper here would strand it when another worker dequeued it.
+	if st := statusOf(t, s, r.ID).Status; st != "queued" {
+		t.Errorf("status = %s after a takeover, want queued", st)
+	}
+
+	// The old worker's next heartbeat is how it learns, so it must fail now.
 	_, err = s.HeartbeatRun(t.Context(), db.HeartbeatRunParams{ID: r.ID, Worker: "w1"})
 	wantNoRow(t, err, "the old worker's heartbeat after a takeover")
-	if _, err := s.HeartbeatRun(t.Context(), db.HeartbeatRunParams{ID: r.ID, Worker: "w2"}); err != nil {
-		t.Errorf("the new holder's heartbeat: %v", err)
+
+	if row := claim(t, s, r.ID, "w3"); row.Worker == nil || *row.Worker != "w3" {
+		t.Errorf("the worker that dequeued it holds %v, want w3", row.Worker)
+	}
+}
+
+// The wall clock is the run's, not the attempt's: a run taken over five hours
+// in has one hour left.
+func TestATakenOverRunKeepsItsWallClock(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	r := createRun(t, s, f)
+	claim(t, s, r.ID, "w1")
+	age(t, s, r.ID, "started_at", 5*60*60)
+	age(t, s, r.ID, "heartbeat_at", 120)
+
+	if _, err := s.TakeOverStaleRuns(t.Context(), 90); err != nil {
+		t.Fatalf("take over: %v", err)
+	}
+
+	left := claim(t, s, r.ID, "w2").RemainingSeconds
+	if left > 60*60 || left < 60*60-60 {
+		t.Errorf("remaining = %.0fs after a takeover five hours in, want about an hour", left)
 	}
 }
 
@@ -444,8 +470,7 @@ func TestTakeOverStaleRunsHasOneWinner(t *testing.T) {
 	}
 	defer func() { _ = tx.Rollback(t.Context()) }()
 
-	first, err := s.WithTx(tx).TakeOverStaleRuns(t.Context(),
-		db.TakeOverStaleRunsParams{Worker: "w2", StaleSeconds: 90})
+	first, err := s.WithTx(tx).TakeOverStaleRuns(t.Context(), 90)
 	if err != nil || len(first) != 1 {
 		t.Fatalf("first sweep: %v, %v", first, err)
 	}
@@ -454,7 +479,7 @@ func TestTakeOverStaleRunsHasOneWinner(t *testing.T) {
 	// that into a failure instead of a hung suite.
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	second, err := s.TakeOverStaleRuns(ctx, db.TakeOverStaleRunsParams{Worker: "w3", StaleSeconds: 90})
+	second, err := s.TakeOverStaleRuns(ctx, 90)
 	if err != nil || len(second) != 0 {
 		t.Errorf("second sweep took %v, %v while the first held it; want nothing", second, err)
 	}
@@ -462,8 +487,11 @@ func TestTakeOverStaleRunsHasOneWinner(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	if got := statusOf(t, s, r.ID); got.Worker == nil || *got.Worker != "w2" {
-		t.Errorf("worker = %v, want w2", got.Worker)
+	if got := statusOf(t, s, r.ID); got.Status != "queued" || got.Worker != nil {
+		t.Errorf("status %s, worker %v; want it handed back once", got.Status, got.Worker)
+	}
+	if again, err := s.TakeOverStaleRuns(t.Context(), 90); err != nil || len(again) != 0 {
+		t.Errorf("a later sweep took %v, %v; a run handed back is not taken again", again, err)
 	}
 }
 

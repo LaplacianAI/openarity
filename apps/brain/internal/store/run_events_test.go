@@ -57,7 +57,7 @@ func TestEachRunIsNumberedOnItsOwn(t *testing.T) {
 	}
 }
 
-// After a takeover the new holder carries on the numbering, and the worker
+// After a takeover the worker that claims it next carries on the numbering, and the worker
 // that lost the run can no longer write between its events.
 func TestAWorkerThatLostTheRunCannotAppendAnEvent(t *testing.T) {
 	s := queryStore(t)
@@ -67,10 +67,10 @@ func TestAWorkerThatLostTheRunCannotAppendAnEvent(t *testing.T) {
 	_, _ = appendEvent(t, s, r.ID, "w1", "started")
 
 	age(t, s, r.ID, "heartbeat_at", 120)
-	if _, err := s.TakeOverStaleRuns(t.Context(),
-		db.TakeOverStaleRunsParams{Worker: "w2", StaleSeconds: 90}); err != nil {
+	if _, err := s.TakeOverStaleRuns(t.Context(), 90); err != nil {
 		t.Fatalf("takeover: %v", err)
 	}
+	claim(t, s, r.ID, "w2")
 
 	_, err := appendEvent(t, s, r.ID, "w1", "step")
 	wantNoRow(t, err, "the old worker's event after a takeover")

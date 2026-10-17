@@ -77,10 +77,10 @@ WHERE status = 'queued'
 ORDER BY created_at
 LIMIT 100;
 
--- One winner per stale run: the row is locked while it is taken, and the old
--- worker's next heartbeat finds worker changed and stops.
+-- One winner per stale run: the row is locked while it is handed back, and
+-- the old worker's next heartbeat finds it no longer running and stops.
 -- name: TakeOverStaleRuns :many
-UPDATE runs SET worker = sqlc.arg('worker')::text, heartbeat_at = now()
+UPDATE runs SET status = 'queued', worker = NULL, heartbeat_at = NULL
 WHERE id IN (
     SELECT id FROM runs
     WHERE status = 'running'

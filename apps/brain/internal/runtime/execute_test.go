@@ -128,6 +128,7 @@ type execFixture struct {
 	raw      *pgx.Conn
 	sessions *postgres.Store
 	pool     *pgxpool.Pool
+	dsn      string
 	model    *scripted
 	exec     *Executor
 	team     uuid.UUID
@@ -172,7 +173,7 @@ func newExecFixture(t *testing.T, model *scripted) *execFixture {
 		t.Fatalf("pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	f.pool, f.sessions = pool, postgres.New(pool)
+	f.pool, f.sessions, f.dsn = pool, postgres.New(pool), dsn
 
 	f.exec = f.executor(t, func(agent.Endpoint) (agent.ModelClient, error) { return model, nil },
 		agent.Endpoint{BaseURL: "http://model.test"})

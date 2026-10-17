@@ -385,26 +385,21 @@ func (q *Queries) RequestRunCancel(ctx context.Context, id uuid.UUID) (Run, erro
 }
 
 const takeOverStaleRuns = `-- name: TakeOverStaleRuns :many
-UPDATE runs SET worker = $1::text, heartbeat_at = now()
+UPDATE runs SET status = 'queued', worker = NULL, heartbeat_at = NULL
 WHERE id IN (
     SELECT id FROM runs
     WHERE status = 'running'
-      AND heartbeat_at < now() - make_interval(secs => $2::float8)
+      AND heartbeat_at < now() - make_interval(secs => $1::float8)
     ORDER BY heartbeat_at
     LIMIT 20
     FOR UPDATE SKIP LOCKED)
 RETURNING id
 `
 
-type TakeOverStaleRunsParams struct {
-	Worker       string
-	StaleSeconds float64
-}
-
-// One winner per stale run: the row is locked while it is taken, and the old
-// worker's next heartbeat finds worker changed and stops.
-func (q *Queries) TakeOverStaleRuns(ctx context.Context, arg TakeOverStaleRunsParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, takeOverStaleRuns, arg.Worker, arg.StaleSeconds)
+// One winner per stale run: the row is locked while it is handed back, and
+// the old worker's next heartbeat finds it no longer running and stops.
+func (q *Queries) TakeOverStaleRuns(ctx context.Context, staleSeconds float64) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, takeOverStaleRuns, staleSeconds)
 	if err != nil {
 		return nil, err
 	}

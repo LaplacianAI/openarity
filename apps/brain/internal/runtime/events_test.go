@@ -38,7 +38,7 @@ func liveSchema(t *testing.T) (*store.Store, *pgx.Conn, string) {
 
 	// Postgres cuts an identifier at 63 bytes without failing, and two tests
 	// cut to the same name would share their tables.
-	schema := "runtime_test_" + strings.ToLower(t.Name())
+	schema := "runtime_test_" + strings.NewReplacer("/", "_", "'", "").Replace(strings.ToLower(t.Name()))
 	if len(schema) > 63 {
 		t.Fatalf("the schema name %s is %d bytes, and Postgres keeps 63", schema, len(schema))
 	}
