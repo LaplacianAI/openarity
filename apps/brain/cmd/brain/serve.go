@@ -6,14 +6,21 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
+
+	"github.com/dbos-inc/dbos-transact-golang/dbos"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/server"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/worker"
 )
+
+const runQueueShutdown = 5 * time.Second
 
 func newGuard(
 	ctx context.Context, logger *slog.Logger,
@@ -71,8 +78,16 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	graphs, closeGraphs := newGraphViewer(ctx, cfg, logger)
 	defer closeGraphs()
 
+	runQueue, err := dbos.NewClient(ctx, dbos.ClientConfig{
+		DatabaseURL: cfg.PostgresDSN, AppName: worker.AppName, Logger: logger,
+	})
+	if err != nil {
+		return fmt.Errorf("connect to the run queue: %w", err)
+	}
+	defer func() { _ = dbos.Shutdown(runQueue, runQueueShutdown) }()
+
 	authorizer := authz.New(dbStore, cfg.SuperAdmins)
-	routers := newRouters(cfg, logger, dbStore, authorizer, secretWriter, registry, attachments, newImporter(cfg), newDiscoverer(cfg, secretStore), graphs)
+	routers := newRouters(cfg, logger, dbStore, authorizer, secretWriter, registry, attachments, newImporter(cfg), newDiscoverer(cfg, secretStore), graphs, runtime.NewEnqueuer(runQueue))
 	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry, attachments)
 
 	guard, err := newGuard(ctx, logger, dbStore, authorizer)

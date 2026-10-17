@@ -45,6 +45,8 @@ tags:
     description: A team's agents, tools and skills as the graph index holds them
   - name: sessions
     description: Conversations, and what was said in them
+  - name: runs
+    description: An agent working on one input, and what it did as it went
   - name: users
     description: Finding a user's id
 
@@ -1477,6 +1479,177 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/runs:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    post:
+      operationId: startRun
+      tags: [runs]
+      summary: Start a run of an agent
+      description: |
+        Requires `run:write` in this team. The run is recorded and queued
+        before the reply, and a worker picks it up; follow it with
+        `GET /teams/{id}/runs/{runID}/events`.
+
+        With no `session_id` the run gets a direct session of its own, owned
+        by the caller. A named session must be one the caller can read: a
+        `group` or `thread` session of this team, their own `direct` one, or
+        any with `session:read_all`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunRequest"
+      responses:
+        "202":
+          description: Queued, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "400":
+          description: |
+            The body breaks a rule, named in the sentence: no agent, no
+            input, input over 100 KiB or holding a NUL character, or a body
+            that is not the shape above. Nothing is written.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["input must be at most 100 KiB"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: |
+            No agent in this team has that name, or the session is not one
+            the caller can read. Neither repeats what was asked for, and
+            nothing is written.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["no agent in this team has that name"]
+
+  /teams/{id}/runs/{runID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      operationId: getRun
+      tags: [runs]
+      summary: Read a run
+      description: |
+        A run is visible exactly where its session is: someone else's direct
+        run answers 404 unless the caller holds `session:read_all`.
+      responses:
+        "200":
+          description: The run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/runs/{runID}/events:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      operationId: streamRunEvents
+      tags: [runs]
+      summary: Follow what a run does
+      description: |
+        A server-sent event stream, visible where the run is. Each frame is
+        one event the run recorded:
+
+        ```text
+        id: 3
+        event: tool_call
+        data: {"name": "search", ...}
+        ```
+
+        The `id` is the event's sequence within the run, so a client that
+        reconnects sends it back as `Last-Event-ID` and misses nothing. Once
+        the run has finished and its last event is sent, a final `end` frame
+        carries its status, `data: {"status":"succeeded"}`, and the stream
+        closes. A run cancelled before any worker took it has no events, and
+        its stream is that one frame. A comment, `: keep-alive`, is sent
+        every 15 seconds while nothing happens.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Resume after this sequence number. Wins over `after`.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: after
+          in: query
+          required: false
+          description: Resume after this sequence number, for a client that cannot set a header.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        "200":
+          description: The stream, until the run ends or the client leaves
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/runs/{runID}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/RunID"
+    post:
+      operationId: cancelRun
+      tags: [runs]
+      summary: Cancel a run
+      description: |
+        Requires `run:write` in this team, and the run must be visible to the
+        caller. A queued run ends at once. A running one is marked, and its
+        worker stops it at its next heartbeat, within 15 seconds; read the
+        run, or its events, to see it finish.
+      responses:
+        "202":
+          description: Cancelled, or asked to stop, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The run has already finished
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the run has already finished"]
+
   /teams/{id}/mcp-servers:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -1933,6 +2106,15 @@ components:
       in: path
       required: true
       description: The MCP server
+      schema:
+        type: string
+        format: uuid
+
+    RunID:
+      name: runID
+      in: path
+      required: true
+      description: The run
       schema:
         type: string
         format: uuid
@@ -3117,3 +3299,77 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Loop"
+
+    RunRequest:
+      type: object
+      required: [agent, input]
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+          description: The name of an agent in this team
+          examples: ["triage"]
+        input:
+          type: string
+          maxLength: 102400
+          description: What the agent is asked to do. At most 100 KiB, with no NUL character.
+          examples: ["Sort the issues opened today."]
+        session_id:
+          type: string
+          format: uuid
+          description: |
+            The conversation the run belongs to. Leave it out and the run gets
+            a direct session of its own.
+
+    Run:
+      type: object
+      required:
+        - id
+        - session_id
+        - agent
+        - status
+        - input
+        - input_tokens
+        - output_tokens
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+        agent:
+          type: string
+          description: The agent's name when the run started, kept if it is later renamed or deleted
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, cancelled]
+        input:
+          type: string
+        output:
+          type: string
+          nullable: true
+          description: The agent's answer, null until it succeeds
+        error:
+          type: string
+          nullable: true
+          description: Why it failed, null unless it did
+        input_tokens:
+          type: integer
+          format: int64
+        output_tokens:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a worker first took it, null while queued
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true

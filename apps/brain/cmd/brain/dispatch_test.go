@@ -55,7 +55,7 @@ func TestExecuteRejectsAnUnknownCommand(t *testing.T) {
 func TestMigrateRejectsAnUnknownDirection(t *testing.T) {
 	t.Parallel()
 
-	err := migrate(t.Context(), quietLogger(), nil, direction("sideways"))
+	err := migrate(t.Context(), quietLogger(), nil, "", direction("sideways"))
 	if err == nil {
 		t.Fatal("migrate accepted an unknown direction")
 	}
@@ -70,7 +70,7 @@ func TestMigrateUpReportsFailure(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
-	err := migrate(t.Context(), logger, closedStore(t), directionUp)
+	err := migrate(t.Context(), logger, closedStore(t), "", directionUp)
 	if err == nil {
 		t.Fatal("migrate up succeeded against a closed pool")
 	}
@@ -83,7 +83,7 @@ func TestMigrateDownReportsFailure(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
-	err := migrate(t.Context(), logger, closedStore(t), directionDown)
+	err := migrate(t.Context(), logger, closedStore(t), "", directionDown)
 	if err == nil {
 		t.Fatal("migrate down succeeded against a closed pool")
 	}

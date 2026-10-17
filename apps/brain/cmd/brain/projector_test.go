@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -21,8 +22,10 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets/static"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/worker"
 )
 
 func liveFalkorURL(t *testing.T) string {
@@ -136,6 +139,14 @@ func TestAProjectorIsNotBuiltOnAWidthNoIndexCanHave(t *testing.T) {
 
 // --- which jobs the worker runs ---
 
+func jobNames(jobs []worker.Job) []string {
+	names := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		names = append(names, j.Name())
+	}
+	return names
+}
+
 // With no embedding model there is nothing to project with. The worker says
 // so once and runs the rest; it does not dial a FalkorDB it will not use.
 func TestTheWorkerDoesNotDrainWhenNoModelIsSet(t *testing.T) {
@@ -145,14 +156,14 @@ func TestTheWorkerDoesNotDrainWhenNoModelIsSet(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	cfg := &config.Config{FalkorDBURL: deadFalkorURL(t), EmbeddingDimensions: 3}
 
-	jobs, closeJobs, err := newJobs(t.Context(), cfg, logger, nil, nil)
+	jobs, closeJobs, err := newJobs(t.Context(), cfg, logger, &store.Store{}, static.New(), nil)
 	if err != nil {
 		t.Fatalf("newJobs: %v", err)
 	}
 	closeJobs()
 
-	if len(jobs) != 1 || jobs[0].Name() != "reaper.sweep" {
-		t.Errorf("%d jobs, want only the reaper's", len(jobs))
+	if got := jobNames(jobs); !slices.Equal(got, []string{"reaper.sweep", "runtime"}) {
+		t.Errorf("jobs = %v, want the reaper's and the runtime's", got)
 	}
 	if !strings.Contains(logs.String(), "EMBEDDING_MODEL is not set") || !strings.Contains(logs.String(), "level=WARN") {
 		t.Errorf("the worker did not say the graph is not being projected:\n%s", logs.String())
@@ -165,14 +176,14 @@ func TestTheWorkerDrainsWhenAModelIsSet(t *testing.T) {
 	var logs bytes.Buffer
 	cfg := &config.Config{FalkorDBURL: liveFalkorURL(t), EmbeddingModel: "test-model", EmbeddingDimensions: 3}
 
-	jobs, closeJobs, err := newJobs(t.Context(), cfg, slog.New(slog.NewTextHandler(&logs, nil)), nil, nil)
+	jobs, closeJobs, err := newJobs(t.Context(), cfg, slog.New(slog.NewTextHandler(&logs, nil)), &store.Store{}, static.New(), nil)
 	if err != nil {
 		t.Fatalf("newJobs: %v", err)
 	}
 	t.Cleanup(closeJobs)
 
-	if len(jobs) != 2 || jobs[0].Name() != "reaper.sweep" || jobs[1].Name() != "graph.drain" {
-		t.Errorf("jobs = %d, want the reaper's and the drain", len(jobs))
+	if got := jobNames(jobs); !slices.Equal(got, []string{"reaper.sweep", "runtime", "graph.drain"}) {
+		t.Errorf("jobs = %v, want the reaper's, the runtime's and the drain", got)
 	}
 	if strings.Contains(logs.String(), "not being projected") {
 		t.Error("the worker said the graph is not projected, with a model set")
@@ -185,7 +196,7 @@ func TestTheWorkerDoesNotStartWithAModelAndNoFalkorDB(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{FalkorDBURL: deadFalkorURL(t), EmbeddingModel: "test-model", EmbeddingDimensions: 3}
-	jobs, closeJobs, err := newJobs(t.Context(), cfg, discardLogger(), nil, nil)
+	jobs, closeJobs, err := newJobs(t.Context(), cfg, discardLogger(), &store.Store{}, static.New(), nil)
 	if err == nil || jobs != nil || closeJobs != nil {
 		t.Errorf("newJobs = %d jobs, %v; want the failure", len(jobs), err)
 	}

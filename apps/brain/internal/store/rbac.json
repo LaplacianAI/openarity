@@ -146,6 +146,28 @@
       "scope": "member"
     },
     {
+      "method": "POST",
+      "path": "/teams/{id}/runs",
+      "scope": "team",
+      "permission": "run:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/runs/{runID}",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/runs/{runID}/events",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/runs/{runID}/cancel",
+      "scope": "team",
+      "permission": "run:write"
+    },
+    {
       "method": "GET",
       "path": "/teams/{id}/channels",
       "scope": "member"

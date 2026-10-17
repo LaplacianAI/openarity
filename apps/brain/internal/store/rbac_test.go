@@ -509,6 +509,15 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// can read an agent can read what its pattern may be.
 		"GET /teams/{id}/loops": "member",
 
+		// Reading a run is `member` because the handler applies the session
+		// rule to the row: someone else's direct run is a 404 to everyone but
+		// a moderator. Starting and cancelling one spend tokens, so they are
+		// run:write.
+		"POST /teams/{id}/runs":                "team run:write",
+		"GET /teams/{id}/runs/{runID}":         "member",
+		"GET /teams/{id}/runs/{runID}/events":  "member",
+		"POST /teams/{id}/runs/{runID}/cancel": "team run:write",
+
 		// An MCP server is a tool source, so writing one is tool:write. Reading
 		// is member-wide for the reason skills are: granting a server to an
 		// agent starts with seeing which exist, and a row holds references,
