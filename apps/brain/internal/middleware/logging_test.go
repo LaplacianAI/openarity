@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func recordingLogger() (*slog.Logger, *bytes.Buffer) {
@@ -178,4 +179,38 @@ func TestLogRequestsDoesNotSwallowAPanic(t *testing.T) {
 	LogRequests(logger)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("boom")
 	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/boom", nil))
+}
+
+// Every response passes through the recorder, so a streaming handler reaches
+// the connection only if the recorder lets http.ResponseController through.
+// Without Unwrap, Flush and SetWriteDeadline both answer ErrNotSupported: a
+// run's event stream closed after its first frame, and the deadline it pushes
+// to outlive the server's WriteTimeout was never set.
+func TestLogRequestsLetsAStreamFlushAndExtendItsDeadline(t *testing.T) {
+	t.Parallel()
+
+	logger, _ := recordingLogger()
+	errs := make(chan error, 2)
+	server := httptest.NewServer(LogRequests(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		rc := http.NewResponseController(w)
+		errs <- rc.SetWriteDeadline(time.Now().Add(time.Minute))
+		errs <- rc.Flush()
+	})))
+	t.Cleanup(server.Close)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/stream", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	for _, call := range []string{"SetWriteDeadline", "Flush"} {
+		if err := <-errs; err != nil {
+			t.Errorf("%s through LogRequests: %v", call, err)
+		}
+	}
 }
