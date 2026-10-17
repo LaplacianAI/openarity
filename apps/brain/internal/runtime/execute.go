@@ -1,0 +1,259 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
+	"github.com/LaplacianAI/openarity/sdk/agent"
+)
+
+type Store interface {
+	EventStore
+	BuildStore
+	ClaimRun(ctx context.Context, arg db.ClaimRunParams) (db.ClaimRunRow, error)
+	HeartbeatRun(ctx context.Context, arg db.HeartbeatRunParams) (*time.Time, error)
+	FinishRun(ctx context.Context, arg db.FinishRunParams) (int64, error)
+}
+
+const (
+	heartbeatEvery = 15 * time.Second
+	maxWallClock   = 6 * time.Hour
+	finishTimeout  = 10 * time.Second
+)
+
+var (
+	ErrCancelled = errors.New("the run was cancelled")
+	errWallClock = fmt.Errorf("the run ran past its wall clock of %s", maxWallClock)
+)
+
+type Executor struct {
+	store    Store
+	builder  *Builder
+	runner   *agent.Runner
+	endpoint agent.Endpoint
+	sessions agent.Store
+	logger   *slog.Logger
+	every    time.Duration
+}
+
+func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
+	sessions agent.Store, logger *slog.Logger,
+) *Executor {
+	return &Executor{
+		store: s, builder: b, runner: r, endpoint: endpoint,
+		sessions: sessions, logger: logger, every: heartbeatEvery,
+	}
+}
+
+type startedPayload struct {
+	Agent   string   `json:"agent"`
+	Model   string   `json:"model"`
+	Pattern string   `json:"pattern"`
+	Tools   []string `json:"tools"`
+	Skills  []string `json:"skills"`
+}
+
+type resumedPayload struct {
+	Messages int `json:"messages"`
+}
+
+type unavailablePayload struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+type finishedPayload struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+func (e *Executor) Execute(ctx context.Context, runID uuid.UUID, worker string) error {
+	row, err := e.store.ClaimRun(ctx, db.ClaimRunParams{
+		ID: runID, Worker: worker, WallClockSeconds: maxWallClock.Seconds(),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("claiming run %s: %w", runID, err)
+	}
+
+	remaining := time.Duration(row.RemainingSeconds * float64(time.Second))
+	bounded, cancelClock := context.WithTimeoutCause(ctx, remaining, errWallClock)
+	defer cancelClock()
+	runCtx, stop := context.WithCancelCause(bounded)
+	defer stop(nil)
+
+	beatCtx, stopBeat := context.WithCancel(runCtx)
+	beating := make(chan struct{})
+	go func() {
+		defer close(beating)
+		e.heartbeat(beatCtx, runID, worker, stop)
+	}()
+
+	output, runErr := e.run(runCtx, row, worker, stop)
+
+	stopBeat()
+	<-beating
+
+	if ctx.Err() != nil {
+		return fmt.Errorf("the worker stopped while running %s: %w", runID, ctx.Err())
+	}
+
+	cause := context.Cause(runCtx)
+	if errors.Is(cause, ErrLostRun) {
+		return nil
+	}
+	status, failure := outcome(runErr, cause)
+	return e.finish(ctx, runID, worker, status, output, failure)
+}
+
+func (e *Executor) run(ctx context.Context, row db.ClaimRunRow, worker string,
+	stop context.CancelCauseFunc,
+) (string, error) {
+	session, err := agent.Open(row.ID.String(), e.sessions)
+	if err != nil {
+		return "", err
+	}
+	msgs, err := session.Messages(ctx)
+	if err != nil {
+		return "", fmt.Errorf("reading the transcript: %w", err)
+	}
+
+	built, err := e.builder.Build(ctx, runOf(row), session)
+	if err != nil {
+		return "", err
+	}
+	defer built.Close()
+
+	if len(msgs) > 0 {
+		err = appendEvent(ctx, e.store, row.ID, worker, "resumed", resumedPayload{Messages: len(msgs)})
+	} else {
+		msgs = []agent.Message{{
+			Role:    agent.RoleUser,
+			Content: []agent.Content{{Type: agent.ContentText, Text: row.Input}},
+		}}
+		err = appendEvent(ctx, e.store, row.ID, worker, "started", startedOf(row.AgentName, built.Spec))
+	}
+	if err != nil {
+		return "", err
+	}
+
+	for _, u := range built.Unavailable {
+		if err := appendEvent(ctx, e.store, row.ID, worker, "tool_unavailable",
+			unavailablePayload(u)); err != nil {
+			return "", err
+		}
+	}
+
+	events := make(chan agent.Event, 64)
+	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, worker, events, stop)
+	result, err := e.runner.Run(ctx, built.Spec, msgs, e.endpoint, events)
+	close(events)
+	<-recorded
+
+	return result.Output, err
+}
+
+func (e *Executor) heartbeat(ctx context.Context, runID uuid.UUID, worker string, stop context.CancelCauseFunc) {
+	tick := time.NewTicker(e.every)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+
+		cancelled, err := e.store.HeartbeatRun(ctx, db.HeartbeatRunParams{ID: runID, Worker: worker})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			stop(ErrLostRun)
+			return
+		case err != nil:
+			e.logger.Warn("heartbeat failed", "run", runID, "err", err)
+		case cancelled != nil:
+			stop(ErrCancelled)
+			return
+		}
+	}
+}
+
+func outcome(runErr, cause error) (string, string) {
+	var unreachable *url.Error
+	switch {
+	case errors.Is(cause, ErrCancelled):
+		return "cancelled", ""
+	case cause != nil:
+		return "failed", cause.Error()
+	case runErr == nil:
+		return "succeeded", ""
+	case errors.As(runErr, &unreachable):
+		return "failed", fmt.Sprintf("the model endpoint OPENARITY_LLM_BASE_URL could not be reached: %v", runErr)
+	default:
+		return "failed", runErr.Error()
+	}
+}
+
+func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, output, failure string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	defer cancel()
+
+	p := db.FinishRunParams{ID: runID, Worker: worker, Status: status}
+	if status == "succeeded" {
+		p.Output = &output
+	}
+	if failure != "" {
+		p.Error = &failure
+	}
+
+	n, err := e.store.FinishRun(ctx, p)
+	if err != nil {
+		return fmt.Errorf("finishing run %s as %s: %w", runID, status, err)
+	}
+	if n == 0 {
+		return nil
+	}
+
+	failure, _ = clip(failure)
+	err = appendEvent(ctx, e.store, runID, worker, "finished", finishedPayload{Status: status, Error: failure})
+	if err != nil && !errors.Is(err, ErrLostRun) {
+		return err
+	}
+	return nil
+}
+
+func startedOf(agentName string, spec agent.Spec) startedPayload {
+	p := startedPayload{
+		Agent: agentName, Model: spec.Model.Name, Pattern: string(spec.Pattern),
+		Tools: make([]string, 0, len(spec.Tools)), Skills: make([]string, 0, len(spec.Skills)),
+	}
+	for _, t := range spec.Tools {
+		p.Tools = append(p.Tools, t.Name)
+	}
+	for _, s := range spec.Skills {
+		p.Skills = append(p.Skills, s.Name)
+	}
+	return p
+}
+
+func runOf(r db.ClaimRunRow) db.Run {
+	return db.Run{
+		ID: r.ID, TeamID: r.TeamID, SessionID: r.SessionID, ParentRunID: r.ParentRunID,
+		RootRunID: r.RootRunID, ParentToolCall: r.ParentToolCall, Depth: r.Depth,
+		AgentID: r.AgentID, AgentName: r.AgentName, UserID: r.UserID, Status: r.Status,
+		Input: r.Input, Output: r.Output, Error: r.Error, InputTokens: r.InputTokens,
+		OutputTokens: r.OutputTokens, Worker: r.Worker, HeartbeatAt: r.HeartbeatAt,
+		CancelRequestedAt: r.CancelRequestedAt, CreatedAt: r.CreatedAt,
+		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+	}
+}

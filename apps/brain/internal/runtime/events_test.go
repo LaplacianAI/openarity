@@ -27,8 +27,8 @@ const (
 )
 
 // liveSchema is a migrated schema of its own for one test, and a plain
-// connection into it for the statements no query is generated for.
-func liveSchema(t *testing.T) (*store.Store, *pgx.Conn) {
+// connection into it for the statements no query is generated for, and its DSN.
+func liveSchema(t *testing.T) (*store.Store, *pgx.Conn, string) {
 	t.Helper()
 
 	dsn := os.Getenv("BRAIN_TEST_POSTGRES_DSN")
@@ -88,7 +88,7 @@ func liveSchema(t *testing.T) (*store.Store, *pgx.Conn) {
 	if _, err := s.Migrate(t.Context()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	return s, raw
+	return s, raw, u.String()
 }
 
 // heldRun is a run this worker has claimed, in a schema of its own.
@@ -101,7 +101,7 @@ type heldRun struct {
 func newHeldRun(t *testing.T) heldRun {
 	t.Helper()
 
-	s, raw := liveSchema(t)
+	s, raw, _ := liveSchema(t)
 	team, err := s.CreateTeam(t.Context(), "platform")
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
