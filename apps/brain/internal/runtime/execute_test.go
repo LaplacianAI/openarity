@@ -639,3 +639,73 @@ func TestTheWallClockIsTheOneLeftNotAFreshSixHours(t *testing.T) {
 
 	wantStatus(t, f.row(t), "failed", "wall clock")
 }
+
+// --- what the security review found ---
+
+// beats fails or passes each heartbeat by its own rule, as a database that
+// is down, or coming and going, would.
+type beats struct {
+	Store
+	fail func(n int) bool
+	n    atomic.Int32
+}
+
+func (b *beats) HeartbeatRun(ctx context.Context, arg db.HeartbeatRunParams) (*time.Time, error) {
+	if b.fail(int(b.n.Add(1))) {
+		return nil, errors.New("connection refused")
+	}
+	return b.Store.HeartbeatRun(ctx, arg)
+}
+
+// A worker that cannot reach the database for longer than a sweep waits
+// before taking its run over has to assume it was: two workers on one run
+// pay for every token twice and run every tool twice.
+func TestHeartbeatsFailingTooLongStopTheRunAsLost(t *testing.T) {
+	f := newExecFixture(t, newScripted(blocked()))
+	f.exec.store = &beats{Store: f.exec.store, fail: func(int) bool { return true }}
+	f.exec.lostAfter = 100 * time.Millisecond
+	w := f.spy()
+
+	f.mustExecute(t)
+
+	if r := f.row(t); r.Status != "running" || r.FinishedAt != nil {
+		t.Errorf("status %s; want it left running for whoever takes it over", r.Status)
+	}
+	if n := w.finishes.Load(); n != 0 {
+		t.Errorf("tried to finish a run it had lost contact with %d times", n)
+	}
+}
+
+func TestHeartbeatsThatRecoverKeepTheRun(t *testing.T) {
+	slow := answer("42", 1, 1)
+	slow.delay = 800 * time.Millisecond
+	f := newExecFixture(t, newScripted(slow))
+	f.exec.store = &beats{Store: f.exec.store, fail: func(n int) bool { return n%2 == 1 }}
+	f.exec.lostAfter = 300 * time.Millisecond
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+}
+
+// The run's error is shown to everyone who can read its session, and some
+// endpoints carry their key in the URL.
+func TestAnUnreachableModelsURLIsNotStored(t *testing.T) {
+	f := newExecFixture(t, newScripted())
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	f.exec = f.executor(t, openaicompat.Factory(), agent.Endpoint{BaseURL: gone.URL + "/key-abc123/v1", APIKey: "test"})
+
+	f.mustExecute(t)
+
+	r := f.row(t)
+	wantStatus(t, r, "failed", "OPENARITY_LLM_BASE_URL")
+	if strings.Contains(deref(r.Error), "key-abc123") {
+		t.Errorf("error = %q, which carries the endpoint's URL", deref(r.Error))
+	}
+	for _, e := range f.events(t) {
+		if strings.Contains(string(e.Payload), "key-abc123") {
+			t.Errorf("the %s event carries the endpoint's URL: %s", e.Kind, e.Payload)
+		}
+	}
+}

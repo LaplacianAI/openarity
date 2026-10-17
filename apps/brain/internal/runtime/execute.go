@@ -24,9 +24,10 @@ type Store interface {
 }
 
 const (
-	heartbeatEvery = 15 * time.Second
-	maxWallClock   = 6 * time.Hour
-	finishTimeout  = 10 * time.Second
+	heartbeatEvery     = 15 * time.Second
+	heartbeatLostAfter = 60 * time.Second
+	maxWallClock       = 6 * time.Hour
+	finishTimeout      = 10 * time.Second
 )
 
 var (
@@ -35,13 +36,14 @@ var (
 )
 
 type Executor struct {
-	store    Store
-	builder  *Builder
-	runner   *agent.Runner
-	endpoint agent.Endpoint
-	sessions agent.Store
-	logger   *slog.Logger
-	every    time.Duration
+	store     Store
+	builder   *Builder
+	runner    *agent.Runner
+	endpoint  agent.Endpoint
+	sessions  agent.Store
+	logger    *slog.Logger
+	every     time.Duration
+	lostAfter time.Duration
 }
 
 func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
@@ -50,6 +52,7 @@ func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
 	return &Executor{
 		store: s, builder: b, runner: r, endpoint: endpoint,
 		sessions: sessions, logger: logger, every: heartbeatEvery,
+		lostAfter: heartbeatLostAfter,
 	}
 }
 
@@ -166,6 +169,7 @@ func (e *Executor) run(ctx context.Context, row db.ClaimRunRow, worker string,
 func (e *Executor) heartbeat(ctx context.Context, runID uuid.UUID, worker string, stop context.CancelCauseFunc) {
 	tick := time.NewTicker(e.every)
 	defer tick.Stop()
+	beaten := time.Now()
 
 	for {
 		select {
@@ -179,11 +183,18 @@ func (e *Executor) heartbeat(ctx context.Context, runID uuid.UUID, worker string
 		case errors.Is(err, pgx.ErrNoRows):
 			stop(ErrLostRun)
 			return
+		case err != nil && time.Since(beaten) >= e.lostAfter:
+			e.logger.Error("Heartbeat lost; stopping before another worker takes the run over",
+				"run", runID, "last_beat", beaten, "err", err)
+			stop(ErrLostRun)
+			return
 		case err != nil:
 			e.logger.Warn("heartbeat failed", "run", runID, "err", err)
 		case cancelled != nil:
 			stop(ErrCancelled)
 			return
+		default:
+			beaten = time.Now()
 		}
 	}
 }
@@ -198,7 +209,7 @@ func outcome(runErr, cause error) (string, string) {
 	case runErr == nil:
 		return "succeeded", ""
 	case errors.As(runErr, &unreachable):
-		return "failed", fmt.Sprintf("the model endpoint OPENARITY_LLM_BASE_URL could not be reached: %v", runErr)
+		return "failed", fmt.Sprintf("the model endpoint OPENARITY_LLM_BASE_URL could not be reached: %v", unreachable.Err)
 	default:
 		return "failed", runErr.Error()
 	}
