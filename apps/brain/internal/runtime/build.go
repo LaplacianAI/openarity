@@ -40,13 +40,14 @@ type MCPClients interface {
 }
 
 type Builder struct {
-	store   BuildStore
-	objects Objects
-	mcp     MCPClients
+	store          BuildStore
+	objects        Objects
+	mcp            MCPClients
+	connectTimeout time.Duration
 }
 
 func NewBuilder(s BuildStore, o Objects, m MCPClients) *Builder {
-	return &Builder{store: s, objects: o, mcp: m}
+	return &Builder{store: s, objects: o, mcp: m, connectTimeout: connectTimeout}
 }
 
 type Unavailable struct{ Name, Reason string }
@@ -183,7 +184,7 @@ func (b *Builder) connect(ctx context.Context, s db.McpServer) (*mcp.Session, er
 		return nil, fmt.Errorf("the MCP server %q: %w", s.Name, err)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
+	ctx, cancel := context.WithTimeout(ctx, b.connectTimeout)
 	defer cancel()
 
 	live, err := mcp.Connect(ctx, mcp.Server{Name: s.Name, URL: *s.Url, HTTPClient: client, Bare: s.Bare})

@@ -33,10 +33,13 @@ type Job struct {
 	store    SweepStore
 	logger   *slog.Logger
 	dbos     dbos.Context
+	restart  func(uuid.UUID) error
 }
 
 func RunJob(e *Executor, s SweepStore, logger *slog.Logger) *Job {
-	return &Job{executor: e, store: s, logger: logger}
+	j := &Job{executor: e, store: s, logger: logger}
+	j.restart = j.restartRun
+	return j
 }
 
 func (*Job) Name() string { return "runtime" }
@@ -99,15 +102,21 @@ func (j *Job) sweepOnce(ctx context.Context) error {
 
 	var failed []error
 	for _, id := range queued {
-		if err := enqueue(j.dbos, id); err != nil {
+		if err := j.restart(id); err != nil {
 			failed = append(failed, err)
-			continue
-		}
-		if _, err := dbos.ResumeWorkflow[string](j.dbos, id.String(), dbos.WithResumeQueue(RunQueue)); err != nil {
-			failed = append(failed, fmt.Errorf("resuming run %s: %w", id, err))
 		}
 	}
 	return errors.Join(failed...)
+}
+
+func (j *Job) restartRun(id uuid.UUID) error {
+	if err := enqueue(j.dbos, id); err != nil {
+		return err
+	}
+	if _, err := dbos.ResumeWorkflow[string](j.dbos, id.String(), dbos.WithResumeQueue(RunQueue)); err != nil {
+		return fmt.Errorf("resuming run %s: %w", id, err)
+	}
+	return nil
 }
 
 func enqueue(c dbos.Client, id uuid.UUID) error {

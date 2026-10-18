@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -441,4 +443,47 @@ func (f *execFixture) anotherRun(t *testing.T) uuid.UUID {
 		t.Fatalf("CreateRun: %v", err)
 	}
 	return r.ID
+}
+
+type sweepRows struct{ unstarted []uuid.UUID }
+
+func (*sweepRows) TakeOverStaleRuns(context.Context, float64) ([]uuid.UUID, error) { return nil, nil }
+
+func (s *sweepRows) ListUnstartedRuns(context.Context, float64) ([]uuid.UUID, error) {
+	return s.unstarted, nil
+}
+
+// One run the sweep cannot restart must not strand the runs queued behind it
+// until the next minute. Each is tried, and every failure is reported.
+func TestOneRunThatCannotBeRestartedDoesNotHoldUpTheOthers(t *testing.T) {
+	t.Parallel()
+
+	queued := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	j := RunJob(nil, &sweepRows{unstarted: queued}, quietLogger())
+	var tried []uuid.UUID
+	j.restart = func(id uuid.UUID) error {
+		tried = append(tried, id)
+		if id == queued[0] {
+			return errors.New("enqueue refused")
+		}
+		return nil
+	}
+
+	err := j.sweepOnce(t.Context())
+
+	if !slices.Equal(tried, queued) {
+		t.Errorf("tried %v, want every queued run %v", tried, queued)
+	}
+	if err == nil || !strings.Contains(err.Error(), "enqueue refused") {
+		t.Errorf("sweepOnce = %v, want the failure reported", err)
+	}
+}
+
+func TestTheSweepRestartsRunsThroughDBOS(t *testing.T) {
+	t.Parallel()
+
+	j := RunJob(nil, &sweepRows{}, quietLogger())
+	if j.restart == nil {
+		t.Fatal("RunJob left the sweep with nothing to restart runs with")
+	}
 }

@@ -597,6 +597,59 @@ func TestConnectingGivesUpWhenTheRunsContextEnds(t *testing.T) {
 	}
 }
 
+// A server that takes the connection and never answers is what the connect
+// timeout is for; the run's own context may allow hours.
+func TestConnectingGivesUpAtItsTimeout(t *testing.T) {
+	stop := make(chan struct{})
+	var held atomic.Int32
+	silent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), `"method":"notifications/`) {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		held.Add(1)
+		select {
+		case <-r.Context().Done():
+		case <-stop:
+		}
+	}))
+	t.Cleanup(silent.Close)
+	t.Cleanup(func() { close(stop) })
+	f := newFixture()
+	f.builder.connectTimeout = 200 * time.Millisecond
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("silent", silent.URL, true)}
+
+	done := make(chan error, 1)
+	go func() {
+		built, err := f.builder.Build(t.Context(), f.run, noSession{})
+		if err == nil {
+			built.Close()
+		}
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), `"silent"`) {
+			t.Errorf("Build = %v, want the silent server named", err)
+		}
+		if held.Load() == 0 {
+			t.Error("the server held no call, so this tested nothing")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Build was still connecting 5s after its connect timeout")
+	}
+}
+
+func TestTheConnectTimeoutIsThirtySeconds(t *testing.T) {
+	t.Parallel()
+
+	if got := NewBuilder(nil, nil, nil).connectTimeout; got != 30*time.Second {
+		t.Errorf("connectTimeout = %v, want 30s", got)
+	}
+}
+
 // The connect timeout bounds connecting and nothing after: a session whose
 // connect context has been cancelled still carries every call of the run.
 func TestASessionOutlivesItsConnectTimeout(t *testing.T) {
