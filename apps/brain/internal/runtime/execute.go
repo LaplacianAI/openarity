@@ -201,6 +201,7 @@ func (e *Executor) heartbeat(ctx context.Context, runID uuid.UUID, worker string
 
 func outcome(runErr, cause error) (string, string) {
 	var unreachable *url.Error
+	var answered *agent.ModelError
 	switch {
 	case errors.Is(cause, ErrCancelled):
 		return "cancelled", ""
@@ -210,6 +211,8 @@ func outcome(runErr, cause error) (string, string) {
 		return "succeeded", ""
 	case errors.As(runErr, &unreachable):
 		return "failed", fmt.Sprintf("the model endpoint OPENARITY_LLM_BASE_URL could not be reached: %v", unreachable.Err)
+	case errors.As(runErr, &answered):
+		return "failed", "OPENARITY_LLM_BASE_URL: " + answered.Error()
 	default:
 		return "failed", runErr.Error()
 	}

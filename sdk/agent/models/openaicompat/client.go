@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -45,8 +46,9 @@ func (c *Client) Complete(ctx context.Context, req agent.Request) (agent.Respons
 
 	completion, err := c.oai.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return agent.Response{}, err
+		return agent.Response{}, modelError(err)
 	}
+
 	return fromCompletion(*completion)
 }
 
@@ -110,7 +112,7 @@ func (s *stream) Next() bool {
 	}
 
 	if err := s.raw.Err(); err != nil {
-		s.err = err
+		s.err = modelError(err)
 		return false
 	}
 
@@ -520,6 +522,14 @@ func toResponseFormat(out *agent.OutputSchema) (openai.ChatCompletionNewParamsRe
 	return openai.ChatCompletionNewParamsResponseFormatUnion{
 		OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{JSONSchema: format},
 	}, true
+}
+
+func modelError(err error) error {
+	var answered *openai.Error
+	if errors.As(err, &answered) {
+		return &agent.ModelError{Status: answered.StatusCode, Code: answered.Code}
+	}
+	return err
 }
 
 // the compiler is what keeps this honest: the pattern only ever sees the

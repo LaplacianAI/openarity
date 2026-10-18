@@ -710,3 +710,32 @@ func TestAnUnreachableModelsURLIsNotStored(t *testing.T) {
 		}
 	}
 }
+
+// A model that answers with an error status fails the run naming the setting
+// to fix, with the status and the provider's code, and nothing of the URL or
+// the body: the SDK hands the brain a ModelError and nothing more.
+func TestAModelThatAnswersAnErrorFailsNamingTheSetting(t *testing.T) {
+	f := newExecFixture(t, newScripted())
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"Incorrect API key provided: sk-live-HUNTER2","code":"invalid_api_key"}}`)
+	}))
+	t.Cleanup(refusing.Close)
+	f.exec = f.executor(t, openaicompat.Factory(), agent.Endpoint{BaseURL: refusing.URL + "/key-abc123/v1", APIKey: "test"})
+
+	f.mustExecute(t)
+
+	r := f.row(t)
+	want := "OPENARITY_LLM_BASE_URL: the model endpoint answered 401 Unauthorized (invalid_api_key)"
+	if r.Status != "failed" || deref(r.Error) != want {
+		t.Errorf("run is %s, %q; want failed, %q", r.Status, deref(r.Error), want)
+	}
+	for _, e := range f.events(t) {
+		for _, leak := range []string{"key-abc123", "HUNTER2"} {
+			if strings.Contains(string(e.Payload), leak) {
+				t.Errorf("the %s event carries %q: %s", e.Kind, leak, e.Payload)
+			}
+		}
+	}
+}
