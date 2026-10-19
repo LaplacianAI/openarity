@@ -34,13 +34,27 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       statuses: write
+      pull-requests: write
     steps:
+      # The event's sha is the head when the label was added. If a commit
+      # landed between that and this job, the label would approve a commit
+      # the event never saw, so nothing is approved and the label comes off.
+      # What no label can tell is which commit the reviewer read: check the
+      # head sha shown on the pull request before adding it.
       - env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
           SHA: ${{ github.event.pull_request.head.sha }}
           BY: ${{ github.event.sender.login }}
         run: |
+          set -euo pipefail
+          head=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
+          if [ "$head" != "$SHA" ]; then
+            gh pr edit "$PR" --repo "$REPO" --remove-label "ok to deploy"
+            gh pr comment "$PR" --repo "$REPO" --body "The head moved to ${head:0:12} while **ok to deploy** was being added, so nothing was approved. Add the label again after reading it."
+            exit 0
+          fi
           gh api -X POST "repos/$REPO/statuses/$SHA" \
             -f state=success -f context=staging/approved \
             -f description="Approved for staging by $BY"
