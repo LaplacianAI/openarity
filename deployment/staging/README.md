@@ -9,8 +9,9 @@ Postgres, FalkorDB) once. Only the brain changes:
   no secrets (`staging-build.yml`), pushed as `openarity-brain:pr-<n>`, and
   takes staging on a database of its own, `openarity_pr_<n>`
   (`staging-deploy.yml`).
-- **New commits** remove the label. Staging keeps running the commit that was
-  reviewed until somebody reads the new ones and labels it again.
+- **New commits**, or reopening, remove the label. Staging keeps running the
+  commit that was approved until somebody reads the new ones and labels it
+  again.
 - **Closing the pull request** drops its database and returns staging to main
   (`staging-pr.yml`).
 
@@ -28,9 +29,14 @@ request can change the workflow files themselves.
   uses main's copy of the workflow, and only moves the built image as data.
 - **There is no self-hosted runner.** On a public repository one is a machine
   that runs whatever a pull request's workflow says.
-- **The label is the review, and is tied to the commits read.** The deploy
-  checks that the pull request's head is still the commit that was built and
-  that the label is still there.
+- **The label is the review, and approves one commit.** Adding it writes a
+  commit status, `staging/approved`, on the head sha as it is at that moment
+  (`staging-pr.yml`, running main's copy). The deploy ships only a sha that
+  carries it, and only while the label is still on. The build workflow is not
+  trusted for any of this: a pull request can rewrite it, and its own run uses
+  its own copy, but a fork's token cannot write a status.
+- **New commits, or reopening, take the label off.** Staging keeps running the
+  approved commit; labelling again approves the new head.
 - **The server's key can do four things.** It is an SSH forced command:
   `deploy.sh` reads `deploy`, `release` or `status` and refuses everything
   else, including a shell.

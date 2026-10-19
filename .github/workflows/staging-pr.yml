@@ -1,25 +1,52 @@
 # What a pull request's own events mean for staging.
 #
 # pull_request_target runs main's copy of this file with write access, which
-# is exactly why it checks out nothing: every value it uses is the pull
-# request's number, an integer GitHub sets.
+# is exactly why it checks out nothing. The values it uses are GitHub's: the
+# pull request's number, its head sha, and who added the label, each passed
+# through the environment rather than into the script.
 #
-#   synchronize  new commits nobody has reviewed: the label comes off, and
-#                staging keeps running the commit that was reviewed
+#   labeled      "ok to deploy" approves the head commit as it is now: a
+#                commit status, staging/approved, on that sha. The deploy
+#                ships only a sha that carries one, so the approval is of
+#                commits somebody read, never of whatever the branch becomes.
+#   synchronize  new commits, or a reopened pull request that may have
+#   reopened     gained some while closed: the label comes off, and staging
+#                keeps running the commit that was approved
 #   closed       merged or not, the pull request's database is dropped and the
 #                slot returns to main if it held it
+#
+# The status is the gate, not the label. A pull request's own run of
+# staging-build.yml uses the pull request's copy of that file, so it can be
+# made to build anything; it cannot write a status, because a fork's token
+# is read-only, and this job runs main's copy.
 name: staging pull request
 
 on:
   pull_request_target:
     branches: [main]
-    types: [synchronize, closed]
+    types: [labeled, synchronize, reopened, closed]
 
 permissions: {}
 
 jobs:
+  approve:
+    if: github.event.action == 'labeled' && github.event.label.name == 'ok to deploy'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          BY: ${{ github.event.sender.login }}
+        run: |
+          gh api -X POST "repos/$REPO/statuses/$SHA" \
+            -f state=success -f context=staging/approved \
+            -f description="Approved for staging by $BY"
+
   unlabel:
-    if: github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'ok to deploy')
+    if: (github.event.action == 'synchronize' || github.event.action == 'reopened') && contains(github.event.pull_request.labels.*.name, 'ok to deploy')
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write

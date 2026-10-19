@@ -5,7 +5,8 @@
 # changed, and this is the only workflow here that holds the server's key.
 # It executes nothing from the pull request: the image arrives as an artifact
 # and is pushed as data, and the number beside it is checked against the
-# pull request's head sha and label before it is believed.
+# pull request's head sha and label before it is believed. The sha must
+# carry the staging/approved status that labelling it wrote.
 #
 # Nothing about the server is in this repository. Where it is and how to reach
 # it are secrets of the `staging` environment; see deployment/staging/README.md.
@@ -68,6 +69,15 @@ jobs:
             [ "$(jq -r .base.ref <<<"$pull")" = main ] || skip "#$pr is not against main"
             [ "$(jq -r .head.sha <<<"$pull")" = "$HEAD_SHA" ] || skip "#$pr has commits newer than this build"
             jq -e '.labels | any(.name == "ok to deploy")' <<<"$pull" >/dev/null || skip "#$pr is no longer labelled ok to deploy"
+
+            # The gate. The label says a maintainer wants this pull request on
+            # staging; this says which commit they read. Only staging-pr.yml,
+            # running main's copy, writes it, so a build of anything else -
+            # including one from a pull request that rewrote staging-build.yml -
+            # stops here whatever the label says.
+            approved=$(gh api --paginate "repos/$REPO/commits/$HEAD_SHA/statuses" \
+              --jq '.[] | select(.context == "staging/approved" and .state == "success" and .creator.login == "github-actions[bot]") | .id' | head -1)
+            [ -n "$approved" ] || skip "${HEAD_SHA:0:12} was never approved for staging"
 
             gunzip -c "$RUNNER_TEMP/build/image.tar.gz" | docker load
             slot="pr-$pr"

@@ -8,14 +8,16 @@
 # ship it.
 #
 # The label is the review: a maintainer reads the diff, the Dockerfile and
-# the workflows included, and adds "ok to deploy". New commits remove it
-# (staging-pr.yml), so a commit nobody has read is never deployed.
+# the workflows included, and adds "ok to deploy". That writes a commit
+# status on the head sha (staging-pr.yml), and the deploy ships only a sha
+# that carries it. Nothing here is relied on for that: a pull request can
+# change this file, and its own run uses its own copy.
 name: staging build
 
 on:
   pull_request:
     branches: [main]
-    types: [labeled, synchronize, reopened]
+    types: [labeled]
 
 permissions:
   contents: read
@@ -26,7 +28,7 @@ concurrency:
 
 jobs:
   image:
-    if: contains(github.event.pull_request.labels.*.name, 'ok to deploy')
+    if: github.event.label.name == 'ok to deploy'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
