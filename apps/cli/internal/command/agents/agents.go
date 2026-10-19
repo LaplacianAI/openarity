@@ -346,6 +346,11 @@ func printAgent(opts *cli.Options, a *client.Agent, did string) error {
 			table.Row("description", strconv.QuoteToGraphic(a.Description), "")
 			table.Row("model", cli.Safe(a.Model.Name), strconv.Itoa(int(a.Model.MaxTokens))+" tokens")
 			table.Row("pattern", cli.Safe(a.Pattern), strconv.Itoa(int(a.MaxSteps))+" steps")
+			budget := "the default"
+			if a.TokenBudget != nil {
+				budget = strconv.FormatInt(*a.TokenBudget, 10) + " tokens"
+			}
+			table.Row("token budget", budget, "per run")
 			for _, g := range a.McpServers {
 				only := "every tool"
 				if g.Allow != nil {

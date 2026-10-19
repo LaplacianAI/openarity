@@ -69,6 +69,7 @@ const draft = {
   maxTokens: "1024",
   pattern: "react",
   maxSteps: "5",
+  tokenBudget: "",
   servers: ["m1"],
   skills: ["s1"],
 };
@@ -87,12 +88,26 @@ describe("the define form", () => {
     });
   });
 
+  it("sends a budget when one is set, and leaves the default to the brain when not", () => {
+    expect(agentRequest(draft)).not.toHaveProperty("token_budget");
+    expect(agentRequest({ ...draft, tokenBudget: " 250000 " })).toMatchObject({
+      token_budget: 250000,
+    });
+    expect(agentRequest({ ...draft, tokenBudget: "100000000" })).toMatchObject({
+      token_budget: 100_000_000,
+    });
+  });
+
   it.each([
     ["no name", { ...draft, name: " " }, /name/],
     ["no model", { ...draft, model: "" }, /model/],
     ["tokens that are not a number", { ...draft, maxTokens: "lots" }, /Max tokens/],
     ["zero tokens", { ...draft, maxTokens: "0" }, /Max tokens/],
     ["fractional steps", { ...draft, maxSteps: "2.5" }, /Max steps/],
+    ["a budget that is not a number", { ...draft, tokenBudget: "lots" }, /Token budget/],
+    ["a budget of zero", { ...draft, tokenBudget: "0" }, /Token budget/],
+    ["a fractional budget", { ...draft, tokenBudget: "1.5" }, /Token budget/],
+    ["a budget past the cap", { ...draft, tokenBudget: "100000001" }, /Token budget/],
   ])("refuses %s before anything is sent", (_, d, said) => {
     const got = agentRequest(d);
     expect(typeof got).toBe("string");
@@ -135,6 +150,51 @@ it("shows an agent's grants by name", async () => {
   expect(screen.getByText("search_code")).toBeInTheDocument();
   expect(await screen.findByText("pdf")).toBeInTheDocument();
   expect(screen.getByText("Label it.")).toBeInTheDocument();
+});
+
+it.each([
+  [250000, "250,000 tokens a run"],
+  [undefined, "the default budget"],
+])("shows a budget of %s as %s", async (budget, said) => {
+  brain({
+    ...team([]),
+    ...registry,
+    "GET /teams/{id}/agents/{agentID}": {
+      body: {
+        ...triage,
+        instructions: "Label it.",
+        max_steps: 5,
+        steer_continuations: 0,
+        parser: false,
+        mcp_servers: [],
+        skills: [],
+        ...(budget === undefined ? {} : { token_budget: budget }),
+      },
+    },
+  });
+  show(Agents);
+
+  await userEvent.click(await screen.findByRole("button", { name: /triage/ }));
+  expect(await screen.findByText(new RegExp(said))).toBeInTheDocument();
+});
+
+it("defines an agent with the budget typed", async () => {
+  const seen = brain({
+    ...team(["agent:write"]),
+    ...registry,
+    "POST /teams/{id}/agents": { status: 201, body: { ...triage, id: "a2", name: "reviewer" } },
+  });
+  show(Agents);
+
+  await userEvent.click(await screen.findByRole("button", { name: /define agent/i }));
+  await userEvent.type(screen.getByLabelText(/^name$/i), "reviewer");
+  await userEvent.type(screen.getByLabelText(/^model$/i), "m");
+  await userEvent.type(screen.getByLabelText(/^token budget$/i), "250000");
+  await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
+
+  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+  const body = JSON.parse(String(seen.find((s) => s.method === "POST")?.body));
+  expect(body.token_budget).toBe(250000);
 });
 
 it("defines an agent with the servers and skills ticked", async () => {

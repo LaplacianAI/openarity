@@ -113,6 +113,29 @@ func TestAgentsGetShowsItsGrants(t *testing.T) {
 	}
 }
 
+// An agent with no budget of its own runs on the deployment's default, and
+// the table says so rather than leaving the row out.
+func TestAgentsGetShowsTheTokenBudget(t *testing.T) {
+	for name, tc := range map[string]struct{ body, want string }{
+		"its own": {strings.Replace(oneAgent, `"max_steps":5,`, `"max_steps":5,"token_budget":250000,`, 1), "250000 tokens"},
+		"none":    {oneAgent, "the default"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clitest.Routes(t, routes(map[string]clitest.Reply{
+				"GET /teams/{id}/agents/{agentID}": {Status: http.StatusOK, Body: tc.body},
+			}))
+
+			out, err := clitest.Execute(t, commands, "agents", "get", "platform", "triage")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out, "token budget") || !strings.Contains(out, tc.want) {
+				t.Errorf("missing the budget %q:\n%s", tc.want, out)
+			}
+		})
+	}
+}
+
 // The file is the body. Grants named on the command line are resolved in
 // the team's own lists and added, so nobody writes a uuid by hand.
 func TestCreateSendsTheFileAndTheGrantsByID(t *testing.T) {

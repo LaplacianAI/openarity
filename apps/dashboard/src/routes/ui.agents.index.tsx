@@ -215,6 +215,10 @@ function AgentDetail({ teamId, agentId }: { teamId: string; agentId: string }) {
       <div className="min-w-0 space-y-2">
         <p className="text-muted-foreground">
           {a.model.name}, up to {a.model.max_tokens} tokens · {a.pattern}, up to {a.max_steps} steps
+          ·{" "}
+          {a.token_budget === undefined
+            ? "the default budget"
+            : `${a.token_budget.toLocaleString("en")} tokens a run`}
         </p>
         <pre className="max-h-64 overflow-auto rounded-md border border-border bg-card p-3 whitespace-pre-wrap">
           {a.instructions || "No instructions."}
@@ -263,9 +267,13 @@ type Draft = {
   maxTokens: string;
   pattern: string;
   maxSteps: string;
+  tokenBudget: string;
   servers: string[];
   skills: string[];
 };
+
+/** The brain refuses more; this only says so before the round trip. */
+const MAX_TOKEN_BUDGET = 100_000_000;
 
 const EMPTY: Draft = {
   name: "",
@@ -275,6 +283,7 @@ const EMPTY: Draft = {
   maxTokens: "1024",
   pattern: "react",
   maxSteps: "5",
+  tokenBudget: "",
   servers: [],
   skills: [],
 };
@@ -291,6 +300,12 @@ export function agentRequest(d: Draft): AgentRequest | string {
   if (!Number.isInteger(maxTokens) || maxTokens < 1)
     return "Max tokens is a whole number above zero.";
   if (!Number.isInteger(maxSteps) || maxSteps < 1) return "Max steps is a whole number above zero.";
+  const budget = d.tokenBudget.trim() === "" ? undefined : Number(d.tokenBudget);
+  if (
+    budget !== undefined &&
+    (!Number.isInteger(budget) || budget < 1 || budget > MAX_TOKEN_BUDGET)
+  )
+    return "Token budget is a whole number from 1 to 100,000,000, or empty for the default.";
 
   return {
     name: d.name.trim(),
@@ -301,6 +316,7 @@ export function agentRequest(d: Draft): AgentRequest | string {
     max_steps: maxSteps,
     mcp_servers: d.servers.map((id) => ({ id })),
     skills: d.skills,
+    ...(budget === undefined ? {} : { token_budget: budget }),
   };
 }
 
@@ -404,6 +420,19 @@ function DefineDialog({
               </Field>
             </div>
           </div>
+          <Field
+            label="Token budget"
+            htmlFor="agent-budget"
+            hint="What one run may spend, input and output together. Empty for the default, 1,000,000."
+          >
+            <Input
+              id="agent-budget"
+              inputMode="numeric"
+              value={draft.tokenBudget}
+              placeholder="1000000"
+              onChange={(e) => set({ tokenBudget: e.target.value })}
+            />
+          </Field>
           <Field
             label="Description"
             htmlFor="agent-description"
