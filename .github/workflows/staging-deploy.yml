@@ -1,0 +1,119 @@
+# Puts an image on the staging server: the newest main after every merge,
+# or a labelled pull request built by staging-build.yml.
+#
+# workflow_run always runs main's copy of this file, whatever the pull request
+# changed, and this is the only workflow here that holds the server's key.
+# It executes nothing from the pull request: the image arrives as an artifact
+# and is pushed as data, and the number beside it is checked against the
+# pull request's head sha and label before it is believed.
+#
+# Nothing about the server is in this repository. Where it is and how to reach
+# it are secrets of the `staging` environment; see deployment/staging/README.md.
+#
+# There is no concurrency group: a pending run in a group is replaced by a
+# newer one, which would drop a merge to main on the floor. The server takes a
+# lock instead and does one change at a time.
+name: staging deploy
+
+on:
+  workflow_run:
+    workflows: ["staging build", "image"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+    permissions:
+      actions: read
+      packages: write
+      pull-requests: write
+
+    steps:
+      - name: Decide what to deploy
+        id: what
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          EVENT: ${{ github.event.workflow_run.event }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          skip() { echo "::notice::$1"; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/openarity-brain"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+          if [ "$WORKFLOW" = image ]; then
+            # publish-image.yml only runs for this repository's main, but a
+            # dispatch can name any branch, and only main is staging's.
+            [ "$SOURCE_REPO" = "$REPO" ] && [ "$BRANCH" = main ] || skip "image built from $BRANCH, not main"
+            slot=main
+            tag="sha-$HEAD_SHA"
+            digest=$(docker buildx imagetools inspect "$image:$tag" --format '{{json .Manifest}}' | jq -r .digest)
+          else
+            gh run download "$RUN_ID" --repo "$REPO" --name staging-image --dir "$RUNNER_TEMP/build"
+            pr=$(cat "$RUNNER_TEMP/build/pr")
+            [[ $pr =~ ^[0-9]{1,7}$ ]] || { echo "::error::the build did not name a pull request"; exit 1; }
+
+            pull=$(gh api "repos/$REPO/pulls/$pr")
+            [ "$(jq -r .state <<<"$pull")" = open ] || skip "#$pr is closed"
+            [ "$(jq -r .base.ref <<<"$pull")" = main ] || skip "#$pr is not against main"
+            [ "$(jq -r .head.sha <<<"$pull")" = "$HEAD_SHA" ] || skip "#$pr has commits newer than this build"
+            jq -e '.labels | any(.name == "ok to deploy")' <<<"$pull" >/dev/null || skip "#$pr is no longer labelled ok to deploy"
+
+            gunzip -c "$RUNNER_TEMP/build/image.tar.gz" | docker load
+            slot="pr-$pr"
+            tag="pr-$pr"
+            docker tag openarity-brain:candidate "$image:$tag"
+            docker push "$image:$tag"
+            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$image:$tag")
+            digest=${digest#*@}
+            echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          fi
+
+          [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest for $image:$tag"; exit 1; }
+          {
+            echo "slot=$slot"
+            echo "tag=$tag"
+            echo "digest=$digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Deploy on the staging server
+        if: steps.what.outputs.skip != 'true'
+        env:
+          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
+          TARGET: ${{ secrets.STAGING_SSH_TARGET }}
+          PORT: ${{ secrets.STAGING_SSH_PORT }}
+          SLOT: ${{ steps.what.outputs.slot }}
+          TAG: ${{ steps.what.outputs.tag }}
+          DIGEST: ${{ steps.what.outputs.digest }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/staging
+          chmod 600 ~/.ssh/staging
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # The server's forced command reads these four words and nothing else.
+          ssh -i ~/.ssh/staging -p "${PORT:-22}" \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$TARGET" deploy "$SLOT" "$TAG" "$DIGEST"
+
+      - name: Say so on the pull request
+        if: steps.what.outputs.skip != 'true' && steps.what.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.what.outputs.pr }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          DIGEST: ${{ steps.what.outputs.digest }}
+        run: |
+          gh pr comment "$PR" --repo "$REPO" --body "Deployed ${HEAD_SHA:0:12} to staging on database \`openarity_pr_$PR\` (\`$DIGEST\`). New commits remove **ok to deploy**; add it again after reviewing them to redeploy."

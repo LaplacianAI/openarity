@@ -1,0 +1,70 @@
+# Builds a pull request's image for staging, and nothing else.
+#
+# This is the half that runs the pull request's code — its Dockerfile, its
+# package.json scripts — so it runs as an ordinary pull_request workflow: on
+# GitHub's machines, with a read-only token and no secrets, forks included.
+# It cannot push, deploy or comment. It leaves the image as an artifact, and
+# staging-deploy.yml, which runs main's copy of itself, decides whether to
+# ship it.
+#
+# The label is the review: a maintainer reads the diff, the Dockerfile and
+# the workflows included, and adds "ok to deploy". New commits remove it
+# (staging-pr.yml), so a commit nobody has read is never deployed.
+name: staging build
+
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    if: contains(github.event.pull_request.labels.*.name, 'ok to deploy')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # The head commit, not the merge commit GitHub would check out: the
+      # deploy compares this sha against the pull request's head, and the
+      # label was given to the commits the reviewer read.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Build the dashboard into the binary's bundle
+        working-directory: apps/brain
+        run: make ui
+
+      # One architecture, the server's. The staging server is x86; set the
+      # repository variable STAGING_PLATFORM to linux/arm64 if that changes.
+      - name: Build the image
+        env:
+          PLATFORM: ${{ vars.STAGING_PLATFORM || 'linux/amd64' }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          docker build --platform "$PLATFORM" -f deployment/Dockerfile -t openarity-brain:candidate .
+          docker save openarity-brain:candidate | gzip > "$RUNNER_TEMP/image.tar.gz"
+          echo "$PR" > "$RUNNER_TEMP/pr"
+
+      # Data for the deploy, not instructions: it checks the number against
+      # the pull request's head sha and label before using either.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staging-image
+          path: |
+            ${{ runner.temp }}/image.tar.gz
+            ${{ runner.temp }}/pr
+          retention-days: 1
+          if-no-files-found: error

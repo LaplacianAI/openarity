@@ -19,8 +19,13 @@ name: openarity
 # whatever the missing setting pointed at.
 #
 # x- keys are ignored by compose; << merges the map into a service.
+#
+# OPENARITY_DATABASE picks the database on the one Postgres, and is unset
+# everywhere but a staging server, where staging/deploy.sh gives each pull
+# request a database of its own: two pull requests with different
+# migrations never share a schema. The migrate step reads the same one.
 x-brain-env: &brain-env
-  OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/openarity?sslmode=disable"
+  OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/${OPENARITY_DATABASE:-openarity}?sslmode=disable"
   OPENARITY_FALKOR_DB_URL: "redis://falkordb:6379"
   OPENARITY_REDIS_URL: "redis://redis:6379"
   OPENARITY_SECRETS_ADDR: "http://openbao:8200"
@@ -193,7 +198,7 @@ services:
       dockerfile: deployment/Dockerfile
     command: ["migrate", "up"]
     environment:
-      OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/openarity?sslmode=disable"
+      OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/${OPENARITY_DATABASE:-openarity}?sslmode=disable"
     depends_on:
       postgres:
         condition: service_healthy

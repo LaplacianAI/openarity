@@ -1,0 +1,55 @@
+# What a pull request's own events mean for staging.
+#
+# pull_request_target runs main's copy of this file with write access, which
+# is exactly why it checks out nothing: every value it uses is the pull
+# request's number, an integer GitHub sets.
+#
+#   synchronize  new commits nobody has reviewed: the label comes off, and
+#                staging keeps running the commit that was reviewed
+#   closed       merged or not, the pull request's database is dropped and the
+#                slot returns to main if it held it
+name: staging pull request
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [synchronize, closed]
+
+permissions: {}
+
+jobs:
+  unlabel:
+    if: github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'ok to deploy')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr edit "$PR" --repo "$REPO" --remove-label "ok to deploy"
+          gh pr comment "$PR" --repo "$REPO" --body "New commits arrived after **ok to deploy**, so the label is off. Staging keeps the commit that was reviewed; add the label again after reading the new ones to redeploy."
+
+  release:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging
+    steps:
+      - env:
+          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
+          TARGET: ${{ secrets.STAGING_SSH_TARGET }}
+          PORT: ${{ secrets.STAGING_SSH_PORT }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/staging
+          chmod 600 ~/.ssh/staging
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/staging -p "${PORT:-22}" \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$TARGET" release "$PR"
