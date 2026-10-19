@@ -285,7 +285,11 @@ type Agent struct {
 	Skills             []openapi_types.UUID `json:"skills" yaml:"skills"`
 	SteerContinuations int32                `json:"steer_continuations" yaml:"steer_continuations"`
 	TeamID             openapi_types.UUID   `json:"team_id" yaml:"team_id"`
-	UpdatedAt          time.Time            `json:"updated_at" yaml:"updated_at"`
+
+	// TokenBudget What one run of the agent may spend, input and output tokens
+	// together. Absent when the agent uses the deployment's default.
+	TokenBudget *int64    `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at" yaml:"updated_at"`
 }
 
 // AgentPage defines model for AgentPage.
@@ -335,6 +339,15 @@ type AgentRequest struct {
 
 	// SteerContinuations How many times a run may carry on for a message that arrived as it finished
 	SteerContinuations *int32 `json:"steer_continuations,omitempty" yaml:"steer_continuations,omitempty"`
+
+	// TokenBudget What one run of the agent may spend, input and output tokens
+	// together; a run that goes past it fails, naming the budget. Leave
+	// it out for the deployment's default, 1,000,000. A run keeps the
+	// budget it started with if the agent is edited while it runs.
+	//
+	//
+	// Examples: 200000
+	TokenBudget *int64 `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
 }
 
 // AgentSummary defines model for AgentSummary.

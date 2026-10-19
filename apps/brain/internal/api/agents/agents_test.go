@@ -135,7 +135,7 @@ func (s *fakeStore) CreateAgent(_ context.Context, p db.CreateAgentParams) (db.A
 		Instructions: p.Instructions, ModelName: p.ModelName, MaxTokens: p.MaxTokens, Temperature: p.Temperature,
 		Pattern: p.Pattern, MaxSteps: p.MaxSteps, SteerContinuations: p.SteerContinuations,
 		OutputSchema: p.OutputSchema, Parser: p.Parser, ParserModelName: p.ParserModelName,
-		ParserMaxTokens: p.ParserMaxTokens, ParserTemperature: p.ParserTemperature,
+		ParserMaxTokens: p.ParserMaxTokens, ParserTemperature: p.ParserTemperature, TokenBudget: p.TokenBudget,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	s.agents[a.ID] = a
@@ -162,6 +162,7 @@ func (s *fakeStore) UpdateAgent(_ context.Context, p db.UpdateAgentParams) (db.A
 	a.Pattern, a.MaxSteps, a.SteerContinuations = p.Pattern, p.MaxSteps, p.SteerContinuations
 	a.OutputSchema, a.Parser = p.OutputSchema, p.Parser
 	a.ParserModelName, a.ParserMaxTokens, a.ParserTemperature = p.ParserModelName, p.ParserMaxTokens, p.ParserTemperature
+	a.TokenBudget = p.TokenBudget
 	a.UpdatedAt = time.Now()
 	s.agents[a.ID] = a
 	return a, nil
@@ -537,6 +538,7 @@ func TestOnlyContractedFieldsAreSerialised(t *testing.T) {
 	full.OutputSchema = []byte(`{"name":"v","json":{"type":"object"},"strict":true}`)
 	full.Parser = true
 	full.ParserModelName = new("p")
+	full.TokenBudget = new(int64(5000))
 	s := newFakeStore(plain, full)
 
 	detailKeys := slices.Sorted(slices.Values(append(slices.Clone(summaryKeys),
@@ -545,7 +547,7 @@ func TestOnlyContractedFieldsAreSerialised(t *testing.T) {
 		t.Errorf("plain agent keys = %v, want %v", got, detailKeys)
 	}
 
-	withOptional := slices.Sorted(slices.Values(append(slices.Clone(detailKeys), "output_schema", "parser_model")))
+	withOptional := slices.Sorted(slices.Values(append(slices.Clone(detailKeys), "output_schema", "parser_model", "token_budget")))
 	if got := keysOf(t, call(t, s, &fakeAuthz{}, memberOf(team), http.MethodGet, one(team, full.ID), nil).Body.Bytes()); !slices.Equal(got, withOptional) {
 		t.Errorf("full agent keys = %v, want %v", got, withOptional)
 	}
@@ -1185,6 +1187,55 @@ func TestReplaceWritesAndClearsTheOptionalParts(t *testing.T) {
 	p = s.updated[1]
 	if p.OutputSchema != nil || p.Parser || p.ParserModelName != nil || p.ParserMaxTokens != nil {
 		t.Errorf("a replace without them sent %+v, want them cleared", p)
+	}
+}
+
+// A budget is stored as given, read back as given, and a replace that leaves
+// it out clears it back to the deployment's default.
+func TestATokenBudgetIsStoredReadAndClearedByAReplace(t *testing.T) {
+	t.Parallel()
+
+	team := uuid.New()
+	s := newFakeStore()
+	b := body("triage")
+	b["token_budget"] = 250000
+
+	rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(team), http.MethodPost, collection(team), b)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+	}
+	if p := s.created[0]; p.TokenBudget == nil || *p.TokenBudget != 250000 {
+		t.Errorf("created with token_budget %v, want 250000", p.TokenBudget)
+	}
+	if got := decode(t, rec); got.TokenBudget == nil || *got.TokenBudget != 250000 {
+		t.Errorf("response token_budget = %v, want 250000", got.TokenBudget)
+	}
+
+	if rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(team), http.MethodPost, collection(team), body("other")); rec.Code != http.StatusCreated {
+		t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+	} else if strings.Contains(rec.Body.String(), "token_budget") {
+		t.Errorf("an agent with no budget answers %s, want token_budget absent", rec.Body)
+	}
+	if p := s.created[1]; p.TokenBudget != nil {
+		t.Errorf("an agent with no budget was stored with %d, want NULL", *p.TokenBudget)
+	}
+
+	a := anAgent(team, "kept")
+	a.TokenBudget = new(int64(9000))
+	s = newFakeStore(a)
+	b = body("kept")
+	b["token_budget"] = 7000
+	if rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(team), http.MethodPut, one(team, a.ID), b); rec.Code != http.StatusOK {
+		t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+	}
+	if p := s.updated[0]; p.TokenBudget == nil || *p.TokenBudget != 7000 {
+		t.Errorf("replaced with %v, want 7000", p.TokenBudget)
+	}
+	if rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(team), http.MethodPut, one(team, a.ID), body("kept")); rec.Code != http.StatusOK {
+		t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+	}
+	if p := s.updated[1]; p.TokenBudget != nil {
+		t.Errorf("a replace without token_budget sent %d, want it cleared", *p.TokenBudget)
 	}
 }
 

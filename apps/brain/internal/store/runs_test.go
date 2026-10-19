@@ -85,6 +85,50 @@ func TestCreateRunIsItsOwnRootUnderItsAgentsName(t *testing.T) {
 	}
 }
 
+// A run's budget is the agent's as it was when the run was created: editing
+// the agent afterwards does not move the limit of a run already going.
+func TestCreateRunCopiesTheAgentsBudgetAndKeepsIt(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+
+	if r := createRun(t, s, f); r.TokenBudget != nil {
+		t.Errorf("an agent with no budget gave its run %d, want NULL for the default", *r.TokenBudget)
+	}
+
+	if _, err := s.pool.Exec(t.Context(), `UPDATE agents SET token_budget = 5000 WHERE id = $1`, f.agent); err != nil {
+		t.Fatalf("set the budget: %v", err)
+	}
+	r := createRun(t, s, f)
+	if r.TokenBudget == nil || *r.TokenBudget != 5000 {
+		t.Fatalf("token_budget = %v, want the agent's 5000", r.TokenBudget)
+	}
+
+	if _, err := s.pool.Exec(t.Context(), `UPDATE agents SET token_budget = 9000 WHERE id = $1`, f.agent); err != nil {
+		t.Fatalf("edit the budget: %v", err)
+	}
+	if got := claim(t, s, r.ID, "worker-a"); got.TokenBudget == nil || *got.TokenBudget != 5000 {
+		t.Errorf("after the agent was edited the run claims with %v, want the 5000 it started with", got.TokenBudget)
+	}
+}
+
+func TestATokenBudgetMustBePositive(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+
+	for _, q := range []string{
+		`UPDATE agents SET token_budget = 0 WHERE id = $1`,
+		`UPDATE agents SET token_budget = -1 WHERE id = $1`,
+	} {
+		if _, err := s.pool.Exec(t.Context(), q, f.agent); err == nil {
+			t.Errorf("%s was accepted", q)
+		}
+	}
+	r := createRun(t, s, f)
+	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET token_budget = 0 WHERE id = $1`, r.ID); err == nil {
+		t.Error("a run with a budget of 0 was accepted")
+	}
+}
+
 // The SELECT is the team check: an agent of another team inserts nothing,
 // before the key on (agent_id, team_id) would have refused it anyway.
 func TestCreateRunRefusesAnAgentFromAnotherTeam(t *testing.T) {

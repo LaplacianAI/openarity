@@ -627,6 +627,16 @@ func TestARunPastItsTokenBudgetFailsNamingIt(t *testing.T) {
 	wantStatus(t, f.row(t), "failed", "token budget")
 }
 
+// The executor takes the budget from the run's row, not the default.
+func TestARunStopsAtItsOwnBudget(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("modest", 40, 20)))
+	f.mustExec(t, `UPDATE runs SET token_budget = 50 WHERE id = $1`, f.run)
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "failed", "token budget")
+}
+
 // A run taken over five hours in has one hour left, not six. The clock is
 // started_at's, read on the database.
 func TestTheWallClockIsTheOneLeftNotAFreshSixHours(t *testing.T) {

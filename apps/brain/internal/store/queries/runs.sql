@@ -1,9 +1,9 @@
 -- The agent's team is checked by the SELECT: an agent of another team inserts
 -- nothing, and the caller gets pgx.ErrNoRows.
 -- name: CreateRun :one
-INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input)
+INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input, token_budget)
 SELECT sqlc.arg('id')::uuid, a.team_id, sqlc.arg('session_id')::uuid, sqlc.arg('id')::uuid,
-       a.id, a.name, sqlc.narg('user_id')::uuid, sqlc.arg('input')::text
+       a.id, a.name, sqlc.narg('user_id')::uuid, sqlc.arg('input')::text, a.token_budget
 FROM agents a
 WHERE a.id = sqlc.arg('agent_id') AND a.team_id = sqlc.arg('team_id')
 RETURNING *;

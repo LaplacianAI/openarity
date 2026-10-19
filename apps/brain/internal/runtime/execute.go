@@ -158,7 +158,7 @@ func (e *Executor) run(ctx context.Context, row db.ClaimRunRow, worker string,
 	}
 
 	events := make(chan agent.Event, 64)
-	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, worker, events, stop)
+	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, worker, budgetOf(row.TokenBudget), events, stop)
 	result, err := e.runner.Run(ctx, built.Spec, msgs, e.endpoint, events)
 	close(events)
 	<-recorded

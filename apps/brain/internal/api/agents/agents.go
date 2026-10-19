@@ -305,7 +305,7 @@ func columns(req agentRequest) (db.CreateAgentParams, error) {
 		Name: req.Name, Description: req.Description, Instructions: req.Instructions,
 		ModelName: req.Model.Name, MaxTokens: req.Model.MaxTokens, Temperature: req.Model.Temperature,
 		Pattern: req.Pattern, MaxSteps: req.MaxSteps, SteerContinuations: req.SteerContinuations,
-		Parser: req.Parser,
+		Parser: req.Parser, TokenBudget: req.TokenBudget,
 	}
 
 	if req.OutputSchema != nil {
@@ -330,6 +330,7 @@ func updateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
 		Pattern: c.Pattern, MaxSteps: c.MaxSteps, SteerContinuations: c.SteerContinuations,
 		OutputSchema: c.OutputSchema, Parser: c.Parser,
 		ParserModelName: c.ParserModelName, ParserMaxTokens: c.ParserMaxTokens, ParserTemperature: c.ParserTemperature,
+		TokenBudget: c.TokenBudget,
 	}
 }
 
@@ -388,6 +389,7 @@ func view(row db.Agent, g grants) (detail, error) {
 		summary:            viewSummary(row),
 		Instructions:       row.Instructions,
 		MaxSteps:           row.MaxSteps,
+		TokenBudget:        row.TokenBudget,
 		SteerContinuations: row.SteerContinuations,
 		Parser:             row.Parser,
 		MCPServers:         g.servers,

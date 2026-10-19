@@ -355,6 +355,22 @@ func TestTheLoopRuleIsValidated(t *testing.T) {
 
 // Going back to the six names cannot keep an agent on a seventh, so the
 // rollback refuses rather than leave a row the old rule calls impossible.
+// validateLoopsVersion is 20261016182933_validate_agents_pattern_named.sql.
+const validateLoopsVersion = 20261016182933
+
+// downTo rolls the schema back until version is the newest migration applied.
+func downTo(t *testing.T, s *Store, version int64) {
+	t.Helper()
+
+	p, err := s.provider()
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	if _, err := p.DownTo(t.Context(), version); err != nil {
+		t.Fatalf("down to %d: %v", version, err)
+	}
+}
+
 func TestRollingBackRefusesWhileAnAgentUsesANewLoop(t *testing.T) {
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
@@ -362,6 +378,9 @@ func TestRollingBackRefusesWhileAnAgentUsesANewLoop(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
+	// Later migrations sit on top of these two; undo them first so the next
+	// rollback is the loops' own, whatever is added after.
+	downTo(t, s, validateLoopsVersion)
 	if err := s.Rollback(t.Context()); err != nil {
 		t.Fatalf("rolling back the validation: %v", err)
 	}

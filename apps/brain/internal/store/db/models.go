@@ -30,6 +30,7 @@ type Agent struct {
 	ParserTemperature  *float64
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	TokenBudget        *int64
 }
 
 type AgentMcpServer struct {
@@ -203,6 +204,7 @@ type Run struct {
 	CreatedAt         time.Time
 	StartedAt         *time.Time
 	FinishedAt        *time.Time
+	TokenBudget       *int64
 }
 
 type RunEvent struct {

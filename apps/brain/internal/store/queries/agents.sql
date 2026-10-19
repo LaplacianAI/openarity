@@ -2,11 +2,13 @@
 INSERT INTO agents (
     team_id, name, description, kind, instructions,
     model_name, max_tokens, temperature, pattern, max_steps, steer_continuations,
-    output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature
+    output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature,
+    token_budget
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14, $15, $16
+    $12, $13, $14, $15, $16,
+    $17
 ) RETURNING *;
 
 -- name: GetAgent :one
@@ -37,6 +39,7 @@ UPDATE agents SET
     parser_model_name   = sqlc.narg('parser_model_name'),
     parser_max_tokens   = sqlc.narg('parser_max_tokens'),
     parser_temperature  = sqlc.narg('parser_temperature'),
+    token_budget        = sqlc.narg('token_budget'),
     updated_at          = now()
 WHERE id = sqlc.arg('id')
 RETURNING *;

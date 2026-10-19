@@ -181,10 +181,16 @@ func (s *stops) all() []error {
 // than five seconds is a recorder that stopped reading.
 func feed(t *testing.T, s EventStore, runID uuid.UUID, events ...agent.Event) *stops {
 	t.Helper()
+	return feedWithin(t, s, runID, maxTokens, events...)
+}
+
+// feedWithin is feed for a run with a budget of its own.
+func feedWithin(t *testing.T, s EventStore, runID uuid.UUID, budget int64, events ...agent.Event) *stops {
+	t.Helper()
 
 	st := &stops{}
 	ch := make(chan agent.Event)
-	done := record(t.Context(), s, runID, worker, ch, st.stop)
+	done := record(t.Context(), s, runID, worker, budget, ch, st.stop)
 	for _, e := range events {
 		select {
 		case ch <- e:
@@ -385,6 +391,41 @@ func TestUsageExactlyAtTheBudgetDoesNotStopTheRun(t *testing.T) {
 	h := newHeldRun(t)
 
 	wantNoStop(t, feed(t, h.store, h.id, usage(600_000, 400_000)))
+}
+
+// An agent's own budget replaces the default in both directions: a smaller
+// one stops the run sooner, a larger one lets it carry on past a million.
+func TestARunsOwnBudgetIsTheLimit(t *testing.T) {
+	for name, tc := range map[string]struct {
+		budget int64
+		spend  agent.UsageEvent
+		stops  bool
+	}{
+		"past a small budget": {1000, usage(600, 401), true},
+		"exactly at it":       {1000, usage(600, 400), false},
+		"past the default":    {2_000_000, usage(1_500_000, 0), false},
+		"past a large budget": {2_000_000, usage(1_500_000, 500_001), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHeldRun(t)
+			st := feedWithin(t, h.store, h.id, tc.budget, tc.spend)
+			if got := st.all(); tc.stops != (len(got) == 1 && errors.Is(got[0], ErrBudget)) {
+				t.Errorf("budget %d, spent %d: stops = %v, want stopped %v",
+					tc.budget, tc.spend.Usage.InputTokens+tc.spend.Usage.OutputTokens, got, tc.stops)
+			}
+		})
+	}
+}
+
+func TestARunWithNoBudgetOfItsOwnGetsTheDefault(t *testing.T) {
+	t.Parallel()
+
+	if got := budgetOf(nil); got != maxTokens {
+		t.Errorf("budgetOf(nil) = %d, want the default %d", got, maxTokens)
+	}
+	if got := budgetOf(new(int64(5000))); got != 5000 {
+		t.Errorf("budgetOf(5000) = %d", got)
+	}
 }
 
 // A resumed run is a new process with nothing in memory; what it has spent

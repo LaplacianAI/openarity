@@ -3214,6 +3214,12 @@ components:
               items:
                 type: string
                 format: uuid
+            token_budget:
+              type: integer
+              format: int64
+              description: |
+                What one run of the agent may spend, input and output tokens
+                together. Absent when the agent uses the deployment's default.
 
     AgentRequest:
       type: object
@@ -3269,6 +3275,17 @@ components:
           items:
             type: string
             format: uuid
+        token_budget:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 100000000
+          description: |
+            What one run of the agent may spend, input and output tokens
+            together; a run that goes past it fails, naming the budget. Leave
+            it out for the deployment's default, 1,000,000. A run keeps the
+            budget it started with if the agent is edited while it runs.
+          examples: [200000]
 
     AgentPage:
       type: object

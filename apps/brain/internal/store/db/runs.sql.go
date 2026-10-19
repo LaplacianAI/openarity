@@ -48,7 +48,7 @@ UPDATE runs SET
     started_at   = coalesce(started_at, now())
 WHERE id = $2
   AND (status = 'queued' OR (status = 'running' AND worker = $1::text))
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at,
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget,
     extract(epoch FROM started_at
         + make_interval(secs => $3::float8) - now())::float8
         AS remaining_seconds
@@ -83,6 +83,7 @@ type ClaimRunRow struct {
 	CreatedAt         time.Time
 	StartedAt         *time.Time
 	FinishedAt        *time.Time
+	TokenBudget       *int64
 	RemainingSeconds  float64
 }
 
@@ -115,18 +116,19 @@ func (q *Queries) ClaimRun(ctx context.Context, arg ClaimRunParams) (ClaimRunRow
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.TokenBudget,
 		&i.RemainingSeconds,
 	)
 	return i, err
 }
 
 const createRun = `-- name: CreateRun :one
-INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input)
+INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input, token_budget)
 SELECT $1::uuid, a.team_id, $2::uuid, $1::uuid,
-       a.id, a.name, $3::uuid, $4::text
+       a.id, a.name, $3::uuid, $4::text, a.token_budget
 FROM agents a
 WHERE a.id = $5 AND a.team_id = $6
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget
 `
 
 type CreateRunParams struct {
@@ -173,6 +175,7 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.TokenBudget,
 	)
 	return i, err
 }
@@ -209,7 +212,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at FROM runs WHERE id = $1
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget FROM runs WHERE id = $1
 `
 
 func (q *Queries) GetRun(ctx context.Context, id uuid.UUID) (Run, error) {
@@ -238,12 +241,13 @@ func (q *Queries) GetRun(ctx context.Context, id uuid.UUID) (Run, error) {
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.TokenBudget,
 	)
 	return i, err
 }
 
 const getRunVisible = `-- name: GetRunVisible :one
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at FROM runs r
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget FROM runs r
 WHERE r.id = $1 AND r.team_id = $2
   AND EXISTS (
     SELECT 1 FROM sessions s
@@ -292,6 +296,7 @@ func (q *Queries) GetRunVisible(ctx context.Context, arg GetRunVisibleParams) (R
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.TokenBudget,
 	)
 	return i, err
 }
@@ -349,7 +354,7 @@ UPDATE runs SET
     status      = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
     finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END
 WHERE id = $1 AND status IN ('queued', 'running')
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget
 `
 
 // Queued: cancelled now, since no worker holds it. Running: flagged for the
@@ -380,6 +385,7 @@ func (q *Queries) RequestRunCancel(ctx context.Context, id uuid.UUID) (Run, erro
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.TokenBudget,
 	)
 	return i, err
 }

@@ -58,7 +58,7 @@ type usagePayload struct {
 	Spent             int64  `json:"spent"`
 }
 
-func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string,
+func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, budget int64,
 	events <-chan agent.Event, stop context.CancelCauseFunc,
 ) <-chan struct{} {
 	done := make(chan struct{})
@@ -69,7 +69,7 @@ func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string,
 			if lost {
 				continue
 			}
-			err := recordOne(ctx, s, runID, worker, e)
+			err := recordOne(ctx, s, runID, worker, budget, e)
 			if err == nil {
 				continue
 			}
@@ -80,7 +80,7 @@ func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string,
 	return done
 }
 
-func recordOne(ctx context.Context, s EventStore, runID uuid.UUID, worker string, e agent.Event) error {
+func recordOne(ctx context.Context, s EventStore, runID uuid.UUID, worker string, budget int64, e agent.Event) error {
 	switch e := e.(type) {
 	case agent.StepEvent:
 		return appendEvent(ctx, s, runID, worker, "step", stepPayload{Step: e.Step})
@@ -97,12 +97,12 @@ func recordOne(ctx context.Context, s EventStore, runID uuid.UUID, worker string
 			Truncated: cutOutput || cutError, DurationMS: e.Duration.Milliseconds(),
 		})
 	case agent.UsageEvent:
-		return recordUsage(ctx, s, runID, worker, e)
+		return recordUsage(ctx, s, runID, worker, budget, e)
 	}
 	return nil
 }
 
-func recordUsage(ctx context.Context, s EventStore, runID uuid.UUID, worker string, e agent.UsageEvent) error {
+func recordUsage(ctx context.Context, s EventStore, runID uuid.UUID, worker string, budget int64, e agent.UsageEvent) error {
 	spent, err := s.AddRunUsage(ctx, db.AddRunUsageParams{
 		InputTokens: int64(e.Usage.InputTokens), OutputTokens: int64(e.Usage.OutputTokens),
 		ID: runID, Worker: worker,
@@ -121,10 +121,17 @@ func recordUsage(ctx context.Context, s EventStore, runID uuid.UUID, worker stri
 		return err
 	}
 
-	if spent > maxTokens {
+	if spent > budget {
 		return ErrBudget
 	}
 	return nil
+}
+
+func budgetOf(set *int64) int64 {
+	if set == nil {
+		return maxTokens
+	}
+	return *set
 }
 
 func appendEvent(ctx context.Context, s EventStore, runID uuid.UUID, worker, kind string, payload any) error {
