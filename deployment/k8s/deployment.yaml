@@ -35,8 +35,8 @@ spec:
 
       # Migrations run before the container that serves traffic, and they run
       # in every pod. That is safe: `brain migrate up` takes a Postgres
-      # advisory lock, so replicas starting together serialise rather than
-      # racing. It also means a rollout cannot begin serving against a schema
+      # advisory lock for ours and another for DBOS's, which takes none of its
+      # own, so replicas starting together serialise rather than racing. It also means a rollout cannot begin serving against a schema
       # it has not applied.
       initContainers:
         - name: migrate
