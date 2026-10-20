@@ -42,13 +42,29 @@ export type User = {
   email?: string;
 };
 
-/** GET /teams/{id}/channels. `provider` is the adapter's name, e.g. "slack". */
+/** GET /teams/{id}/channels. `provider` is the adapter's name, e.g. "custom". */
 export type Channel = {
   id: string;
   team_id: string;
   provider: string;
   name: string;
 };
+
+/**
+ * POST /teams/{id}/channels. Leave `signing_secret` out and the brain
+ * generates one; send it only when the provider issued its own.
+ */
+export type CreateChannelRequest = {
+  provider: string;
+  name: string;
+  signing_secret?: string;
+};
+
+/**
+ * The create response. `signing_secret` is present only when the brain
+ * generated it, and no endpoint returns it again.
+ */
+export type CreatedChannel = Channel & { signing_secret?: string };
 
 /**
  * GET /teams/{id}/channels/{channelID}/senders/pending
