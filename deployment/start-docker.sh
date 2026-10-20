@@ -25,6 +25,9 @@ COMPOSE_BASE="-f docker-compose.yml"
 BAO_OVERLAY="-f docker-compose.openbao.yml"
 OBJECTS_OVERLAY="-f docker-compose.objects.yml"
 
+# The image docker-compose.openbao.yml runs; key_readable_by_openbao borrows it.
+OPENBAO_IMAGE="openbao/openbao:2.6.2"
+
 # The dev user pinned in dex/config.yaml, as dex derives it. Committed rather
 # than read back after a login, because the userID it comes from is committed
 # too — see the note beside it in .env.example.
@@ -228,9 +231,28 @@ wait_bao_answering() {
 		esac
 		[ "$(date +%s)" -lt "$deadline" ] ||
 			die "OpenBao did not start within two minutes.
-Look at it with:  docker compose $COMPOSE_BASE $BAO_OVERLAY logs openbao"
+Look at it with:  docker logs --tail 30 openarity-openbao-1"
 		sleep 2
 	done
+}
+
+# OpenBao runs as its own user inside the container, uid 100, and reads the
+# unseal key through a bind mount. Docker Desktop hides ownership on a bind
+# mount, so a key that only this user can read works on a Mac. A Linux host
+# shows the container the real owner and mode, and OpenBao, unable to read
+# its key, never unseals: "did not start within two minutes", on a fresh
+# Ubuntu server, with nothing in the message about permissions.
+#
+# The container's user owns it and this user's group may read it, so the key
+# is never world-readable and can still be backed up from here. chown runs
+# in a throwaway container because giving a file away needs root, which
+# this script does not ask for and docker already has. The image is the one
+# the overlay runs, already pulled or about to be.
+key_readable_by_openbao() {
+	[ "$(uname -s)" = Linux ] || return 0
+	docker run --rm --user 0 -v "$PWD/openbao/keys:/keys" --entrypoint sh "$OPENBAO_IMAGE" \
+		-c "chown openbao:$(id -g) /keys/unseal.key && chmod 640 /keys/unseal.key" ||
+		die "Could not give OpenBao's container its unseal key."
 }
 
 ensure_openbao() {
@@ -243,6 +265,7 @@ ensure_openbao() {
 		chmod 600 openbao/keys/unseal.key
 		note "generated openbao/keys/unseal.key"
 	fi
+	key_readable_by_openbao
 
 	make bao-up >/dev/null
 	wait_bao_answering
