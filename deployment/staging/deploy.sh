@@ -12,16 +12,22 @@
 #                                                 slot only if main holds it
 #   deploy pr-<n> pr-<n>       sha256:<64 hex>    a labelled pull request;
 #                                                 takes the slot
-#   release <n>                                   the pull request closed: its
-#                                                 database goes, and the slot
-#                                                 returns to main if it held it
+#   release <n>                                   the pull request closed: the
+#                                                 slot returns to main if it
+#                                                 held it
 #   status                                        what holds the slot
 #
 # Staging is one slot because the server is small: authentik, OpenBao,
 # SeaweedFS, Postgres and FalkorDB run once, and only migrate, brain and
-# worker are replaced. Each pull request gets a database of its own on the
-# one Postgres, so migrations from two branches never meet, and a pull
-# request's data survives being swapped out and back in.
+# worker are replaced.
+#
+# Main and every pull request share one database, so the teams, agents and
+# channels made on staging are there whatever is deployed. A pull request's
+# migrations therefore land in it. That is safe to swap back from: goose
+# skips a migration it has no file for, so main's brain runs over a schema a
+# step ahead, and applies its own newer ones regardless. What stays is the
+# tables of a pull request that was never merged, which on staging is a fair
+# price for not losing its data.
 #
 # The image is always pinned by digest. A tag can be moved after CI read it;
 # a digest cannot.
@@ -86,19 +92,9 @@ psql_postgres() {
 	compose exec -T postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc "$1"
 }
 
-database_for() {
-	case "$1" in
-	main) say openarity ;;
-	pr-*) say "openarity_pr_${1#pr-}" ;;
-	esac
-}
-
-ensure_database() {
-	if [ "$(psql_postgres "SELECT 1 FROM pg_database WHERE datname = '$1'")" != 1 ]; then
-		psql_postgres "CREATE DATABASE $1" >/dev/null
-		say "created database $1"
-	fi
-}
+# The one database, whatever holds the slot. Named rather than left to the
+# compose default, so a .env that sets OPENARITY_DATABASE cannot move it.
+DATABASE=openarity
 
 # The API's address as compose published it, so this works whatever BIND_ADDR
 # and API_PORT the server's .env chose.
@@ -123,19 +119,17 @@ wait_healthy() {
 # make a brain swap a restart of the whole server. A failed migration stops
 # here, with the old brain still serving.
 switch() {
-	local slot=$1 tag=$2 digest=$3 database
-	database=$(database_for "$slot")
-	ensure_database "$database"
+	local slot=$1 tag=$2 digest=$3
 
-	export BRAIN_TAG="$tag@$digest" OPENARITY_DATABASE="$database"
+	export BRAIN_TAG="$tag@$digest" OPENARITY_DATABASE="$DATABASE"
 	compose pull migrate brain worker
-	compose run --rm --no-deps migrate || refuse "the migration of $database failed; the brain was not replaced"
+	compose run --rm --no-deps migrate || refuse "the migration of $DATABASE failed; the brain was not replaced"
 	compose up -d --no-deps --force-recreate brain worker
 	wait_healthy
 
 	printf '%s %s %s\n' "$slot" "$tag" "$digest" >"$STATE_DIR/current"
 	docker image prune -f >/dev/null
-	tell "deployed $slot $digest on database $database"
+	tell "deployed $slot $digest"
 }
 
 current_slot() {
@@ -196,9 +190,10 @@ release)
 			tell "stopped $slot; no main deploy is recorded to return to"
 		fi
 	fi
-	database=$(database_for "$slot")
-	psql_postgres "DROP DATABASE IF EXISTS $database WITH (FORCE)" >/dev/null
-	tell "released $slot and dropped $database"
+	# Pull requests deployed before the database was shared each had one of
+	# their own; drop it if this one did. A no-op for every later one.
+	psql_postgres "DROP DATABASE IF EXISTS openarity_pr_${words[1]} WITH (FORCE)" >/dev/null
+	tell "released $slot"
 	;;
 status)
 	if [ -f "$STATE_DIR/current" ]; then

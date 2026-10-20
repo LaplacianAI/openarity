@@ -7,13 +7,19 @@ Postgres, FalkorDB) once. Only the brain changes:
   and staging runs it on the `openarity` database.
 - **A pull request labelled `ok to deploy`** is built on GitHub's machines with
   no secrets (`staging-build.yml`), pushed as `openarity-brain:pr-<n>`, and
-  takes staging on a database of its own, `openarity_pr_<n>`
-  (`staging-deploy.yml`).
+  takes staging (`staging-deploy.yml`) on the same database, so whatever was
+  made on staging is still there.
 - **New commits**, or reopening, remove the label. Staging keeps running the
   commit that was approved until somebody reads the new ones and labels it
   again.
-- **Closing the pull request** drops its database and returns staging to main
-  (`staging-pr.yml`).
+- **Closing the pull request** returns staging to main (`staging-pr.yml`).
+
+A pull request's migrations are applied to that one database and stay there.
+Swapping back is still safe: goose skips a migration it has no file for, so
+main's brain runs over a schema a step ahead, and applies its own newer ones
+regardless. What a never-merged pull request leaves behind is its tables. On
+staging that is a fair trade for keeping the data; when it is not, restore
+from a backup or drop and recreate the database by hand.
 
 One pull request holds staging at a time. A merge to main while one does is
 recorded and deployed when that pull request is released.
@@ -224,8 +230,8 @@ catches it: `ls` must be refused. `tailscale set --ssh=false` turns it off.
 
 ### 6. Using it
 
-- Label a pull request `ok to deploy`. It is built, deployed, and the pull
-  request says on which database.
+- Label a pull request `ok to deploy`. It is built and deployed, and the
+  pull request says so.
 - `ssh -i staging-ci openarity@<server> status` says what holds staging.
 - A failed deploy says only that it failed. Why is in
   `~/.openarity-staging/deploy.log` on the server.

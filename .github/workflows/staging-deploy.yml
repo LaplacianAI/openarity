@@ -138,4 +138,4 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           DIGEST: ${{ steps.what.outputs.digest }}
         run: |
-          gh pr comment "$PR" --repo "$REPO" --body "Deployed ${HEAD_SHA:0:12} to staging on database \`openarity_pr_$PR\` (\`$DIGEST\`). New commits remove **ok to deploy**; add it again after reviewing them to redeploy."
+          gh pr comment "$PR" --repo "$REPO" --body "Deployed ${HEAD_SHA:0:12} to staging (\`$DIGEST\`), on the database main uses: its migrations, if any, are applied there and stay when main returns. New commits remove **ok to deploy**; add it again after reviewing them to redeploy."
