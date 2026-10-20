@@ -20,10 +20,10 @@ name: openarity
 #
 # x- keys are ignored by compose; << merges the map into a service.
 #
-# OPENARITY_DATABASE picks the database on the one Postgres, and is unset
-# everywhere but a staging server, where staging/deploy.sh gives each pull
-# request a database of its own: two pull requests with different
-# migrations never share a schema. The migrate step reads the same one.
+# OPENARITY_DATABASE picks the database on the one Postgres. staging/deploy.sh
+# pins it to openarity for main and every pull request alike, so a deploy
+# keeps the teams and channels already there. The migrate step reads the
+# same one.
 x-brain-env: &brain-env
   OPENARITY_POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/${OPENARITY_DATABASE:-openarity}?sslmode=disable"
   OPENARITY_FALKOR_DB_URL: "redis://falkordb:6379"
@@ -66,6 +66,11 @@ x-brain-env: &brain-env
   OPENARITY_OIDC_ENABLED: ${OPENARITY_OIDC_ENABLED:-false}
   OPENARITY_OIDC_ISSUER: ${OPENARITY_OIDC_ISSUER-}
   OPENARITY_OIDC_AUDIENCE: ${OPENARITY_OIDC_AUDIENCE:-openarity}
+  # Where providers reach the webhook listener from outside, such as
+  # https://hooks.example.com. With it, every channel carries the full URL to
+  # give its provider; without it, only the path. start-docker.sh sets it
+  # from HOOKS_HOST when a tunnel is configured.
+  OPENARITY_WEBHOOK_PUBLIC_URL: ${OPENARITY_WEBHOOK_PUBLIC_URL-}
   # All empty by default, and each is a setting that can be left that way.
   # Skills import from GitHub regardless; another host only when listed.
   # MCP discovery reaches public addresses only, so a server running inside
