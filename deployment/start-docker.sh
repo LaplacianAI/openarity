@@ -17,6 +17,10 @@
 #   make start-docker GATEWAY=omniroute   # omniroute | litellm | existing | none
 #   make start-docker BUILD=1             # build the brain from this tree
 #
+# With HTTPS_HOST, HTTPS_AUTH_HOST and CLOUDFLARE_API_TOKEN in .env, the
+# dashboard and authentik are also served over HTTPS on those names; see
+# docker-compose.https.yml.
+#
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -351,13 +355,15 @@ ensure_authentik() {
 
 	local client_id
 	client_id=$(AUTHENTIK_URL="http://$REACH_ADDR:9000" AUTHENTIK_TOKEN="$token" \
-		DASHBOARD_ORIGIN="http://$REACH_ADDR:$API_PORT" \
+		DASHBOARD_ORIGIN="$DASHBOARD_URL" \
 		LOOPBACK_ORIGINS="http://localhost:$API_PORT,http://127.0.0.1:$API_PORT" \
 		python3 authentik-provision.py) ||
 		die "Could not provision authentik. Its log may say why:
   docker compose $COMPOSE_FILES logs authentik-server"
 
-	env_set OPENARITY_OIDC_ISSUER "http://$REACH_ADDR:9000/application/o/openarity/"
+	[ -z "$HTTPS_HOST" ] || ensure_https
+
+	env_set OPENARITY_OIDC_ISSUER "$AUTH_URL/application/o/openarity/"
 	env_set OPENARITY_OIDC_AUDIENCE "$client_id"
 	env_set OPENARITY_SUPER_ADMINS "akadmin"
 	note "authentik provider ready"
@@ -466,6 +472,53 @@ ensure_existing() {
 	esac
 }
 
+# --------------------------------------------------------------------- https
+
+# The addresses a browser uses. Plain HTTP at REACH_ADDR unless .env names
+# HTTPS hosts, and then only those: a page at a LAN or tailnet address over
+# plain HTTP cannot sign in at all, because Web Crypto exists only in a secure
+# context, so registering it would offer a login that always fails.
+public_urls() {
+	if [ -n "$HTTPS_HOST" ]; then
+		DASHBOARD_URL="https://$HTTPS_HOST"
+		AUTH_URL="https://$HTTPS_AUTH_HOST"
+	else
+		DASHBOARD_URL="http://$REACH_ADDR:$API_PORT"
+		AUTH_URL="http://$REACH_ADDR:9000"
+	fi
+}
+
+# Caddy, and a certificate for both names, before the issuer points at them.
+# The brain reads the issuer's discovery document when it starts and will not
+# start without it, so a brain started first would crash-loop until Let's
+# Encrypt answered.
+#
+# The issuer authentik reports is compared, not only whether it answers.
+# authentik builds it from the request, so if it did not believe the
+# forwarded scheme it would say http://, every token would carry that, and
+# the brain would reject them all with a message about issuers.
+ensure_https() {
+	$COMPOSE up -d --build caddy >/dev/null
+
+	local want="$AUTH_URL/application/o/openarity/" got deadline
+	local url="${want}.well-known/openid-configuration"
+	deadline=$(( $(date +%s) + 300 ))
+	while :; do
+		got=$(curl -fsS --max-time 5 "$url" 2>/dev/null |
+			python3 -c 'import json, sys; print(json.load(sys.stdin)["issuer"])' 2>/dev/null || true)
+		[ "$got" = "$want" ] && break
+		[ -z "$got" ] || die "authentik answers at $AUTH_URL, but calls itself $got rather than $want.
+It did not trust the X-Forwarded-Proto Caddy sent; its log says from where:
+  docker compose $COMPOSE_FILES logs authentik-server"
+		[ "$(date +%s)" -lt "$deadline" ] || die "Nothing answered $url with a valid certificate within five minutes.
+Caddy's log says why. Usually the token's permissions, or an A record that is
+proxied (orange cloud) or does not point at $REACH_ADDR:
+  docker compose $COMPOSE_FILES logs caddy"
+		sleep 5
+	done
+	note "$HTTPS_HOST and $HTTPS_AUTH_HOST answer over HTTPS"
+}
+
 # --------------------------------------------------------------------- start
 
 # At $BIND_ADDR, not loopback. BIND_ADDR moves every published port, so on a
@@ -565,7 +618,20 @@ else
 	BUILD_FLAG=""
 fi
 
-COMPOSE_FILES="$COMPOSE_BASE $PROVIDER_OVERLAY $GATEWAY_OVERLAY $IMAGE_OVERLAY $BAO_OVERLAY $OBJECTS_OVERLAY"
+# Read before the file set is built, because the overlay is part of it.
+HTTPS_HOST=$(env_value HTTPS_HOST || true)
+HTTPS_AUTH_HOST=""
+HTTPS_OVERLAY=""
+if [ -n "$HTTPS_HOST" ]; then
+	[ "$PROVIDER" = authentik ] || die "HTTPS_HOST is set, and HTTPS is wired for authentik only.
+Run with PROVIDER=authentik, or take HTTPS_HOST out of deployment/.env."
+	HTTPS_AUTH_HOST=$(env_value HTTPS_AUTH_HOST || true)
+	[ -n "$HTTPS_AUTH_HOST" ] || die "HTTPS_HOST is set without HTTPS_AUTH_HOST, the name authentik is served on."
+	env_is_set CLOUDFLARE_API_TOKEN || die "HTTPS_HOST is set without CLOUDFLARE_API_TOKEN, which the certificate is proven with."
+	HTTPS_OVERLAY="-f docker-compose.https.yml"
+fi
+
+COMPOSE_FILES="$COMPOSE_BASE $PROVIDER_OVERLAY $GATEWAY_OVERLAY $IMAGE_OVERLAY $BAO_OVERLAY $OBJECTS_OVERLAY $HTTPS_OVERLAY"
 COMPOSE="docker compose $COMPOSE_FILES"
 # The same `env` prefix the Makefile's $(BOOTSTRAP) carries, and for the same
 # reason: the OpenBao overlay guards both halves of the AppRole with `:?`, and
@@ -580,6 +646,7 @@ BAO_COMPOSE="env OPENARITY_SECRETS_APPROLE_ID=bootstrap OPENARITY_SECRETS_APPROL
 step "Settings"
 ensure_env_file
 ensure_bind_addr
+public_urls
 
 step "Secret store"
 ensure_openbao
@@ -606,11 +673,15 @@ step "Starting"
 # shellcheck disable=SC2086 # every one of these is a flag we wrote
 $COMPOSE --profile brain up -d $BUILD_FLAG
 wait_ready
+if [ -n "$HTTPS_HOST" ] &&
+	[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$DASHBOARD_URL/readyz")" != 200 ]; then
+	note "the brain is up, but $DASHBOARD_URL/readyz did not answer 200 — see: docker compose $COMPOSE_FILES logs caddy"
+fi
 
 say ""
 say "${bold}Openarity is running.${plain}"
 say ""
-say "  dashboard    http://$REACH_ADDR:$API_PORT/ui"
+say "  dashboard    $DASHBOARD_URL/ui"
 if [ "$PROVIDER" = dex ]; then
 	say "  sign in as   dev@openarity.local"
 	if [ -n "${DEX_PASSPHRASE:-}" ]; then
@@ -621,7 +692,7 @@ if [ "$PROVIDER" = dex ]; then
 		say "  passphrase   the one from the first run — deployment/.env has only its hash"
 	fi
 else
-	say "  authentik    http://$REACH_ADDR:9000"
+	say "  authentik    $AUTH_URL"
 	say "  sign in as   akadmin"
 	say "  passphrase   ${AUTHENTIK_PASSWORD:-AUTHENTIK_BOOTSTRAP_PASSWORD in deployment/.env}"
 fi
@@ -658,6 +729,6 @@ if [ -n "$GATEWAY_URL" ]; then
 fi
 
 say ""
-say "${dim}  oa context create local --server http://$REACH_ADDR:$API_PORT${plain}"
+say "${dim}  oa context create local --server $DASHBOARD_URL${plain}"
 say "${dim}  oa login${plain}"
 say ""
