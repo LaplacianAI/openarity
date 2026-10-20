@@ -43,6 +43,14 @@ services:
       - openbao-data:/openbao/file
       - ./openbao:/openbao/config:ro
       - ./openbao/keys:/openbao/keys:ro
+    # The unseal key belongs to whoever ran start-docker.sh, mode 640 with
+    # their group. OpenBao runs as its own uid, 100, which on a Linux host is
+    # nobody's or a system account's; joining the operator's group by number
+    # is how it reads the key without the key changing hands. Docker Desktop
+    # hides ownership, so a Mac never needed this. 1000 is the container's
+    # own openbao group, a no-op for a stack start-docker.sh did not set up.
+    group_add:
+      - "${OPENBAO_KEY_GID:-1000}"
     cap_add:
       - IPC_LOCK
     healthcheck:
