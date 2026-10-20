@@ -42,12 +42,17 @@ export type User = {
   email?: string;
 };
 
-/** GET /teams/{id}/channels. `provider` is the adapter's name, e.g. "custom". */
+/**
+ * GET /teams/{id}/channels. `provider` is the adapter's name, e.g. "custom".
+ * `hook_url` is the full address to give the provider, present only when the
+ * brain knows its public webhook address.
+ */
 export type Channel = {
   id: string;
   team_id: string;
   provider: string;
   name: string;
+  hook_url?: string;
 };
 
 /**
