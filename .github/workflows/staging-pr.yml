@@ -12,8 +12,7 @@
 #   synchronize  new commits, or a reopened pull request that may have
 #   reopened     gained some while closed: the label comes off, and staging
 #                keeps running the commit that was approved
-#   closed       merged or not, the pull request's database is dropped and the
-#                slot returns to main if it held it
+#   closed       merged or not, the slot returns to main if it held it
 #
 # The status is the gate, not the label. A pull request's own run of
 # staging-build.yml uses the pull request's copy of that file, so it can be

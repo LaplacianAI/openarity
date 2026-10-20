@@ -1,0 +1,36 @@
+# The webhook listener on the internet, through a Cloudflare Tunnel, and
+# nothing else.
+#
+# Providers — Slack, Meta, a support tool — have to reach the brain's webhook
+# listener, while the dashboard and API stay on a private network. cloudflared
+# makes an outbound connection to Cloudflare and carries requests for one
+# public name back to the listener, so no port is opened on this machine.
+#
+# The listener is the half built to face the internet: every request must
+# carry a valid signature for its channel, and it serves no API route. The API
+# listener is a different port and a different mux.
+#
+# start-docker.sh adds this file when CLOUDFLARE_TUNNEL_TOKEN is set:
+#
+#   CLOUDFLARE_TUNNEL_TOKEN=…                 the tunnel's token, from Cloudflare
+#   HOOKS_HOST=hooks.example.com              the public name it serves
+#
+# Where the name leads is configured in Cloudflare, on the tunnel's public
+# hostname: service HTTP, URL brain:21121. Point it at nothing else — anything
+# on the compose network is reachable from this container, Postgres included.
+#
+# A name one level under the zone (hooks.example.com, not
+# hooks.app.example.com): the tunnel's name is proxied, and Cloudflare's free
+# certificate covers one level only.
+
+name: openarity
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    # The token through the environment rather than --token: an argument is
+    # readable by anyone who can list processes on the host.
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in deployment/.env}
+    restart: unless-stopped
