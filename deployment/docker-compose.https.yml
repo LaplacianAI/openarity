@@ -1,0 +1,42 @@
+# HTTPS for the dashboard and authentik, on names you own.
+#
+# A browser signs in only from a secure context: HTTPS, or a page on
+# 127.0.0.1. A stack reached at a LAN or tailnet address is neither, so the
+# dashboard there says it cannot sign you in. This puts Caddy in front of
+# both, with a Let's Encrypt certificate proven through Cloudflare DNS.
+#
+# start-docker.sh adds this file when HTTPS_HOST is set in deployment/.env:
+#
+#   HTTPS_HOST=dashboard.example.com          the dashboard and API
+#   HTTPS_AUTH_HOST=auth.example.com          authentik
+#   CLOUDFLARE_API_TOKEN=…                    Zone → DNS → Edit, this zone only
+#
+# Point both names at BIND_ADDR with DNS-only (grey cloud) A records. With a
+# tailnet or LAN address the names resolve for anyone and connect only from
+# inside, and the certificate still issues, because the DNS challenge never
+# needs to reach this machine.
+
+name: openarity
+
+services:
+  caddy:
+    build:
+      context: caddy
+    image: openarity-caddy:2.11.6
+    environment:
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN in deployment/.env}
+      HTTPS_HOST: ${HTTPS_HOST:?set HTTPS_HOST in deployment/.env}
+      HTTPS_AUTH_HOST: ${HTTPS_AUTH_HOST:?set HTTPS_AUTH_HOST in deployment/.env}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificates and the ACME account. Losing it means asking Let's
+      # Encrypt again, which is rate limited per name.
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
