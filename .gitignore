@@ -45,3 +45,7 @@ apps/brain/internal/api/ui/dist/*
 
 # Python bytecode, from deployment/authentik-provision.py
 __pycache__/
+
+# Designs and implementation plans are written and kept locally. They are
+# working notes, not documentation, and stay out of the public repository.
+docs/superpowers/

@@ -8,6 +8,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/reaper"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/worker"
 )
@@ -20,7 +21,7 @@ func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbS
 		return err
 	}
 
-	jobs, closeJobs, err := newJobs(ctx, cfg, logger, dbStore, effects)
+	jobs, closeJobs, err := newJobs(ctx, cfg, logger, dbStore, secretStore, effects)
 	if err != nil {
 		return err
 	}
@@ -38,9 +39,13 @@ func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbS
 
 func newJobs(
 	ctx context.Context, cfg *config.Config, logger *slog.Logger,
-	dbStore *store.Store, effects []reaper.Effect,
+	dbStore *store.Store, secretStore secrets.Store, effects []reaper.Effect,
 ) ([]worker.Job, func(), error) {
-	jobs := []worker.Job{reaper.SweepJob(logger, effects...)}
+	runs, err := newRunJob(cfg, logger, dbStore, secretStore)
+	if err != nil {
+		return nil, nil, err
+	}
+	jobs := []worker.Job{reaper.SweepJob(logger, effects...), runs}
 
 	if cfg.EmbeddingModel == "" {
 		logger.WarnContext(ctx, "EMBEDDING_MODEL is not set, so the graph is not being projected")

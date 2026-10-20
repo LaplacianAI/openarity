@@ -93,6 +93,33 @@ func (e GraphNodeLabel) Valid() bool {
 	}
 }
 
+// Defines values for RunStatus.
+const (
+	Cancelled RunStatus = "cancelled"
+	Failed    RunStatus = "failed"
+	Queued    RunStatus = "queued"
+	Running   RunStatus = "running"
+	Succeeded RunStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the RunStatus enum.
+func (e RunStatus) Valid() bool {
+	switch e {
+	case Cancelled:
+		return true
+	case Failed:
+		return true
+	case Queued:
+		return true
+	case Running:
+		return true
+	case Succeeded:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionKind.
 const (
 	Direct SessionKind = "direct"
@@ -258,7 +285,11 @@ type Agent struct {
 	Skills             []openapi_types.UUID `json:"skills" yaml:"skills"`
 	SteerContinuations int32                `json:"steer_continuations" yaml:"steer_continuations"`
 	TeamID             openapi_types.UUID   `json:"team_id" yaml:"team_id"`
-	UpdatedAt          time.Time            `json:"updated_at" yaml:"updated_at"`
+
+	// TokenBudget What one run of the agent may spend, input and output tokens
+	// together. Absent when the agent uses the deployment's default.
+	TokenBudget *int64    `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at" yaml:"updated_at"`
 }
 
 // AgentPage defines model for AgentPage.
@@ -297,9 +328,9 @@ type AgentRequest struct {
 	// ParserModel Only with parser. max_tokens and temperature fall back to the SDK's defaults.
 	ParserModel *ParserModel `json:"parser_model,omitempty" yaml:"parser_model,omitempty"`
 
-	// Pattern How the agent works through a task. The brain runs react, plan,
-	// rewoo, reflection, code and custom today; the database holds the
-	// authoritative list, and a pattern outside it is a 400.
+	// Pattern The loop the agent works through a task with. It must be one the
+	// brain runs — `GET /teams/{id}/loops` lists them — and any other is
+	// a 400 naming those it does run.
 	//
 	//
 	// Examples: react
@@ -308,6 +339,15 @@ type AgentRequest struct {
 
 	// SteerContinuations How many times a run may carry on for a message that arrived as it finished
 	SteerContinuations *int32 `json:"steer_continuations,omitempty" yaml:"steer_continuations,omitempty"`
+
+	// TokenBudget What one run of the agent may spend, input and output tokens
+	// together; a run that goes past it fails, naming the budget. Leave
+	// it out for the deployment's default, 1,000,000. A run keeps the
+	// budget it started with if the agent is edited while it runs.
+	//
+	//
+	// Examples: 200000
+	TokenBudget *int64 `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
 }
 
 // AgentSummary defines model for AgentSummary.
@@ -523,6 +563,19 @@ type GraphNode struct {
 
 // GraphNodeLabel A Toolkit is an MCP server
 type GraphNodeLabel string
+
+// Loop defines model for Loop.
+type Loop struct {
+	// Name The value an agent's `pattern` takes to use this loop
+	//
+	// Examples: react
+	Name string `json:"name" yaml:"name"`
+}
+
+// LoopPage defines model for LoopPage.
+type LoopPage struct {
+	Items []Loop `json:"items" yaml:"items"`
+}
 
 // MCPServer Exactly one of `url` and `command` is present.
 type MCPServer struct {
@@ -763,6 +816,49 @@ type PendingSenderPage struct {
 
 	// NextCursor Absent on the last page
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// Run defines model for Run.
+type Run struct {
+	// Agent The agent's name when the run started, kept if it is later renamed or deleted
+	Agent     string    `json:"agent" yaml:"agent"`
+	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
+
+	// Error Why it failed, null unless it did
+	Error       *string            `json:"error,omitempty" yaml:"error,omitempty"`
+	FinishedAt  *time.Time         `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`
+	ID          openapi_types.UUID `json:"id" yaml:"id"`
+	Input       string             `json:"input" yaml:"input"`
+	InputTokens int64              `json:"input_tokens" yaml:"input_tokens"`
+
+	// Output The agent's answer, null until it succeeds
+	Output       *string            `json:"output,omitempty" yaml:"output,omitempty"`
+	OutputTokens int64              `json:"output_tokens" yaml:"output_tokens"`
+	SessionID    openapi_types.UUID `json:"session_id" yaml:"session_id"`
+
+	// StartedAt When a worker first took it, null while queued
+	StartedAt *time.Time `json:"started_at,omitempty" yaml:"started_at,omitempty"`
+	Status    RunStatus  `json:"status" yaml:"status"`
+}
+
+// RunStatus defines model for Run.Status.
+type RunStatus string
+
+// RunRequest defines model for RunRequest.
+type RunRequest struct {
+	// Agent The name of an agent in this team
+	//
+	// Examples: triage
+	Agent string `json:"agent" yaml:"agent"`
+
+	// Input What the agent is asked to do. At most 100 KiB, with no NUL character.
+	//
+	// Examples: Sort the issues opened today.
+	Input string `json:"input" yaml:"input"`
+
+	// SessionID The conversation the run belongs to. Leave it out and the run gets
+	// a direct session of its own.
+	SessionID *openapi_types.UUID `json:"session_id,omitempty" yaml:"session_id,omitempty"`
 }
 
 // Session defines model for Session.
@@ -1058,6 +1154,9 @@ type Cursor = string
 // Limit defines model for Limit.
 type Limit = int32
 
+// RunID defines model for RunID.
+type RunID = openapi_types.UUID
+
 // ServerID defines model for ServerID.
 type ServerID = openapi_types.UUID
 
@@ -1174,6 +1273,15 @@ type ListTeamMembersParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
 }
 
+// StreamRunEventsParams defines parameters for StreamRunEvents.
+type StreamRunEventsParams struct {
+	// After Resume after this sequence number, for a client that cannot set a header.
+	After *int32 `form:"after,omitempty" json:"after,omitempty" yaml:"after,omitempty"`
+
+	// LastEventID Resume after this sequence number. Wins over `after`.
+	LastEventID *int32 `json:"Last-Event-ID,omitempty" yaml:"Last-Event-ID,omitempty"`
+}
+
 // ListSessionsParams defines parameters for ListSessions.
 type ListSessionsParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
@@ -1261,6 +1369,9 @@ type UpdateMCPServerJSONRequestBody = MCPServerRequest
 
 // AddTeamMemberJSONRequestBody defines body for AddTeamMember for application/json ContentType.
 type AddTeamMemberJSONRequestBody = AddMemberRequest
+
+// StartRunJSONRequestBody defines body for StartRun for application/json ContentType.
+type StartRunJSONRequestBody = RunRequest
 
 // CreateSkillMultipartRequestBody defines body for CreateSkill for multipart/form-data ContentType.
 type CreateSkillMultipartRequestBody = SkillUpload
@@ -1674,6 +1785,16 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/graph (the `GetTeamGraph` operationId).
 	GetTeamGraph(ctx context.Context, id TeamID, params *GetTeamGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListLoops List the loops an agent may use
+	//
+	// A read, so belonging to the team is enough. These are the loops the
+	// brain runs, sorted by name, and the only values an agent's `pattern`
+	// accepts. The list is short and always whole, so it takes no `limit`
+	// or `cursor` and never has a `next_cursor`.
+	//
+	// Corresponds with GET /teams/{id}/loops (the `ListLoops` operationId).
+	ListLoops(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListMCPServers List a team's MCP servers
 	//
 	// A read, so belonging to the team is enough: granting a server to an
@@ -1841,6 +1962,78 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 	GetTeamPermissions(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartRunWithBody Start a run of an agent
+	//
+	// Requires `run:write` in this team. The run is recorded and queued
+	// before the reply, and a worker picks it up; follow it with
+	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `session_id` the run gets a direct session of its own, owned
+	// by the caller. A named session must be one the caller can read: a
+	// `group` or `thread` session of this team, their own `direct` one, or
+	// any with `session:read_all`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
+	StartRunWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartRun Start a run of an agent
+	//
+	// Requires `run:write` in this team. The run is recorded and queued
+	// before the reply, and a worker picks it up; follow it with
+	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `session_id` the run gets a direct session of its own, owned
+	// by the caller. A named session must be one the caller can read: a
+	// `group` or `thread` session of this team, their own `direct` one, or
+	// any with `session:read_all`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
+	StartRun(ctx context.Context, id TeamID, body StartRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRun Read a run
+	//
+	// A run is visible exactly where its session is: someone else's direct
+	// run answers 404 unless the caller holds `session:read_all`.
+	//
+	// Corresponds with GET /teams/{id}/runs/{runID} (the `GetRun` operationId).
+	GetRun(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CancelRun Cancel a run
+	//
+	// Requires `run:write` in this team, and the run must be visible to the
+	// caller. A queued run ends at once. A running one is marked, and its
+	// worker stops it at its next heartbeat, within 15 seconds; read the
+	// run, or its events, to see it finish.
+	//
+	// Corresponds with POST /teams/{id}/runs/{runID}/cancel (the `CancelRun` operationId).
+	CancelRun(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StreamRunEvents Follow what a run does
+	//
+	// A server-sent event stream, visible where the run is. Each frame is
+	// one event the run recorded:
+	//
+	// ```text
+	// id: 3
+	// event: tool_call
+	// data: {"name": "search", ...}
+	// ```
+	//
+	// The `id` is the event's sequence within the run, so a client that
+	// reconnects sends it back as `Last-Event-ID` and misses nothing. Once
+	// the run has finished and its last event is sent, a final `end` frame
+	// carries its status, `data: {"status":"succeeded"}`, and the stream
+	// closes. A run cancelled before any worker took it has no events, and
+	// its stream is that one frame. A comment, `: keep-alive`, is sent
+	// every 15 seconds while nothing happens.
+	//
+	// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
+	StreamRunEvents(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSessions List every conversation in a team
 	//
@@ -2665,6 +2858,26 @@ func (c *Client) GetTeamGraph(ctx context.Context, id TeamID, params *GetTeamGra
 	return c.Client.Do(req)
 }
 
+// ListLoops List the loops an agent may use
+//
+// A read, so belonging to the team is enough. These are the loops the
+// brain runs, sorted by name, and the only values an agent's `pattern`
+// accepts. The list is short and always whole, so it takes no `limit`
+// or `cursor` and never has a `next_cursor`.
+//
+// Corresponds with GET /teams/{id}/loops (the `ListLoops` operationId).
+func (c *Client) ListLoops(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListLoopsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListMCPServers List a team's MCP servers
 //
 // A read, so belonging to the team is enough: granting a server to an
@@ -2963,6 +3176,128 @@ func (c *Client) RemoveTeamMember(ctx context.Context, id TeamID, userID openapi
 // Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 func (c *Client) GetTeamPermissions(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTeamPermissionsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartRunWithBody Start a run of an agent
+//
+// Requires `run:write` in this team. The run is recorded and queued
+// before the reply, and a worker picks it up; follow it with
+// `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `session_id` the run gets a direct session of its own, owned
+// by the caller. A named session must be one the caller can read: a
+// `group` or `thread` session of this team, their own `direct` one, or
+// any with `session:read_all`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
+func (c *Client) StartRunWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartRunRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartRun Start a run of an agent
+//
+// Requires `run:write` in this team. The run is recorded and queued
+// before the reply, and a worker picks it up; follow it with
+// `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `session_id` the run gets a direct session of its own, owned
+// by the caller. A named session must be one the caller can read: a
+// `group` or `thread` session of this team, their own `direct` one, or
+// any with `session:read_all`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
+func (c *Client) StartRun(ctx context.Context, id TeamID, body StartRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartRunRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRun Read a run
+//
+// A run is visible exactly where its session is: someone else's direct
+// run answers 404 unless the caller holds `session:read_all`.
+//
+// Corresponds with GET /teams/{id}/runs/{runID} (the `GetRun` operationId).
+func (c *Client) GetRun(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRunRequest(c.Server, id, runID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CancelRun Cancel a run
+//
+// Requires `run:write` in this team, and the run must be visible to the
+// caller. A queued run ends at once. A running one is marked, and its
+// worker stops it at its next heartbeat, within 15 seconds; read the
+// run, or its events, to see it finish.
+//
+// Corresponds with POST /teams/{id}/runs/{runID}/cancel (the `CancelRun` operationId).
+func (c *Client) CancelRun(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCancelRunRequest(c.Server, id, runID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StreamRunEvents Follow what a run does
+//
+// A server-sent event stream, visible where the run is. Each frame is
+// one event the run recorded:
+//
+// ```text
+// id: 3
+// event: tool_call
+// data: {"name": "search", ...}
+// ```
+//
+// The `id` is the event's sequence within the run, so a client that
+// reconnects sends it back as `Last-Event-ID` and misses nothing. Once
+// the run has finished and its last event is sent, a final `end` frame
+// carries its status, `data: {"status":"succeeded"}`, and the stream
+// closes. A run cancelled before any worker took it has no events, and
+// its stream is that one frame. A comment, `: keep-alive`, is sent
+// every 15 seconds while nothing happens.
+//
+// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
+func (c *Client) StreamRunEvents(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamRunEventsRequest(c.Server, id, runID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -4423,6 +4758,40 @@ func NewGetTeamGraphRequest(server string, id TeamID, params *GetTeamGraphParams
 	return req, nil
 }
 
+// NewListLoopsRequest constructs an http.Request for the ListLoops method
+func NewListLoopsRequest(server string, id TeamID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/loops", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListMCPServersRequest constructs an http.Request for the ListMCPServers method
 func NewListMCPServersRequest(server string, id TeamID, params *ListMCPServersParams) (*http.Request, error) {
 	var err error
@@ -4951,6 +5320,218 @@ func NewGetTeamPermissionsRequest(server string, id TeamID) (*http.Request, erro
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStartRunRequest calls the generic StartRun builder with application/json body
+func NewStartRunRequest(server string, id TeamID, body StartRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewStartRunRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewStartRunRequestWithBody constructs an http.Request for the StartRun method, with any body, and a specified content type
+func NewStartRunRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/runs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetRunRequest constructs an http.Request for the GetRun method
+func NewGetRunRequest(server string, id TeamID, runID RunID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "runID", runID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/runs/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCancelRunRequest constructs an http.Request for the CancelRun method
+func NewCancelRunRequest(server string, id TeamID, runID RunID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "runID", runID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/runs/%s/cancel", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStreamRunEventsRequest constructs an http.Request for the StreamRunEvents method
+func NewStreamRunEventsRequest(server string, id TeamID, runID RunID, params *StreamRunEventsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "runID", runID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/runs/%s/events", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.LastEventID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Last-Event-ID", *params.LastEventID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "integer", Format: "int32"})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Last-Event-ID", headerParam0)
+		}
+
 	}
 
 	return req, nil
@@ -6115,6 +6696,18 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/graph (the `GetTeamGraph` operationId).
 	GetTeamGraphWithResponse(ctx context.Context, id TeamID, params *GetTeamGraphParams, reqEditors ...RequestEditorFn) (*GetTeamGraphResponse, error)
 
+	// ListLoopsWithResponse List the loops an agent may use
+	//
+	// A read, so belonging to the team is enough. These are the loops the
+	// brain runs, sorted by name, and the only values an agent's `pattern`
+	// accepts. The list is short and always whole, so it takes no `limit`
+	// or `cursor` and never has a `next_cursor`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/loops (the `ListLoops` operationId).
+	ListLoopsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*ListLoopsResponse, error)
+
 	// ListMCPServersWithResponse List a team's MCP servers
 	//
 	// A read, so belonging to the team is enough: granting a server to an
@@ -6298,6 +6891,84 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 	GetTeamPermissionsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamPermissionsResponse, error)
+
+	// StartRunWithBodyWithResponse Start a run of an agent
+	//
+	// Requires `run:write` in this team. The run is recorded and queued
+	// before the reply, and a worker picks it up; follow it with
+	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `session_id` the run gets a direct session of its own, owned
+	// by the caller. A named session must be one the caller can read: a
+	// `group` or `thread` session of this team, their own `direct` one, or
+	// any with `session:read_all`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
+	StartRunWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartRunResponse, error)
+
+	// StartRunWithResponse Start a run of an agent
+	//
+	// Requires `run:write` in this team. The run is recorded and queued
+	// before the reply, and a worker picks it up; follow it with
+	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `session_id` the run gets a direct session of its own, owned
+	// by the caller. A named session must be one the caller can read: a
+	// `group` or `thread` session of this team, their own `direct` one, or
+	// any with `session:read_all`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
+	StartRunWithResponse(ctx context.Context, id TeamID, body StartRunJSONRequestBody, reqEditors ...RequestEditorFn) (*StartRunResponse, error)
+
+	// GetRunWithResponse Read a run
+	//
+	// A run is visible exactly where its session is: someone else's direct
+	// run answers 404 unless the caller holds `session:read_all`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/runs/{runID} (the `GetRun` operationId).
+	GetRunWithResponse(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*GetRunResponse, error)
+
+	// CancelRunWithResponse Cancel a run
+	//
+	// Requires `run:write` in this team, and the run must be visible to the
+	// caller. A queued run ends at once. A running one is marked, and its
+	// worker stops it at its next heartbeat, within 15 seconds; read the
+	// run, or its events, to see it finish.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/runs/{runID}/cancel (the `CancelRun` operationId).
+	CancelRunWithResponse(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*CancelRunResponse, error)
+
+	// StreamRunEventsWithResponse Follow what a run does
+	//
+	// A server-sent event stream, visible where the run is. Each frame is
+	// one event the run recorded:
+	//
+	// ```text
+	// id: 3
+	// event: tool_call
+	// data: {"name": "search", ...}
+	// ```
+	//
+	// The `id` is the event's sequence within the run, so a client that
+	// reconnects sends it back as `Last-Event-ID` and misses nothing. Once
+	// the run has finished and its last event is sent, a final `end` frame
+	// carries its status, `data: {"status":"succeeded"}`, and the stream
+	// closes. A run cancelled before any worker took it has no events, and
+	// its stream is that one frame. A comment, `: keep-alive`, is sent
+	// every 15 seconds while nothing happens.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
+	StreamRunEventsWithResponse(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*StreamRunEventsResponse, error)
 
 	// ListSessionsWithResponse List every conversation in a team
 	//
@@ -7462,6 +8133,54 @@ func (r GetTeamGraphResponse) ContentType() string {
 	return ""
 }
 
+// ListLoopsResponse401Headers the declared response headers of an HTTP 401 response for ListLoops
+type ListLoopsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListLoopsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *LoopPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListLoopsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListLoopsResponse) GetJSON200() *LoopPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListLoopsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListLoopsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListLoopsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListLoopsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListMCPServersResponse401Headers the declared response headers of an HTTP 401 response for ListMCPServers
 type ListMCPServersResponse401Headers struct {
 	WWWAuthenticate *string
@@ -7963,6 +8682,191 @@ func (r GetTeamPermissionsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetTeamPermissionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// StartRunResponse401Headers the declared response headers of an HTTP 401 response for StartRun
+type StartRunResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type StartRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *Run
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *StartRunResponse401Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r StartRunResponse) GetJSON202() *Run {
+	return r.JSON202
+}
+
+// GetBody returns the raw response body bytes
+func (r StartRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetRunResponse401Headers the declared response headers of an HTTP 401 response for GetRun
+type GetRunResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Run
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetRunResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRunResponse) GetJSON200() *Run {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CancelRunResponse401Headers the declared response headers of an HTTP 401 response for CancelRun
+type CancelRunResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CancelRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *Run
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CancelRunResponse401Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r CancelRunResponse) GetJSON202() *Run {
+	return r.JSON202
+}
+
+// GetBody returns the raw response body bytes
+func (r CancelRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CancelRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CancelRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CancelRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// StreamRunEventsResponse401Headers the declared response headers of an HTTP 401 response for StreamRunEvents
+type StreamRunEventsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type StreamRunEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *StreamRunEventsResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r StreamRunEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StreamRunEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StreamRunEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StreamRunEventsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -9147,6 +10051,24 @@ func (c *ClientWithResponses) GetTeamGraphWithResponse(ctx context.Context, id T
 	return ParseGetTeamGraphResponse(rsp)
 }
 
+// ListLoopsWithResponse List the loops an agent may use
+//
+// A read, so belonging to the team is enough. These are the loops the
+// brain runs, sorted by name, and the only values an agent's `pattern`
+// accepts. The list is short and always whole, so it takes no `limit`
+// or `cursor` and never has a `next_cursor`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/loops (the `ListLoops` operationId).
+func (c *ClientWithResponses) ListLoopsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*ListLoopsResponse, error) {
+	rsp, err := c.ListLoops(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListLoopsResponse(rsp)
+}
+
 // ListMCPServersWithResponse List a team's MCP servers
 //
 // A read, so belonging to the team is enough: granting a server to an
@@ -9413,6 +10335,114 @@ func (c *ClientWithResponses) GetTeamPermissionsWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseGetTeamPermissionsResponse(rsp)
+}
+
+// StartRunWithBodyWithResponse Start a run of an agent
+//
+// Requires `run:write` in this team. The run is recorded and queued
+// before the reply, and a worker picks it up; follow it with
+// `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `session_id` the run gets a direct session of its own, owned
+// by the caller. A named session must be one the caller can read: a
+// `group` or `thread` session of this team, their own `direct` one, or
+// any with `session:read_all`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
+func (c *ClientWithResponses) StartRunWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartRunResponse, error) {
+	rsp, err := c.StartRunWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartRunResponse(rsp)
+}
+
+// StartRunWithResponse Start a run of an agent
+//
+// Requires `run:write` in this team. The run is recorded and queued
+// before the reply, and a worker picks it up; follow it with
+// `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `session_id` the run gets a direct session of its own, owned
+// by the caller. A named session must be one the caller can read: a
+// `group` or `thread` session of this team, their own `direct` one, or
+// any with `session:read_all`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
+func (c *ClientWithResponses) StartRunWithResponse(ctx context.Context, id TeamID, body StartRunJSONRequestBody, reqEditors ...RequestEditorFn) (*StartRunResponse, error) {
+	rsp, err := c.StartRun(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartRunResponse(rsp)
+}
+
+// GetRunWithResponse Read a run
+//
+// A run is visible exactly where its session is: someone else's direct
+// run answers 404 unless the caller holds `session:read_all`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/runs/{runID} (the `GetRun` operationId).
+func (c *ClientWithResponses) GetRunWithResponse(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*GetRunResponse, error) {
+	rsp, err := c.GetRun(ctx, id, runID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRunResponse(rsp)
+}
+
+// CancelRunWithResponse Cancel a run
+//
+// Requires `run:write` in this team, and the run must be visible to the
+// caller. A queued run ends at once. A running one is marked, and its
+// worker stops it at its next heartbeat, within 15 seconds; read the
+// run, or its events, to see it finish.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/runs/{runID}/cancel (the `CancelRun` operationId).
+func (c *ClientWithResponses) CancelRunWithResponse(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*CancelRunResponse, error) {
+	rsp, err := c.CancelRun(ctx, id, runID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCancelRunResponse(rsp)
+}
+
+// StreamRunEventsWithResponse Follow what a run does
+//
+// A server-sent event stream, visible where the run is. Each frame is
+// one event the run recorded:
+//
+// ```text
+// id: 3
+// event: tool_call
+// data: {"name": "search", ...}
+// ```
+//
+// The `id` is the event's sequence within the run, so a client that
+// reconnects sends it back as `Last-Event-ID` and misses nothing. Once
+// the run has finished and its last event is sent, a final `end` frame
+// carries its status, `data: {"status":"succeeded"}`, and the stream
+// closes. A run cancelled before any worker took it has no events, and
+// its stream is that one frame. A comment, `: keep-alive`, is sent
+// every 15 seconds while nothing happens.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
+func (c *ClientWithResponses) StreamRunEventsWithResponse(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*StreamRunEventsResponse, error) {
+	rsp, err := c.StreamRunEvents(ctx, id, runID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamRunEventsResponse(rsp)
 }
 
 // ListSessionsWithResponse List every conversation in a team
@@ -10451,6 +11481,45 @@ func ParseGetTeamGraphResponse(rsp *http.Response) (*GetTeamGraphResponse, error
 	return response, nil
 }
 
+// ParseListLoopsResponse parses an HTTP response from a ListLoopsWithResponse call
+func ParseListLoopsResponse(rsp *http.Response) (*ListLoopsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListLoopsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LoopPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListLoopsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseListMCPServersResponse parses an HTTP response from a ListMCPServersWithResponse call
 func ParseListMCPServersResponse(rsp *http.Response) (*ListMCPServersResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -10837,6 +11906,152 @@ func ParseGetTeamPermissionsResponse(rsp *http.Response) (*GetTeamPermissionsRes
 	switch {
 	case rsp.StatusCode == 401:
 		var headers GetTeamPermissionsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseStartRunResponse parses an HTTP response from a StartRunWithResponse call
+func ParseStartRunResponse(rsp *http.Response) (*StartRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Run
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers StartRunResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetRunResponse parses an HTTP response from a GetRunWithResponse call
+func ParseGetRunResponse(rsp *http.Response) (*GetRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Run
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetRunResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCancelRunResponse parses an HTTP response from a CancelRunWithResponse call
+func ParseCancelRunResponse(rsp *http.Response) (*CancelRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CancelRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Run
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CancelRunResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseStreamRunEventsResponse parses an HTTP response from a StreamRunEventsWithResponse call
+func ParseStreamRunEventsResponse(rsp *http.Response) (*StreamRunEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StreamRunEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers StreamRunEventsResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

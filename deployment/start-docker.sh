@@ -25,6 +25,7 @@ COMPOSE_BASE="-f docker-compose.yml"
 BAO_OVERLAY="-f docker-compose.openbao.yml"
 OBJECTS_OVERLAY="-f docker-compose.objects.yml"
 
+
 # The dev user pinned in dex/config.yaml, as dex derives it. Committed rather
 # than read back after a login, because the userID it comes from is committed
 # too — see the note beside it in .env.example.
@@ -228,9 +229,41 @@ wait_bao_answering() {
 		esac
 		[ "$(date +%s)" -lt "$deadline" ] ||
 			die "OpenBao did not start within two minutes.
-Look at it with:  docker compose $COMPOSE_BASE $BAO_OVERLAY logs openbao"
+Look at it with:  docker logs --tail 30 openarity-openbao-1"
 		sleep 2
 	done
+}
+
+# OpenBao runs as its own user inside the container, uid 100, and reads the
+# unseal key through a bind mount. Docker Desktop hides ownership on a bind
+# mount, so a key only this user can read works on a Mac. A Linux host shows
+# the container the real owner and mode, and OpenBao, unable to read its
+# key, never unseals: "did not start within two minutes", on a fresh Ubuntu
+# server, with nothing in the message about permissions.
+#
+# The key stays this user's. Its group may read it, and the overlay adds the
+# container to that group by number (OPENBAO_KEY_GID). That is only private
+# if the group is: Ubuntu gives every user a group of their own, but a
+# shared primary group — macOS's staff, or a site's users — would hand the
+# key to everyone in it, so this checks rather than assumes, and refuses.
+# Giving the key to uid 100 instead would give it to whichever account the
+# host has there. Run every time, so a key made before this is fixed too.
+key_readable_by_openbao() {
+	[ "$(uname -s)" = Linux ] || return 0
+
+	local gid user group sharing
+	gid=$(id -g)
+	user=$(id -un)
+	group=$(getent group "$gid") || die "Could not look up group $gid."
+	sharing=$(getent passwd | awk -F: -v g="$gid" -v me="$user" '$4 == g && $1 != me' | wc -l)
+	if [ "${group%%:*}" != "$user" ] || [ -n "$(printf '%s' "$group" | cut -d: -f4)" ] || [ "$sharing" -ne 0 ]; then
+		die "OpenBao reads its unseal key through your primary group, ${group%%:*}, and it is not yours alone.
+Run this as a user with a group of its own, as useradd gives by default."
+	fi
+
+	chmod 750 openbao/keys
+	chmod 640 openbao/keys/unseal.key
+	env_set OPENBAO_KEY_GID "$gid"
 }
 
 ensure_openbao() {
@@ -243,6 +276,7 @@ ensure_openbao() {
 		chmod 600 openbao/keys/unseal.key
 		note "generated openbao/keys/unseal.key"
 	fi
+	key_readable_by_openbao
 
 	make bao-up >/dev/null
 	wait_bao_answering

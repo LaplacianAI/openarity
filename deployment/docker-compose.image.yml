@@ -35,3 +35,12 @@ services:
     build: !reset null
     image: *image
     pull_policy: always
+
+  # The worker runs the same binary as the brain. Left out, it keeps its
+  # `build:` and is compiled from whatever checkout runs compose, so a deploy
+  # pinned by digest would replace the brain and rebuild the worker from the
+  # server's tree.
+  worker:
+    build: !reset null
+    image: *image
+    pull_policy: always

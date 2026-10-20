@@ -77,10 +77,21 @@ func (r *recorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
 }
+
+func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 ```
 
 Embedding promotes `Header()` and `Write()` unchanged; only `WriteHeader` is
 overridden.
+
+**`Unwrap` is not optional.** Embedding promotes only the methods of the
+`http.ResponseWriter` interface, so `Flush` and `SetWriteDeadline` are lost,
+and `http.NewResponseController` finds them only by following `Unwrap`.
+Without it both answer `ErrNotSupported`: the run event stream closed after
+its first frame, and the deadline it pushes past `WriteTimeout` was never set.
+A handler's own tests on a bare mux cannot see this.
+`TestLogRequestsLetsAStreamFlushAndExtendItsDeadline` is the test a new
+wrapper copies.
 
 **Initialise `status` to `http.StatusOK`.** A handler that only calls `Write`
 never calls `WriteHeader` — Go sends 200 implicitly. Start at 0 and every

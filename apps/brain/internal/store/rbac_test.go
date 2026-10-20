@@ -296,7 +296,7 @@ func TestARoleInTheFileGetsExactlyTheGrantsItLists(t *testing.T) {
 		t.Fatalf("LoadRBAC: %v", err)
 	}
 
-	want := []string{"agent:write", "skill:write", "tool:write"}
+	want := []string{"agent:write", "run:write", "skill:write", "tool:write"}
 	if got := grantsOf(t, s, "member"); !slices.Equal(got, want) {
 		t.Errorf("member grants = %v, want %v", got, want)
 	}
@@ -504,6 +504,19 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"GET /teams/{id}/agents/{agentID}":    "member",
 		"PUT /teams/{id}/agents/{agentID}":    "team agent:write",
 		"DELETE /teams/{id}/agents/{agentID}": "team agent:write",
+
+		// The loops are the values an agent's pattern takes, so anyone who
+		// can read an agent can read what its pattern may be.
+		"GET /teams/{id}/loops": "member",
+
+		// Reading a run is `member` because the handler applies the session
+		// rule to the row: someone else's direct run is a 404 to everyone but
+		// a moderator. Starting and cancelling one spend tokens, so they are
+		// run:write.
+		"POST /teams/{id}/runs":                "team run:write",
+		"GET /teams/{id}/runs/{runID}":         "member",
+		"GET /teams/{id}/runs/{runID}/events":  "member",
+		"POST /teams/{id}/runs/{runID}/cancel": "team run:write",
 
 		// An MCP server is a tool source, so writing one is tool:write. Reading
 		// is member-wide for the reason skills are: granting a server to an

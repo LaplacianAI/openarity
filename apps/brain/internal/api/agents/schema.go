@@ -57,6 +57,7 @@ type detail struct {
 	ParserModel        *parserModel  `json:"parser_model,omitempty"`
 	MCPServers         []serverGrant `json:"mcp_servers"`
 	Skills             []uuid.UUID   `json:"skills"`
+	TokenBudget        *int64        `json:"token_budget,omitempty"`
 }
 
 type agentRequest struct {
@@ -73,6 +74,7 @@ type agentRequest struct {
 	ParserModel        *parserModel  `json:"parser_model"`
 	MCPServers         []serverGrant `json:"mcp_servers"`
 	Skills             []uuid.UUID   `json:"skills"`
+	TokenBudget        *int64        `json:"token_budget"`
 }
 
 type agentCursor struct {

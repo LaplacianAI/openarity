@@ -6,25 +6,33 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
 )
 
-const maxNameBytes = 200
+const (
+	maxNameBytes   = 200
+	maxTokenBudget = 100_000_000
+)
 
 var toolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
-func validate(req agentRequest) error {
+func validate(req agentRequest, loops []string) error {
 	switch {
 	case req.Name == "" || len(req.Name) > maxNameBytes || strings.TrimSpace(req.Name) != req.Name:
 		return errors.New("name must be 1-200 bytes with no space at either end")
 	case req.Pattern == "":
 		return errors.New("pattern is required")
+	case !slices.Contains(loops, req.Pattern):
+		return fmt.Errorf("pattern must be a loop the brain runs: %s", strings.Join(loops, ", "))
 	case req.MaxSteps <= 0:
 		return errors.New("max_steps must be greater than 0")
 	case req.SteerContinuations < 0:
 		return errors.New("steer_continuations must not be negative")
+	case req.TokenBudget != nil && (*req.TokenBudget <= 0 || *req.TokenBudget > maxTokenBudget):
+		return fmt.Errorf("token_budget must be between 1 and %d", maxTokenBudget)
 	case hasNUL(req.Name, req.Description, req.Instructions):
 		return errors.New("name, description and instructions must not contain a NUL character")
 	}

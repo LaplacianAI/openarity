@@ -173,6 +173,8 @@ export type Agent = AgentSummary & {
   parser: boolean;
   mcp_servers: MCPServerGrant[];
   skills: string[];
+  /** Tokens one run may spend. Absent when the deployment's default applies. */
+  token_budget?: number;
 };
 
 /** POST /teams/{id}/agents. The fields a form sets; the rest default. */
@@ -185,6 +187,7 @@ export type AgentRequest = {
   max_steps: number;
   mcp_servers?: MCPServerGrant[];
   skills?: string[];
+  token_budget?: number;
 };
 
 /** GET /teams/{id}/mcp-servers. Credentials are references, never values. */

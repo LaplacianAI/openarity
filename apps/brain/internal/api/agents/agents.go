@@ -43,6 +43,7 @@ type Queries interface {
 type handler struct {
 	logger *slog.Logger
 	store  Store
+	loops  []string
 }
 
 type grants struct {
@@ -50,8 +51,8 @@ type grants struct {
 	skills  []uuid.UUID
 }
 
-func New(logger *slog.Logger, s Store) *api.Router {
-	h := &handler{logger: logger, store: s}
+func New(logger *slog.Logger, s Store, loops []string) *api.Router {
+	h := &handler{logger: logger, store: s, loops: loops}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/agents", h.list)
@@ -71,7 +72,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, ok := readRequest(w, r)
+	req, ok := readRequest(w, r, h.loops)
 	if !ok {
 		return
 	}
@@ -110,7 +111,7 @@ func (h *handler) replace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, ok := readRequest(w, r)
+	req, ok := readRequest(w, r, h.loops)
 	if !ok {
 		return
 	}
@@ -269,8 +270,6 @@ func (h *handler) writeFailed(w http.ResponseWriter, u *auth.User, err error) bo
 		http.Error(w, "an agent with that name already exists", http.StatusConflict)
 	case isPG && slices.Contains(grantConstraints, pgErr.ConstraintName):
 		http.Error(w, "a granted server or skill does not exist in this team", http.StatusBadRequest)
-	case isPG && pgErr.ConstraintName == "agents_pattern_known":
-		http.Error(w, "pattern is not one the brain runs", http.StatusBadRequest)
 	default:
 		api.Fail(w, h.logger, u, "failed to write agent", err)
 	}
@@ -287,13 +286,13 @@ func (h *handler) write(w http.ResponseWriter, u *auth.User, status int, row db.
 	api.WriteJSON(w, h.logger, status, out)
 }
 
-func readRequest(w http.ResponseWriter, r *http.Request) (agentRequest, bool) {
+func readRequest(w http.ResponseWriter, r *http.Request, loops []string) (agentRequest, bool) {
 	var req agentRequest
 	if !api.DecodeJSON(w, r, &req) {
 		return agentRequest{}, false
 	}
 
-	if err := validate(req); err != nil {
+	if err := validate(req, loops); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return agentRequest{}, false
 	}
@@ -306,7 +305,7 @@ func columns(req agentRequest) (db.CreateAgentParams, error) {
 		Name: req.Name, Description: req.Description, Instructions: req.Instructions,
 		ModelName: req.Model.Name, MaxTokens: req.Model.MaxTokens, Temperature: req.Model.Temperature,
 		Pattern: req.Pattern, MaxSteps: req.MaxSteps, SteerContinuations: req.SteerContinuations,
-		Parser: req.Parser,
+		Parser: req.Parser, TokenBudget: req.TokenBudget,
 	}
 
 	if req.OutputSchema != nil {
@@ -331,6 +330,7 @@ func updateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
 		Pattern: c.Pattern, MaxSteps: c.MaxSteps, SteerContinuations: c.SteerContinuations,
 		OutputSchema: c.OutputSchema, Parser: c.Parser,
 		ParserModelName: c.ParserModelName, ParserMaxTokens: c.ParserMaxTokens, ParserTemperature: c.ParserTemperature,
+		TokenBudget: c.TokenBudget,
 	}
 }
 
@@ -389,6 +389,7 @@ func view(row db.Agent, g grants) (detail, error) {
 		summary:            viewSummary(row),
 		Instructions:       row.Instructions,
 		MaxSteps:           row.MaxSteps,
+		TokenBudget:        row.TokenBudget,
 		SteerContinuations: row.SteerContinuations,
 		Parser:             row.Parser,
 		MCPServers:         g.servers,

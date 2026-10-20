@@ -2,11 +2,13 @@
 INSERT INTO agents (
     team_id, name, description, kind, instructions,
     model_name, max_tokens, temperature, pattern, max_steps, steer_continuations,
-    output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature
+    output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature,
+    token_budget
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
-    $12, $13, $14, $15, $16
+    $12, $13, $14, $15, $16,
+    $17
 ) RETURNING *;
 
 -- name: GetAgent :one
@@ -37,6 +39,7 @@ UPDATE agents SET
     parser_model_name   = sqlc.narg('parser_model_name'),
     parser_max_tokens   = sqlc.narg('parser_max_tokens'),
     parser_temperature  = sqlc.narg('parser_temperature'),
+    token_budget        = sqlc.narg('token_budget'),
     updated_at          = now()
 WHERE id = sqlc.arg('id')
 RETURNING *;
@@ -65,3 +68,25 @@ DELETE FROM agent_skills WHERE agent_id = $1;
 
 -- name: ListAgentSkills :many
 SELECT skill_id FROM agent_skills WHERE agent_id = $1 ORDER BY skill_id;
+
+-- A run names its agent; names are unique per team in any case, and
+-- agents_team_name_key is on (team_id, lower(name)), so this reads one entry.
+-- name: GetAgentByName :one
+SELECT * FROM agents
+WHERE team_id = sqlc.arg('team_id') AND lower(name) = lower(sqlc.arg('name')::text);
+
+-- What a run binds, read when it starts: each granted server with the grant's
+-- allow-list, which is null for every tool on the server.
+-- name: ListGrantedMCPServers :many
+SELECT sqlc.embed(s), g.allow
+FROM agent_mcp_servers g
+JOIN mcp_servers s ON s.id = g.mcp_server_id
+WHERE g.agent_id = $1
+ORDER BY s.name;
+
+-- With the body, unlike ListSkillsByTeam: a run hands it to the model when
+-- the skill is loaded. One table in the FROM, so sqlc returns db.Skill.
+-- name: ListGrantedSkills :many
+SELECT * FROM skills
+WHERE id IN (SELECT skill_id FROM agent_skills WHERE agent_id = $1)
+ORDER BY name;

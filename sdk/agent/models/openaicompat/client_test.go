@@ -13,6 +13,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
@@ -1274,4 +1277,69 @@ func finalOf(t *testing.T, client *Client) *agent.Response {
 		t.Fatal("the stream ended with no final response")
 	}
 	return final
+}
+
+// openai-go's error prints the method, the whole URL and the raw body. A
+// gateway's URL can hold a key in its path and a body can quote the request
+// back, and the caller of this package stores the error where everyone who
+// can read the run sees it. What leaves is the status and the provider's
+// code, through Complete and through a stream alike.
+func TestAnErrorStatusLeavesWithoutItsURLOrItsBody(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":{"message":"Incorrect API key provided: sk-live-HUNTER2",`+
+			`"type":"invalid_request_error","code":"invalid_api_key"}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL+"/key-abc123/v1", "sk-test", option.WithMaxRetries(0))
+	req := agent.Request{Model: agent.ModelRef{Name: "probe"}, Messages: []agent.Message{userSays("go")}}
+
+	_, completeErr := c.Complete(t.Context(), req)
+	s, err := c.Stream(t.Context(), req)
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for s.Next() {
+	}
+	streamErr := s.Err()
+	_ = s.Close()
+
+	for name, err := range map[string]error{"Complete": completeErr, "Stream": streamErr} {
+		var answered *agent.ModelError
+		if !errors.As(err, &answered) || answered.Status != http.StatusUnauthorized || answered.Code != "invalid_api_key" {
+			t.Errorf("%s: err = %#v, want a ModelError of 401, invalid_api_key", name, err)
+			continue
+		}
+		for _, leak := range []string{"key-abc123", "HUNTER2", srv.URL} {
+			if strings.Contains(err.Error(), leak) {
+				t.Errorf("%s: %q carries %q", name, err, leak)
+			}
+		}
+		var raw *openai.Error
+		if errors.As(err, &raw) {
+			t.Errorf("%s: openai-go's error, URL and body, is still reachable through errors.As", name)
+		}
+	}
+}
+
+// An endpoint that cannot be reached has no status, and its error is the
+// transport's, untouched: the caller tells the two apart.
+func TestAnUnreachableEndpointIsNotAModelError(t *testing.T) {
+	t.Parallel()
+
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	c := New(gone.URL+"/v1", "sk-test", option.WithMaxRetries(0))
+
+	_, err := c.Complete(t.Context(), agent.Request{
+		Model: agent.ModelRef{Name: "probe"}, Messages: []agent.Message{userSays("go")},
+	})
+	var answered *agent.ModelError
+	if err == nil || errors.As(err, &answered) {
+		t.Errorf("err = %#v, want the transport's error", err)
+	}
 }

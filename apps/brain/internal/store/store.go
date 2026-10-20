@@ -88,4 +88,6 @@ func (s *Store) InTx(ctx context.Context, fn func(*db.Queries) error) error {
 
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
+func (s *Store) Pool() *pgxpool.Pool { return s.pool }
+
 func (s *Store) Close() { s.pool.Close() }

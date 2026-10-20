@@ -47,6 +47,10 @@
     {
       "name": "user:read",
       "description": "Look people up by name or subject"
+    },
+    {
+      "name": "run:write",
+      "description": "Start and cancel agent runs"
     }
   ],
   "roles": [
@@ -60,7 +64,8 @@
         "channel:write",
         "session:read_all",
         "membership:write",
-        "user:read"
+        "user:read",
+        "run:write"
       ]
     },
     {
@@ -69,7 +74,8 @@
       "permissions": [
         "agent:write",
         "skill:write",
-        "tool:write"
+        "tool:write",
+        "run:write"
       ]
     }
   ],
@@ -133,6 +139,33 @@
       "path": "/teams/{id}/agents/{agentID}",
       "scope": "team",
       "permission": "agent:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/loops",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/runs",
+      "scope": "team",
+      "permission": "run:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/runs/{runID}",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/runs/{runID}/events",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/runs/{runID}/cancel",
+      "scope": "team",
+      "permission": "run:write"
     },
     {
       "method": "GET",

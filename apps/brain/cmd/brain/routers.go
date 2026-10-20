@@ -8,7 +8,9 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/authconfig"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/channels"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/docs"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/loops"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpservers"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/runs"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/sessions"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/skills"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamgraph"
@@ -20,6 +22,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/server"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
@@ -37,6 +40,7 @@ func newRouters(
 	importer skills.Importer,
 	discoverer mcpservers.Discoverer,
 	graphs teamgraph.Viewer,
+	starter runs.Starter,
 ) []server.Router {
 	routers := []server.Router{
 		whoami.New(logger),
@@ -44,7 +48,9 @@ func newRouters(
 		channels.New(logger, dbStore, secretWriter, registry),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
 		mcpservers.New(logger, mcpStore{dbStore}, discoverer),
-		agents.New(logger, agentStore{dbStore}),
+		agents.New(logger, agentStore{dbStore}, runtime.Loops()),
+		loops.New(logger, runtime.Loops()),
+		runs.New(logger, runStore{dbStore}, authorizer, starter),
 		teamgraph.New(logger, graphs),
 		users.New(logger, dbStore),
 		sessions.New(logger, dbStore, authorizer, attachments),
@@ -96,4 +102,28 @@ type agentStore struct{ *store.Store }
 
 func (s agentStore) InTx(ctx context.Context, fn func(agents.Queries) error) error {
 	return s.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
+}
+
+type runStore struct{ *store.Store }
+
+func (s runStore) StartRun(ctx context.Context, arg runs.StartArgs) (db.Run, error) {
+	var run db.Run
+	err := s.InTx(ctx, func(q *db.Queries) error {
+		sessionID := arg.SessionID
+		if sessionID == nil {
+			created, err := q.CreateDirectSession(ctx, db.CreateDirectSessionParams{TeamID: arg.TeamID, UserID: arg.UserID})
+			if err != nil {
+				return err
+			}
+			sessionID = &created.ID
+		}
+
+		var err error
+		run, err = q.CreateRun(ctx, db.CreateRunParams{
+			ID: arg.ID, SessionID: *sessionID, UserID: &arg.UserID,
+			Input: arg.Input, AgentID: arg.AgentID, TeamID: arg.TeamID,
+		})
+		return err
+	})
+	return run, err
 }

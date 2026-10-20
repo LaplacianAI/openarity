@@ -14,37 +14,6 @@ import (
 // in a migration fails here, which points at the string in
 // internal/api/agents/agents.go that has to move with it.
 
-// The handler keeps no list of patterns; the database's is the list.
-func TestAnUnknownPatternIsRefusedByAgentsPatternKnown(t *testing.T) {
-	s := queryStore(t)
-	team := mustCreate(t, s, "platform")
-
-	p := agentParams(team.ID, "triage")
-	p.Pattern = "telepathy"
-	_, err := s.CreateAgent(t.Context(), p)
-	wantConstraint(t, err, "23514", "agents_pattern_known")
-
-	a := mustCreateAgent(t, s, team.ID, "triage")
-	_, err = s.UpdateAgent(t.Context(), db.UpdateAgentParams{
-		ID: a.ID, Name: a.Name, ModelName: a.ModelName, MaxTokens: a.MaxTokens, Pattern: "telepathy", MaxSteps: a.MaxSteps,
-	})
-	wantConstraint(t, err, "23514", "agents_pattern_known")
-}
-
-// Every pattern the SDK names is one the database accepts.
-func TestEveryPatternTheSDKNamesIsAccepted(t *testing.T) {
-	s := queryStore(t)
-	team := mustCreate(t, s, "platform")
-
-	for _, pattern := range []string{"react", "plan", "rewoo", "reflection", "code", "custom"} {
-		p := agentParams(team.ID, "agent-"+pattern)
-		p.Pattern = pattern
-		if _, err := s.CreateAgent(t.Context(), p); err != nil {
-			t.Errorf("pattern %s: %v", pattern, err)
-		}
-	}
-}
-
 // A grant naming a server or skill outside the agent's team — or one that
 // does not exist — is refused by the composite foreign keys the handler names.
 func TestAGrantOutsideTheTeamIsRefusedByTheConstraintsTheHandlerNames(t *testing.T) {

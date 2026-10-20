@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 )
 
 // wantConstraint is wantPGCode that also names the rule. Two CHECKs on one
@@ -239,6 +241,164 @@ func TestAnUnknownKindOrPatternIsRefused(t *testing.T) {
 	_, err = s.pool.Exec(t.Context(), `
 		INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
 		VALUES ($1, 'a', 'm', 1, 'ReAct', 1)`, team.ID)
+	wantConstraint(t, err, checkViolation, "agents_pattern_named")
+}
+
+// --- loops ---
+
+// The last migration before loops were named by the runner.
+const beforeLoopsByTheRunner = 20261016074250
+
+var oldLoops = []string{"react", "plan", "rewoo", "reflection", "code", "custom"}
+
+func insertAgentWithLoop(t *testing.T, s *Store, teamID uuid.UUID, name, loop string) error {
+	t.Helper()
+
+	_, err := s.pool.Exec(t.Context(), `
+		INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
+		VALUES ($1, $2, 'test/model', 1024, $3, 5)`, teamID, name, loop)
+	return err
+}
+
+// The database no longer knows which loops exist, only what a loop's name
+// looks like; a deployment's own loop is a name it has never seen.
+func TestALoopNameMustBeWellFormed(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+
+	refused := map[string]string{
+		"empty":                 "",
+		"punctuation":           "Plan!",
+		"upper case":            "ReAct",
+		"a leading digit":       "1plan",
+		"a leading hyphen":      "-plan",
+		"an underscore":         "critic_pass",
+		"a space":               "critic pass",
+		"sixty-five characters": "a" + strings.Repeat("b", 64),
+	}
+	for name, loop := range refused {
+		t.Run(name, func(t *testing.T) {
+			err := insertAgentWithLoop(t, s, team.ID, name, loop)
+			wantConstraint(t, err, checkViolation, "agents_pattern_named")
+		})
+	}
+
+	accepted := map[string]string{
+		"a deployment's own loop": "critic-pass",
+		"digits after the first":  "plan2",
+		"sixty-four characters":   "a" + strings.Repeat("b", 63),
+	}
+	for name, loop := range accepted {
+		t.Run(name, func(t *testing.T) {
+			if err := insertAgentWithLoop(t, s, team.ID, name, loop); err != nil {
+				t.Errorf("%q refused: %v", loop, err)
+			}
+		})
+	}
+}
+
+// The API lets a caller choose any loop the brain registers, and answers a
+// refusal from this rule with a 500. A loop registered in Go under a name the
+// rule refuses fails here instead of on the first agent that chooses it.
+func TestEveryLoopTheBrainRunsHasANameTheDatabaseAccepts(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+
+	for _, loop := range runtime.Loops() {
+		if err := insertAgentWithLoop(t, s, team.ID, loop, loop); err != nil {
+			t.Errorf("the loop %q: %v", loop, err)
+		}
+	}
+}
+
+func TestExistingAgentsSurviveTheChange(t *testing.T) {
+	s := migrationStore(t)
+	p, err := s.provider()
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	if _, err := p.UpTo(t.Context(), beforeLoopsByTheRunner); err != nil {
+		t.Fatalf("UpTo(%d): %v", beforeLoopsByTheRunner, err)
+	}
+	team := mustCreate(t, s, "platform")
+	for _, loop := range oldLoops {
+		if err := insertAgentWithLoop(t, s, team.ID, loop, loop); err != nil {
+			t.Fatalf("an agent on %q before the change: %v", loop, err)
+		}
+	}
+
+	if _, err := s.Migrate(t.Context()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	got := count(t, s, `SELECT count(*) FROM agents WHERE pattern = ANY($1)`, oldLoops)
+	if got != len(oldLoops) {
+		t.Errorf("%d agents on the old loops after the change, want %d", got, len(oldLoops))
+	}
+}
+
+// NOT VALID skips the scan that takes the table's exclusive lock; the second
+// migration is what makes the rule hold for rows already there.
+func TestTheLoopRuleIsValidated(t *testing.T) {
+	s := queryStore(t)
+
+	var validated bool
+	if err := s.pool.QueryRow(t.Context(), `
+		SELECT convalidated FROM pg_constraint
+		WHERE conrelid = 'agents'::regclass AND conname = 'agents_pattern_named'`).Scan(&validated); err != nil {
+		t.Fatalf("reading the constraint: %v", err)
+	}
+	if !validated {
+		t.Error("agents_pattern_named is still NOT VALID after every migration")
+	}
+}
+
+// Going back to the six names cannot keep an agent on a seventh, so the
+// rollback refuses rather than leave a row the old rule calls impossible.
+// validateLoopsVersion is 20261016182933_validate_agents_pattern_named.sql.
+const validateLoopsVersion = 20261016182933
+
+// downTo rolls the schema back until version is the newest migration applied.
+func downTo(t *testing.T, s *Store, version int64) {
+	t.Helper()
+
+	p, err := s.provider()
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	if _, err := p.DownTo(t.Context(), version); err != nil {
+		t.Fatalf("down to %d: %v", version, err)
+	}
+}
+
+func TestRollingBackRefusesWhileAnAgentUsesANewLoop(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	if err := insertAgentWithLoop(t, s, team.ID, "critic", "critic-pass"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Later migrations sit on top of these two; undo them first so the next
+	// rollback is the loops' own, whatever is added after.
+	downTo(t, s, validateLoopsVersion)
+	if err := s.Rollback(t.Context()); err != nil {
+		t.Fatalf("rolling back the validation: %v", err)
+	}
+	err := s.Rollback(t.Context())
+	if err == nil {
+		t.Fatal("the rollback dropped the rule with an agent on critic-pass")
+	}
+	if !strings.Contains(err.Error(), "agents_pattern_known") {
+		t.Errorf("rollback = %v, want the old rule named", err)
+	}
+
+	if _, err := s.pool.Exec(t.Context(), `DELETE FROM agents WHERE pattern = 'critic-pass'`); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := s.Rollback(t.Context()); err != nil {
+		t.Fatalf("rolling back with only the old loops: %v", err)
+	}
+	err = insertAgentWithLoop(t, s, team.ID, "critic", "critic-pass")
 	wantConstraint(t, err, checkViolation, "agents_pattern_known")
 }
 

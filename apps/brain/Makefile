@@ -108,8 +108,14 @@ lint:
 	golangci-lint run
 
 ## test: run tests with the race detector
+#
+# internal/store migrates a fresh schema for each of its ~400 tests, so the
+# package grows with every migration and passed go test's 10m default in
+# October 2026. TEST_TIMEOUT is the stopgap; migrating once per package is the fix.
+TEST_TIMEOUT ?= 20m
+
 test:
-	$(GO) test -race ./...
+	$(GO) test -race -timeout $(TEST_TIMEOUT) ./...
 
 ## cover: run tests and fail below the coverage threshold
 #
@@ -122,7 +128,7 @@ cover:
 	@test -n "$$BRAIN_TEST_POSTGRES_DSN" || printf '%s\n%s\n\n' \
 	  "warning: BRAIN_TEST_POSTGRES_DSN is unset — every database test will skip" \
 	  "         and the coverage below is not the real number. See CONTRIBUTING.md."
-	$(GO) test -race -covermode=atomic -coverpkg=./... -coverprofile=$(COVER_PROFILE) ./...
+	$(GO) test -race -timeout $(TEST_TIMEOUT) -covermode=atomic -coverpkg=./... -coverprofile=$(COVER_PROFILE) ./...
 	@$(GO) tool cover -func=$(COVER_PROFILE) | tail -1
 	@total=$$($(GO) tool cover -func=$(COVER_PROFILE) | tail -1 | grep -oE '[0-9]+\.[0-9]+'); \
 	  awk -v t="$$total" -v m="$(COVER_MIN)" 'BEGIN { \

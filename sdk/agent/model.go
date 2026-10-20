@@ -1,6 +1,10 @@
 package agent
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"net/http"
+)
 
 type ModelClient interface {
 	Complete(ctx context.Context, req Request) (Response, error)
@@ -54,6 +58,19 @@ type Endpoint struct {
 }
 
 type ClientFactory func(Endpoint) (ModelClient, error)
+
+type ModelError struct {
+	Status int
+	Code   string
+}
+
+func (e *ModelError) Error() string {
+	answered := fmt.Sprintf("the model endpoint answered %d %s", e.Status, http.StatusText(e.Status))
+	if e.Code == "" {
+		return answered
+	}
+	return answered + " (" + e.Code + ")"
+}
 
 func (u *Usage) Add(other Usage) {
 	u.InputTokens += other.InputTokens

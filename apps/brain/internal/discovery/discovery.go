@@ -44,11 +44,29 @@ type Secrets interface {
 type Discoverer struct {
 	secrets   Secrets
 	transport http.RoundTripper
+	calls     http.RoundTripper
 	timeout   time.Duration
 }
 
 func New(sec Secrets, p Policy, timeout time.Duration) *Discoverer {
-	return &Discoverer{secrets: sec, transport: newTransport(p), timeout: timeout}
+	return &Discoverer{
+		secrets:   sec,
+		transport: newTransport(p, headerTimeout),
+		calls:     newTransport(p, callHeaderTimeout),
+		timeout:   timeout,
+	}
+}
+
+func (d *Discoverer) Client(ctx context.Context, s db.McpServer) (*http.Client, error) {
+	if s.Url == nil {
+		return nil, ErrCommandServer
+	}
+
+	token, err := d.token(ctx, s.AuthSecretRef)
+	if err != nil {
+		return nil, err
+	}
+	return newClient(d.calls, token, time.Time{}), nil
 }
 
 func (d *Discoverer) Discover(ctx context.Context, s db.McpServer) ([]Tool, error) {

@@ -1,0 +1,105 @@
+# What a pull request's own events mean for staging.
+#
+# pull_request_target runs main's copy of this file with write access, which
+# is exactly why it checks out nothing. The values it uses are GitHub's: the
+# pull request's number, its head sha, and who added the label, each passed
+# through the environment rather than into the script.
+#
+#   labeled      "ok to deploy" approves the head commit as it is now: a
+#                commit status, staging/approved, on that sha. The deploy
+#                ships only a sha that carries one, so the approval is of
+#                commits somebody read, never of whatever the branch becomes.
+#   synchronize  new commits, or a reopened pull request that may have
+#   reopened     gained some while closed: the label comes off, and staging
+#                keeps running the commit that was approved
+#   closed       merged or not, the pull request's database is dropped and the
+#                slot returns to main if it held it
+#
+# The status is the gate, not the label. A pull request's own run of
+# staging-build.yml uses the pull request's copy of that file, so it can be
+# made to build anything; it cannot write a status, because a fork's token
+# is read-only, and this job runs main's copy.
+name: staging pull request
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [labeled, synchronize, reopened, closed]
+
+permissions: {}
+
+jobs:
+  approve:
+    if: github.event.action == 'labeled' && github.event.label.name == 'ok to deploy'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      pull-requests: write
+    steps:
+      # The event's sha is the head when the label was added. If a commit
+      # landed between that and this job, the label would approve a commit
+      # the event never saw, so nothing is approved and the label comes off.
+      # What no label can tell is which commit the reviewer read: check the
+      # head sha shown on the pull request before adding it.
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          BY: ${{ github.event.sender.login }}
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
+          if [ "$head" != "$SHA" ]; then
+            gh pr edit "$PR" --repo "$REPO" --remove-label "ok to deploy"
+            gh pr comment "$PR" --repo "$REPO" --body "The head moved to ${head:0:12} while **ok to deploy** was being added, so nothing was approved. Add the label again after reading it."
+            exit 0
+          fi
+          gh api -X POST "repos/$REPO/statuses/$SHA" \
+            -f state=success -f context=staging/approved \
+            -f description="Approved for staging by $BY"
+
+  unlabel:
+    if: (github.event.action == 'synchronize' || github.event.action == 'reopened') && contains(github.event.pull_request.labels.*.name, 'ok to deploy')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr edit "$PR" --repo "$REPO" --remove-label "ok to deploy"
+          gh pr comment "$PR" --repo "$REPO" --body "New commits arrived after **ok to deploy**, so the label is off. Staging keeps the commit that was reviewed; add the label again after reading the new ones to redeploy."
+
+  release:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging
+    steps:
+      # The same as staging-deploy.yml: an ephemeral tag:ci node, when the
+      # server is reached over Tailscale.
+      - if: vars.STAGING_TAILSCALE == 'true'
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - env:
+          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
+          TARGET: ${{ secrets.STAGING_SSH_TARGET }}
+          PORT: ${{ secrets.STAGING_SSH_PORT }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/staging
+          chmod 600 ~/.ssh/staging
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/staging -p "${PORT:-22}" \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=30 \
+            "$TARGET" release "$PR"

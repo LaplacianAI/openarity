@@ -15,9 +15,12 @@ import (
 )
 
 const (
-	dialTimeout   = 10 * time.Second
-	headerTimeout = 15 * time.Second
-	maxBodyBytes  = 8 << 20
+	dialTimeout       = 10 * time.Second
+	headerTimeout     = 15 * time.Second
+	callHeaderTimeout = 5 * time.Minute
+	idleTimeout       = 90 * time.Second
+	maxIdleConns      = 100
+	maxBodyBytes      = 8 << 20
 )
 
 var (
@@ -35,7 +38,7 @@ type Policy struct {
 	RootCAs *x509.CertPool
 }
 
-func newTransport(p Policy) http.RoundTripper {
+func newTransport(p Policy, headerTimeout time.Duration) http.RoundTripper {
 	dialer := &net.Dialer{
 		Timeout: dialTimeout,
 		Control: func(_, address string, _ syscall.RawConn) error {
@@ -53,6 +56,8 @@ func newTransport(p Policy) http.RoundTripper {
 		TLSHandshakeTimeout:   dialTimeout,
 		ResponseHeaderTimeout: headerTimeout,
 		ForceAttemptHTTP2:     true,
+		IdleConnTimeout:       idleTimeout,
+		MaxIdleConns:          maxIdleConns,
 	}
 }
 
@@ -67,7 +72,10 @@ func dialable(a netip.Addr, allow func(netip.Addr) bool) bool {
 }
 
 func newClient(base http.RoundTripper, token string, deadline time.Time) *http.Client {
-	var rt http.RoundTripper = bounded{deadline: deadline, next: capped{next: base}}
+	var rt http.RoundTripper = capped{next: base}
+	if !deadline.IsZero() {
+		rt = bounded{deadline: deadline, next: rt}
+	}
 	if token != "" {
 		rt = bearer{token: token, next: rt}
 	}
