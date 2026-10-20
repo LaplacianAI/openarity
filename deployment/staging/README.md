@@ -80,6 +80,30 @@ Reach it over a private network rather than the internet: Tailscale, a
 WireGuard tunnel, or `ssh -L`. authentik's issuer has to be the address
 browsers use, so choose that address before provisioning it.
 
+A browser signs in only from a secure context, so a dashboard opened at a
+private address over plain HTTP refuses to. Either reach it through
+`ssh -L 21120:<BIND_ADDR>:21120` and open `http://127.0.0.1:21120/ui`, or
+give it HTTPS on two names you own:
+
+1. In Cloudflare, add two **DNS only** (grey cloud) A records pointing at
+   `BIND_ADDR`, one for the dashboard and one for authentik. A tailnet address
+   is fine: the names resolve for anyone and connect only from inside.
+2. Create an API token with **Zone → DNS → Edit** on that zone only.
+3. In `deployment/.env`:
+
+   ```sh
+   HTTPS_HOST=<dashboard name>
+   HTTPS_AUTH_HOST=<authentik name>
+   CLOUDFLARE_API_TOKEN=<token>
+   ```
+
+4. Run `make start-docker PROVIDER=authentik` again. It starts Caddy, waits
+   for both certificates, checks that authentik now calls itself `https://`,
+   and moves the brain's issuer there.
+
+Signing in again is needed afterwards: the issuer changed, so tokens from the
+old one are refused.
+
 ### 2. Keep the checkout on main
 
 `deploy.sh` and the compose files are read from this checkout, never from a

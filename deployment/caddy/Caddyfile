@@ -1,0 +1,30 @@
+# HTTPS in front of the dashboard and the identity provider.
+#
+# Both, not only the dashboard. Signing in needs Web Crypto, which a browser
+# gives only to a secure context, so the dashboard must be HTTPS; and the
+# sign-in then calls the identity provider from that page, which a browser
+# blocks as mixed content if the provider is still plain HTTP.
+#
+# The names come from deployment/.env, so nothing about the machine is in
+# this file.
+{
+	# The names point at an address the internet cannot reach, so the
+	# certificate is proven through DNS rather than a connection.
+	acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+
+	# Only 443 is published. Without this Caddy would also bind 80 for a
+	# redirect nobody can reach.
+	auto_https disable_redirects
+}
+
+{$HTTPS_HOST} {
+	reverse_proxy brain:21120
+}
+
+# authentik builds its issuer and every URL in its discovery document from
+# the request, so it has to believe the request was HTTPS. Caddy sends
+# X-Forwarded-Proto, and authentik trusts it from private ranges by default,
+# which the compose network is.
+{$HTTPS_AUTH_HOST} {
+	reverse_proxy authentik-server:9000
+}
