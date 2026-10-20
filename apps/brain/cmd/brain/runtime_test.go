@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"net/url"
@@ -170,4 +171,99 @@ func TestServeAndAWorkerStartingTogetherDoNotFightOverDBOSsTables(t *testing.T) 
 	cancel()
 	stopped(t, "serve", served, &serveLog)
 	stopped(t, "worker", worked, &workerLog)
+}
+
+// Kubernetes runs `migrate up` in every brain pod's init container, so the
+// replicas of a rollout run it together. Ours serialise on goose's advisory
+// lock; DBOS's take none, and a duplicate-key error is not one DBOS retries.
+// The first deploy hides it, because goose's own work spaces the pods out.
+// A release where only DBOS has something to apply - its library upgraded,
+// our schema unchanged - does not: every pod is through goose in
+// milliseconds and they all CREATE at once. Dropping DBOS's schema after a
+// full migrate up is that release.
+func TestMigrateUpTwiceAtOnceDoesNotFightOverDBOSsTables(t *testing.T) {
+	const together = 4
+	dsn, _ := runtimeEnv(t)
+	mustMigrate(t)
+
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	_, err = conn.Exec(t.Context(), "DROP SCHEMA dbos CASCADE")
+	_ = conn.Close(context.WithoutCancel(t.Context()))
+	if err != nil {
+		t.Fatalf("drop DBOS's schema: %v", err)
+	}
+
+	type finished struct {
+		err     error
+		version int64
+	}
+	logs := make([]syncBuffer, together)
+	done := make(chan finished, together)
+	start := make(chan struct{})
+	for i := range together {
+		go func() {
+			<-start
+			if err := run(t.Context(), &logs[i], []string{"migrate", "up"}); err != nil {
+				done <- finished{err: err}
+				return
+			}
+			// Read the moment it returns, not after the others: an init
+			// container that exits early lets its pod start against a
+			// schema another pod is still migrating.
+			version, err := dbosVersion(t.Context(), dsn)
+			done <- finished{err: err, version: version}
+		}()
+	}
+	close(start)
+
+	seen := make([]int64, 0, together)
+	for range together {
+		f := <-done
+		if f.err != nil {
+			for i := range logs {
+				t.Logf("migrate up %d:\n%s", i, logs[i].String())
+			}
+			t.Fatalf("migrate up beside %d others = %v", together-1, f.err)
+		}
+		seen = append(seen, f.version)
+	}
+
+	final, err := dbosVersion(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("read DBOS's version: %v", err)
+	}
+	for i, v := range seen {
+		if v != final {
+			t.Errorf("migrate up %d returned with DBOS at version %d of %d", i, v, final)
+		}
+	}
+}
+
+// dbosVersion is how far DBOS's own migrations have got, or 0 before its
+// table exists. Returns an error rather than failing, for use off the test's
+// goroutine.
+func dbosVersion(ctx context.Context, dsn string) (int64, error) {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+
+	// Two queries, because Postgres resolves every table a statement names
+	// when it plans it: a guard in the same statement never gets to run.
+	var exists bool
+	if err := conn.QueryRow(ctx,
+		"SELECT to_regclass('dbos.dbos_migrations') IS NOT NULL").Scan(&exists); err != nil || !exists {
+		return 0, err
+	}
+
+	var version int64
+	err = conn.QueryRow(ctx, "SELECT version FROM dbos.dbos_migrations LIMIT 1").Scan(&version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	return version, err
 }

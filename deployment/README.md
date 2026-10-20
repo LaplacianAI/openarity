@@ -614,8 +614,9 @@ behaves. The compose stack is the part that has been exercised end to end.
 Three things in `deployment.yaml` are decisions rather than defaults:
 
 - **Migrations run as an init container in every pod.** `brain migrate up`
-  takes a Postgres advisory lock, so replicas starting together serialise
-  instead of racing. A pod therefore cannot serve traffic against a schema it
+  takes a Postgres advisory lock for its own migrations and another for the
+  durable runtime's, whose library takes none, so replicas starting together
+  serialise instead of racing. A pod therefore cannot serve traffic against a schema it
   has not applied.
 - **Liveness never touches the database.** If it did, a Postgres blip would
   restart every pod simultaneously and turn a recoverable outage into a crash
@@ -637,11 +638,16 @@ The brain's side is the same three settings as above, in `configmap.yaml`.
 
 ## What is not here yet
 
-An Ingress, TLS, a HorizontalPodAutoscaler, a PodDisruptionBudget, and a
-NetworkPolicy. All of them depend on the cluster they are going into — an
-Ingress written against nginx is wrong on Gateway API, and a NetworkPolicy is
-wrong wherever the CNI does not enforce it. They belong in whatever overlay or
-chart wraps these manifests.
+A HorizontalPodAutoscaler, a PodDisruptionBudget, a NetworkPolicy, and an
+Ingress you can apply as-is. All of them depend on the cluster they are going
+into — an Ingress written against nginx is wrong on Gateway API, and a
+NetworkPolicy is wrong wherever the CNI does not enforce it. They belong in
+whatever overlay or chart wraps these manifests.
+
+The Ingress has an example, `k8s/examples/ingress-nginx.yaml`, for
+ingress-nginx and cert-manager. `kubectl apply -f deployment/k8s/` does not
+pick it up. Something like it is required rather than optional: the dashboard
+signs in only over HTTPS, or at 127.0.0.1.
 
 ## Images
 

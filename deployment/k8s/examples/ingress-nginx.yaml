@@ -1,0 +1,46 @@
+# The API and dashboard over HTTPS, for a cluster running ingress-nginx and
+# cert-manager. An example rather than part of the set: it lives in a
+# directory `kubectl apply -f deployment/k8s/` does not descend into, because
+# an Ingress is written against one controller and is wrong on any other.
+# On Gateway API this is an HTTPRoute instead; the rest carries over.
+#
+# HTTPS is not optional for the dashboard. Signing in needs Web Crypto, which
+# a browser gives only to a secure context, so a dashboard served over plain
+# HTTP on any name but 127.0.0.1 says it cannot sign you in. The identity
+# provider must be HTTPS too, since the sign-in calls it from the page; the
+# issuer in configmap.yaml is the URL to check.
+#
+# Replace the host, and name an issuer cert-manager has. The run events
+# stream needs nothing extra here: it sends X-Accel-Buffering: no, which
+# ingress-nginx honours, and a keepalive every 15 seconds, inside the
+# controller's 60-second read timeout.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: brain-api
+  labels:
+    app.kubernetes.io/name: brain
+    app.kubernetes.io/part-of: openarity
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - openarity.example.com
+      secretName: brain-api-tls
+  rules:
+    - host: openarity.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: brain-api
+                port:
+                  name: api
+# The webhook Service is left out on purpose. It receives callbacks from Slack
+# and the like, so it is the one that has to face the internet, and whether
+# the API does too is a separate decision. Give it an Ingress of its own, on
+# its own host, when a channel needs it.
