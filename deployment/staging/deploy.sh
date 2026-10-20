@@ -27,6 +27,11 @@
 # a digest cannot.
 #
 # It can also be run by hand on the server, with the same words as arguments.
+#
+# Over SSH, the caller is a CI job, and a public repository publishes its
+# log to anyone. So what compose, curl and the brain print - addresses,
+# container names, migration output - goes to deploy.log beside the state,
+# and the caller is told only the outcome. By hand, everything is shown.
 
 set -euo pipefail
 
@@ -34,11 +39,29 @@ REPO_DIR=${OPENARITY_STAGING_REPO:-$HOME/openarity}
 STATE_DIR=${OPENARITY_STAGING_STATE:-$HOME/.openarity-staging}
 DEPLOYMENT=$REPO_DIR/deployment
 
+# Until the output is redirected, 3 and 4 are simply stdout and stderr.
+exec 3>&1 4>&2
+quiet=0
+
 say() { printf '%s\n' "$*"; }
+# The outcome, which the caller sees as well as the log.
+tell() {
+	say "$*"
+	if [ "$quiet" = 1 ]; then say "$*" >&3; fi
+}
 refuse() {
 	say "refused: $*" >&2
+	if [ "$quiet" = 1 ]; then say "refused: $*; deploy.log on the server has the output" >&4; fi
 	exit 2
 }
+# Anything set -e stops on, which refuse did not already explain.
+on_exit() {
+	local code=$?
+	if [ "$quiet" = 1 ] && [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then
+		say "failed with exit $code; deploy.log on the server has the output" >&4
+	fi
+}
+trap on_exit EXIT
 
 if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
 	read -r -a words <<<"$SSH_ORIGINAL_COMMAND"
@@ -112,7 +135,7 @@ switch() {
 
 	printf '%s %s %s\n' "$slot" "$tag" "$digest" >"$STATE_DIR/current"
 	docker image prune -f >/dev/null
-	say "deployed $slot $digest on database $database"
+	tell "deployed $slot $digest on database $database"
 }
 
 current_slot() {
@@ -126,6 +149,16 @@ mkdir -p "$STATE_DIR"
 exec 9>"$STATE_DIR/lock"
 flock -w 900 9 || refuse "another deploy held the lock for fifteen minutes"
 
+if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+	log=$STATE_DIR/deploy.log
+	if [ -f "$log" ] && [ "$(wc -c <"$log")" -gt 1048576 ]; then
+		mv "$log" "$log.1"
+	fi
+	exec >>"$log" 2>&1
+	quiet=1
+	say "== $(date -u +%FT%TZ) $SSH_ORIGINAL_COMMAND"
+fi
+
 case "${words[0]}" in
 deploy)
 	[ "${#words[@]}" -eq 4 ] || refuse "deploy takes a slot, a tag and a digest"
@@ -137,7 +170,7 @@ deploy)
 		printf '%s %s\n' "$tag" "$digest" >"$STATE_DIR/main"
 		held=$(current_slot)
 		if [ -n "$held" ] && [ "$held" != main ]; then
-			say "recorded main $digest; $held holds the slot and keeps it until it is released"
+			tell "recorded main $digest; $held holds the slot and keeps it until it is released"
 			exit 0
 		fi
 		switch main "$tag" "$digest"
@@ -160,21 +193,21 @@ release)
 		else
 			compose stop brain worker
 			rm -f "$STATE_DIR/current"
-			say "stopped $slot; no main deploy is recorded to return to"
+			tell "stopped $slot; no main deploy is recorded to return to"
 		fi
 	fi
 	database=$(database_for "$slot")
 	psql_postgres "DROP DATABASE IF EXISTS $database WITH (FORCE)" >/dev/null
-	say "released $slot and dropped $database"
+	tell "released $slot and dropped $database"
 	;;
 status)
 	if [ -f "$STATE_DIR/current" ]; then
-		say "holding the slot: $(cat "$STATE_DIR/current")"
+		tell "holding the slot: $(cat "$STATE_DIR/current")"
 	else
-		say "nothing deployed"
+		tell "nothing deployed"
 	fi
 	if [ -f "$STATE_DIR/main" ]; then
-		say "newest main: $(cat "$STATE_DIR/main")"
+		tell "newest main: $(cat "$STATE_DIR/main")"
 	fi
 	;;
 *) refuse "unknown command ${words[0]}" ;;
