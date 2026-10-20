@@ -19,7 +19,9 @@
 #
 # With HTTPS_HOST, HTTPS_AUTH_HOST and CLOUDFLARE_API_TOKEN in .env, the
 # dashboard and authentik are also served over HTTPS on those names; see
-# docker-compose.https.yml.
+# docker-compose.https.yml. With CLOUDFLARE_TUNNEL_TOKEN and HOOKS_HOST, the
+# webhook listener alone is reachable from the internet; see
+# docker-compose.tunnel.yml.
 #
 set -euo pipefail
 
@@ -527,6 +529,26 @@ proxied (orange cloud) or does not point at $REACH_ADDR:
 	note "$HTTPS_HOST and $HTTPS_AUTH_HOST answer over HTTPS"
 }
 
+# The tunnel is configured in Cloudflare, not here, so this can only ask the
+# public name and say what came back. Not fatal: the stack is up either way,
+# and the usual cause is a public hostname not yet pointed at brain:21121.
+check_tunnel() {
+	local url="https://$HOOKS_HOST/healthz" code="" deadline
+	deadline=$(( $(date +%s) + 90 ))
+	while [ "$(date +%s)" -lt "$deadline" ]; do
+		code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null || true)
+		[ "$code" = 200 ] && break
+		sleep 3
+	done
+	if [ "$code" = 200 ]; then
+		note "$HOOKS_HOST reaches the webhook listener"
+	else
+		note "$url answered ${code:-nothing}, not 200. In Cloudflare, the tunnel's public hostname
+  should be $HOOKS_HOST → HTTP brain:21121. cloudflared's log:
+  docker compose $COMPOSE_FILES logs cloudflared"
+	fi
+}
+
 # --------------------------------------------------------------------- start
 
 # At $BIND_ADDR, not loopback. BIND_ADDR moves every published port, so on a
@@ -639,7 +661,15 @@ Run with PROVIDER=authentik, or take HTTPS_HOST out of deployment/.env."
 	HTTPS_OVERLAY="-f docker-compose.https.yml"
 fi
 
-COMPOSE_FILES="$COMPOSE_BASE $PROVIDER_OVERLAY $GATEWAY_OVERLAY $IMAGE_OVERLAY $BAO_OVERLAY $OBJECTS_OVERLAY $HTTPS_OVERLAY"
+HOOKS_HOST=""
+TUNNEL_OVERLAY=""
+if env_is_set CLOUDFLARE_TUNNEL_TOKEN; then
+	HOOKS_HOST=$(env_value HOOKS_HOST || true)
+	[ -n "$HOOKS_HOST" ] || die "CLOUDFLARE_TUNNEL_TOKEN is set without HOOKS_HOST, the public name the tunnel serves."
+	TUNNEL_OVERLAY="-f docker-compose.tunnel.yml"
+fi
+
+COMPOSE_FILES="$COMPOSE_BASE $PROVIDER_OVERLAY $GATEWAY_OVERLAY $IMAGE_OVERLAY $BAO_OVERLAY $OBJECTS_OVERLAY $HTTPS_OVERLAY $TUNNEL_OVERLAY"
 COMPOSE="docker compose $COMPOSE_FILES"
 # The same `env` prefix the Makefile's $(BOOTSTRAP) carries, and for the same
 # reason: the OpenBao overlay guards both halves of the AppRole with `:?`, and
@@ -685,11 +715,13 @@ if [ -n "$HTTPS_HOST" ] &&
 	[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$DASHBOARD_URL/readyz")" != 200 ]; then
 	note "the brain is up, but $DASHBOARD_URL/readyz did not answer 200 — see: docker compose $COMPOSE_FILES logs caddy"
 fi
+[ -z "$HOOKS_HOST" ] || check_tunnel
 
 say ""
 say "${bold}Openarity is running.${plain}"
 say ""
 say "  dashboard    $DASHBOARD_URL/ui"
+[ -z "$HOOKS_HOST" ] || say "  webhooks     https://$HOOKS_HOST/hooks/<provider>/<channel id>"
 if [ "$PROVIDER" = dex ]; then
 	say "  sign in as   dev@openarity.local"
 	if [ -n "${DEX_PASSPHRASE:-}" ]; then

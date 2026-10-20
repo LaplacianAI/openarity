@@ -104,6 +104,31 @@ give it HTTPS on two names you own:
 Signing in again is needed afterwards: the issuer changed, so tokens from the
 old one are refused.
 
+### Webhooks from the internet
+
+Providers have to reach the webhook listener, which the steps above keep on
+the private network along with everything else. A Cloudflare Tunnel exposes
+that listener alone, with no port opened on the server:
+
+1. In Cloudflare, **Zero Trust → Networks → Tunnels → Create a tunnel**,
+   type cloudflared. Copy its token.
+2. Give it one public hostname, one level under the zone (the tunnel's name
+   is proxied, and the free certificate covers one level): service **HTTP**,
+   URL **`brain:21121`**. Nothing else — the container can reach everything
+   on the compose network.
+3. In `deployment/.env`:
+
+   ```sh
+   CLOUDFLARE_TUNNEL_TOKEN=<token>
+   HOOKS_HOST=<that hostname>
+   ```
+
+4. Run `make start-docker` again. It starts cloudflared and checks that
+   `https://<HOOKS_HOST>/healthz` answers.
+
+A provider then posts to `https://<HOOKS_HOST>/hooks/<provider>/<channel id>`.
+Every request still has to carry a valid signature for its channel.
+
 ### 2. Keep the checkout on main
 
 `deploy.sh` and the compose files are read from this checkout, never from a
