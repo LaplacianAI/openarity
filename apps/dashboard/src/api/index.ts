@@ -15,6 +15,8 @@ import type {
   Attachment,
   AuthConfig,
   Channel,
+  CreateChannelRequest,
+  CreatedChannel,
   MCPServer,
   MCPServerRequest,
   MCPTool,
@@ -90,6 +92,13 @@ export function listUsers(cursor?: string | null): Promise<Page<User>> {
 
 export function listChannels(teamId: string, cursor?: string | null): Promise<Page<Channel>> {
   return request<Page<Channel>>(`/teams/${teamId}/channels${pageQuery(cursor)}`);
+}
+
+export function createChannel(
+  teamId: string,
+  channel: CreateChannelRequest,
+): Promise<CreatedChannel> {
+  return request<CreatedChannel>(`/teams/${teamId}/channels`, { method: "POST", body: channel });
 }
 
 export function deleteChannel(teamId: string, channelId: string): Promise<void> {
