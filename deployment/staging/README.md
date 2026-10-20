@@ -42,6 +42,11 @@ request can change the workflow files themselves.
   else, including a shell.
 - **The image is pinned by digest**, so a tag moved after CI read it changes
   nothing.
+- **The server's output stays on the server.** Actions logs on a public
+  repository are public. Over SSH, `deploy.sh` writes what compose, curl and
+  the brain print to `~/.openarity-staging/deploy.log` and answers CI with one
+  line: what was deployed, or why not. Secrets are masked in logs, but an
+  address printed by a tool is not a secret, so nothing would mask it.
 - **Assume a deployed pull request is hostile.** Once it runs, its code can read
   everything the brain's environment holds. Give staging its own credentials:
   a model key with a spending cap, its own authentik, and nothing that reaches
@@ -173,5 +178,7 @@ catches it: `ls` must be refused. `tailscale set --ssh=false` turns it off.
 - Label a pull request `ok to deploy`. It is built, deployed, and the pull
   request says on which database.
 - `ssh -i staging-ci openarity@<server> status` says what holds staging.
+- A failed deploy says only that it failed. Why is in
+  `~/.openarity-staging/deploy.log` on the server.
 - Changing a compose file or `deploy.sh` in a pull request does not change
   what that pull request is deployed with: the server uses main's.
