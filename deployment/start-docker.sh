@@ -72,9 +72,15 @@ env_set() {
 	if grep -q "^$key=" .env; then
 		# A temporary file rather than sed -i: the in-place flag takes an
 		# argument on BSD sed and does not on GNU, and this runs on both.
-		awk -v k="$key" -v v="$value" \
-			'index($0, k "=") == 1 { print k "=" v; next } { print }' \
-			.env > .env.tmp
+		# umask 077, because mv gives .env the temporary file's mode, and
+		# under the usual 022 that is 644: every secret in it readable by
+		# every user on the machine.
+		(
+			umask 077
+			awk -v k="$key" -v v="$value" \
+				'index($0, k "=") == 1 { print k "=" v; next } { print }' \
+				.env > .env.tmp
+		)
 		mv .env.tmp .env
 	else
 		printf '%s=%s\n' "$key" "$value" >> .env
@@ -86,9 +92,11 @@ secret() { openssl rand -hex 24; }
 ensure_env_file() {
 	if [ ! -f .env ]; then
 		cp .env.example .env
-		chmod 600 .env
 		note "wrote deployment/.env from the example"
 	fi
+	# Every run, not only the first: env_set used to leave the file 644, and
+	# this puts back a .env it already widened.
+	chmod 600 .env
 
 	# Generated for both providers even when only one is being started, so
 	# switching later is a re-run rather than another round of setup.
