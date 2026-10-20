@@ -242,13 +242,28 @@ Look at it with:  docker logs --tail 30 openarity-openbao-1"
 # server, with nothing in the message about permissions.
 #
 # The key stays this user's. Its group may read it, and the overlay adds the
-# container to that group by number (OPENBAO_KEY_GID), so nothing else on the
-# host can read it — giving it to uid 100 would give it to whichever account
-# the host happens to have there. Run every time, so a key made before this
-# existed is fixed too.
+# container to that group by number (OPENBAO_KEY_GID). That is only private
+# if the group is: Ubuntu gives every user a group of their own, but a
+# shared primary group — macOS's staff, or a site's users — would hand the
+# key to everyone in it, so this checks rather than assumes, and refuses.
+# Giving the key to uid 100 instead would give it to whichever account the
+# host has there. Run every time, so a key made before this is fixed too.
 key_readable_by_openbao() {
+	[ "$(uname -s)" = Linux ] || return 0
+
+	local gid user group sharing
+	gid=$(id -g)
+	user=$(id -un)
+	group=$(getent group "$gid") || die "Could not look up group $gid."
+	sharing=$(getent passwd | awk -F: -v g="$gid" -v me="$user" '$4 == g && $1 != me' | wc -l)
+	if [ "${group%%:*}" != "$user" ] || [ -n "$(printf '%s' "$group" | cut -d: -f4)" ] || [ "$sharing" -ne 0 ]; then
+		die "OpenBao reads its unseal key through your primary group, ${group%%:*}, and it is not yours alone.
+Run this as a user with a group of its own, as useradd gives by default."
+	fi
+
+	chmod 750 openbao/keys
 	chmod 640 openbao/keys/unseal.key
-	env_set OPENBAO_KEY_GID "$(id -g)"
+	env_set OPENBAO_KEY_GID "$gid"
 }
 
 ensure_openbao() {
