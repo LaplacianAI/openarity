@@ -11,6 +11,7 @@ type channel struct {
 	TeamID   uuid.UUID `json:"team_id"`
 	Provider string    `json:"provider"`
 	Name     string    `json:"name"`
+	HookURL  string    `json:"hook_url,omitempty"`
 }
 
 type createRequest struct {
