@@ -51,6 +51,29 @@ func checkURL(field, v string, schemes ...string) error {
 	return nil
 }
 
+// checkWebhookPublicURL allows the setting to be empty, which means the brain
+// has no public address and hook URLs are left out. When set, it is handed to
+// every client that lists a channel, so it may carry nothing private, and it
+// is a base: the hook's path is appended to it.
+func checkWebhookPublicURL(v string, env Environment) error {
+	if v == "" {
+		return nil
+	}
+	if err := checkURL("WEBHOOK_PUBLIC_URL", v, httpSchemes...); err != nil {
+		return err
+	}
+	u, _ := url.Parse(v) // checkURL has just parsed it
+	switch {
+	case u.User != nil:
+		return errors.New("WEBHOOK_PUBLIC_URL holds a user or password, and every client is given it — take them out")
+	case u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
+		return errors.New("WEBHOOK_PUBLIC_URL is a base address, so it cannot have a query or a fragment")
+	case u.Scheme != "https" && env != EnvironmentDevelopment:
+		return fmt.Errorf("WEBHOOK_PUBLIC_URL must be https outside development, got ENVIRONMENT=%s", env)
+	}
+	return nil
+}
+
 var hostPattern = regexp.MustCompile(`(?i)^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
 func checkHosts(field string, hosts []string) error {
@@ -130,6 +153,10 @@ func (c *Config) Validate() error {
 	}
 
 	if err := checkHostPort("WEBHOOK_BIND", c.WebhookBind); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := checkWebhookPublicURL(c.WebhookPublicURL, c.Environment); err != nil {
 		errs = append(errs, err)
 	}
 
