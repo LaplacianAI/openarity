@@ -88,7 +88,7 @@ function Channels() {
                   <td className="py-2 pl-3 text-sm font-medium">{c.name}</td>
                   <td className="py-2 text-xs text-muted-foreground">{c.provider}</td>
                   <td className="py-2 pr-3 text-right">
-                    <Mono>{c.id}</Mono>
+                    <Mono className="break-all">{c.hook_url ?? c.id}</Mono>
                   </td>
                 </tr>
               ))}
@@ -150,6 +150,15 @@ export function channelRequest(d: ChannelDraft): CreateChannelRequest | string {
 /** Where the provider sends this channel's webhooks, on the brain's webhook listener. */
 export function hookPath(c: { provider: string; id: string }): string {
   return `/hooks/${c.provider}/${c.id}`;
+}
+
+/**
+ * The address to give the provider: the brain's own full URL when it knows
+ * its public address, else the path alone. Never a URL built here from the
+ * page's origin: the dashboard and the webhook listener are different hosts.
+ */
+export function hookAddress(c: { provider: string; id: string; hook_url?: string }): string {
+  return c.hook_url ?? hookPath(c);
 }
 
 function CreateDialog({
@@ -309,13 +318,17 @@ function CreatedDialog({
             <DialogHeader>
               <DialogTitle>Connected {channel.name}</DialogTitle>
               <DialogDescription>
-                Point the provider's webhook at this path on the brain's webhook listener.
+                {channel.hook_url
+                  ? "Point the provider's webhook at this URL."
+                  : "Point the provider's webhook at this path on the brain's webhook listener."}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 text-sm">
               <div className="space-y-1">
-                <p className="text-xs font-medium">Webhook path</p>
-                <Mono>POST {hookPath(channel)}</Mono>
+                <p className="text-xs font-medium">
+                  {channel.hook_url ? "Webhook URL" : "Webhook path"}
+                </p>
+                <Mono className="break-all">POST {hookAddress(channel)}</Mono>
               </div>
               {channel.signing_secret ? (
                 <div className="space-y-1">

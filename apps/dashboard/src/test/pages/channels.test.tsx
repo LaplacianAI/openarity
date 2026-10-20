@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setToken } from "@/api/token";
 import { brain, pageOf, show, TEAM, team } from "@/test/brain";
 
-const { Route, channelRequest, hookPath } = await import("@/routes/ui.channels.index");
+const { Route, channelRequest, hookAddress, hookPath } = await import("@/routes/ui.channels.index");
 const Channels = await pageOf(Route);
 
 afterEach(() => {
@@ -17,6 +17,8 @@ afterEach(() => {
 const support = { id: "c1", team_id: TEAM, provider: "custom", name: "support" };
 const GENERATED = "oawh_generated-in-the-brain";
 const PASTED = " pasted secret ";
+// Not what the page would build from its own origin: the listener is another host.
+const HOOK_URL = "https://hooks.example.com/hooks/custom/c1";
 
 function posted(seen: { method: string; body: BodyInit | null | undefined }[]) {
   const post = seen.find((s) => s.method === "POST");
@@ -58,6 +60,11 @@ describe("the create form", () => {
 
   it("names the path the provider posts to", () => {
     expect(hookPath(support)).toBe("/hooks/custom/c1");
+  });
+
+  it("gives the brain's own URL when it has one, and the path when it does not", () => {
+    expect(hookAddress({ ...support, hook_url: HOOK_URL })).toBe(HOOK_URL);
+    expect(hookAddress(support)).toBe("/hooks/custom/c1");
   });
 });
 
@@ -154,4 +161,37 @@ it("forgets a typed secret when the form is cancelled", async () => {
   await userEvent.click(await screen.findByRole("button", { name: /new channel/i }));
   expect(screen.queryByLabelText(/^signing secret$/i)).not.toBeInTheDocument();
   expect(screen.getByLabelText(/gave me a signing secret/i)).not.toBeChecked();
+});
+
+it("hands over the full URL when the brain knows its public address", async () => {
+  brain({
+    ...team(["channel:write"]),
+    "GET /teams/{id}/channels": { body: { items: [] } },
+    "POST /teams/{id}/channels": {
+      status: 201,
+      body: { ...support, hook_url: HOOK_URL, signing_secret: GENERATED },
+    },
+  });
+  show(Channels);
+
+  await userEvent.click(await screen.findByRole("button", { name: /new channel/i }));
+  await userEvent.type(screen.getByLabelText(/^name$/i), "support");
+  await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+
+  expect(await screen.findByText(`POST ${HOOK_URL}`)).toBeInTheDocument();
+  expect(screen.getByText("Webhook URL")).toBeInTheDocument();
+  expect(screen.queryByText("Webhook path")).not.toBeInTheDocument();
+});
+
+it("lists each channel's URL, so it can be found again after the dialog closes", async () => {
+  const other = { id: "c2", team_id: TEAM, provider: "custom", name: "other" };
+  brain({
+    ...team([]),
+    "GET /teams/{id}/channels": { body: { items: [{ ...support, hook_url: HOOK_URL }, other] } },
+  });
+  show(Channels);
+
+  expect(await screen.findByText(HOOK_URL)).toBeInTheDocument();
+  // One the brain gave no URL for keeps its id, rather than a guess.
+  expect(screen.getByText("c2")).toBeInTheDocument();
 });

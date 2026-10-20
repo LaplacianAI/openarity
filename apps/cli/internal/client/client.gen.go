@@ -431,6 +431,16 @@ type AuthConfigEnvironment string
 
 // Channel defines model for Channel.
 type Channel struct {
+	// HookURL The full address to give the provider: the brain's public
+	// webhook address, then `/hooks/<provider>/<id>` and the
+	// provider's route. Absent when the brain has no
+	// `WEBHOOK_PUBLIC_URL`, or no adapter for `provider` — never a
+	// guess at an address the provider might not reach.
+	//
+	//
+	// Examples: https://hooks.example.com/hooks/custom/0192f5c4-7d1e-7c3a-9b2e-4f6a8d0c1e23
+	HookURL *string `json:"hook_url,omitempty" yaml:"hook_url,omitempty"`
+
 	// ID The routing key in this channel's hook URL. Not a secret — what
 	// authenticates a webhook is its signature, never knowledge of the
 	// URL.
@@ -499,6 +509,16 @@ type CreateTeamRequest struct {
 
 // CreatedChannel defines model for CreatedChannel.
 type CreatedChannel struct {
+	// HookURL The full address to give the provider: the brain's public
+	// webhook address, then `/hooks/<provider>/<id>` and the
+	// provider's route. Absent when the brain has no
+	// `WEBHOOK_PUBLIC_URL`, or no adapter for `provider` — never a
+	// guess at an address the provider might not reach.
+	//
+	//
+	// Examples: https://hooks.example.com/hooks/custom/0192f5c4-7d1e-7c3a-9b2e-4f6a8d0c1e23
+	HookURL *string `json:"hook_url,omitempty" yaml:"hook_url,omitempty"`
+
 	// ID The routing key in this channel's hook URL. Not a secret — what
 	// authenticates a webhook is its signature, never knowledge of the
 	// URL.

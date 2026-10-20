@@ -667,6 +667,11 @@ if env_is_set CLOUDFLARE_TUNNEL_TOKEN; then
 	HOOKS_HOST=$(env_value HOOKS_HOST || true)
 	[ -n "$HOOKS_HOST" ] || die "CLOUDFLARE_TUNNEL_TOKEN is set without HOOKS_HOST, the public name the tunnel serves."
 	TUNNEL_OVERLAY="-f docker-compose.tunnel.yml"
+	# Into .env rather than the overlay, so staging/deploy.sh, which recreates
+	# the brain without this overlay, still hands every channel its full URL.
+	# Every run: the tunnel decides the public name, so a changed HOOKS_HOST
+	# must not leave the old one behind.
+	env_set OPENARITY_WEBHOOK_PUBLIC_URL "https://$HOOKS_HOST"
 fi
 
 COMPOSE_FILES="$COMPOSE_BASE $PROVIDER_OVERLAY $GATEWAY_OVERLAY $IMAGE_OVERLAY $BAO_OVERLAY $OBJECTS_OVERLAY $HTTPS_OVERLAY $TUNNEL_OVERLAY"

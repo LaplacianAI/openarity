@@ -11,9 +11,10 @@ import (
 
 type Config struct {
 	/* Application Configuration */
-	Environment Environment `env:"ENVIRONMENT" envDefault:"development"`
-	APIBind     string      `env:"API_BIND" envDefault:"127.0.0.1:21120"`
-	WebhookBind string      `env:"WEBHOOK_BIND" envDefault:"127.0.0.1:21121"`
+	Environment      Environment `env:"ENVIRONMENT" envDefault:"development"`
+	APIBind          string      `env:"API_BIND" envDefault:"127.0.0.1:21120"`
+	WebhookBind      string      `env:"WEBHOOK_BIND" envDefault:"127.0.0.1:21121"`
+	WebhookPublicURL string      `env:"WEBHOOK_PUBLIC_URL" envDefault:""`
 
 	/* Logging Configuration */
 	LogLevel slog.Level `env:"LOG_LEVEL" envDefault:"info"`
@@ -79,7 +80,7 @@ type Config struct {
 
 func (c *Config) String() string {
 	return fmt.Sprintf(
-		"Config{Environment:%s LogLevel:%s APIBind:%s WebhookBind:%s "+
+		"Config{Environment:%s LogLevel:%s APIBind:%s WebhookBind:%s WebhookPublicURL:%s "+
 			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s "+
 			"SecretsBackend:%s SecretsAddr:%s "+
 			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
@@ -89,6 +90,7 @@ func (c *Config) String() string {
 		c.LogLevel,
 		c.APIBind,
 		c.WebhookBind,
+		redactURL(c.WebhookPublicURL),
 		redactURL(c.PostgresDSN),
 		redactURL(c.FalkorDBURL),
 		redactURL(c.RedisURL),

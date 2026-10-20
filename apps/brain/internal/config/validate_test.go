@@ -65,6 +65,60 @@ func TestValidateRejectsBadBinds(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsAWebhookPublicURLItCannotHandOut(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct{ url, env, said string }{
+		"a user and password": {"https://user:pw@hooks.example.com", "development", "user or password"},
+		"a user alone":        {"https://user@hooks.example.com", "development", "user or password"},
+		"a query":             {"https://hooks.example.com?x=1", "development", "query or a fragment"},
+		"a bare question":     {"https://hooks.example.com?", "development", "query or a fragment"},
+		"a fragment":          {"https://hooks.example.com#x", "development", "query or a fragment"},
+		"http in staging":     {"http://hooks.example.com", "staging", "must be https"},
+		"http in production":  {"http://hooks.example.com", "production", "must be https"},
+		"no host":             {"https://", "development", "must have a host"},
+		"another scheme":      {"ftp://hooks.example.com", "development", "schemes"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := checkWebhookPublicURL(tc.url, Environment(tc.env))
+			if err == nil || !strings.Contains(err.Error(), tc.said) {
+				t.Errorf("checkWebhookPublicURL(%q, %s) = %v, want an error saying %q", tc.url, tc.env, err, tc.said)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsAWebhookPublicURLItCanHandOut(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct{ url, env string }{
+		"unset":               {"", "production"},
+		"https":               {"https://hooks.example.com", "production"},
+		"behind a path":       {"https://example.com/openarity/", "staging"},
+		"http in development": {"http://127.0.0.1:21121", "development"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := checkWebhookPublicURL(tc.url, Environment(tc.env)); err != nil {
+				t.Errorf("checkWebhookPublicURL(%q, %s) = %v", tc.url, tc.env, err)
+			}
+		})
+	}
+}
+
+// Wired into Validate, not only written: a check nobody calls passes its own
+// tests.
+func TestValidateChecksTheWebhookPublicURL(t *testing.T) {
+	t.Parallel()
+
+	if _, err := load(map[string]string{"OPENARITY_WEBHOOK_PUBLIC_URL": "https://u:p@hooks.example.com"}); err == nil {
+		t.Error("load accepted a WEBHOOK_PUBLIC_URL with a password in it")
+	}
+}
+
 func TestCheckHostPort(t *testing.T) {
 	t.Parallel()
 

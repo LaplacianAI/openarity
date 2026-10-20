@@ -192,9 +192,18 @@ func call(
 	t *testing.T, s Store, sec Secrets, a *fakeAuthz, u *auth.User, method, path, body string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
+	return callWith(t, registry(t), "", s, sec, a, u, method, path, body)
+}
+
+// callWith is call with the providers and the public webhook address chosen.
+func callWith(
+	t *testing.T, p Providers, hookBase string,
+	s Store, sec Secrets, a *fakeAuthz, u *auth.User, method, path, body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), s, sec, registry(t)).
+	New(discardLogger(), s, sec, p, hookBase).
 		Register(mux, api.NewGuard(channelRoutes(t), a, discardLogger()))
 
 	var reader io.Reader
@@ -712,5 +721,85 @@ func TestNoResponseEverRepeatsAStoredSecret(t *testing.T) {
 		if strings.Contains(rec.Body.String(), secret) {
 			t.Errorf("the %s response contains the signing secret: %s", what, rec.Body)
 		}
+	}
+}
+
+// A provider whose webhooks arrive under a suffix, with a second route after
+// the first: the URL handed out is the first route's.
+type suffixed struct{ gateway.Provider }
+
+func (suffixed) Routes() []gateway.Route {
+	return []gateway.Route{
+		{Method: http.MethodPost, Suffix: "/events"},
+		{Method: http.MethodPost, Suffix: "/interactions"},
+	}
+}
+
+type providers map[string]gateway.Provider
+
+func (p providers) Get(name string) (gateway.Provider, bool) {
+	v, ok := p[name]
+	return v, ok
+}
+
+func TestAChannelCarriesTheURLItsProviderPostsTo(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	plain, behind, gone := uuid.New(), uuid.New(), uuid.New()
+	s := &fakeStore{channels: []db.Channel{
+		{ID: plain, TeamID: teamID, Provider: "custom", Name: "support"},
+		{ID: behind, TeamID: teamID, Provider: "chat", Name: "chat"},
+		{ID: gone, TeamID: teamID, Provider: "retired", Name: "old"},
+	}}
+	p := providers{"custom": custom.New(), "chat": suffixed{custom.New()}}
+
+	// A trailing slash and a path: the slash must not double, the path must stay.
+	rec := callWith(t, p, "https://example.com/openarity/", s, newFakeSecrets(), &fakeAuthz{},
+		memberOf(teamID, "member"), http.MethodGet, "/teams/"+teamID.String()+"/channels", "")
+
+	want := map[uuid.UUID]string{
+		plain:  "https://example.com/openarity/hooks/custom/" + plain.String(),
+		behind: "https://example.com/openarity/hooks/chat/" + behind.String() + "/events",
+		gone:   "",
+	}
+	for _, c := range channelsPage(t, rec).Items {
+		if c.HookURL != want[c.ID] {
+			t.Errorf("%s hook_url = %q, want %q", c.Name, c.HookURL, want[c.ID])
+		}
+	}
+}
+
+func TestACreatedChannelCarriesItsURL(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	rec := callWith(t, registry(t), "https://hooks.example.com", &fakeStore{}, newFakeSecrets(),
+		&fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+		http.MethodPost, "/teams/"+teamID.String()+"/channels", `{"provider":"custom","name":"support"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST = %d, want 201 (%s)", rec.Code, rec.Body)
+	}
+
+	got := decodeCreated(t, rec)
+	if want := "https://hooks.example.com/hooks/custom/" + got.ID.String(); got.HookURL != want {
+		t.Errorf("hook_url = %q, want %q", got.HookURL, want)
+	}
+}
+
+// With no public address the key is absent, not empty: a client tells the
+// two cases apart by whether it is there.
+func TestNoPublicAddressMeansNoHookURLAtAll(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	s := &fakeStore{channels: []db.Channel{
+		{ID: uuid.New(), TeamID: teamID, Provider: "custom", Name: "support"},
+	}}
+	rec := call(t, s, newFakeSecrets(), &fakeAuthz{}, memberOf(teamID, "member"),
+		http.MethodGet, "/teams/"+teamID.String()+"/channels", "")
+
+	if strings.Contains(rec.Body.String(), "hook_url") {
+		t.Errorf("body %s names a hook_url with no public address configured", rec.Body)
 	}
 }

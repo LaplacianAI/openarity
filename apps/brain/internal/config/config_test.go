@@ -25,6 +25,7 @@ func TestLoadDefaults(t *testing.T) {
 		"Environment":            string(EnvironmentDevelopment),
 		"APIBind":                "127.0.0.1:21120",
 		"WebhookBind":            "127.0.0.1:21121",
+		"WebhookPublicURL":       "",
 		"LogLevel":               slog.LevelInfo.String(),
 		"PostgresDSN":            "postgres://postgres:postgres@localhost:5432/openarity?sslmode=disable",
 		"FalkorDBURL":            "redis://127.0.0.1:6380",
@@ -61,6 +62,7 @@ func TestLoadDefaults(t *testing.T) {
 		"Environment":            string(cfg.Environment),
 		"APIBind":                cfg.APIBind,
 		"WebhookBind":            cfg.WebhookBind,
+		"WebhookPublicURL":       cfg.WebhookPublicURL,
 		"LogLevel":               cfg.LogLevel.String(),
 		"PostgresDSN":            cfg.PostgresDSN,
 		"FalkorDBURL":            cfg.FalkorDBURL,
@@ -215,6 +217,18 @@ func TestStringRedactsPasswords(t *testing.T) {
 		if strings.Contains(s, secret) {
 			t.Errorf("String() leaked %q: %s", secret, s)
 		}
+	}
+}
+
+// Validate refuses a WEBHOOK_PUBLIC_URL with a password in it, so load
+// cannot produce one. String() redacts it anyway: a Config built by hand, or
+// a check loosened later, must not be what puts a password in a log line.
+func TestStringRedactsTheWebhookPublicURL(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{WebhookPublicURL: "https://user:hooksecret@hooks.example.com"}
+	if s := cfg.String(); strings.Contains(s, "hooksecret") {
+		t.Errorf("String() leaked the password: %s", s)
 	}
 }
 

@@ -54,10 +54,11 @@ type handler struct {
 	store     Store
 	secrets   Secrets
 	providers Providers
+	hookBase  string
 }
 
-func New(logger *slog.Logger, s Store, sec Secrets, p Providers) *api.Router {
-	h := &handler{logger: logger, store: s, secrets: sec, providers: p}
+func New(logger *slog.Logger, s Store, sec Secrets, p Providers, hookBase string) *api.Router {
+	h := &handler{logger: logger, store: s, secrets: sec, providers: p, hookBase: strings.TrimSuffix(hookBase, "/")}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/channels", h.list)
@@ -129,7 +130,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := created{channel: view(row)}
+	out := created{channel: h.view(row)}
 	if generated {
 		out.SigningSecret = secret
 	}
@@ -188,7 +189,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 
 	page, err := api.MapPage(rows, limit,
 		func(row db.Channel) any { return channelCursor{CreatedAt: row.CreatedAt, ID: row.ID} },
-		view,
+		h.view,
 	)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to page channels", err)
@@ -254,6 +255,16 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func view(row db.Channel) channel {
-	return channel{ID: row.ID, TeamID: row.TeamID, Provider: row.Provider, Name: row.Name}
+func (h *handler) view(row db.Channel) channel {
+	c := channel{ID: row.ID, TeamID: row.TeamID, Provider: row.Provider, Name: row.Name}
+	if h.hookBase == "" {
+		return c
+	}
+
+	p, ok := h.providers.Get(row.Provider)
+	if !ok || len(p.Routes()) == 0 {
+		return c
+	}
+	c.HookURL = h.hookBase + "/hooks/" + row.Provider + "/" + row.ID.String() + p.Routes()[0].Suffix
+	return c
 }
