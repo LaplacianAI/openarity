@@ -96,6 +96,18 @@ jobs:
             echo "digest=$digest"
           } >> "$GITHUB_OUTPUT"
 
+      # A server reached over Tailscale rather than the internet: the runner
+      # joins the tailnet as an ephemeral node tagged tag:ci, which the
+      # tailnet's policy lets reach the server's SSH port and nothing else.
+      # Set the repository variable STAGING_TAILSCALE to true to use it.
+      - name: Join the tailnet
+        if: steps.what.outputs.skip != 'true' && vars.STAGING_TAILSCALE == 'true'
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
       - name: Deploy on the staging server
         if: steps.what.outputs.skip != 'true'
         env:
@@ -114,7 +126,7 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           # The server's forced command reads these four words and nothing else.
           ssh -i ~/.ssh/staging -p "${PORT:-22}" \
-            -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=30 \
             "$TARGET" deploy "$SLOT" "$TAG" "$DIGEST"
 
       - name: Say so on the pull request

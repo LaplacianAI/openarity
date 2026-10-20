@@ -79,6 +79,15 @@ jobs:
     timeout-minutes: 15
     environment: staging
     steps:
+      # The same as staging-deploy.yml: an ephemeral tag:ci node, when the
+      # server is reached over Tailscale.
+      - if: vars.STAGING_TAILSCALE == 'true'
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
       - env:
           SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
@@ -92,5 +101,5 @@ jobs:
           chmod 600 ~/.ssh/staging
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh -i ~/.ssh/staging -p "${PORT:-22}" \
-            -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=30 \
             "$TARGET" release "$PR"

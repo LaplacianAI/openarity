@@ -120,6 +120,7 @@ In **Settings → Environments**, create `staging`:
   | `STAGING_SSH_TARGET` | `openarity@<server>` |
   | `STAGING_SSH_PORT` | the SSH port, if it is not 22 |
   | `STAGING_SSH_KNOWN_HOSTS` | `ssh-keyscan -p <port> <server>`, checked against the server's own fingerprint |
+  | `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET` | only over Tailscale; see below |
 
 - **Required reviewers** are optional: the label already is the review, and
   requiring approval would hold every merge to main as well.
@@ -132,7 +133,42 @@ label.
 The workflows only start once they are on main: `workflow_run` and
 `pull_request_target` always run the default branch's copy.
 
-### 5. Using it
+### 5. A server on a tailnet
+
+GitHub's runners are on the internet, so a server reachable only over
+Tailscale needs the runner to join the tailnet for the one SSH call. It joins
+as an ephemeral node tagged `tag:ci`, and the tailnet policy decides what that
+tag can reach.
+
+In the tailnet's access controls, let `tag:ci` reach the server's SSH port
+and nothing else. With the server tagged `tag:staging`:
+
+```json
+"tagOwners": {
+  "tag:ci":      ["autogroup:admin"],
+  "tag:staging": ["autogroup:admin"]
+},
+"grants": [
+  { "src": ["tag:ci"], "dst": ["tag:staging"], "ip": ["tcp:22"] }
+]
+```
+
+Grants only add access, so this is narrow only if nothing else matches
+`tag:ci`. The default policy's allow-all rule (`"src": ["*"]`) does; change
+its source to `autogroup:member` so it covers people's devices and not tagged
+ones.
+
+Then, under **Settings → OAuth clients**, create a client with the
+`auth_keys` write scope and the tag `tag:ci`, put its id and secret in the
+`staging` environment as `TS_OAUTH_CLIENT_ID` and `TS_OAUTH_SECRET`, and set
+the repository variable `STAGING_TAILSCALE` to `true`.
+
+**Tailscale SSH must be off on the server.** It answers port 22 on the
+tailnet address itself and never reads `authorized_keys`, so the forced
+command, and everything it refuses, would not apply. The check in step 3
+catches it: `ls` must be refused. `tailscale set --ssh=false` turns it off.
+
+### 6. Using it
 
 - Label a pull request `ok to deploy`. It is built, deployed, and the pull
   request says on which database.
