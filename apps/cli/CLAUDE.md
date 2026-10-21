@@ -73,7 +73,8 @@ apps/cli/
     whoami/            oa whoami
     config/            oa config show|set|unset|path
     context/           oa context list|use|create|rename|delete
-    teams/             oa teams list|create, oa teams members list|add|remove
+    teams/             oa teams list|create, oa teams members list|add|remove,
+                       oa teams settings show|set
     channels/          oa channels list|create|delete, oa channels senders …
     sessions/          oa sessions list|read — the conversations, and their messages
     users/             oa users list — who has logged in, and their id
