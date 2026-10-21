@@ -134,7 +134,7 @@ func (h *handler) searchKey(
 			return nil, "", false
 		}
 		return &id, path, true
-	case s.APIKey == nil && keepsKey(stored, s.Provider):
+	case s.APIKey == nil && keepsKey(stored, s):
 		return stored.SearchSecretID, "", true
 	default:
 		return nil, "", true

@@ -72,7 +72,14 @@ func checkSearch(s searchRequest, stored *db.TeamSetting, allow func(netip.Addr)
 		if err := checkSelfHostedURL(*s.URL, allow); err != nil {
 			return err
 		}
-		if s.APIKey == nil || *s.APIKey == "" {
+		if s.APIKey == nil {
+			if hadKey(stored, s.Provider) && !keepsKey(stored, s) {
+				return errors.New("search.api_key is required when the url changes: " +
+					"send the key again, or an empty one if the instance needs none")
+			}
+			return nil
+		}
+		if *s.APIKey == "" {
 			return nil
 		}
 		return checkKey(*s.APIKey)
@@ -81,7 +88,7 @@ func checkSearch(s searchRequest, stored *db.TeamSetting, allow func(netip.Addr)
 			return errUnwantedURL
 		}
 		if s.APIKey == nil {
-			if keepsKey(stored, s.Provider) {
+			if keepsKey(stored, s) {
 				return nil
 			}
 			return fmt.Errorf("search.api_key is required: no %s key is saved", s.Provider)
@@ -97,8 +104,16 @@ var (
 	errUnwantedKey = errors.New("search.api_key is only for brave, tavily and firecrawl")
 )
 
-func keepsKey(stored *db.TeamSetting, provider string) bool {
+func hadKey(stored *db.TeamSetting, provider string) bool {
 	return stored != nil && stored.SearchProvider == provider && stored.SearchSecretID != nil
+}
+
+func keepsKey(stored *db.TeamSetting, s searchRequest) bool {
+	return hadKey(stored, s.Provider) && sameURL(stored.SearchUrl, s.URL)
+}
+
+func sameURL(a, b *string) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
 func checkKey(key string) error {

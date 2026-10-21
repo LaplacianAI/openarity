@@ -884,3 +884,38 @@ func TestAMappedAddressIsJudgedAsTheAddressItMaps(t *testing.T) {
 		t.Errorf("loopback written as IPv6: status %d, want 400", rec.Code)
 	}
 }
+
+// A key is kept only for the endpoint it was given for. Moving a
+// self-hosted instance's URL while leaving the key out would otherwise send
+// the stored key to whatever host the new URL names — a way to read a
+// write-only secret by pointing the brain at yourself.
+func TestMovingSelfHostedFirecrawlNeedsTheKeyAgain(t *testing.T) {
+	e := newEnv()
+	id := uuid.New()
+	url := "http://firecrawl:3002"
+	e.stored("firecrawl-oss", &id, &url)
+
+	rec := e.save(t, body("", `{"provider":"firecrawl-oss","url":"https://attacker.example"}`, false, 100))
+
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "search.api_key") {
+		t.Errorf("status %d, body %q; want 400 naming search.api_key", rec.Code, rec.Body)
+	}
+	if len(e.store.upserts) != 0 {
+		t.Error("saved a new URL with the old key still attached")
+	}
+}
+
+// Moving it with an empty key is the explicit "this instance has no key".
+func TestMovingSelfHostedFirecrawlWithAnEmptyKeyDropsTheKey(t *testing.T) {
+	e := newEnv()
+	id := uuid.New()
+	url := "http://firecrawl:3002"
+	e.stored("firecrawl-oss", &id, &url)
+
+	got := decode(t, e.save(t, body("",
+		`{"provider":"firecrawl-oss","url":"http://firecrawl-2:3002","api_key":""}`, false, 100)))
+
+	if e.store.upserts[0].SearchSecretID != nil || got.Search.KeySet {
+		t.Error("the old key followed the instance to its new address")
+	}
+}
