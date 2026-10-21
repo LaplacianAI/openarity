@@ -98,6 +98,7 @@ apps/brain/
       schema.go        request and response structs — the wire contract
     runs/              start, read, cancel and follow a run; events.go is the stream
     loops/             the loops an agent may choose, which are the runner's
+    teamsettings/      a team's model, web search, learning and compaction
   internal/gateway/    a provider's webhook in, normalised messages out
     providertest/      the conformance suite every adapter runs
     <provider>/        one package per platform; custom is the reference
@@ -467,6 +468,16 @@ reinstalled.
   the session *and* every attachment in the database to return a few hundred.
   Denormalising on a guess about load is suspicious; denormalising because the
   schema cannot express the access path is not.
+- **A team's search key has a path per key, and stays with its address.**
+  `teams/<team>/search/<key id>`, fresh on every save, with the id on the
+  `team_settings` row and a trigger tombstoning the one it replaces. One
+  fixed path per team would let the tombstone of a cleared key destroy a key
+  saved after it but before the sweep ran. A save that leaves the key out
+  keeps it only while the provider *and* the URL are unchanged: moving a
+  self-hosted provider's URL with the key still attached would send a
+  write-only secret to whoever the new URL names. An automated review caught
+  that the first version compared the provider alone, which was enough until
+  a provider with a URL of its own existed.
 - **`attachments.key_version` exists before rotation does.** A read has to know
   which key sealed an object, and adding the column now costs nothing while
   adding it later means a migration over every attachment ever stored. Every

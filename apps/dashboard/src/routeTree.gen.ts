@@ -15,6 +15,7 @@ import { Route as UiIndexRouteImport } from './routes/ui.index'
 import { Route as UiApprovalsRouteImport } from './routes/ui.approvals'
 import { Route as UiCallbackRouteImport } from './routes/ui.callback'
 import { Route as UiGraphRouteImport } from './routes/ui.graph'
+import { Route as UiSettingsRouteImport } from './routes/ui.settings'
 import { Route as UiAgentsIndexRouteImport } from './routes/ui.agents.index'
 import { Route as UiChannelsIndexRouteImport } from './routes/ui.channels.index'
 import { Route as UiServersIndexRouteImport } from './routes/ui.servers.index'
@@ -50,6 +51,11 @@ const UiCallbackRoute = UiCallbackRouteImport.update({
 const UiGraphRoute = UiGraphRouteImport.update({
   id: '/graph',
   path: '/graph',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiSettingsRoute = UiSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => UiRoute,
 } as any)
 const UiAgentsIndexRoute = UiAgentsIndexRouteImport.update({
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/ui/approvals': typeof UiApprovalsRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/graph': typeof UiGraphRoute
+  '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
@@ -102,6 +109,7 @@ export interface FileRoutesByTo {
   '/ui/approvals': typeof UiApprovalsRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/graph': typeof UiGraphRoute
+  '/ui/settings': typeof UiSettingsRoute
   '/ui': typeof UiIndexRoute
   '/ui/agents': typeof UiAgentsIndexRoute
   '/ui/channels': typeof UiChannelsIndexRoute
@@ -117,6 +125,7 @@ export interface FileRoutesById {
   '/ui/approvals': typeof UiApprovalsRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/graph': typeof UiGraphRoute
+  '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
@@ -133,6 +142,7 @@ export interface FileRouteTypes {
     | '/ui/approvals'
     | '/ui/callback'
     | '/ui/graph'
+    | '/ui/settings'
     | '/ui/'
     | '/ui/agents/'
     | '/ui/channels/'
@@ -146,6 +156,7 @@ export interface FileRouteTypes {
     | '/ui/approvals'
     | '/ui/callback'
     | '/ui/graph'
+    | '/ui/settings'
     | '/ui'
     | '/ui/agents'
     | '/ui/channels'
@@ -160,6 +171,7 @@ export interface FileRouteTypes {
     | '/ui/approvals'
     | '/ui/callback'
     | '/ui/graph'
+    | '/ui/settings'
     | '/ui/'
     | '/ui/agents/'
     | '/ui/channels/'
@@ -218,6 +230,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiGraphRouteImport
       parentRoute: typeof UiRoute
     }
+    '/ui/settings': {
+      id: '/ui/settings'
+      path: '/settings'
+      fullPath: '/ui/settings'
+      preLoaderRoute: typeof UiSettingsRouteImport
+      parentRoute: typeof UiRoute
+    }
     '/ui/agents/': {
       id: '/ui/agents/'
       path: '/agents'
@@ -267,6 +286,7 @@ interface UiRouteChildren {
   UiApprovalsRoute: typeof UiApprovalsRoute
   UiCallbackRoute: typeof UiCallbackRoute
   UiGraphRoute: typeof UiGraphRoute
+  UiSettingsRoute: typeof UiSettingsRoute
   UiIndexRoute: typeof UiIndexRoute
   UiAgentsIndexRoute: typeof UiAgentsIndexRoute
   UiChannelsIndexRoute: typeof UiChannelsIndexRoute
@@ -280,6 +300,7 @@ const UiRouteChildren: UiRouteChildren = {
   UiApprovalsRoute: UiApprovalsRoute,
   UiCallbackRoute: UiCallbackRoute,
   UiGraphRoute: UiGraphRoute,
+  UiSettingsRoute: UiSettingsRoute,
   UiIndexRoute: UiIndexRoute,
   UiAgentsIndexRoute: UiAgentsIndexRoute,
   UiChannelsIndexRoute: UiChannelsIndexRoute,

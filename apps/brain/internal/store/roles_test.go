@@ -42,8 +42,10 @@ func TestSeededPermissions(t *testing.T) {
 	for role, want := range map[string][]string{
 		"admin": {
 			"agent:write", "channel:write", "membership:write", "run:write",
-			"session:read_all", "skill:write", "tool:write", "user:read",
+			"session:read_all", "skill:write", "team:settings", "tool:write", "user:read",
 		},
+		// Not team:settings: the model every message runs on is a cost
+		// decision, and the search key is a credential.
 		"member": {"agent:write", "run:write", "skill:write", "tool:write"},
 	} {
 		got, err := s.ListRolePermissions(t.Context(), role)

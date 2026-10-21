@@ -322,6 +322,8 @@ func TestTheTriggersSpellSecretPathsTheWayGoDoes(t *testing.T) {
 
 	team := mustCreate(t, s, "paths")
 	ch := mustCreateChannel(t, s, team.ID, "custom", "paths")
+	searchKey := uuid.New()
+	mustUpsertSettings(t, s, keyed(team.ID, "brave", searchKey))
 
 	if _, err := s.pool.Exec(t.Context(), `DELETE FROM teams WHERE id = $1`, team.ID); err != nil {
 		t.Fatalf("deleting the team: %v", err)
@@ -335,6 +337,7 @@ func TestTheTriggersSpellSecretPathsTheWayGoDoes(t *testing.T) {
 	for what, path := range map[string]string{
 		"the channel's signing secret": secrets.Path(team.ID, secrets.KindChannel, ch.ID),
 		"the team's attachment key":    secrets.TeamPath(team.ID, secrets.KindAttachments),
+		"the team's search key":        secrets.Path(team.ID, secrets.KindSearch, searchKey),
 	} {
 		teamID, found := got[path]
 		if !found {

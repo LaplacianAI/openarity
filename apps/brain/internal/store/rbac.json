@@ -51,6 +51,10 @@
     {
       "name": "run:write",
       "description": "Start and cancel agent runs"
+    },
+    {
+      "name": "team:settings",
+      "description": "Change a team's settings: its model, web search and learning"
     }
   ],
   "roles": [
@@ -65,7 +69,8 @@
         "session:read_all",
         "membership:write",
         "user:read",
-        "run:write"
+        "run:write",
+        "team:settings"
       ]
     },
     {
@@ -166,6 +171,17 @@
       "path": "/teams/{id}/runs/{runID}/cancel",
       "scope": "team",
       "permission": "run:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/settings",
+      "scope": "member"
+    },
+    {
+      "method": "PUT",
+      "path": "/teams/{id}/settings",
+      "scope": "team",
+      "permission": "team:settings"
     },
     {
       "method": "GET",

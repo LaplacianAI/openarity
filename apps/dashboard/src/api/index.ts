@@ -30,6 +30,8 @@ import type {
   Team,
   TeamGraph,
   TeamPermissions,
+  TeamSettings,
+  TeamSettingsRequest,
   User,
 } from "./types";
 
@@ -274,4 +276,15 @@ export function discoverMCPServer(teamId: string, serverId: string): Promise<{ i
 
 export function getGraph(teamId: string, limit: number, signal?: AbortSignal): Promise<TeamGraph> {
   return request<TeamGraph>(`/teams/${teamId}/graph?limit=${limit}`, signal ? { signal } : {});
+}
+
+export function getTeamSettings(teamId: string): Promise<TeamSettings> {
+  return request<TeamSettings>(`/teams/${teamId}/settings`);
+}
+
+export function saveTeamSettings(
+  teamId: string,
+  settings: TeamSettingsRequest,
+): Promise<TeamSettings> {
+  return request<TeamSettings>(`/teams/${teamId}/settings`, { method: "PUT", body: settings });
 }

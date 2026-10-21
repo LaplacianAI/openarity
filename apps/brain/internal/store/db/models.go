@@ -270,6 +270,19 @@ type TeamMember struct {
 	UpdatedAt time.Time
 }
 
+type TeamSetting struct {
+	TeamID             uuid.UUID
+	ModelName          *string
+	ModelMaxTokens     *int32
+	ModelTemperature   *float64
+	SearchProvider     string
+	SearchUrl          *string
+	SearchSecretID     *uuid.UUID
+	Learning           bool
+	CompactionMessages int32
+	UpdatedAt          time.Time
+}
+
 type User struct {
 	ID           uuid.UUID
 	Issuer       string
