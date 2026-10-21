@@ -518,6 +518,14 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"GET /teams/{id}/runs/{runID}/events":  "member",
 		"POST /teams/{id}/runs/{runID}/cancel": "team run:write",
 
+		// Every member reads the settings: which model answers them and
+		// whether search is on is not a secret, and the key never leaves the
+		// secret store. Changing them is its own permission rather than
+		// agent:write — choosing the model every message runs on is a cost
+		// decision for the team, held by admin alone in what ships.
+		"GET /teams/{id}/settings": "member",
+		"PUT /teams/{id}/settings": "team team:settings",
+
 		// An MCP server is a tool source, so writing one is tool:write. Reading
 		// is member-wide for the reason skills are: granting a server to an
 		// agent starts with seeing which exist, and a row holds references,

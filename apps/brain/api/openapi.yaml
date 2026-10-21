@@ -49,6 +49,8 @@ tags:
     description: An agent working on one input, and what it did as it went
   - name: users
     description: Finding a user's id
+  - name: settings
+    description: A team's model, web search, learning and compaction
 
 security:
   - bearerAuth: []
@@ -1649,6 +1651,87 @@ paths:
               schema:
                 type: string
                 examples: ["the run has already finished"]
+
+  /teams/{id}/settings:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: getTeamSettings
+      tags: [settings]
+      summary: Read a team's settings
+      description: |
+        Any member may read them. A team that never saved reads the
+        defaults: no model, search off, learning off, compaction at 100
+        messages, and `updated_at` null. The search key is never returned;
+        `search.key_set` says whether there is one.
+      responses:
+        "200":
+          description: The settings, or the defaults
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: saveTeamSettings
+      tags: [settings]
+      summary: Change a team's settings
+      description: |
+        Requires `team:settings` in this team. The whole set every time: a
+        field left out is not a field left alone. A missing `model` means no
+        model, the same as null.
+
+        The search key is the exception, because it cannot be read back to
+        send again. Leave out `search.api_key` and the stored key is kept,
+        provided the provider is unchanged; switching to another provider
+        that takes a key needs a new one. A key sent is stored in the secret
+        store, never in the database, and never returned.
+
+        A SearXNG URL whose host is an address rather than a name must be a
+        public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
+        is checked when the brain connects to it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamSettingsRequest"
+      responses:
+        "200":
+          description: Saved, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamSettings"
+        "400":
+          description: |
+            The body breaks a rule, named in the sentence by its field.
+            Nothing is written, and no key reaches the secret store.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["search.api_key is needed to switch to tavily"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: |
+            The secret store is unreachable, so nothing was saved: settings
+            naming a key the store does not hold would fail every search.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the secret store is unavailable"]
 
   /teams/{id}/mcp-servers:
     parameters:
@@ -3326,6 +3409,91 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Loop"
+
+    TeamSettings:
+      type: object
+      required: [search, learning, compaction_messages]
+      description: |
+        `model` and `updated_at` are always sent, null when unset; optional
+        here only so a generated client decodes null as absent rather than as
+        a zero value.
+      properties:
+        model:
+          $ref: "#/components/schemas/ModelRef"
+          nullable: true
+          description: The model the team's built-in agents run on. Null until chosen, and until then they do not run.
+        search:
+          $ref: "#/components/schemas/SearchSettings"
+        learning:
+          type: boolean
+          description: Whether the learner writes learnings after each run, for approval
+        compaction_messages:
+          type: integer
+          format: int32
+          minimum: 10
+          maximum: 10000
+          description: Messages before a transcript compacts. Stored now; compaction reads it from a later release.
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Null for a team that never saved
+
+    SearchSettings:
+      type: object
+      required: [provider, key_set]
+      properties:
+        provider:
+          $ref: "#/components/schemas/SearchProvider"
+        url:
+          type: string
+          nullable: true
+          description: SearXNG's address; null for every other provider
+          examples: ["http://searxng:8080"]
+        key_set:
+          type: boolean
+          description: Whether a key is stored. The key itself is never returned.
+
+    SearchProvider:
+      type: string
+      enum: [none, searxng, brave, tavily]
+
+    TeamSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [search, learning, compaction_messages]
+      properties:
+        model:
+          $ref: "#/components/schemas/ModelRef"
+          nullable: true
+          description: Null or absent for no model, which stops the built-in agents running.
+        search:
+          $ref: "#/components/schemas/SearchSettingsRequest"
+        learning:
+          type: boolean
+        compaction_messages:
+          type: integer
+          format: int32
+          minimum: 10
+          maximum: 10000
+
+    SearchSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [provider]
+      properties:
+        provider:
+          $ref: "#/components/schemas/SearchProvider"
+        url:
+          type: string
+          description: Required for searxng, refused for every other provider
+        api_key:
+          type: string
+          writeOnly: true
+          maxLength: 4096
+          description: |
+            Brave's or Tavily's key. Omit it to keep the stored one while the
+            provider is unchanged. Refused for none and searxng.
 
     RunRequest:
       type: object

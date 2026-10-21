@@ -120,6 +120,30 @@ func (e RunStatus) Valid() bool {
 	}
 }
 
+// Defines values for SearchProvider.
+const (
+	Brave   SearchProvider = "brave"
+	None    SearchProvider = "none"
+	Searxng SearchProvider = "searxng"
+	Tavily  SearchProvider = "tavily"
+)
+
+// Valid indicates whether the value is a known member of the SearchProvider enum.
+func (e SearchProvider) Valid() bool {
+	switch e {
+	case Brave:
+		return true
+	case None:
+		return true
+	case Searxng:
+		return true
+	case Tavily:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionKind.
 const (
 	Direct SessionKind = "direct"
@@ -881,6 +905,32 @@ type RunRequest struct {
 	SessionID *openapi_types.UUID `json:"session_id,omitempty" yaml:"session_id,omitempty"`
 }
 
+// SearchProvider defines model for SearchProvider.
+type SearchProvider string
+
+// SearchSettings defines model for SearchSettings.
+type SearchSettings struct {
+	// KeySet Whether a key is stored. The key itself is never returned.
+	KeySet   bool           `json:"key_set" yaml:"key_set"`
+	Provider SearchProvider `json:"provider" yaml:"provider"`
+
+	// URL SearXNG's address; null for every other provider
+	//
+	// Examples: http://searxng:8080
+	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
+// SearchSettingsRequest defines model for SearchSettingsRequest.
+type SearchSettingsRequest struct {
+	// APIKey Brave's or Tavily's key. Omit it to keep the stored one while the
+	// provider is unchanged. Refused for none and searxng.
+	APIKey   *string        `json:"api_key,omitempty" yaml:"api_key,omitempty"`
+	Provider SearchProvider `json:"provider" yaml:"provider"`
+
+	// URL Required for searxng, refused for every other provider
+	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
 // Session defines model for Session.
 type Session struct {
 	// ChannelID The channel it arrived on, absent when it did not arrive on one —
@@ -1104,6 +1154,34 @@ type TeamPermissions struct {
 
 	// SuperAdmin Holds every permission in every team, whatever the role
 	SuperAdmin bool `json:"super_admin" yaml:"super_admin"`
+}
+
+// TeamSettings `model` and `updated_at` are always sent, null when unset; optional
+// here only so a generated client decodes null as absent rather than as
+// a zero value.
+type TeamSettings struct {
+	// CompactionMessages Messages before a transcript compacts. Stored now; compaction reads it from a later release.
+	CompactionMessages int32 `json:"compaction_messages" yaml:"compaction_messages"`
+
+	// Learning Whether the learner writes learnings after each run, for approval
+	Learning bool `json:"learning" yaml:"learning"`
+
+	// Model The model the team's built-in agents run on. Null until chosen, and until then they do not run.
+	Model  *ModelRef      `json:"model,omitempty" yaml:"model,omitempty"`
+	Search SearchSettings `json:"search" yaml:"search"`
+
+	// UpdatedAt Null for a team that never saved
+	UpdatedAt *time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
+}
+
+// TeamSettingsRequest defines model for TeamSettingsRequest.
+type TeamSettingsRequest struct {
+	CompactionMessages int32 `json:"compaction_messages" yaml:"compaction_messages"`
+	Learning           bool  `json:"learning" yaml:"learning"`
+
+	// Model Null or absent for no model, which stops the built-in agents running.
+	Model  *ModelRef             `json:"model,omitempty" yaml:"model,omitempty"`
+	Search SearchSettingsRequest `json:"search" yaml:"search"`
 }
 
 // User defines model for User.
@@ -1392,6 +1470,9 @@ type AddTeamMemberJSONRequestBody = AddMemberRequest
 
 // StartRunJSONRequestBody defines body for StartRun for application/json ContentType.
 type StartRunJSONRequestBody = RunRequest
+
+// SaveTeamSettingsJSONRequestBody defines body for SaveTeamSettings for application/json ContentType.
+type SaveTeamSettingsJSONRequestBody = TeamSettingsRequest
 
 // CreateSkillMultipartRequestBody defines body for CreateSkill for multipart/form-data ContentType.
 type CreateSkillMultipartRequestBody = SkillUpload
@@ -2136,6 +2217,58 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 	ListSessionMessages(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTeamSettings Read a team's settings
+	//
+	// Any member may read them. A team that never saved reads the
+	// defaults: no model, search off, learning off, compaction at 100
+	// messages, and `updated_at` null. The search key is never returned;
+	// `search.key_set` says whether there is one.
+	//
+	// Corresponds with GET /teams/{id}/settings (the `GetTeamSettings` operationId).
+	GetTeamSettings(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SaveTeamSettingsWithBody Change a team's settings
+	//
+	// Requires `team:settings` in this team. The whole set every time: a
+	// field left out is not a field left alone. A missing `model` means no
+	// model, the same as null.
+	//
+	// The search key is the exception, because it cannot be read back to
+	// send again. Leave out `search.api_key` and the stored key is kept,
+	// provided the provider is unchanged; switching to another provider
+	// that takes a key needs a new one. A key sent is stored in the secret
+	// store, never in the database, and never returned.
+	//
+	// A SearXNG URL whose host is an address rather than a name must be a
+	// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
+	// is checked when the brain connects to it.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
+	SaveTeamSettingsWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SaveTeamSettings Change a team's settings
+	//
+	// Requires `team:settings` in this team. The whole set every time: a
+	// field left out is not a field left alone. A missing `model` means no
+	// model, the same as null.
+	//
+	// The search key is the exception, because it cannot be read back to
+	// send again. Leave out `search.api_key` and the stored key is kept,
+	// provided the provider is unchanged; switching to another provider
+	// that takes a key needs a new one. A key sent is stored in the secret
+	// store, never in the database, and never returned.
+	//
+	// A SearXNG URL whose host is an address rather than a name must be a
+	// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
+	// is checked when the brain connects to it.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
+	SaveTeamSettings(ctx context.Context, id TeamID, body SaveTeamSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSkills List a team's skills
 	//
@@ -3440,6 +3573,88 @@ func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID 
 // Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 func (c *Client) ListSessionMessages(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSessionMessagesRequest(c.Server, id, sessionID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetTeamSettings Read a team's settings
+//
+// Any member may read them. A team that never saved reads the
+// defaults: no model, search off, learning off, compaction at 100
+// messages, and `updated_at` null. The search key is never returned;
+// `search.key_set` says whether there is one.
+//
+// Corresponds with GET /teams/{id}/settings (the `GetTeamSettings` operationId).
+func (c *Client) GetTeamSettings(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTeamSettingsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SaveTeamSettingsWithBody Change a team's settings
+//
+// Requires `team:settings` in this team. The whole set every time: a
+// field left out is not a field left alone. A missing `model` means no
+// model, the same as null.
+//
+// The search key is the exception, because it cannot be read back to
+// send again. Leave out `search.api_key` and the stored key is kept,
+// provided the provider is unchanged; switching to another provider
+// that takes a key needs a new one. A key sent is stored in the secret
+// store, never in the database, and never returned.
+//
+// A SearXNG URL whose host is an address rather than a name must be a
+// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
+// is checked when the brain connects to it.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
+func (c *Client) SaveTeamSettingsWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSaveTeamSettingsRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SaveTeamSettings Change a team's settings
+//
+// Requires `team:settings` in this team. The whole set every time: a
+// field left out is not a field left alone. A missing `model` means no
+// model, the same as null.
+//
+// The search key is the exception, because it cannot be read back to
+// send again. Leave out `search.api_key` and the stored key is kept,
+// provided the provider is unchanged; switching to another provider
+// that takes a key needs a new one. A key sent is stored in the secret
+// store, never in the database, and never returned.
+//
+// A SearXNG URL whose host is an address rather than a name must be a
+// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
+// is checked when the brain connects to it.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
+func (c *Client) SaveTeamSettings(ctx context.Context, id TeamID, body SaveTeamSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSaveTeamSettingsRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5838,6 +6053,87 @@ func NewListSessionMessagesRequest(server string, id TeamID, sessionID openapi_t
 	return req, nil
 }
 
+// NewGetTeamSettingsRequest constructs an http.Request for the GetTeamSettings method
+func NewGetTeamSettingsRequest(server string, id TeamID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/settings", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSaveTeamSettingsRequest calls the generic SaveTeamSettings builder with application/json body
+func NewSaveTeamSettingsRequest(server string, id TeamID, body SaveTeamSettingsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSaveTeamSettingsRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewSaveTeamSettingsRequestWithBody constructs an http.Request for the SaveTeamSettings method, with any body, and a specified content type
+func NewSaveTeamSettingsRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/settings", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListSkillsRequest constructs an http.Request for the ListSkills method
 func NewListSkillsRequest(server string, id TeamID, params *ListSkillsParams) (*http.Request, error) {
 	var err error
@@ -7079,6 +7375,60 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 	ListSessionMessagesWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*ListSessionMessagesResponse, error)
+
+	// GetTeamSettingsWithResponse Read a team's settings
+	//
+	// Any member may read them. A team that never saved reads the
+	// defaults: no model, search off, learning off, compaction at 100
+	// messages, and `updated_at` null. The search key is never returned;
+	// `search.key_set` says whether there is one.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/settings (the `GetTeamSettings` operationId).
+	GetTeamSettingsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamSettingsResponse, error)
+
+	// SaveTeamSettingsWithBodyWithResponse Change a team's settings
+	//
+	// Requires `team:settings` in this team. The whole set every time: a
+	// field left out is not a field left alone. A missing `model` means no
+	// model, the same as null.
+	//
+	// The search key is the exception, because it cannot be read back to
+	// send again. Leave out `search.api_key` and the stored key is kept,
+	// provided the provider is unchanged; switching to another provider
+	// that takes a key needs a new one. A key sent is stored in the secret
+	// store, never in the database, and never returned.
+	//
+	// A SearXNG URL whose host is an address rather than a name must be a
+	// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
+	// is checked when the brain connects to it.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
+	SaveTeamSettingsWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaveTeamSettingsResponse, error)
+
+	// SaveTeamSettingsWithResponse Change a team's settings
+	//
+	// Requires `team:settings` in this team. The whole set every time: a
+	// field left out is not a field left alone. A missing `model` means no
+	// model, the same as null.
+	//
+	// The search key is the exception, because it cannot be read back to
+	// send again. Leave out `search.api_key` and the stored key is kept,
+	// provided the provider is unchanged; switching to another provider
+	// that takes a key needs a new one. A key sent is stored in the secret
+	// store, never in the database, and never returned.
+	//
+	// A SearXNG URL whose host is an address rather than a name must be a
+	// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
+	// is checked when the brain connects to it.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
+	SaveTeamSettingsWithResponse(ctx context.Context, id TeamID, body SaveTeamSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SaveTeamSettingsResponse, error)
 
 	// ListSkillsWithResponse List a team's skills
 	//
@@ -9087,6 +9437,102 @@ func (r ListSessionMessagesResponse) ContentType() string {
 	return ""
 }
 
+// GetTeamSettingsResponse401Headers the declared response headers of an HTTP 401 response for GetTeamSettings
+type GetTeamSettingsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetTeamSettingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TeamSettings
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetTeamSettingsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTeamSettingsResponse) GetJSON200() *TeamSettings {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTeamSettingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTeamSettingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTeamSettingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTeamSettingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SaveTeamSettingsResponse401Headers the declared response headers of an HTTP 401 response for SaveTeamSettings
+type SaveTeamSettingsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type SaveTeamSettingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TeamSettings
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *SaveTeamSettingsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SaveTeamSettingsResponse) GetJSON200() *TeamSettings {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r SaveTeamSettingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SaveTeamSettingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SaveTeamSettingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SaveTeamSettingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListSkillsResponse401Headers the declared response headers of an HTTP 401 response for ListSkills
 type ListSkillsResponse401Headers struct {
 	WWWAuthenticate *string
@@ -10577,6 +11023,78 @@ func (c *ClientWithResponses) ListSessionMessagesWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseListSessionMessagesResponse(rsp)
+}
+
+// GetTeamSettingsWithResponse Read a team's settings
+//
+// Any member may read them. A team that never saved reads the
+// defaults: no model, search off, learning off, compaction at 100
+// messages, and `updated_at` null. The search key is never returned;
+// `search.key_set` says whether there is one.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/settings (the `GetTeamSettings` operationId).
+func (c *ClientWithResponses) GetTeamSettingsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamSettingsResponse, error) {
+	rsp, err := c.GetTeamSettings(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTeamSettingsResponse(rsp)
+}
+
+// SaveTeamSettingsWithBodyWithResponse Change a team's settings
+//
+// Requires `team:settings` in this team. The whole set every time: a
+// field left out is not a field left alone. A missing `model` means no
+// model, the same as null.
+//
+// The search key is the exception, because it cannot be read back to
+// send again. Leave out `search.api_key` and the stored key is kept,
+// provided the provider is unchanged; switching to another provider
+// that takes a key needs a new one. A key sent is stored in the secret
+// store, never in the database, and never returned.
+//
+// A SearXNG URL whose host is an address rather than a name must be a
+// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
+// is checked when the brain connects to it.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
+func (c *ClientWithResponses) SaveTeamSettingsWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaveTeamSettingsResponse, error) {
+	rsp, err := c.SaveTeamSettingsWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSaveTeamSettingsResponse(rsp)
+}
+
+// SaveTeamSettingsWithResponse Change a team's settings
+//
+// Requires `team:settings` in this team. The whole set every time: a
+// field left out is not a field left alone. A missing `model` means no
+// model, the same as null.
+//
+// The search key is the exception, because it cannot be read back to
+// send again. Leave out `search.api_key` and the stored key is kept,
+// provided the provider is unchanged; switching to another provider
+// that takes a key needs a new one. A key sent is stored in the secret
+// store, never in the database, and never returned.
+//
+// A SearXNG URL whose host is an address rather than a name must be a
+// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
+// is checked when the brain connects to it.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
+func (c *ClientWithResponses) SaveTeamSettingsWithResponse(ctx context.Context, id TeamID, body SaveTeamSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SaveTeamSettingsResponse, error) {
+	rsp, err := c.SaveTeamSettings(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSaveTeamSettingsResponse(rsp)
 }
 
 // ListSkillsWithResponse List a team's skills
@@ -12242,6 +12760,84 @@ func ParseListSessionMessagesResponse(rsp *http.Response) (*ListSessionMessagesR
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ListSessionMessagesResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetTeamSettingsResponse parses an HTTP response from a GetTeamSettingsWithResponse call
+func ParseGetTeamSettingsResponse(rsp *http.Response) (*GetTeamSettingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTeamSettingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TeamSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetTeamSettingsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSaveTeamSettingsResponse parses an HTTP response from a SaveTeamSettingsWithResponse call
+func ParseSaveTeamSettingsResponse(rsp *http.Response) (*SaveTeamSettingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SaveTeamSettingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TeamSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers SaveTeamSettingsResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
