@@ -439,6 +439,69 @@ func (q *Queries) ListGrantedSkills(ctx context.Context, agentID uuid.UUID) ([]S
 	return items, nil
 }
 
+const listGrantedToolIDs = `-- name: ListGrantedToolIDs :many
+SELECT t.id
+FROM agent_mcp_servers g
+JOIN mcp_tools t ON t.mcp_server_id = g.mcp_server_id
+WHERE g.agent_id = $1 AND (g.allow IS NULL OR t.name = ANY (g.allow))
+ORDER BY t.id
+`
+
+// What the graph tool may return as a tool: every tool on a server granted
+// to the agent, cut by the grant's allow-list where it has one.
+func (q *Queries) ListGrantedToolIDs(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listGrantedToolIDs, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReachableAgentIDs = `-- name: ListReachableAgentIDs :many
+SELECT id FROM agents
+WHERE team_id = $1 AND id <> $2
+ORDER BY id
+`
+
+type ListReachableAgentIDsParams struct {
+	TeamID  uuid.UUID
+	AgentID uuid.UUID
+}
+
+// What the graph tool may return as an agent, until slice C narrows it by
+// the caller's delegation setting: the rest of the team, never the caller.
+func (q *Queries) ListReachableAgentIDs(ctx context.Context, arg ListReachableAgentIDsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listReachableAgentIDs, arg.TeamID, arg.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateAgent = `-- name: UpdateAgent :one
 UPDATE agents SET
     name                = $1,

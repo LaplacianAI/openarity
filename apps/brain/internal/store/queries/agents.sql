@@ -90,3 +90,19 @@ ORDER BY s.name;
 SELECT * FROM skills
 WHERE id IN (SELECT skill_id FROM agent_skills WHERE agent_id = $1)
 ORDER BY name;
+
+-- What the graph tool may return as an agent, until slice C narrows it by
+-- the caller's delegation setting: the rest of the team, never the caller.
+-- name: ListReachableAgentIDs :many
+SELECT id FROM agents
+WHERE team_id = sqlc.arg('team_id') AND id <> sqlc.arg('agent_id')
+ORDER BY id;
+
+-- What the graph tool may return as a tool: every tool on a server granted
+-- to the agent, cut by the grant's allow-list where it has one.
+-- name: ListGrantedToolIDs :many
+SELECT t.id
+FROM agent_mcp_servers g
+JOIN mcp_tools t ON t.mcp_server_id = g.mcp_server_id
+WHERE g.agent_id = $1 AND (g.allow IS NULL OR t.name = ANY (g.allow))
+ORDER BY t.id;
