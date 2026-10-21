@@ -9,6 +9,7 @@ import {
   discoverMCPServer,
   listMCPServers,
   listMCPTools,
+  replaceMCPServer,
 } from "@/api";
 import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
@@ -92,6 +93,54 @@ export function serverRequest(d: Draft): MCPServerRequest | string {
   return body;
 }
 
+/** A server as the form shows it. */
+export function draftOf(s: MCPServer): Draft {
+  return {
+    name: s.name,
+    transport: s.command ? "command" : "url",
+    url: s.url ?? "",
+    authRef: s.auth_secret_ref ?? "",
+    command: (s.command ?? []).join("\n"),
+    env: Object.entries(s.env ?? {})
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n"),
+    bare: s.bare,
+  };
+}
+
+/**
+ * The whole definition a PUT replaces the server with: the server as it
+ * stands, with the form laid over it. The form owns the name, bare and its
+ * transport's fields; a field it does not show (env on a url server, a token
+ * on a command one) is kept, unless the transport itself changed, when the
+ * old transport's fields go with it.
+ */
+export function editRequest(current: MCPServer, d: Draft): MCPServerRequest | string {
+  const form = serverRequest(d);
+  if (typeof form === "string") return form;
+
+  const body: MCPServerRequest = { name: form.name, bare: Boolean(form.bare) };
+  const sameTransport = (current.command ? "command" : "url") === d.transport;
+  if (sameTransport) {
+    if (current.url !== undefined) body.url = current.url;
+    if (current.auth_secret_ref !== undefined) body.auth_secret_ref = current.auth_secret_ref;
+    if (current.command !== undefined) body.command = current.command;
+    body.env = current.env;
+  }
+
+  if (d.transport === "url") {
+    delete body.command;
+    body.url = form.url;
+    if (form.auth_secret_ref) body.auth_secret_ref = form.auth_secret_ref;
+    else delete body.auth_secret_ref;
+  } else {
+    delete body.url;
+    body.command = form.command;
+    body.env = form.env;
+  }
+  return body;
+}
+
 function Servers() {
   const qc = useQueryClient();
   const { teamId } = useCurrentTeam();
@@ -99,6 +148,7 @@ function Servers() {
   const canWrite = perms.can(WRITE);
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<MCPServer | null>(null);
 
   const servers = useInfiniteQuery({
     queryKey: ["servers", teamId, "paged"],
@@ -150,6 +200,7 @@ function Servers() {
                 canWrite={canWrite}
                 open={open === s.id}
                 onToggle={() => setOpen(open === s.id ? null : s.id)}
+                onEdit={() => setEditing(s)}
                 onChanged={changed}
               />
             ))}
@@ -164,13 +215,28 @@ function Servers() {
       )}
 
       {teamId && canWrite ? (
-        <RegisterDialog
+        <ServerDialog
           teamId={teamId}
           open={adding}
           onClose={() => setAdding(false)}
-          onCreated={(s) => {
+          onSaved={(s) => {
             changed();
             setOpen(s.id);
+          }}
+        />
+      ) : null}
+      {/* Mounted per server, so each edit starts from that server as it is. */}
+      {teamId && canWrite && editing ? (
+        <ServerDialog
+          key={editing.id}
+          teamId={teamId}
+          server={editing}
+          open
+          onClose={() => setEditing(null)}
+          onSaved={(s) => {
+            changed();
+            // A changed transport is discovered again; its tools may be new.
+            qc.invalidateQueries({ queryKey: ["tools", teamId, s.id] });
           }}
         />
       ) : null}
@@ -184,6 +250,7 @@ function ServerRow({
   canWrite,
   open,
   onToggle,
+  onEdit,
   onChanged,
 }: {
   server: MCPServer;
@@ -191,6 +258,7 @@ function ServerRow({
   canWrite: boolean;
   open: boolean;
   onToggle: () => void;
+  onEdit: () => void;
   onChanged: () => void;
 }) {
   const qc = useQueryClient();
@@ -247,6 +315,9 @@ function ServerRow({
                 {discover.isPending ? "Discovering…" : "Discover"}
               </Button>
             ) : null}
+            <Button variant="ghost" size="sm" className="text-xs" onClick={onEdit}>
+              Edit
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -305,28 +376,32 @@ function Tools({ teamId, server }: { teamId: string; server: MCPServer }) {
   );
 }
 
-function RegisterDialog({
+/** Registers a server, or, given one, edits it. */
+function ServerDialog({
   teamId,
+  server,
   open,
   onClose,
-  onCreated,
+  onSaved,
 }: {
   teamId: string;
+  server?: MCPServer;
   open: boolean;
   onClose: () => void;
-  onCreated: (s: MCPServer) => void;
+  onSaved: (s: MCPServer) => void;
 }) {
-  const [draft, setDraft] = useState<Draft>(EMPTY);
+  const [draft, setDraft] = useState<Draft>(() => (server ? draftOf(server) : EMPTY));
   const [problem, setProblem] = useState<string | null>(null);
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
 
-  const create = useMutation({
-    mutationFn: (body: MCPServerRequest) => createMCPServer(teamId, body),
+  const save = useMutation({
+    mutationFn: (body: MCPServerRequest) =>
+      server ? replaceMCPServer(teamId, server.id, body) : createMCPServer(teamId, body),
     onSuccess: (s) => {
       setDraft(EMPTY);
-      onCreated(s);
+      onSaved(s);
       onClose();
-      toast.success(`Registered ${s.name}`);
+      toast.success(server ? `Saved ${s.name}` : `Registered ${s.name}`);
     },
     onError: (err: Error) => setProblem(err.message),
   });
@@ -335,7 +410,7 @@ function RegisterDialog({
     <Dialog open={open} onOpenChange={(o) => (o ? null : onClose())}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Register an MCP server</DialogTitle>
+          <DialogTitle>{server ? "Edit server" : "Register an MCP server"}</DialogTitle>
           <DialogDescription>
             Secrets stay in the secret store. Write them there first, then name them here as
             teams/&lt;team_id&gt;/mcp/&lt;name&gt;#&lt;key&gt;.
@@ -345,13 +420,13 @@ function RegisterDialog({
           className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault();
-            const body = serverRequest(draft);
+            const body = server ? editRequest(server, draft) : serverRequest(draft);
             if (typeof body === "string") {
               setProblem(body);
               return;
             }
             setProblem(null);
-            create.mutate(body);
+            save.mutate(body);
           }}
         >
           <Field
@@ -431,8 +506,14 @@ function RegisterDialog({
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={create.isPending}>
-              {create.isPending ? "Registering…" : "Register"}
+            <Button type="submit" disabled={save.isPending}>
+              {server
+                ? save.isPending
+                  ? "Saving…"
+                  : "Save"
+                : save.isPending
+                  ? "Registering…"
+                  : "Register"}
             </Button>
           </DialogFooter>
         </form>

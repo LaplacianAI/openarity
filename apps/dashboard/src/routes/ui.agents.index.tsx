@@ -3,11 +3,19 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { createAgent, deleteAgent, getAgent, listAgents, listMCPServers, listSkills } from "@/api";
+import {
+  createAgent,
+  deleteAgent,
+  getAgent,
+  listAgents,
+  listMCPServers,
+  listSkills,
+  replaceAgent,
+} from "@/api";
 import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
-import type { Agent, AgentRequest, AgentSummary } from "@/api/types";
+import type { Agent, AgentRequest, AgentSummary, MCPServerGrant } from "@/api/types";
 import { Field, ReadOnlyNote, Tag, TextArea } from "@/components/registry-bits";
 import { Button } from "@/components/ui/button";
 import {
@@ -147,6 +155,7 @@ function AgentRow({
   onToggle: () => void;
   onChanged: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
   const remove = useMutation({
     mutationFn: () => deleteAgent(teamId, agent.id),
     onSuccess: () => {
@@ -179,18 +188,31 @@ function AgentRow({
           {relativeTime(agent.updated_at)}
         </span>
         {canWrite ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-xs"
-            disabled={remove.isPending}
-            onClick={() => remove.mutate()}
-          >
-            Delete
-          </Button>
+          <>
+            <Button variant="ghost" size="sm" className="text-xs" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs"
+              disabled={remove.isPending}
+              onClick={() => remove.mutate()}
+            >
+              Delete
+            </Button>
+          </>
         ) : null}
       </div>
       {open ? <AgentDetail teamId={teamId} agentId={agent.id} /> : null}
+      {canWrite && editing ? (
+        <EditDialog
+          teamId={teamId}
+          agentId={agent.id}
+          onClose={() => setEditing(false)}
+          onSaved={onChanged}
+        />
+      ) : null}
     </li>
   );
 }
@@ -320,6 +342,50 @@ export function agentRequest(d: Draft): AgentRequest | string {
   };
 }
 
+/** The agent as the form shows it. */
+export function draftOf(a: Agent): Draft {
+  return {
+    name: a.name,
+    description: a.description,
+    instructions: a.instructions,
+    model: a.model.name,
+    maxTokens: String(a.model.max_tokens),
+    pattern: a.pattern,
+    maxSteps: String(a.max_steps),
+    tokenBudget: a.token_budget === undefined ? "" : String(a.token_budget),
+    servers: a.mcp_servers.map((g) => g.id),
+    skills: a.skills,
+  };
+}
+
+/** What the brain holds beyond the form; the PUT is whole, so they go back as they came. */
+const UNSHOWN = ["steer_continuations", "output_schema", "parser", "parser_model"] as const;
+
+/**
+ * The PUT for an edit: the agent as it is, with the form laid over it. A
+ * server still ticked keeps the grant it had, so a grant limited to some
+ * tools stays limited; only a newly ticked server is granted whole.
+ */
+export function replaceRequest(a: Agent, d: Draft): AgentRequest | string {
+  const form = agentRequest(d);
+  if (typeof form === "string") return form;
+  const kept: Partial<AgentRequest> = {};
+  for (const k of UNSHOWN) {
+    if (a[k] !== undefined && a[k] !== null) (kept as Record<string, unknown>)[k] = a[k];
+  }
+  const grant = (id: string): MCPServerGrant => {
+    const old = a.mcp_servers.find((g) => g.id === id);
+    return old?.allow ? { id, allow: old.allow } : { id };
+  };
+  const body: AgentRequest = {
+    ...form,
+    ...kept,
+    model: { ...a.model, ...form.model },
+    mcp_servers: d.servers.map(grant),
+  };
+  return body;
+}
+
 function toggle(list: string[], id: string): string[] {
   return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
 }
@@ -335,10 +401,8 @@ function DefineDialog({
   onClose: () => void;
   onCreated: (a: Agent) => void;
 }) {
-  const names = useNames(teamId);
-  const [draft, setDraft] = useState<Draft>(EMPTY);
   const [problem, setProblem] = useState<string | null>(null);
-  const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
+  const [draft, setDraft] = useState<Draft>(EMPTY);
 
   const create = useMutation({
     mutationFn: (body: AgentRequest) => createAgent(teamId, body),
@@ -361,147 +425,268 @@ function DefineDialog({
             CLI can grant some.
           </DialogDescription>
         </DialogHeader>
-        <form
-          className="space-y-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const body = agentRequest(draft);
-            if (typeof body === "string") {
-              setProblem(body);
-              return;
-            }
-            setProblem(null);
-            create.mutate(body);
-          }}
-        >
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Name" htmlFor="agent-name">
-              <Input
-                id="agent-name"
-                value={draft.name}
-                onChange={(e) => set({ name: e.target.value })}
-              />
-            </Field>
-            <Field label="Model" htmlFor="agent-model" hint="As the model gateway names it.">
-              <Input
-                id="agent-model"
-                value={draft.model}
-                placeholder="anthropic/claude-sonnet-5-5"
-                onChange={(e) => set({ model: e.target.value })}
-              />
-            </Field>
-            <Field
-              label="Pattern"
-              htmlFor="agent-pattern"
-              hint="react, plan, rewoo, reflection, code or custom."
-            >
-              <Input
-                id="agent-pattern"
-                value={draft.pattern}
-                onChange={(e) => set({ pattern: e.target.value })}
-              />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Max tokens" htmlFor="agent-tokens">
-                <Input
-                  id="agent-tokens"
-                  inputMode="numeric"
-                  value={draft.maxTokens}
-                  onChange={(e) => set({ maxTokens: e.target.value })}
-                />
-              </Field>
-              <Field label="Max steps" htmlFor="agent-steps">
-                <Input
-                  id="agent-steps"
-                  inputMode="numeric"
-                  value={draft.maxSteps}
-                  onChange={(e) => set({ maxSteps: e.target.value })}
-                />
-              </Field>
-            </div>
-          </div>
-          <Field
-            label="Token budget"
-            htmlFor="agent-budget"
-            hint="What one run may spend, input and output together. Empty for the default, 1,000,000."
-          >
-            <Input
-              id="agent-budget"
-              inputMode="numeric"
-              value={draft.tokenBudget}
-              placeholder="1000000"
-              onChange={(e) => set({ tokenBudget: e.target.value })}
-            />
-          </Field>
-          <Field
-            label="Description"
-            htmlFor="agent-description"
-            hint="What it is for. This is what selection searches."
-          >
-            <Input
-              id="agent-description"
-              value={draft.description}
-              onChange={(e) => set({ description: e.target.value })}
-            />
-          </Field>
-          <Field label="Instructions" htmlFor="agent-instructions">
-            <TextArea
-              id="agent-instructions"
-              value={draft.instructions}
-              onChange={(e) => set({ instructions: e.target.value })}
-            />
-          </Field>
-          <fieldset className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <legend className="mb-1 text-xs font-medium">MCP servers</legend>
-              {names.servers.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground">The team has none.</p>
-              ) : (
-                names.servers.map((s) => (
-                  <label key={s.id} className="flex items-center gap-1.5 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={draft.servers.includes(s.id)}
-                      onChange={() => set({ servers: toggle(draft.servers, s.id) })}
-                    />
-                    {s.name}
-                  </label>
-                ))
-              )}
-            </div>
-            <div>
-              <legend className="mb-1 text-xs font-medium">Skills</legend>
-              {names.skills.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground">The team has none.</p>
-              ) : (
-                names.skills.map((s) => (
-                  <label key={s.id} className="flex items-center gap-1.5 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={draft.skills.includes(s.id)}
-                      onChange={() => set({ skills: toggle(draft.skills, s.id) })}
-                    />
-                    {s.name}
-                  </label>
-                ))
-              )}
-            </div>
-          </fieldset>
-          {problem ? (
-            <p role="alert" className="text-xs text-destructive">
-              {problem}
-            </p>
-          ) : null}
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={create.isPending}>
-              {create.isPending ? "Defining…" : "Define"}
-            </Button>
-          </DialogFooter>
-        </form>
+        <AgentForm
+          teamId={teamId}
+          draft={draft}
+          set={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+          toRequest={agentRequest}
+          submit="Define"
+          submitting="Defining…"
+          pending={create.isPending}
+          problem={problem}
+          setProblem={setProblem}
+          onSubmit={(body) => create.mutate(body)}
+          onCancel={onClose}
+        />
       </DialogContent>
     </Dialog>
+  );
+}
+
+function EditDialog({
+  teamId,
+  agentId,
+  onClose,
+  onSaved,
+}: {
+  teamId: string;
+  agentId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [problem, setProblem] = useState<string | null>(null);
+  // The whole agent, fetched afresh: the PUT replaces it, so the form must
+  // start from what the brain holds now, not from a list row or a cache.
+  const detail = useQuery({
+    queryKey: ["agents", teamId, agentId],
+    queryFn: () => getAgent(teamId, agentId),
+  });
+
+  const save = useMutation({
+    mutationFn: (body: AgentRequest) => replaceAgent(teamId, agentId, body),
+    onSuccess: (a) => {
+      onSaved();
+      onClose();
+      toast.success(`Saved ${a.name}`);
+    },
+    onError: (err: Error) => setProblem(err.message),
+  });
+
+  const agent = detail.isFetchedAfterMount ? detail.data : undefined;
+  // Untouched, the form is the agent as fetched.
+  const [edited, setEdited] = useState<Draft | null>(null);
+
+  return (
+    <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Edit agent</DialogTitle>
+          <DialogDescription>
+            Saved whole: a server or skill left unticked is revoked. A server already limited to
+            some tools keeps that limit; a newly ticked one is granted every tool.
+          </DialogDescription>
+        </DialogHeader>
+        {detail.isError ? (
+          <p className="text-xs text-destructive">{detail.error.message}</p>
+        ) : !agent ? (
+          <p className="text-xs text-muted-foreground">Loading…</p>
+        ) : (
+          <AgentForm
+            teamId={teamId}
+            draft={edited ?? draftOf(agent)}
+            set={(patch) => setEdited((d) => ({ ...(d ?? draftOf(agent)), ...patch }))}
+            limits={agent.mcp_servers}
+            toRequest={(d) => replaceRequest(agent, d)}
+            submit="Save"
+            submitting="Saving…"
+            pending={save.isPending}
+            problem={problem}
+            setProblem={setProblem}
+            onSubmit={(body) => save.mutate(body)}
+            onCancel={onClose}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AgentForm({
+  teamId,
+  draft,
+  set,
+  limits,
+  toRequest,
+  submit,
+  submitting,
+  pending,
+  problem,
+  setProblem,
+  onSubmit,
+  onCancel,
+}: {
+  teamId: string;
+  draft: Draft;
+  set: (patch: Partial<Draft>) => void;
+  /** The grants the agent has now, to say which are limited to some tools. */
+  limits?: MCPServerGrant[];
+  toRequest: (d: Draft) => AgentRequest | string;
+  submit: string;
+  submitting: string;
+  pending: boolean;
+  problem: string | null;
+  setProblem: (p: string | null) => void;
+  onSubmit: (body: AgentRequest) => void;
+  onCancel: () => void;
+}) {
+  const names = useNames(teamId);
+
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const body = toRequest(draft);
+        if (typeof body === "string") {
+          setProblem(body);
+          return;
+        }
+        setProblem(null);
+        onSubmit(body);
+      }}
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Name" htmlFor="agent-name">
+          <Input
+            id="agent-name"
+            value={draft.name}
+            onChange={(e) => set({ name: e.target.value })}
+          />
+        </Field>
+        <Field label="Model" htmlFor="agent-model" hint="As the model gateway names it.">
+          <Input
+            id="agent-model"
+            value={draft.model}
+            placeholder="anthropic/claude-sonnet-5-5"
+            onChange={(e) => set({ model: e.target.value })}
+          />
+        </Field>
+        <Field
+          label="Pattern"
+          htmlFor="agent-pattern"
+          hint="react, plan, rewoo, reflection, code or custom."
+        >
+          <Input
+            id="agent-pattern"
+            value={draft.pattern}
+            onChange={(e) => set({ pattern: e.target.value })}
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Max tokens" htmlFor="agent-tokens">
+            <Input
+              id="agent-tokens"
+              inputMode="numeric"
+              value={draft.maxTokens}
+              onChange={(e) => set({ maxTokens: e.target.value })}
+            />
+          </Field>
+          <Field label="Max steps" htmlFor="agent-steps">
+            <Input
+              id="agent-steps"
+              inputMode="numeric"
+              value={draft.maxSteps}
+              onChange={(e) => set({ maxSteps: e.target.value })}
+            />
+          </Field>
+        </div>
+      </div>
+      <Field
+        label="Token budget"
+        htmlFor="agent-budget"
+        hint="What one run may spend, input and output together. Empty for the default, 1,000,000."
+      >
+        <Input
+          id="agent-budget"
+          inputMode="numeric"
+          value={draft.tokenBudget}
+          placeholder="1000000"
+          onChange={(e) => set({ tokenBudget: e.target.value })}
+        />
+      </Field>
+      <Field
+        label="Description"
+        htmlFor="agent-description"
+        hint="Other agents find this one by its description. Say what it does and when to use it."
+      >
+        <Input
+          id="agent-description"
+          value={draft.description}
+          onChange={(e) => set({ description: e.target.value })}
+        />
+      </Field>
+      <Field label="Instructions" htmlFor="agent-instructions">
+        <TextArea
+          id="agent-instructions"
+          value={draft.instructions}
+          onChange={(e) => set({ instructions: e.target.value })}
+        />
+      </Field>
+      <fieldset className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <legend className="mb-1 text-xs font-medium">MCP servers</legend>
+          {names.servers.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">The team has none.</p>
+          ) : (
+            names.servers.map((s) => {
+              const only = limits?.find((g) => g.id === s.id)?.allow;
+              return (
+                <label key={s.id} className="flex items-center gap-1.5 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={draft.servers.includes(s.id)}
+                    onChange={() => set({ servers: toggle(draft.servers, s.id) })}
+                  />
+                  {s.name}
+                  {only ? (
+                    <span className="text-muted-foreground">only {only.join(", ")}</span>
+                  ) : null}
+                </label>
+              );
+            })
+          )}
+        </div>
+        <div>
+          <legend className="mb-1 text-xs font-medium">Skills</legend>
+          {names.skills.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">The team has none.</p>
+          ) : (
+            names.skills.map((s) => (
+              <label key={s.id} className="flex items-center gap-1.5 text-xs">
+                <input
+                  type="checkbox"
+                  checked={draft.skills.includes(s.id)}
+                  onChange={() => set({ skills: toggle(draft.skills, s.id) })}
+                />
+                {s.name}
+              </label>
+            ))
+          )}
+        </div>
+      </fieldset>
+      {problem ? (
+        <p role="alert" className="text-xs text-destructive">
+          {problem}
+        </p>
+      ) : null}
+      <DialogFooter>
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={pending}>
+          {pending ? submitting : submit}
+        </Button>
+      </DialogFooter>
+    </form>
   );
 }

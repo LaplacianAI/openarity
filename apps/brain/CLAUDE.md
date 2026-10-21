@@ -119,6 +119,7 @@ apps/brain/
     falkor.go          the client: one graph per team, nodes, edges, indexes
     params.go          query parameters, written here rather than by the library
     embed.go           vectors from the model router
+    search.go          the read side: what a caller may reach, ranked, with paths
     projector.go       the outbox in, the graph out
     rebuild.go         a team's graph from nothing
     job.go             the drain as background work
@@ -128,6 +129,7 @@ apps/brain/
     build.go           the Spec, its granted MCP tools and skills; Patterns and Loops
     events.go          what a run does, as run_events, within its token budget
     execute.go         one run: claim, heartbeat, run to the end, finish
+    graphtool.go       graph(query, kinds, hops), bound to every run
     job.go             the run queue, the sweep that takes over stale runs, the Enqueuer
   internal/worker/     the background process: a registry of Jobs, and Run
   internal/store/      Postgres: pool, migrations, queries
@@ -342,6 +344,20 @@ reinstalled.
   cascade leaves a row for everything it held, each meaning "delete this
   node", and FalkorDB creates a graph for any query sent to one that is not
   there. Run one by one they would drop the graph and leave an empty one.
+- **A search is scoped before it is scored, always.** `Graph.Search` starts
+  every query from `WHERE r.id IN $reach`, the reach read from Postgres on
+  each call, and scores with `vec.cosineDistance` inside it. The vector index
+  is never asked first: its top-k cut would be spent on nodes the caller
+  cannot use, and the caller would get fewer results, or none, for no reason
+  it could see. A team's reach is hundreds of nodes, so the scan is cheap; if
+  one ever outgrows it, narrow the scope or run the vector query over the
+  scoped set, never over the team and filter after. Only vectors from the
+  current `EMBEDDING_MODEL` are compared.
+- **The graph tool's queries are the brain's.** The model picks kinds and
+  hops; those select among fixed walks in `search.go`, and every walk across
+  `GRANTED` honours the grant's allow-list. A path may name a node outside the
+  reach, such as the skill that led to an agent: that is the team's registry,
+  which every member can read already.
 - **The drain ticks once a minute, not every ten seconds.** DBOS keeps a row
   per tick and deletes none: measured, 98 ticks left 98 workflow rows and 98
   step rows, about 560 bytes a tick before indexes. The job's durable state is

@@ -214,6 +214,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"one step, so it never exists without what it was meant to have.\n\n" +
 			"    # triage.yaml\n" +
 			"    name: triage\n" +
+			"    # what it does and when to use it: this is how other agents find it\n" +
 			"    description: Sorts incoming issues and labels them\n" +
 			"    instructions: Read the issue. Label it. Say why.\n" +
 			"    model: {name: anthropic/claude-sonnet-5-5, max_tokens: 1024}\n" +
@@ -260,7 +261,11 @@ func newReplaceCmd(opts *cli.Options) *cobra.Command {
 		Short: "Replace an agent's definition and grants",
 		Long: "Needs agent:write in the team. A replace is whole: a grant the new\n" +
 			"definition does not name is revoked, and a field it leaves out goes back\n" +
-			"to its default. The agent keeps its id and its kind.",
+			"to its default. The agent keeps its id and its kind.\n\n" +
+			"To change one thing, start from what is there, which keeps every grant:\n\n" +
+			"    oa agents get platform triage -o yaml > triage.yaml\n" +
+			"    # edit triage.yaml\n" +
+			"    oa agents replace platform triage -f triage.yaml",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body, err := def.read(cmd.InOrStdin())

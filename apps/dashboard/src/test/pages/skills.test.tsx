@@ -47,7 +47,14 @@ it("offers no write action without skill:write, and says what it would need", as
 
   await screen.findByText("pdf");
   expect(await screen.findByText("skill:write")).toBeInTheDocument();
-  for (const name of [/upload folder/i, /upload zip/i, /^import$/i, /^sync$/i, /^delete$/i]) {
+  for (const name of [
+    /upload folder/i,
+    /upload zip/i,
+    /^import$/i,
+    /^sync$/i,
+    /^delete$/i,
+    /upload new version/i,
+  ]) {
     expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   }
 });
@@ -57,7 +64,14 @@ it("offers every write action with skill:write", async () => {
   show(Skills);
 
   await screen.findByText("pdf");
-  for (const name of [/upload folder/i, /upload zip/i, /^import$/i, /^sync$/i, /^delete$/i]) {
+  for (const name of [
+    /upload folder/i,
+    /upload zip/i,
+    /^import$/i,
+    /^sync$/i,
+    /^delete$/i,
+    /upload new version/i,
+  ]) {
     expect(await screen.findByRole("button", { name })).toBeInTheDocument();
   }
   expect(screen.queryByText(/a team admin can grant/i)).not.toBeInTheDocument();
@@ -174,4 +188,111 @@ it("uploads a picked folder as one part per file", async () => {
   expect(body).toBeInstanceOf(FormData);
   const parts = (body as FormData).getAll("files") as File[];
   expect(parts.map((p) => p.name)).toEqual(["pdf/SKILL.md", "pdf/scripts/read.py"]);
+});
+
+// --- a new version of a skill ---
+
+// A replace keeps the skill's id and its grants; the brain names the skill
+// from the new SKILL.md and refuses, with a sentence, a version that does not fit.
+
+it("offers no new version without skill:write", async () => {
+  brain({ ...team(["agent:write"]), ...skills });
+  show(Skills);
+
+  await screen.findByText("pdf");
+  expect(screen.queryByRole("button", { name: /upload new version/i })).not.toBeInTheDocument();
+});
+
+async function openReplace() {
+  await userEvent.click(await screen.findByRole("button", { name: /upload new version/i }));
+  expect(await screen.findByText(/agents granted this skill keep it/i)).toBeInTheDocument();
+}
+
+const replaced = { ...pdf, description: "Read and split PDFs", body: "", files: [], metadata: {} };
+
+it("sends a new version picked as a folder to that skill, one part per file", async () => {
+  const seen = brain({
+    ...team(["skill:write"]),
+    ...skills,
+    "PUT /teams/{id}/skills/{skillID}": { body: replaced },
+  });
+  show(Skills);
+
+  await openReplace();
+  const picker = (await screen.findByLabelText(/new version folder/i)) as HTMLInputElement;
+  await userEvent.upload(picker, [file("pdf/SKILL.md"), file("pdf/scripts/read.py")]);
+
+  await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+  const put = seen.find((s) => s.method === "PUT");
+  expect(put?.path).toBe(`/teams/${TEAM}/skills/s1`);
+  const body = put?.body;
+  expect(body).toBeInstanceOf(FormData);
+  const parts = (body as FormData).getAll("files") as File[];
+  expect(parts.map((p) => p.name)).toEqual(["pdf/SKILL.md", "pdf/scripts/read.py"]);
+});
+
+it("sends a new version picked as a zip as the body", async () => {
+  const seen = brain({
+    ...team(["skill:write"]),
+    ...skills,
+    "PUT /teams/{id}/skills/{skillID}": { body: replaced },
+  });
+  show(Skills);
+
+  await openReplace();
+  const zip = new File(["PK"], "pdf.zip", { type: "application/zip" });
+  await userEvent.upload(
+    (await screen.findByLabelText(/new version zip/i)) as HTMLInputElement,
+    zip,
+  );
+
+  await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+  const put = seen.find((s) => s.method === "PUT");
+  expect(put?.path).toBe(`/teams/${TEAM}/skills/s1`);
+  expect(put?.body).toBe(zip);
+});
+
+it("shows the brain's refusal of a new version in the dialog", async () => {
+  brain({
+    ...team(["skill:write"]),
+    ...skills,
+    "PUT /teams/{id}/skills/{skillID}": {
+      status: 409,
+      text: "a skill named csv already exists in this team",
+    },
+  });
+  show(Skills);
+
+  await openReplace();
+  await userEvent.upload(
+    (await screen.findByLabelText(/new version zip/i)) as HTMLInputElement,
+    new File(["PK"], "csv.zip", { type: "application/zip" }),
+  );
+
+  const dialog = await screen.findByRole("dialog");
+  await waitFor(() =>
+    expect(dialog).toHaveTextContent("a skill named csv already exists in this team"),
+  );
+});
+
+it("lists the new version once it is in", async () => {
+  let version = pdf;
+  brain({
+    ...team(["skill:write"]),
+    "GET /teams/{id}/skills": () => ({ body: { items: [version] } }),
+    "PUT /teams/{id}/skills/{skillID}": () => {
+      version = { ...pdf, description: "Read and split PDFs" };
+      return { body: replaced };
+    },
+  });
+  show(Skills);
+
+  await openReplace();
+  await userEvent.upload(
+    (await screen.findByLabelText(/new version zip/i)) as HTMLInputElement,
+    new File(["PK"], "pdf.zip", { type: "application/zip" }),
+  );
+
+  expect(await screen.findByText("Read and split PDFs")).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });

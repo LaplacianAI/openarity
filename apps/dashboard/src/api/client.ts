@@ -68,6 +68,8 @@ type RequestOptions = {
   signal?: AbortSignal;
   /** For /auth/config, which answers before anyone has a token. */
   anonymous?: boolean;
+  /** The body as bytes rather than JSON: an attachment. */
+  blob?: boolean;
 };
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -88,7 +90,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 }
 
 async function send<T>(path: string, options: RequestOptions): Promise<T> {
-  const headers = new Headers({ Accept: "application/json" });
+  const headers = new Headers({ Accept: options.blob ? "*/*" : "application/json" });
 
   if (!options.anonymous) {
     const token = getToken();
@@ -122,6 +124,8 @@ async function send<T>(path: string, options: RequestOptions): Promise<T> {
   if (!res.ok) {
     throw new ApiError(res.status, await describe(res));
   }
+
+  if (options.blob) return (await res.blob()) as T;
 
   // 204, and any other body-less success.
   if (res.status === 204 || res.headers.get("Content-Length") === "0") {

@@ -178,6 +178,17 @@ it.each([
   expect(await screen.findByText(new RegExp(said))).toBeInTheDocument();
 });
 
+// The graph tool finds an agent by its description; the form says so where
+// the description is written.
+it("says an agent is found by its description", async () => {
+  brain({ ...team(["agent:write"]), ...registry });
+  show(Agents);
+
+  await userEvent.click(await screen.findByRole("button", { name: /define agent/i }));
+
+  expect(screen.getByText(/other agents find this one by its description/i)).toBeInTheDocument();
+});
+
 it("defines an agent with the budget typed", async () => {
   const seen = brain({
     ...team(["agent:write"]),
@@ -237,4 +248,143 @@ it("shows the brain's refusal in the form", async () => {
   await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("is not one the brain runs");
+});
+
+// Editing replaces the agent whole: a grant the PUT does not name is revoked
+// and a field it leaves out goes back to its default. So the form starts from
+// the agent as the brain has it and sends all of it back.
+describe("editing an agent", () => {
+  const current = {
+    ...triage,
+    model: { name: "anthropic/claude-sonnet-5-5", max_tokens: 1024, temperature: 0.2 },
+    instructions: "Label it.",
+    max_steps: 7,
+    steer_continuations: 2,
+    parser: false,
+    mcp_servers: [{ id: "m1", allow: ["search"] }],
+    skills: ["s1"],
+    token_budget: 250000,
+  };
+
+  // What the brain holds, as the PUT takes it: no id, kind or stamps.
+  const definition = {
+    name: "triage",
+    description: "Sorts issues",
+    instructions: "Label it.",
+    model: { name: "anthropic/claude-sonnet-5-5", max_tokens: 1024, temperature: 0.2 },
+    pattern: "react",
+    max_steps: 7,
+    steer_continuations: 2,
+    parser: false,
+    mcp_servers: [{ id: "m1", allow: ["search"] }],
+    skills: ["s1"],
+    token_budget: 250000,
+  };
+
+  function editing(agent: Record<string, unknown>, put: Record<string, unknown> = {}) {
+    return brain({
+      ...team(["agent:write"]),
+      ...registry,
+      "GET /teams/{id}/agents/{agentID}": { body: agent },
+      "PUT /teams/{id}/agents/{agentID}": { body: agent, ...put },
+    });
+  }
+
+  async function openEdit() {
+    show(Agents);
+    await userEvent.click(await screen.findByRole("button", { name: /^edit$/i }));
+    await screen.findByRole("heading", { name: /edit agent/i });
+    // The grants are ticked once the team's servers and skills have loaded.
+    await screen.findByRole("checkbox", { name: /github/ });
+    await screen.findByRole("checkbox", { name: /pdf/ });
+  }
+
+  function putBody(seen: { method: string; body: unknown }[]) {
+    return JSON.parse(String(seen.find((s) => s.method === "PUT")?.body));
+  }
+
+  it("offers no edit without agent:write", async () => {
+    brain({ ...team(["skill:write"]), ...registry });
+    show(Agents);
+
+    await screen.findByText("triage");
+    expect(await screen.findByText("agent:write")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^edit$/i })).not.toBeInTheDocument();
+  });
+
+  it("opens with the agent's current values", async () => {
+    editing(current);
+    await openEdit();
+
+    expect(screen.getByLabelText(/^name$/i)).toHaveValue("triage");
+    expect(screen.getByLabelText(/^model$/i)).toHaveValue("anthropic/claude-sonnet-5-5");
+    expect(screen.getByLabelText(/^max steps$/i)).toHaveValue("7");
+    expect(screen.getByLabelText(/^token budget$/i)).toHaveValue("250000");
+    expect(screen.getByLabelText(/^instructions$/i)).toHaveValue("Label it.");
+    expect(screen.getByRole("checkbox", { name: /github/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /pdf/ })).toBeChecked();
+    // A grant limited to some tools says which, so it is not taken for whole.
+    expect(screen.getByText(/only search/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeInTheDocument();
+  });
+
+  it("saved unchanged, sends the agent back as it is, limits and all", async () => {
+    const seen = editing(current);
+    await openEdit();
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+    expect(seen.find((s) => s.method === "PUT")?.path).toBe(`/teams/${TEAM}/agents/a1`);
+    expect(putBody(seen)).toEqual(definition);
+  });
+
+  it("sends a new description with everything else unchanged", async () => {
+    const seen = editing(current);
+    await openEdit();
+    const description = screen.getByLabelText(/^description$/i);
+    await userEvent.clear(description);
+    await userEvent.type(description, "Sorts and labels issues");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+    expect(putBody(seen)).toEqual({ ...definition, description: "Sorts and labels issues" });
+  });
+
+  it("revokes a skill that is unticked", async () => {
+    const seen = editing(current);
+    await openEdit();
+    await userEvent.click(screen.getByRole("checkbox", { name: /pdf/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+    expect(putBody(seen)).toEqual({ ...definition, skills: [] });
+  });
+
+  it("keeps what the form does not show", async () => {
+    const shaped = {
+      ...current,
+      output_schema: { name: "verdict", json: { type: "object" }, strict: true },
+      parser: true,
+      parser_model: { name: "anthropic/claude-haiku-5" },
+    };
+    const seen = editing(shaped);
+    await openEdit();
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+    expect(putBody(seen)).toEqual({
+      ...definition,
+      output_schema: { name: "verdict", json: { type: "object" }, strict: true },
+      parser: true,
+      parser_model: { name: "anthropic/claude-haiku-5" },
+    });
+  });
+
+  it("shows the brain's refusal in the form", async () => {
+    editing(current, { status: 400, text: 'pattern "wander" is not one the brain runs' });
+    await openEdit();
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("is not one the brain runs");
+  });
 });

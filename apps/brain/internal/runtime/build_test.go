@@ -200,6 +200,7 @@ type fixture struct {
 	store   *fakeStore
 	objects *fakeObjects
 	clients *fakeClients
+	graph   *graphFixture
 	builder *Builder
 	agent   db.Agent
 	run     db.Run
@@ -218,7 +219,8 @@ func newFixture() *fixture {
 		agent:   a,
 		run:     db.Run{ID: uuid.New(), TeamID: teamID, AgentID: &a.ID, AgentName: a.Name},
 	}
-	f.builder = NewBuilder(f.store, f.objects, f.clients)
+	f.graph = newGraphFixture()
+	f.builder = NewBuilder(f.store, f.objects, f.clients, f.graph.deps())
 	return f
 }
 
@@ -257,10 +259,14 @@ func (f *fixture) buildErr(t *testing.T) error {
 	return err
 }
 
+// toolNames is the MCP tools a build bound: every run also has the brain's
+// own graph tool, which the tests below check on its own.
 func toolNames(built Built) []string {
 	out := make([]string, 0, len(built.Spec.Tools))
 	for _, tl := range built.Spec.Tools {
-		out = append(out, tl.Name)
+		if tl.Description != graphDescription {
+			out = append(out, tl.Name)
+		}
 	}
 	slices.Sort(out)
 	return out
@@ -645,7 +651,7 @@ func TestConnectingGivesUpAtItsTimeout(t *testing.T) {
 func TestTheConnectTimeoutIsThirtySeconds(t *testing.T) {
 	t.Parallel()
 
-	if got := NewBuilder(nil, nil, nil).connectTimeout; got != 30*time.Second {
+	if got := NewBuilder(nil, nil, nil, nil).connectTimeout; got != 30*time.Second {
 		t.Errorf("connectTimeout = %v, want 30s", got)
 	}
 }
@@ -857,5 +863,98 @@ func TestLoopsNamesEveryRegisteredPatternOnce(t *testing.T) {
 	slices.Sort(registered)
 	if !slices.Equal(registered, Loops()) || len(slices.Compact(registered)) != len(Patterns()) {
 		t.Errorf("Patterns() names %v; Loops() must list each once", registered)
+	}
+}
+
+// --- the graph tool ---
+
+func (f *graphFixture) deps() *GraphDeps {
+	return &GraphDeps{Search: f.search, Embed: f.embed, Store: f.reach}
+}
+
+func graphTools(built Built) []agent.Tool {
+	var out []agent.Tool
+	for _, tl := range built.Spec.Tools {
+		if tl.Name == GraphToolName {
+			out = append(out, tl)
+		}
+	}
+	return out
+}
+
+// Every run can search its team's graph, scoped to the run's team and to
+// what the run's agent may reach.
+func TestBuildBindsTheGraphTool(t *testing.T) {
+	f := newFixture()
+	built := f.build(t)
+
+	g := graphTools(built)
+	if len(g) != 1 || g[0].Description != graphDescription {
+		t.Fatalf("graph tools = %d, want the brain's one", len(g))
+	}
+	if len(built.Unavailable) != 0 {
+		t.Errorf("unavailable = %+v, want nothing", built.Unavailable)
+	}
+
+	if _, err := g[0].Invoke(t.Context(), json.RawMessage(`{"query":"x"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.graph.search.teams; len(got) != 1 || got[0] != f.run.TeamID {
+		t.Errorf("searched teams %v, want the run's %s", got, f.run.TeamID)
+	}
+	want := db.ListReachableAgentIDsParams{TeamID: f.run.TeamID, AgentID: f.agent.ID}
+	if got := f.graph.reach.agentsAsked; len(got) != 1 || got[0] != want {
+		t.Errorf("reach asked with %+v, want %+v", got, want)
+	}
+}
+
+func TestBuildWithoutTheGraphSaysWhy(t *testing.T) {
+	f := newFixture()
+	f.builder = NewBuilder(f.store, f.objects, f.clients, nil)
+
+	built := f.build(t)
+
+	if g := graphTools(built); len(g) != 0 {
+		t.Errorf("graph tools = %d with no graph, want none", len(g))
+	}
+	want := []Unavailable{{Name: "graph", Reason: "no embedding model is configured, so the team's graph is not built"}}
+	if !reflect.DeepEqual(built.Unavailable, want) {
+		t.Errorf("unavailable = %+v, want %+v", built.Unavailable, want)
+	}
+}
+
+// Review Focus 4: a bare server's tool named graph would collide with the
+// brain's. The brain's keeps the name, the server's is left out and said so,
+// and the run goes ahead with everything else.
+func TestBuildLeavesOutAnMCPToolNamedGraph(t *testing.T) {
+	f := newFixture()
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", serve(t, "graph", "search").url, true)}
+
+	built := f.build(t)
+
+	if got := toolNames(built); !slices.Equal(got, []string{"search"}) {
+		t.Errorf("MCP tools = %v, want only search", got)
+	}
+	if g := graphTools(built); len(g) != 1 || g[0].Description != graphDescription {
+		t.Errorf("graph tools = %d, want only the brain's", len(g))
+	}
+	want := []Unavailable{{Name: "graph", Reason: `the MCP server "web" offers a tool named graph, which is the brain's own`}}
+	if !reflect.DeepEqual(built.Unavailable, want) {
+		t.Errorf("unavailable = %+v, want %+v", built.Unavailable, want)
+	}
+}
+
+// A prefixed server's graph is web__graph, which collides with nothing.
+func TestBuildKeepsAPrefixedToolNamedGraph(t *testing.T) {
+	f := newFixture()
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", serve(t, "graph").url, false)}
+
+	built := f.build(t)
+
+	if got := toolNames(built); !slices.Equal(got, []string{"web__graph"}) {
+		t.Errorf("MCP tools = %v, want web__graph", got)
+	}
+	if len(built.Unavailable) != 0 {
+		t.Errorf("unavailable = %+v, want nothing", built.Unavailable)
 	}
 }

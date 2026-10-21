@@ -15,7 +15,7 @@ import (
 
 func newRunJob(
 	cfg *config.Config, logger *slog.Logger,
-	dbStore *store.Store, secretStore secrets.Store,
+	dbStore *store.Store, secretStore secrets.Store, graphDeps *runtime.GraphDeps,
 ) (*runtime.Job, error) {
 	attachments, err := newAttachmentStore(cfg, secretStore, logger)
 	if err != nil {
@@ -27,7 +27,7 @@ func newRunJob(
 		return nil, fmt.Errorf("building the agent runner: %w", err)
 	}
 
-	builder := runtime.NewBuilder(dbStore, attachments, newDiscoverer(cfg, secretStore))
+	builder := runtime.NewBuilder(dbStore, attachments, newDiscoverer(cfg, secretStore), graphDeps)
 	endpoint := agent.Endpoint{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
 	executor := runtime.NewExecutor(dbStore, builder, runner, endpoint, postgres.New(dbStore.Pool()), logger)
 

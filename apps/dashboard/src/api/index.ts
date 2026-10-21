@@ -180,6 +180,17 @@ export function listAttachments(
   );
 }
 
+/** An attachment's bytes. Saved by the caller, never opened in the page. */
+export function downloadAttachment(
+  teamId: string,
+  sessionId: string,
+  attachmentId: string,
+): Promise<Blob> {
+  return request<Blob>(`/teams/${teamId}/sessions/${sessionId}/attachments/${attachmentId}`, {
+    blob: true,
+  });
+}
+
 /* ------------------------------------------------------------ permissions */
 
 /**
@@ -206,6 +217,14 @@ export function getSkill(teamId: string, skillId: string): Promise<Skill> {
  */
 export function uploadSkill(teamId: string, upload: SkillUpload): Promise<Skill> {
   return request<Skill>(`/teams/${teamId}/skills`, { method: "POST", upload: skillBody(upload) });
+}
+
+/** A new version of a skill, uploaded as a whole; it keeps its id and grants. */
+export function replaceSkill(teamId: string, skillId: string, upload: SkillUpload): Promise<Skill> {
+  return request<Skill>(`/teams/${teamId}/skills/${skillId}`, {
+    method: "PUT",
+    upload: skillBody(upload),
+  });
 }
 
 export function importSkill(teamId: string, source: string): Promise<Skill> {
@@ -244,6 +263,11 @@ export function createAgent(teamId: string, agent: AgentRequest): Promise<Agent>
   return request<Agent>(`/teams/${teamId}/agents`, { method: "POST", body: agent });
 }
 
+/** Whole, like the CLI's replace: a grant the request does not name is revoked. */
+export function replaceAgent(teamId: string, agentId: string, agent: AgentRequest): Promise<Agent> {
+  return request<Agent>(`/teams/${teamId}/agents/${agentId}`, { method: "PUT", body: agent });
+}
+
 export function deleteAgent(teamId: string, agentId: string): Promise<void> {
   return request<void>(`/teams/${teamId}/agents/${agentId}`, { method: "DELETE" });
 }
@@ -256,6 +280,17 @@ export function listMCPServers(teamId: string, cursor?: string | null): Promise<
 
 export function createMCPServer(teamId: string, server: MCPServerRequest): Promise<MCPServer> {
   return request<MCPServer>(`/teams/${teamId}/mcp-servers`, { method: "POST", body: server });
+}
+
+export function replaceMCPServer(
+  teamId: string,
+  serverId: string,
+  server: MCPServerRequest,
+): Promise<MCPServer> {
+  return request<MCPServer>(`/teams/${teamId}/mcp-servers/${serverId}`, {
+    method: "PUT",
+    body: server,
+  });
 }
 
 export function deleteMCPServer(teamId: string, serverId: string): Promise<void> {

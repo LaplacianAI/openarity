@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
 )
 
@@ -305,6 +306,28 @@ func TestAnAgentsEscapeSequencesDoNotReachTheTerminal(t *testing.T) {
 		}
 		if strings.ContainsAny(out, "\x1b\x07") {
 			t.Errorf("%v printed a raw escape:\n%q", args, out)
+		}
+	}
+}
+
+// The graph tool finds an agent by its description, so the example a person
+// copies says so where the description is written.
+func TestTheExampleSaysAnAgentIsFoundByItsDescription(t *testing.T) {
+	long := newCreateCmd(&cli.Options{}).Long
+	note := strings.Index(long, "this is how other agents find it")
+	desc := strings.Index(long, "description:")
+	if note < 0 || desc < 0 || note > desc {
+		t.Errorf("the example should say how agents are found just above description:\n%s", long)
+	}
+}
+
+// A whole replace revokes what it does not name, so the help shows the safe
+// way to change one field: start from the agent as it is.
+func TestReplaceHelpShowsHowToChangeOneThing(t *testing.T) {
+	long := newReplaceCmd(&cli.Options{}).Long
+	for _, want := range []string{"-o yaml > triage.yaml", "replace platform triage -f triage.yaml"} {
+		if !strings.Contains(long, want) {
+			t.Errorf("replace help lacks %q:\n%s", want, long)
 		}
 	}
 }

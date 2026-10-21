@@ -8,6 +8,7 @@ import {
   getSkill,
   importSkill,
   listSkills,
+  replaceSkill,
   type SkillUpload,
   syncSkill,
   uploadSkill,
@@ -18,6 +19,14 @@ import { useCurrentTeam } from "@/api/session";
 import type { SkillSummary } from "@/api/types";
 import { ReadOnlyNote, Tag } from "@/components/registry-bits";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { EmptyState, LoadMore, Mono, PageHeader } from "@/components/ui-bits";
 import { fileSize, relativeTime } from "@/lib/format";
@@ -41,6 +50,78 @@ export function folderUpload(files: FileList | File[]): SkillUpload {
   return { files: picked };
 }
 
+/**
+ * A folder or a zip, chosen through the browser's own pickers: what an
+ * upload and a new version of a skill both start from.
+ */
+function SkillPicker({
+  disabled,
+  onPick,
+  folderButton,
+  zipButton,
+  folderLabel,
+  zipLabel,
+}: {
+  disabled: boolean;
+  onPick: (body: SkillUpload) => void;
+  folderButton: string;
+  zipButton: string;
+  folderLabel: string;
+  zipLabel: string;
+}) {
+  const folderInput = useRef<HTMLInputElement>(null);
+  const zipInput = useRef<HTMLInputElement>(null);
+
+  const onFolder = (e: ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.length) onPick(folderUpload(e.target.files));
+    e.target.value = "";
+  };
+  const onZip = (e: ChangeEvent<HTMLInputElement>) => {
+    const zip = e.target.files?.[0];
+    if (zip) onPick({ zip });
+    e.target.value = "";
+  };
+
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={disabled}
+        onClick={() => folderInput.current?.click()}
+      >
+        {folderButton}
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={disabled}
+        onClick={() => zipInput.current?.click()}
+      >
+        {zipButton}
+      </Button>
+      {/* webkitdirectory is not in React's types, and every browser supports it. */}
+      <input
+        ref={folderInput}
+        type="file"
+        multiple
+        className="hidden"
+        aria-label={folderLabel}
+        onChange={onFolder}
+        {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+      />
+      <input
+        ref={zipInput}
+        type="file"
+        accept=".zip,application/zip"
+        className="hidden"
+        aria-label={zipLabel}
+        onChange={onZip}
+      />
+    </>
+  );
+}
+
 function Skills() {
   const qc = useQueryClient();
   const { teamId } = useCurrentTeam();
@@ -48,8 +129,6 @@ function Skills() {
   const canWrite = perms.can(WRITE);
   const [open, setOpen] = useState<string | null>(null);
   const [source, setSource] = useState("");
-  const folderInput = useRef<HTMLInputElement>(null);
-  const zipInput = useRef<HTMLInputElement>(null);
 
   const skills = useInfiniteQuery({
     queryKey: ["skills", teamId, "paged"],
@@ -82,16 +161,6 @@ function Skills() {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const onFolder = (e: ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.length) upload.mutate(folderUpload(e.target.files));
-    e.target.value = "";
-  };
-  const onZip = (e: ChangeEvent<HTMLInputElement>) => {
-    const zip = e.target.files?.[0];
-    if (zip) upload.mutate({ zip });
-    e.target.value = "";
-  };
-
   const rows = skills.data?.pages.flatMap((p) => p.items) ?? [];
   const busy = upload.isPending || imported.isPending;
 
@@ -102,42 +171,14 @@ function Skills() {
         description="Instructions and files an agent can load when a task needs them. The description is what the model reads when deciding."
         actions={
           canWrite ? (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => folderInput.current?.click()}
-              >
-                Upload folder
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => zipInput.current?.click()}
-              >
-                Upload zip
-              </Button>
-              {/* webkitdirectory is not in React's types, and every browser supports it. */}
-              <input
-                ref={folderInput}
-                type="file"
-                multiple
-                className="hidden"
-                aria-label="Skill folder"
-                onChange={onFolder}
-                {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
-              />
-              <input
-                ref={zipInput}
-                type="file"
-                accept=".zip,application/zip"
-                className="hidden"
-                aria-label="Skill zip"
-                onChange={onZip}
-              />
-            </>
+            <SkillPicker
+              disabled={busy}
+              onPick={(body) => upload.mutate(body)}
+              folderButton="Upload folder"
+              zipButton="Upload zip"
+              folderLabel="Skill folder"
+              zipLabel="Skill zip"
+            />
           ) : null
         }
       />
@@ -227,6 +268,7 @@ function SkillRow({
     },
     onError: (err: Error) => toast.error(err.message),
   });
+  const [replacing, setReplacing] = useState(false);
   const remove = useMutation({
     mutationFn: () => deleteSkill(teamId, skill.id),
     onSuccess: () => {
@@ -271,6 +313,14 @@ function SkillRow({
               variant="ghost"
               size="sm"
               className="text-xs"
+              onClick={() => setReplacing(true)}
+            >
+              Upload new version
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs"
               disabled={remove.isPending}
               onClick={() => remove.mutate()}
             >
@@ -280,7 +330,83 @@ function SkillRow({
         ) : null}
       </div>
       {open ? <SkillDetail teamId={teamId} skillId={skill.id} /> : null}
+      {canWrite ? (
+        <ReplaceDialog
+          teamId={teamId}
+          skill={skill}
+          open={replacing}
+          onClose={() => setReplacing(false)}
+          onChanged={onChanged}
+        />
+      ) : null}
     </li>
+  );
+}
+
+/**
+ * A new version of a skill, uploaded whole. The brain keeps the skill's id and
+ * its grants, names it from the new SKILL.md, and refuses — with a sentence
+ * shown here as it is — a version that does not fit.
+ */
+function ReplaceDialog({
+  teamId,
+  skill,
+  open,
+  onClose,
+  onChanged,
+}: {
+  teamId: string;
+  skill: SkillSummary;
+  open: boolean;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const replace = useMutation({
+    mutationFn: (body: SkillUpload) => replaceSkill(teamId, skill.id, body),
+    onSuccess: (next) => {
+      // The list and this skill's detail share the ["skills", teamId] prefix.
+      onChanged();
+      close();
+      toast.success(`Uploaded a new version of ${next.name}`);
+    },
+  });
+
+  const close = () => {
+    replace.reset();
+    onClose();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => (o ? null : close())}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Upload a new version of {skill.name}</DialogTitle>
+          <DialogDescription>
+            Pick the whole skill again: a folder with SKILL.md at the top, or a zip of one. It
+            replaces every file, and its name comes from the new SKILL.md. Agents granted this skill
+            keep it and get the new version on their next run.
+          </DialogDescription>
+        </DialogHeader>
+        {replace.isError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {replace.error.message}
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={close}>
+            Cancel
+          </Button>
+          <SkillPicker
+            disabled={replace.isPending}
+            onPick={(body) => replace.mutate(body)}
+            folderButton="Choose folder"
+            zipButton="Choose zip"
+            folderLabel="New version folder"
+            zipLabel="New version zip"
+          />
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
