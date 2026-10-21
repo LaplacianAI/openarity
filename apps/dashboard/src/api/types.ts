@@ -267,3 +267,36 @@ export type TeamGraph = {
   edges: GraphEdge[];
   truncated: boolean;
 };
+
+/** The providers a team may search with. The first two are self-hosted and take a URL. */
+export type SearchProvider =
+  | "none"
+  | "searxng"
+  | "brave"
+  | "tavily"
+  | "firecrawl-cloud"
+  | "firecrawl-oss";
+
+/**
+ * GET /teams/{id}/settings. A team that never saved reads the defaults, with
+ * `updated_at` null. The search key is never returned; `key_set` says
+ * whether there is one.
+ */
+export type TeamSettings = {
+  model: { name: string; max_tokens: number; temperature?: number } | null;
+  search: { provider: SearchProvider; url: string | null; key_set: boolean };
+  learning: boolean;
+  compaction_messages: number;
+  updated_at: string | null;
+};
+
+/**
+ * PUT /teams/{id}/settings, the whole set. Leave `api_key` out to keep the
+ * stored key; for firecrawl-oss an empty one removes it.
+ */
+export type TeamSettingsRequest = {
+  model: { name: string; max_tokens: number; temperature?: number } | null;
+  search: { provider: SearchProvider; url?: string; api_key?: string };
+  learning: boolean;
+  compaction_messages: number;
+};

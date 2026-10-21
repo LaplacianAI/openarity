@@ -10,6 +10,7 @@ import {
   Network,
   Radio,
   Server,
+  Settings,
   Sun,
   Users,
 } from "lucide-react";
@@ -42,6 +43,7 @@ const NAV = [
   { to: "/ui/servers", label: "MCP servers", icon: Server, exact: false },
   { to: "/ui/skills", label: "Skills", icon: BookOpen, exact: false },
   { to: "/ui/graph", label: "Graph", icon: Network, exact: false },
+  { to: "/ui/settings", label: "Settings", icon: Settings, exact: false },
 ] as const;
 
 function UiLayout() {
