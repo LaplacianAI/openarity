@@ -140,7 +140,7 @@ func invoke(ctx context.Context, byName map[string]agent.Tool, call agent.ToolCa
 		return fmt.Sprintf("the tool %q cannot be called here", call.Name), "tool has no implementation"
 	}
 
-	result, err := t.Invoke(ctx, call.Arguments)
+	result, err := t.Invoke(agent.WithToolCallID(ctx, call.ID), call.Arguments)
 	if err != nil {
 		return err.Error(), err.Error()
 	}
