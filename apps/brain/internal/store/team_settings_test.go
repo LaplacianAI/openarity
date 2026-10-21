@@ -183,26 +183,41 @@ func TestTeamSettingsRefuseWhatTheAPIWould(t *testing.T) {
 		},
 		"searxng with no url": {
 			func(p *db.UpsertTeamSettingsParams) { p.SearchProvider = "searxng" },
-			"team_settings_search_url_iff_searxng",
+			"team_settings_search_url_iff_self_hosted",
+		},
+		"self-hosted firecrawl with no url": {
+			func(p *db.UpsertTeamSettingsParams) { p.SearchProvider = "firecrawl-oss" },
+			"team_settings_search_url_iff_self_hosted",
 		},
 		"a url with search off": {
 			func(p *db.UpsertTeamSettingsParams) { p.SearchUrl = &url },
-			"team_settings_search_url_iff_searxng",
+			"team_settings_search_url_iff_self_hosted",
+		},
+		"firecrawl cloud with a url": {
+			func(p *db.UpsertTeamSettingsParams) {
+				id := uuid.New()
+				p.SearchProvider, p.SearchUrl, p.SearchSecretID = "firecrawl-cloud", &url, &id
+			},
+			"team_settings_search_url_iff_self_hosted",
 		},
 		"brave with no key": {
 			func(p *db.UpsertTeamSettingsParams) { p.SearchProvider = "brave" },
-			"team_settings_search_secret_iff_keyed",
+			"team_settings_search_secret_required",
+		},
+		"firecrawl cloud with no key": {
+			func(p *db.UpsertTeamSettingsParams) { p.SearchProvider = "firecrawl-cloud" },
+			"team_settings_search_secret_required",
 		},
 		"a key with search off": {
 			func(p *db.UpsertTeamSettingsParams) { id := uuid.New(); p.SearchSecretID = &id },
-			"team_settings_search_secret_iff_keyed",
+			"team_settings_search_secret_allowed",
 		},
 		"searxng with a key": {
 			func(p *db.UpsertTeamSettingsParams) {
 				id := uuid.New()
 				p.SearchProvider, p.SearchUrl, p.SearchSecretID = "searxng", &url, &id
 			},
-			"team_settings_search_secret_iff_keyed",
+			"team_settings_search_secret_allowed",
 		},
 		"compaction below 10": {
 			func(p *db.UpsertTeamSettingsParams) { p.CompactionMessages = 9 },
@@ -229,6 +244,24 @@ func TestTeamSettingsRefuseWhatTheAPIWould(t *testing.T) {
 		})
 	}
 }
+
+// Self-hosted Firecrawl is the one provider whose key is optional: an
+// instance may run with authentication off.
+func TestSelfHostedFirecrawlTakesAKeyOrNone(t *testing.T) {
+	s := queryStore(t)
+	url := "https://firecrawl.internal.example"
+
+	for name, id := range map[string]*uuid.UUID{"with a key": ptrTo(uuid.New()), "without": nil} {
+		t.Run(name, func(t *testing.T) {
+			team := mustCreate(t, s, "oss-"+name)
+			p := settings(team.ID)
+			p.SearchProvider, p.SearchUrl, p.SearchSecretID = "firecrawl-oss", &url, id
+			mustUpsertSettings(t, s, p)
+		})
+	}
+}
+
+func ptrTo[T any](v T) *T { return &v }
 
 // Every key is written to a path of its own, and a trigger records the one it
 // replaces. One fixed path would let the tombstone of a cleared key destroy a

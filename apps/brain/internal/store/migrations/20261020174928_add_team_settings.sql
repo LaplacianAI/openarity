@@ -31,11 +31,16 @@ CREATE TABLE team_settings (
     CONSTRAINT team_settings_model_max_tokens_positive CHECK (model_max_tokens > 0),
     CONSTRAINT team_settings_model_temperature_range CHECK (model_temperature BETWEEN 0 AND 2),
     CONSTRAINT team_settings_search_provider_known CHECK (
-        search_provider IN ('none', 'searxng', 'brave', 'tavily')),
-    CONSTRAINT team_settings_search_url_iff_searxng CHECK (
-        (search_url IS NOT NULL) = (search_provider = 'searxng')),
-    CONSTRAINT team_settings_search_secret_iff_keyed CHECK (
-        (search_secret_id IS NOT NULL) = (search_provider IN ('brave', 'tavily'))),
+        search_provider IN ('none', 'searxng', 'brave', 'tavily',
+                            'firecrawl-cloud', 'firecrawl-oss')),
+    CONSTRAINT team_settings_search_url_iff_self_hosted CHECK (
+        (search_url IS NOT NULL) = (search_provider IN ('searxng', 'firecrawl-oss'))),
+    CONSTRAINT team_settings_search_secret_required CHECK (
+        search_secret_id IS NOT NULL
+        OR search_provider NOT IN ('brave', 'tavily', 'firecrawl-cloud')),
+    CONSTRAINT team_settings_search_secret_allowed CHECK (
+        search_secret_id IS NULL
+        OR search_provider IN ('brave', 'tavily', 'firecrawl-cloud', 'firecrawl-oss')),
     CONSTRAINT team_settings_compaction_range CHECK (compaction_messages BETWEEN 10 AND 10000)
 );
 

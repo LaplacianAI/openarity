@@ -122,16 +122,22 @@ func (e RunStatus) Valid() bool {
 
 // Defines values for SearchProvider.
 const (
-	Brave   SearchProvider = "brave"
-	None    SearchProvider = "none"
-	Searxng SearchProvider = "searxng"
-	Tavily  SearchProvider = "tavily"
+	Brave          SearchProvider = "brave"
+	FirecrawlCloud SearchProvider = "firecrawl-cloud"
+	FirecrawlOss   SearchProvider = "firecrawl-oss"
+	None           SearchProvider = "none"
+	Searxng        SearchProvider = "searxng"
+	Tavily         SearchProvider = "tavily"
 )
 
 // Valid indicates whether the value is a known member of the SearchProvider enum.
 func (e SearchProvider) Valid() bool {
 	switch e {
 	case Brave:
+		return true
+	case FirecrawlCloud:
+		return true
+	case FirecrawlOss:
 		return true
 	case None:
 		return true
@@ -905,16 +911,22 @@ type RunRequest struct {
 	SessionID *openapi_types.UUID `json:"session_id,omitempty" yaml:"session_id,omitempty"`
 }
 
-// SearchProvider defines model for SearchProvider.
+// SearchProvider `searxng` and `firecrawl-oss` are self-hosted and take a `url`;
+// `brave`, `tavily` and `firecrawl-cloud` take a key and no url.
+// `firecrawl-oss` takes a key only if the instance requires one.
 type SearchProvider string
 
 // SearchSettings defines model for SearchSettings.
 type SearchSettings struct {
 	// KeySet Whether a key is stored. The key itself is never returned.
-	KeySet   bool           `json:"key_set" yaml:"key_set"`
+	KeySet bool `json:"key_set" yaml:"key_set"`
+
+	// Provider `searxng` and `firecrawl-oss` are self-hosted and take a `url`;
+	// `brave`, `tavily` and `firecrawl-cloud` take a key and no url.
+	// `firecrawl-oss` takes a key only if the instance requires one.
 	Provider SearchProvider `json:"provider" yaml:"provider"`
 
-	// URL SearXNG's address; null for every other provider
+	// URL The self-hosted instance's address, for searxng and firecrawl-oss; null for every other provider
 	//
 	// Examples: http://searxng:8080
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
@@ -922,12 +934,19 @@ type SearchSettings struct {
 
 // SearchSettingsRequest defines model for SearchSettingsRequest.
 type SearchSettingsRequest struct {
-	// APIKey Brave's or Tavily's key. Omit it to keep the stored one while the
-	// provider is unchanged. Refused for none and searxng.
-	APIKey   *string        `json:"api_key,omitempty" yaml:"api_key,omitempty"`
+	// APIKey The provider's key: required for brave, tavily and firecrawl-cloud,
+	// optional for firecrawl-oss, refused for none and searxng. Omit it
+	// to keep the stored one while the provider is unchanged. For
+	// firecrawl-oss an empty string removes the stored key; for the
+	// others it is refused.
+	APIKey *string `json:"api_key,omitempty" yaml:"api_key,omitempty"`
+
+	// Provider `searxng` and `firecrawl-oss` are self-hosted and take a `url`;
+	// `brave`, `tavily` and `firecrawl-cloud` take a key and no url.
+	// `firecrawl-oss` takes a key only if the instance requires one.
 	Provider SearchProvider `json:"provider" yaml:"provider"`
 
-	// URL Required for searxng, refused for every other provider
+	// URL Required for searxng and firecrawl-oss, refused for every other provider
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
 }
 
@@ -2240,9 +2259,9 @@ type ClientInterface interface {
 	// that takes a key needs a new one. A key sent is stored in the secret
 	// store, never in the database, and never returned.
 	//
-	// A SearXNG URL whose host is an address rather than a name must be a
-	// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
-	// is checked when the brain connects to it.
+	// A self-hosted provider's URL whose host is an address rather than a
+	// name must be a public one, or within the deployment's
+	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2261,9 +2280,9 @@ type ClientInterface interface {
 	// that takes a key needs a new one. A key sent is stored in the secret
 	// store, never in the database, and never returned.
 	//
-	// A SearXNG URL whose host is an address rather than a name must be a
-	// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
-	// is checked when the brain connects to it.
+	// A self-hosted provider's URL whose host is an address rather than a
+	// name must be a public one, or within the deployment's
+	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -3615,9 +3634,9 @@ func (c *Client) GetTeamSettings(ctx context.Context, id TeamID, reqEditors ...R
 // that takes a key needs a new one. A key sent is stored in the secret
 // store, never in the database, and never returned.
 //
-// A SearXNG URL whose host is an address rather than a name must be a
-// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
-// is checked when the brain connects to it.
+// A self-hosted provider's URL whose host is an address rather than a
+// name must be a public one, or within the deployment's
+// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3646,9 +3665,9 @@ func (c *Client) SaveTeamSettingsWithBody(ctx context.Context, id TeamID, conten
 // that takes a key needs a new one. A key sent is stored in the secret
 // store, never in the database, and never returned.
 //
-// A SearXNG URL whose host is an address rather than a name must be a
-// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
-// is checked when the brain connects to it.
+// A self-hosted provider's URL whose host is an address rather than a
+// name must be a public one, or within the deployment's
+// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -7400,9 +7419,9 @@ type ClientWithResponsesInterface interface {
 	// that takes a key needs a new one. A key sent is stored in the secret
 	// store, never in the database, and never returned.
 	//
-	// A SearXNG URL whose host is an address rather than a name must be a
-	// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
-	// is checked when the brain connects to it.
+	// A self-hosted provider's URL whose host is an address rather than a
+	// name must be a public one, or within the deployment's
+	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7421,9 +7440,9 @@ type ClientWithResponsesInterface interface {
 	// that takes a key needs a new one. A key sent is stored in the secret
 	// store, never in the database, and never returned.
 	//
-	// A SearXNG URL whose host is an address rather than a name must be a
-	// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
-	// is checked when the brain connects to it.
+	// A self-hosted provider's URL whose host is an address rather than a
+	// name must be a public one, or within the deployment's
+	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11055,9 +11074,9 @@ func (c *ClientWithResponses) GetTeamSettingsWithResponse(ctx context.Context, i
 // that takes a key needs a new one. A key sent is stored in the secret
 // store, never in the database, and never returned.
 //
-// A SearXNG URL whose host is an address rather than a name must be a
-// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
-// is checked when the brain connects to it.
+// A self-hosted provider's URL whose host is an address rather than a
+// name must be a public one, or within the deployment's
+// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -11082,9 +11101,9 @@ func (c *ClientWithResponses) SaveTeamSettingsWithBodyWithResponse(ctx context.C
 // that takes a key needs a new one. A key sent is stored in the secret
 // store, never in the database, and never returned.
 //
-// A SearXNG URL whose host is an address rather than a name must be a
-// public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
-// is checked when the brain connects to it.
+// A self-hosted provider's URL whose host is an address rather than a
+// name must be a public one, or within the deployment's
+// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

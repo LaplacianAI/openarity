@@ -1692,9 +1692,9 @@ paths:
         that takes a key needs a new one. A key sent is stored in the secret
         store, never in the database, and never returned.
 
-        A SearXNG URL whose host is an address rather than a name must be a
-        public one, or within the deployment's `MCP_PRIVATE_NETWORKS`. A name
-        is checked when the brain connects to it.
+        A self-hosted provider's URL whose host is an address rather than a
+        name must be a public one, or within the deployment's
+        `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
       requestBody:
         required: true
         content:
@@ -3448,7 +3448,7 @@ components:
         url:
           type: string
           nullable: true
-          description: SearXNG's address; null for every other provider
+          description: The self-hosted instance's address, for searxng and firecrawl-oss; null for every other provider
           examples: ["http://searxng:8080"]
         key_set:
           type: boolean
@@ -3456,7 +3456,11 @@ components:
 
     SearchProvider:
       type: string
-      enum: [none, searxng, brave, tavily]
+      enum: [none, searxng, brave, tavily, firecrawl-cloud, firecrawl-oss]
+      description: |
+        `searxng` and `firecrawl-oss` are self-hosted and take a `url`;
+        `brave`, `tavily` and `firecrawl-cloud` take a key and no url.
+        `firecrawl-oss` takes a key only if the instance requires one.
 
     TeamSettingsRequest:
       type: object
@@ -3486,14 +3490,17 @@ components:
           $ref: "#/components/schemas/SearchProvider"
         url:
           type: string
-          description: Required for searxng, refused for every other provider
+          description: Required for searxng and firecrawl-oss, refused for every other provider
         api_key:
           type: string
           writeOnly: true
           maxLength: 4096
           description: |
-            Brave's or Tavily's key. Omit it to keep the stored one while the
-            provider is unchanged. Refused for none and searxng.
+            The provider's key: required for brave, tavily and firecrawl-cloud,
+            optional for firecrawl-oss, refused for none and searxng. Omit it
+            to keep the stored one while the provider is unchanged. For
+            firecrawl-oss an empty string removes the stored key; for the
+            others it is refused.
 
     RunRequest:
       type: object
