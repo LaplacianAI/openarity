@@ -143,6 +143,16 @@ it("shows the defaults for a team that never saved", async () => {
   expect(screen.getByLabelText(/messages before a transcript compacts/i)).toHaveValue("100");
 });
 
+// Settings are per team; the title says whose they are.
+it("names the team whose settings these are", async () => {
+  brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: NEVER } });
+  show(Settings);
+
+  expect(
+    await screen.findByRole("heading", { name: "Team settings — platform" }),
+  ).toBeInTheDocument();
+});
+
 // Review Focus 1 from the dashboard: it never has the key, so it must never
 // send one it did not type.
 it("saves the learning switch without touching the key", async () => {

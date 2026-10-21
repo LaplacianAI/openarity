@@ -43,7 +43,7 @@ const NAV = [
   { to: "/ui/servers", label: "MCP servers", icon: Server, exact: false },
   { to: "/ui/skills", label: "Skills", icon: BookOpen, exact: false },
   { to: "/ui/graph", label: "Graph", icon: Network, exact: false },
-  { to: "/ui/settings", label: "Settings", icon: Settings, exact: false },
+  { to: "/ui/settings", label: "Team settings", icon: Settings, exact: false },
 ] as const;
 
 function UiLayout() {

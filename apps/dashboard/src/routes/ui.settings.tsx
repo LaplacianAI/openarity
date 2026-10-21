@@ -34,7 +34,8 @@ const MIN_COMPACTION = 10;
 const MAX_COMPACTION = 10000;
 
 function Settings() {
-  const { teamId } = useCurrentTeam();
+  const { teamId, teams } = useCurrentTeam();
+  const teamName = teams.find((t) => t.id === teamId)?.name;
   const perms = usePermissions(teamId);
   const canWrite = perms.can(WRITE);
 
@@ -47,8 +48,8 @@ function Settings() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Settings"
-        description="The model this team's built-in agents run on, how they search the web, and what they learn."
+        title={teamName ? `Team settings — ${teamName}` : "Team settings"}
+        description="For this team only: the model its built-in agents run on, how they search the web, and what they learn. Each team has its own."
       />
 
       {teamId && !perms.isPending && !canWrite ? (
