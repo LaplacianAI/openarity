@@ -7,7 +7,7 @@
 # building, never the machine being built for. Without it, buildx runs the
 # whole arm64 stage under QEMU emulation and a Go compile takes minutes rather
 # than seconds. Go cross-compiles natively, so emulating it buys nothing.
-FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS build
 
 # The repository's layout, not a flat /src: go.mod replaces the agent SDK with
 # ../../sdk/agent, and that path has to resolve inside the image too.

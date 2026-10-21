@@ -11,7 +11,7 @@ For the whole thing instead — a real identity provider, a secret store that
 survives a restart, the dashboard — that is one command and it is on the
 [Docker page](/docs/get-started/docker). This page needs Go; that one does not.
 
-Needs Go 1.26.9 and a Postgres 13 or newer you can reach. 13 is where
+Needs Go 1.26.10 and a Postgres 13 or newer you can reach. 13 is where
 `gen_random_uuid()` became built-in, which the first migration uses. Running the
 *tests* needs 18.
 

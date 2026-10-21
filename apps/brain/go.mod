@@ -1,6 +1,6 @@
 module github.com/LaplacianAI/openarity/apps/brain
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/FalkorDB/falkordb-go/v2 v2.1.0
