@@ -23,6 +23,7 @@ jobs:
     outputs:
       brain: ${{ steps.filter.outputs.brain }}
       cli: ${{ steps.filter.outputs.cli }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
       sdk: ${{ steps.filter.outputs.sdk }}
 
     steps:
@@ -37,11 +38,14 @@ jobs:
             brain:
               - 'apps/brain/**'
               # The dashboard is embedded in the brain binary, so a change to
-              # it changes what the brain serves. It has no job of its own —
-              # its build and its type-check run inside this one.
+              # it changes what the brain serves, and the brain job proves the
+              # bundle still builds and embeds.
               - 'apps/dashboard/**'
               - 'go.work'
               - 'go.work.sum'
+              - '.github/workflows/ci.yml'
+            dashboard:
+              - 'apps/dashboard/**'
               - '.github/workflows/ci.yml'
             sdk:
               - 'sdk/**'
@@ -184,42 +188,17 @@ jobs:
           cache: npm
           cache-dependency-path: apps/dashboard/package-lock.json
 
-      # The dashboard's own checks, before anything Go runs. It has no job of
-      # its own on purpose: it is not shipped separately, it is compiled into
-      # the brain, so a green dashboard and a red brain would be a status
-      # nobody can act on.
+      # The dashboard's own checks are the dashboard job's. This job only
+      # builds the bundle it embeds.
       - name: Dashboard dependencies
         working-directory: apps/dashboard
         run: make deps
-
-      # One target per step rather than `make check`, so a failure names the
-      # check in the step list instead of only inside the log. The dashboard
-      # has no job of its own, so this is the only place its status is
-      # visible at a glance.
-      #
-      # Ordered the way `make check` orders them: cheapest and most likely to
-      # be wrong first. A missing semicolon should not wait for a test run.
-      - name: Dashboard formatting
-        working-directory: apps/dashboard
-        run: make fmt-check
-
-      - name: Dashboard lint
-        working-directory: apps/dashboard
-        run: make lint
-
-      - name: Dashboard types
-        working-directory: apps/dashboard
-        run: make typecheck
-
-      - name: Dashboard tests
-        working-directory: apps/dashboard
-        run: make test
 
       - name: Dashboard build
         working-directory: apps/dashboard
         run: make build
 
-      # Copies what `make check` above just built into the embed directory.
+      # Copies what the build above produced into the embed directory.
       # Separate from that target because the copy is the brain's business,
       # not the dashboard's.
       - name: Embed the dashboard in the binary's bundle
@@ -277,6 +256,51 @@ jobs:
 
       - name: Known vulnerabilities
         run: make vuln
+
+  dashboard:
+    needs: changes
+    if: needs.changes.outputs.dashboard == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/dashboard
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      # npm ci: exactly the lockfile, failing if package.json disagrees.
+      - name: Dependencies
+        run: make deps
+
+      # One target per step rather than `make check`, so a failure names the
+      # check in the step list instead of only inside the log. Ordered the way
+      # `make check` orders them: cheapest and most likely to be wrong first.
+      - name: Formatting
+        run: make fmt-check
+
+      - name: Lint
+        run: make lint
+
+      - name: Types
+        run: make typecheck
+
+      # Fails below the thresholds in vite.config.ts.
+      - name: Test and coverage
+        run: make cover
+
+      - name: Build
+        run: make build
+
+      # npm audit, dev dependencies included: the test runner and the bundler
+      # run here and on every contributor's machine.
+      - name: Known vulnerabilities
+        run: make audit
 
   cli:
     needs: changes

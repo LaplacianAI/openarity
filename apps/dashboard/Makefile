@@ -52,9 +52,16 @@ test:
 test-watch:
 	npx vitest
 
-## cover: run the tests with coverage
+## cover: run the tests with coverage; fails below the thresholds in vite.config.ts
 cover:
 	npx vitest run --coverage
+
+## audit: fail on a known high or critical advisory in any installed package
+#
+# Dev dependencies too: the test runner and the bundler run on CI machines and
+# on every contributor's laptop, so an advisory in them is not harmless.
+audit:
+	$(NPM) audit --audit-level=high
 
 ## build: type-check and emit the static bundle into dist/
 build:
@@ -62,16 +69,16 @@ build:
 
 ## check: everything CI runs, in the order that fails fastest
 #
-# CI calls these five targets as five named steps rather than calling this
+# CI calls these six targets as six named steps rather than calling this
 # one, so that a failure names the check in the step list instead of only
 # inside the log. That means the list here and the steps in
 # .github/workflows/ci.yml have to be kept in step by hand — adding a target
 # to this line without adding a step there leaves it running locally and
 # nowhere else.
-check: fmt-check lint typecheck test build
+check: fmt-check lint typecheck cover build audit
 
 ## clean: remove the build output and the installed dependencies
 clean:
 	rm -rf dist node_modules
 
-.PHONY: help deps dev fmt fmt-check lint typecheck test test-watch cover build check clean
+.PHONY: help deps dev fmt fmt-check lint typecheck test test-watch cover audit build check clean
