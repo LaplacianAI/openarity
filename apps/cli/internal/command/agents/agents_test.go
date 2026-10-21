@@ -320,3 +320,14 @@ func TestTheExampleSaysAnAgentIsFoundByItsDescription(t *testing.T) {
 		t.Errorf("the example should say how agents are found just above description:\n%s", long)
 	}
 }
+
+// A whole replace revokes what it does not name, so the help shows the safe
+// way to change one field: start from the agent as it is.
+func TestReplaceHelpShowsHowToChangeOneThing(t *testing.T) {
+	long := newReplaceCmd(&cli.Options{}).Long
+	for _, want := range []string{"-o yaml > triage.yaml", "replace platform triage -f triage.yaml"} {
+		if !strings.Contains(long, want) {
+			t.Errorf("replace help lacks %q:\n%s", want, long)
+		}
+	}
+}
