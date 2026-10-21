@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -40,7 +41,9 @@ func eventsRoute(status int, body string) map[string]clitest.Reply {
 }
 
 func TestEventsPrintsEveryKindReadably(t *testing.T) {
-	script := clitest.Routes(t, eventsRoute(http.StatusOK, succeededStream))
+	routes := eventsRoute(http.StatusOK, succeededStream)
+	routes["GET /teams/{id}/runs/{runID}"] = clitest.Reply{Status: http.StatusOK, Body: finishedRun}
+	script := clitest.Routes(t, routes)
 
 	out, err := clitest.Execute(t, commands, "runs", "events", "platform", runID)
 	if err != nil {
@@ -50,22 +53,20 @@ func TestEventsPrintsEveryKindReadably(t *testing.T) {
 		t.Errorf("the events were asked for %d times", n)
 	}
 
-	for _, want := range []string{
-		"triage on anthropic/claude-sonnet-5-5, react — tools: github.search_code — skills: pdf",
-		"jira.search: the server is unreachable",
-		"github.search_code {\"q\":\"label:bug\"}",
-		"github.search_code → 4 issues (812ms) (truncated by the brain)",
-		"120 in, 45 out, 30 cached — 165 spent",
-		"succeeded",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("the events are missing %q:\n%s", want, out)
-		}
-	}
-
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 8 {
-		t.Errorf("%d lines for 8 frames — a comment or a split event got through:\n%s", len(lines), out)
+	want := "triage · anthropic/claude-sonnet-5-5 · react\n" +
+		"  tools github.search_code\n" +
+		"  skills pdf\n" +
+		"\n" +
+		"⚠ jira.search unavailable: the server is unreachable\n" +
+		"\n" +
+		"⏺ github.search_code(q: \"label:bug\")\n" +
+		"  ⎿  4 issues · 812ms · truncated by the brain\n" +
+		"\n" +
+		"⏺ Labelled 4 issues.\n" +
+		"\n" +
+		"✓ succeeded · 1 step · 165 tokens · 8.0s\n"
+	if out != want {
+		t.Errorf("transcript =\n%s\nwant\n%s", out, want)
 	}
 	if strings.Contains(out, "keep-alive") || strings.Contains(out, "following run") {
 		t.Errorf("a comment was printed:\n%s", out)
@@ -269,10 +270,13 @@ func TestEventDataCannotDriveTheTerminal(t *testing.T) {
 	if strings.ContainsAny(out, "\x1b\u009b\u202e") {
 		t.Errorf("a control sequence reached the terminal:\n%q", out)
 	}
-	if n := strings.Count(strings.TrimSpace(out), "\n"); n != 3 {
-		t.Errorf("4 events printed as %d lines — one broke out of its row:\n%s", n+1, out)
+	// The forged line stays under the result it came in, never at the left
+	// edge where a real event would be.
+	if !strings.Contains(out, "\n       9  finished  succeeded\n") || strings.Contains(out, "\n  9  finished") {
+		t.Errorf("a line of a tool's output escaped its result:\n%s", out)
 	}
-	if !strings.Contains(out, "page") || !strings.Contains(out, "weird") {
+	if !strings.Contains(out, "⏺ web.fetch()\n  ⎿  2 lines · 3ms\n     page\n") ||
+		!strings.Contains(out, "⏺ x(evil)") || !strings.Contains(out, "weird not json") {
 		t.Errorf("the readable part was lost:\n%s", out)
 	}
 
@@ -296,9 +300,10 @@ func TestEventDataCannotDriveTheTerminal(t *testing.T) {
 	}
 }
 
-// A long tool output is the common case — a fetched page, a file. One event
-// is one line, so the table shows the start of it and -o json has the rest.
-func TestALongOutputIsClippedInTheTable(t *testing.T) {
+// A long tool output is the common case — a fetched page, a file. The
+// transcript shows the start of it, one terminal line wide, and -o json has
+// the rest.
+func TestALongOutputIsClippedToTheLine(t *testing.T) {
 	long := strings.Repeat("ab", 500)
 	clitest.Routes(t, eventsRoute(http.StatusOK,
 		"id: 1\nevent: tool_result\ndata: {\"name\":\"read\",\"output\":\""+long+"\"}\n\nevent: end\ndata: {\"status\":\"succeeded\"}\n\n"))
@@ -307,8 +312,14 @@ func TestALongOutputIsClippedInTheTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runs events: %v\n%s", err, out)
 	}
-	if strings.Contains(out, long) || !strings.Contains(out, strings.Repeat("ab", maxCell/2)+"…") {
-		t.Errorf("the output was not clipped at %d characters:\n%s", maxCell, out)
+	want := "  ⎿  " + strings.Repeat("ab", 44) + "… · 0ms\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("the output was not clipped to %d columns:\n%s", fallbackWidth, out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if n := utf8.RuneCountInString(line); n > fallbackWidth {
+			t.Errorf("a line is %d columns wide, past %d: %s", n, fallbackWidth, line)
+		}
 	}
 }
 
@@ -457,11 +468,11 @@ func TestStartFollowStreamsTheRunsEvents(t *testing.T) {
 	}
 
 	all := script.All()
-	if len(all) != 3 || all[1].Path != runsPath || all[2].Path != eventsPath {
-		t.Fatalf("requests = %+v, want the team, the start, then the run's events", all)
+	if len(all) != 4 || all[1].Path != runsPath || all[2].Path != eventsPath || all[3].Path != runPath {
+		t.Fatalf("requests = %+v, want the team, the start, the run's events, then the run for its answer", all)
 	}
 	started := strings.Index(out, "started")
-	step := strings.Index(out, "github.search_code →")
+	step := strings.Index(out, "⏺ github.search_code")
 	if started < 0 || step < 0 || started > step || !strings.Contains(out, runID) {
 		t.Errorf("the run is not printed before its events:\n%s", out)
 	}
@@ -519,35 +530,5 @@ func TestStartWithoutFollowDoesNotStream(t *testing.T) {
 	}
 	if n := script.Calls(http.MethodGet, eventsPath); n != 0 {
 		t.Errorf("the events were followed %d times without --follow", n)
-	}
-}
-
-func TestEverySummaryNamesWhatHappened(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		kind   string
-		p      payload
-		want   string
-		failed bool
-	}{
-		{"resumed", payload{Messages: 12}, "after 12 messages", false},
-		{"step", payload{Step: 3}, "3", false},
-		{"tool_result", payload{Name: "fetch", Error: "timeout", DurationMS: 9}, "fetch failed: timeout (9ms)", true},
-		{"tool_unavailable", payload{Name: "jira", Reason: "gone"}, "jira: gone", true},
-		{"finished", payload{Status: "failed", Error: "budget"}, "failed: budget", true},
-		{"finished", payload{Status: "succeeded"}, "succeeded", false},
-		{"end", payload{Status: "cancelled"}, "cancelled", true},
-		{"started", payload{Agent: "a", Model: "m", Pattern: "p"}, "a on m, p", false},
-		{"tool_call", payload{Name: "n", Arguments: "{}", Truncated: true}, "n {} (truncated by the brain)", false},
-	} {
-		got, failed := summary(tc.kind, tc.p, "")
-		if got != tc.want || failed != tc.failed {
-			t.Errorf("summary(%s, %+v) = %q, %v; want %q, %v", tc.kind, tc.p, got, failed, tc.want, tc.failed)
-		}
-	}
-
-	if got, _ := summary("compacted", payload{}, `{"messages":4}`); got != `{"messages":4}` {
-		t.Errorf("an unknown kind printed %q, want its data", got)
 	}
 }

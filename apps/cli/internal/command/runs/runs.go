@@ -71,8 +71,9 @@ func viewOf(r *client.Run) runView {
 
 func newStartCmd(opts *cli.Options) *cobra.Command {
 	var (
-		session string
-		follow  bool
+		session   string
+		following bool
+		verbose   bool
 	)
 
 	cmd := &cobra.Command{
@@ -82,7 +83,8 @@ func newStartCmd(opts *cli.Options) *cobra.Command {
 			"brain resolves it as it queues the run. The input is what the agent is\n" +
 			"asked to do, at most 100 KiB; - reads it from stdin.\n\n" +
 			"--follow prints the run's events as they happen and exits once it ends,\n" +
-			"non-zero unless it succeeded. Ctrl-C stops following, not the run.\n\n" +
+			"non-zero unless it succeeded. Ctrl-C stops following, not the run.\n" +
+			"--verbose adds each step's tokens and prints tool results whole.\n\n" +
 			"    oa runs start platform triage 'Sort the issues opened today.'\n" +
 			"    oa runs start platform triage - --follow < task.md\n" +
 			"    oa runs start platform triage 'And the ones from yesterday?' \\\n" +
@@ -116,7 +118,7 @@ func newStartCmd(opts *cli.Options) *cobra.Command {
 			if err != nil {
 				return cli.Needs(err, writePermission)
 			}
-			if !follow {
+			if !following {
 				return printRun(opts, run, "started")
 			}
 
@@ -130,14 +132,17 @@ func newStartCmd(opts *cli.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return followRun(cmd.Context(), opts, team, run.ID, args[0], nil)
+			return followRun(cmd.Context(), opts, team, run.ID, args[0],
+				follow{verbose: verbose, afterStart: true})
 		},
 	}
 
 	cmd.Flags().StringVar(&session, "session", "",
 		"the conversation to run in, by id; without it the run gets a session of its own")
-	cmd.Flags().BoolVar(&follow, "follow", false,
+	cmd.Flags().BoolVar(&following, "follow", false,
 		"print the run's events until it ends, as oa runs events does")
+	cmd.Flags().BoolVar(&verbose, "verbose", false,
+		"with --follow, also show each step and its tokens, and every tool result whole")
 	return cmd
 }
 
@@ -219,8 +224,9 @@ func newGetCmd(opts *cli.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <team> <run>",
 		Short: "Show a run: its status, input, answer and what it spent",
-		Long: "The output and the error are printed whole, quoted if they hold anything\n" +
-			"a terminal would act on. -o json has them exactly as stored.\n\n" +
+		Long: "The answer is printed whole, as lines, with anything a terminal would\n" +
+			"act on taken out; the error is quoted if it holds any. -o json has them\n" +
+			"exactly as stored.\n\n" +
 			"    oa runs get platform 0b7c3e52-8a41-4f6d-9e2b-5c1a7d3f8e60",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -247,7 +253,10 @@ func newGetCmd(opts *cli.Options) *cobra.Command {
 }
 
 func newEventsCmd(opts *cli.Options) *cobra.Command {
-	var after int32
+	var (
+		after   int32
+		verbose bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "events <team> <run>",
@@ -256,6 +265,9 @@ func newEventsCmd(opts *cli.Options) *cobra.Command {
 			"happens, and exits once the run ends — zero if it succeeded, non-zero\n" +
 			"if it failed or was cancelled. A run that ended long ago prints its\n" +
 			"whole history and exits at once.\n\n" +
+			"The table reads like a transcript: each tool call with the start of\n" +
+			"its result, then the answer and how the run ended. --verbose adds each\n" +
+			"step's tokens and prints every result whole.\n\n" +
 			"-o json prints one object per line, {id, event, data}, with data\n" +
 			"exactly as the brain recorded it. Ctrl-C stops following; the run\n" +
 			"carries on, and --after picks up where you left off.\n\n" +
@@ -284,12 +296,14 @@ func newEventsCmd(opts *cli.Options) *cobra.Command {
 			if after > 0 {
 				from = &after
 			}
-			return followRun(cmd.Context(), opts, team, id, args[0], from)
+			return followRun(cmd.Context(), opts, team, id, args[0], follow{after: from, verbose: verbose})
 		},
 	}
 
 	cmd.Flags().Int32Var(&after, "after", 0,
 		"skip the events up to and including this number, to resume a stream")
+	cmd.Flags().BoolVar(&verbose, "verbose", false,
+		"also show each step and its tokens, and every tool result whole")
 	return cmd
 }
 
@@ -352,7 +366,7 @@ func parseRun(args []string) (uuid.UUID, error) {
 
 func printRun(opts *cli.Options, r *client.Run, did string) error {
 	view := viewOf(r)
-	return opts.Out.Print(view, printer.Options{
+	err := opts.Out.Print(view, printer.Options{
 		Table: func(table *printer.Table) {
 			head := status(opts, view.Status)
 			if did != "" {
@@ -362,9 +376,6 @@ func printRun(opts *cli.Options, r *client.Run, did string) error {
 			table.Row("status", status(opts, view.Status), "")
 			table.Row("session", view.SessionID, "")
 			table.Row("input", cli.Safe(view.Input), "")
-			if view.Output != nil {
-				table.Row("output", cli.Safe(*view.Output), "")
-			}
 			if view.Error != nil {
 				table.Row("error", opts.Styles.Err.Render(cli.Safe(*view.Error)), "")
 			}
@@ -379,6 +390,22 @@ func printRun(opts *cli.Options, r *client.Run, did string) error {
 			}
 		},
 	})
+	if err != nil || view.Output == nil {
+		return err
+	}
+
+	// The answer is prose, often many lines, so it goes under the table rather
+	// than into a cell. Note is silent under json and yaml.
+	lines := answer(paintOf(opts.Styles), *view.Output)
+	if len(lines) == 0 {
+		return nil
+	}
+	text := "\n" + opts.Styles.Label.Render("Answer")
+	for _, l := range lines {
+		text += "\n" + strings.TrimRight("  "+l, " ")
+	}
+	opts.Out.Note(text)
+	return nil
 }
 
 func status(opts *cli.Options, s string) string {

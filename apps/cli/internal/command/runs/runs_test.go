@@ -352,6 +352,9 @@ func TestGetShowsTheRun(t *testing.T) {
 	if n := script.Calls(http.MethodGet, runPath); n != 1 {
 		t.Errorf("the run was read %d times", n)
 	}
+	if !strings.HasSuffix(out, "\nAnswer\n  Labelled 4 issues.\n") {
+		t.Errorf("the answer is not under its label, after the table:\n%s", out)
+	}
 	for _, want := range []string{"succeeded", "triage", runID, sessionID, "Labelled 4 issues.", "120 in, 45 out", "finished"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the run is missing %q:\n%s", want, out)
@@ -413,8 +416,8 @@ func TestGetNeutralisesWhatTheModelWrote(t *testing.T) {
 	if strings.Contains(out, "\x1b") {
 		t.Errorf("an escape sequence reached the terminal:\n%q", out)
 	}
-	if strings.Contains(out, "\nsecond line") {
-		t.Errorf("the output broke out of its row:\n%s", out)
+	if !strings.Contains(out, "\nAnswer\n  done\n  second line\n") {
+		t.Errorf("the answer is not its lines, indented under the label:\n%s", out)
 	}
 
 	out, err = clitest.Execute(t, commands, "runs", "get", "platform", runID, "-o", "json")

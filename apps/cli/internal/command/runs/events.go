@@ -8,21 +8,18 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/client"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/output"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output/printer"
 )
 
 const (
 	maxCell        = 120
 	maxErrorBody   = 4 << 10
-	kindWidth      = 16
-	seqWidth       = 4
 	endEvent       = "end"
 	finishedEvent  = "finished"
 	unsetEventName = "message"
@@ -38,8 +35,9 @@ type eventView struct {
 }
 
 // payload is every field any event kind carries, so one decode serves the
-// table whatever the kind. Absent fields stay zero.
+// transcript whatever the kind. Absent fields stay zero.
 type payload struct {
+	ID                string   `json:"id"`
 	Agent             string   `json:"agent"`
 	Model             string   `json:"model"`
 	Pattern           string   `json:"pattern"`
@@ -61,15 +59,27 @@ type payload struct {
 	Status            string   `json:"status"`
 }
 
+// follow is how a run's events are printed: from where, with how much detail,
+// and whether something is already on screen above them.
+type follow struct {
+	after      *int32
+	verbose    bool
+	afterStart bool
+}
+
 // followRun opens its own client rather than taking the caller's: the
 // ordinary one gives up after 30 seconds, which is shorter than most runs.
-func followRun(ctx context.Context, opts *cli.Options, team, run uuid.UUID, teamRef string, after *int32) error {
+//
+// A table is a transcript, written straight to the terminal so a call can
+// show it is running and be replaced by its result. json and yaml are one
+// record per event, exactly as the brain recorded it.
+func followRun(ctx context.Context, opts *cli.Options, team, run uuid.UUID, teamRef string, how follow) error {
 	api, err := opts.Stream(ctx)
 	if err != nil {
 		return err
 	}
 
-	res, err := api.StreamRunEvents(ctx, team, run, &client.StreamRunEventsParams{After: after})
+	res, err := api.StreamRunEvents(ctx, team, run, &client.StreamRunEventsParams{After: how.after})
 	if err != nil {
 		if ctx.Err() != nil {
 			return stopped(teamRef, run, "")
@@ -83,12 +93,21 @@ func followRun(ctx context.Context, opts *cli.Options, team, run uuid.UUID, team
 		return cli.APIError(res.StatusCode, body)
 	}
 
+	var shown *transcript
+	if format, _ := output.Parse(opts.Settings.Output.Value); !format.IsMachine() {
+		shown = newTranscript(opts.Stdout, opts.Styles, how.verbose)
+		shown.printed = how.afterStart
+	}
+
 	stream := newFrames(res.Body)
 	last := ""
 	failure := ""
 	for {
 		f, err := stream.next()
 		if err != nil {
+			if shown != nil {
+				shown.close()
+			}
 			if ctx.Err() != nil {
 				return stopped(teamRef, run, last)
 			}
@@ -112,13 +131,42 @@ func followRun(ctx context.Context, opts *cli.Options, team, run uuid.UUID, team
 			failure = p.Error
 		}
 
-		if err := printEvent(opts, f, p); err != nil {
+		if shown != nil {
+			err = shown.event(f, p)
+		} else {
+			err = printEvent(opts, f)
+		}
+		if err != nil {
 			return err
 		}
+
 		if f.event == endEvent {
+			if shown != nil {
+				if err := finish(ctx, shown, api, team, run, teamRef, p.Status, failure); err != nil {
+					return err
+				}
+			}
 			return ended(p.Status, failure, teamRef, run)
 		}
 	}
+}
+
+// finish ends the transcript. The finished event says how the run ended but
+// not what it answered, so a run that succeeded is read once more for that.
+// Not being able to read it costs the answer on screen, not the exit status:
+// the run still succeeded.
+func finish(ctx context.Context, shown *transcript, api *client.ClientWithResponses,
+	team, run uuid.UUID, teamRef, status, failure string,
+) error {
+	if client.RunStatus(status) != client.Succeeded {
+		return shown.finish(status, failure, nil, "")
+	}
+	got, err := cli.Result(api.GetRunWithResponse(ctx, team, run))
+	if err != nil {
+		return shown.finish(status, failure, nil,
+			"the answer could not be read — `oa runs get "+cli.Line(teamRef)+" "+run.String()+"` shows it")
+	}
+	return shown.finish(status, failure, got, "")
 }
 
 func stopped(teamRef string, run uuid.UUID, last string) error {
@@ -153,25 +201,12 @@ func ended(status, failure, teamRef string, run uuid.UUID) error {
 	}
 }
 
-func printEvent(opts *cli.Options, f frame, p payload) error {
+func printEvent(opts *cli.Options, f frame) error {
 	view := eventView{Event: f.event, Data: decode(f.data)}
 	if n, err := strconv.ParseInt(f.id, 10, 64); err == nil {
 		view.ID = &n
 	}
-
-	return opts.Out.Line(view, printer.Options{
-		Table: func(table *printer.Table) {
-			text, failed := summary(f.event, p, f.data)
-			if failed {
-				text = opts.Styles.Err.Render(text)
-			}
-			table.Row(
-				opts.Styles.Muted.Render(pad(cli.Safe(f.id), seqWidth)),
-				opts.Styles.Value.Render(pad(cli.Safe(f.event), kindWidth)),
-				text,
-			)
-		},
-	})
+	return opts.Out.Line(view, printer.Options{})
 }
 
 func decode(data string) any {
@@ -182,65 +217,6 @@ func decode(data string) any {
 	return v
 }
 
-// summary is one event as a line a person reads. Every value in it came from
-// the run — a tool's output, a model's arguments — so each is clipped and
-// quoted on its own; -o json has them whole and unquoted.
-func summary(kind string, p payload, raw string) (string, bool) {
-	safe := func(s string) string { return cli.Safe(clip(s)) }
-	cut := ""
-	if p.Truncated {
-		cut = " (truncated by the brain)"
-	}
-
-	switch kind {
-	case "started":
-		text := safe(p.Agent) + " on " + safe(p.Model) + ", " + safe(p.Pattern)
-		if len(p.Tools) > 0 {
-			text += " — tools: " + safe(strings.Join(p.Tools, ", "))
-		}
-		if len(p.Skills) > 0 {
-			text += " — skills: " + safe(strings.Join(p.Skills, ", "))
-		}
-		return text, false
-	case "resumed":
-		return "after " + strconv.Itoa(p.Messages) + " messages", false
-	case "step":
-		return strconv.Itoa(p.Step), false
-	case "tool_call":
-		return safe(p.Name) + " " + safe(p.Arguments) + cut, false
-	case "tool_result":
-		took := " (" + strconv.FormatInt(p.DurationMS, 10) + "ms)"
-		if p.Error != "" {
-			return safe(p.Name) + " failed: " + safe(p.Error) + took + cut, true
-		}
-		return safe(p.Name) + " → " + safe(p.Output) + took + cut, false
-	case "tool_unavailable":
-		return safe(p.Name) + ": " + safe(p.Reason), true
-	case "usage":
-		return fmt.Sprintf("%s %d in, %d out, %d cached — %d spent",
-			safe(p.Model), p.InputTokens, p.OutputTokens, p.CachedInputTokens, p.Spent), false
-	case finishedEvent, endEvent:
-		text := safe(p.Status)
-		if p.Error != "" {
-			text += ": " + safe(p.Error)
-		}
-		return text, client.RunStatus(p.Status) != client.Succeeded
-	default:
-		return safe(raw), false
-	}
-}
-
 func clip(s string) string {
-	if utf8.RuneCountInString(s) <= maxCell {
-		return s
-	}
-	runes := []rune(s)
-	return string(runes[:maxCell]) + "…"
-}
-
-func pad(s string, width int) string {
-	if n := utf8.RuneCountInString(s); n < width {
-		return s + strings.Repeat(" ", width-n)
-	}
-	return s
+	return clipRunes(s, maxCell)
 }
