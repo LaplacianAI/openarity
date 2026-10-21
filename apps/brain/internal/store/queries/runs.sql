@@ -89,3 +89,13 @@ WHERE id IN (
     LIMIT 20
     FOR UPDATE SKIP LOCKED)
 RETURNING id;
+
+-- Top-level runs only: a delegate's run shows in its parent's trace.
+-- name: ListRunsBySession :many
+SELECT * FROM runs
+WHERE session_id = sqlc.arg('session_id')
+  AND id = root_run_id
+  AND (NOT sqlc.arg('use_cursor')::bool
+   OR (created_at, id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('page_size');

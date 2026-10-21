@@ -241,6 +241,11 @@
     },
     {
       "method": "GET",
+      "path": "/teams/{id}/sessions/{sessionID}/runs",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
       "path": "/teams/{id}/sessions/{sessionID}/attachments",
       "scope": "member"
     },

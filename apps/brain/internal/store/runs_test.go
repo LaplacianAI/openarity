@@ -662,3 +662,67 @@ func TestListGrantedSkillsReadsTheBodyOfOnlyThoseGranted(t *testing.T) {
 		t.Errorf("granted = %v, want review with its body", got)
 	}
 }
+
+// --- a session's runs ---
+
+func runIDs(rows []db.Run) []uuid.UUID {
+	out := make([]uuid.UUID, len(rows))
+	for i, r := range rows {
+		out[i] = r.ID
+	}
+	return out
+}
+
+func TestASessionListsItsTopLevelRunsNewestFirst(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	first := mustInsertRun(t, s, f.root())
+	second := mustInsertRun(t, s, f.root())
+	mustInsertRun(t, s, f.child(first, "call-1"))
+	age(t, s, first, "created_at", 60)
+
+	elsewhere := f
+	elsewhere.session = insertSession(t, s, f.team)
+	mustInsertRun(t, s, elsewhere.root())
+
+	rows, err := s.ListRunsBySession(t.Context(), db.ListRunsBySessionParams{SessionID: f.session, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListRunsBySession: %v", err)
+	}
+	if got, want := runIDs(rows), []uuid.UUID{second, first}; !slices.Equal(got, want) {
+		t.Errorf("listed %v, want %v: the two top-level runs of this session, newest first", got, want)
+	}
+}
+
+// Runs started in the same instant still page once each: the id breaks the tie.
+func TestASessionsRunsPageWithoutRepeatsOrGaps(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	var made []uuid.UUID
+	for range 5 {
+		made = append(made, mustInsertRun(t, s, f.root()))
+	}
+	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET created_at = '2026-10-21T10:00:00Z' WHERE session_id = $1`, f.session); err != nil {
+		t.Fatalf("same instant: %v", err)
+	}
+
+	var seen []uuid.UUID
+	params := db.ListRunsBySessionParams{SessionID: f.session, PageSize: 2}
+	for page := 0; page < 5; page++ {
+		rows, err := s.ListRunsBySession(t.Context(), params)
+		if err != nil {
+			t.Fatalf("ListRunsBySession: %v", err)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		seen = append(seen, runIDs(rows)...)
+		last := rows[len(rows)-1]
+		params.UseCursor, params.AfterCreatedAt, params.AfterID = true, last.CreatedAt, last.ID
+	}
+
+	slices.SortFunc(made, func(a, b uuid.UUID) int { return -slices.Compare(a[:], b[:]) })
+	if !slices.Equal(seen, made) {
+		t.Errorf("paged %v, want each of %v once, by id descending", seen, made)
+	}
+}

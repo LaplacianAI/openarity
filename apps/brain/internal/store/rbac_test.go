@@ -474,6 +474,9 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"GET /teams/{id}/channels/{channelID}/sessions": "member",
 		"GET /teams/{id}/sessions":                      "member",
 		"GET /teams/{id}/sessions/{sessionID}/messages": "member",
+		// What a person asked in a conversation, and what each run did: the
+		// session's own visibility rule decides, as it does for its messages.
+		"GET /teams/{id}/sessions/{sessionID}/runs": "member",
 
 		// Attachments are the session's, on purpose. There is deliberately no
 		// attachment:read permission: a role holding one without session:read

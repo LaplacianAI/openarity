@@ -894,6 +894,14 @@ type Run struct {
 // RunStatus defines model for Run.Status.
 type RunStatus string
 
+// RunPage defines model for RunPage.
+type RunPage struct {
+	Items []Run `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
 // RunRequest defines model for RunRequest.
 type RunRequest struct {
 	// Agent The name of an agent in this team
@@ -1425,6 +1433,18 @@ type ListSessionAttachmentsParams struct {
 
 // ListSessionMessagesParams defines parameters for ListSessionMessages.
 type ListSessionMessagesParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
+// ListSessionRunsParams defines parameters for ListSessionRuns.
+type ListSessionRunsParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
 	// refused; zero, a negative and anything unparseable are 400.
 	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
@@ -2236,6 +2256,21 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 	ListSessionMessages(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSessionRuns List the runs in a conversation
+	//
+	// The runs started in this session, newest first. Only top-level runs
+	// are listed: a delegate's run belongs to the run that started it.
+	//
+	// Each item is the run as `GET /teams/{id}/runs/{runID}` returns it;
+	// follow `/runs/{runID}/events` for what it did.
+	//
+	// Visible exactly where the session is: a session in another team, or
+	// somebody else's `direct` session without `session:read_all`, answers
+	// 404 with the same body as a session that does not exist.
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID}/runs (the `ListSessionRuns` operationId).
+	ListSessionRuns(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetTeamSettings Read a team's settings
 	//
@@ -3592,6 +3627,31 @@ func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID 
 // Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 func (c *Client) ListSessionMessages(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSessionMessagesRequest(c.Server, id, sessionID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSessionRuns List the runs in a conversation
+//
+// The runs started in this session, newest first. Only top-level runs
+// are listed: a delegate's run belongs to the run that started it.
+//
+// Each item is the run as `GET /teams/{id}/runs/{runID}` returns it;
+// follow `/runs/{runID}/events` for what it did.
+//
+// Visible exactly where the session is: a session in another team, or
+// somebody else's `direct` session without `session:read_all`, answers
+// 404 with the same body as a session that does not exist.
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID}/runs (the `ListSessionRuns` operationId).
+func (c *Client) ListSessionRuns(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSessionRunsRequest(c.Server, id, sessionID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6072,6 +6132,86 @@ func NewListSessionMessagesRequest(server string, id TeamID, sessionID openapi_t
 	return req, nil
 }
 
+// NewListSessionRunsRequest constructs an http.Request for the ListSessionRuns method
+func NewListSessionRunsRequest(server string, id TeamID, sessionID openapi_types.UUID, params *ListSessionRunsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "sessionID", sessionID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/sessions/%s/runs", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetTeamSettingsRequest constructs an http.Request for the GetTeamSettings method
 func NewGetTeamSettingsRequest(server string, id TeamID) (*http.Request, error) {
 	var err error
@@ -7394,6 +7534,23 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 	ListSessionMessagesWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*ListSessionMessagesResponse, error)
+
+	// ListSessionRunsWithResponse List the runs in a conversation
+	//
+	// The runs started in this session, newest first. Only top-level runs
+	// are listed: a delegate's run belongs to the run that started it.
+	//
+	// Each item is the run as `GET /teams/{id}/runs/{runID}` returns it;
+	// follow `/runs/{runID}/events` for what it did.
+	//
+	// Visible exactly where the session is: a session in another team, or
+	// somebody else's `direct` session without `session:read_all`, answers
+	// 404 with the same body as a session that does not exist.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID}/runs (the `ListSessionRuns` operationId).
+	ListSessionRunsWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionRunsParams, reqEditors ...RequestEditorFn) (*ListSessionRunsResponse, error)
 
 	// GetTeamSettingsWithResponse Read a team's settings
 	//
@@ -9456,6 +9613,54 @@ func (r ListSessionMessagesResponse) ContentType() string {
 	return ""
 }
 
+// ListSessionRunsResponse401Headers the declared response headers of an HTTP 401 response for ListSessionRuns
+type ListSessionRunsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListSessionRunsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RunPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListSessionRunsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSessionRunsResponse) GetJSON200() *RunPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSessionRunsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSessionRunsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSessionRunsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSessionRunsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetTeamSettingsResponse401Headers the declared response headers of an HTTP 401 response for GetTeamSettings
 type GetTeamSettingsResponse401Headers struct {
 	WWWAuthenticate *string
@@ -11042,6 +11247,29 @@ func (c *ClientWithResponses) ListSessionMessagesWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseListSessionMessagesResponse(rsp)
+}
+
+// ListSessionRunsWithResponse List the runs in a conversation
+//
+// The runs started in this session, newest first. Only top-level runs
+// are listed: a delegate's run belongs to the run that started it.
+//
+// Each item is the run as `GET /teams/{id}/runs/{runID}` returns it;
+// follow `/runs/{runID}/events` for what it did.
+//
+// Visible exactly where the session is: a session in another team, or
+// somebody else's `direct` session without `session:read_all`, answers
+// 404 with the same body as a session that does not exist.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID}/runs (the `ListSessionRuns` operationId).
+func (c *ClientWithResponses) ListSessionRunsWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionRunsParams, reqEditors ...RequestEditorFn) (*ListSessionRunsResponse, error) {
+	rsp, err := c.ListSessionRuns(ctx, id, sessionID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSessionRunsResponse(rsp)
 }
 
 // GetTeamSettingsWithResponse Read a team's settings
@@ -12779,6 +13007,45 @@ func ParseListSessionMessagesResponse(rsp *http.Response) (*ListSessionMessagesR
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ListSessionMessagesResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListSessionRunsResponse parses an HTTP response from a ListSessionRunsWithResponse call
+func ParseListSessionRunsResponse(rsp *http.Response) (*ListSessionRunsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSessionRunsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RunPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListSessionRunsResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
