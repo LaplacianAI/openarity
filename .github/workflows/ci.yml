@@ -412,8 +412,14 @@ jobs:
           --health-timeout 5s
           --health-retries 20
 
+      # 8.2.12, not the floating mongo:8. From 8.3 (and in recent 8.0
+      # patches) mongod refuses to start on Linux 6.19 or newer, which the
+      # runners now have: "MongoDB cannot start: Linux kernel versions 6.19
+      # and newer has a known incompatibility" (SERVER-121912, a TCMalloc
+      # rseq bug). 8.2.12 starts and answers ping on such a kernel. Move off
+      # it only to a version checked to start there.
       mongodb:
-        image: mongo:8
+        image: mongo:8.2.12
         ports:
           - 27017:27017
         options: >-
