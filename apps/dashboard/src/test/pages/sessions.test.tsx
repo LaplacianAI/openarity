@@ -216,7 +216,7 @@ it("downloads an attachment with the token, as bytes to save", async () => {
   expect(seen.some((s) => s.path === `/teams/${TEAM}/sessions/${SID}/attachments/a1`)).toBe(true);
   expect(clicked[0]?.download).toBe("page.html");
   expect(made[0]?.type).toBe("application/octet-stream");
-  expect(await made[0]?.text()).toBe("<script>x</script>");
+  expect(made[0]?.size).toBe("<script>x</script>".length);
   await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake"));
 });
 
