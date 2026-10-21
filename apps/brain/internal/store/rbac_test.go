@@ -473,6 +473,7 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// an admin reads every conversation on everybody else's behalf.
 		"GET /teams/{id}/channels/{channelID}/sessions": "member",
 		"GET /teams/{id}/sessions":                      "member",
+		"GET /teams/{id}/sessions/{sessionID}":          "member",
 		"GET /teams/{id}/sessions/{sessionID}/messages": "member",
 		// What a person asked in a conversation, and what each run did: the
 		// session's own visibility rule decides, as it does for its messages.

@@ -31,6 +31,7 @@ func New(opts *cli.Options) *cobra.Command {
 
 	cmd.AddCommand(
 		newListCmd(opts),
+		newGetCmd(opts),
 		newReadCmd(opts),
 	)
 	return cmd
@@ -123,6 +124,60 @@ func ref(provider *string) string {
 	return strconv.QuoteToGraphic(*provider)
 }
 
+func sessionArg(args []string) (uuid.UUID, error) {
+	id, err := uuid.Parse(strings.TrimSpace(args[1]))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("%q is not a session id — `oa sessions list %s` shows them",
+			args[1], args[0])
+	}
+	return id, nil
+}
+
+func newGetCmd(opts *cli.Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <team> <session>",
+		Short: "Show a conversation: its kind, where it came from and when",
+		Long: "The conversation itself, not what was said in it — `oa sessions read`\n" +
+			"shows the messages and `oa runs list` the runs started in it.\n\n" +
+			"Somebody else's direct conversation is not found, exactly as one that\n" +
+			"does not exist, unless you may read every conversation in the team.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			api, err := opts.API(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			team, err := cli.ResolveTeam(cmd.Context(), api, args[0])
+			if err != nil {
+				return err
+			}
+
+			id, err := sessionArg(args)
+			if err != nil {
+				return err
+			}
+
+			s, err := cli.Result(api.GetSessionWithResponse(cmd.Context(), team, id))
+			if err != nil {
+				return err
+			}
+
+			return opts.Out.Print(s, printer.Options{
+				Table: func(table *printer.Table) {
+					table.Row(opts.Styles.Value.Render(s.ID.String()), string(s.Kind), string(s.Status))
+					table.Row("ref", opts.Styles.Muted.Render(ref(s.ProviderRef)), "")
+					if s.ChannelID != nil {
+						table.Row("channel", s.ChannelID.String(), "")
+					}
+					table.Row("started", s.StartedAt.Format(stampLayout), "")
+					table.Row("last message", s.LastMessageAt.Format(stampLayout), "")
+				},
+			})
+		},
+	}
+}
+
 func newReadCmd(opts *cli.Options) *cobra.Command {
 	var paging cli.Paging
 
@@ -150,10 +205,9 @@ func newReadCmd(opts *cli.Options) *cobra.Command {
 				return err
 			}
 
-			session, err := uuid.Parse(strings.TrimSpace(args[1]))
+			session, err := sessionArg(args)
 			if err != nil {
-				return fmt.Errorf("%q is not a session id — `oa sessions list %s` shows them",
-					args[1], args[0])
+				return err
 			}
 
 			limit, cursor := paging.Values()

@@ -159,6 +159,11 @@ export function removeSender(teamId: string, channelId: string, senderRef: strin
 
 /* --------------------------------------------------------------- sessions */
 
+/** One session, as the lists return it. Somebody else's direct one is a 404. */
+export function getSession(teamId: string, sessionId: string): Promise<Session> {
+  return request(`/teams/${teamId}/sessions/${sessionId}`);
+}
+
 export function listSessions(teamId: string, cursor?: string | null): Promise<Page<Session>> {
   return request<Page<Session>>(`/teams/${teamId}/sessions${pageQuery(cursor)}`);
 }

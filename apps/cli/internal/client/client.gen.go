@@ -2190,6 +2190,16 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
 	ListSessions(ctx context.Context, id TeamID, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetSession Read a conversation's details
+	//
+	// The session as the lists return it. Visible exactly where its
+	// messages are: a session in another team, or somebody else's `direct`
+	// session without `session:read_all`, answers 404 with the same body as
+	// one that does not exist.
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID} (the `GetSession` operationId).
+	GetSession(ctx context.Context, id TeamID, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListSessionAttachments List the files in a conversation
 	//
 	// Every file that arrived in this conversation, across every message in
@@ -3530,6 +3540,26 @@ func (c *Client) StreamRunEvents(ctx context.Context, id TeamID, runID RunID, pa
 // Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
 func (c *Client) ListSessions(ctx context.Context, id TeamID, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSessionsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSession Read a conversation's details
+//
+// The session as the lists return it. Visible exactly where its
+// messages are: a session in another team, or somebody else's `direct`
+// session without `session:read_all`, answers 404 with the same body as
+// one that does not exist.
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID} (the `GetSession` operationId).
+func (c *Client) GetSession(ctx context.Context, id TeamID, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSessionRequest(c.Server, id, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -5924,6 +5954,47 @@ func NewListSessionsRequest(server string, id TeamID, params *ListSessionsParams
 	return req, nil
 }
 
+// NewGetSessionRequest constructs an http.Request for the GetSession method
+func NewGetSessionRequest(server string, id TeamID, sessionID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "sessionID", sessionID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/sessions/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSessionAttachmentsRequest constructs an http.Request for the ListSessionAttachments method
 func NewListSessionAttachmentsRequest(server string, id TeamID, sessionID openapi_types.UUID, params *ListSessionAttachmentsParams) (*http.Request, error) {
 	var err error
@@ -7461,6 +7532,18 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
 	ListSessionsWithResponse(ctx context.Context, id TeamID, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*ListSessionsResponse, error)
+
+	// GetSessionWithResponse Read a conversation's details
+	//
+	// The session as the lists return it. Visible exactly where its
+	// messages are: a session in another team, or somebody else's `direct`
+	// session without `session:read_all`, answers 404 with the same body as
+	// one that does not exist.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID} (the `GetSession` operationId).
+	GetSessionWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetSessionResponse, error)
 
 	// ListSessionAttachmentsWithResponse List the files in a conversation
 	//
@@ -9467,6 +9550,54 @@ func (r ListSessionsResponse) ContentType() string {
 	return ""
 }
 
+// GetSessionResponse401Headers the declared response headers of an HTTP 401 response for GetSession
+type GetSessionResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetSessionResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetSessionResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListSessionAttachmentsResponse401Headers the declared response headers of an HTTP 401 response for ListSessionAttachments
 type ListSessionAttachmentsResponse401Headers struct {
 	WWWAuthenticate *string
@@ -11156,6 +11287,24 @@ func (c *ClientWithResponses) ListSessionsWithResponse(ctx context.Context, id T
 		return nil, err
 	}
 	return ParseListSessionsResponse(rsp)
+}
+
+// GetSessionWithResponse Read a conversation's details
+//
+// The session as the lists return it. Visible exactly where its
+// messages are: a session in another team, or somebody else's `direct`
+// session without `session:read_all`, answers 404 with the same body as
+// one that does not exist.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID} (the `GetSession` operationId).
+func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetSessionResponse, error) {
+	rsp, err := c.GetSession(ctx, id, sessionID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSessionResponse(rsp)
 }
 
 // ListSessionAttachmentsWithResponse List the files in a conversation
@@ -12876,6 +13025,45 @@ func ParseListSessionsResponse(rsp *http.Response) (*ListSessionsResponse, error
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ListSessionsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetSessionResponse parses an HTTP response from a GetSessionWithResponse call
+func ParseGetSessionResponse(rsp *http.Response) (*GetSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetSessionResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

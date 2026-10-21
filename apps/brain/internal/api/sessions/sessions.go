@@ -40,6 +40,7 @@ func New(logger *slog.Logger, s Store, a api.Authorizer, o Objects) *api.Router 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/channels/{channelID}/sessions", h.listByChannel)
 	r.Get("/{id}/sessions", h.listByTeam)
+	r.Get("/{id}/sessions/{sessionID}", h.get)
 	r.Get("/{id}/sessions/{sessionID}/messages", h.listMessages)
 
 	r.Get("/{id}/sessions/{sessionID}/attachments", h.listAttachments)
@@ -123,6 +124,20 @@ func (h *handler) listByTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeSessions(w, u, rows, limit)
+}
+
+func (h *handler) get(w http.ResponseWriter, r *http.Request) {
+	teamID, ok := api.RequireTeam(w, r, h.logger)
+	if !ok {
+		return
+	}
+
+	row, ok := h.visible(w, r, teamID)
+	if !ok {
+		return
+	}
+
+	api.WriteJSON(w, h.logger, http.StatusOK, sessionView(row))
 }
 
 func (h *handler) listMessages(w http.ResponseWriter, r *http.Request) {
@@ -225,16 +240,7 @@ func (h *handler) writeSessions(w http.ResponseWriter, u *auth.User, rows []db.S
 		func(row db.Session) any {
 			return sessionCursor{LastMessageAt: row.LastMessageAt, ID: row.ID}
 		},
-		func(row db.Session) session {
-			out := session{
-				ID: row.ID, ChannelID: row.ChannelID, Kind: row.Kind, Status: row.Status,
-				StartedAt: row.StartedAt, LastMessageAt: row.LastMessageAt,
-			}
-			if row.ProviderRef != nil {
-				out.ProviderRef = *row.ProviderRef
-			}
-			return out
-		},
+		sessionView,
 	)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to page sessions", err)
@@ -242,6 +248,17 @@ func (h *handler) writeSessions(w http.ResponseWriter, u *auth.User, rows []db.S
 	}
 
 	api.WriteJSON(w, h.logger, http.StatusOK, page)
+}
+
+func sessionView(row db.Session) session {
+	out := session{
+		ID: row.ID, ChannelID: row.ChannelID, Kind: row.Kind, Status: row.Status,
+		StartedAt: row.StartedAt, LastMessageAt: row.LastMessageAt,
+	}
+	if row.ProviderRef != nil {
+		out.ProviderRef = *row.ProviderRef
+	}
+	return out
 }
 
 func (h *handler) visible(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) (db.Session, bool) {

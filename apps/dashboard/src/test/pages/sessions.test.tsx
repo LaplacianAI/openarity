@@ -44,6 +44,7 @@ function message(id: string, user: string, text: string, at: string) {
   return { id, external_id: `x-${id}`, user_id: user, text, received_at: at };
 }
 
+const SESSION = `GET /teams/{id}/sessions/{sid}`;
 const MESSAGES = `GET /teams/{id}/sessions/{sid}/messages`;
 const ATTACHMENTS = `GET /teams/{id}/sessions/{sid}/attachments`;
 const RUNS = `GET /teams/{id}/sessions/{sid}/runs`;
@@ -54,6 +55,7 @@ function listed(extra: Parameters<typeof brain>[0]) {
   return brain({
     ...team([]),
     "GET /teams/{id}/sessions": { body: { items: [session] } },
+    [SESSION]: { body: session },
     [MESSAGES]: { body: { items: [] } },
     [ATTACHMENTS]: { body: { items: [] } },
     [RUNS]: { body: { items: [] } },
@@ -136,23 +138,28 @@ describe("a session's page", () => {
     expect(router.state.location.pathname).toBe("/ui/sessions");
   });
 
-  it("finds a linked session further down the list", async () => {
-    const seen = listed({
-      "GET /teams/{id}/sessions": (s) =>
-        s.path.includes("cursor=two")
-          ? { body: { items: [session] } }
-          : {
-              body: { items: [{ ...session, id: "other", provider_ref: "x" }], next_cursor: "two" },
-            },
-    });
+  it("reads a linked session on its own, never by paging the list", async () => {
+    const seen = listed({ "GET /teams/{id}/sessions": { body: { items: [] } } });
     await open();
-    expect(seen.some((s) => s.path === `/teams/${TEAM}/sessions?cursor=two`)).toBe(true);
+    expect(seen.some((s) => s.path === `/teams/${TEAM}/sessions/${SID}`)).toBe(true);
+    expect(seen.some((s) => s.path.startsWith(`/teams/${TEAM}/sessions?`))).toBe(false);
   });
 
-  it("falls back to the session's id when it cannot be found", async () => {
-    listed({ "GET /teams/{id}/sessions": { body: { items: [] } } });
+  it("falls back to the session's id when it is not found", async () => {
+    const seen = listed({ [SESSION]: { status: 404, text: "not found" } });
     at(PAGE);
     expect(await screen.findByRole("heading", { level: 1, name: SID })).toBeInTheDocument();
+    // Wait for the read to have been answered, or the absence proves nothing.
+    await waitFor(() =>
+      expect(seen.some((s) => s.path === `/teams/${TEAM}/sessions/${SID}`)).toBe(true),
+    );
+    await expect(screen.findByRole("alert", {}, { timeout: 300 })).rejects.toThrow();
+  });
+
+  it("says so when the session cannot be read", async () => {
+    listed({ [SESSION]: { status: 500, text: "the database is down" } });
+    at(PAGE);
+    expect(await screen.findByText(/the database is down/)).toBeInTheDocument();
   });
 
   it("opens on the messages, and keeps the chosen tab in the URL", async () => {

@@ -12,12 +12,12 @@ import { useState } from "react";
 import {
   downloadAttachment,
   getRun,
+  getSession,
   listAttachments,
   listMessages,
   listSessionRuns,
-  listSessions,
 } from "@/api";
-import { nextCursorOf } from "@/api/client";
+import { ApiError, nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type { Attachment, Page, Run, Session } from "@/api/types";
@@ -54,27 +54,21 @@ export const Route = createFileRoute("/ui/sessions/$sessionId")({
   component: SessionPage,
 });
 
-/** How many pages of sessions to read looking for one opened by a link. */
-const SESSION_PAGES = 10;
-
 /**
- * The brain has no route that reads one session, so a session is found in
- * the list: at once if the list was just read, otherwise by paging through.
+ * The session's own details. A 404 is not an error to show: the page still
+ * has its messages and runs to answer for themselves, and titles with the id.
  */
 function useSession(teamId: string | null, sessionId: string) {
   const qc = useQueryClient();
   return useQuery({
     queryKey: ["sessions", teamId, sessionId, "meta"],
     queryFn: async (): Promise<Session | null> => {
-      let cursor: string | null = null;
-      for (let i = 0; i < SESSION_PAGES; i++) {
-        const page: Page<Session> = await listSessions(teamId as string, cursor);
-        const found = page.items.find((s) => s.id === sessionId);
-        if (found) return found;
-        cursor = nextCursorOf(page) ?? null;
-        if (!cursor) break;
+      try {
+        return await getSession(teamId as string, sessionId);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
       }
-      return null;
     },
     placeholderData: () =>
       qc
@@ -144,6 +138,10 @@ function SessionPage() {
               last message{" "}
               <time dateTime={s.last_message_at}>{relativeTime(s.last_message_at)}</time>
             </span>
+          </p>
+        ) : session.isError ? (
+          <p role="alert" className="text-xs text-destructive">
+            {session.error.message}
           </p>
         ) : session.isPending && teamId ? (
           <Skeleton className="h-4 w-64" />
