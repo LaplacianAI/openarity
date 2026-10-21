@@ -14,7 +14,7 @@ into any Go program: a web service, a CLI, a worker, a test.
 go get github.com/LaplacianAI/openarity/sdk/agent
 ```
 
-Needs Go 1.26.9. Nothing else from this repository comes with it, and there is
+Needs Go 1.26.10. Nothing else from this repository comes with it, and there is
 no database, no server and no configuration file to set up.
 
 Two direct dependencies, and which of them you build depends on what you

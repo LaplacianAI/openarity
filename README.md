@@ -171,7 +171,7 @@ brain answers, and prints the address and the sign-in. See
 **The brain on its own**, which is what you want while writing code — no
 identity provider to configure, no container to rebuild.
 
-Requires Go 1.26.9 and a Postgres 13 or newer you can reach — 13 is where
+Requires Go 1.26.10 and a Postgres 13 or newer you can reach — 13 is where
 `gen_random_uuid()` became built-in, which the first migration needs. Running
 the *tests* needs 18; see [CONTRIBUTING.md](CONTRIBUTING.md). CI runs against
 Postgres 18.
@@ -255,7 +255,7 @@ database:
 go get github.com/LaplacianAI/openarity/sdk/agent
 ```
 
-Needs Go 1.26.9. The core links one dependency, `github.com/openai/openai-go/v3`.
+Needs Go 1.26.10. The core links one dependency, `github.com/openai/openai-go/v3`.
 Importing `tools/mcp` adds the official MCP SDK; nothing else does.
 
 A whole agent, against any gateway speaking OpenAI chat completions:

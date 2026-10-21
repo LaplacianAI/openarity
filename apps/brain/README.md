@@ -13,7 +13,7 @@ make run        # sources .env if present, Ctrl-C to shut down gracefully
 make build      # compile into ./bin
 ```
 
-Requires Go 1.26.9 and a Postgres 13 or newer — 13 is where `gen_random_uuid()`
+Requires Go 1.26.10 and a Postgres 13 or newer — 13 is where `gen_random_uuid()`
 became built-in, which the first migration needs. Running the tests needs 18,
 for a reason that belongs to them and not to the brain; see [the gate](#the-gate).
 CI runs against Postgres 18.
