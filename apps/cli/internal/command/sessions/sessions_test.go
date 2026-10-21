@@ -357,6 +357,7 @@ func TestSessionCommandsNeedTheirArguments(t *testing.T) {
 		"list with no team":    {"sessions", "list"},
 		"read with no session": {"sessions", "read", "platform"},
 		"read with no team":    {"sessions", "read"},
+		"get with no session":  {"sessions", "get", "platform"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			clitest.Routes(t, teamRoute())
@@ -476,5 +477,106 @@ func TestSessionsReadShowsWhenAMessageArrived(t *testing.T) {
 	}
 	if strings.Contains(out, "11:29") {
 		t.Errorf("sent_at is shown, so the order is the sender's to choose:\n%s", out)
+	}
+}
+
+// --- one session ---
+
+const oneSession = `{"id":"` + sessionID + `","channel_id":"` + channelID + `","provider_ref":"C123:1699999999.000100",
+  "kind":"thread","status":"open",
+  "started_at":"2026-08-22T09:00:00Z","last_message_at":"2026-08-22T11:30:00Z"}`
+
+func TestSessionsGetShowsTheConversation(t *testing.T) {
+	routes := teamRoute()
+	routes["GET /teams/{id}/sessions/{sessionID}"] = clitest.Reply{Status: http.StatusOK, Body: oneSession}
+	script := clitest.Routes(t, routes)
+
+	out, err := clitest.Execute(t, commands, "sessions", "get", "platform", sessionID)
+	if err != nil {
+		t.Fatalf("get: %v\n%s", err, out)
+	}
+	for _, want := range []string{sessionID, "thread", "open", `"C123:1699999999.000100"`, channelID, "2026-08-22 09:00", "2026-08-22 11:30"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output has no %q:\n%s", want, out)
+		}
+	}
+	all := script.All()
+	if got := all[len(all)-1]; got.Method != http.MethodGet || got.Path != "/teams/"+teamID+"/sessions/"+sessionID {
+		t.Errorf("asked %s %s", got.Method, got.Path)
+	}
+}
+
+// A session that arrived on no channel says so rather than printing an empty
+// channel row.
+func TestSessionsGetShowsADashboardSession(t *testing.T) {
+	routes := teamRoute()
+	routes["GET /teams/{id}/sessions/{sessionID}"] = clitest.Reply{Status: http.StatusOK, Body: `{"id":"` + sessionID + `",
+	  "kind":"direct","status":"open","started_at":"2026-08-21T08:00:00Z","last_message_at":"2026-08-21T08:05:00Z"}`}
+	clitest.Routes(t, routes)
+
+	out, err := clitest.Execute(t, commands, "sessions", "get", "platform", sessionID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if strings.Contains(out, "channel") || !strings.Contains(out, "—") {
+		t.Errorf("a session with no channel or ref:\n%s", out)
+	}
+}
+
+// The ref is a stranger's bytes, as in the list.
+func TestSessionsGetNeutralisesAHostileRef(t *testing.T) {
+	routes := teamRoute()
+	routes["GET /teams/{id}/sessions/{sessionID}"] = clitest.Reply{Status: http.StatusOK, Body: `{"id":"` + sessionID + `",
+	  "provider_ref":"\u001b[2Jgone\u202e","kind":"direct","status":"open",
+	  "started_at":"2026-08-21T08:00:00Z","last_message_at":"2026-08-21T08:05:00Z"}`}
+	clitest.Routes(t, routes)
+
+	out, err := clitest.Execute(t, commands, "sessions", "get", "platform", sessionID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if strings.ContainsAny(out, "\x1b\u202e") {
+		t.Errorf("a control character reached the terminal: %q", out)
+	}
+}
+
+func TestSessionsGetPrintsJSONAsTheBrainSentIt(t *testing.T) {
+	routes := teamRoute()
+	routes["GET /teams/{id}/sessions/{sessionID}"] = clitest.Reply{Status: http.StatusOK, Body: oneSession}
+	clitest.Routes(t, routes)
+
+	out, err := clitest.Execute(t, commands, "sessions", "get", "platform", sessionID, "-o", "json")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if got["id"] != sessionID || got["provider_ref"] != "C123:1699999999.000100" || got["kind"] != "thread" {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestSessionsGetRefusesANameWithoutAskingTheBrain(t *testing.T) {
+	script := clitest.Routes(t, teamRoute())
+
+	if _, err := clitest.Execute(t, commands, "sessions", "get", "platform", "support"); err == nil || !strings.Contains(err.Error(), "not a session id") {
+		t.Fatalf("err = %v, want a refusal naming the id", err)
+	}
+	for _, e := range script.All() {
+		if strings.Contains(e.Path, "/sessions/") {
+			t.Errorf("the brain was asked anyway: %s %s", e.Method, e.Path)
+		}
+	}
+}
+
+func TestSessionsGetReportsARefusal(t *testing.T) {
+	routes := teamRoute()
+	routes["GET /teams/{id}/sessions/{sessionID}"] = clitest.Reply{Status: http.StatusNotFound, Body: "not found"}
+	clitest.Routes(t, routes)
+
+	if _, err := clitest.Execute(t, commands, "sessions", "get", "platform", sessionID); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("err = %v, want the 404 reported", err)
 	}
 }

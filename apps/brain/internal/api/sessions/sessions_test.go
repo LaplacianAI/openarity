@@ -286,6 +286,10 @@ func (f *fixture) sessionAttachments() string {
 	return "/teams/" + f.teamID.String() + "/sessions/" + f.sessionID.String() + "/attachments"
 }
 
+func (f *fixture) session() string {
+	return "/teams/" + f.teamID.String() + "/sessions/" + f.sessionID.String()
+}
+
 func (f *fixture) sessionMessages() string {
 	return "/teams/" + f.teamID.String() + "/sessions/" + f.sessionID.String() + "/messages"
 }
@@ -316,6 +320,7 @@ func routes(t *testing.T) authz.Routes {
 	for _, path := range []string{
 		"/teams/{id}/channels/{channelID}/sessions",
 		"/teams/{id}/sessions",
+		"/teams/{id}/sessions/{sessionID}",
 		"/teams/{id}/sessions/{sessionID}/messages",
 		"/teams/{id}/sessions/{sessionID}/attachments",
 		"/teams/{id}/sessions/{sessionID}/attachments/{attachmentID}",
@@ -937,5 +942,84 @@ func TestTheListsPassTheCallerAndTheirModeration(t *testing.T) {
 				t.Errorf("channel moderator = %v, want %v", channel.Moderator, moderator)
 			}
 		})
+	}
+}
+
+// --- reading one session ---
+
+// One session read alone is the same JSON as that session in a list, so a
+// page linked to it and a list that led to it never disagree.
+func TestASessionReadsAsItDoesInTheList(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+
+	rec := f.get(t, f.session())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	listed, err := json.Marshal(sessionPage(t, f.get(t, f.teamSessions())).Items[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != string(listed) {
+		t.Errorf("read alone:\n %s\nin the list:\n %s", got, listed)
+	}
+}
+
+func TestReadingASessionKeepsTheSessionRule(t *testing.T) {
+	t.Parallel()
+
+	stranger := uuid.New()
+	for name, tc := range map[string]struct {
+		set  func(*fixture)
+		want int
+	}{
+		"its participant":             {func(*fixture) {}, http.StatusOK},
+		"a group session":             {func(f *fixture) { f.store.sessions[0].Kind, f.store.sessions[0].UserID = "group", nil }, http.StatusOK},
+		"someone else's direct":       {func(f *fixture) { f.store.sessions[0].UserID = &stranger }, http.StatusNotFound},
+		"a moderator, someone else's": {func(f *fixture) { f.store.sessions[0].UserID, f.authz.moderator = &stranger, true }, http.StatusOK},
+		"another team's":              {func(f *fixture) { f.store.sessions[0].TeamID = uuid.New() }, http.StatusNotFound},
+		"a failed lookup":             {func(f *fixture) { f.store.sessionErr = errAny }, http.StatusInternalServerError},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t)
+			tc.set(f)
+			rec := f.get(t, f.session())
+			if rec.Code != tc.want {
+				t.Errorf("status = %d, want %d: %s", rec.Code, tc.want, rec.Body)
+			}
+			// The status is committed by the first write, so only the body
+			// shows a session written after a refusal.
+			if tc.want != http.StatusOK && strings.Contains(rec.Body.String(), `"id"`) {
+				t.Errorf("a session was written after the refusal: %s", rec.Body)
+			}
+		})
+	}
+}
+
+// Somebody else's direct session and one that does not exist answer alike.
+func TestAHiddenSessionReadsAsAMissingOne(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	missing := f.get(t, "/teams/"+f.teamID.String()+"/sessions/"+uuid.New().String())
+	stranger := uuid.New()
+	f.store.sessions[0].UserID = &stranger
+	hidden := f.get(t, f.session())
+
+	if hidden.Code != missing.Code || hidden.Body.String() != missing.Body.String() {
+		t.Errorf("hidden = %d %q, missing = %d %q", hidden.Code, hidden.Body, missing.Code, missing.Body)
+	}
+}
+
+func TestAMalformedSessionIDIsRefusedWhenRead(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	if rec := f.get(t, "/teams/"+f.teamID.String()+"/sessions/not-a-uuid"); rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }

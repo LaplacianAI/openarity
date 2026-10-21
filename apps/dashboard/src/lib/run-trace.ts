@@ -1,0 +1,289 @@
+/**
+ * A run's events, as the brain streams them, grouped into what a person reads:
+ * the steps the agent took, each holding the tools it called with what they
+ * returned, and the few things that happened to the run as a whole.
+ *
+ * The events are flat on the wire — `step`, `usage`, `tool_call`,
+ * `tool_result`, one after another — and nothing in a result names its step.
+ * A result belongs to the step that was current when it arrived, and to the
+ * call with the same id; a pattern that sends no ids is paired by order.
+ *
+ * Pure, and run again over the whole list on every new event, so a trace read
+ * live and the same trace read after the fact group the same way.
+ */
+import type { RunEvent } from "@/api/types";
+
+export type Tokens = {
+  input: number;
+  output: number;
+  cached: number;
+  /** Input plus output: what the run was charged for. */
+  total: number;
+};
+
+export type ToolResult = {
+  output: string;
+  /** Empty when the tool succeeded. */
+  error: string;
+  truncated: boolean;
+  durationMs: number | null;
+};
+
+export type ToolCall = {
+  /** The model's id for the call, or null when the pattern sends none. */
+  id: string | null;
+  name: string;
+  /** The arguments as the model wrote them, usually JSON; null for a result nobody called. */
+  arguments: string | null;
+  truncated: boolean;
+  /** Null until the result arrives. */
+  result: ToolResult | null;
+};
+
+export type Step = {
+  /** The step's number as the agent counted it; null for events that came before any step. */
+  number: number | null;
+  calls: ToolCall[];
+  usage: Tokens;
+  /** The model each usage event named, in order, without repeats. */
+  models: string[];
+  /** Events of a kind this dashboard does not know, kept where they arrived. */
+  other: RunEvent[];
+};
+
+export type Started = {
+  agent: string;
+  model: string;
+  pattern: string;
+  tools: string[];
+  skills: string[];
+};
+
+/** What happened, in order. Steps and the run-level events between them. */
+export type TraceItem =
+  | { type: "step"; step: Step }
+  | { type: "resumed"; messages: number }
+  | { type: "unavailable"; name: string; reason: string }
+  | { type: "other"; event: RunEvent };
+
+export type Trace = {
+  started: Started | null;
+  items: TraceItem[];
+  /** The `finished` event: the run's own account of how it ended. */
+  finished: { status: string; error: string } | null;
+  /** The stream's closing `end` frame: nothing more will arrive. */
+  ended: { status: string } | null;
+  usage: Tokens;
+};
+
+function emptyTokens(): Tokens {
+  return { input: 0, output: 0, cached: 0, total: 0 };
+}
+
+function record(data: unknown): Record<string, unknown> {
+  return data !== null && typeof data === "object" && !Array.isArray(data)
+    ? (data as Record<string, unknown>)
+    : {};
+}
+
+function text(v: unknown): string {
+  return typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
+}
+
+function count(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+function strings(v: unknown): string[] {
+  return Array.isArray(v) ? v.map(String) : [];
+}
+
+export function groupTrace(events: readonly RunEvent[]): Trace {
+  const trace: Trace = {
+    started: null,
+    items: [],
+    finished: null,
+    ended: null,
+    usage: emptyTokens(),
+  };
+  let current: Step | null = null;
+  const calls: ToolCall[] = [];
+
+  // Usage and tool calls that arrive before any step still need a home.
+  const step = (): Step => {
+    if (current) return current;
+    current = { number: null, calls: [], usage: emptyTokens(), models: [], other: [] };
+    trace.items.push({ type: "step", step: current });
+    return current;
+  };
+
+  for (const e of events) {
+    const d = record(e.data);
+    switch (e.kind) {
+      case "started":
+        trace.started = {
+          agent: text(d.agent),
+          model: text(d.model),
+          pattern: text(d.pattern),
+          tools: strings(d.tools),
+          skills: strings(d.skills),
+        };
+        break;
+      case "resumed":
+        current = null;
+        trace.items.push({ type: "resumed", messages: count(d.messages) });
+        break;
+      case "tool_unavailable":
+        trace.items.push({ type: "unavailable", name: text(d.name), reason: text(d.reason) });
+        break;
+      case "step": {
+        const n = d.step;
+        current = {
+          number: typeof n === "number" ? n : null,
+          calls: [],
+          usage: emptyTokens(),
+          models: [],
+          other: [],
+        };
+        trace.items.push({ type: "step", step: current });
+        break;
+      }
+      case "usage": {
+        const s = step();
+        const input = count(d.input_tokens);
+        const output = count(d.output_tokens);
+        const cached = count(d.cached_input_tokens);
+        for (const t of [s.usage, trace.usage]) {
+          t.input += input;
+          t.output += output;
+          t.cached += cached;
+          t.total += input + output;
+        }
+        const model = text(d.model);
+        if (model && !s.models.includes(model)) s.models.push(model);
+        break;
+      }
+      case "tool_call": {
+        const call: ToolCall = {
+          id: text(d.id) || null,
+          name: text(d.name),
+          arguments: text(d.arguments),
+          truncated: d.truncated === true,
+          result: null,
+        };
+        step().calls.push(call);
+        calls.push(call);
+        break;
+      }
+      case "tool_result": {
+        const result: ToolResult = {
+          output: text(d.output),
+          error: text(d.error),
+          truncated: d.truncated === true,
+          durationMs: typeof d.duration_ms === "number" ? d.duration_ms : null,
+        };
+        const id = text(d.id) || null;
+        const name = text(d.name);
+        const match = pairOf(calls, id, name);
+        if (match) {
+          match.result = result;
+        } else {
+          // A result with no call to answer is still something the tool did.
+          const orphan: ToolCall = { id, name, arguments: null, truncated: false, result };
+          step().calls.push(orphan);
+          calls.push(orphan);
+        }
+        break;
+      }
+      case "finished":
+        trace.finished = { status: text(d.status), error: text(d.error) };
+        break;
+      case "end":
+        trace.ended = { status: text(d.status) };
+        break;
+      default:
+        if (current) current.other.push(e);
+        else trace.items.push({ type: "other", event: e });
+    }
+  }
+  return trace;
+}
+
+/**
+ * The call a result answers: the one with its id, or, when the pattern sends
+ * no ids, the oldest call still waiting — by name if one matches, so two
+ * different tools answered out of order still pair up.
+ */
+function pairOf(calls: ToolCall[], id: string | null, name: string): ToolCall | undefined {
+  const waiting = calls.filter((c) => c.result === null);
+  if (id !== null) return waiting.find((c) => c.id === id);
+  const anonymous = waiting.filter((c) => c.id === null);
+  return anonymous.find((c) => c.name === name) ?? anonymous[0];
+}
+
+/** The steps alone, for counting. */
+export function stepsOf(trace: Trace): Step[] {
+  return trace.items.flatMap((i) => (i.type === "step" ? [i.step] : []));
+}
+
+export type GraphHit = {
+  kind: string;
+  name: string;
+  description: string;
+  score: number;
+  /** The walk from the match to this node, the node itself excluded. */
+  via: { kind: string; name: string }[];
+};
+
+/**
+ * The graph tool's output read as ranked hits, or null when it is not the
+ * shape the brain writes — a cut or foreign output is shown as text instead.
+ */
+export function graphHits(output: string): GraphHit[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  const results = record(parsed).results;
+  if (!Array.isArray(results)) return null;
+  return results.map((r) => {
+    const h = record(r);
+    const path = Array.isArray(h.path) ? h.path.map(record) : [];
+    return {
+      kind: text(h.kind),
+      name: text(h.name),
+      description: text(h.description),
+      score: count(h.score),
+      via: path.slice(1).map((p) => ({ kind: text(p.kind), name: text(p.name) })),
+    };
+  });
+}
+
+/**
+ * A tool call's arguments as key and value pairs to show at a glance, or null
+ * when they are not a JSON object — then they are shown as they were written.
+ */
+export function argumentPairs(args: string): [string, string][] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(args);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  return Object.entries(parsed as Record<string, unknown>).map(([k, v]) => [
+    k,
+    typeof v === "string" ? v : JSON.stringify(v),
+  ]);
+}
+
+/** Pretty JSON when it parses, the text as it was when it does not. */
+export function pretty(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}

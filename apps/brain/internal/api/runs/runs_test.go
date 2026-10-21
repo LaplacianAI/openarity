@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -39,12 +41,15 @@ type fakeStore struct {
 	runs     map[uuid.UUID]db.Run
 	events   map[uuid.UUID][]db.RunEvent
 
-	startErr  error
-	readErr   error
-	started   []StartArgs
-	cancelled []uuid.UUID
-	visible   []db.GetRunVisibleParams
-	calls     int
+	startErr   error
+	readErr    error
+	sessionErr error
+	listErr    error
+	listed     []db.ListRunsBySessionParams
+	started    []StartArgs
+	cancelled  []uuid.UUID
+	visible    []db.GetRunVisibleParams
+	calls      int
 }
 
 func newFakeStore() *fakeStore {
@@ -77,6 +82,9 @@ func (s *fakeStore) GetSessionVisible(_ context.Context, arg db.GetSessionVisibl
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
+	if s.sessionErr != nil {
+		return db.Session{}, s.sessionErr
+	}
 	if !s.sees(arg.ID, arg.TeamID, arg.Viewer, arg.Moderator) {
 		return db.Session{}, pgx.ErrNoRows
 	}
@@ -124,6 +132,39 @@ func (s *fakeStore) ListRunEvents(_ context.Context, arg db.ListRunEventsParams)
 		if e.Seq > arg.After && int32(len(out)) < arg.PageSize {
 			out = append(out, e)
 		}
+	}
+	return out, nil
+}
+
+// ListRunsBySession orders and pages as the query does; which session the
+// caller may read is the handler's to check before asking.
+func (s *fakeStore) ListRunsBySession(_ context.Context, arg db.ListRunsBySessionParams) ([]db.Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	s.listed = append(s.listed, arg)
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	var out []db.Run
+	for _, r := range s.runs {
+		if r.SessionID == arg.SessionID {
+			out = append(out, r)
+		}
+	}
+	newer := func(a, b db.Run) bool {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.After(b.CreatedAt)
+		}
+		return a.ID.String() > b.ID.String()
+	}
+	sort.Slice(out, func(i, j int) bool { return newer(out[i], out[j]) })
+	if arg.UseCursor {
+		after := db.Run{CreatedAt: arg.AfterCreatedAt, ID: arg.AfterID}
+		out = slices.DeleteFunc(out, func(r db.Run) bool { return !newer(after, r) })
+	}
+	if int32(len(out)) > arg.PageSize {
+		out = out[:arg.PageSize]
 	}
 	return out, nil
 }
@@ -201,6 +242,7 @@ func runRoutes(t *testing.T) authz.Routes {
 		permission          *string
 	}{
 		{"POST", "/teams/{id}/runs", "team", &write},
+		{"GET", "/teams/{id}/sessions/{sessionID}/runs", "member", nil},
 		{"GET", "/teams/{id}/runs/{runID}", "member", nil},
 		{"GET", "/teams/{id}/runs/{runID}/events", "member", nil},
 		{"POST", "/teams/{id}/runs/{runID}/cancel", "team", &write},
@@ -295,6 +337,10 @@ func (w *world) call(t *testing.T, u *auth.User, method, path string, body any, 
 func (w *world) runs() string { return "/teams/" + w.team.String() + "/runs" }
 
 func (w *world) one(id uuid.UUID) string { return w.runs() + "/" + id.String() }
+
+func (w *world) ofSession(id uuid.UUID) string {
+	return "/teams/" + w.team.String() + "/sessions/" + id.String() + "/runs"
+}
 
 func decodeRun(t *testing.T, rec *httptest.ResponseRecorder) run {
 	t.Helper()
@@ -671,5 +717,186 @@ func TestEveryRouteRefusesARequestWithNoUser(t *testing.T) {
 	}
 	if n := w.store.touched(); n != 0 {
 		t.Errorf("the store was asked %d things", n)
+	}
+}
+
+// --- a session's runs ---
+
+func decodeRuns(t *testing.T, rec *httptest.ResponseRecorder) api.Page[run] {
+	t.Helper()
+
+	var out api.Page[run]
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode %q: %v", rec.Body, err)
+	}
+	return out
+}
+
+func TestASessionsRunsAreListedNewestFirstAsTheyAreRead(t *testing.T) {
+	w := newWorld(t)
+	group := w.session("group", nil)
+	old := w.run(group, "succeeded")
+	old.CreatedAt = old.CreatedAt.Add(-time.Minute)
+	w.store.runs[old.ID] = old
+	recent := w.run(group, "running")
+	w.run(w.session("group", nil), "queued")
+
+	rec := w.call(t, w.me, http.MethodGet, w.ofSession(group), nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d (%s), want 200", rec.Code, rec.Body)
+	}
+	page := decodeRuns(t, rec)
+	if len(page.Items) != 2 || page.Items[0].ID != recent.ID || page.Items[1].ID != old.ID || page.NextCursor != nil {
+		t.Fatalf("page = %+v, want the two runs of this session, newest first, and no next page", page)
+	}
+	if got := page.Items[1]; got.Status != "succeeded" || got.Agent != "triage" || got.SessionID != group || got.FinishedAt == nil {
+		t.Errorf("listed %+v, want the run as GET /runs/{runID} shows it", got)
+	}
+	if p := w.store.listed[0]; p.SessionID != group || p.PageSize != api.DefaultLimit+1 || p.UseCursor {
+		t.Errorf("listed with %+v", p)
+	}
+}
+
+func TestASessionsRunsPageThroughTheCursor(t *testing.T) {
+	w := newWorld(t)
+	group := w.session("group", nil)
+	at := time.Now()
+	for range 3 {
+		r := w.run(group, "succeeded")
+		r.CreatedAt = at
+		w.store.runs[r.ID] = r
+	}
+
+	var seen []uuid.UUID
+	next := w.ofSession(group) + "?limit=2"
+	for range 3 {
+		rec := w.call(t, w.me, http.MethodGet, next, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+		}
+		page := decodeRuns(t, rec)
+		for _, r := range page.Items {
+			seen = append(seen, r.ID)
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		next = w.ofSession(group) + "?limit=2&cursor=" + *page.NextCursor
+	}
+
+	if len(seen) != 3 || seen[0] == seen[1] || seen[1] == seen[2] || seen[0] == seen[2] {
+		t.Errorf("paged %v, want each of the 3 runs once", seen)
+	}
+	if p := w.store.listed[1]; !p.UseCursor || !p.AfterCreatedAt.Equal(at) || p.AfterID != seen[1] {
+		t.Errorf("second page asked with %+v, want after the last run of the first", p)
+	}
+}
+
+func TestAnotherPersonsDirectSessionHasNoRunsToList(t *testing.T) {
+	w := newWorld(t)
+	theirs := w.session("direct", w.other)
+	w.run(theirs, "running")
+
+	rec := w.call(t, w.me, http.MethodGet, w.ofSession(theirs), nil)
+
+	if rec.Code != http.StatusNotFound || strings.TrimSpace(rec.Body.String()) != "not found" {
+		t.Errorf("status %d %q, want a plain 404", rec.Code, rec.Body)
+	}
+	if len(w.store.listed) != 0 {
+		t.Error("the runs of a session the caller cannot read were listed")
+	}
+}
+
+func TestASessionOfAnotherTeamHasNoRunsToList(t *testing.T) {
+	w := newWorld(t)
+	foreign := db.Session{ID: uuid.New(), TeamID: uuid.New(), Kind: "group"}
+	w.store.sessions[foreign.ID] = foreign
+
+	if rec := w.call(t, w.me, http.MethodGet, w.ofSession(foreign.ID), nil); rec.Code != http.StatusNotFound {
+		t.Errorf("status %d, want 404", rec.Code)
+	}
+	if len(w.store.listed) != 0 {
+		t.Error("another team's session was listed")
+	}
+}
+
+func TestAModeratorCanListADirectSessionsRuns(t *testing.T) {
+	w := newWorld(t)
+	w.authz.grants = moderator().grants
+	theirs := w.session("direct", w.other)
+	r := w.run(theirs, "running")
+
+	rec := w.call(t, w.me, http.MethodGet, w.ofSession(theirs), nil)
+
+	if page := decodeRuns(t, rec); rec.Code != http.StatusOK || len(page.Items) != 1 || page.Items[0].ID != r.ID {
+		t.Errorf("status %d, page %+v; want the run", rec.Code, page)
+	}
+}
+
+func TestTheOwnerOfADirectSessionCanListItsRuns(t *testing.T) {
+	w := newWorld(t)
+	mine := w.session("direct", w.me)
+	w.run(mine, "running")
+
+	if rec := w.call(t, w.me, http.MethodGet, w.ofSession(mine), nil); rec.Code != http.StatusOK {
+		t.Errorf("status %d, want 200", rec.Code)
+	}
+}
+
+func TestARefusedListNeverListsRuns(t *testing.T) {
+	w := newWorld(t)
+	group := w.session("group", nil)
+
+	for name, tc := range map[string]struct {
+		path string
+		says string
+		// Refused before the session is read, so the store is never asked.
+		first bool
+	}{
+		"a bad session id": {"/teams/" + w.team.String() + "/sessions/nope/runs", "sessionID must be a uuid", true},
+		"a bad limit":      {w.ofSession(group) + "?limit=0", "limit must be a positive integer", false},
+		"a bad cursor":     {w.ofSession(group) + "?cursor=%21%21", "cursor", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			before := w.store.touched()
+			rec := w.call(t, w.me, http.MethodGet, tc.path, nil)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tc.says) {
+				t.Errorf("status %d %q, want 400 saying %q", rec.Code, rec.Body, tc.says)
+			}
+			if len(w.store.listed) != 0 {
+				t.Error("runs were listed after the refusal")
+			}
+			if n := w.store.touched() - before; tc.first && n != 0 {
+				t.Errorf("the store was asked %d things after a bad session id", n)
+			}
+		})
+	}
+}
+
+func TestAFailedListIsA500ThatLeaksNothing(t *testing.T) {
+	for name, set := range map[string]func(*fakeStore){
+		"reading the session": func(s *fakeStore) { s.sessionErr = errAny },
+		"listing the runs":    func(s *fakeStore) { s.listErr = errAny },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			group := w.session("group", nil)
+			set(w.store)
+
+			rec := w.call(t, w.me, http.MethodGet, w.ofSession(group), nil)
+
+			if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "reset by peer") {
+				t.Errorf("status %d %q, want a 500 that says nothing", rec.Code, rec.Body)
+			}
+			// The status is committed by the first write, so only the body
+			// and the store show work done after the failure.
+			if strings.Contains(rec.Body.String(), "items") {
+				t.Errorf("a page was written after the 500: %q", rec.Body)
+			}
+			if w.store.sessionErr != nil && len(w.store.listed) != 0 {
+				t.Error("runs were listed after the session could not be read")
+			}
+		})
 	}
 }

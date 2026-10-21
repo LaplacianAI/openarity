@@ -369,3 +369,92 @@ func TestOnlyTheTablePrinterPrintsANote(t *testing.T) {
 		t.Errorf("the table printer swallowed the note: %q", buf.String())
 	}
 }
+
+// A stream is read a line at a time — `oa runs events -o json | jq` gets each
+// event as it happens only if each one is a whole document on its own line.
+// The indented form Print uses would split one event across many lines.
+func TestJSONLineIsOneObjectPerLine(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	p := New(&buf, output.JSON)
+	for _, name := range []string{"first", "second"} {
+		if err := p.Line(row{Name: name, Server: "s"}, Options{}); err != nil {
+			t.Fatalf("Line: %v", err)
+		}
+	}
+
+	lines := strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("two records became %d lines:\n%s", len(lines), buf.String())
+	}
+	for i, want := range []string{"first", "second"} {
+		var got row
+		if err := json.Unmarshal([]byte(lines[i]), &got); err != nil {
+			t.Fatalf("line %d is not a json object: %v\n%s", i, err, lines[i])
+		}
+		if got.Name != want {
+			t.Errorf("line %d = %+v, want %s", i, got, want)
+		}
+	}
+}
+
+// Two yaml documents written back to back with no separator are one document
+// with duplicate keys, which a parser refuses or silently merges.
+func TestYAMLLineSeparatesDocuments(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	p := New(&buf, output.YAML)
+	for _, name := range []string{"first", "second"} {
+		if err := p.Line(row{Name: name}, Options{}); err != nil {
+			t.Fatalf("Line: %v", err)
+		}
+	}
+
+	decoder := yaml.NewDecoder(strings.NewReader(buf.String()))
+	var names []string
+	for {
+		var got row
+		if err := decoder.Decode(&got); err != nil {
+			break
+		}
+		names = append(names, got.Name)
+	}
+	if strings.Join(names, ",") != "first,second" {
+		t.Errorf("documents = %v, want first and second:\n%s", names, buf.String())
+	}
+}
+
+func TestTableLineRunsTheCallback(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	err := New(&buf, output.Table).Line(row{}, Options{Table: func(table *Table) {
+		table.Row("3", "tool_call", "search")
+	}})
+	if err != nil {
+		t.Fatalf("Line: %v", err)
+	}
+	if !strings.Contains(buf.String(), "tool_call") {
+		t.Errorf("the row never reached the writer: %q", buf.String())
+	}
+	if strings.ContainsAny(buf.String(), "{}") {
+		t.Errorf("the value was serialised into the table output: %q", buf.String())
+	}
+}
+
+// `oa runs events -o json | head -1` closes the pipe after one event. The
+// command must notice and stop rather than keep following a run nobody reads.
+func TestLineReportsAWriteFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, format := range output.All() {
+		err := New(brokenPipe{}, format).Line(onePage(), Options{Table: func(table *Table) {
+			table.Row("local")
+		}})
+		if err == nil {
+			t.Errorf("%s reported success writing to a closed pipe", format)
+		}
+	}
+}

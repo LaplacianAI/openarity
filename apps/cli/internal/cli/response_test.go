@@ -201,12 +201,14 @@ type fakeResponse struct {
 	body    []byte
 	json200 *string
 	json201 *string
+	json202 *string
 }
 
 func (f *fakeResponse) StatusCode() int     { return f.status }
 func (f *fakeResponse) GetBody() []byte     { return f.body }
 func (f *fakeResponse) GetJSON200() *string { return f.json200 }
 func (f *fakeResponse) GetJSON201() *string { return f.json201 }
+func (f *fakeResponse) GetJSON202() *string { return f.json202 }
 
 // A transport failure is returned untouched. Wrapping it in an API error would
 // blame the brain for a DNS failure or a closed VPN.
@@ -312,5 +314,31 @@ func TestALongBodyIsSummarised(t *testing.T) {
 	}
 	if !strings.HasSuffix(err.Error(), "…") {
 		t.Errorf("truncation is not marked: %q", err.Error())
+	}
+}
+
+// Starting and cancelling a run answer 202, a field neither Result nor Created
+// reads. A 409 from a cancel must arrive as the brain's sentence, not as a run
+// the caller dereferences.
+func TestAcceptedUnwrapsOnly202(t *testing.T) {
+	t.Parallel()
+
+	body := "queued"
+	got, err := Accepted[string](&fakeResponse{status: http.StatusAccepted, json202: &body}, nil)
+	if err != nil || got == nil || *got != body {
+		t.Fatalf("Accepted = %v, %v; want the body", got, err)
+	}
+
+	_, err = Accepted[string](&fakeResponse{status: http.StatusConflict, body: []byte("the run has already finished")}, nil)
+	if err == nil {
+		t.Fatal("a 409 was unwrapped as an accepted run")
+	}
+	if !strings.Contains(err.Error(), "already finished") {
+		t.Errorf("the brain's reason was dropped: %v", err)
+	}
+
+	boom := errors.New("dial tcp: connection refused")
+	if _, err := Accepted[string](&fakeResponse{}, boom); !errors.Is(err, boom) {
+		t.Errorf("Accepted rewrote the transport error: %v", err)
 	}
 }

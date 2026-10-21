@@ -38,6 +38,11 @@ type (
 		GetBody() []byte
 		StatusCode() int
 	}
+	acceptedResponse[T any] interface {
+		GetJSON202() *T
+		GetBody() []byte
+		StatusCode() int
+	}
 	emptyResponse interface {
 		GetBody() []byte
 		StatusCode() int
@@ -59,6 +64,16 @@ func Created[T any](res createdResponse[T], err error) (*T, error) {
 		return nil, err
 	}
 	if body := res.GetJSON201(); body != nil {
+		return body, nil
+	}
+	return nil, APIError(res.StatusCode(), res.GetBody())
+}
+
+func Accepted[T any](res acceptedResponse[T], err error) (*T, error) {
+	if err != nil {
+		return nil, err
+	}
+	if body := res.GetJSON202(); body != nil {
 		return body, nil
 	}
 	return nil, APIError(res.StatusCode(), res.GetBody())

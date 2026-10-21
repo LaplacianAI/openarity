@@ -7,6 +7,7 @@
  * reset — and every one of them was a screen with nothing underneath.
  */
 import { pageQuery, request } from "./client";
+import { readFrames } from "./sse";
 import type {
   Agent,
   AgentRequest,
@@ -24,6 +25,8 @@ import type {
   Message,
   Page,
   PendingSender,
+  Run,
+  RunEvent,
   Session,
   Skill,
   SkillSummary,
@@ -156,6 +159,11 @@ export function removeSender(teamId: string, channelId: string, senderRef: strin
 
 /* --------------------------------------------------------------- sessions */
 
+/** One session, as the lists return it. Somebody else's direct one is a 404. */
+export function getSession(teamId: string, sessionId: string): Promise<Session> {
+  return request(`/teams/${teamId}/sessions/${sessionId}`);
+}
+
 export function listSessions(teamId: string, cursor?: string | null): Promise<Page<Session>> {
   return request<Page<Session>>(`/teams/${teamId}/sessions${pageQuery(cursor)}`);
 }
@@ -188,6 +196,79 @@ export function downloadAttachment(
 ): Promise<Blob> {
   return request<Blob>(`/teams/${teamId}/sessions/${sessionId}/attachments/${attachmentId}`, {
     blob: true,
+  });
+}
+
+/* ------------------------------------------------------------------- runs */
+
+export function listSessionRuns(
+  teamId: string,
+  sessionId: string,
+  cursor?: string | null,
+): Promise<Page<Run>> {
+  return request<Page<Run>>(`/teams/${teamId}/sessions/${sessionId}/runs${pageQuery(cursor)}`);
+}
+
+/** One run, wherever it was started — what a link to a run's trace reads. */
+export function getRun(teamId: string, runId: string): Promise<Run> {
+  return request<Run>(`/teams/${teamId}/runs/${runId}`);
+}
+
+export function cancelRun(teamId: string, runId: string): Promise<void> {
+  return request<void>(`/teams/${teamId}/runs/${runId}/cancel`, { method: "POST" });
+}
+
+/** How long to wait before following a stream again that closed early. */
+export const RESUME_AFTER_MS = 1000;
+
+/**
+ * Follows a run's events until the brain sends `end` or `signal` aborts,
+ * calling `onEvent` for each, `end` included. A stream that closes without
+ * `end` was cut, not finished, so it is followed again from the last event
+ * seen — the brain replays nothing twice.
+ */
+export async function followRunEvents(
+  teamId: string,
+  runId: string,
+  onEvent: (event: RunEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  let after: number | null = null;
+  while (!signal.aborted) {
+    const query: string = after === null ? "" : `?after=${after}`;
+    const body: ReadableStream<Uint8Array> = await request(
+      `/teams/${teamId}/runs/${runId}/events${query}`,
+      { stream: true, signal },
+    );
+    for await (const frame of readFrames(body, signal)) {
+      const seq: number | null = frame.id === null ? null : Number(frame.id);
+      if (seq !== null && Number.isInteger(seq)) after = seq;
+      onEvent({ seq, kind: frame.event, data: parseData(frame.data) });
+      if (frame.event === "end") return;
+    }
+    await pause(RESUME_AFTER_MS, signal);
+  }
+}
+
+function parseData(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
   });
 }
 

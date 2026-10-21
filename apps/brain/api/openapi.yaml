@@ -722,6 +722,39 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/sessions/{sessionID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: sessionID
+        in: path
+        required: true
+        description: The conversation
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getSession
+      tags: [sessions]
+      summary: Read a conversation's details
+      description: |
+        The session as the lists return it. Visible exactly where its
+        messages are: a session in another team, or somebody else's `direct`
+        session without `session:read_all`, answers 404 with the same body as
+        one that does not exist.
+      responses:
+        "200":
+          description: The session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/sessions/{sessionID}/messages:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -766,6 +799,47 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MessagePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/sessions/{sessionID}/runs:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: sessionID
+        in: path
+        required: true
+        description: The conversation
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listSessionRuns
+      tags: [runs]
+      summary: List the runs in a conversation
+      description: |
+        The runs started in this session, newest first. Only top-level runs
+        are listed: a delegate's run belongs to the run that started it.
+
+        Each item is the run as `GET /teams/{id}/runs/{runID}` returns it;
+        follow `/runs/{runID}/events` for what it did.
+
+        Visible exactly where the session is: a session in another team, or
+        somebody else's `direct` session without `session:read_all`, answers
+        404 with the same body as a session that does not exist.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of runs, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPage"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3575,3 +3649,15 @@ components:
           type: string
           format: date-time
           nullable: true
+
+    RunPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Run"
+        next_cursor:
+          type: string
+          description: Absent on the last page

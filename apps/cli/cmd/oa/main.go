@@ -18,6 +18,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/login"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/logout"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/mcpservers"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/runs"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/sessions"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/skills"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/teams"
@@ -54,6 +55,7 @@ func commands(opts *cli.Options) []*cobra.Command {
 		mcpservers.New(opts),
 		skills.New(opts),
 		sessions.New(opts),
+		runs.New(opts),
 		users.New(opts),
 		login.New(opts),
 		logout.New(opts),

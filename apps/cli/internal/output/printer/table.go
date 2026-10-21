@@ -68,3 +68,7 @@ func (p tablePrinter) Print(_ any, opts Options) error {
 func (p tablePrinter) Note(text string) {
 	fmt.Fprintln(p.w, text)
 }
+
+func (p tablePrinter) Line(value any, opts Options) error {
+	return p.Print(value, opts)
+}

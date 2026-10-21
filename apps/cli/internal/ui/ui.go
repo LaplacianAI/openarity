@@ -28,6 +28,11 @@ type Styles struct {
 	Warn  lipgloss.Style
 	Err   lipgloss.Style
 
+	// Strong and Code are for prose rendered from light markdown: **bold**
+	// and `code`.
+	Strong lipgloss.Style
+	Code   lipgloss.Style
+
 	renderer *lipgloss.Renderer
 }
 
@@ -54,6 +59,9 @@ func New(w io.Writer, chosenTheme theme.Theme) *Styles {
 		Warn:  r.NewStyle().Foreground(warnColor),
 		Err:   r.NewStyle().Foreground(errColor),
 
+		Strong: r.NewStyle().Bold(true),
+		Code:   r.NewStyle().Foreground(accentColor),
+
 		renderer: r,
 	}
 }
@@ -73,4 +81,18 @@ func IsTerminal(w io.Writer) bool {
 		return false
 	}
 	return term.IsTerminal(int(f.Fd()))
+}
+
+// Width is how many columns the terminal behind w has, or fallback when w is
+// not a terminal or will not say.
+func Width(w io.Writer, fallback int) int {
+	f, ok := w.(*os.File)
+	if !ok || !term.IsTerminal(int(f.Fd())) {
+		return fallback
+	}
+	width, _, err := term.GetSize(int(f.Fd()))
+	if err != nil || width <= 0 {
+		return fallback
+	}
+	return width
 }

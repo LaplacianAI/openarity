@@ -236,7 +236,17 @@
     },
     {
       "method": "GET",
+      "path": "/teams/{id}/sessions/{sessionID}",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
       "path": "/teams/{id}/sessions/{sessionID}/messages",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/sessions/{sessionID}/runs",
       "scope": "member"
     },
     {

@@ -52,7 +52,9 @@ func TestNoEscapeSequencesReachANonTerminal(t *testing.T) {
 		styles.Muted.Render("none") +
 		styles.OK.Render("ok") +
 		styles.Warn.Render("careful") +
-		styles.Err.Render("failed")
+		styles.Err.Render("failed") +
+		styles.Strong.Render("bold") +
+		styles.Code.Render("code")
 
 	if strings.Contains(rendered, "\x1b") {
 		t.Errorf("an escape sequence reached a non-terminal writer: %q", rendered)
@@ -71,13 +73,15 @@ func TestStylingKeepsTheText(t *testing.T) {
 	const name = "a-team-with-a-deliberately-long-name"
 
 	for label, style := range map[string]interface{ Render(...string) string }{
-		"Title": styles.Title,
-		"Label": styles.Label,
-		"Value": styles.Value,
-		"Muted": styles.Muted,
-		"OK":    styles.OK,
-		"Warn":  styles.Warn,
-		"Err":   styles.Err,
+		"Title":  styles.Title,
+		"Label":  styles.Label,
+		"Value":  styles.Value,
+		"Muted":  styles.Muted,
+		"OK":     styles.OK,
+		"Warn":   styles.Warn,
+		"Err":    styles.Err,
+		"Strong": styles.Strong,
+		"Code":   styles.Code,
 	} {
 		if got := strings.TrimSpace(style.Render(name)); got != name {
 			t.Errorf("%s.Render(%q) = %q — the style changed the text", label, name, got)
@@ -96,5 +100,27 @@ func TestStylesAreBoundToTheirOwnWriter(t *testing.T) {
 
 	if New(&first, theme.Auto) == New(&second, theme.Auto) {
 		t.Error("New returned the same styles for two writers")
+	}
+}
+
+// A pipe has no width to ask for, and a transcript clipped to zero columns
+// would be all ellipses.
+func TestWidthFallsBackOffATerminal(t *testing.T) {
+	t.Parallel()
+
+	if got := Width(&bytes.Buffer{}, 100); got != 100 {
+		t.Errorf("Width(buffer) = %d, want the fallback", got)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = r.Close()
+		_ = w.Close()
+	})
+	if got := Width(w, 72); got != 72 {
+		t.Errorf("Width(pipe) = %d, want the fallback", got)
 	}
 }

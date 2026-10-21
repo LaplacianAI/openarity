@@ -33,3 +33,14 @@ export function initials(name: string): string {
     .map((p) => p[0]?.toUpperCase() ?? "")
     .join("");
 }
+
+/**
+ * A session's status in one of the three tones a status dot knows. The
+ * brain's vocabulary is wider; anything unrecognised is drawn as closed
+ * rather than guessed at.
+ */
+export function sessionTone(status: string): "active" | "idle" | "closed" {
+  if (status === "active" || status === "open") return "active";
+  if (status === "idle" || status === "waiting") return "idle";
+  return "closed";
+}

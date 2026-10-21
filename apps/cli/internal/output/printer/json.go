@@ -18,3 +18,10 @@ func (p jsonPrinter) Print(value any, _ Options) error {
 	}
 	return nil
 }
+
+func (p jsonPrinter) Line(value any, _ Options) error {
+	if err := json.NewEncoder(p.w).Encode(value); err != nil {
+		return fmt.Errorf("render json: %w", err)
+	}
+	return nil
+}

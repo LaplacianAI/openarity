@@ -20,6 +20,7 @@ import { Route as UiAgentsIndexRouteImport } from './routes/ui.agents.index'
 import { Route as UiChannelsIndexRouteImport } from './routes/ui.channels.index'
 import { Route as UiServersIndexRouteImport } from './routes/ui.servers.index'
 import { Route as UiSessionsIndexRouteImport } from './routes/ui.sessions.index'
+import { Route as UiSessionsSessionIdRouteImport } from './routes/ui.sessions.$sessionId'
 import { Route as UiSkillsIndexRouteImport } from './routes/ui.skills.index'
 import { Route as UiTeamsIndexRouteImport } from './routes/ui.teams.index'
 
@@ -78,6 +79,11 @@ const UiSessionsIndexRoute = UiSessionsIndexRouteImport.update({
   path: '/sessions/',
   getParentRoute: () => UiRoute,
 } as any)
+const UiSessionsSessionIdRoute = UiSessionsSessionIdRouteImport.update({
+  id: '/sessions/$sessionId',
+  path: '/sessions/$sessionId',
+  getParentRoute: () => UiRoute,
+} as any)
 const UiSkillsIndexRoute = UiSkillsIndexRouteImport.update({
   id: '/skills/',
   path: '/skills/',
@@ -97,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/ui/graph': typeof UiGraphRoute
   '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
+  '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
   '/ui/servers/': typeof UiServersIndexRoute
@@ -111,6 +118,7 @@ export interface FileRoutesByTo {
   '/ui/graph': typeof UiGraphRoute
   '/ui/settings': typeof UiSettingsRoute
   '/ui': typeof UiIndexRoute
+  '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
   '/ui/agents': typeof UiAgentsIndexRoute
   '/ui/channels': typeof UiChannelsIndexRoute
   '/ui/servers': typeof UiServersIndexRoute
@@ -127,6 +135,7 @@ export interface FileRoutesById {
   '/ui/graph': typeof UiGraphRoute
   '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
+  '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
   '/ui/servers/': typeof UiServersIndexRoute
@@ -144,6 +153,7 @@ export interface FileRouteTypes {
     | '/ui/graph'
     | '/ui/settings'
     | '/ui/'
+    | '/ui/sessions/$sessionId'
     | '/ui/agents/'
     | '/ui/channels/'
     | '/ui/servers/'
@@ -158,6 +168,7 @@ export interface FileRouteTypes {
     | '/ui/graph'
     | '/ui/settings'
     | '/ui'
+    | '/ui/sessions/$sessionId'
     | '/ui/agents'
     | '/ui/channels'
     | '/ui/servers'
@@ -173,6 +184,7 @@ export interface FileRouteTypes {
     | '/ui/graph'
     | '/ui/settings'
     | '/ui/'
+    | '/ui/sessions/$sessionId'
     | '/ui/agents/'
     | '/ui/channels/'
     | '/ui/servers/'
@@ -265,6 +277,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiSessionsIndexRouteImport
       parentRoute: typeof UiRoute
     }
+    '/ui/sessions/$sessionId': {
+      id: '/ui/sessions/$sessionId'
+      path: '/sessions/$sessionId'
+      fullPath: '/ui/sessions/$sessionId'
+      preLoaderRoute: typeof UiSessionsSessionIdRouteImport
+      parentRoute: typeof UiRoute
+    }
     '/ui/skills/': {
       id: '/ui/skills/'
       path: '/skills'
@@ -288,6 +307,7 @@ interface UiRouteChildren {
   UiGraphRoute: typeof UiGraphRoute
   UiSettingsRoute: typeof UiSettingsRoute
   UiIndexRoute: typeof UiIndexRoute
+  UiSessionsSessionIdRoute: typeof UiSessionsSessionIdRoute
   UiAgentsIndexRoute: typeof UiAgentsIndexRoute
   UiChannelsIndexRoute: typeof UiChannelsIndexRoute
   UiServersIndexRoute: typeof UiServersIndexRoute
@@ -302,6 +322,7 @@ const UiRouteChildren: UiRouteChildren = {
   UiGraphRoute: UiGraphRoute,
   UiSettingsRoute: UiSettingsRoute,
   UiIndexRoute: UiIndexRoute,
+  UiSessionsSessionIdRoute: UiSessionsSessionIdRoute,
   UiAgentsIndexRoute: UiAgentsIndexRoute,
   UiChannelsIndexRoute: UiChannelsIndexRoute,
   UiServersIndexRoute: UiServersIndexRoute,
