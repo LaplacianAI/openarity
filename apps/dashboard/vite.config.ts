@@ -60,6 +60,15 @@ export default defineConfig({
         "src/routeTree.gen.ts",
         "src/**/*.d.ts",
       ],
+      // A few points under what main measured (lines 78%, branches 70%,
+      // functions 66%), so a change that ships untested code fails CI.
+      // Raise these as coverage grows; never lower them to make a change pass.
+      thresholds: {
+        lines: 75,
+        statements: 75,
+        branches: 65,
+        functions: 60,
+      },
     },
   },
 });
