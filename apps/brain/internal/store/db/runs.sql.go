@@ -417,6 +417,44 @@ func (q *Queries) ListUnstartedRuns(ctx context.Context, olderThanSeconds float6
 	return items, nil
 }
 
+const reapChildren = `-- name: ReapChildren :many
+WITH RECURSIVE below AS (
+    SELECT id FROM runs WHERE parent_run_id = $2::uuid
+    UNION ALL
+    SELECT r.id FROM runs r JOIN below b ON r.parent_run_id = b.id
+)
+UPDATE runs SET status = 'failed', error = $1::text, finished_at = now()
+WHERE id IN (SELECT id FROM below) AND status = 'running'
+RETURNING id
+`
+
+type ReapChildrenParams struct {
+	Reason   string
+	ParentID uuid.UUID
+}
+
+// After a crash the resumed parent asks again rather than finding what it
+// asked before, so whatever was still running beneath it fails, at any depth.
+func (q *Queries) ReapChildren(ctx context.Context, arg ReapChildrenParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, reapChildren, arg.Reason, arg.ParentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requestRunCancel = `-- name: RequestRunCancel :one
 UPDATE runs SET
     cancel_requested_at = coalesce(cancel_requested_at, now()),
@@ -459,11 +497,78 @@ func (q *Queries) RequestRunCancel(ctx context.Context, id uuid.UUID) (Run, erro
 	return i, err
 }
 
+const startChildRun = `-- name: StartChildRun :one
+INSERT INTO runs (id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth,
+                  agent_id, agent_name, user_id, status, input, token_budget,
+                  worker, heartbeat_at, started_at)
+SELECT $1::uuid, p.team_id, p.session_id, p.id, p.root_run_id,
+       $2::text, p.depth + 1,
+       a.id, a.name, p.user_id, 'running', $3::text, a.token_budget,
+       $4::text, now(), now()
+FROM runs p
+JOIN agents a ON a.id = $5::uuid AND a.team_id = p.team_id
+WHERE p.id = $6::uuid AND p.team_id = $7::uuid
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget
+`
+
+type StartChildRunParams struct {
+	ID             uuid.UUID
+	ParentToolCall string
+	Input          string
+	Worker         string
+	AgentID        uuid.UUID
+	ParentID       uuid.UUID
+	TeamID         uuid.UUID
+}
+
+// A child is born running and held by its parent's worker: never queued, so
+// the sweep never starts it as a run of its own. Session, root and user come
+// from the parent; the agent is selected within the team, so another team's
+// agent writes nothing.
+func (q *Queries) StartChildRun(ctx context.Context, arg StartChildRunParams) (Run, error) {
+	row := q.db.QueryRow(ctx, startChildRun,
+		arg.ID,
+		arg.ParentToolCall,
+		arg.Input,
+		arg.Worker,
+		arg.AgentID,
+		arg.ParentID,
+		arg.TeamID,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.SessionID,
+		&i.ParentRunID,
+		&i.RootRunID,
+		&i.ParentToolCall,
+		&i.Depth,
+		&i.AgentID,
+		&i.AgentName,
+		&i.UserID,
+		&i.Status,
+		&i.Input,
+		&i.Output,
+		&i.Error,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.Worker,
+		&i.HeartbeatAt,
+		&i.CancelRequestedAt,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.TokenBudget,
+	)
+	return i, err
+}
+
 const takeOverStaleRuns = `-- name: TakeOverStaleRuns :many
 UPDATE runs SET status = 'queued', worker = NULL, heartbeat_at = NULL
 WHERE id IN (
     SELECT id FROM runs
-    WHERE status = 'running'
+    WHERE status = 'running' AND parent_run_id IS NULL
       AND heartbeat_at < now() - make_interval(secs => $1::float8)
     ORDER BY heartbeat_at
     LIMIT 20
@@ -473,6 +578,7 @@ RETURNING id
 
 // One winner per stale run: the row is locked while it is handed back, and
 // the old worker's next heartbeat finds it no longer running and stops.
+// A child is never taken over: only its parent decides what becomes of it.
 func (q *Queries) TakeOverStaleRuns(ctx context.Context, staleSeconds float64) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, takeOverStaleRuns, staleSeconds)
 	if err != nil {
@@ -491,4 +597,28 @@ func (q *Queries) TakeOverStaleRuns(ctx context.Context, staleSeconds float64) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const treeUsage = `-- name: TreeUsage :one
+SELECT coalesce(sum(r.input_tokens + r.output_tokens), 0)::bigint AS tokens,
+       count(*)::bigint AS runs,
+       coalesce(extract(epoch FROM now() - (
+           SELECT started_at FROM runs WHERE id = $1::uuid)), 0)::float8 AS elapsed_seconds
+FROM runs r
+WHERE r.root_run_id = $1::uuid
+`
+
+type TreeUsageRow struct {
+	Tokens         int64
+	Runs           int64
+	ElapsedSeconds float64
+}
+
+// What a tree has spent, for the delegate tool's budget check. Elapsed is on
+// the database's clock, from when the root first started.
+func (q *Queries) TreeUsage(ctx context.Context, rootID uuid.UUID) (TreeUsageRow, error) {
+	row := q.db.QueryRow(ctx, treeUsage, rootID)
+	var i TreeUsageRow
+	err := row.Scan(&i.Tokens, &i.Runs, &i.ElapsedSeconds)
+	return i, err
 }

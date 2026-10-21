@@ -69,6 +69,17 @@ DELETE FROM agent_skills WHERE agent_id = $1;
 -- name: ListAgentSkills :many
 SELECT skill_id FROM agent_skills WHERE agent_id = $1 ORDER BY skill_id;
 
+-- One statement for the whole list, as the skills are: one outbox row.
+-- name: AddAgentDelegates :exec
+INSERT INTO agent_delegates (agent_id, delegate_id, team_id)
+SELECT sqlc.arg('agent_id'), unnest(sqlc.arg('delegate_ids')::uuid[]), sqlc.arg('team_id');
+
+-- name: ClearAgentDelegates :exec
+DELETE FROM agent_delegates WHERE agent_id = $1;
+
+-- name: ListAgentDelegates :many
+SELECT delegate_id FROM agent_delegates WHERE agent_id = $1 ORDER BY delegate_id;
+
 -- A run names its agent; names are unique per team in any case, and
 -- agents_team_name_key is on (team_id, lower(name)), so this reads one entry.
 -- name: GetAgentByName :one
@@ -91,12 +102,17 @@ SELECT * FROM skills
 WHERE id IN (SELECT skill_id FROM agent_skills WHERE agent_id = $1)
 ORDER BY name;
 
--- What the graph tool may return as an agent, until slice C narrows it by
--- the caller's delegation setting: the rest of the team, never the caller.
+-- What the graph tool may return as an agent: whom the caller may delegate
+-- to. The rest of the team, only those it lists, or nobody; never itself.
 -- name: ListReachableAgentIDs :many
-SELECT id FROM agents
-WHERE team_id = sqlc.arg('team_id') AND id <> sqlc.arg('agent_id')
-ORDER BY id;
+SELECT a.id FROM agents a
+JOIN agents caller ON caller.id = sqlc.arg('agent_id')::uuid AND caller.team_id = a.team_id
+WHERE a.team_id = sqlc.arg('team_id')::uuid AND a.id <> caller.id
+  AND (caller.delegation = 'team'
+    OR (caller.delegation = 'listed' AND EXISTS (
+          SELECT 1 FROM agent_delegates d
+          WHERE d.agent_id = caller.id AND d.delegate_id = a.id)))
+ORDER BY a.id;
 
 -- What the graph tool may return as a tool: every tool on a server granted
 -- to the agent, cut by the grant's allow-list where it has one.

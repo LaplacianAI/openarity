@@ -12,6 +12,23 @@ import (
 	"github.com/google/uuid"
 )
 
+const addAgentDelegates = `-- name: AddAgentDelegates :exec
+INSERT INTO agent_delegates (agent_id, delegate_id, team_id)
+SELECT $1, unnest($2::uuid[]), $3
+`
+
+type AddAgentDelegatesParams struct {
+	AgentID     uuid.UUID
+	DelegateIds []uuid.UUID
+	TeamID      uuid.UUID
+}
+
+// One statement for the whole list, as the skills are: one outbox row.
+func (q *Queries) AddAgentDelegates(ctx context.Context, arg AddAgentDelegatesParams) error {
+	_, err := q.db.Exec(ctx, addAgentDelegates, arg.AgentID, arg.DelegateIds, arg.TeamID)
+	return err
+}
+
 const addAgentMCPServer = `-- name: AddAgentMCPServer :exec
 INSERT INTO agent_mcp_servers (agent_id, mcp_server_id, team_id, allow)
 VALUES ($1, $2, $3, $4)
@@ -49,6 +66,15 @@ type AddAgentSkillsParams struct {
 // per row that needs its own INSERT, and one statement is one outbox row.
 func (q *Queries) AddAgentSkills(ctx context.Context, arg AddAgentSkillsParams) error {
 	_, err := q.db.Exec(ctx, addAgentSkills, arg.AgentID, arg.SkillIds, arg.TeamID)
+	return err
+}
+
+const clearAgentDelegates = `-- name: ClearAgentDelegates :exec
+DELETE FROM agent_delegates WHERE agent_id = $1
+`
+
+func (q *Queries) ClearAgentDelegates(ctx context.Context, agentID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearAgentDelegates, agentID)
 	return err
 }
 
@@ -232,6 +258,30 @@ func (q *Queries) GetAgentByName(ctx context.Context, arg GetAgentByNameParams) 
 		&i.Delegation,
 	)
 	return i, err
+}
+
+const listAgentDelegates = `-- name: ListAgentDelegates :many
+SELECT delegate_id FROM agent_delegates WHERE agent_id = $1 ORDER BY delegate_id
+`
+
+func (q *Queries) ListAgentDelegates(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listAgentDelegates, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var delegate_id uuid.UUID
+		if err := rows.Scan(&delegate_id); err != nil {
+			return nil, err
+		}
+		items = append(items, delegate_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAgentMCPServers = `-- name: ListAgentMCPServers :many
@@ -474,20 +524,25 @@ func (q *Queries) ListGrantedToolIDs(ctx context.Context, agentID uuid.UUID) ([]
 }
 
 const listReachableAgentIDs = `-- name: ListReachableAgentIDs :many
-SELECT id FROM agents
-WHERE team_id = $1 AND id <> $2
-ORDER BY id
+SELECT a.id FROM agents a
+JOIN agents caller ON caller.id = $1::uuid AND caller.team_id = a.team_id
+WHERE a.team_id = $2::uuid AND a.id <> caller.id
+  AND (caller.delegation = 'team'
+    OR (caller.delegation = 'listed' AND EXISTS (
+          SELECT 1 FROM agent_delegates d
+          WHERE d.agent_id = caller.id AND d.delegate_id = a.id)))
+ORDER BY a.id
 `
 
 type ListReachableAgentIDsParams struct {
-	TeamID  uuid.UUID
 	AgentID uuid.UUID
+	TeamID  uuid.UUID
 }
 
-// What the graph tool may return as an agent, until slice C narrows it by
-// the caller's delegation setting: the rest of the team, never the caller.
+// What the graph tool may return as an agent: whom the caller may delegate
+// to. The rest of the team, only those it lists, or nobody; never itself.
 func (q *Queries) ListReachableAgentIDs(ctx context.Context, arg ListReachableAgentIDsParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, listReachableAgentIDs, arg.TeamID, arg.AgentID)
+	rows, err := q.db.Query(ctx, listReachableAgentIDs, arg.AgentID, arg.TeamID)
 	if err != nil {
 		return nil, err
 	}
