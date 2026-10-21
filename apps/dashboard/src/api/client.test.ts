@@ -110,6 +110,35 @@ describe("request", () => {
   });
 });
 
+// An attachment is bytes, not JSON. It still goes through request(), so the
+// token, the brain's error text and renewal on 401 hold for it too.
+describe("a file", () => {
+  it("comes back as its bytes, asked for as any type, with the token", async () => {
+    setToken("t0ken");
+    const mock = vi.fn<typeof fetch>(
+      async () =>
+        new Response("%PDF-1.7", { status: 200, headers: { "Content-Type": "application/pdf" } }),
+    );
+    vi.stubGlobal("fetch", mock);
+
+    const got = await request<Blob>("/file", { blob: true });
+
+    // fetch's Blob is Node's, not jsdom's, so no instanceof across the two.
+    expect(got.type).toBe("application/pdf");
+    expect(await got.text()).toBe("%PDF-1.7");
+    const headers = new Headers(mock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("Accept")).toBe("*/*");
+    expect(headers.get("Authorization")).toBe("Bearer t0ken");
+  });
+
+  it("carries the brain's words when it is refused", async () => {
+    respondText("this attachment is not in this session", 404);
+    await expect(request("/file", { blob: true })).rejects.toThrow(
+      "this attachment is not in this session",
+    );
+  });
+});
+
 describe("cursor pages", () => {
   it("sends nothing on the first page", () => {
     expect(pageQuery(null)).toBe("");

@@ -192,13 +192,20 @@ export type Agent = AgentSummary & {
   max_steps: number;
   steer_continuations: number;
   parser: boolean;
+  /** A JSON Schema the answer must fit. The dashboard carries it, never edits it. */
+  output_schema?: unknown;
+  /** The model that fits the answer to output_schema, when parser is on. */
+  parser_model?: unknown;
   mcp_servers: MCPServerGrant[];
   skills: string[];
   /** Tokens one run may spend. Absent when the deployment's default applies. */
   token_budget?: number;
 };
 
-/** POST /teams/{id}/agents. The fields a form sets; the rest default. */
+/**
+ * POST and PUT /teams/{id}/agents. A PUT is whole, so an edit sends back what
+ * the form does not show as it came.
+ */
 export type AgentRequest = {
   name: string;
   description?: string;
@@ -206,6 +213,10 @@ export type AgentRequest = {
   model: ModelRef;
   pattern: string;
   max_steps: number;
+  steer_continuations?: number;
+  output_schema?: unknown;
+  parser?: boolean;
+  parser_model?: unknown;
   mcp_servers?: MCPServerGrant[];
   skills?: string[];
   token_budget?: number;
