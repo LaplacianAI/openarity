@@ -31,6 +31,13 @@ type Agent struct {
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	TokenBudget        *int64
+	Delegation         string
+}
+
+type AgentDelegate struct {
+	AgentID    uuid.UUID
+	DelegateID uuid.UUID
+	TeamID     uuid.UUID
 }
 
 type AgentMcpServer struct {

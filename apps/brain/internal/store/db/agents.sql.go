@@ -81,7 +81,7 @@ INSERT INTO agents (
     $6, $7, $8, $9, $10, $11,
     $12, $13, $14, $15, $16,
     $17
-) RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget
+) RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation
 `
 
 type CreateAgentParams struct {
@@ -146,6 +146,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TokenBudget,
+		&i.Delegation,
 	)
 	return i, err
 }
@@ -160,7 +161,7 @@ func (q *Queries) DeleteAgent(ctx context.Context, id uuid.UUID) error {
 }
 
 const getAgent = `-- name: GetAgent :one
-SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget FROM agents WHERE id = $1
+SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation FROM agents WHERE id = $1
 `
 
 func (q *Queries) GetAgent(ctx context.Context, id uuid.UUID) (Agent, error) {
@@ -187,12 +188,13 @@ func (q *Queries) GetAgent(ctx context.Context, id uuid.UUID) (Agent, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TokenBudget,
+		&i.Delegation,
 	)
 	return i, err
 }
 
 const getAgentByName = `-- name: GetAgentByName :one
-SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget FROM agents
+SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation FROM agents
 WHERE team_id = $1 AND lower(name) = lower($2::text)
 `
 
@@ -227,6 +229,7 @@ func (q *Queries) GetAgentByName(ctx context.Context, arg GetAgentByNameParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TokenBudget,
+		&i.Delegation,
 	)
 	return i, err
 }
@@ -285,7 +288,7 @@ func (q *Queries) ListAgentSkills(ctx context.Context, agentID uuid.UUID) ([]uui
 }
 
 const listAgentsByTeam = `-- name: ListAgentsByTeam :many
-SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget FROM agents
+SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation FROM agents
 WHERE team_id = $1
   AND (NOT $2::bool
    OR (created_at, id) < ($3::timestamptz, $4::uuid))
@@ -337,6 +340,7 @@ func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamPara
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.TokenBudget,
+			&i.Delegation,
 		); err != nil {
 			return nil, err
 		}
@@ -521,7 +525,7 @@ UPDATE agents SET
     token_budget        = $15,
     updated_at          = now()
 WHERE id = $16
-RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget
+RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation
 `
 
 type UpdateAgentParams struct {
@@ -585,6 +589,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TokenBudget,
+		&i.Delegation,
 	)
 	return i, err
 }
