@@ -66,7 +66,7 @@ apps/cli/
   internal/cli/
     root.go            the root command and its persistent flags
     options.go         Options — the whole surface a command may reach
-    response.go        Result, Created, NoContent: a call becomes a value
+    response.go        Result, Created, Accepted, NoContent: a call becomes a value
     page.go            Paging and PrintPage: a page becomes a table
     lookup.go          ResolveTeam, ResolveMember, …: a name becomes an id
   internal/command/
@@ -77,6 +77,7 @@ apps/cli/
                        oa teams settings show|set
     channels/          oa channels list|create|delete, oa channels senders …
     sessions/          oa sessions list|read — the conversations, and their messages
+    runs/              oa runs start|list|get|events|cancel — events is an SSE stream
     users/             oa users list — who has logged in, and their id
     skills/            oa skills list|get|upload|replace|import|sync|cat|delete
     agents/            oa agents list|get|create|replace|delete — a file, grants by name

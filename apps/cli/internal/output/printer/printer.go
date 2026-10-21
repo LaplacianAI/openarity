@@ -10,8 +10,12 @@ type Options struct {
 	Table func(*Table)
 }
 
+// Line prints one record of a stream as it arrives: a json object on one
+// line, a yaml document behind its own ---, or the table's rows. Print is for
+// a whole value; a stream has no end to wait for.
 type Printer interface {
 	Print(value any, opts Options) error
+	Line(value any, opts Options) error
 	Note(text string)
 }
 

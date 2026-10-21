@@ -9,6 +9,7 @@ package clitest
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,6 +51,14 @@ func Isolate(t *testing.T) {
 func Execute(t *testing.T, builds []Build, args ...string) (string, error) {
 	t.Helper()
 
+	return ExecuteContext(t.Context(), t, builds, args...)
+}
+
+// ExecuteContext is Execute under a context the test controls, which is how a
+// test presses Ctrl-C: main cancels the context on SIGINT, and nothing else.
+func ExecuteContext(ctx context.Context, t *testing.T, builds []Build, args ...string) (string, error) {
+	t.Helper()
+
 	var out bytes.Buffer
 	root := cli.NewRoot(&out, &out, func(opts *cli.Options) []*cobra.Command {
 		commands := make([]*cobra.Command, 0, len(builds))
@@ -62,7 +71,7 @@ func Execute(t *testing.T, builds []Build, args ...string) (string, error) {
 	root.SetOut(&out)
 	root.SetErr(&out)
 
-	err := root.ExecuteContext(t.Context())
+	err := root.ExecuteContext(ctx)
 	return out.String(), err
 }
 

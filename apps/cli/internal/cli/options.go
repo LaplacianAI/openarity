@@ -166,6 +166,24 @@ func (o *Options) Load() error {
 }
 
 func (o *Options) API(ctx context.Context) (*client.ClientWithResponses, error) {
+	return o.authenticated(ctx, &http.Client{Timeout: requestTimeout})
+}
+
+// Stream is API for a response that is read for as long as it lasts — a run's
+// events. A whole-request timeout would cut it off mid-run, so only the wait
+// for the headers is bounded; the caller's context is what ends it.
+func (o *Options) Stream(ctx context.Context) (*client.ClientWithResponses, error) {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("the default HTTP transport has been replaced")
+	}
+	transport = transport.Clone()
+	transport.ResponseHeaderTimeout = requestTimeout
+
+	return o.authenticated(ctx, &http.Client{Transport: transport})
+}
+
+func (o *Options) authenticated(ctx context.Context, hc *http.Client) (*client.ClientWithResponses, error) {
 	if err := o.renewIfExpired(ctx); err != nil {
 		return nil, err
 	}
@@ -176,7 +194,7 @@ func (o *Options) API(ctx context.Context) (*client.ClientWithResponses, error) 
 		return nil, err
 	}
 
-	return NewClient(o.Settings.Server.Value, client.WithRequestEditorFn(
+	return newClient(o.Settings.Server.Value, hc, client.WithRequestEditorFn(
 		func(_ context.Context, req *http.Request) error {
 			req.Header.Set("Authorization", "Bearer "+token)
 			return nil
@@ -193,7 +211,11 @@ func (o *Options) WarnOverride(setting config.Setting) error {
 }
 
 func NewClient(server string, opts ...client.ClientOption) (*client.ClientWithResponses, error) {
-	opts = append(opts, client.WithHTTPClient(&http.Client{Timeout: requestTimeout}))
+	return newClient(server, &http.Client{Timeout: requestTimeout}, opts...)
+}
+
+func newClient(server string, hc *http.Client, opts ...client.ClientOption) (*client.ClientWithResponses, error) {
+	opts = append(opts, client.WithHTTPClient(hc))
 
 	api, err := client.NewClientWithResponses(server, opts...)
 	if err != nil {
