@@ -206,6 +206,21 @@ func TestTheShippedPolicyRefusesEverythingElse(t *testing.T) {
 		"the version history of a team's attachment key": {
 			http.MethodGet, secret + "/metadata/teams/" + team + "/attachments",
 		},
+		"below a search key, because + is not greedy": {
+			http.MethodGet, secret + "/data/teams/" + team + "/search/" + channel + "/extra",
+		},
+		"the search root itself": {
+			http.MethodGet, secret + "/data/teams/" + team + "/search",
+		},
+		"listing a team's search keys": {
+			http.MethodGet, secret + "/metadata/teams/" + team + "/search?list=true",
+		},
+		"the version history of a search key": {
+			http.MethodGet, secret + "/metadata/teams/" + team + "/search/" + channel,
+		},
+		"soft-deleting a search key": {
+			http.MethodDelete, secret + "/data/teams/" + team + "/search/" + channel,
+		},
 		"the MCP root itself, which is not under mcp/*": {
 			http.MethodGet, secret + "/data/teams/" + team + "/mcp",
 		},
@@ -345,6 +360,34 @@ func TestTheShippedPolicyDestroysADeletedTeamsKey(t *testing.T) {
 	}
 }
 
+// Saving a team's search key, reading it to call the provider, and the sweep
+// destroying it once it is replaced: the three things the brain does at
+// teams/<t>/search/<id>.
+func TestTheShippedPolicyServesATeamsSearchKey(t *testing.T) {
+	t.Parallel()
+
+	reader, writer, _, _ := brainStore(t)
+	path := secrets.Path(uuid.New(), secrets.KindSearch, uuid.New())
+
+	if err := writer.Put(t.Context(), path, "api_key", "k3y"); err != nil {
+		t.Fatalf("saving a search key: %v", err)
+	}
+	got, err := reader.Get(t.Context(), path, "api_key")
+	if err != nil {
+		t.Fatalf("reading the search key: %v", err)
+	}
+	if got != "k3y" {
+		t.Errorf("key = %q, want %q", got, "k3y")
+	}
+	if err := writer.Delete(t.Context(), path); err != nil {
+		t.Fatalf("destroying a replaced search key: %v\nthe tombstone is never "+
+			"cleared and the old key outlives its replacement", err)
+	}
+	if _, err := reader.Get(t.Context(), path, "api_key"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Errorf("after destroying the key, err = %v, want secrets.ErrNotFound", err)
+	}
+}
+
 // Connecting to a team's MCP server reads the credential its row refers to,
 // under the policy that ships. A reference may nest, which is why the rule is
 // a glob; both shapes are read here so narrowing it to `+` fails a test rather
@@ -417,6 +460,8 @@ func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
 		`path "secret/data/teams/+/attachments"`,
 		`path "secret/metadata/teams/+/attachments"`,
 		`path "secret/data/teams/+/mcp/*"`,
+		`path "secret/data/teams/+/search/+"`,
+		`path "secret/metadata/teams/+/search/+"`,
 	} {
 		if !strings.Contains(hcl, want) {
 			t.Errorf("policy-brain.hcl no longer contains %s — the tests above are\n"+

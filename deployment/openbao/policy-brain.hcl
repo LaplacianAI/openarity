@@ -132,6 +132,23 @@ path "secret/data/teams/+/mcp/*" {
   capabilities = ["read"]
 }
 
+# A team's web search key lives at teams/<team_id>/search/<key_id>: a path per
+# key rather than one per team. Saving a new key writes a fresh path and a
+# trigger tombstones the old one, so a key cleared and then replaced before the
+# sweep runs is never destroyed by its predecessor's tombstone — which one
+# fixed path would allow.
+#
+# Read to call the provider, create to save, delete on metadata/ for the sweep,
+# exactly as a channel's signing secret. No update: a key's path is new every
+# time, so nothing overwrites one.
+path "secret/data/teams/+/search/+" {
+  capabilities = ["read", "create"]
+}
+
+path "secret/metadata/teams/+/search/+" {
+  capabilities = ["delete"]
+}
+
 # Renewing its own token is how the brain avoids logging in on every read.
 # The default policy already grants this, so it is redundant today — and it is
 # what keeps renewal working the day the role sets token_no_default_policy.
