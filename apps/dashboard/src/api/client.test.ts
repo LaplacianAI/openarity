@@ -140,6 +140,67 @@ describe("a file", () => {
   });
 });
 
+// EventSource cannot send a header, so a run's events come through request()
+// too: the token, the brain's error text and renewal on 401 hold for a stream.
+describe("a stream", () => {
+  afterEach(() => {
+    onSessionExpired(null);
+  });
+
+  function streamed(text: string): Response {
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(text));
+        c.close();
+      },
+    });
+    return { ok: true, status: 200, headers: new Headers(), body } as Response;
+  }
+
+  it("comes back unread, asked for as an event stream, with the token", async () => {
+    setToken("t0ken");
+    const mock = vi.fn<typeof fetch>(async () => streamed("data: 1\n\n"));
+    vi.stubGlobal("fetch", mock);
+
+    const body = await request<ReadableStream<Uint8Array>>("/events", { stream: true });
+
+    const { value } = await body.getReader().read();
+    expect(new TextDecoder().decode(value)).toBe("data: 1\n\n");
+    const headers = new Headers(mock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("Accept")).toBe("text/event-stream");
+    expect(headers.get("Authorization")).toBe("Bearer t0ken");
+  });
+
+  it("renews on a 401 and follows with the new token", async () => {
+    setToken("expired");
+    const mock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("", { status: 401 }))
+      .mockResolvedValueOnce(streamed("data: 1\n\n"));
+    vi.stubGlobal("fetch", mock);
+    onSessionExpired(async () => {
+      setSession({ access: "fresh", refresh: "rt" });
+      return true;
+    });
+
+    await request("/events", { stream: true });
+
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(new Headers(mock.mock.calls[1]?.[1]?.headers).get("Authorization")).toBe("Bearer fresh");
+  });
+
+  it("is an error when the answer has no body", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(
+        async () => ({ ok: true, status: 200, headers: new Headers(), body: null }) as Response,
+      ),
+    );
+
+    await expect(request("/events", { stream: true })).rejects.toThrow("no stream");
+  });
+});
+
 describe("cursor pages", () => {
   it("sends nothing on the first page", () => {
     expect(pageQuery(null)).toBe("");

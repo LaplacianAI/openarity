@@ -124,6 +124,37 @@ export type Attachment = {
   created_at: string;
 };
 
+export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+/** GET /teams/{id}/sessions/{sessionID}/runs, newest first. */
+export type Run = {
+  id: string;
+  session_id: string;
+  /** The agent's name when the run started, kept if it is later renamed. */
+  agent: string;
+  status: RunStatus;
+  input: string;
+  output: string | null;
+  error: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+/**
+ * One frame of GET /teams/{id}/runs/{runID}/events. `data` is the parsed
+ * JSON as the run recorded it — tool arguments and outputs are whatever a
+ * model or a tool produced, so nothing in it is trusted. `seq` is null only
+ * on the closing `end` frame.
+ */
+export type RunEvent = {
+  seq: number | null;
+  kind: string;
+  data: unknown;
+};
+
 /** GET /auth/config — public, and answered before anyone has a token. */
 export type AuthConfig = {
   environment: string;

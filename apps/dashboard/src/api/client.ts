@@ -70,6 +70,12 @@ type RequestOptions = {
   anonymous?: boolean;
   /** The body as bytes rather than JSON: an attachment. */
   blob?: boolean;
+  /**
+   * The body unread, for a server-sent event stream. EventSource cannot send
+   * an Authorization header, so streams come through here like everything
+   * else and the token is attached in one place.
+   */
+  stream?: boolean;
 };
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -90,7 +96,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 }
 
 async function send<T>(path: string, options: RequestOptions): Promise<T> {
-  const headers = new Headers({ Accept: options.blob ? "*/*" : "application/json" });
+  const headers = new Headers({
+    Accept: options.stream ? "text/event-stream" : options.blob ? "*/*" : "application/json",
+  });
 
   if (!options.anonymous) {
     const token = getToken();
@@ -126,6 +134,10 @@ async function send<T>(path: string, options: RequestOptions): Promise<T> {
   }
 
   if (options.blob) return (await res.blob()) as T;
+  if (options.stream) {
+    if (!res.body) throw new ApiError(res.status, "the brain answered with no stream");
+    return res.body as T;
+  }
 
   // 204, and any other body-less success.
   if (res.status === 204 || res.headers.get("Content-Length") === "0") {
