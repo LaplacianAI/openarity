@@ -436,7 +436,7 @@ function DefineDialog({
           <Field
             label="Description"
             htmlFor="agent-description"
-            hint="What it is for. This is what selection searches."
+            hint="Other agents find this one by its description. Say what it does and when to use it."
           >
             <Input
               id="agent-description"

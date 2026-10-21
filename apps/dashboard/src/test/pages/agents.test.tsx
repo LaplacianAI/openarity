@@ -178,6 +178,17 @@ it.each([
   expect(await screen.findByText(new RegExp(said))).toBeInTheDocument();
 });
 
+// The graph tool finds an agent by its description; the form says so where
+// the description is written.
+it("says an agent is found by its description", async () => {
+  brain({ ...team(["agent:write"]), ...registry });
+  show(Agents);
+
+  await userEvent.click(await screen.findByRole("button", { name: /define agent/i }));
+
+  expect(screen.getByText(/other agents find this one by its description/i)).toBeInTheDocument();
+});
+
 it("defines an agent with the budget typed", async () => {
   const seen = brain({
     ...team(["agent:write"]),

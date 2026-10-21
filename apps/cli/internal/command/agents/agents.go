@@ -214,6 +214,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"one step, so it never exists without what it was meant to have.\n\n" +
 			"    # triage.yaml\n" +
 			"    name: triage\n" +
+			"    # what it does and when to use it: this is how other agents find it\n" +
 			"    description: Sorts incoming issues and labels them\n" +
 			"    instructions: Read the issue. Label it. Say why.\n" +
 			"    model: {name: anthropic/claude-sonnet-5-5, max_tokens: 1024}\n" +

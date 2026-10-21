@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
 )
 
@@ -306,5 +307,16 @@ func TestAnAgentsEscapeSequencesDoNotReachTheTerminal(t *testing.T) {
 		if strings.ContainsAny(out, "\x1b\x07") {
 			t.Errorf("%v printed a raw escape:\n%q", args, out)
 		}
+	}
+}
+
+// The graph tool finds an agent by its description, so the example a person
+// copies says so where the description is written.
+func TestTheExampleSaysAnAgentIsFoundByItsDescription(t *testing.T) {
+	long := newCreateCmd(&cli.Options{}).Long
+	note := strings.Index(long, "this is how other agents find it")
+	desc := strings.Index(long, "description:")
+	if note < 0 || desc < 0 || note > desc {
+		t.Errorf("the example should say how agents are found just above description:\n%s", long)
 	}
 }
