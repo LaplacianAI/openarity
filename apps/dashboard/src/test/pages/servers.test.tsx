@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -96,16 +96,16 @@ it("offers no write action without tool:write", async () => {
 
   await screen.findByText("github");
   expect(await screen.findByText("tool:write")).toBeInTheDocument();
-  for (const name of [/register server/i, /^discover$/i, /^delete$/i]) {
+  for (const name of [/register server/i, /^discover$/i, /^edit$/i, /^delete$/i]) {
     expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   }
 });
 
-it("offers register, discover and delete with tool:write", async () => {
+it("offers register, discover, edit and delete with tool:write", async () => {
   brain({ ...team(["tool:write"]), ...servers });
   show(Servers);
 
-  for (const name of [/register server/i, /^discover$/i, /^delete$/i]) {
+  for (const name of [/register server/i, /^discover$/i, /^edit$/i, /^delete$/i]) {
     expect(await screen.findByRole("button", { name })).toBeInTheDocument();
   }
 });
@@ -180,4 +180,150 @@ it("refuses an incomplete form without a request", async () => {
 
   expect(await screen.findByRole("alert")).toHaveTextContent(/needs its URL/);
   await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(false));
+});
+
+describe("editing a server", () => {
+  // What a PUT carries: the server as it stands, without what the brain owns.
+  const { id, team_id, discovered_at, created_at, updated_at, ...definition } = github;
+
+  const files = {
+    ...github,
+    id: "m2",
+    name: "files",
+    url: undefined,
+    auth_secret_ref: undefined,
+    command: ["npx", "-y", "/srv/My Files"],
+    env: { TOKEN: `teams/${TEAM}/mcp/files#token` },
+    bare: true,
+  };
+
+  async function editing(name: string) {
+    const row = (await screen.findByText(name)).closest("li") as HTMLElement;
+    await userEvent.click(within(row).getByRole("button", { name: /^edit$/i }));
+    return screen.findByRole("dialog", { name: /edit server/i });
+  }
+
+  it("opens a url server's form filled with what it has", async () => {
+    brain({ ...team(["tool:write"]), ...servers });
+    show(Servers);
+
+    const dialog = await editing("github");
+    expect(within(dialog).getByLabelText(/^name$/i)).toHaveValue("github");
+    expect(within(dialog).getByRole("radio", { name: /url/i })).toBeChecked();
+    expect(within(dialog).getByRole("textbox", { name: /^url$/i })).toHaveValue(
+      "https://mcp.example.com",
+    );
+    expect(within(dialog).getByLabelText(/bearer token reference/i)).toHaveValue(
+      `teams/${TEAM}/mcp/github#token`,
+    );
+    expect(within(dialog).getByRole("checkbox", { name: /bare/i })).not.toBeChecked();
+    expect(within(dialog).getByRole("button", { name: /^save$/i })).toBeInTheDocument();
+  });
+
+  it("opens a command server's form filled with its command and references", async () => {
+    brain({
+      ...team(["tool:write"]),
+      "GET /teams/{id}/mcp-servers": { body: { items: [files] } },
+    });
+    show(Servers);
+
+    const dialog = await editing("files");
+    expect(within(dialog).getByRole("radio", { name: /command/i })).toBeChecked();
+    expect(within(dialog).getByRole("textbox", { name: /^command$/i })).toHaveValue(
+      "npx\n-y\n/srv/My Files",
+    );
+    expect(within(dialog).getByLabelText(/^environment$/i)).toHaveValue(
+      `TOKEN=teams/${TEAM}/mcp/files#token`,
+    );
+    expect(within(dialog).getByRole("checkbox", { name: /bare/i })).toBeChecked();
+  });
+
+  it("saves an untouched server as exactly what it was", async () => {
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...servers,
+      "PUT /teams/{id}/mcp-servers/{serverID}": { body: github },
+    });
+    show(Servers);
+
+    const dialog = await editing("github");
+    await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+    const put = seen.find((s) => s.method === "PUT");
+    expect(put?.path).toBe(`/teams/${TEAM}/mcp-servers/m1`);
+    expect(JSON.parse(String(put?.body))).toEqual(definition);
+  });
+
+  it("saves an untouched command server as exactly what it was", async () => {
+    const seen = brain({
+      ...team(["tool:write"]),
+      "GET /teams/{id}/mcp-servers": { body: { items: [files] } },
+      "PUT /teams/{id}/mcp-servers/{serverID}": { body: files },
+    });
+    show(Servers);
+
+    const dialog = await editing("files");
+    await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+    const put = seen.find((s) => s.method === "PUT");
+    expect(JSON.parse(String(put?.body))).toEqual({
+      name: "files",
+      command: ["npx", "-y", "/srv/My Files"],
+      env: { TOKEN: `teams/${TEAM}/mcp/files#token` },
+      bare: true,
+    });
+  });
+
+  it("sends a new URL with the rest unchanged, then reads the list again", async () => {
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...servers,
+      "PUT /teams/{id}/mcp-servers/{serverID}": {
+        body: { ...github, url: "https://mcp2.example.com" },
+      },
+    });
+    show(Servers);
+
+    const dialog = await editing("github");
+    const url = within(dialog).getByRole("textbox", { name: /^url$/i });
+    await userEvent.clear(url);
+    await userEvent.type(url, "https://mcp2.example.com");
+    const listsBefore = seen.filter(
+      (s) => s.method === "GET" && s.path.endsWith("/mcp-servers"),
+    ).length;
+    await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: /edit server/i })).not.toBeInTheDocument(),
+    );
+    const put = seen.find((s) => s.method === "PUT");
+    expect(JSON.parse(String(put?.body))).toEqual({
+      ...definition,
+      url: "https://mcp2.example.com",
+    });
+    await waitFor(() =>
+      expect(
+        seen.filter((s) => s.method === "GET" && s.path.endsWith("/mcp-servers")).length,
+      ).toBeGreaterThan(listsBefore),
+    );
+  });
+
+  it("shows the brain's refusal in the form", async () => {
+    brain({
+      ...team(["tool:write"]),
+      ...servers,
+      "PUT /teams/{id}/mcp-servers/{serverID}": {
+        status: 400,
+        text: "a url server's address may not carry a password",
+      },
+    });
+    show(Servers);
+
+    const dialog = await editing("github");
+    await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("may not carry a password");
+  });
 });
