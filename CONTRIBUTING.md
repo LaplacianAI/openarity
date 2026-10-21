@@ -13,6 +13,7 @@ about to change.
 | -------- | ------- | ------------------------------------------------------ |
 | Go       | 1.26.10  | pinned by `go.work` and each app's `go.mod`            |
 | make     | any     |                                                        |
+| Node     | 24      | the dashboard only; CI runs 24                         |
 | Postgres | 13+     | optional — database tests skip without one; CI runs 18 |
 
 ## Getting set up
@@ -46,6 +47,7 @@ present at the time, and breaks with a version-mismatch error until reinstalled.
 ```text
 apps/brain/        the Go backend
 apps/cli/          oa, the command-line client
+apps/dashboard/    the web dashboard, built into the brain and served at /ui
 sdk/agent/         the agent loop, as a library
   examples/        runnable agents; `make example` runs every one of them
 site/              the documentation site, built with Hugo and published
@@ -53,8 +55,6 @@ site/              the documentation site, built with Hugo and published
 deployment/        manifests
 go.work            ties every Go module in the repository together
 ```
-
-`apps/dashboard` is planned and not here yet.
 
 Each app is **its own Go module**, tied together by `go.work` at the root, and
 so is `sdk/agent` — being a separate module is what makes it unable to import
@@ -72,14 +72,19 @@ Run the gate in every module you touched.
 ```sh
 cd apps/brain && make check db=postgres
 cd apps/cli   && make check
+cd apps/dashboard && make deps && make check
 cd sdk/agent  && make check
 cd site       && make check
 ```
 
 That is `tidy-check`, `generate-check`, `fmt-check`, `vet`, `lint`, `build` and
 the tests — the same steps `.github/workflows/ci.yml` runs, in the same order,
-as three jobs named `brain`, `cli` and `sdk`. CI adds `cover` and `vuln` on top.
-If it passes locally it passes there.
+as jobs named `brain`, `cli`, `dashboard` and `sdk`. CI adds `cover` and `vuln`
+on top for the Go modules. If it passes locally it passes there.
+
+The dashboard's `make check` is its formatting, lint, types, tests with
+coverage (minimums in `vite.config.ts`), build, and `npm audit`, which fails on
+any high or critical advisory, dev dependencies included.
 
 `sdk/agent` has one step the others do not: `boundary`, which fails if a pattern
 or the core package links a provider SDK. Everything outside that module
