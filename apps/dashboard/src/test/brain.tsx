@@ -4,8 +4,16 @@
  * assertion that looks for it rather than hanging.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  type AnyRoute,
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { render } from "@testing-library/react";
-import { type ComponentType, Suspense } from "react";
+import { type ComponentType, Fragment, StrictMode, Suspense } from "react";
 import { vi } from "vitest";
 
 import { setToken } from "@/api/token";
@@ -164,4 +172,33 @@ export async function pageOf(route: { options: { component?: unknown } }): Promi
   const component = route.options.component as ComponentType & { preload?: () => Promise<void> };
   await component.preload?.();
   return component;
+}
+
+/**
+ * Renders the given routes under a real router, starting at `at`, for pages
+ * that link to one another or keep state in the URL. Each route is the page's
+ * own `Route`, hung off a bare root at its full path — what the generated
+ * tree does under the /ui layout, without the layout's sidebar and sign-in.
+ * Returns the router, so a test can read where it ended up.
+ */
+export function showAt(at: string, routes: [path: string, route: AnyRoute][], strict = false) {
+  setToken("a-token");
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const root = createRootRoute({ component: Outlet });
+  for (const [path, route] of routes) {
+    route.update({ id: path, path, getParentRoute: () => root } as never);
+  }
+  const router = createRouter({
+    routeTree: root.addChildren(routes.map(([, r]) => r)),
+    history: createMemoryHistory({ initialEntries: [at] }),
+  });
+  const Wrap = strict ? StrictMode : Fragment;
+  render(
+    <Wrap>
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </Wrap>,
+  );
+  return router;
 }

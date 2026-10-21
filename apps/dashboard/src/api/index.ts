@@ -204,6 +204,11 @@ export function listSessionRuns(
   return request<Page<Run>>(`/teams/${teamId}/sessions/${sessionId}/runs${pageQuery(cursor)}`);
 }
 
+/** One run, wherever it was started — what a link to a run's trace reads. */
+export function getRun(teamId: string, runId: string): Promise<Run> {
+  return request<Run>(`/teams/${teamId}/runs/${runId}`);
+}
+
 export function cancelRun(teamId: string, runId: string): Promise<void> {
   return request<void>(`/teams/${teamId}/runs/${runId}/cancel`, { method: "POST" });
 }

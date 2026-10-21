@@ -19,3 +19,7 @@ configure({ asyncUtilTimeout: 5000 });
 if (!globalThis.crypto?.subtle) {
   Object.defineProperty(globalThis, "crypto", { value: webcrypto, configurable: true });
 }
+
+// jsdom does not implement scrolling, and the router scrolls to the top on
+// every navigation; without this each one logs "Not implemented".
+window.scrollTo = () => {};
