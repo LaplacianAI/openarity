@@ -21,22 +21,30 @@ const (
 func newProjector(
 	ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore *store.Store,
 ) (*graph.Projector, func(), error) {
+	g, embedder, closeGraph, err := dialGraph(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return graph.NewProjector(dbStore, g, embedder, logger), closeGraph, nil
+}
+
+func dialGraph(ctx context.Context, cfg *config.Config) (*graph.Graph, *graph.Embedder, func(), error) {
 	startCtx, cancel := context.WithTimeout(ctx, graphStartTimeout)
 	defer cancel()
 
 	g, err := graph.Dial(startCtx, cfg.FalkorDBURL, cfg.EmbeddingDimensions)
 	if err != nil {
-		return nil, nil, fmt.Errorf("connecting to FalkorDB: %w", err)
+		return nil, nil, nil, fmt.Errorf("connecting to FalkorDB: %w", err)
 	}
 	if err := g.Ping(startCtx); err != nil {
 		_ = g.Close()
-		return nil, nil, fmt.Errorf("FalkorDB unreachable at startup: %w", err)
+		return nil, nil, nil, fmt.Errorf("FalkorDB unreachable at startup: %w", err)
 	}
 
 	embedder := graph.NewEmbedder(cfg.EmbeddingBaseURL, cfg.EmbeddingModel, cfg.EmbeddingDimensions,
 		embeddingKey(cfg), &http.Client{Timeout: embeddingTimeout})
 
-	return graph.NewProjector(dbStore, g, embedder, logger), func() { _ = g.Close() }, nil
+	return g, embedder, func() { _ = g.Close() }, nil
 }
 
 func embeddingKey(cfg *config.Config) func(context.Context) (string, error) {

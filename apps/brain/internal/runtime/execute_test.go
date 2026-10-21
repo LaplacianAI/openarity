@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
@@ -134,6 +135,7 @@ type execFixture struct {
 	team     uuid.UUID
 	agent    uuid.UUID
 	run      uuid.UUID
+	graph    *fakeSearcher
 }
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -149,7 +151,7 @@ func newExecFixture(t *testing.T, model *scripted) *execFixture {
 		t.Fatalf("CreateTeam: %v", err)
 	}
 
-	f := &execFixture{store: s, raw: raw, model: model, team: team.ID}
+	f := &execFixture{store: s, raw: raw, model: model, team: team.ID, graph: &fakeSearcher{}}
 	if err := raw.QueryRow(t.Context(), `
 		INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
 		VALUES ($1, 'triage', 'test/model', 1024, 'react', 5) RETURNING id`, team.ID).Scan(&f.agent); err != nil {
@@ -187,7 +189,8 @@ func (f *execFixture) executor(t *testing.T, clients agent.ClientFactory, endpoi
 	if err != nil {
 		t.Fatalf("agent.New: %v", err)
 	}
-	builder := NewBuilder(f.store, &fakeObjects{data: map[string]string{}}, &fakeClients{client: &http.Client{}})
+	builder := NewBuilder(f.store, &fakeObjects{data: map[string]string{}}, &fakeClients{client: &http.Client{}},
+		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store})
 	e := NewExecutor(f.store, builder, runner, endpoint, f.sessions, quietLogger())
 	e.every = 20 * time.Millisecond
 	return e
@@ -354,8 +357,8 @@ func TestARunThatCallsAToolRecordsTheCallAndTheResult(t *testing.T) {
 	if got := kinds(events); !slices.Equal(got, want) {
 		t.Fatalf("events = %v, want %v", got, want)
 	}
-	if tools := payload[startedPayload](t, events[0]).Tools; !slices.Equal(tools, []string{"fetch"}) {
-		t.Errorf("started lists tools %v, want [fetch]", tools)
+	if tools := payload[startedPayload](t, events[0]).Tools; !slices.Equal(tools, []string{"fetch", "graph"}) {
+		t.Errorf("started lists tools %v, want [fetch graph]", tools)
 	}
 	if result := payload[toolResult](t, events[4]); result.ID != "c1" || result.Output != "fetch ran" {
 		t.Errorf("tool_result = %+v", result)
@@ -747,5 +750,35 @@ func TestAModelThatAnswersAnErrorFailsNamingTheSetting(t *testing.T) {
 				t.Errorf("the %s event carries %q: %s", e.Kind, leak, e.Payload)
 			}
 		}
+	}
+}
+
+// The evaluation record the orchestrator spec asks for: a graph call and what
+// came back, scores and paths included, read back from run_events.
+func TestAGraphCallIsRecordedWithWhatItFound(t *testing.T) {
+	f := newExecFixture(t, newScripted(
+		callTool("g1", GraphToolName, `{"query":"who reconciles invoices","kinds":["agents"],"hops":1}`),
+		answer("ok", 1, 1)))
+	f.graph.hits = []graph.Hit{{
+		Kind: graph.KindAgent, ID: uuid.New(), Name: "clerk", Description: "Reconciles invoices", Score: 0.91234,
+		Path: []graph.Step{{Kind: graph.KindAgent, Name: "clerk"}, {Kind: graph.KindSkill, Name: "invoices"}},
+	}}
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	events := f.events(t)
+	call := payload[toolCallPayload](t, events[3])
+	if call.Name != "graph" || !strings.Contains(call.Arguments, "who reconciles invoices") {
+		t.Errorf("tool_call = %+v, want the graph call and its query", call)
+	}
+	result := payload[toolResult](t, events[4])
+	want := `{"results":[{"kind":"agent","name":"clerk","description":"Reconciles invoices","score":0.912,` +
+		`"path":[{"kind":"agent","name":"clerk"},{"kind":"skill","name":"invoices"}]}]}`
+	if result.Name != "graph" || result.Output != want {
+		t.Errorf("tool_result = %+v, want the output %s", result, want)
+	}
+	if s := f.graph.asked; len(s) != 1 || s[0].Hops != 1 || s[0].Reach.Agents != nil {
+		t.Errorf("searched %+v, want hops 1 and a reach with no other agents in this team", s)
 	}
 }

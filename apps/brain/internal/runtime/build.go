@@ -43,11 +43,12 @@ type Builder struct {
 	store          BuildStore
 	objects        Objects
 	mcp            MCPClients
+	graph          *GraphDeps
 	connectTimeout time.Duration
 }
 
-func NewBuilder(s BuildStore, o Objects, m MCPClients) *Builder {
-	return &Builder{store: s, objects: o, mcp: m, connectTimeout: connectTimeout}
+func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps) *Builder {
+	return &Builder{store: s, objects: o, mcp: m, graph: g, connectTimeout: connectTimeout}
 }
 
 type Unavailable struct{ Name, Reason string }
@@ -90,6 +91,13 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session) 
 	if err != nil {
 		built.Close()
 		return Built{}, err
+	}
+	if b.graph == nil {
+		built.Unavailable = append(built.Unavailable, Unavailable{
+			Name: GraphToolName, Reason: "no embedding model is configured, so the team's graph is not built",
+		})
+	} else {
+		built.Spec.Tools = append(built.Spec.Tools, GraphTool(*b.graph, run.TeamID, a.ID))
 	}
 
 	built.Spec.Skills, err = b.skills(ctx, run.TeamID, a.ID)
@@ -166,6 +174,13 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, built *Built) ([
 
 		for _, t := range live.Tools() {
 			if !allowed(s, g.Allow, t.Name) {
+				continue
+			}
+			if t.Name == GraphToolName {
+				built.Unavailable = append(built.Unavailable, Unavailable{
+					Name:   GraphToolName,
+					Reason: fmt.Sprintf("the MCP server %q offers a tool named graph, which is the brain's own", s.Name),
+				})
 				continue
 			}
 			if first, taken := owner[t.Name]; taken {
