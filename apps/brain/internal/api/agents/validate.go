@@ -140,7 +140,7 @@ func checkGrants(req agentRequest) error {
 
 func delegationOf(req agentRequest) string {
 	if req.Delegation == nil {
-		return "team"
+		return "none"
 	}
 	return *req.Delegation
 }

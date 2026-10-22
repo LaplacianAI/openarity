@@ -42,8 +42,9 @@ func TestAnAgentReadsBackItsDelegation(t *testing.T) {
 	}
 }
 
-// Leaving the setting out is the default, and the list is an array, never null.
-func TestAnAgentWithNoDelegationDelegatesToTheTeam(t *testing.T) {
+// Leaving the setting out is the default, working alone, and the list is an
+// array, never null.
+func TestAnAgentWithNoDelegationWorksAlone(t *testing.T) {
 	t.Parallel()
 
 	team := uuid.New()
@@ -52,20 +53,20 @@ func TestAnAgentWithNoDelegationDelegatesToTheTeam(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
-	if got := decode(t, rec); got.Delegation != "team" || got.Delegates == nil || len(got.Delegates) != 0 {
-		t.Errorf("delegation %q delegates %v, want team and []", got.Delegation, got.Delegates)
+	if got := decode(t, rec); got.Delegation != "none" || got.Delegates == nil || len(got.Delegates) != 0 {
+		t.Errorf("delegation %q delegates %v, want none and []", got.Delegation, got.Delegates)
 	}
 	if !strings.Contains(rec.Body.String(), `"delegates":[]`) {
 		t.Errorf("delegates is not an empty array: %s", rec.Body)
 	}
-	if s.created[0].Delegation != "team" {
-		t.Errorf("stored %q, want team", s.created[0].Delegation)
+	if s.created[0].Delegation != "none" {
+		t.Errorf("stored %q, want none", s.created[0].Delegation)
 	}
 }
 
 // A PUT is the whole agent: one that says nothing about delegation puts it
 // back to the default and drops the list.
-func TestReplacingWithoutDelegationResetsItToTeam(t *testing.T) {
+func TestReplacingWithoutDelegationResetsItToNone(t *testing.T) {
 	t.Parallel()
 
 	team := uuid.New()
@@ -78,8 +79,8 @@ func TestReplacingWithoutDelegationResetsItToTeam(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("replace: %d %s", rec.Code, rec.Body)
 	}
-	if got := decode(t, rec); got.Delegation != "team" || len(got.Delegates) != 0 {
-		t.Errorf("after replace %q %v, want team and none", got.Delegation, got.Delegates)
+	if got := decode(t, rec); got.Delegation != "none" || len(got.Delegates) != 0 {
+		t.Errorf("after replace %q %v, want none and no delegates", got.Delegation, got.Delegates)
 	}
 	if len(s.delegates[lead.ID]) != 0 {
 		t.Errorf("the old list survived: %v", s.delegates[lead.ID])

@@ -33,12 +33,12 @@ func delegationOf(t *testing.T, s *Store, agentID uuid.UUID) string {
 
 // --- the setting ---
 
-func TestAnAgentDelegatesToTheTeamByDefault(t *testing.T) {
+func TestAnAgentWorksAloneByDefault(t *testing.T) {
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform").ID
 
-	if got := delegationOf(t, s, insertAgent(t, s, team, "triage")); got != "team" {
-		t.Errorf("delegation = %q, want team", got)
+	if got := delegationOf(t, s, insertAgent(t, s, team, "triage")); got != "none" {
+		t.Errorf("delegation = %q, want none", got)
 	}
 }
 
@@ -122,52 +122,31 @@ func TestDeletingEitherEndRemovesTheListing(t *testing.T) {
 	}
 }
 
-// --- the graph hears about it ---
+// --- the graph is not told ---
 
-func TestListingADelegateEnqueuesTheAgent(t *testing.T) {
+// Nothing in the graph is drawn from a listing: the list is read from Postgres
+// when a strategy's limit is checked, so writing or clearing it is no reason
+// to reproject the agent.
+func TestAListingLeavesTheGraphAlone(t *testing.T) {
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform").ID
-	lead, clerk := insertAgent(t, s, team, "lead"), insertAgent(t, s, team, "clerk")
+	lead, a, b := insertAgent(t, s, team, "lead"), insertAgent(t, s, team, "a"), insertAgent(t, s, team, "b")
 	clearOutbox(t, s)
 
-	if err := listDelegate(t, s, team, lead, clerk); err != nil {
-		t.Fatalf("list: %v", err)
+	if err := s.AddAgentDelegates(t.Context(), db.AddAgentDelegatesParams{
+		AgentID: lead, TeamID: team, DelegateIds: []uuid.UUID{a, b},
+	}); err != nil {
+		t.Fatalf("AddAgentDelegates: %v", err)
 	}
-	got := outbox(t, s)
-	if len(got) != 1 || got[0] != (outboxRow{TeamID: team, Entity: "agent", EntityID: lead}) {
-		t.Errorf("outbox = %v, want the listing agent once", got)
+	if got := outbox(t, s); len(got) != 0 {
+		t.Errorf("after listing, outbox = %v, want nothing", got)
 	}
-}
 
-func TestUnlistingADelegateEnqueuesTheAgent(t *testing.T) {
-	s := queryStore(t)
-	team := mustCreate(t, s, "platform").ID
-	lead, clerk := insertAgent(t, s, team, "lead"), insertAgent(t, s, team, "clerk")
-	if err := listDelegate(t, s, team, lead, clerk); err != nil {
-		t.Fatalf("list: %v", err)
+	if err := s.ClearAgentDelegates(t.Context(), lead); err != nil {
+		t.Fatalf("ClearAgentDelegates: %v", err)
 	}
-	clearOutbox(t, s)
-
-	exec(t, s, `DELETE FROM agent_delegates`)
-	got := outbox(t, s)
-	if len(got) != 1 || got[0] != (outboxRow{TeamID: team, Entity: "agent", EntityID: lead}) {
-		t.Errorf("outbox = %v, want the listing agent once", got)
-	}
-}
-
-// Changing the setting is an update of the agent, which already enqueues it;
-// the projector draws the edges only for listed, so the switch must reach it.
-func TestChangingTheSettingEnqueuesTheAgent(t *testing.T) {
-	s := queryStore(t)
-	team := mustCreate(t, s, "platform").ID
-	lead := insertAgent(t, s, team, "lead")
-	clearOutbox(t, s)
-
-	if _, err := s.pool.Exec(t.Context(), `UPDATE agents SET delegation = 'listed' WHERE id = $1`, lead); err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	if got := outbox(t, s); len(got) == 0 || got[0].EntityID != lead {
-		t.Errorf("outbox = %v, want the agent", got)
+	if got := outbox(t, s); len(got) != 0 {
+		t.Errorf("after clearing, outbox = %v, want nothing", got)
 	}
 }
 
@@ -207,23 +186,6 @@ func TestDelegatesAreAddedListedAndCleared(t *testing.T) {
 	}
 }
 
-// One statement for the whole list, as the skills are: one outbox row.
-func TestAddingDelegatesIsOneOutboxRow(t *testing.T) {
-	s := queryStore(t)
-	team := mustCreate(t, s, "platform").ID
-	lead, a, b := insertAgent(t, s, team, "lead"), insertAgent(t, s, team, "a"), insertAgent(t, s, team, "b")
-	clearOutbox(t, s)
-
-	if err := s.AddAgentDelegates(t.Context(), db.AddAgentDelegatesParams{
-		AgentID: lead, TeamID: team, DelegateIds: []uuid.UUID{a, b},
-	}); err != nil {
-		t.Fatalf("AddAgentDelegates: %v", err)
-	}
-	if got := outbox(t, s); len(got) != 1 {
-		t.Errorf("outbox = %v, want one row for the listing agent", got)
-	}
-}
-
 // The graph tool's agents follow the caller's setting: the rest of the team,
 // only those listed, or none.
 func TestReachFollowsTheSetting(t *testing.T) {
@@ -252,6 +214,7 @@ func TestReachFollowsTheSetting(t *testing.T) {
 		return got
 	}
 
+	setDelegation(t, s, lead, "team")
 	if got, want := reach(), sortedIDs(a, b); !slices.Equal(got, want) {
 		t.Errorf("team: reach = %v, want %v", got, want)
 	}

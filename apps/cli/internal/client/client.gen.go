@@ -317,8 +317,8 @@ type Agent struct {
 
 	// Delegation Whom the agent may hand work to with the delegate tool: any other
 	// agent in its team, only its delegates, or no one. An agent set to
-	// none is not given the tool. Left out of a request, it is team: a PUT
-	// replaces the whole agent.
+	// none is not given the tool. Left out of a request, it is none: the
+	// agent works alone, and a PUT replaces the whole agent.
 	Delegation   Delegation         `json:"delegation" yaml:"delegation"`
 	Description  string             `json:"description" yaml:"description"`
 	ID           openapi_types.UUID `json:"id" yaml:"id"`
@@ -368,8 +368,8 @@ type AgentRequest struct {
 
 	// Delegation Whom the agent may hand work to with the delegate tool: any other
 	// agent in its team, only its delegates, or no one. An agent set to
-	// none is not given the tool. Left out of a request, it is team: a PUT
-	// replaces the whole agent.
+	// none is not given the tool. Left out of a request, it is none: the
+	// agent works alone, and a PUT replaces the whole agent.
 	Delegation *Delegation `json:"delegation,omitempty" yaml:"delegation,omitempty"`
 
 	// Description What it is for, shown where agents are chosen
@@ -622,8 +622,8 @@ type CreatedChannel struct {
 
 // Delegation Whom the agent may hand work to with the delegate tool: any other
 // agent in its team, only its delegates, or no one. An agent set to
-// none is not given the tool. Left out of a request, it is team: a PUT
-// replaces the whole agent.
+// none is not given the tool. Left out of a request, it is none: the
+// agent works alone, and a PUT replaces the whole agent.
 type Delegation string
 
 // GraphEdge defines model for GraphEdge.

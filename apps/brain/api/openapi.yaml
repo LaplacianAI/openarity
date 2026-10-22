@@ -3475,12 +3475,12 @@ components:
     Delegation:
       type: string
       enum: [team, listed, none]
-      default: team
+      default: none
       description: |
         Whom the agent may hand work to with the delegate tool: any other
         agent in its team, only its delegates, or no one. An agent set to
-        none is not given the tool. Left out of a request, it is team: a PUT
-        replaces the whole agent.
+        none is not given the tool. Left out of a request, it is none: the
+        agent works alone, and a PUT replaces the whole agent.
 
     AgentPage:
       type: object
