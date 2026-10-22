@@ -102,6 +102,7 @@ func TestAReplaceThatFailsPartWayKeepsTheOldGrants(t *testing.T) {
 	err := s.InTx(t.Context(), func(q *db.Queries) error {
 		if _, err := q.UpdateAgent(t.Context(), db.UpdateAgentParams{
 			ID: a.ID, Name: "renamed", ModelName: a.ModelName, MaxTokens: a.MaxTokens, Pattern: a.Pattern, MaxSteps: a.MaxSteps,
+			Delegation: a.Delegation,
 		}); err != nil {
 			return err
 		}

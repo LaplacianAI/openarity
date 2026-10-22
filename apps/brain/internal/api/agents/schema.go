@@ -58,6 +58,8 @@ type detail struct {
 	MCPServers         []serverGrant `json:"mcp_servers"`
 	Skills             []uuid.UUID   `json:"skills"`
 	TokenBudget        *int64        `json:"token_budget,omitempty"`
+	Delegation         string        `json:"delegation"`
+	Delegates          []uuid.UUID   `json:"delegates"`
 }
 
 type agentRequest struct {
@@ -75,6 +77,8 @@ type agentRequest struct {
 	MCPServers         []serverGrant `json:"mcp_servers"`
 	Skills             []uuid.UUID   `json:"skills"`
 	TokenBudget        *int64        `json:"token_budget"`
+	Delegation         *string       `json:"delegation"`
+	Delegates          []uuid.UUID   `json:"delegates"`
 }
 
 type agentCursor struct {

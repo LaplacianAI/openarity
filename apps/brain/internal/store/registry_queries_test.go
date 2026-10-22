@@ -23,6 +23,7 @@ func agentParams(teamID uuid.UUID, name string) db.CreateAgentParams {
 	return db.CreateAgentParams{
 		TeamID: teamID, Name: name, Kind: "custom",
 		ModelName: "test/model", MaxTokens: 1024, Pattern: "react", MaxSteps: 5,
+		Delegation: "team",
 	}
 }
 
@@ -107,7 +108,7 @@ func TestAnAgentRoundTripsEveryField(t *testing.T) {
 			MaxTokens: 4096, Temperature: ref(0.2), Pattern: "plan", MaxSteps: 8,
 			SteerContinuations: 2, OutputSchema: []byte(`{"name":"triage","json":{}}`),
 			Parser: true, ParserModelName: ref("small/model"),
-			ParserMaxTokens: ref(int32(256)), ParserTemperature: ref(0.0),
+			ParserMaxTokens: ref(int32(256)), ParserTemperature: ref(0.0), Delegation: "listed",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -128,8 +129,8 @@ func TestAnAgentRoundTripsEveryField(t *testing.T) {
 				MaxSteps: p.MaxSteps, SteerContinuations: p.SteerContinuations,
 				OutputSchema: p.OutputSchema, Parser: p.Parser,
 				ParserModelName: p.ParserModelName, ParserMaxTokens: p.ParserMaxTokens,
-				ParserTemperature: p.ParserTemperature,
-				CreatedAt:         got.CreatedAt, UpdatedAt: got.UpdatedAt,
+				ParserTemperature: p.ParserTemperature, Delegation: p.Delegation,
+				CreatedAt: got.CreatedAt, UpdatedAt: got.UpdatedAt,
 			}
 			if !agentsEqual(got, want) {
 				t.Errorf("round trip:\n got  %+v\n want %+v", got, want)
@@ -165,7 +166,7 @@ func agentsEqual(a, b db.Agent) bool {
 		a.SteerContinuations == b.SteerContinuations &&
 		sameJSON(a.OutputSchema, b.OutputSchema) && a.Parser == b.Parser &&
 		eqS(a.ParserModelName, b.ParserModelName) && eqI(a.ParserMaxTokens, b.ParserMaxTokens) &&
-		eqF(a.ParserTemperature, b.ParserTemperature)
+		eqF(a.ParserTemperature, b.ParserTemperature) && a.Delegation == b.Delegation
 }
 
 // A replace is whole: leaving temperature out clears it. With sqlc.arg in
@@ -183,7 +184,7 @@ func TestReplacingAnAgentCanClearItsTemperature(t *testing.T) {
 
 	got, err := s.UpdateAgent(t.Context(), db.UpdateAgentParams{
 		ID: a.ID, Name: a.Name, ModelName: a.ModelName, MaxTokens: a.MaxTokens,
-		Pattern: a.Pattern, MaxSteps: a.MaxSteps,
+		Pattern: a.Pattern, MaxSteps: a.MaxSteps, Delegation: a.Delegation,
 	})
 	if err != nil {
 		t.Fatalf("UpdateAgent: %v", err)
@@ -208,7 +209,7 @@ func TestReplacingAnAgentLeavesItsKindAndTeam(t *testing.T) {
 
 	got, err := s.UpdateAgent(t.Context(), db.UpdateAgentParams{
 		ID: a.ID, Name: "renamed", ModelName: a.ModelName, MaxTokens: a.MaxTokens,
-		Pattern: a.Pattern, MaxSteps: a.MaxSteps,
+		Pattern: a.Pattern, MaxSteps: a.MaxSteps, Delegation: a.Delegation,
 	})
 	if err != nil {
 		t.Fatalf("UpdateAgent: %v", err)
@@ -226,6 +227,7 @@ func TestReplacingAMissingAgentReportsNoRows(t *testing.T) {
 
 	_, err := s.UpdateAgent(t.Context(), db.UpdateAgentParams{
 		ID: uuid.New(), Name: "x", ModelName: "m", MaxTokens: 1, Pattern: "react", MaxSteps: 1,
+		Delegation: "team",
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Errorf("UpdateAgent of a missing id: %v, want pgx.ErrNoRows", err)

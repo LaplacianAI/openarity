@@ -27,6 +27,9 @@ type run struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	StartedAt  *time.Time `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at"`
+
+	ParentRunID *uuid.UUID `json:"parent_run_id"`
+	Depth       int32      `json:"depth"`
 }
 
 type runCursor struct {

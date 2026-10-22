@@ -559,13 +559,33 @@ func TestTheRunIsReadAsItIs(t *testing.T) {
 	for _, k := range []string{
 		"id", "session_id", "agent", "status", "input", "output", "error",
 		"input_tokens", "output_tokens", "created_at", "started_at", "finished_at",
+		"parent_run_id", "depth",
 	} {
 		if _, ok := keys[k]; !ok {
 			t.Errorf("the run has no %q", k)
 		}
 	}
-	if len(keys) != 12 {
-		t.Errorf("the run has %d fields, want the 12 in the contract", len(keys))
+	if len(keys) != 14 {
+		t.Errorf("the run has %d fields, want the 14 in the contract", len(keys))
+	}
+	if keys["parent_run_id"] != nil || keys["depth"] != float64(0) {
+		t.Errorf("a top-level run says parent %v depth %v, want null and 0", keys["parent_run_id"], keys["depth"])
+	}
+}
+
+// A delegate's run, opened by its id, says whose delegate it is.
+func TestARunSaysWhoseDelegateItIs(t *testing.T) {
+	w := newWorld(t)
+	session := w.session("group", nil)
+	parent := w.run(session, "running")
+	child := w.run(session, "succeeded")
+	child.ParentRunID, child.RootRunID, child.Depth = &parent.ID, parent.ID, 1
+	w.store.runs[child.ID] = child
+
+	rec := w.call(t, w.me, http.MethodGet, w.one(child.ID), nil)
+	got := decodeRun(t, rec)
+	if rec.Code != http.StatusOK || got.ParentRunID == nil || *got.ParentRunID != parent.ID || got.Depth != 1 {
+		t.Errorf("status %d, parent %v depth %d; want the parent and 1", rec.Code, got.ParentRunID, got.Depth)
 	}
 }
 

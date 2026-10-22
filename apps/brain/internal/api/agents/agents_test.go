@@ -45,13 +45,16 @@ type fakeStore struct {
 	agents  map[uuid.UUID]db.Agent
 	servers map[uuid.UUID][]db.AgentMcpServer
 	skills  map[uuid.UUID][]uuid.UUID
+	// Each agent's listed delegates; a delegate must be an agent of the
+	// same team and never the agent itself, as the database refuses.
+	delegates map[uuid.UUID][]uuid.UUID
 
 	// What exists in each team to be granted.
 	ownServers map[uuid.UUID]uuid.UUID
 	ownSkills  map[uuid.UUID]uuid.UUID
 
-	readErr, listErr, serversErr, skillsErr, deleteErr error
-	createErr, updateErr, clearErr                     error
+	readErr, listErr, serversErr, skillsErr, deleteErr, delegatesErr error
+	createErr, updateErr, clearErr                                   error
 
 	reads, txs int
 	created    []db.CreateAgentParams
@@ -65,6 +68,7 @@ func newFakeStore(existing ...db.Agent) *fakeStore {
 		agents:     map[uuid.UUID]db.Agent{},
 		servers:    map[uuid.UUID][]db.AgentMcpServer{},
 		skills:     map[uuid.UUID][]uuid.UUID{},
+		delegates:  map[uuid.UUID][]uuid.UUID{},
 		ownServers: map[uuid.UUID]uuid.UUID{},
 		ownSkills:  map[uuid.UUID]uuid.UUID{},
 	}
@@ -93,12 +97,12 @@ func (s *fakeStore) skill(team uuid.UUID) uuid.UUID {
 func (s *fakeStore) InTx(_ context.Context, fn func(Queries) error) error {
 	s.txs++
 	s.mu.Lock()
-	agents, servers, skills := maps.Clone(s.agents), maps.Clone(s.servers), maps.Clone(s.skills)
+	agents, servers, skills, delegates := maps.Clone(s.agents), maps.Clone(s.servers), maps.Clone(s.skills), maps.Clone(s.delegates)
 	s.mu.Unlock()
 
 	if err := fn(s); err != nil {
 		s.mu.Lock()
-		s.agents, s.servers, s.skills = agents, servers, skills
+		s.agents, s.servers, s.skills, s.delegates = agents, servers, skills, delegates
 		s.mu.Unlock()
 		return err
 	}
@@ -136,7 +140,7 @@ func (s *fakeStore) CreateAgent(_ context.Context, p db.CreateAgentParams) (db.A
 		Pattern: p.Pattern, MaxSteps: p.MaxSteps, SteerContinuations: p.SteerContinuations,
 		OutputSchema: p.OutputSchema, Parser: p.Parser, ParserModelName: p.ParserModelName,
 		ParserMaxTokens: p.ParserMaxTokens, ParserTemperature: p.ParserTemperature, TokenBudget: p.TokenBudget,
-		CreatedAt: now, UpdatedAt: now,
+		Delegation: p.Delegation, CreatedAt: now, UpdatedAt: now,
 	}
 	s.agents[a.ID] = a
 	return a, nil
@@ -162,7 +166,7 @@ func (s *fakeStore) UpdateAgent(_ context.Context, p db.UpdateAgentParams) (db.A
 	a.Pattern, a.MaxSteps, a.SteerContinuations = p.Pattern, p.MaxSteps, p.SteerContinuations
 	a.OutputSchema, a.Parser = p.OutputSchema, p.Parser
 	a.ParserModelName, a.ParserMaxTokens, a.ParserTemperature = p.ParserModelName, p.ParserMaxTokens, p.ParserTemperature
-	a.TokenBudget = p.TokenBudget
+	a.TokenBudget, a.Delegation = p.TokenBudget, p.Delegation
 	a.UpdatedAt = time.Now()
 	s.agents[a.ID] = a
 	return a, nil
@@ -205,6 +209,39 @@ func (s *fakeStore) ClearAgentSkills(_ context.Context, id uuid.UUID) error {
 	defer s.mu.Unlock()
 	delete(s.skills, id)
 	return nil
+}
+
+func (s *fakeStore) AddAgentDelegates(_ context.Context, p db.AddAgentDelegatesParams) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range p.DelegateIds {
+		if id == p.AgentID {
+			return constraint("23514", "agent_delegates_not_self")
+		}
+		if d, ok := s.agents[id]; !ok || d.TeamID != p.TeamID {
+			return constraint("23503", "agent_delegates_delegate_in_team")
+		}
+		s.delegates[p.AgentID] = append(s.delegates[p.AgentID], id)
+	}
+	return nil
+}
+
+func (s *fakeStore) ClearAgentDelegates(_ context.Context, id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.delegates, id)
+	return nil
+}
+
+func (s *fakeStore) ListAgentDelegates(_ context.Context, id uuid.UUID) ([]uuid.UUID, error) {
+	if s.delegatesErr != nil {
+		return nil, s.delegatesErr
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := slices.Clone(s.delegates[id])
+	slices.SortFunc(out, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
+	return out, nil
 }
 
 func (s *fakeStore) GetAgent(_ context.Context, id uuid.UUID) (db.Agent, error) {
@@ -254,6 +291,7 @@ func (s *fakeStore) DeleteAgent(_ context.Context, id uuid.UUID) error {
 	delete(s.agents, id)
 	delete(s.servers, id)
 	delete(s.skills, id)
+	delete(s.delegates, id)
 	return nil
 }
 
@@ -542,7 +580,7 @@ func TestOnlyContractedFieldsAreSerialised(t *testing.T) {
 	s := newFakeStore(plain, full)
 
 	detailKeys := slices.Sorted(slices.Values(append(slices.Clone(summaryKeys),
-		"instructions", "max_steps", "steer_continuations", "parser", "mcp_servers", "skills")))
+		"instructions", "max_steps", "steer_continuations", "parser", "mcp_servers", "skills", "delegation", "delegates")))
 	if got := keysOf(t, call(t, s, &fakeAuthz{}, memberOf(team), http.MethodGet, one(team, plain.ID), nil).Body.Bytes()); !slices.Equal(got, detailKeys) {
 		t.Errorf("plain agent keys = %v, want %v", got, detailKeys)
 	}

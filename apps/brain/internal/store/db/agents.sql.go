@@ -101,12 +101,12 @@ INSERT INTO agents (
     team_id, name, description, kind, instructions,
     model_name, max_tokens, temperature, pattern, max_steps, steer_continuations,
     output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature,
-    token_budget
+    token_budget, delegation
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
     $12, $13, $14, $15, $16,
-    $17
+    $17, $18
 ) RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation
 `
 
@@ -128,6 +128,7 @@ type CreateAgentParams struct {
 	ParserMaxTokens    *int32
 	ParserTemperature  *float64
 	TokenBudget        *int64
+	Delegation         string
 }
 
 func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent, error) {
@@ -149,6 +150,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.ParserMaxTokens,
 		arg.ParserTemperature,
 		arg.TokenBudget,
+		arg.Delegation,
 	)
 	var i Agent
 	err := row.Scan(
@@ -578,8 +580,9 @@ UPDATE agents SET
     parser_max_tokens   = $13,
     parser_temperature  = $14,
     token_budget        = $15,
+    delegation          = $16,
     updated_at          = now()
-WHERE id = $16
+WHERE id = $17
 RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation
 `
 
@@ -599,6 +602,7 @@ type UpdateAgentParams struct {
 	ParserMaxTokens    *int32
 	ParserTemperature  *float64
 	TokenBudget        *int64
+	Delegation         string
 	ID                 uuid.UUID
 }
 
@@ -620,6 +624,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.ParserMaxTokens,
 		arg.ParserTemperature,
 		arg.TokenBudget,
+		arg.Delegation,
 		arg.ID,
 	)
 	var i Agent
