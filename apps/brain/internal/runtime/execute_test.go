@@ -782,3 +782,466 @@ func TestAGraphCallIsRecordedWithWhatItFound(t *testing.T) {
 		t.Errorf("searched %+v, want hops 1 and a reach with no other agents in this team", s)
 	}
 }
+
+// --- a child run ---
+
+const childBrief = "Objective: refund the duplicate charge on order 4411\n\nReturn: the refund id"
+
+type delegatedEvent struct {
+	CallID string    `json:"call_id"`
+	Agent  string    `json:"agent"`
+	RunID  uuid.UUID `json:"run_id"`
+	Depth  int32     `json:"depth"`
+}
+
+// delegation is the fixture's run as a worker holds it mid-step, handing a
+// brief to a second agent, billing.
+func (f *execFixture) delegation(t *testing.T, callID string) Delegation {
+	t.Helper()
+
+	f.mustExec(t, `UPDATE runs SET status = 'running', worker = $2, heartbeat_at = now(), started_at = now()
+		WHERE id = $1`, f.run, worker)
+	var billing uuid.UUID
+	if err := f.raw.QueryRow(t.Context(), `
+		INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
+		VALUES ($1, 'billing', 'test/model', 1024, 'react', 5) RETURNING id`, f.team).Scan(&billing); err != nil {
+		t.Fatalf("insert billing: %v", err)
+	}
+	a, err := f.store.GetAgent(t.Context(), billing)
+	if err != nil {
+		t.Fatalf("GetAgent: %v", err)
+	}
+	return Delegation{
+		Parent: f.row(t), Agent: a, Brief: childBrief, CallID: callID,
+		Lineage: Lineage{Worker: worker, Chain: []uuid.UUID{f.agent}},
+	}
+}
+
+// delegate runs Delegate with the same watchdog execute has.
+func (f *execFixture) delegate(t *testing.T, ctx context.Context, d Delegation) (db.Run, error) {
+	t.Helper()
+
+	type result struct {
+		row db.Run
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		row, err := f.exec.Delegate(ctx, d)
+		done <- result{row, err}
+	}()
+	select {
+	case r := <-done:
+		return r.row, r.err
+	case <-time.After(20 * time.Second):
+		t.Fatal("Delegate had not returned after 20s")
+		return db.Run{}, nil
+	}
+}
+
+func (f *execFixture) children(t *testing.T, parent uuid.UUID) []db.Run {
+	t.Helper()
+
+	rows, err := f.raw.Query(t.Context(), `SELECT id FROM runs WHERE parent_run_id = $1 ORDER BY created_at, id`, parent)
+	if err != nil {
+		t.Fatalf("children: %v", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		t.Fatalf("children: %v", err)
+	}
+	out := make([]db.Run, len(ids))
+	for i, id := range ids {
+		if out[i], err = f.store.GetRun(t.Context(), id); err != nil {
+			t.Fatalf("GetRun %s: %v", id, err)
+		}
+	}
+	return out
+}
+
+func (f *execFixture) eventsOf(t *testing.T, run uuid.UUID) []db.RunEvent {
+	t.Helper()
+
+	got, err := f.store.ListRunEvents(t.Context(), db.ListRunEventsParams{RunID: run, PageSize: 1000})
+	if err != nil {
+		t.Fatalf("ListRunEvents: %v", err)
+	}
+	return got
+}
+
+// stopOnFirstCall ends ctx with cause once the model is first called, as the
+// parent's heartbeat or clock would end the parent's run under the child.
+func (f *execFixture) stopOnFirstCall(t *testing.T, cause error) context.Context {
+	t.Helper()
+
+	ctx, stop := context.WithCancelCause(t.Context())
+	go func() {
+		if f.model.waitForACall() {
+			stop(cause)
+		}
+	}()
+	return ctx
+}
+
+func TestAChildRunsAndItsRowIsFinished(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("refund re_118 issued", 3, 2)))
+	d := f.delegation(t, "call_7")
+
+	child, err := f.delegate(t, t.Context(), d)
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+
+	wantStatus(t, child, "succeeded", "")
+	if deref(child.Output) != "refund re_118 issued" {
+		t.Errorf("output = %q", deref(child.Output))
+	}
+	if child.ParentRunID == nil || *child.ParentRunID != f.run || child.RootRunID != d.Parent.RootRunID ||
+		child.SessionID != d.Parent.SessionID || child.Depth != 1 {
+		t.Errorf("child parent %v root %s session %s depth %d; want under the parent at depth 1",
+			child.ParentRunID, child.RootRunID, child.SessionID, child.Depth)
+	}
+	if child.AgentID == nil || *child.AgentID != d.Agent.ID || child.AgentName != "billing" || child.Input != childBrief {
+		t.Errorf("child agent %v %q input %q; want billing with the brief", child.AgentID, child.AgentName, child.Input)
+	}
+	// The call id alone repeats (ReWOO numbers its steps per plan, and some
+	// providers reuse ids), so the child's own id makes the key unique.
+	if want := "call_7#" + child.ID.String(); deref(child.ParentToolCall) != want {
+		t.Errorf("parent_tool_call = %q, want %q", deref(child.ParentToolCall), want)
+	}
+	if child.InputTokens != 3 || child.OutputTokens != 2 {
+		t.Errorf("tokens %d/%d, want 3/2 counted on the child", child.InputTokens, child.OutputTokens)
+	}
+	if got := f.row(t); got.Status != "running" || got.FinishedAt != nil {
+		t.Errorf("the parent is %s; a child finishing must leave its parent running", got.Status)
+	}
+
+	events := f.eventsOf(t, child.ID)
+	if got := kinds(events); got[0] != "started" || got[len(got)-1] != "finished" {
+		t.Errorf("child events = %v, want started … finished, as a root's", got)
+	}
+	if p := payload[startedPayload](t, events[0]); p.Agent != "billing" {
+		t.Errorf("started = %+v, want billing", p)
+	}
+	first := textOf(f.model.requests()[0].Messages)
+	if !strings.Contains(first, childBrief) || strings.Contains(first, runInput) {
+		t.Errorf("the child's first request carried %q; want the brief and nothing of the parent's", first)
+	}
+}
+
+// The parent's event is what lets the dashboard open the child while it works,
+// so it must be written before the child does anything.
+func TestTheParentRecordsTheChildBeforeItStarts(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("done", 1, 1)))
+	d := f.delegation(t, "call_7")
+
+	child, err := f.delegate(t, t.Context(), d)
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+
+	parent := f.eventsOf(t, f.run)
+	if len(parent) != 1 || parent[0].Kind != "delegated" {
+		t.Fatalf("parent events = %v, want one delegated", kinds(parent))
+	}
+	want := delegatedEvent{CallID: "call_7", Agent: "billing", RunID: child.ID, Depth: 1}
+	if got := payload[delegatedEvent](t, parent[0]); got != want {
+		t.Errorf("delegated = %+v, want %+v", got, want)
+	}
+	started := f.eventsOf(t, child.ID)[0]
+	if parent[0].CreatedAt.After(started.CreatedAt) {
+		t.Errorf("delegated at %s, after the child started at %s", parent[0].CreatedAt, started.CreatedAt)
+	}
+}
+
+// The agent is chosen within the parent's team, so a row from another team
+// writes nothing, records nothing and calls no model.
+func TestAChildWhoseAgentIsNotInTheTeamNeverRuns(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("never", 1, 1)))
+	d := f.delegation(t, "call_7")
+	other, err := f.store.CreateTeam(t.Context(), "elsewhere")
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	f.mustExec(t, `UPDATE agents SET team_id = $2 WHERE id = $1`, d.Agent.ID, other.ID)
+
+	if _, err := f.delegate(t, t.Context(), d); err == nil {
+		t.Error("Delegate = nil for an agent outside the team")
+	}
+	if got := f.children(t, f.run); len(got) != 0 {
+		t.Errorf("%d children written", len(got))
+	}
+	if got := f.eventsOf(t, f.run); len(got) != 0 {
+		t.Errorf("parent events = %v, want none", kinds(got))
+	}
+	if n := len(f.model.requests()); n != 0 {
+		t.Errorf("the model was called %d times", n)
+	}
+}
+
+// Cancelling the parent ends the parent's context, with ErrCancelled as its
+// cause; the child's context is the parent's, so the child ends cancelled too.
+func TestAParentsCancelReachesTheChild(t *testing.T) {
+	f := newExecFixture(t, newScripted(blocked()))
+	d := f.delegation(t, "call_7")
+	ctx := f.stopOnFirstCall(t, ErrCancelled)
+
+	child, err := f.delegate(t, ctx, d)
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+
+	wantStatus(t, child, "cancelled", "")
+	if got := kinds(f.eventsOf(t, child.ID)); got[len(got)-1] != "finished" {
+		t.Errorf("child events = %v, want it to end finished", got)
+	}
+}
+
+// POST /runs/{child}/cancel flags the child alone; the child's own heartbeat
+// sees it, and the parent is handed a cancelled report and carries on.
+func TestCancellingOnlyTheChildLetsTheParentCarryOn(t *testing.T) {
+	f := newExecFixture(t, newScripted(blocked()))
+	d := f.delegation(t, "call_7")
+	f.onFirstCall(t, `UPDATE runs SET cancel_requested_at = now() WHERE parent_run_id = $1`)
+	ctx, stop := context.WithCancelCause(t.Context())
+	defer stop(nil)
+
+	child, err := f.delegate(t, ctx, d)
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+
+	wantStatus(t, child, "cancelled", "")
+	if ctx.Err() != nil {
+		t.Errorf("the parent's context ended: %v", context.Cause(ctx))
+	}
+	if r := f.row(t); r.Status != "running" || r.CancelRequestedAt != nil {
+		t.Errorf("parent %s, cancel %v; want it running and unflagged", r.Status, r.CancelRequestedAt)
+	}
+}
+
+// The root's six hours bound the whole tree: the child has no clock of its
+// own, so the parent's deadline is the child's.
+func TestAChildIsBoundByTheRootsClock(t *testing.T) {
+	f := newExecFixture(t, newScripted(blocked()))
+	d := f.delegation(t, "call_7")
+	ctx, cancel := context.WithTimeoutCause(t.Context(), 200*time.Millisecond, errWallClock)
+	defer cancel()
+
+	child, err := f.delegate(t, ctx, d)
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+
+	wantStatus(t, child, "failed", "wall clock")
+}
+
+// A parent whose worker lost it will be resumed elsewhere, and the resumed
+// parent reaps this child. Finishing it here would race that.
+func TestALostParentLeavesItsChildUnfinished(t *testing.T) {
+	f := newExecFixture(t, newScripted(blocked()))
+	d := f.delegation(t, "call_7")
+	w := f.spy()
+	ctx := f.stopOnFirstCall(t, ErrLostRun)
+
+	// The child did run, so this is not the error that means it never ran.
+	if _, err := f.delegate(t, ctx, d); err != nil {
+		t.Errorf("Delegate = %v for a child that ran; a lost parent is not a child that never started", err)
+	}
+
+	children := f.children(t, f.run)
+	if len(children) != 1 {
+		t.Fatalf("%d children, want 1", len(children))
+	}
+	if c := children[0]; c.Status != "running" || c.FinishedAt != nil || c.Error != nil {
+		t.Errorf("child %s, error %s; want it left running for the resumed parent", c.Status, deref(c.Error))
+	}
+	if got := kinds(f.eventsOf(t, children[0].ID)); slices.Contains(got, "finished") {
+		t.Errorf("child events = %v; a lost parent's child wrote its end", got)
+	}
+	if n := w.finishes.Load(); n != 0 {
+		t.Errorf("FinishRun was tried %d times", n)
+	}
+}
+
+// A child runs under its own agent's budget, copied onto its row when it was
+// written, not the parent's and not the default.
+func TestAChildIsHeldToItsOwnAgentsBudget(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("a long answer", 3, 2), answer("unreached", 1, 1)))
+	d := f.delegation(t, "call_7")
+	f.mustExec(t, `UPDATE agents SET token_budget = 4 WHERE id = $1`, d.Agent.ID)
+	if d.Agent, _ = f.store.GetAgent(t.Context(), d.Agent.ID); d.Agent.TokenBudget == nil {
+		t.Fatal("setup: billing has no budget")
+	}
+
+	child, err := f.delegate(t, t.Context(), d)
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+
+	wantStatus(t, child, "failed", "token budget")
+}
+
+// Under decision A a resumed parent asks again rather than finding what it
+// asked before, so whatever was still running beneath it fails, at any depth;
+// what had finished is left as it was.
+func TestAResumedParentReapsItsChildren(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("carried on", 1, 1)))
+	start := func(parent uuid.UUID, call string) db.Run {
+		t.Helper()
+		r, err := f.store.StartChildRun(t.Context(), db.StartChildRunParams{
+			ID: uuid.New(), ParentID: parent, AgentID: f.agent, TeamID: f.team,
+			ParentToolCall: call, Input: "the work asked for before", Worker: "w-dead",
+		})
+		if err != nil {
+			t.Fatalf("StartChildRun: %v", err)
+		}
+		return r
+	}
+	running := start(f.run, "call_1#a")
+	grandchild := start(running.ID, "call_9#b")
+	done := start(f.run, "call_2#c")
+	f.mustExec(t, `UPDATE runs SET status = 'succeeded', output = 'kept', finished_at = now() WHERE id = $1`, done.ID)
+	if err := f.sessions.Save(t.Context(), f.run.String(), []agent.Message{
+		{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: runInput}}},
+	}); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
+
+	f.mustExecute(t)
+
+	const sentence = "its parent was resumed after the worker stopped; the work was asked for again"
+	for _, id := range []uuid.UUID{running.ID, grandchild.ID} {
+		r, err := f.store.GetRun(t.Context(), id)
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		wantStatus(t, r, "failed", sentence)
+		if r.FinishedAt == nil {
+			t.Errorf("reaped run %s has no finished_at", id)
+		}
+	}
+	if r, _ := f.store.GetRun(t.Context(), done.ID); r.Status != "succeeded" || deref(r.Output) != "kept" {
+		t.Errorf("the finished child became %s %q; want it left as it was", r.Status, deref(r.Output))
+	}
+	wantStatus(t, f.row(t), "succeeded", "")
+}
+
+// A fresh run has nothing beneath it to reap, and must not reach for a
+// sibling's: the reap is the resumed run's own subtree.
+func TestAFreshRunReapsNothing(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("first time", 1, 1)))
+	mine := f.row(t)
+	otherRun, err := f.store.CreateRun(t.Context(), db.CreateRunParams{
+		ID: uuid.New(), TeamID: f.team, SessionID: mine.SessionID, AgentID: f.agent, Input: "elsewhere",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	other := otherRun.ID
+	f.mustExec(t, `UPDATE runs SET status = 'running', worker = 'w-other', heartbeat_at = now(), started_at = now()
+		WHERE id = $1`, other)
+	sibling, err := f.store.StartChildRun(t.Context(), db.StartChildRunParams{
+		ID: uuid.New(), ParentID: other, AgentID: f.agent, TeamID: f.team,
+		ParentToolCall: "call_1#x", Input: "not ours", Worker: "w-other",
+	})
+	if err != nil {
+		t.Fatalf("StartChildRun: %v", err)
+	}
+
+	f.mustExecute(t)
+
+	if r, _ := f.store.GetRun(t.Context(), sibling.ID); r.Status != "running" {
+		t.Errorf("another run's child became %s", r.Status)
+	}
+}
+
+// The same call id twice, as a ReWOO plan's #E1 in two plans, or a provider
+// reusing ids, starts two children and hands each its own report.
+func TestTheSameCallTwiceMakesTwoChildren(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("first", 1, 1), answer("second", 1, 1)))
+	d := f.delegation(t, "#E1")
+
+	one, err := f.delegate(t, t.Context(), d)
+	if err != nil {
+		t.Fatalf("Delegate 1: %v", err)
+	}
+	two, err := f.delegate(t, t.Context(), d)
+	if err != nil {
+		t.Fatalf("Delegate 2: %v", err)
+	}
+
+	if one.ID == two.ID || deref(one.Output) != "first" || deref(two.Output) != "second" {
+		t.Errorf("children %s %q and %s %q; want two, each with its own answer",
+			one.ID, deref(one.Output), two.ID, deref(two.Output))
+	}
+}
+
+// A deploy stops the worker under the parent and the child alike. DBOS ends
+// the worker's context with a cause of its own, not context.Canceled, so the
+// child must tell "the worker stopped" from the brain's own causes by those.
+func TestAWorkerShuttingDownLeavesTheChildRunning(t *testing.T) {
+	f := newExecFixture(t, newScripted(blocked()))
+	d := f.delegation(t, "call_7")
+	w := f.spy()
+	ctx := f.stopOnFirstCall(t, errors.New("dbos: the executor is shutting down"))
+
+	if _, err := f.delegate(t, ctx, d); err == nil {
+		t.Error("Delegate = nil for a worker that stopped mid-child")
+	}
+
+	children := f.children(t, f.run)
+	if len(children) != 1 || children[0].Status != "running" || children[0].FinishedAt != nil {
+		t.Fatalf("children = %+v, want one left running", children)
+	}
+	if n := w.finishes.Load(); n != 0 {
+		t.Errorf("FinishRun was tried %d times", n)
+	}
+}
+
+// refusesDelegated fails the parent's delegated event, as a database that
+// went away between writing the child and recording it would.
+type refusesDelegated struct{ Store }
+
+func (s *refusesDelegated) AppendRunEvent(ctx context.Context, arg db.AppendRunEventParams) (int32, error) {
+	if arg.Kind == "delegated" {
+		return 0, errors.New("the database went away")
+	}
+	return s.Store.AppendRunEvent(ctx, arg)
+}
+
+// Children are never swept, so one written and then abandoned would stay
+// running for as long as its parent lives. It is finished instead.
+func TestAnUnrecordedChildIsNotLeftRunning(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("never", 1, 1)))
+	d := f.delegation(t, "call_7")
+	f.exec.store = &refusesDelegated{Store: f.exec.store}
+
+	if _, err := f.delegate(t, t.Context(), d); err == nil {
+		t.Error("Delegate = nil when the delegation could not be recorded")
+	}
+
+	children := f.children(t, f.run)
+	if len(children) != 1 {
+		t.Fatalf("%d children, want 1", len(children))
+	}
+	wantStatus(t, children[0], "failed", "could not record")
+	if n := len(f.model.requests()); n != 0 {
+		t.Errorf("the model was called %d times for a child nobody can see", n)
+	}
+}
+
+// A parent that spends its budget ends its own context with ErrBudget; that
+// is the brain's own stop, so the child ends and says why.
+func TestAParentOutOfBudgetEndsTheChild(t *testing.T) {
+	f := newExecFixture(t, newScripted(blocked()))
+	d := f.delegation(t, "call_7")
+	ctx := f.stopOnFirstCall(t, ErrBudget)
+
+	child, err := f.delegate(t, ctx, d)
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+
+	wantStatus(t, child, "failed", "token budget")
+}

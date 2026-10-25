@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,9 @@ type Store interface {
 	ClaimRun(ctx context.Context, arg db.ClaimRunParams) (db.ClaimRunRow, error)
 	HeartbeatRun(ctx context.Context, arg db.HeartbeatRunParams) (*time.Time, error)
 	FinishRun(ctx context.Context, arg db.FinishRunParams) (int64, error)
+	StartChildRun(ctx context.Context, arg db.StartChildRunParams) (db.Run, error)
+	ReapChildren(ctx context.Context, arg db.ReapChildrenParams) ([]uuid.UUID, error)
+	GetRun(ctx context.Context, id uuid.UUID) (db.Run, error)
 }
 
 const (
@@ -34,6 +38,21 @@ var (
 	ErrCancelled = errors.New("the run was cancelled")
 	errWallClock = fmt.Errorf("the run ran past its wall clock of %s", maxWallClock)
 )
+
+const reapReason = "its parent was resumed after the worker stopped; the work was asked for again"
+
+type Lineage struct {
+	Worker string
+	Chain  []uuid.UUID
+}
+
+type Delegation struct {
+	Parent  db.Run
+	Agent   db.Agent
+	Brief   string
+	CallID  string
+	Lineage Lineage
+}
 
 type Executor struct {
 	store     Store
@@ -78,6 +97,13 @@ type finishedPayload struct {
 	Error  string `json:"error,omitempty"`
 }
 
+type delegatedPayload struct {
+	CallID string    `json:"call_id"`
+	Agent  string    `json:"agent"`
+	RunID  uuid.UUID `json:"run_id"`
+	Depth  int32     `json:"depth"`
+}
+
 func (e *Executor) Execute(ctx context.Context, runID uuid.UUID, worker string) error {
 	row, err := e.store.ClaimRun(ctx, db.ClaimRunParams{
 		ID: runID, Worker: worker, WallClockSeconds: maxWallClock.Seconds(),
@@ -92,23 +118,53 @@ func (e *Executor) Execute(ctx context.Context, runID uuid.UUID, worker string) 
 	remaining := time.Duration(row.RemainingSeconds * float64(time.Second))
 	bounded, cancelClock := context.WithTimeoutCause(ctx, remaining, errWallClock)
 	defer cancelClock()
-	runCtx, stop := context.WithCancelCause(bounded)
+
+	return e.hold(bounded, runOf(row), Lineage{Worker: worker, Chain: chainOf(row.AgentID)})
+}
+
+func (e *Executor) Delegate(ctx context.Context, d Delegation) (db.Run, error) {
+	id := uuid.New()
+	child, err := e.store.StartChildRun(ctx, db.StartChildRunParams{
+		ID: id, ParentID: d.Parent.ID, AgentID: d.Agent.ID, TeamID: d.Parent.TeamID,
+		ParentToolCall: d.CallID + "#" + id.String(), Input: d.Brief, Worker: d.Lineage.Worker,
+	})
+	if err != nil {
+		return db.Run{}, fmt.Errorf("starting %s under run %s: %w", d.Agent.Name, d.Parent.ID, err)
+	}
+
+	err = appendEvent(ctx, e.store, d.Parent.ID, d.Lineage.Worker, "delegated", delegatedPayload{
+		CallID: d.CallID, Agent: child.AgentName, RunID: child.ID, Depth: child.Depth,
+	})
+	if err != nil {
+		failed := e.finish(ctx, child.ID, d.Lineage.Worker, "failed", "", "its parent could not record it: "+err.Error())
+		return db.Run{}, errors.Join(err, failed)
+	}
+
+	l := Lineage{Worker: d.Lineage.Worker, Chain: append(slices.Clone(d.Lineage.Chain), d.Agent.ID)}
+	if err := e.hold(ctx, child, l); err != nil {
+		return db.Run{}, err
+	}
+	return e.store.GetRun(context.WithoutCancel(ctx), child.ID)
+}
+
+func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
+	runCtx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
 
 	beatCtx, stopBeat := context.WithCancel(runCtx)
 	beating := make(chan struct{})
 	go func() {
 		defer close(beating)
-		e.heartbeat(beatCtx, runID, worker, stop)
+		e.heartbeat(beatCtx, row.ID, l.Worker, stop)
 	}()
 
-	output, runErr := e.run(runCtx, row, worker, stop)
+	output, runErr := e.run(runCtx, row, l, stop)
 
 	stopBeat()
 	<-beating
 
-	if ctx.Err() != nil {
-		return fmt.Errorf("the worker stopped while running %s: %w", runID, ctx.Err())
+	if ctx.Err() != nil && !ours(context.Cause(ctx)) {
+		return fmt.Errorf("the worker stopped while running %s: %w", row.ID, context.Cause(ctx))
 	}
 
 	cause := context.Cause(runCtx)
@@ -116,10 +172,22 @@ func (e *Executor) Execute(ctx context.Context, runID uuid.UUID, worker string) 
 		return nil
 	}
 	status, failure := outcome(runErr, cause)
-	return e.finish(ctx, runID, worker, status, output, failure)
+	return e.finish(ctx, row.ID, l.Worker, status, output, failure)
 }
 
-func (e *Executor) run(ctx context.Context, row db.ClaimRunRow, worker string,
+func ours(cause error) bool {
+	return errors.Is(cause, ErrCancelled) || errors.Is(cause, ErrLostRun) ||
+		errors.Is(cause, ErrBudget) || errors.Is(cause, errWallClock)
+}
+
+func chainOf(agentID *uuid.UUID) []uuid.UUID {
+	if agentID == nil {
+		return nil
+	}
+	return []uuid.UUID{*agentID}
+}
+
+func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	stop context.CancelCauseFunc,
 ) (string, error) {
 	session, err := agent.Open(row.ID.String(), e.sessions)
@@ -131,34 +199,37 @@ func (e *Executor) run(ctx context.Context, row db.ClaimRunRow, worker string,
 		return "", fmt.Errorf("reading the transcript: %w", err)
 	}
 
-	built, err := e.builder.Build(ctx, runOf(row), session)
+	built, err := e.builder.Build(ctx, row, session)
 	if err != nil {
 		return "", err
 	}
 	defer built.Close()
 
 	if len(msgs) > 0 {
-		err = appendEvent(ctx, e.store, row.ID, worker, "resumed", resumedPayload{Messages: len(msgs)})
+		if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: row.ID, Reason: reapReason}); err != nil {
+			return "", fmt.Errorf("reaping what the run started before its worker stopped: %w", err)
+		}
+		err = appendEvent(ctx, e.store, row.ID, l.Worker, "resumed", resumedPayload{Messages: len(msgs)})
 	} else {
 		msgs = []agent.Message{{
 			Role:    agent.RoleUser,
 			Content: []agent.Content{{Type: agent.ContentText, Text: row.Input}},
 		}}
-		err = appendEvent(ctx, e.store, row.ID, worker, "started", startedOf(row.AgentName, built.Spec))
+		err = appendEvent(ctx, e.store, row.ID, l.Worker, "started", startedOf(row.AgentName, built.Spec))
 	}
 	if err != nil {
 		return "", err
 	}
 
 	for _, u := range built.Unavailable {
-		if err := appendEvent(ctx, e.store, row.ID, worker, "tool_unavailable",
+		if err := appendEvent(ctx, e.store, row.ID, l.Worker, "tool_unavailable",
 			unavailablePayload(u)); err != nil {
 			return "", err
 		}
 	}
 
 	events := make(chan agent.Event, 64)
-	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, worker, budgetOf(row.TokenBudget), events, stop)
+	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, budgetOf(row.TokenBudget), events, stop)
 	result, err := e.runner.Run(ctx, built.Spec, msgs, e.endpoint, events)
 	close(events)
 	<-recorded
@@ -268,6 +339,6 @@ func runOf(r db.ClaimRunRow) db.Run {
 		Input: r.Input, Output: r.Output, Error: r.Error, InputTokens: r.InputTokens,
 		OutputTokens: r.OutputTokens, Worker: r.Worker, HeartbeatAt: r.HeartbeatAt,
 		CancelRequestedAt: r.CancelRequestedAt, CreatedAt: r.CreatedAt,
-		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, TokenBudget: r.TokenBudget,
 	}
 }

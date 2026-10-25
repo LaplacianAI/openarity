@@ -495,3 +495,15 @@ func TestDeletingARunDeletesItsEvents(t *testing.T) {
 		t.Errorf("%d events outlived their run", n)
 	}
 }
+
+// A parent records that it handed work on, so the dashboard and the CLI can
+// open the child while it is still working.
+func TestADelegatedEventIsOneTheRuntimeWrites(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	id := mustInsertRun(t, s, f.root())
+
+	if err := insertEvent(t, s, id, 1, "delegated", `{"call_id": "c1", "agent": "billing"}`); err != nil {
+		t.Errorf("a delegated event was refused: %v", err)
+	}
+}

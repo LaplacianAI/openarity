@@ -28,8 +28,21 @@ CREATE TABLE agent_delegates (
 -- Deleting an agent checks the listings that name it as a delegate.
 CREATE INDEX agent_delegates_delegate_idx ON agent_delegates (delegate_id, team_id);
 
+-- A parent records that it handed work on, so its child can be opened while
+-- it runs.
+ALTER TABLE run_events DROP CONSTRAINT run_events_kind_known;
+ALTER TABLE run_events ADD CONSTRAINT run_events_kind_known CHECK (kind IN (
+    'started', 'resumed', 'step', 'tool_call', 'tool_result', 'usage',
+    'tool_unavailable', 'finished', 'delegated')) NOT VALID;
+
 -- +goose Down
 SET lock_timeout = '3s';
+
+DELETE FROM run_events WHERE kind = 'delegated';
+ALTER TABLE run_events DROP CONSTRAINT run_events_kind_known;
+ALTER TABLE run_events ADD CONSTRAINT run_events_kind_known CHECK (kind IN (
+    'started', 'resumed', 'step', 'tool_call', 'tool_result', 'usage',
+    'tool_unavailable', 'finished'));
 
 DROP TABLE agent_delegates;
 ALTER TABLE agents DROP COLUMN delegation;
