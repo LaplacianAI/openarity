@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +26,7 @@ const (
 	maxValue      = 60
 	previewLines  = 5
 	graphTool     = "graph"
+	delegateTool  = "delegate"
 
 	bullet     = "⏺"
 	elbow      = "  ⎿  "
@@ -59,6 +62,7 @@ type transcript struct {
 	width   int
 	tty     bool
 	verbose bool
+	team    string
 
 	printed bool
 	live    bool
@@ -74,10 +78,13 @@ type transcript struct {
 	tokens    int64
 }
 
-func newTranscript(w io.Writer, styles *ui.Styles, verbose bool) *transcript {
+// team is the team as it was typed, for the command a delegation's result
+// names to read its child.
+func newTranscript(w io.Writer, styles *ui.Styles, verbose bool, team string) *transcript {
 	return &transcript{
 		w: w, paint: paintOf(styles), width: ui.Width(w, fallbackWidth),
-		tty: ui.IsTerminal(w), verbose: verbose, calls: map[string]string{},
+		tty: ui.IsTerminal(w), verbose: verbose, team: team,
+		calls: map[string]string{},
 	}
 }
 
@@ -131,6 +138,8 @@ func (t *transcript) event(f frame, p payload) error {
 		t.call(p)
 	case "tool_result":
 		t.result(p)
+	case "delegated":
+		// The child of a delegate call still running; its report names it too.
 	case "tool_unavailable":
 		t.block()
 		t.line(t.paint.warn(t.clip("⚠ " + cli.Line(p.Name) + " unavailable: " + cli.Line(p.Reason))))
@@ -194,7 +203,11 @@ func (t *transcript) call(p payload) {
 }
 
 func (t *transcript) callLine(p payload) string {
-	text := t.clip(bullet + " " + cli.Line(p.Name) + "(" + arguments(p.Arguments) + ")")
+	args := p.Arguments
+	if p.Name == delegateTool {
+		args = briefOf(args)
+	}
+	text := t.clip(bullet + " " + cli.Line(p.Name) + "(" + arguments(args) + ")")
 	return t.paint.mark(bullet) + strings.TrimPrefix(text, bullet)
 }
 
@@ -231,6 +244,9 @@ func (t *transcript) result(p payload) {
 	}
 
 	summary, rows := describe(p)
+	if r, ok := reportIn(p.Output); ok && p.Name == delegateTool {
+		summary, rows = t.reported(r)
+	}
 	t.line(elbow + t.clipAfter(elbow+tail, summary) + t.paint.muted(tail))
 	t.preview(rows, func(s string) string { return s })
 }
@@ -252,6 +268,56 @@ func (t *transcript) preview(rows []string, style func(string) string) {
 	if hidden := len(rows) - len(shown); hidden > 0 {
 		t.line(t.paint.muted(underElbow + "… +" + strconv.Itoa(hidden) + " lines (oa runs events --verbose to see all)"))
 	}
+}
+
+// briefOf is a delegate call's arguments cut to whom it asked and what for:
+// the rest of the brief is in the child's own input. Arguments that are not a
+// JSON object are left for arguments to show as they are.
+func briefOf(raw string) string {
+	pairs, ok := inOrder(strings.TrimSpace(raw))
+	if !ok {
+		return raw
+	}
+	kept := make([]string, 0, 2)
+	for _, kv := range pairs {
+		if kv[0] == "agent" || kv[0] == "objective" {
+			key, _ := json.Marshal(kv[0])
+			kept = append(kept, string(key)+":"+kv[1])
+		}
+	}
+	return "{" + strings.Join(kept, ",") + "}"
+}
+
+type report struct{ agent, run, status, body string }
+
+var reportHead = regexp.MustCompile(`^<report agent="([^"]*)" run="([^"]*)" status="([^"]*)" end="([^"]*)">\n`)
+
+// reportIn reads a delegate's output as the envelope the brain wraps a
+// child's answer in. The body ends only at the closing tag carrying the
+// envelope's own end, which the child never saw.
+func reportIn(output string) (report, bool) {
+	m := reportHead.FindStringSubmatch(output)
+	if m == nil {
+		return report{}, false
+	}
+	closing := "\n</report end=\"" + m[4] + "\">"
+	if !strings.HasSuffix(output, closing) || len(output) < len(m[0])+len(closing) {
+		return report{}, false
+	}
+	return report{
+		agent:  html.UnescapeString(m[1]),
+		run:    m[2],
+		status: m[3],
+		body:   output[len(m[0]) : len(output)-len(closing)],
+	}, true
+}
+
+// reported is a delegate's report as how its child ended, the command that
+// reads the child's run, and the child's answer beneath.
+func (t *transcript) reported(r report) (string, []string) {
+	summary := cli.Line(r.agent) + " " + cli.Line(r.status) +
+		" · oa runs events " + cli.Line(t.team) + " " + cli.Line(r.run)
+	return summary, trimBlank(cli.Lines(r.body))
 }
 
 // describe is a tool's output as a summary line and the rows under it.

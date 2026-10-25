@@ -95,7 +95,7 @@ func followRun(ctx context.Context, opts *cli.Options, team, run uuid.UUID, team
 
 	var shown *transcript
 	if format, _ := output.Parse(opts.Settings.Output.Value); !format.IsMachine() {
-		shown = newTranscript(opts.Stdout, opts.Styles, how.verbose)
+		shown = newTranscript(opts.Stdout, opts.Styles, how.verbose, teamRef)
 		shown.printed = how.afterStart
 	}
 

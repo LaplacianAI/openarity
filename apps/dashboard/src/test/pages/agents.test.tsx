@@ -72,6 +72,8 @@ const draft = {
   tokenBudget: "",
   servers: ["m1"],
   skills: ["s1"],
+  delegation: "none" as const,
+  delegates: [] as string[],
 };
 
 describe("the define form", () => {
@@ -85,6 +87,7 @@ describe("the define form", () => {
       max_steps: 5,
       mcp_servers: [{ id: "m1" }],
       skills: ["s1"],
+      delegation: "none",
     });
   });
 
@@ -264,6 +267,8 @@ describe("editing an agent", () => {
     mcp_servers: [{ id: "m1", allow: ["search"] }],
     skills: ["s1"],
     token_budget: 250000,
+    delegation: "none",
+    delegates: [],
   };
 
   // What the brain holds, as the PUT takes it: no id, kind or stamps.
@@ -279,6 +284,7 @@ describe("editing an agent", () => {
     mcp_servers: [{ id: "m1", allow: ["search"] }],
     skills: ["s1"],
     token_budget: 250000,
+    delegation: "none",
   };
 
   function editing(agent: Record<string, unknown>, put: Record<string, unknown> = {}) {
@@ -386,5 +392,180 @@ describe("editing an agent", () => {
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("is not one the brain runs");
+  });
+});
+
+/* ------------------------------------------------------------- delegation */
+
+// Whom an agent may hand work to with the delegate tool. A new agent works
+// alone: the box is ticked, and the brain's own default is the same.
+describe("whom an agent may hand work to", () => {
+  const billing = { ...triage, id: "a3", name: "billing", description: "Refunds" };
+  const clerk = { ...triage, id: "a4", name: "clerk", description: "Files" };
+  const withTeam = {
+    ...registry,
+    "GET /teams/{id}/agents": { body: { items: [triage, billing, clerk] } },
+  };
+  const ALONE = /works alone/i;
+
+  describe("as the form sends it", () => {
+    it("sends none with no list", () => {
+      const got = agentRequest({ ...draft, delegation: "none", delegates: ["a3"] });
+      expect(got).toMatchObject({ delegation: "none" });
+      expect(got).not.toHaveProperty("delegates");
+    });
+
+    it("sends team with no list, whatever was ticked before", () => {
+      const got = agentRequest({ ...draft, delegation: "team", delegates: ["a3"] });
+      expect(got).toMatchObject({ delegation: "team" });
+      expect(got).not.toHaveProperty("delegates");
+    });
+
+    it("sends listed with its list", () => {
+      expect(
+        agentRequest({ ...draft, delegation: "listed", delegates: ["a3", "a4"] }),
+      ).toMatchObject({ delegation: "listed", delegates: ["a3", "a4"] });
+    });
+  });
+
+  function created(seen: { method: string; body: unknown }[]) {
+    return JSON.parse(String(seen.find((s) => s.method === "POST")?.body));
+  }
+
+  async function defining() {
+    const seen = brain({
+      ...team(["agent:write"]),
+      ...withTeam,
+      "POST /teams/{id}/agents": { status: 201, body: { ...triage, id: "a9", name: "reviewer" } },
+    });
+    show(Agents);
+    await userEvent.click(await screen.findByRole("button", { name: /define agent/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "reviewer");
+    await userEvent.type(screen.getByLabelText(/^model$/i), "m");
+    return seen;
+  }
+
+  it("defines a new agent working alone unless told otherwise", async () => {
+    const seen = await defining();
+
+    expect(screen.getByRole("checkbox", { name: ALONE })).toBeChecked();
+    expect(screen.queryByLabelText(/^hands work to$/i)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+    expect(created(seen).delegation).toBe("none");
+    expect(created(seen)).not.toHaveProperty("delegates");
+  });
+
+  it("offers any agent in the team once the box is unticked, and lists none", async () => {
+    const seen = await defining();
+    await userEvent.click(screen.getByRole("checkbox", { name: ALONE }));
+
+    expect(screen.getByLabelText(/^hands work to$/i)).toHaveValue("team");
+    expect(screen.queryByRole("checkbox", { name: "billing" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+    expect(created(seen).delegation).toBe("team");
+    expect(created(seen)).not.toHaveProperty("delegates");
+  });
+
+  it("lists the team's agents only when only some are chosen", async () => {
+    const seen = await defining();
+    await userEvent.click(screen.getByRole("checkbox", { name: ALONE }));
+    await userEvent.selectOptions(screen.getByLabelText(/^hands work to$/i), "listed");
+    await userEvent.click(await screen.findByRole("checkbox", { name: "billing" }));
+    await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+    expect(created(seen)).toMatchObject({ delegation: "listed", delegates: ["a3"] });
+  });
+
+  it("forgets a list when the box is ticked again", async () => {
+    const seen = await defining();
+    await userEvent.click(screen.getByRole("checkbox", { name: ALONE }));
+    await userEvent.selectOptions(screen.getByLabelText(/^hands work to$/i), "listed");
+    await userEvent.click(await screen.findByRole("checkbox", { name: "billing" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: ALONE }));
+    await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+    expect(created(seen).delegation).toBe("none");
+    expect(created(seen)).not.toHaveProperty("delegates");
+  });
+
+  describe("on an agent that has a setting", () => {
+    const stored = {
+      ...triage,
+      instructions: "",
+      max_steps: 5,
+      steer_continuations: 0,
+      parser: false,
+      mcp_servers: [],
+      skills: [],
+    };
+
+    function editing(agent: Record<string, unknown>) {
+      return brain({
+        ...team(["agent:write"]),
+        ...withTeam,
+        "GET /teams/{id}/agents/{agentID}": { body: agent },
+        "PUT /teams/{id}/agents/{agentID}": { body: agent },
+      });
+    }
+
+    async function openEdit() {
+      show(Agents);
+      const [first] = await screen.findAllByRole("button", { name: /^edit$/i });
+      await userEvent.click(first as HTMLElement);
+      await screen.findByRole("heading", { name: /edit agent/i });
+    }
+
+    async function save(seen: { method: string; body: unknown }[]) {
+      await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+      await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+      return JSON.parse(String(seen.find((s) => s.method === "PUT")?.body));
+    }
+
+    it("shows team as stored, not the new agent's default, and sends it back", async () => {
+      const seen = editing({ ...stored, delegation: "team", delegates: [] });
+      await openEdit();
+
+      expect(screen.getByRole("checkbox", { name: ALONE })).not.toBeChecked();
+      expect(screen.getByLabelText(/^hands work to$/i)).toHaveValue("team");
+      const body = await save(seen);
+      expect(body.delegation).toBe("team");
+      expect(body).not.toHaveProperty("delegates");
+    });
+
+    it("shows a list as stored, without the agent itself, and sends it back", async () => {
+      const seen = editing({ ...stored, delegation: "listed", delegates: ["a3"] });
+      await openEdit();
+
+      expect(screen.getByLabelText(/^hands work to$/i)).toHaveValue("listed");
+      expect(await screen.findByRole("checkbox", { name: "billing" })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "clerk" })).not.toBeChecked();
+      expect(screen.queryByRole("checkbox", { name: "triage" })).toBeNull();
+      expect(await save(seen)).toMatchObject({ delegation: "listed", delegates: ["a3"] });
+    });
+
+    it("sends a list changed in the form", async () => {
+      const seen = editing({ ...stored, delegation: "listed", delegates: ["a3"] });
+      await openEdit();
+      await userEvent.click(await screen.findByRole("checkbox", { name: "billing" }));
+      await userEvent.click(screen.getByRole("checkbox", { name: "clerk" }));
+
+      expect(await save(seen)).toMatchObject({ delegation: "listed", delegates: ["a4"] });
+    });
+
+    it("sets an agent to work alone, dropping its list", async () => {
+      const seen = editing({ ...stored, delegation: "listed", delegates: ["a3"] });
+      await openEdit();
+      await userEvent.click(screen.getByRole("checkbox", { name: ALONE }));
+
+      const body = await save(seen);
+      expect(body.delegation).toBe("none");
+      expect(body).not.toHaveProperty("delegates");
+    });
   });
 });

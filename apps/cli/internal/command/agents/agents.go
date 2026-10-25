@@ -118,11 +118,13 @@ func newGetCmd(opts *cli.Options) *cobra.Command {
 
 // definition is how create and replace read an agent: a file for the body,
 // and grants by name on the command line, because a definition naming
-// servers and skills by id is a file nobody can read or write by hand.
+// servers and skills by id is a file nobody can read or write by hand. The
+// file's delegates are names too, read out of it before the rest is decoded.
 type definition struct {
-	file    string
-	servers []string
-	skills  []string
+	file      string
+	servers   []string
+	skills    []string
+	delegates *[]string
 }
 
 func (d *definition) flags(cmd *cobra.Command) {
@@ -150,14 +152,45 @@ func (d *definition) read(in io.Reader) (client.AgentRequest, error) {
 		return client.AgentRequest{}, fmt.Errorf("the agent is over %d bytes — is that the right file?", maxDefinition)
 	}
 
-	var body client.AgentRequest
-	if err := yaml.Unmarshal(raw, &body); err != nil {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return client.AgentRequest{}, fmt.Errorf("read the agent: %w", err)
+	}
+	var body client.AgentRequest
+	if len(doc.Content) > 0 {
+		root := doc.Content[0]
+		if d.delegates, err = takeDelegates(root); err != nil {
+			return client.AgentRequest{}, err
+		}
+		if err := root.Decode(&body); err != nil {
+			return client.AgentRequest{}, fmt.Errorf("read the agent: %w", err)
+		}
 	}
 	if strings.TrimSpace(body.Name) == "" {
 		return client.AgentRequest{}, errors.New("the agent has no name")
 	}
 	return body, nil
+}
+
+// takeDelegates removes the delegates key from the definition and returns
+// what it named, so names and ids alike are resolved rather than decoded as
+// ids. Nil when the file does not say.
+func takeDelegates(root *yaml.Node) (*[]string, error) {
+	if root.Kind != yaml.MappingNode {
+		return nil, nil
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "delegates" {
+			continue
+		}
+		var names []string
+		if err := root.Content[i+1].Decode(&names); err != nil {
+			return nil, errors.New("delegates is a list of the agents it may hand work to, by name or id")
+		}
+		root.Content = append(root.Content[:i], root.Content[i+2:]...)
+		return &names, nil
+	}
+	return nil, nil
 }
 
 // grant adds the named servers and skills to what the file granted. A grant
@@ -201,6 +234,18 @@ func (d *definition) grant(cmd *cobra.Command, api *client.ClientWithResponses, 
 		}
 		*body.Skills = append(*body.Skills, id)
 	}
+
+	if d.delegates != nil {
+		ids := make([]uuid.UUID, 0, len(*d.delegates))
+		for _, ref := range *d.delegates {
+			id, err := cli.ResolveAgent(cmd.Context(), api, team, ref)
+			if err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		body.Delegates = &ids
+	}
 	return nil
 }
 
@@ -219,7 +264,10 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"    instructions: Read the issue. Label it. Say why.\n" +
 			"    model: {name: anthropic/claude-sonnet-5-5, max_tokens: 1024}\n" +
 			"    pattern: react\n" +
-			"    max_steps: 5\n\n" +
+			"    max_steps: 5\n" +
+			"    # whom it may hand work to: none (alone, the default), team, or listed\n" +
+			"    delegation: listed\n" +
+			"    delegates: [billing]   # by name or id; read only with listed\n\n" +
 			"    oa agents create platform -f triage.yaml \\\n" +
 			"        --mcp-server github=search_code --skill pdf-processing",
 		Args: cobra.ExactArgs(1),
@@ -366,6 +414,23 @@ func printAgent(opts *cli.Options, a *client.Agent, did string) error {
 			for _, s := range a.Skills {
 				table.Row("skill", s.String(), "")
 			}
+			table.Row("delegation", cli.Safe(string(a.Delegation)), delegationNote(a.Delegation))
+			for _, id := range a.Delegates {
+				table.Row("delegate", id.String(), "")
+			}
 		},
 	})
+}
+
+func delegationNote(d client.Delegation) string {
+	switch d {
+	case client.DelegationTeam:
+		return "any other agent in the team"
+	case client.DelegationListed:
+		return "only its delegates"
+	case client.DelegationNone:
+		return "works alone"
+	default:
+		return ""
+	}
 }

@@ -6,26 +6,30 @@
  * as React text — or, for the answer alone, as markdown with raw HTML off —
  * and never as markup.
  */
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
+  ArrowUpLeft,
   Ban,
   CheckCircle2,
   ChevronRight,
   CircleDashed,
   Clock,
   Loader2,
+  Users,
   Wrench,
   XCircle,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
-import { cancelRun, followRunEvents } from "@/api";
+import { cancelRun, followRunEvents, getRun } from "@/api";
 import type { Run, RunEvent } from "@/api/types";
 import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import {
   argumentPairs,
+  delegateReport,
   type GraphHit,
   graphHits,
   groupTrace,
@@ -172,6 +176,9 @@ export function RunDetail({
               <RunStatus status={run.status} pill />
               {live ? <LiveBadge /> : null}
             </div>
+            {run.parent_run_id ? (
+              <ParentLink teamId={teamId} sessionId={run.session_id} parentId={run.parent_run_id} />
+            ) : null}
             <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <Meta label="Model">{trace.started?.model || "—"}</Meta>
               <Meta label="Steps">{steps}</Meta>
@@ -239,9 +246,41 @@ export function RunDetail({
             Could not follow this run: {failed}
           </p>
         ) : null}
-        <TraceView trace={trace} live={live} empty={events.length === 0 && !failed} />
+        <TraceView
+          trace={trace}
+          live={live}
+          empty={events.length === 0 && !failed}
+          sessionId={run.session_id}
+        />
       </Section>
     </article>
+  );
+}
+
+/** A delegate's run names the run that started it, read for its agent's name. */
+function ParentLink({
+  teamId,
+  sessionId,
+  parentId,
+}: {
+  teamId: string;
+  sessionId: string;
+  parentId: string;
+}) {
+  const parent = useQuery({
+    queryKey: ["runs", teamId, parentId],
+    queryFn: () => getRun(teamId, parentId),
+  });
+  return (
+    <Link
+      to="/ui/sessions/$sessionId"
+      params={{ sessionId }}
+      search={{ tab: "runs", run: parentId }}
+      className="inline-flex items-center gap-1 rounded text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+    >
+      <ArrowUpLeft aria-hidden className="size-3" />
+      delegated by {parent.data?.agent ?? "another run"}
+    </Link>
   );
 }
 
@@ -348,7 +387,17 @@ function Chip({
 
 /* ------------------------------------------------------------------ trace */
 
-function TraceView({ trace, live, empty }: { trace: Trace; live: boolean; empty: boolean }) {
+function TraceView({
+  trace,
+  live,
+  empty,
+  sessionId,
+}: {
+  trace: Trace;
+  live: boolean;
+  empty: boolean;
+  sessionId: string;
+}) {
   if (empty) {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -372,6 +421,7 @@ function TraceView({ trace, live, empty }: { trace: Trace; live: boolean; empty:
                 index={item.step.number ?? numbered}
                 live={live}
                 last={i === trace.items.length - 1}
+                sessionId={sessionId}
               />
             );
           case "resumed":
@@ -432,11 +482,13 @@ function StepView({
   index,
   live,
   last,
+  sessionId,
 }: {
   step: Step;
   index: number;
   live: boolean;
   last: boolean;
+  sessionId: string;
 }) {
   return (
     <li data-step={index} className="relative flex gap-3">
@@ -466,9 +518,13 @@ function StepView({
         </div>
         {step.calls.length > 0 ? (
           <ul className="space-y-2">
-            {step.calls.map((c, i) => (
-              <ToolCallCard key={c.id ?? `n${i}`} call={c} live={live} />
-            ))}
+            {step.calls.map((c, i) =>
+              c.name === "delegate" ? (
+                <DelegateCard key={c.id ?? `n${i}`} call={c} live={live} sessionId={sessionId} />
+              ) : (
+                <ToolCallCard key={c.id ?? `n${i}`} call={c} live={live} />
+              ),
+            )}
           </ul>
         ) : step.other.length === 0 ? (
           <p className="text-xs text-muted-foreground">
@@ -588,6 +644,106 @@ function ToolCallCard({ call, live }: { call: ToolCall; live: boolean }) {
 }
 
 const PREVIEW = 300;
+
+/**
+ * A `delegate` call: whom it went to and what it was asked, the child's run as
+ * soon as the brain has started it, and the child's report once it is back.
+ */
+function DelegateCard({
+  call,
+  live,
+  sessionId,
+}: {
+  call: ToolCall;
+  live: boolean;
+  sessionId: string;
+}) {
+  const result = call.result;
+  const brief = call.arguments === null ? null : argumentPairs(call.arguments);
+  const field = (k: string) => brief?.find(([key]) => key === k)?.[1] ?? "";
+  const target = field("agent") || call.delegated?.agent || "";
+  const objective = field("objective");
+  const report = result && !result.error ? delegateReport(result.output) : null;
+  const failed = Boolean(result?.error) || (report !== null && report.status !== "succeeded");
+  const state = result === null ? "pending" : failed ? "failed" : "done";
+
+  return (
+    <li
+      data-call={call.name}
+      data-state={state}
+      className={cn(
+        "rounded-md border bg-card",
+        failed ? "border-destructive/40" : "border-border",
+      )}
+    >
+      <div className="flex items-start gap-2 px-3 py-2">
+        <Users aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-xs font-medium">delegate</span>
+            <span aria-hidden className="text-xs text-muted-foreground">
+              →
+            </span>
+            <span data-target className="truncate text-xs font-medium">
+              {target || "an agent it did not name"}
+            </span>
+            {report ? <RunStatus status={report.status} /> : null}
+            {call.truncated ? <span className="text-xs text-muted-foreground">(cut)</span> : null}
+          </div>
+          {objective ? (
+            <p data-objective className="line-clamp-2 break-words text-xs text-muted-foreground">
+              {clipped(objective, PREVIEW)}
+            </p>
+          ) : null}
+          {call.delegated ? (
+            <Link
+              to="/ui/sessions/$sessionId"
+              params={{ sessionId }}
+              search={{ tab: "runs", run: call.delegated.runId }}
+              className="inline-flex items-center gap-1 rounded text-xs text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              Open {call.delegated.agent || target}'s run
+              <ChevronRight aria-hidden className="size-3" />
+            </Link>
+          ) : null}
+        </div>
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+          {result === null ? (
+            live ? (
+              <span className="inline-flex items-center gap-1" role="status">
+                <Loader2 aria-hidden className="size-3 animate-spin" />
+                working
+              </span>
+            ) : (
+              "no result"
+            )
+          ) : result.durationMs !== null ? (
+            duration(result.durationMs)
+          ) : null}
+        </span>
+      </div>
+      {result ? (
+        <div className="border-t border-border px-3 py-2">
+          {result.error ? (
+            <p className="whitespace-pre-wrap break-words font-mono text-xs text-destructive">
+              {result.error}
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              <p
+                data-preview
+                className="whitespace-pre-wrap break-words text-xs text-muted-foreground"
+              >
+                {clipped(report ? report.body : result.output, PREVIEW) || "No answer."}
+              </p>
+              <RawToggle raw={result.output} />
+            </div>
+          )}
+        </div>
+      ) : null}
+    </li>
+  );
+}
 
 function ResultView({ name, output }: { name: string; output: string }) {
   const hits = name === "graph" ? graphHits(output) : null;

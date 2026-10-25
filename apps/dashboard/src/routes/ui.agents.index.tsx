@@ -15,7 +15,7 @@ import {
 import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
-import type { Agent, AgentRequest, AgentSummary, MCPServerGrant } from "@/api/types";
+import type { Agent, AgentRequest, AgentSummary, Delegation, MCPServerGrant } from "@/api/types";
 import { Field, ReadOnlyNote, Tag, TextArea } from "@/components/registry-bits";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,9 +48,15 @@ function useNames(teamId: string | null) {
     queryFn: () => listSkills(teamId as string),
     enabled: Boolean(teamId),
   });
+  const agents = useQuery({
+    queryKey: ["agents", teamId, "names"],
+    queryFn: () => listAgents(teamId as string),
+    enabled: Boolean(teamId),
+  });
   return {
     servers: servers.data?.items ?? [],
     skills: skills.data?.items ?? [],
+    agents: agents.data?.items ?? [],
   };
 }
 
@@ -292,6 +298,9 @@ type Draft = {
   tokenBudget: string;
   servers: string[];
   skills: string[];
+  delegation: Delegation;
+  /** Kept while another choice is shown, and sent only with listed. */
+  delegates: string[];
 };
 
 /** The brain refuses more; this only says so before the round trip. */
@@ -308,6 +317,8 @@ const EMPTY: Draft = {
   tokenBudget: "",
   servers: [],
   skills: [],
+  delegation: "none",
+  delegates: [],
 };
 
 /**
@@ -339,6 +350,8 @@ export function agentRequest(d: Draft): AgentRequest | string {
     mcp_servers: d.servers.map((id) => ({ id })),
     skills: d.skills,
     ...(budget === undefined ? {} : { token_budget: budget }),
+    delegation: d.delegation,
+    ...(d.delegation === "listed" ? { delegates: d.delegates } : {}),
   };
 }
 
@@ -355,6 +368,8 @@ export function draftOf(a: Agent): Draft {
     tokenBudget: a.token_budget === undefined ? "" : String(a.token_budget),
     servers: a.mcp_servers.map((g) => g.id),
     skills: a.skills,
+    delegation: a.delegation,
+    delegates: a.delegates,
   };
 }
 
@@ -496,6 +511,7 @@ function EditDialog({
             draft={edited ?? draftOf(agent)}
             set={(patch) => setEdited((d) => ({ ...(d ?? draftOf(agent)), ...patch }))}
             limits={agent.mcp_servers}
+            self={agent.id}
             toRequest={(d) => replaceRequest(agent, d)}
             submit="Save"
             submitting="Saving…"
@@ -516,6 +532,7 @@ function AgentForm({
   draft,
   set,
   limits,
+  self,
   toRequest,
   submit,
   submitting,
@@ -530,6 +547,8 @@ function AgentForm({
   set: (patch: Partial<Draft>) => void;
   /** The grants the agent has now, to say which are limited to some tools. */
   limits?: MCPServerGrant[];
+  /** The agent being edited, which is never offered as its own delegate. */
+  self?: string;
   toRequest: (d: Draft) => AgentRequest | string;
   submit: string;
   submitting: string;
@@ -674,6 +693,7 @@ function AgentForm({
           )}
         </div>
       </fieldset>
+      <Delegates draft={draft} set={set} agents={names.agents.filter((a) => a.id !== self)} />
       {problem ? (
         <p role="alert" className="text-xs text-destructive">
           {problem}
@@ -688,5 +708,68 @@ function AgentForm({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+/**
+ * Whom the agent may hand work to with the delegate tool. Ticked, it works
+ * alone and is not given the tool. A list stays in the draft while another
+ * choice is shown, so changing one's mind does not lose it, but only listed
+ * sends it.
+ */
+function Delegates({
+  draft,
+  set,
+  agents,
+}: {
+  draft: Draft;
+  set: (patch: Partial<Draft>) => void;
+  agents: AgentSummary[];
+}) {
+  const alone = draft.delegation === "none";
+  return (
+    <fieldset className="space-y-2">
+      <legend className="mb-1 text-xs font-medium">Delegation</legend>
+      <label className="flex items-center gap-1.5 text-xs">
+        <input
+          type="checkbox"
+          checked={alone}
+          onChange={() => set({ delegation: alone ? "team" : "none" })}
+        />
+        Works alone — never hands work to other agents
+      </label>
+      {alone ? null : (
+        <Field label="Hands work to" htmlFor="agent-delegation">
+          <select
+            id="agent-delegation"
+            value={draft.delegation}
+            onChange={(e) => set({ delegation: e.target.value as Delegation })}
+            className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm"
+          >
+            <option value="team">Any agent in the team</option>
+            <option value="listed">Only these agents</option>
+          </select>
+        </Field>
+      )}
+      {draft.delegation === "listed" ? (
+        <div>
+          <p className="mb-1 text-xs font-medium">Agents it may hand work to</p>
+          {agents.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">The team has no other agents.</p>
+          ) : (
+            agents.map((a) => (
+              <label key={a.id} className="flex items-center gap-1.5 text-xs">
+                <input
+                  type="checkbox"
+                  checked={draft.delegates.includes(a.id)}
+                  onChange={() => set({ delegates: toggle(draft.delegates, a.id) })}
+                />
+                {a.name}
+              </label>
+            ))
+          )}
+        </div>
+      ) : null}
+    </fieldset>
   );
 }
