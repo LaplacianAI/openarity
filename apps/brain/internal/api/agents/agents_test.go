@@ -1287,3 +1287,27 @@ func TestACreatedAgentWithNoGrantsHasEmptyArrays(t *testing.T) {
 		t.Errorf("body = %s", rec.Body)
 	}
 }
+
+// A search reaches the query as typed, trimmed; one that cannot be a search
+// is refused before the store is asked.
+func TestListPassesTheSearchThrough(t *testing.T) {
+	t.Parallel()
+
+	team := uuid.New()
+	s := newFakeStore()
+	call(t, s, &fakeAuthz{}, memberOf(team), http.MethodGet, collection(team)+"?q=%20Invoice%20", nil)
+	if len(s.listArgs) != 1 || s.listArgs[0].Q != "Invoice" {
+		t.Errorf("asked %+v, want q Invoice", s.listArgs)
+	}
+}
+
+func TestListRefusesASearchItCannotUse(t *testing.T) {
+	t.Parallel()
+
+	team := uuid.New()
+	s := newFakeStore()
+	rec := call(t, s, &fakeAuthz{}, memberOf(team), http.MethodGet, collection(team)+"?q=a%00b", nil)
+	if rec.Code != http.StatusBadRequest || len(s.listArgs) != 0 {
+		t.Errorf("status %d after %d store calls, want 400 and none", rec.Code, len(s.listArgs))
+	}
+}

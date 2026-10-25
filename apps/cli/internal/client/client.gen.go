@@ -1331,6 +1331,9 @@ type Cursor = string
 // Limit defines model for Limit.
 type Limit = int32
 
+// Query Examples: invoice
+type Query = string
+
 // RunID defines model for RunID.
 type RunID = openapi_types.UUID
 
@@ -1365,6 +1368,12 @@ type ListAgentsParams struct {
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Q Only the rows whose name contains this, ignoring case. It is taken
+	// literally, so `%` and `_` are characters, not wildcards. Spaces around
+	// it are dropped, and an empty one lists everything. A cursor from a
+	// search goes on within the same search.
+	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
 }
 
 // ListChannelsParams defines parameters for ListChannels.
@@ -1436,6 +1445,12 @@ type ListMCPServersParams struct {
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Q Only the rows whose name contains this, ignoring case. It is taken
+	// literally, so `%` and `_` are characters, not wildcards. Spaces around
+	// it are dropped, and an empty one lists everything. A cursor from a
+	// search goes on within the same search.
+	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
 }
 
 // ListTeamMembersParams defines parameters for ListTeamMembers.
@@ -1517,6 +1532,12 @@ type ListSkillsParams struct {
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Q Only the rows whose name contains this, ignoring case. It is taken
+	// literally, so `%` and `_` are characters, not wildcards. Spaces around
+	// it are dropped, and an empty one lists everything. A cursor from a
+	// search goes on within the same search.
+	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
 }
 
 // ListUsersParams defines parameters for ListUsers.
@@ -4377,6 +4398,18 @@ func NewListAgentsRequest(server string, id TeamID, params *ListAgentsParams) (*
 
 		}
 
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -5238,6 +5271,18 @@ func NewListMCPServersRequest(server string, id TeamID, params *ListMCPServersPa
 		if params.Cursor != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -6466,6 +6511,18 @@ func NewListSkillsRequest(server string, id TeamID, params *ListSkillsParams) (*
 		if params.Cursor != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {

@@ -90,14 +90,16 @@ func (q *Queries) GetMCPServer(ctx context.Context, id uuid.UUID) (McpServer, er
 const listMCPServersByTeam = `-- name: ListMCPServersByTeam :many
 SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at FROM mcp_servers
 WHERE team_id = $1
-  AND (NOT $2::bool
-   OR (created_at, id) < ($3::timestamptz, $4::uuid))
+  AND strpos(lower(name), lower($2::text)) > 0
+  AND (NOT $3::bool
+   OR (created_at, id) < ($4::timestamptz, $5::uuid))
 ORDER BY created_at DESC, id DESC
-LIMIT $5
+LIMIT $6
 `
 
 type ListMCPServersByTeamParams struct {
 	TeamID         uuid.UUID
+	Q              string
 	UseCursor      bool
 	AfterCreatedAt time.Time
 	AfterID        uuid.UUID
@@ -107,6 +109,7 @@ type ListMCPServersByTeamParams struct {
 func (q *Queries) ListMCPServersByTeam(ctx context.Context, arg ListMCPServersByTeamParams) ([]McpServer, error) {
 	rows, err := q.db.Query(ctx, listMCPServersByTeam,
 		arg.TeamID,
+		arg.Q,
 		arg.UseCursor,
 		arg.AfterCreatedAt,
 		arg.AfterID,

@@ -294,6 +294,11 @@ func writeFile(w http.ResponseWriter, f db.SkillFile, body []byte) {
 
 func page(w http.ResponseWriter, r *http.Request, teamID uuid.UUID, limit int32) (db.ListSkillsByTeamParams, bool) {
 	params := db.ListSkillsByTeamParams{TeamID: teamID, PageSize: limit + 1}
+	q, ok := api.Query(w, r)
+	if !ok {
+		return params, false
+	}
+	params.Q = q
 
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {

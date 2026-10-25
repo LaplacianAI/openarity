@@ -393,6 +393,11 @@ func stored(rows []db.AgentMcpServer, skills, delegates []uuid.UUID) grants {
 
 func page(w http.ResponseWriter, r *http.Request, teamID uuid.UUID, limit int32) (db.ListAgentsByTeamParams, bool) {
 	params := db.ListAgentsByTeamParams{TeamID: teamID, PageSize: limit + 1}
+	q, ok := api.Query(w, r)
+	if !ok {
+		return params, false
+	}
+	params.Q = q
 
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {

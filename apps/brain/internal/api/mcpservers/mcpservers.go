@@ -277,6 +277,11 @@ func readRequest(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) (fiel
 
 func page(w http.ResponseWriter, r *http.Request, teamID uuid.UUID, limit int32) (db.ListMCPServersByTeamParams, bool) {
 	params := db.ListMCPServersByTeamParams{TeamID: teamID, PageSize: limit + 1}
+	q, ok := api.Query(w, r)
+	if !ok {
+		return params, false
+	}
+	params.Q = q
 
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {

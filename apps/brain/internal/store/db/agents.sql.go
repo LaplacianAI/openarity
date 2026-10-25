@@ -342,14 +342,16 @@ func (q *Queries) ListAgentSkills(ctx context.Context, agentID uuid.UUID) ([]uui
 const listAgentsByTeam = `-- name: ListAgentsByTeam :many
 SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation FROM agents
 WHERE team_id = $1
-  AND (NOT $2::bool
-   OR (created_at, id) < ($3::timestamptz, $4::uuid))
+  AND strpos(lower(name), lower($2::text)) > 0
+  AND (NOT $3::bool
+   OR (created_at, id) < ($4::timestamptz, $5::uuid))
 ORDER BY created_at DESC, id DESC
-LIMIT $5
+LIMIT $6
 `
 
 type ListAgentsByTeamParams struct {
 	TeamID         uuid.UUID
+	Q              string
 	UseCursor      bool
 	AfterCreatedAt time.Time
 	AfterID        uuid.UUID
@@ -359,6 +361,7 @@ type ListAgentsByTeamParams struct {
 func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamParams) ([]Agent, error) {
 	rows, err := q.db.Query(ctx, listAgentsByTeam,
 		arg.TeamID,
+		arg.Q,
 		arg.UseCursor,
 		arg.AfterCreatedAt,
 		arg.AfterID,

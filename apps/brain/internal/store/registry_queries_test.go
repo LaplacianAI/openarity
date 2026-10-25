@@ -966,3 +966,104 @@ func TestListTeamIDsNamesEveryTeam(t *testing.T) {
 		}
 	}
 }
+
+// --- searching a list by name ---
+
+// A search matches anywhere in the name, whatever its case, and takes what
+// was typed literally: a % or an _ is a character, not a wildcard.
+func TestListingSearchesByNameAnywhereInIt(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	other := mustCreate(t, s, "support")
+
+	type lister func(q string) []string
+	cases := map[string]struct {
+		create func(teamID uuid.UUID, name string)
+		list   lister
+	}{
+		"skills": {
+			func(teamID uuid.UUID, name string) { mustCreateSkill(t, s, teamID, name) },
+			func(q string) []string {
+				rows, err := s.ListSkillsByTeam(t.Context(), db.ListSkillsByTeamParams{TeamID: team.ID, PageSize: 50, Q: q})
+				if err != nil {
+					t.Fatalf("ListSkillsByTeam: %v", err)
+				}
+				out := []string{}
+				for _, r := range rows {
+					out = append(out, r.Name)
+				}
+				return out
+			},
+		},
+		"agents": {
+			func(teamID uuid.UUID, name string) { mustCreateAgent(t, s, teamID, name) },
+			func(q string) []string {
+				rows, err := s.ListAgentsByTeam(t.Context(), db.ListAgentsByTeamParams{TeamID: team.ID, PageSize: 50, Q: q})
+				if err != nil {
+					t.Fatalf("ListAgentsByTeam: %v", err)
+				}
+				out := []string{}
+				for _, r := range rows {
+					out = append(out, r.Name)
+				}
+				return out
+			},
+		},
+		"mcp servers": {
+			func(teamID uuid.UUID, name string) { mustCreateServer(t, s, urlServer(teamID, name)) },
+			func(q string) []string {
+				rows, err := s.ListMCPServersByTeam(t.Context(), db.ListMCPServersByTeamParams{TeamID: team.ID, PageSize: 50, Q: q})
+				if err != nil {
+					t.Fatalf("ListMCPServersByTeam: %v", err)
+				}
+				out := []string{}
+				for _, r := range rows {
+					out = append(out, r.Name)
+				}
+				return out
+			},
+		},
+	}
+	for kind, c := range cases {
+		for _, name := range []string{"invoice-reconciliation", "dunning-invoices", "pdf"} {
+			c.create(team.ID, kind[:2]+"-"+name)
+		}
+		c.create(other.ID, kind[:2]+"-invoice-elsewhere")
+
+		for q, want := range map[string][]string{
+			"":          {kind[:2] + "-pdf", kind[:2] + "-dunning-invoices", kind[:2] + "-invoice-reconciliation"},
+			"invoice":   {kind[:2] + "-dunning-invoices", kind[:2] + "-invoice-reconciliation"},
+			"INVOICE":   {kind[:2] + "-dunning-invoices", kind[:2] + "-invoice-reconciliation"},
+			"reconcil":  {kind[:2] + "-invoice-reconciliation"},
+			"elsewhere": {},
+			"%":         {},
+			"_":         {},
+		} {
+			if got := c.list(q); !slices.Equal(got, want) {
+				t.Errorf("%s, q=%q: listed %v, want %v", kind, q, got, want)
+			}
+		}
+	}
+}
+
+// A search pages like the whole list does: the cursor goes on within the
+// matches, newest first.
+func TestASearchPagesWithTheCursor(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	for _, name := range []string{"invoice-a", "other", "invoice-b", "invoice-c"} {
+		mustCreateSkill(t, s, team.ID, name)
+	}
+
+	first, err := s.ListSkillsByTeam(t.Context(), db.ListSkillsByTeamParams{TeamID: team.ID, PageSize: 2, Q: "invoice"})
+	if err != nil || len(first) != 2 || first[0].Name != "invoice-c" || first[1].Name != "invoice-b" {
+		t.Fatalf("first page = %+v, %v; want invoice-c, invoice-b", first, err)
+	}
+	rest, err := s.ListSkillsByTeam(t.Context(), db.ListSkillsByTeamParams{
+		TeamID: team.ID, PageSize: 2, Q: "invoice",
+		UseCursor: true, AfterCreatedAt: first[1].CreatedAt, AfterID: first[1].ID,
+	})
+	if err != nil || len(rest) != 1 || rest[0].Name != "invoice-a" {
+		t.Errorf("next page = %+v, %v; want invoice-a alone", rest, err)
+	}
+}
