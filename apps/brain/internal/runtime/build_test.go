@@ -239,7 +239,7 @@ func commandServer(name string) db.ListGrantedMCPServersRow {
 func (f *fixture) build(t *testing.T) Built {
 	t.Helper()
 
-	built, err := f.builder.Build(t.Context(), f.run, noSession{})
+	built, err := f.builder.Build(t.Context(), f.run, noSession{}, Lineage{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -252,19 +252,19 @@ func (f *fixture) build(t *testing.T) Built {
 func (f *fixture) buildErr(t *testing.T) error {
 	t.Helper()
 
-	built, err := f.builder.Build(t.Context(), f.run, noSession{})
+	built, err := f.builder.Build(t.Context(), f.run, noSession{}, Lineage{})
 	if err == nil {
 		built.Close()
 	}
 	return err
 }
 
-// toolNames is the MCP tools a build bound: every run also has the brain's
-// own graph tool, which the tests below check on its own.
+// toolNames is the MCP tools a build bound: a run may also have the brain's
+// own graph and delegate tools, which the tests below check on their own.
 func toolNames(built Built) []string {
 	out := make([]string, 0, len(built.Spec.Tools))
 	for _, tl := range built.Spec.Tools {
-		if tl.Description != graphDescription {
+		if tl.Description != graphDescription && tl.Description != delegateDescription {
 			out = append(out, tl.Name)
 		}
 	}
@@ -350,7 +350,7 @@ func TestAnAgentRowBecomesTheSpecItDescribes(t *testing.T) {
 			f.store.agents[a.ID] = a
 
 			session := &noSession{}
-			built, err := f.builder.Build(t.Context(), f.run, session)
+			built, err := f.builder.Build(t.Context(), f.run, session, Lineage{})
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
@@ -583,7 +583,7 @@ func TestConnectingGivesUpWhenTheRunsContextEnds(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		built, err := f.builder.Build(ctx, f.run, noSession{})
+		built, err := f.builder.Build(ctx, f.run, noSession{}, Lineage{})
 		if err == nil {
 			built.Close()
 		}
@@ -628,7 +628,7 @@ func TestConnectingGivesUpAtItsTimeout(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		built, err := f.builder.Build(t.Context(), f.run, noSession{})
+		built, err := f.builder.Build(t.Context(), f.run, noSession{}, Lineage{})
 		if err == nil {
 			built.Close()
 		}
@@ -663,7 +663,7 @@ func TestASessionOutlivesItsConnectTimeout(t *testing.T) {
 	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", serve(t, "fetch").url, true)}
 
 	ctx, cancel := context.WithCancel(t.Context())
-	built, err := f.builder.Build(ctx, f.run, noSession{})
+	built, err := f.builder.Build(ctx, f.run, noSession{}, Lineage{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -727,7 +727,7 @@ func TestBuiltCloseEndsEverySession(t *testing.T) {
 	a, b := serve(t, "one"), serve(t, "two")
 	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("a", a.url, true), urlServer("b", b.url, true)}
 
-	built, err := f.builder.Build(t.Context(), f.run, noSession{})
+	built, err := f.builder.Build(t.Context(), f.run, noSession{}, Lineage{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -956,5 +956,135 @@ func TestBuildKeepsAPrefixedToolNamedGraph(t *testing.T) {
 	}
 	if len(built.Unavailable) != 0 {
 		t.Errorf("unavailable = %+v, want nothing", built.Unavailable)
+	}
+}
+
+// --- the delegate tool ---
+
+func delegateTools(built Built) []agent.Tool {
+	var out []agent.Tool
+	for _, tl := range built.Spec.Tools {
+		if tl.Name == DelegateToolName {
+			out = append(out, tl)
+		}
+	}
+	return out
+}
+
+// withDelegates gives the fixture's builder what NewExecutor gives it, with
+// the fixture's agent set to delegation and listing delegates.
+func (f *fixture) withDelegates(delegation string, delegates ...uuid.UUID) *fakeDelegateStore {
+	f.agent.Delegation = delegation
+	f.store.agents[f.agent.ID] = f.agent
+	ds := &fakeDelegateStore{agents: []db.Agent{f.agent}, delegates: map[uuid.UUID][]uuid.UUID{f.agent.ID: delegates}}
+	f.builder.delegates = &DelegateDeps{Store: ds, Run: &fakeDelegator{}}
+	return ds
+}
+
+// A tool that can only be refused is not given (orchestrator spec §4).
+func TestNoneGetsNoDelegateTool(t *testing.T) {
+	f := newFixture()
+	f.withDelegates("none")
+
+	if got := delegateTools(f.build(t)); len(got) != 0 {
+		t.Errorf("delegate tools = %d for an agent that works alone", len(got))
+	}
+}
+
+func TestAnEmptyListGetsNoDelegateTool(t *testing.T) {
+	f := newFixture()
+	ds := f.withDelegates("listed")
+
+	if got := delegateTools(f.build(t)); len(got) != 0 {
+		t.Errorf("delegate tools = %d for an empty list", len(got))
+	}
+	if ds.listReads != 1 {
+		t.Errorf("the list was read %d times at build, want once", ds.listReads)
+	}
+}
+
+func TestAListWithADelegateGetsTheTool(t *testing.T) {
+	f := newFixture()
+	f.withDelegates("listed", uuid.New())
+
+	if got := delegateTools(f.build(t)); len(got) != 1 {
+		t.Errorf("delegate tools = %d for a listed agent with a delegate, want 1", len(got))
+	}
+}
+
+func TestATeamSettingGetsTheToolWithoutReadingAList(t *testing.T) {
+	f := newFixture()
+	ds := f.withDelegates("team")
+
+	got := delegateTools(f.build(t))
+	if len(got) != 1 || got[0].Description != delegateDescription {
+		t.Fatalf("delegate tools = %d, want the brain's one", len(got))
+	}
+	if ds.listReads != 0 {
+		t.Errorf("a team setting read the list %d times at build", ds.listReads)
+	}
+}
+
+// A child at depth three could only ever be refused, so it is not offered.
+func TestDepthThreeGetsNoDelegateTool(t *testing.T) {
+	for depth, want := range map[int32]int{0: 1, 2: 1, 3: 0} {
+		f := newFixture()
+		f.withDelegates("team")
+		f.run.Depth = depth
+
+		if got := delegateTools(f.build(t)); len(got) != want {
+			t.Errorf("depth %d: delegate tools = %d, want %d", depth, len(got), want)
+		}
+	}
+}
+
+// The tool Build binds carries the run and the lineage Build was given, so a
+// child's cycle check sees the agents above it.
+func TestTheBoundToolCarriesTheRunAndItsLineage(t *testing.T) {
+	f := newFixture()
+	ds := f.withDelegates("team")
+	billing := db.Agent{ID: uuid.New(), TeamID: f.run.TeamID, Name: "billing"}
+	ds.agents = append(ds.agents, billing)
+	runner, ok := f.builder.delegates.Run.(*fakeDelegator)
+	if !ok {
+		t.Fatal("setup: the builder's delegator is not the fake")
+	}
+	l := Lineage{Worker: "w9", Chain: []uuid.UUID{billing.ID, f.agent.ID}}
+
+	built, err := f.builder.Build(t.Context(), f.run, noSession{}, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(built.Close)
+	tl := delegateTools(built)[0]
+
+	_, err = tl.Invoke(agent.WithToolCallID(t.Context(), "c1"), json.RawMessage(`{"agent":"billing","objective":"x","output":"y"}`))
+	if err == nil || err.Error() != `"billing" is already working on this, above you` {
+		t.Errorf("err = %v; want the cycle refusal from the lineage Build was given", err)
+	}
+	if len(runner.delegations()) != 0 {
+		t.Error("a refused call started a child")
+	}
+}
+
+// The brain's delegate keeps the name; a bare server's tool named delegate is
+// left out and said so, whatever the agent's own setting.
+func TestBuildLeavesOutAnMCPToolNamedDelegate(t *testing.T) {
+	for _, setting := range []string{"team", "none"} {
+		t.Run(setting, func(t *testing.T) {
+			f := newFixture()
+			f.withDelegates(setting)
+			f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", serve(t, "delegate", "search").url, true)}
+
+			built := f.build(t)
+
+			if got := toolNames(built); !slices.Equal(got, []string{"search"}) {
+				t.Errorf("MCP tools = %v, want only search", got)
+			}
+			want := []Unavailable{{Name: "delegate", Reason: `the MCP server "web" offers a tool named delegate, which is the brain's own`}}
+			if !reflect.DeepEqual(built.Unavailable, want) {
+				t.Errorf("unavailable = %+v, want %+v", built.Unavailable, want)
+			}
+		})
 	}
 }

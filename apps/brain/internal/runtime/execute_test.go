@@ -1245,3 +1245,164 @@ func TestAParentOutOfBudgetEndsTheChild(t *testing.T) {
 
 	wantStatus(t, child, "failed", "token budget")
 }
+
+// --- delegating, end to end ---
+
+// teamLead sets the fixture's triage to delegate to its team and adds billing.
+func (f *execFixture) teamLead(t *testing.T) uuid.UUID {
+	t.Helper()
+
+	f.mustExec(t, `UPDATE agents SET delegation = 'team' WHERE id = $1`, f.agent)
+	var billing uuid.UUID
+	if err := f.raw.QueryRow(t.Context(), `
+		INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
+		VALUES ($1, 'billing', 'test/model', 1024, 'react', 5) RETURNING id`, f.team).Scan(&billing); err != nil {
+		t.Fatalf("insert billing: %v", err)
+	}
+	return billing
+}
+
+const delegateArgs = `{"agent":"billing","objective":"Refund the duplicate charge on order 4411.","output":"The refund id."}`
+
+// The model calls delegate; the executor the worker builds runs billing as a
+// child, and the report comes back as the tool's result in the parent's next
+// request.
+func TestADelegateCallIsRecordedEndToEnd(t *testing.T) {
+	f := newExecFixture(t, newScripted(
+		callTool("call_1", "delegate", delegateArgs),
+		answer("re_118", 2, 2),
+		answer("refunded: re_118", 1, 1),
+	))
+	f.teamLead(t)
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	if got := deref(f.row(t).Output); got != "refunded: re_118" {
+		t.Errorf("output = %q", got)
+	}
+
+	children := f.children(t, f.run)
+	if len(children) != 1 {
+		t.Fatalf("%d children, want 1", len(children))
+	}
+	child := children[0]
+	wantStatus(t, child, "succeeded", "")
+	if deref(child.Output) != "re_118" || child.Depth != 1 ||
+		child.Input != "Objective: Refund the duplicate charge on order 4411.\n\nReturn: The refund id." {
+		t.Errorf("child output %q depth %d input %q", deref(child.Output), child.Depth, child.Input)
+	}
+	if !strings.HasPrefix(deref(child.ParentToolCall), "call_1#") {
+		t.Errorf("parent_tool_call = %q, want the call's id first", deref(child.ParentToolCall))
+	}
+
+	parent := f.events(t)
+	at := func(kind string) int {
+		return slices.IndexFunc(parent, func(e db.RunEvent) bool { return e.Kind == kind })
+	}
+	if c, d, r := at("tool_call"), at("delegated"), at("tool_result"); c < 0 || c >= d || d >= r {
+		t.Fatalf("parent events = %v, want tool_call, delegated, tool_result in order", kinds(parent))
+	}
+	result := payload[toolResultPayload](t, parent[at("tool_result")])
+	if result.Error != "" || !strings.HasPrefix(result.Output, `<report agent="billing" run="`+child.ID.String()+`" status="succeeded" end="`) ||
+		!strings.Contains(result.Output, "\nre_118\n</report end=\"") {
+		t.Errorf("tool_result = %+v, want billing's report in its envelope", result)
+	}
+	if got := kinds(f.eventsOf(t, child.ID)); got[0] != "started" || got[len(got)-1] != "finished" {
+		t.Errorf("child events = %v, want started … finished", got)
+	}
+
+	requests := f.model.requests()
+	if last := textOf(requests[len(requests)-1].Messages); !strings.Contains(last, "re_118\n</report end=") {
+		t.Errorf("the parent's next request did not carry the report:\n%s", last)
+	}
+}
+
+// A refusal is the tool's result, an error the model can act on; the run goes
+// on and nothing is started.
+func TestARefusedDelegationIsAToolErrorAndTheRunGoesOn(t *testing.T) {
+	f := newExecFixture(t, newScripted(
+		callTool("call_1", "delegate", `{"agent":"nobody","objective":"x","output":"y"}`),
+		answer("I will do it myself", 1, 1),
+	))
+	f.teamLead(t)
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	if got := f.children(t, f.run); len(got) != 0 {
+		t.Errorf("%d children for a refused call", len(got))
+	}
+	events := f.events(t)
+	i := slices.IndexFunc(events, func(e db.RunEvent) bool { return e.Kind == "tool_result" })
+	if i < 0 {
+		t.Fatalf("events = %v, want a tool_result", kinds(events))
+	}
+	if r := payload[toolResultPayload](t, events[i]); r.Error != `no agent in this team is named "nobody"` {
+		t.Errorf("tool_result error = %q", r.Error)
+	}
+}
+
+// Review Focus 3: the root's cancel reaches the child at its next heartbeat
+// through the child's context, and then ends the root.
+func TestCancellingTheRootCancelsTheChildThenTheRoot(t *testing.T) {
+	f := newExecFixture(t, newScripted(callTool("call_1", "delegate", delegateArgs), blocked()))
+	f.teamLead(t)
+	var failed atomic.Value
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// The second call is the child's: by then it is running under the root.
+		for range 2 {
+			if !f.model.waitForACall() {
+				failed.Store("the child never called the model")
+				return
+			}
+		}
+		if _, err := f.pool.Exec(context.Background(), `UPDATE runs SET cancel_requested_at = now() WHERE id = $1`, f.run); err != nil {
+			failed.Store(err.Error())
+		}
+	}()
+	t.Cleanup(func() {
+		<-done
+		if msg, ok := failed.Load().(string); ok {
+			t.Error(msg)
+		}
+	})
+
+	f.mustExecute(t)
+
+	children := f.children(t, f.run)
+	if len(children) != 1 {
+		t.Fatalf("%d children, want 1", len(children))
+	}
+	wantStatus(t, children[0], "cancelled", "")
+	wantStatus(t, f.row(t), "cancelled", "")
+	if children[0].FinishedAt == nil || f.row(t).FinishedAt == nil || children[0].FinishedAt.After(*f.row(t).FinishedAt) {
+		t.Errorf("child finished %v, root %v; want the child first", children[0].FinishedAt, f.row(t).FinishedAt)
+	}
+}
+
+// A child built from its own row gets delegate only if its own setting allows
+// it, whatever its parent's.
+func TestAChildGetsDelegateOnlyIfItsOwnSettingAllows(t *testing.T) {
+	f := newExecFixture(t, newScripted(
+		callTool("call_1", "delegate", delegateArgs),
+		answer("re_118", 1, 1),
+		answer("done", 1, 1),
+	))
+	f.teamLead(t)
+
+	f.mustExecute(t)
+
+	requests := f.model.requests()
+	has := func(r agent.Request) bool {
+		return slices.ContainsFunc(r.Tools, func(d agent.Tool) bool { return d.Name == DelegateToolName })
+	}
+	if !has(requests[0]) {
+		t.Error("the root, set to team, was not offered delegate")
+	}
+	if has(requests[1]) {
+		t.Error("the child, set to none, was offered delegate")
+	}
+}

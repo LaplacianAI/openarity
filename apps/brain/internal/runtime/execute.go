@@ -19,6 +19,7 @@ import (
 type Store interface {
 	EventStore
 	BuildStore
+	DelegateStore
 	ClaimRun(ctx context.Context, arg db.ClaimRunParams) (db.ClaimRunRow, error)
 	HeartbeatRun(ctx context.Context, arg db.HeartbeatRunParams) (*time.Time, error)
 	FinishRun(ctx context.Context, arg db.FinishRunParams) (int64, error)
@@ -68,11 +69,13 @@ type Executor struct {
 func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
 	sessions agent.Store, logger *slog.Logger,
 ) *Executor {
-	return &Executor{
+	e := &Executor{
 		store: s, builder: b, runner: r, endpoint: endpoint,
 		sessions: sessions, logger: logger, every: heartbeatEvery,
 		lostAfter: heartbeatLostAfter,
 	}
+	b.delegates = &DelegateDeps{Store: s, Run: e}
+	return e
 }
 
 type startedPayload struct {
@@ -199,7 +202,7 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		return "", fmt.Errorf("reading the transcript: %w", err)
 	}
 
-	built, err := e.builder.Build(ctx, row, session)
+	built, err := e.builder.Build(ctx, row, session, l)
 	if err != nil {
 		return "", err
 	}
