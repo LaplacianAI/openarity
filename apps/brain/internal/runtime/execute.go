@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -70,6 +71,10 @@ type Executor struct {
 	logger    *slog.Logger
 	every     time.Duration
 	lostAfter time.Duration
+
+	// notes holds, for each run executing here, the channel its recorder takes
+	// the brain's own events on, so they are written in order with the agent's.
+	notes sync.Map
 }
 
 func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
@@ -142,7 +147,7 @@ func (e *Executor) Delegate(ctx context.Context, d Delegation) (db.Run, error) {
 		return db.Run{}, fmt.Errorf("starting %s under run %s: %w", d.Agent.Name, d.Parent.ID, err)
 	}
 
-	err = appendEvent(ctx, e.store, d.Parent.ID, d.Lineage.Worker, "delegated", delegatedPayload{
+	err = e.note(ctx, d.Parent.ID, d.Lineage.Worker, "delegated", delegatedPayload{
 		CallID: d.CallID, Agent: child.AgentName, RunID: child.ID, Depth: child.Depth,
 	})
 	if err != nil {
@@ -238,13 +243,37 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		}
 	}
 
-	events := make(chan agent.Event, 64)
-	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, budgetOf(row.TokenBudget), events, stop)
+	// Unbuffered, so a tool runs only once the recorder holds its call, and a
+	// note written from inside the tool lands after it.
+	events := make(chan agent.Event)
+	notes := make(chan note)
+	e.notes.Store(row.ID, notes)
+	defer e.notes.Delete(row.ID)
+	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, budgetOf(row.TokenBudget), events, notes, stop)
 	result, err := e.runner.Run(ctx, built.Spec, msgs, e.endpoint, events)
 	close(events)
 	<-recorded
 
 	return result.Output, err
+}
+
+// note writes one of the brain's own events through the run's recorder, its
+// only writer while it runs: two writers would race for the next seq, and a
+// delegated event could land before the call it belongs to. A run not
+// executing here has no recorder, and is written to directly.
+func (e *Executor) note(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error {
+	v, _ := e.notes.Load(runID)
+	notes, ok := v.(chan note)
+	if !ok {
+		return appendEvent(ctx, e.store, runID, worker, kind, payload)
+	}
+	n := note{kind: kind, payload: payload, done: make(chan error, 1)}
+	select {
+	case notes <- n:
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+	return <-n.done
 }
 
 func (e *Executor) heartbeat(ctx context.Context, runID uuid.UUID, worker string, stop context.CancelCauseFunc) {

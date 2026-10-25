@@ -388,6 +388,13 @@ reinstalled.
   subtree in the same statement. A finish that finds the run no longer its
   worker's reaps nothing: the run's new owner decides. Children are never
   swept, so these are the only ways a child ends without its parent.
+- **A run's events have one writer while it runs.** `AppendRunEvent` takes
+  `max(seq) + 1`, so two writers race for the same seq: staging hit
+  `run_events_pkey` when `Delegate` wrote `delegated` while the recorder was
+  still writing the parent's `tool_call`. The brain's own events go through
+  the run's recorder as notes (`Executor.note`), and the agent's channel is
+  unbuffered, so a tool starts only once the recorder holds its call: a
+  note written from inside the tool always lands after it.
 - **A child's budget is what the tree has left, at most.** The delegate call
   gives the child `min(its agent's budget, 1,000,000 − the tree's tokens)`,
   written on the child's row. That bounds each child, not the tree: a parent

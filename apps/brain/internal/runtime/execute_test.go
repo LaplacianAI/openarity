@@ -1505,3 +1505,64 @@ func TestAResumeThatCannotStartStillEndsItsChildren(t *testing.T) {
 		t.Errorf("the child is %s, want failed with its parent", r.Status)
 	}
 }
+
+// slowToolCalls holds each tool_call write back, as a busy database does, so
+// anything else writing the run's events meanwhile shows up.
+type slowToolCalls struct {
+	*store.Store
+	delay time.Duration
+}
+
+func (s slowToolCalls) AppendRunEvent(ctx context.Context, p db.AppendRunEventParams) (int32, error) {
+	if p.Kind == "tool_call" || p.Kind == "usage" {
+		time.Sleep(s.delay)
+	}
+	return s.Store.AppendRunEvent(ctx, p)
+}
+
+// A run's events have one writer. The delegated event is written after the
+// call it belongs to, however slowly that call is written, and never races it
+// for the next seq. Found on staging: "duplicate key value violates unique
+// constraint run_events_pkey".
+func TestTheDelegatedEventWaitsForItsCall(t *testing.T) {
+	f := newExecFixture(t, newScripted(
+		callTool("call_1", "delegate", delegateArgs),
+		answer("re_118", 2, 2),
+		callTool("call_2", "delegate", delegateArgs),
+		answer("re_119", 2, 2),
+		callTool("call_3", "delegate", delegateArgs),
+		answer("re_120", 2, 2),
+		answer("refunded all three", 1, 1),
+	))
+	f.teamLead(t)
+	runner, err := agent.New(func(agent.Endpoint) (agent.ModelClient, error) { return f.model, nil }, Patterns()...)
+	if err != nil {
+		t.Fatalf("agent.New: %v", err)
+	}
+	slow := slowToolCalls{Store: f.store, delay: 150 * time.Millisecond}
+	builder := NewBuilder(f.store, &fakeObjects{data: map[string]string{}}, &fakeClients{client: &http.Client{}},
+		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store})
+	f.exec = NewExecutor(slow, builder, runner, agent.Endpoint{BaseURL: "http://model.test"}, f.sessions, quietLogger())
+	f.exec.every = 20 * time.Millisecond
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	// Each call's own three events, in order, and every call succeeded.
+	var calls []string
+	for _, e := range f.events(t) {
+		switch e.Kind {
+		case "tool_call", "delegated":
+			calls = append(calls, e.Kind)
+		case "tool_result":
+			calls = append(calls, e.Kind)
+			if r := payload[toolResultPayload](t, e); r.Error != "" {
+				t.Errorf("a delegate call failed: %s", r.Error)
+			}
+		}
+	}
+	want := slices.Repeat([]string{"tool_call", "delegated", "tool_result"}, 3)
+	if !slices.Equal(calls, want) {
+		t.Errorf("the parent's call events = %v, want each tool_call, delegated, tool_result in turn", calls)
+	}
+}
