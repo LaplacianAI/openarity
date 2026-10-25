@@ -813,7 +813,7 @@ func (f *execFixture) delegation(t *testing.T, callID string) Delegation {
 	}
 	return Delegation{
 		Parent: f.row(t), Agent: a, Brief: childBrief, CallID: callID,
-		Lineage: Lineage{Worker: worker, Chain: []uuid.UUID{f.agent}},
+		Lineage: Lineage{Worker: worker, Chain: []uuid.UUID{f.agent}}, Budget: maxTreeTokens,
 	}
 }
 
@@ -1064,24 +1064,6 @@ func TestALostParentLeavesItsChildUnfinished(t *testing.T) {
 	}
 }
 
-// A child runs under its own agent's budget, copied onto its row when it was
-// written, not the parent's and not the default.
-func TestAChildIsHeldToItsOwnAgentsBudget(t *testing.T) {
-	f := newExecFixture(t, newScripted(answer("a long answer", 3, 2), answer("unreached", 1, 1)))
-	d := f.delegation(t, "call_7")
-	f.mustExec(t, `UPDATE agents SET token_budget = 4 WHERE id = $1`, d.Agent.ID)
-	if d.Agent, _ = f.store.GetAgent(t.Context(), d.Agent.ID); d.Agent.TokenBudget == nil {
-		t.Fatal("setup: billing has no budget")
-	}
-
-	child, err := f.delegate(t, t.Context(), d)
-	if err != nil {
-		t.Fatalf("Delegate: %v", err)
-	}
-
-	wantStatus(t, child, "failed", "token budget")
-}
-
 // Under decision A a resumed parent asks again rather than finding what it
 // asked before, so whatever was still running beneath it fails, at any depth;
 // what had finished is left as it was.
@@ -1091,7 +1073,7 @@ func TestAResumedParentReapsItsChildren(t *testing.T) {
 		t.Helper()
 		r, err := f.store.StartChildRun(t.Context(), db.StartChildRunParams{
 			ID: uuid.New(), ParentID: parent, AgentID: f.agent, TeamID: f.team,
-			ParentToolCall: call, Input: "the work asked for before", Worker: "w-dead",
+			ParentToolCall: call, Input: "the work asked for before", Worker: "w-dead", TokenBudget: maxTreeTokens,
 		})
 		if err != nil {
 			t.Fatalf("StartChildRun: %v", err)
@@ -1143,7 +1125,7 @@ func TestAFreshRunReapsNothing(t *testing.T) {
 		WHERE id = $1`, other)
 	sibling, err := f.store.StartChildRun(t.Context(), db.StartChildRunParams{
 		ID: uuid.New(), ParentID: other, AgentID: f.agent, TeamID: f.team,
-		ParentToolCall: "call_1#x", Input: "not ours", Worker: "w-other",
+		ParentToolCall: "call_1#x", Input: "not ours", Worker: "w-other", TokenBudget: maxTreeTokens,
 	})
 	if err != nil {
 		t.Fatalf("StartChildRun: %v", err)
@@ -1404,5 +1386,122 @@ func TestAChildGetsDelegateOnlyIfItsOwnSettingAllows(t *testing.T) {
 	}
 	if has(requests[1]) {
 		t.Error("the child, set to none, was offered delegate")
+	}
+}
+
+// The budget a delegate call works out is the child's, and holds it.
+func TestAChildIsHeldToTheBudgetItWasGiven(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("refund re_118 issued", 3, 2)))
+	d := f.delegation(t, "call_7")
+	d.Budget = 4
+
+	child, err := f.delegate(t, t.Context(), d)
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	if child.TokenBudget == nil || *child.TokenBudget != 4 {
+		t.Errorf("token_budget = %v, want 4", child.TokenBudget)
+	}
+	wantStatus(t, child, "failed", "token budget")
+}
+
+// startUnder starts a child the way a dead worker's delegate call left it.
+func (f *execFixture) startUnder(t *testing.T, parent uuid.UUID, call, holder string) db.Run {
+	t.Helper()
+
+	r, err := f.store.StartChildRun(t.Context(), db.StartChildRunParams{
+		ID: uuid.New(), ParentID: parent, AgentID: f.agent, TeamID: f.team,
+		ParentToolCall: call, Input: "the work asked for before", Worker: holder, TokenBudget: maxTreeTokens,
+	})
+	if err != nil {
+		t.Fatalf("StartChildRun: %v", err)
+	}
+	return r
+}
+
+const endedSentence = "its parent ended before it did"
+
+// Once a run has ended nothing beneath it is waited on, so whatever is still
+// running there fails, at any depth; a finished child keeps its answer.
+func TestAFinishedRunFailsWhatItLeftRunning(t *testing.T) {
+	f := newExecFixture(t, newScripted())
+	f.mustExec(t, `UPDATE runs SET status = 'running', worker = $2, heartbeat_at = now(), started_at = now()
+		WHERE id = $1`, f.run, worker)
+	running := f.startUnder(t, f.run, "call_1#a", worker)
+	deeper := f.startUnder(t, running.ID, "call_9#b", worker)
+	done := f.startUnder(t, f.run, "call_2#c", worker)
+	f.mustExec(t, `UPDATE runs SET status = 'succeeded', output = 'kept', finished_at = now() WHERE id = $1`, done.ID)
+
+	if err := f.exec.finish(t.Context(), f.run, worker, "succeeded", "done", ""); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+
+	for _, id := range []uuid.UUID{running.ID, deeper.ID} {
+		r, _ := f.store.GetRun(t.Context(), id)
+		wantStatus(t, r, "failed", endedSentence)
+	}
+	if r, _ := f.store.GetRun(t.Context(), done.ID); r.Status != "succeeded" || deref(r.Output) != "kept" {
+		t.Errorf("the finished child became %s %q", r.Status, deref(r.Output))
+	}
+	wantStatus(t, f.row(t), "succeeded", "")
+}
+
+// A finish that found the run no longer this worker's ends nothing: the run's
+// new owner decides what happens beneath it.
+func TestAFinishOnALostRunLeavesItsChildren(t *testing.T) {
+	f := newExecFixture(t, newScripted())
+	f.mustExec(t, `UPDATE runs SET status = 'running', worker = 'w-new', heartbeat_at = now(), started_at = now()
+		WHERE id = $1`, f.run)
+	child := f.startUnder(t, f.run, "call_1#a", "w-new")
+
+	if err := f.exec.finish(t.Context(), f.run, worker, "failed", "", "lost"); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if r, _ := f.store.GetRun(t.Context(), child.ID); r.Status != "running" {
+		t.Errorf("child is %s, want running for the run's new owner", r.Status)
+	}
+}
+
+// Postgres text cannot hold a NUL; an answer or a reason carrying one is
+// still recorded, with the NUL replaced, rather than leaving the run running.
+func TestAFinishWithANULIsRecorded(t *testing.T) {
+	for _, c := range []struct{ status, output, failure, wantOutput, wantError string }{
+		{"succeeded", "a\x00b", "", "a\uFFFDb", "<nil>"},
+		{"failed", "", "bad\x00byte", "<nil>", "bad\uFFFDbyte"},
+	} {
+		t.Run(c.status, func(t *testing.T) {
+			f := newExecFixture(t, newScripted())
+			f.mustExec(t, `UPDATE runs SET status = 'running', worker = $2, heartbeat_at = now(), started_at = now()
+				WHERE id = $1`, f.run, worker)
+
+			if err := f.exec.finish(t.Context(), f.run, worker, c.status, c.output, c.failure); err != nil {
+				t.Fatalf("finish: %v", err)
+			}
+			r := f.row(t)
+			if r.Status != c.status || deref(r.Output) != c.wantOutput || deref(r.Error) != c.wantError {
+				t.Errorf("run is %s, output %q, error %q", r.Status, deref(r.Output), deref(r.Error))
+			}
+		})
+	}
+}
+
+// A resume that fails before it reaches its own reap, here because its agent
+// was deleted while no worker held it, still ends what it left running.
+func TestAResumeThatCannotStartStillEndsItsChildren(t *testing.T) {
+	f := newExecFixture(t, newScripted())
+	child := f.startUnder(t, f.run, "call_1#a", "w-dead")
+	if err := f.sessions.Save(t.Context(), f.run.String(), []agent.Message{
+		{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: runInput}}},
+	}); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
+	f.mustExec(t, `DELETE FROM agents WHERE id = $1`, f.agent)
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "failed", "deleted")
+	r, _ := f.store.GetRun(t.Context(), child.ID)
+	if r.Status != "failed" || r.FinishedAt == nil {
+		t.Errorf("the child is %s, want failed with its parent", r.Status)
 	}
 }

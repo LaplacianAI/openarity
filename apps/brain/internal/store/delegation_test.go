@@ -235,7 +235,7 @@ func startChild(t *testing.T, s *Store, parent db.Run, agentID uuid.UUID, call s
 
 	return s.StartChildRun(t.Context(), db.StartChildRunParams{
 		ID: uuid.New(), ParentID: parent.ID, AgentID: agentID, TeamID: parent.TeamID,
-		ParentToolCall: call, Input: "reconcile last month", Worker: "w1",
+		ParentToolCall: call, Input: "reconcile last month", Worker: "w1", TokenBudget: 1_000_000,
 	})
 }
 
@@ -281,8 +281,8 @@ func TestAChildIsBornRunningUnderItsParent(t *testing.T) {
 		t.Errorf("agent %q %v, want clerk", c.AgentName, c.AgentID)
 	case c.ParentToolCall == nil || *c.ParentToolCall != "call_1#x" || c.Input != "reconcile last month":
 		t.Errorf("call %v input %q", c.ParentToolCall, c.Input)
-	case c.TokenBudget == nil || *c.TokenBudget != 5000:
-		t.Errorf("token budget %v, want the agent's 5000", c.TokenBudget)
+	case c.TokenBudget == nil || *c.TokenBudget != 1_000_000:
+		t.Errorf("token budget %v, want the 1000000 it was given, not the agent's 5000", c.TokenBudget)
 	}
 }
 
@@ -439,5 +439,86 @@ func TestTheSweepNeverTakesOverAChild(t *testing.T) {
 	}
 	if got := statusOf(t, s, child.ID); got.Status != "running" || *got.Worker != "w1" {
 		t.Errorf("child is %s held by %v, want still running under w1", got.Status, got.Worker)
+	}
+}
+
+// A child's budget is what its parent's delegate call gave it, never its
+// agent's own: the call has already taken what the tree has left into account.
+func TestAChildStartsWithTheBudgetItIsGiven(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	root := createRun(t, s, f)
+	claim(t, s, root.ID, "w1")
+	clerk := insertAgent(t, s, f.team, "clerk")
+	if _, err := s.pool.Exec(t.Context(), `UPDATE agents SET token_budget = 500000 WHERE id = $1`, clerk); err != nil {
+		t.Fatal(err)
+	}
+
+	child, err := s.StartChildRun(t.Context(), db.StartChildRunParams{
+		ID: uuid.New(), ParentID: root.ID, AgentID: clerk, TeamID: root.TeamID,
+		ParentToolCall: "c1", Input: "reconcile last month", Worker: "w1", TokenBudget: 120_000,
+	})
+	if err != nil {
+		t.Fatalf("StartChildRun: %v", err)
+	}
+	if child.TokenBudget == nil || *child.TokenBudget != 120_000 {
+		t.Errorf("token_budget = %v, want the 120000 it was given", child.TokenBudget)
+	}
+}
+
+// A run cancelled while queued never runs again, so nothing would ever end
+// the children it left running before its worker stopped. The cancel ends
+// them with it, at any depth, and leaves finished ones and other runs alone.
+func TestCancellingAQueuedRunCancelsWhatItLeftRunning(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	root := createRun(t, s, f)
+	claim(t, s, root.ID, "w1")
+	clerk := insertAgent(t, s, f.team, "clerk")
+	running := mustStartChild(t, s, root, clerk, "c1")
+	deeper := mustStartChild(t, s, running, f.agent, "c2")
+	done := mustStartChild(t, s, root, clerk, "c3")
+	finishAs(t, s, done.ID, "succeeded")
+	other := createRun(t, s, f)
+	claim(t, s, other.ID, "w1")
+	theirs := mustStartChild(t, s, other, clerk, "c4")
+	age(t, s, root.ID, "heartbeat_at", 3600)
+	if _, err := s.TakeOverStaleRuns(t.Context(), 60); err != nil {
+		t.Fatalf("TakeOverStaleRuns: %v", err)
+	}
+
+	got, err := s.RequestRunCancel(t.Context(), root.ID)
+	if err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if got.Status != "cancelled" {
+		t.Fatalf("root is %s, want cancelled", got.Status)
+	}
+	for _, id := range []uuid.UUID{running.ID, deeper.ID} {
+		if r := statusOf(t, s, id); r.Status != "cancelled" || r.FinishedAt == nil {
+			t.Errorf("a child left running is %s (finished %v), want cancelled with the root", r.Status, r.FinishedAt)
+		}
+	}
+	for id, want := range map[uuid.UUID]string{done.ID: "succeeded", theirs.ID: "running"} {
+		if r := statusOf(t, s, id); r.Status != want {
+			t.Errorf("%s is %s, want %s", id, r.Status, want)
+		}
+	}
+}
+
+// A running run's cancel reaches its children through its own context, child
+// first; the request itself only flags the run.
+func TestCancellingARunningRunLeavesItsChildrenToIt(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	root := createRun(t, s, f)
+	claim(t, s, root.ID, "w1")
+	child := mustStartChild(t, s, root, insertAgent(t, s, f.team, "clerk"), "c1")
+
+	if _, err := s.RequestRunCancel(t.Context(), root.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if r := statusOf(t, s, child.ID); r.Status != "running" {
+		t.Errorf("child is %s, want still running for its parent to end", r.Status)
 	}
 }

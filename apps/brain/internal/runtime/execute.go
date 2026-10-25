@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,7 +41,10 @@ var (
 	errWallClock = fmt.Errorf("the run ran past its wall clock of %s", maxWallClock)
 )
 
-const reapReason = "its parent was resumed after the worker stopped; the work was asked for again"
+const (
+	reapReason  = "its parent was resumed after the worker stopped; the work was asked for again"
+	endedReason = "its parent ended before it did"
+)
 
 type Lineage struct {
 	Worker string
@@ -53,6 +57,8 @@ type Delegation struct {
 	Brief   string
 	CallID  string
 	Lineage Lineage
+	// Budget is the child's token budget: its agent's, cut to what the tree has left.
+	Budget int64
 }
 
 type Executor struct {
@@ -130,6 +136,7 @@ func (e *Executor) Delegate(ctx context.Context, d Delegation) (db.Run, error) {
 	child, err := e.store.StartChildRun(ctx, db.StartChildRunParams{
 		ID: id, ParentID: d.Parent.ID, AgentID: d.Agent.ID, TeamID: d.Parent.TeamID,
 		ParentToolCall: d.CallID + "#" + id.String(), Input: d.Brief, Worker: d.Lineage.Worker,
+		TokenBudget: d.Budget,
 	})
 	if err != nil {
 		return db.Run{}, fmt.Errorf("starting %s under run %s: %w", d.Agent.Name, d.Parent.ID, err)
@@ -296,6 +303,9 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
 	defer cancel()
 
+	// Postgres text cannot hold a NUL, and a run whose finish fails stays running.
+	output = strings.ReplaceAll(output, "\x00", "\uFFFD")
+	failure = strings.ReplaceAll(failure, "\x00", "\uFFFD")
 	p := db.FinishRunParams{ID: runID, Worker: worker, Status: status}
 	if status == "succeeded" {
 		p.Output = &output
@@ -310,6 +320,10 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 	}
 	if n == 0 {
 		return nil
+	}
+
+	if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: runID, Reason: endedReason}); err != nil {
+		return fmt.Errorf("ending what run %s left running: %w", runID, err)
 	}
 
 	failure, _ = clip(failure)

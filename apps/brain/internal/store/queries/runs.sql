@@ -62,12 +62,26 @@ WHERE id = sqlc.arg('id') AND worker = sqlc.arg('worker')::text AND status = 'ru
 
 -- Queued: cancelled now, since no worker holds it. Running: flagged for the
 -- worker's next heartbeat. Finished: no row, which the handler answers 409.
+-- A queued run can still have children running, left by a worker that
+-- stopped mid-delegation; it will never run again to end them, so they are
+-- cancelled with it, at any depth. A running run's children are its own to end.
 -- name: RequestRunCancel :one
+WITH RECURSIVE below AS (
+    SELECT r.id FROM runs r
+    WHERE r.parent_run_id = sqlc.arg('id')::uuid
+      AND EXISTS (SELECT 1 FROM runs q WHERE q.id = sqlc.arg('id')::uuid AND q.status = 'queued')
+    UNION ALL
+    SELECT r.id FROM runs r JOIN below b ON r.parent_run_id = b.id
+), ended AS (
+    UPDATE runs SET status = 'cancelled', finished_at = now(),
+                    cancel_requested_at = coalesce(cancel_requested_at, now())
+    WHERE runs.id IN (SELECT below.id FROM below) AND runs.status = 'running'
+)
 UPDATE runs SET
     cancel_requested_at = coalesce(cancel_requested_at, now()),
     status      = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
     finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END
-WHERE id = sqlc.arg('id') AND status IN ('queued', 'running')
+WHERE runs.id = sqlc.arg('id')::uuid AND runs.status IN ('queued', 'running')
 RETURNING *;
 
 -- name: ListUnstartedRuns :many
@@ -111,7 +125,7 @@ INSERT INTO runs (id, team_id, session_id, parent_run_id, root_run_id, parent_to
                   worker, heartbeat_at, started_at)
 SELECT sqlc.arg('id')::uuid, p.team_id, p.session_id, p.id, p.root_run_id,
        sqlc.arg('parent_tool_call')::text, p.depth + 1,
-       a.id, a.name, p.user_id, 'running', sqlc.arg('input')::text, a.token_budget,
+       a.id, a.name, p.user_id, 'running', sqlc.arg('input')::text, sqlc.arg('token_budget')::bigint,
        sqlc.arg('worker')::text, now(), now()
 FROM runs p
 JOIN agents a ON a.id = sqlc.arg('agent_id')::uuid AND a.team_id = p.team_id

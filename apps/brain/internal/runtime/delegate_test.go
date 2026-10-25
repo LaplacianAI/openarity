@@ -455,3 +455,32 @@ func TestAChildThatNeverRanIsAToolError(t *testing.T) {
 		t.Errorf("a child that never ran produced a report: %s", out)
 	}
 }
+
+// A child may spend what its own budget allows, but never more than the tree
+// has left of its 1,000,000.
+func TestAChildGetsNoMoreThanTheTreeHasLeft(t *testing.T) {
+	own := func(n int64) *int64 { return &n }
+	for name, c := range map[string]struct {
+		own        *int64
+		used, want int64
+	}{
+		"the default, in a fresh tree": {nil, 0, 1_000_000},
+		"the default, near the limit":  {nil, 900_000, 100_000},
+		"its own, under what is left":  {own(50_000), 900_000, 50_000},
+		"its own, over what is left":   {own(500_000), 900_000, 100_000},
+		"its own, over the whole tree": {own(5_000_000), 0, 1_000_000},
+		"one token left":               {nil, 999_999, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newDelegateFixture()
+			f.store.usage = db.TreeUsageRow{Tokens: c.used, Runs: 1}
+			f.store.agents[1].TokenBudget = c.own
+			if _, err := f.invoke(t, toBilling); err != nil {
+				t.Fatalf("invoke: %v", err)
+			}
+			if got := f.run.delegations()[0].Budget; got != c.want {
+				t.Errorf("budget = %d, want %d", got, c.want)
+			}
+		})
+	}
+}

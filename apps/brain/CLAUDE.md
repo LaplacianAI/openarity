@@ -380,6 +380,21 @@ reinstalled.
   delegated, so it asks again, and a child can only be rejoined once runs can
   be resumed by id (runtime slice 8). The cost is the reaped child's spend.
   Leaving it running would charge for two answers to one question.
+- **Whatever ends a run ends what it left running.** `finish` reaps the
+  run's running subtree once it has recorded the run, so a resume that fails
+  before its own reap (its agent deleted, its clock spent) leaves no child
+  behind, and neither does a child whose own finish failed. A run cancelled
+  while queued never runs again, so `RequestRunCancel` cancels its running
+  subtree in the same statement. A finish that finds the run no longer its
+  worker's reaps nothing: the run's new owner decides. Children are never
+  swept, so these are the only ways a child ends without its parent.
+- **A child's budget is what the tree has left, at most.** The delegate call
+  gives the child `min(its agent's budget, 1,000,000 − the tree's tokens)`,
+  written on the child's row. That bounds each child, not the tree: a parent
+  keeps its own budget and spends after its child returns, so a deep tree
+  can still pass 1,000,000 by what its parents spend afterwards. A cap on the
+  whole tree means checking the tree on every usage event, which is left for
+  the fan-out slice that needs it.
 - **A report is data in an envelope only the brain can close.** The child's
   output goes back as `<report agent run status end>` … `</report end>`, where
   `end` is `rand.Text()`, fresh per report and never shown to the child.
