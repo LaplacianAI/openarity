@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -61,6 +61,23 @@ const registry = {
   },
 };
 
+/** Picks a name in the picker that adds a noun, then closes it. */
+async function pick(noun: string, name: string) {
+  await userEvent.click(screen.getByRole("button", { name: new RegExp(`add ${noun}`, "i") }));
+  await userEvent.click(await screen.findByRole("option", { name }));
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+}
+
+/** The names on the chips of the picker labelled label, in order. */
+function chips(label: string): string[] {
+  const list = screen.queryByRole("list", { name: label });
+  if (!list) return [];
+  return within(list)
+    .getAllByRole("listitem")
+    .map((li) => li.querySelector("span")?.textContent ?? "");
+}
+
 const draft = {
   name: "triage",
   description: " Sorts ",
@@ -70,7 +87,7 @@ const draft = {
   pattern: "react",
   maxSteps: "5",
   tokenBudget: "",
-  servers: ["m1"],
+  servers: [{ id: "m1" }],
   skills: ["s1"],
   delegation: "none" as const,
   delegates: [] as string[],
@@ -222,8 +239,8 @@ it("defines an agent with the servers and skills ticked", async () => {
   await userEvent.click(await screen.findByRole("button", { name: /define agent/i }));
   await userEvent.type(screen.getByLabelText(/^name$/i), "reviewer");
   await userEvent.type(screen.getByLabelText(/^model$/i), "anthropic/claude-sonnet-5-5");
-  await userEvent.click(await screen.findByRole("checkbox", { name: "github" }));
-  await userEvent.click(screen.getByRole("checkbox", { name: "pdf" }));
+  await pick("server", "github");
+  await pick("skill", "pdf");
   await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
 
   await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
@@ -300,9 +317,9 @@ describe("editing an agent", () => {
     show(Agents);
     await userEvent.click(await screen.findByRole("button", { name: /^edit$/i }));
     await screen.findByRole("heading", { name: /edit agent/i });
-    // The grants are ticked once the team's servers and skills have loaded.
-    await screen.findByRole("checkbox", { name: /github/ });
-    await screen.findByRole("checkbox", { name: /pdf/ });
+    // The grants show by name once the team's servers and skills have loaded.
+    await waitFor(() => expect(chips("MCP servers")).toEqual(["github"]));
+    await waitFor(() => expect(chips("Skills")).toEqual(["pdf"]));
   }
 
   function putBody(seen: { method: string; body: unknown }[]) {
@@ -327,10 +344,12 @@ describe("editing an agent", () => {
     expect(screen.getByLabelText(/^max steps$/i)).toHaveValue("7");
     expect(screen.getByLabelText(/^token budget$/i)).toHaveValue("250000");
     expect(screen.getByLabelText(/^instructions$/i)).toHaveValue("Label it.");
-    expect(screen.getByRole("checkbox", { name: /github/ })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /pdf/ })).toBeChecked();
+    expect(chips("MCP servers")).toEqual(["github"]);
+    expect(chips("Skills")).toEqual(["pdf"]);
     // A grant limited to some tools says which, so it is not taken for whole.
-    expect(screen.getByText(/only search/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tools of github" })).toHaveTextContent(
+      "only search",
+    );
     expect(screen.getByRole("button", { name: /^save$/i })).toBeInTheDocument();
   });
 
@@ -359,7 +378,7 @@ describe("editing an agent", () => {
   it("revokes a skill that is unticked", async () => {
     const seen = editing(current);
     await openEdit();
-    await userEvent.click(screen.getByRole("checkbox", { name: /pdf/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove pdf" }));
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
@@ -462,7 +481,7 @@ describe("whom an agent may hand work to", () => {
     await userEvent.click(screen.getByRole("checkbox", { name: ALONE }));
 
     expect(screen.getByLabelText(/^hands work to$/i)).toHaveValue("team");
-    expect(screen.queryByRole("checkbox", { name: "billing" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /add agent/i })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
 
     await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
@@ -474,7 +493,7 @@ describe("whom an agent may hand work to", () => {
     const seen = await defining();
     await userEvent.click(screen.getByRole("checkbox", { name: ALONE }));
     await userEvent.selectOptions(screen.getByLabelText(/^hands work to$/i), "listed");
-    await userEvent.click(await screen.findByRole("checkbox", { name: "billing" }));
+    await pick("agent", "billing");
     await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
 
     await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
@@ -485,7 +504,7 @@ describe("whom an agent may hand work to", () => {
     const seen = await defining();
     await userEvent.click(screen.getByRole("checkbox", { name: ALONE }));
     await userEvent.selectOptions(screen.getByLabelText(/^hands work to$/i), "listed");
-    await userEvent.click(await screen.findByRole("checkbox", { name: "billing" }));
+    await pick("agent", "billing");
     await userEvent.click(screen.getByRole("checkbox", { name: ALONE }));
     await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
 
@@ -543,17 +562,19 @@ describe("whom an agent may hand work to", () => {
       await openEdit();
 
       expect(screen.getByLabelText(/^hands work to$/i)).toHaveValue("listed");
-      expect(await screen.findByRole("checkbox", { name: "billing" })).toBeChecked();
-      expect(screen.getByRole("checkbox", { name: "clerk" })).not.toBeChecked();
-      expect(screen.queryByRole("checkbox", { name: "triage" })).toBeNull();
+      await waitFor(() => expect(chips("Agents it may hand work to")).toEqual(["billing"]));
+      await userEvent.click(screen.getByRole("button", { name: /add agent/i }));
+      await screen.findByRole("option", { name: "clerk" });
+      expect(screen.queryByRole("option", { name: "triage" })).toBeNull();
+      await userEvent.keyboard("{Escape}");
       expect(await save(seen)).toMatchObject({ delegation: "listed", delegates: ["a3"] });
     });
 
     it("sends a list changed in the form", async () => {
       const seen = editing({ ...stored, delegation: "listed", delegates: ["a3"] });
       await openEdit();
-      await userEvent.click(await screen.findByRole("checkbox", { name: "billing" }));
-      await userEvent.click(screen.getByRole("checkbox", { name: "clerk" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Remove billing" }));
+      await pick("agent", "clerk");
 
       expect(await save(seen)).toMatchObject({ delegation: "listed", delegates: ["a4"] });
     });
@@ -566,6 +587,182 @@ describe("whom an agent may hand work to", () => {
       const body = await save(seen);
       expect(body.delegation).toBe("none");
       expect(body).not.toHaveProperty("delegates");
+    });
+  });
+});
+
+/* ----------------------------------------------------------- the pickers */
+
+describe("the form's pickers", () => {
+  const stored = {
+    ...triage,
+    instructions: "",
+    max_steps: 5,
+    steer_continuations: 0,
+    parser: false,
+    mcp_servers: [],
+    skills: [],
+    delegation: "none",
+    delegates: [],
+  };
+  const loops = {
+    "GET /teams/{id}/loops": { body: { items: [{ name: "plan" }, { name: "react" }] } },
+  };
+
+  function editing(agent: Record<string, unknown>, extra: Parameters<typeof brain>[0] = {}) {
+    return brain({
+      ...team(["agent:write"]),
+      ...registry,
+      ...loops,
+      "GET /teams/{id}/agents/{agentID}": { body: agent },
+      "PUT /teams/{id}/agents/{agentID}": { body: agent },
+      ...extra,
+    });
+  }
+
+  async function openEdit() {
+    show(Agents);
+    await userEvent.click(await screen.findByRole("button", { name: /^edit$/i }));
+    await screen.findByRole("heading", { name: /edit agent/i });
+  }
+
+  async function save(seen: { method: string; body: unknown }[]) {
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+    return JSON.parse(String(seen.find((s) => s.method === "PUT")?.body));
+  }
+
+  it("offers the patterns the brain runs", async () => {
+    const seen = editing(stored);
+    await openEdit();
+
+    const pattern = screen.getByLabelText(/^pattern$/i);
+    await waitFor(() =>
+      expect(
+        within(pattern)
+          .getAllByRole("option")
+          .map((o) => o.textContent),
+      ).toEqual(["plan", "react"]),
+    );
+    expect(pattern).toHaveValue("react");
+    await userEvent.selectOptions(pattern, "plan");
+    expect((await save(seen)).pattern).toBe("plan");
+  });
+
+  // A pattern the brain no longer lists is still the agent's; the form shows
+  // it rather than quietly changing it on save.
+  it("keeps a pattern the brain does not list", async () => {
+    const seen = editing({ ...stored, pattern: "custom-triage" });
+    await openEdit();
+
+    const pattern = screen.getByLabelText(/^pattern$/i);
+    expect(pattern).toHaveValue("custom-triage");
+    expect((await save(seen)).pattern).toBe("custom-triage");
+  });
+
+  it("asks the brain for what was typed, a short page at a time", async () => {
+    const seen = editing(stored);
+    await openEdit();
+
+    await userEvent.click(screen.getByRole("button", { name: /add skill/i }));
+    await userEvent.type(await screen.findByRole("combobox", { name: /search skills/i }), "pd");
+    await waitFor(() =>
+      expect(
+        seen.some((s) => s.path.startsWith(`/teams/${TEAM}/skills?`) && s.path.includes("q=pd")),
+      ).toBe(true),
+    );
+    const asked = seen.find((s) => s.path.includes("q=pd"));
+    expect(asked?.path).toContain("limit=20");
+  });
+
+  // A grant past the team's first page is not among the names already read,
+  // so the chip reads it by id rather than showing the id.
+  it("names a grant the first page did not hold", async () => {
+    editing(
+      { ...stored, skills: ["s9"] },
+      {
+        "GET /teams/{id}/skills/{skillID}": {
+          body: { id: "s9", team_id: TEAM, name: "far-away", description: "", source: "upload" },
+        },
+      },
+    );
+    await openEdit();
+
+    await waitFor(() => expect(chips("Skills")).toEqual(["far-away"]));
+  });
+
+  describe("a server's tools", () => {
+    const tools = {
+      "GET /teams/{id}/mcp-servers/{sid}/tools": {
+        body: {
+          items: [
+            { name: "search_code", description: "", input_schema: {} },
+            { name: "create_issue", description: "", input_schema: {} },
+          ],
+        },
+      },
+    };
+
+    it("limits a server granted whole to the tools ticked", async () => {
+      const seen = editing({ ...stored, mcp_servers: [{ id: "m1" }] }, tools);
+      await openEdit();
+
+      const limit = await screen.findByRole("button", { name: "Tools of github" });
+      expect(limit).toHaveTextContent("every tool");
+      await userEvent.click(limit);
+      await userEvent.click(await screen.findByRole("checkbox", { name: "search_code" }));
+      expect(screen.getByRole("checkbox", { name: "Every tool" })).not.toBeChecked();
+      await userEvent.keyboard("{Escape}");
+
+      expect((await save(seen)).mcp_servers).toEqual([{ id: "m1", allow: ["search_code"] }]);
+    });
+
+    // A grant of no tools grants nothing, so unticking the last is every tool.
+    it("goes back to every tool when the last is unticked, or Every tool is", async () => {
+      for (const untick of ["search_code", "Every tool"]) {
+        const seen = editing(
+          { ...stored, mcp_servers: [{ id: "m1", allow: ["search_code"] }] },
+          tools,
+        );
+        const { unmount } = await (async () => {
+          const r = show(Agents);
+          await userEvent.click(await screen.findByRole("button", { name: /^edit$/i }));
+          await screen.findByRole("heading", { name: /edit agent/i });
+          return r;
+        })();
+        await userEvent.click(await screen.findByRole("button", { name: "Tools of github" }));
+        await userEvent.click(await screen.findByRole("checkbox", { name: untick }));
+        await userEvent.keyboard("{Escape}");
+
+        expect((await save(seen)).mcp_servers).toEqual([{ id: "m1" }]);
+        unmount();
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("keeps a server's limit when another server is added", async () => {
+      const linear = {
+        id: "m2",
+        team_id: TEAM,
+        name: "linear",
+        url: "https://c.d",
+        env: {},
+        bare: false,
+        created_at: STAMP,
+        updated_at: STAMP,
+      };
+      const servers = registry["GET /teams/{id}/mcp-servers"].body.items;
+      const seen = editing(
+        { ...stored, mcp_servers: [{ id: "m1", allow: ["search_code"] }] },
+        { ...tools, "GET /teams/{id}/mcp-servers": { body: { items: [...servers, linear] } } },
+      );
+      await openEdit();
+
+      await pick("server", "linear");
+      expect((await save(seen)).mcp_servers).toEqual([
+        { id: "m1", allow: ["search_code"] },
+        { id: "m2" },
+      ]);
     });
   });
 });

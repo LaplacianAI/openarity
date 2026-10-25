@@ -1,5 +1,13 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { ChevronDown } from "lucide-react";
+import { Popover } from "radix-ui";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -7,8 +15,12 @@ import {
   createAgent,
   deleteAgent,
   getAgent,
+  getMCPServer,
+  getSkill,
   listAgents,
+  listLoops,
   listMCPServers,
+  listMCPTools,
   listSkills,
   replaceAgent,
 } from "@/api";
@@ -16,6 +28,7 @@ import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type { Agent, AgentRequest, AgentSummary, Delegation, MCPServerGrant } from "@/api/types";
+import { type Picked, Picker, type SearchResult } from "@/components/picker";
 import { Field, ReadOnlyNote, Tag, TextArea } from "@/components/registry-bits";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,11 +66,50 @@ function useNames(teamId: string | null) {
     queryFn: () => listAgents(teamId as string),
     enabled: Boolean(teamId),
   });
+  const loops = useQuery({
+    queryKey: ["loops", teamId],
+    queryFn: () => listLoops(teamId as string),
+    enabled: Boolean(teamId),
+  });
   return {
     servers: servers.data?.items ?? [],
     skills: skills.data?.items ?? [],
     agents: agents.data?.items ?? [],
+    loops: (loops.data?.items ?? []).map((l) => l.name),
   };
+}
+
+/** How many matches a picker shows at once; the rest are a search away. */
+const PICK_PAGE = 20;
+
+function searchResult(page: { items: Picked[]; next_cursor?: string | null }): SearchResult {
+  return {
+    items: page.items.map((i) => ({ id: i.id, name: i.name })),
+    more: Boolean(page.next_cursor),
+  };
+}
+
+/**
+ * Names for the ids an agent holds: from what is already known, and the rest
+ * read one by one. A team's first page is known; a grant past it, in a team
+ * of thousands, is not.
+ */
+function useNamed(
+  ids: string[],
+  known: Map<string, string>,
+  key: readonly unknown[],
+  read: (id: string) => Promise<{ name: string }>,
+): Picked[] {
+  const missing = ids.filter((id) => !known.has(id));
+  const read_ = useQueries({
+    queries: missing.map((id) => ({
+      queryKey: [...key, id, "name"],
+      queryFn: () => read(id),
+      staleTime: Number.POSITIVE_INFINITY,
+    })),
+  });
+  const fetched = new Map(missing.map((id, i) => [id, read_[i]?.data?.name]));
+  return ids.map((id) => ({ id, name: known.get(id) ?? fetched.get(id) ?? id }));
 }
 
 function Agents() {
@@ -296,7 +348,7 @@ type Draft = {
   pattern: string;
   maxSteps: string;
   tokenBudget: string;
-  servers: string[];
+  servers: MCPServerGrant[];
   skills: string[];
   delegation: Delegation;
   /** Kept while another choice is shown, and sent only with listed. */
@@ -347,7 +399,7 @@ export function agentRequest(d: Draft): AgentRequest | string {
     model: { name: d.model.trim(), max_tokens: maxTokens },
     pattern: d.pattern.trim(),
     max_steps: maxSteps,
-    mcp_servers: d.servers.map((id) => ({ id })),
+    mcp_servers: d.servers.map((g) => (g.allow ? { id: g.id, allow: g.allow } : { id: g.id })),
     skills: d.skills,
     ...(budget === undefined ? {} : { token_budget: budget }),
     delegation: d.delegation,
@@ -366,7 +418,7 @@ export function draftOf(a: Agent): Draft {
     pattern: a.pattern,
     maxSteps: String(a.max_steps),
     tokenBudget: a.token_budget === undefined ? "" : String(a.token_budget),
-    servers: a.mcp_servers.map((g) => g.id),
+    servers: a.mcp_servers,
     skills: a.skills,
     delegation: a.delegation,
     delegates: a.delegates,
@@ -377,9 +429,9 @@ export function draftOf(a: Agent): Draft {
 const UNSHOWN = ["steer_continuations", "output_schema", "parser", "parser_model"] as const;
 
 /**
- * The PUT for an edit: the agent as it is, with the form laid over it. A
- * server still ticked keeps the grant it had, so a grant limited to some
- * tools stays limited; only a newly ticked server is granted whole.
+ * The PUT for an edit: the agent as it is, with the form laid over it. The
+ * form carries each server's tool limit, so a grant limited to some tools
+ * stays limited unless the form changed it.
  */
 export function replaceRequest(a: Agent, d: Draft): AgentRequest | string {
   const form = agentRequest(d);
@@ -388,21 +440,12 @@ export function replaceRequest(a: Agent, d: Draft): AgentRequest | string {
   for (const k of UNSHOWN) {
     if (a[k] !== undefined && a[k] !== null) (kept as Record<string, unknown>)[k] = a[k];
   }
-  const grant = (id: string): MCPServerGrant => {
-    const old = a.mcp_servers.find((g) => g.id === id);
-    return old?.allow ? { id, allow: old.allow } : { id };
-  };
   const body: AgentRequest = {
     ...form,
     ...kept,
     model: { ...a.model, ...form.model },
-    mcp_servers: d.servers.map(grant),
   };
   return body;
-}
-
-function toggle(list: string[], id: string): string[] {
-  return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
 }
 
 function DefineDialog({
@@ -510,7 +553,6 @@ function EditDialog({
             teamId={teamId}
             draft={edited ?? draftOf(agent)}
             set={(patch) => setEdited((d) => ({ ...(d ?? draftOf(agent)), ...patch }))}
-            limits={agent.mcp_servers}
             self={agent.id}
             toRequest={(d) => replaceRequest(agent, d)}
             submit="Save"
@@ -531,7 +573,6 @@ function AgentForm({
   teamId,
   draft,
   set,
-  limits,
   self,
   toRequest,
   submit,
@@ -545,8 +586,6 @@ function AgentForm({
   teamId: string;
   draft: Draft;
   set: (patch: Partial<Draft>) => void;
-  /** The grants the agent has now, to say which are limited to some tools. */
-  limits?: MCPServerGrant[];
   /** The agent being edited, which is never offered as its own delegate. */
   self?: string;
   toRequest: (d: Draft) => AgentRequest | string;
@@ -559,6 +598,29 @@ function AgentForm({
   onCancel: () => void;
 }) {
   const names = useNames(teamId);
+  // Names learned from a pick, so a chip says what it is before any read.
+  const [learned, setLearned] = useState<Map<string, string>>(new Map());
+  const learn = (picked: Picked[]) =>
+    setLearned((m) => new Map([...m, ...picked.map((p): [string, string] => [p.id, p.name])]));
+  const known = (list: { id: string; name: string }[]) =>
+    new Map([...list.map((i): [string, string] => [i.id, i.name]), ...learned]);
+
+  const servers = useNamed(
+    draft.servers.map((g) => g.id),
+    known(names.servers),
+    ["mcp-servers", teamId],
+    (id) => getMCPServer(teamId, id),
+  );
+  const skills = useNamed(draft.skills, known(names.skills), ["skills", teamId], (id) =>
+    getSkill(teamId, id),
+  );
+  const delegates = useNamed(draft.delegates, known(names.agents), ["agents", teamId], (id) =>
+    getAgent(teamId, id),
+  );
+  const patterns =
+    draft.pattern === "" || names.loops.includes(draft.pattern)
+      ? names.loops
+      : [draft.pattern, ...names.loops];
 
   return (
     <form
@@ -590,16 +652,19 @@ function AgentForm({
             onChange={(e) => set({ model: e.target.value })}
           />
         </Field>
-        <Field
-          label="Pattern"
-          htmlFor="agent-pattern"
-          hint="react, plan, rewoo, reflection, code or custom."
-        >
-          <Input
+        <Field label="Pattern" htmlFor="agent-pattern" hint="How the agent works through a task.">
+          <select
             id="agent-pattern"
             value={draft.pattern}
             onChange={(e) => set({ pattern: e.target.value })}
-          />
+            className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
+          >
+            {patterns.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Max tokens" htmlFor="agent-tokens">
@@ -654,46 +719,53 @@ function AgentForm({
       <fieldset className="grid gap-3 sm:grid-cols-2">
         <div>
           <legend className="mb-1 text-xs font-medium">MCP servers</legend>
-          {names.servers.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground">The team has none.</p>
-          ) : (
-            names.servers.map((s) => {
-              const only = limits?.find((g) => g.id === s.id)?.allow;
-              return (
-                <label key={s.id} className="flex items-center gap-1.5 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={draft.servers.includes(s.id)}
-                    onChange={() => set({ servers: toggle(draft.servers, s.id) })}
-                  />
-                  {s.name}
-                  {only ? (
-                    <span className="text-muted-foreground">only {only.join(", ")}</span>
-                  ) : null}
-                </label>
-              );
-            })
-          )}
+          <Picker
+            label="MCP servers"
+            noun="server"
+            value={servers}
+            onChange={(next) => {
+              learn(next);
+              set({
+                servers: next.map((p) => draft.servers.find((g) => g.id === p.id) ?? { id: p.id }),
+              });
+            }}
+            search={(q) => listMCPServers(teamId, null, { q, limit: PICK_PAGE }).then(searchResult)}
+            searchKey={["mcp-servers", teamId]}
+            extra={(p) => (
+              <ToolLimit
+                teamId={teamId}
+                server={p}
+                grant={draft.servers.find((g) => g.id === p.id) ?? { id: p.id }}
+                onChange={(g) =>
+                  set({ servers: draft.servers.map((old) => (old.id === g.id ? g : old)) })
+                }
+              />
+            )}
+          />
         </div>
         <div>
           <legend className="mb-1 text-xs font-medium">Skills</legend>
-          {names.skills.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground">The team has none.</p>
-          ) : (
-            names.skills.map((s) => (
-              <label key={s.id} className="flex items-center gap-1.5 text-xs">
-                <input
-                  type="checkbox"
-                  checked={draft.skills.includes(s.id)}
-                  onChange={() => set({ skills: toggle(draft.skills, s.id) })}
-                />
-                {s.name}
-              </label>
-            ))
-          )}
+          <Picker
+            label="Skills"
+            noun="skill"
+            value={skills}
+            onChange={(next) => {
+              learn(next);
+              set({ skills: next.map((p) => p.id) });
+            }}
+            search={(q) => listSkills(teamId, null, { q, limit: PICK_PAGE }).then(searchResult)}
+            searchKey={["skills", teamId]}
+          />
         </div>
       </fieldset>
-      <Delegates draft={draft} set={set} agents={names.agents.filter((a) => a.id !== self)} />
+      <Delegates
+        teamId={teamId}
+        draft={draft}
+        set={set}
+        chosen={delegates}
+        learn={learn}
+        self={self}
+      />
       {problem ? (
         <p role="alert" className="text-xs text-destructive">
           {problem}
@@ -718,13 +790,19 @@ function AgentForm({
  * sends it.
  */
 function Delegates({
+  teamId,
   draft,
   set,
-  agents,
+  chosen,
+  learn,
+  self,
 }: {
+  teamId: string;
   draft: Draft;
   set: (patch: Partial<Draft>) => void;
-  agents: AgentSummary[];
+  chosen: Picked[];
+  learn: (picked: Picked[]) => void;
+  self?: string;
 }) {
   const alone = draft.delegation === "none";
   return (
@@ -754,22 +832,98 @@ function Delegates({
       {draft.delegation === "listed" ? (
         <div>
           <p className="mb-1 text-xs font-medium">Agents it may hand work to</p>
-          {agents.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground">The team has no other agents.</p>
-          ) : (
-            agents.map((a) => (
-              <label key={a.id} className="flex items-center gap-1.5 text-xs">
-                <input
-                  type="checkbox"
-                  checked={draft.delegates.includes(a.id)}
-                  onChange={() => set({ delegates: toggle(draft.delegates, a.id) })}
-                />
-                {a.name}
-              </label>
-            ))
-          )}
+          <Picker
+            label="Agents it may hand work to"
+            noun="agent"
+            value={chosen}
+            onChange={(next) => {
+              learn(next);
+              set({ delegates: next.map((p) => p.id) });
+            }}
+            search={(q) => listAgents(teamId, null, { q, limit: PICK_PAGE }).then(searchResult)}
+            searchKey={["agents", teamId]}
+            exclude={self ? [self] : []}
+          />
         </div>
       ) : null}
     </fieldset>
+  );
+}
+
+/**
+ * A granted server's tools: every one, or only those ticked. Unticking the
+ * last goes back to every tool, since a grant of no tools grants nothing.
+ */
+function ToolLimit({
+  teamId,
+  server,
+  grant,
+  onChange,
+}: {
+  teamId: string;
+  server: Picked;
+  grant: MCPServerGrant;
+  onChange: (g: MCPServerGrant) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const tools = useQuery({
+    queryKey: ["mcp-servers", teamId, server.id, "tools"],
+    queryFn: () => listMCPTools(teamId, server.id),
+    enabled: open,
+  });
+  const only = grant.allow;
+  const pick = (name: string) => {
+    const next = only?.includes(name) ? only.filter((t) => t !== name) : [...(only ?? []), name];
+    onChange(next.length === 0 ? { id: grant.id } : { id: grant.id, allow: next });
+  };
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          aria-label={`Tools of ${server.name}`}
+          className="inline-flex items-center gap-0.5 rounded px-1 text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <span className="max-w-40 truncate">
+            {only ? `only ${only.join(", ")}` : "every tool"}
+          </span>
+          <ChevronDown aria-hidden className="size-3" />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="start"
+          sideOffset={4}
+          aria-label={`Tools of ${server.name}`}
+          className="z-50 max-h-72 w-64 overflow-y-auto rounded-md border border-border bg-popover p-2 text-xs text-popover-foreground shadow-md"
+        >
+          <label className="flex items-center gap-1.5 py-0.5 font-medium">
+            <input type="checkbox" checked={!only} onChange={() => onChange({ id: grant.id })} />
+            Every tool
+          </label>
+          {tools.isPending ? (
+            <p className="py-1 text-muted-foreground">Loading tools…</p>
+          ) : tools.isError ? (
+            <p className="py-1 text-destructive">{tools.error.message}</p>
+          ) : tools.data.items.length === 0 ? (
+            <p className="py-1 text-muted-foreground">
+              No tools discovered yet. Every tool it offers is granted.
+            </p>
+          ) : (
+            tools.data.items.map((t) => (
+              <label key={t.name} className="flex items-center gap-1.5 py-0.5">
+                <input
+                  type="checkbox"
+                  checked={Boolean(only?.includes(t.name))}
+                  onChange={() => pick(t.name)}
+                />
+                <span className="truncate font-mono">{t.name}</span>
+              </label>
+            ))
+          )}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
