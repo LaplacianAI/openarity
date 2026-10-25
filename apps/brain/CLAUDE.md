@@ -127,10 +127,12 @@ apps/brain/
     job.go             the reaper as background work: SweepAll, and its Job
   internal/runtime/    a run: the agent built from its row, executed, recorded
     build.go           the Spec, its granted MCP tools and skills; Patterns and Loops
+    delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run
     events.go          what a run does, as run_events, within its token budget
     execute.go         one run: claim, heartbeat, run to the end, finish
     graphtool.go       graph(query, kinds, hops), bound to every run
     job.go             the run queue, the sweep that takes over stale runs, the Enqueuer
+    report.go          a child's answer, wrapped as data for the parent to read
   internal/worker/     the background process: a registry of Jobs, and Run
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary
@@ -358,6 +360,34 @@ reinstalled.
   `GRANTED` honours the grant's allow-list. A path may name a node outside the
   reach, such as the skill that led to an agent: that is the team's registry,
   which every member can read already.
+- **A delegate's run is born running, in the parent's worker, and is never
+  swept.** `StartChildRun` writes it `running` with the parent's worker and a
+  fresh heartbeat, and the `delegate` call holds it inside the tool call; it is
+  never queued. `TakeOverStaleRuns` takes `parent_run_id IS NULL` only, because
+  a child has no work of its own to resume: its parent is waiting on its
+  answer inside a model turn, and that turn is what a resume replays.
+- **A child runs on its parent's context.** Cancelling the root, the root's
+  six-hour clock and its token budget end the child through the same context,
+  with no second path to keep in step. A parent that lost its run stops its
+  child too, and writes nothing: the run's new owner reaps it on resume. What
+  the brain did not cause — DBOS stopping the worker — leaves the child
+  `running` and returns no answer, so the parent is resumed elsewhere rather
+  than told its child failed. `ours()` is the list of causes that are the
+  brain's.
+- **A resumed run reaps the subtree it left running** (decision A). Before
+  its `resumed` event, `ReapChildren` fails every running run beneath it with
+  `reapReason`. The resumed model has the transcript up to the turn that
+  delegated, so it asks again, and a child can only be rejoined once runs can
+  be resumed by id (runtime slice 8). The cost is the reaped child's spend.
+  Leaving it running would charge for two answers to one question.
+- **A report is data in an envelope only the brain can close.** The child's
+  output goes back as `<report agent run status end>` … `</report end>`, where
+  `end` is `rand.Text()`, fresh per report and never shown to the child.
+  Every `<report` or `</report` in the body is escaped, whatever its case, so
+  the body cannot open or close a tag. The body is capped at 32 KiB after
+  escaping, cut where a rune starts, with a line naming the child's run for
+  the rest. Escaping alone left look-alikes (`＜/report＞`, a zero-width
+  space); the unguessable end is what makes them text.
 - **The drain ticks once a minute, not every ten seconds.** DBOS keeps a row
   per tick and deletes none: measured, 98 ticks left 98 workflow rows and 98
   step rows, about 560 bytes a tick before indexes. The job's durable state is
