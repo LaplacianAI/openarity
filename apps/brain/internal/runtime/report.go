@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"crypto/rand"
 	"fmt"
 	"html"
 	"regexp"
@@ -13,7 +14,7 @@ const maxReport = 32 << 10
 
 var reportTag = regexp.MustCompile(`(?i)<(/?report)`)
 
-func report(child db.Run) string {
+func report(child db.Run, end string) string {
 	body := ""
 	switch {
 	case child.Output != nil:
@@ -31,6 +32,10 @@ func report(child db.Run) string {
 		body = fmt.Sprintf("%s\n[the report was cut at 32 KiB; the whole answer is run %s]", body[:cut], child.ID)
 	}
 
-	return fmt.Sprintf("<report agent=\"%s\" run=\"%s\" status=\"%s\">\n%s\n</report>",
-		html.EscapeString(child.AgentName), child.ID, child.Status, body)
+	return fmt.Sprintf("<report agent=\"%s\" run=\"%s\" status=\"%s\" end=\"%s\">\n%s\n</report end=\"%s\">",
+		html.EscapeString(child.AgentName), child.ID, child.Status, end, body, end)
+}
+
+func reportEnd() string {
+	return rand.Text()
 }
