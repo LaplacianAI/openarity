@@ -1,6 +1,10 @@
 package teamsettings
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type modelRef struct {
 	Name        string   `json:"name"`
@@ -14,11 +18,17 @@ type search struct {
 	KeySet   bool    `json:"key_set"`
 }
 
+type hubRef struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
 type settings struct {
 	Model              *modelRef  `json:"model"`
 	Search             search     `json:"search"`
 	Learning           bool       `json:"learning"`
 	CompactionMessages int32      `json:"compaction_messages"`
+	Hub                *hubRef    `json:"hub"`
 	UpdatedAt          *time.Time `json:"updated_at"`
 }
 
@@ -33,4 +43,5 @@ type settingsRequest struct {
 	Search             searchRequest `json:"search"`
 	Learning           bool          `json:"learning"`
 	CompactionMessages int32         `json:"compaction_messages"`
+	Hub                *string       `json:"hub"`
 }

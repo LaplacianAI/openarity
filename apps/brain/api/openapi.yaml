@@ -1738,8 +1738,9 @@ paths:
       description: |
         Any member may read them. A team that never saved reads the
         defaults: no model, search off, learning off, compaction at 100
-        messages, and `updated_at` null. The search key is never returned;
-        `search.key_set` says whether there is one.
+        messages, the built-in orchestrator as its hub, and `updated_at`
+        null. The search key is never returned; `search.key_set` says
+        whether there is one.
       responses:
         "200":
           description: The settings, or the defaults
@@ -1760,7 +1761,8 @@ paths:
       description: |
         Requires `team:settings` in this team. The whole set every time: a
         field left out is not a field left alone. A missing `model` means no
-        model, the same as null.
+        model, the same as null, and a missing `hub` means the built-in
+        orchestrator.
 
         The search key is the exception, because it cannot be read back to
         send again. Leave out `search.api_key` and the stored key is kept,
@@ -1792,7 +1794,9 @@ paths:
             text/plain:
               schema:
                 type: string
-                examples: ["search.api_key is needed to switch to tavily"]
+                examples:
+                  - "search.api_key is needed to switch to tavily"
+                  - 'no agent in this team is named "triage"'
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -3533,9 +3537,9 @@ components:
       type: object
       required: [search, learning, compaction_messages]
       description: |
-        `model` and `updated_at` are always sent, null when unset; optional
-        here only so a generated client decodes null as absent rather than as
-        a zero value.
+        `model`, `hub` and `updated_at` are always sent, null when unset;
+        optional here only so a generated client decodes null as absent
+        rather than as a zero value.
       properties:
         model:
           $ref: "#/components/schemas/ModelRef"
@@ -3552,11 +3556,29 @@ components:
           minimum: 10
           maximum: 10000
           description: Messages before a transcript compacts. Stored now; compaction reads it from a later release.
+        hub:
+          $ref: "#/components/schemas/HubRef"
+          nullable: true
+          description: |
+            The agent that answers a run started for the team rather than
+            for an agent. Null for the built-in orchestrator, which it is
+            again when the chosen agent is deleted.
         updated_at:
           type: string
           format: date-time
           nullable: true
           description: Null for a team that never saved
+
+    HubRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          examples: ["triage"]
 
     SearchSettings:
       type: object
@@ -3599,6 +3621,13 @@ components:
           format: int32
           minimum: 10
           maximum: 10000
+        hub:
+          type: string
+          nullable: true
+          description: |
+            The name of an agent in this team, ignoring case. Null or absent
+            for the built-in orchestrator.
+          examples: ["triage"]
 
     SearchSettingsRequest:
       type: object

@@ -34,6 +34,9 @@ type fakeStore struct {
 	getErr    error
 	upsertErr error
 	recordErr error
+	agentErr  error
+
+	agents []db.Agent
 
 	asked    []uuid.UUID
 	upserts  []db.UpsertTeamSettingsParams
@@ -66,10 +69,36 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		SearchSecretID:     p.SearchSecretID,
 		Learning:           p.Learning,
 		CompactionMessages: p.CompactionMessages,
+		HubAgentID:         p.HubAgentID,
 		UpdatedAt:          time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
 	}
 	f.row = &row
 	return row, nil
+}
+
+// Names are unique per team ignoring case, as agents_team_name_key has them.
+func (f *fakeStore) GetAgentByName(_ context.Context, p db.GetAgentByNameParams) (db.Agent, error) {
+	if f.agentErr != nil {
+		return db.Agent{}, f.agentErr
+	}
+	for _, a := range f.agents {
+		if a.TeamID == p.TeamID && strings.EqualFold(a.Name, p.Name) {
+			return a, nil
+		}
+	}
+	return db.Agent{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetAgent(_ context.Context, id uuid.UUID) (db.Agent, error) {
+	if f.agentErr != nil {
+		return db.Agent{}, f.agentErr
+	}
+	for _, a := range f.agents {
+		if a.ID == id {
+			return a, nil
+		}
+	}
+	return db.Agent{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) RecordDeletedSecret(_ context.Context, p db.RecordDeletedSecretParams) error {
@@ -213,9 +242,13 @@ type wire struct {
 		URL      *string `json:"url"`
 		KeySet   bool    `json:"key_set"`
 	} `json:"search"`
-	Learning           bool       `json:"learning"`
-	CompactionMessages int32      `json:"compaction_messages"`
-	UpdatedAt          *time.Time `json:"updated_at"`
+	Learning           bool  `json:"learning"`
+	CompactionMessages int32 `json:"compaction_messages"`
+	Hub                *struct {
+		ID   uuid.UUID `json:"id"`
+		Name string    `json:"name"`
+	} `json:"hub"`
+	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 func decode(t *testing.T, rec *httptest.ResponseRecorder) wire {
@@ -917,5 +950,188 @@ func TestMovingSelfHostedFirecrawlWithAnEmptyKeyDropsTheKey(t *testing.T) {
 
 	if e.store.upserts[0].SearchSecretID != nil || got.Search.KeySet {
 		t.Error("the old key followed the instance to its new address")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The hub
+
+// agent puts an agent in the fake, in the team unless given another.
+func (e *env) agent(name string, team ...uuid.UUID) db.Agent {
+	a := db.Agent{ID: uuid.New(), TeamID: e.team, Name: name}
+	if len(team) > 0 {
+		a.TeamID = team[0]
+	}
+	e.store.agents = append(e.store.agents, a)
+	return a
+}
+
+// withHub adds "hub" to a request body built by body.
+func withHub(b, hub string) string {
+	return strings.TrimSuffix(b, "}") + `,"hub":` + hub + `}`
+}
+
+// The wire carries "hub": null, never leaves it out: a client tells the
+// built-in orchestrator from an old brain that has no hub at all.
+func TestTheHubIsTheOrchestratorUntilOneIsChosen(t *testing.T) {
+	e := newEnv()
+
+	rec := e.get(t)
+	if got := decode(t, rec); got.Hub != nil {
+		t.Errorf("hub = %+v for a team that never saved, want null", got.Hub)
+	}
+	if !strings.Contains(rec.Body.String(), `"hub":null`) {
+		t.Errorf("body %s leaves the hub out, want \"hub\":null", rec.Body)
+	}
+
+	e.stored(providerNone, nil, nil)
+	if got := decode(t, e.get(t)); got.Hub != nil {
+		t.Errorf("hub = %+v for saved settings with none chosen, want null", got.Hub)
+	}
+}
+
+// The hub is named as a person names it, ignoring case, and comes back as
+// the agent's own name.
+func TestAHubIsChosenByName(t *testing.T) {
+	e := newEnv()
+	triage := e.agent("triage")
+	e.agent("triage", uuid.New())
+
+	got := decode(t, e.save(t, withHub(body("", searchOff, false, 100), `"Triage"`)))
+
+	if len(e.store.upserts) != 1 || e.store.upserts[0].HubAgentID == nil || *e.store.upserts[0].HubAgentID != triage.ID {
+		t.Fatalf("upserts = %+v, want one naming triage %s", e.store.upserts, triage.ID)
+	}
+	if got.Hub == nil || got.Hub.ID != triage.ID || got.Hub.Name != "triage" {
+		t.Errorf("saved hub = %+v, want triage %s", got.Hub, triage.ID)
+	}
+	if got := decode(t, e.get(t)); got.Hub == nil || got.Hub.ID != triage.ID || got.Hub.Name != "triage" {
+		t.Errorf("read hub = %+v, want triage %s", got.Hub, triage.ID)
+	}
+}
+
+// An agent of another team, or none at all, is refused before anything is
+// written, the search key included.
+func TestAHubOutsideTheTeamIsRefused(t *testing.T) {
+	for name, hub := range map[string]string{
+		"another team's": `"theirs"`,
+		"no such agent":  `"nobody"`,
+		"empty":          `""`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv()
+			e.agent("theirs", uuid.New())
+
+			rec := e.save(t, withHub(body("", `{"provider":"brave","api_key":"BSA-key"}`, false, 100), hub))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body)
+			}
+			want := `no agent in this team is named ` + hub
+			if got := strings.TrimSpace(rec.Body.String()); got != want {
+				t.Errorf("body = %q, want %q", got, want)
+			}
+			if len(e.store.upserts) != 0 || len(e.secrets.puts) != 0 {
+				t.Errorf("a refused hub wrote %d rows and %d keys", len(e.store.upserts), len(e.secrets.puts))
+			}
+		})
+	}
+}
+
+// The PUT is whole: a save that leaves the hub out, or sends null, returns
+// the team to the built-in orchestrator.
+func TestLeavingTheHubOutReturnsToTheOrchestrator(t *testing.T) {
+	for name, b := range map[string]string{
+		"left out": body("", searchOff, false, 100),
+		"null":     withHub(body("", searchOff, false, 100), "null"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv()
+			triage := e.agent("triage")
+			e.stored(providerNone, nil, nil)
+			e.store.row.HubAgentID = &triage.ID
+
+			got := decode(t, e.save(t, b))
+
+			if len(e.store.upserts) != 1 || e.store.upserts[0].HubAgentID != nil {
+				t.Errorf("upserts = %+v, want one with no hub", e.store.upserts)
+			}
+			if got.Hub != nil {
+				t.Errorf("hub = %+v, want null", got.Hub)
+			}
+		})
+	}
+}
+
+// Choosing the hub is a settings change like any other.
+func TestTheHubNeedsTeamSettings(t *testing.T) {
+	e := newEnv()
+	e.agent("triage")
+	e.authz.allowed = false
+
+	if rec := e.save(t, withHub(body("", searchOff, false, 100), `"triage"`)); rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 without team:settings", rec.Code)
+	}
+	if len(e.store.upserts) != 0 {
+		t.Errorf("a refused save wrote %d rows", len(e.store.upserts))
+	}
+}
+
+// A hub deleted between the read of the row and the read of its name is
+// the orchestrator, as the next run will be.
+func TestAHubThatIsGoneReadsAsTheOrchestrator(t *testing.T) {
+	e := newEnv()
+	e.stored(providerNone, nil, nil)
+	gone := uuid.New()
+	e.store.row.HubAgentID = &gone
+
+	if got := decode(t, e.get(t)); got.Hub != nil {
+		t.Errorf("hub = %+v for a deleted agent, want null", got.Hub)
+	}
+}
+
+func TestAFailedHubLookupIsAServerError(t *testing.T) {
+	t.Run("saving", func(t *testing.T) {
+		e := newEnv()
+		e.store.agentErr = errAny
+
+		rec := e.save(t, withHub(body("", searchOff, false, 100), `"triage"`))
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500", rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), errAny.Error()) {
+			t.Errorf("body %q echoes the store's error", rec.Body)
+		}
+		if len(e.store.upserts) != 0 {
+			t.Errorf("a failed lookup wrote %d rows", len(e.store.upserts))
+		}
+	})
+	t.Run("reading", func(t *testing.T) {
+		e := newEnv()
+		e.stored(providerNone, nil, nil)
+		hub := uuid.New()
+		e.store.row.HubAgentID = &hub
+		e.store.agentErr = errAny
+
+		if rec := e.get(t); rec.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500", rec.Code)
+		}
+	})
+}
+
+// The API keeps the hub in its team, and the run would be the orchestrator
+// if a row ever named another team's agent; reading must not name it either.
+func TestAHubFromAnotherTeamIsNeverNamed(t *testing.T) {
+	e := newEnv()
+	theirs := e.agent("theirs", uuid.New())
+	e.stored(providerNone, nil, nil)
+	e.store.row.HubAgentID = &theirs.ID
+
+	rec := e.get(t)
+	if got := decode(t, rec); got.Hub != nil {
+		t.Errorf("hub = %+v, want null for another team's agent", got.Hub)
+	}
+	if strings.Contains(rec.Body.String(), "theirs") || strings.Contains(rec.Body.String(), theirs.ID.String()) {
+		t.Errorf("body %s names another team's agent", rec.Body)
 	}
 }

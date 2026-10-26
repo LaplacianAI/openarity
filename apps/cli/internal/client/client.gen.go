@@ -660,6 +660,14 @@ type GraphNode struct {
 // GraphNodeLabel A Toolkit is an MCP server
 type GraphNodeLabel string
 
+// HubRef defines model for HubRef.
+type HubRef struct {
+	ID openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Name Examples: triage
+	Name string `json:"name" yaml:"name"`
+}
+
 // Loop defines model for Loop.
 type Loop struct {
 	// Name The value an agent's `pattern` takes to use this loop
@@ -1235,12 +1243,17 @@ type TeamPermissions struct {
 	SuperAdmin bool `json:"super_admin" yaml:"super_admin"`
 }
 
-// TeamSettings `model` and `updated_at` are always sent, null when unset; optional
-// here only so a generated client decodes null as absent rather than as
-// a zero value.
+// TeamSettings `model`, `hub` and `updated_at` are always sent, null when unset;
+// optional here only so a generated client decodes null as absent
+// rather than as a zero value.
 type TeamSettings struct {
 	// CompactionMessages Messages before a transcript compacts. Stored now; compaction reads it from a later release.
 	CompactionMessages int32 `json:"compaction_messages" yaml:"compaction_messages"`
+
+	// Hub The agent that answers a run started for the team rather than
+	// for an agent. Null for the built-in orchestrator, which it is
+	// again when the chosen agent is deleted.
+	Hub *HubRef `json:"hub,omitempty" yaml:"hub,omitempty"`
 
 	// Learning Whether the learner writes learnings after each run, for approval
 	Learning bool `json:"learning" yaml:"learning"`
@@ -1256,7 +1269,14 @@ type TeamSettings struct {
 // TeamSettingsRequest defines model for TeamSettingsRequest.
 type TeamSettingsRequest struct {
 	CompactionMessages int32 `json:"compaction_messages" yaml:"compaction_messages"`
-	Learning           bool  `json:"learning" yaml:"learning"`
+
+	// Hub The name of an agent in this team, ignoring case. Null or absent
+	// for the built-in orchestrator.
+	//
+	//
+	// Examples: triage
+	Hub      *string `json:"hub,omitempty" yaml:"hub,omitempty"`
+	Learning bool    `json:"learning" yaml:"learning"`
 
 	// Model Null or absent for no model, which stops the built-in agents running.
 	Model  *ModelRef             `json:"model,omitempty" yaml:"model,omitempty"`
@@ -2359,8 +2379,9 @@ type ClientInterface interface {
 	//
 	// Any member may read them. A team that never saved reads the
 	// defaults: no model, search off, learning off, compaction at 100
-	// messages, and `updated_at` null. The search key is never returned;
-	// `search.key_set` says whether there is one.
+	// messages, the built-in orchestrator as its hub, and `updated_at`
+	// null. The search key is never returned; `search.key_set` says
+	// whether there is one.
 	//
 	// Corresponds with GET /teams/{id}/settings (the `GetTeamSettings` operationId).
 	GetTeamSettings(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2369,7 +2390,8 @@ type ClientInterface interface {
 	//
 	// Requires `team:settings` in this team. The whole set every time: a
 	// field left out is not a field left alone. A missing `model` means no
-	// model, the same as null.
+	// model, the same as null, and a missing `hub` means the built-in
+	// orchestrator.
 	//
 	// The search key is the exception, because it cannot be read back to
 	// send again. Leave out `search.api_key` and the stored key is kept,
@@ -2390,7 +2412,8 @@ type ClientInterface interface {
 	//
 	// Requires `team:settings` in this team. The whole set every time: a
 	// field left out is not a field left alone. A missing `model` means no
-	// model, the same as null.
+	// model, the same as null, and a missing `hub` means the built-in
+	// orchestrator.
 	//
 	// The search key is the exception, because it cannot be read back to
 	// send again. Leave out `search.api_key` and the stored key is kept,
@@ -3769,8 +3792,9 @@ func (c *Client) ListSessionRuns(ctx context.Context, id TeamID, sessionID opena
 //
 // Any member may read them. A team that never saved reads the
 // defaults: no model, search off, learning off, compaction at 100
-// messages, and `updated_at` null. The search key is never returned;
-// `search.key_set` says whether there is one.
+// messages, the built-in orchestrator as its hub, and `updated_at`
+// null. The search key is never returned; `search.key_set` says
+// whether there is one.
 //
 // Corresponds with GET /teams/{id}/settings (the `GetTeamSettings` operationId).
 func (c *Client) GetTeamSettings(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3789,7 +3813,8 @@ func (c *Client) GetTeamSettings(ctx context.Context, id TeamID, reqEditors ...R
 //
 // Requires `team:settings` in this team. The whole set every time: a
 // field left out is not a field left alone. A missing `model` means no
-// model, the same as null.
+// model, the same as null, and a missing `hub` means the built-in
+// orchestrator.
 //
 // The search key is the exception, because it cannot be read back to
 // send again. Leave out `search.api_key` and the stored key is kept,
@@ -3820,7 +3845,8 @@ func (c *Client) SaveTeamSettingsWithBody(ctx context.Context, id TeamID, conten
 //
 // Requires `team:settings` in this team. The whole set every time: a
 // field left out is not a field left alone. A missing `model` means no
-// model, the same as null.
+// model, the same as null, and a missing `hub` means the built-in
+// orchestrator.
 //
 // The search key is the exception, because it cannot be read back to
 // send again. Leave out `search.api_key` and the stored key is kept,
@@ -7748,8 +7774,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Any member may read them. A team that never saved reads the
 	// defaults: no model, search off, learning off, compaction at 100
-	// messages, and `updated_at` null. The search key is never returned;
-	// `search.key_set` says whether there is one.
+	// messages, the built-in orchestrator as its hub, and `updated_at`
+	// null. The search key is never returned; `search.key_set` says
+	// whether there is one.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7760,7 +7787,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Requires `team:settings` in this team. The whole set every time: a
 	// field left out is not a field left alone. A missing `model` means no
-	// model, the same as null.
+	// model, the same as null, and a missing `hub` means the built-in
+	// orchestrator.
 	//
 	// The search key is the exception, because it cannot be read back to
 	// send again. Leave out `search.api_key` and the stored key is kept,
@@ -7781,7 +7809,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Requires `team:settings` in this team. The whole set every time: a
 	// field left out is not a field left alone. A missing `model` means no
-	// model, the same as null.
+	// model, the same as null, and a missing `hub` means the built-in
+	// orchestrator.
 	//
 	// The search key is the exception, because it cannot be read back to
 	// send again. Leave out `search.api_key` and the stored key is kept,
@@ -11534,8 +11563,9 @@ func (c *ClientWithResponses) ListSessionRunsWithResponse(ctx context.Context, i
 //
 // Any member may read them. A team that never saved reads the
 // defaults: no model, search off, learning off, compaction at 100
-// messages, and `updated_at` null. The search key is never returned;
-// `search.key_set` says whether there is one.
+// messages, the built-in orchestrator as its hub, and `updated_at`
+// null. The search key is never returned; `search.key_set` says
+// whether there is one.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -11552,7 +11582,8 @@ func (c *ClientWithResponses) GetTeamSettingsWithResponse(ctx context.Context, i
 //
 // Requires `team:settings` in this team. The whole set every time: a
 // field left out is not a field left alone. A missing `model` means no
-// model, the same as null.
+// model, the same as null, and a missing `hub` means the built-in
+// orchestrator.
 //
 // The search key is the exception, because it cannot be read back to
 // send again. Leave out `search.api_key` and the stored key is kept,
@@ -11579,7 +11610,8 @@ func (c *ClientWithResponses) SaveTeamSettingsWithBodyWithResponse(ctx context.C
 //
 // Requires `team:settings` in this team. The whole set every time: a
 // field left out is not a field left alone. A missing `model` means no
-// model, the same as null.
+// model, the same as null, and a missing `hub` means the built-in
+// orchestrator.
 //
 // The search key is the exception, because it cannot be read back to
 // send again. Leave out `search.api_key` and the stored key is kept,
