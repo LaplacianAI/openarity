@@ -436,6 +436,7 @@ func agentUpdate(a db.Agent) db.UpdateAgentParams {
 		ID: a.ID, Name: a.Name, Description: a.Description, Instructions: a.Instructions,
 		ModelName: a.ModelName, MaxTokens: a.MaxTokens, Pattern: a.Pattern, MaxSteps: a.MaxSteps,
 		SteerContinuations: a.SteerContinuations, OutputSchema: a.OutputSchema,
+		Delegation: a.Delegation,
 	}
 }
 
@@ -445,6 +446,7 @@ func (w *world) agent(team db.Team, name, description string) db.Agent {
 	a, err := w.store.CreateAgent(w.t.Context(), db.CreateAgentParams{
 		TeamID: team.ID, Name: name, Description: description, Kind: "custom",
 		ModelName: "test/model", MaxTokens: 1024, Pattern: "react", MaxSteps: 5,
+		Delegation: "team",
 	})
 	if err != nil {
 		w.t.Fatalf("CreateAgent: %v", err)

@@ -331,3 +331,150 @@ func TestReplaceHelpShowsHowToChangeOneThing(t *testing.T) {
 		}
 	}
 }
+
+const (
+	billingID = "4b0d9a11-8d2c-4e5b-a1c1-3f9a41c27e58"
+	clerkID   = "8d2c0e5b-71c1-4b0d-9a11-7e583f9a41c2"
+)
+
+const threeAgentPage = `{"items":[` +
+	`{"id":"` + agentID + `","team_id":"` + teamID + `","name":"triage","description":"","kind":"custom","model":{"name":"m","max_tokens":1},"pattern":"react","created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:00:00Z"},` +
+	`{"id":"` + billingID + `","team_id":"` + teamID + `","name":"billing","description":"","kind":"custom","model":{"name":"m","max_tokens":1},"pattern":"react","created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:00:00Z"},` +
+	`{"id":"` + clerkID + `","team_id":"` + teamID + `","name":"clerk","description":"","kind":"custom","model":{"name":"m","max_tokens":1},"pattern":"react","created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:00:00Z"}]}`
+
+func delegating(t *testing.T, yaml string) (*clitest.Transcript, error) {
+	t.Helper()
+	script := clitest.Routes(t, routes(map[string]clitest.Reply{
+		"GET /teams/{id}/agents":  {Status: http.StatusOK, Body: threeAgentPage},
+		"POST /teams/{id}/agents": {Status: http.StatusCreated, Body: oneAgent},
+	}))
+	_, err := clitest.Execute(t, commands, "agents", "create", "platform", "-f", file(t, triageYAML+yaml))
+	return script, err
+}
+
+// A file names its delegates as a person would, by name; an id is taken as
+// it is, so what `get -o yaml` prints goes back through replace.
+func TestAFileNamesItsDelegatesByNameOrID(t *testing.T) {
+	script, err := delegating(t, "delegation: listed\ndelegates: [billing, "+clerkID+"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := sent(t, script, http.MethodPost)
+	if body["delegation"] != "listed" {
+		t.Errorf("delegation = %v", body["delegation"])
+	}
+	if got, _ := body["delegates"].([]any); len(got) != 2 || got[0] != billingID || got[1] != clerkID {
+		t.Errorf("delegates = %v, want [%s %s]", body["delegates"], billingID, clerkID)
+	}
+	if body["name"] != "triage" || body["max_steps"] != float64(5) {
+		t.Errorf("the rest of the file did not reach the request: %v", body)
+	}
+}
+
+// The brain reads none when delegation is left out, and refuses a list
+// without listed; the CLI sends what the file says and no more.
+func TestAFileSendsItsDelegationAsWritten(t *testing.T) {
+	for name, tc := range map[string]struct {
+		yaml      string
+		want      any
+		delegates bool
+	}{
+		"left out":   {"", nil, false},
+		"team":       {"delegation: team\n", "team", false},
+		"none":       {"delegation: none\n", "none", false},
+		"empty list": {"delegation: listed\ndelegates: []\n", "listed", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script, err := delegating(t, tc.yaml)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := sent(t, script, http.MethodPost)
+			if body["delegation"] != tc.want {
+				t.Errorf("delegation = %v, want %v", body["delegation"], tc.want)
+			}
+			got, has := body["delegates"]
+			if has != tc.delegates {
+				t.Errorf("delegates sent = %v (%v), want sent = %v", has, got, tc.delegates)
+			}
+			if list, _ := got.([]any); has && len(list) != 0 {
+				t.Errorf("delegates = %v, want empty", got)
+			}
+		})
+	}
+}
+
+func TestADelegateTheTeamLacksStopsBeforeAnyWrite(t *testing.T) {
+	script, err := delegating(t, "delegation: listed\ndelegates: [billing, ghost]\n")
+	if err == nil || !strings.Contains(err.Error(), `"ghost"`) {
+		t.Errorf("err = %v", err)
+	}
+	if script.Calls("POST", "/teams/"+teamID+"/agents") != 0 {
+		t.Error("the agent was created without its delegate")
+	}
+}
+
+func TestDelegatesThatAreNotAListOfNamesAreRefusedBeforeAnyRequest(t *testing.T) {
+	for name, yaml := range map[string]string{
+		"a name alone":  "delegates: billing\n",
+		"a map":         "delegates: {billing: yes}\n",
+		"a nested list": "delegates: [[billing]]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			script := clitest.Routes(t, routes(nil))
+			_, err := clitest.Execute(t, commands, "agents", "create", "platform", "-f", file(t, triageYAML+yaml))
+			if err == nil || !strings.Contains(err.Error(), "delegates") {
+				t.Errorf("err = %v", err)
+			}
+			if n := len(script.All()); n != 0 {
+				t.Errorf("%d requests", n)
+			}
+		})
+	}
+}
+
+func TestDelegatesOnStdinAsJSONAreResolvedToo(t *testing.T) {
+	script := clitest.Routes(t, routes(map[string]clitest.Reply{
+		"GET /teams/{id}/agents":  {Status: http.StatusOK, Body: threeAgentPage},
+		"POST /teams/{id}/agents": {Status: http.StatusCreated, Body: oneAgent},
+	}))
+	if _, err := clitest.ExecuteWithStdin(t, commands,
+		`{"name":"triage","model":{"name":"m","max_tokens":1},"pattern":"react","max_steps":1,"delegation":"listed","delegates":["clerk"]}`,
+		"agents", "create", "platform", "-f", "-"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := sent(t, script, http.MethodPost)["delegates"].([]any); len(got) != 1 || got[0] != clerkID {
+		t.Errorf("delegates = %v", got)
+	}
+}
+
+func TestAgentsGetShowsWhomItMayHandWorkTo(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		want []string
+	}{
+		"listed": {
+			strings.Replace(oneAgent, `"max_steps":5,`, `"max_steps":5,"delegation":"listed","delegates":["`+billingID+`"],`, 1),
+			[]string{"delegation", "listed", "delegate", billingID},
+		},
+		"none": {
+			strings.Replace(oneAgent, `"max_steps":5,`, `"max_steps":5,"delegation":"none","delegates":[],`, 1),
+			[]string{"delegation", "none"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clitest.Routes(t, routes(map[string]clitest.Reply{
+				"GET /teams/{id}/agents/{agentID}": {Status: http.StatusOK, Body: tc.body},
+			}))
+			out, err := clitest.Execute(t, commands, "agents", "get", "platform", "triage")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("missing %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+}

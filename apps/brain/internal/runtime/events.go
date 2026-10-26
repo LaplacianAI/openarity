@@ -58,23 +58,40 @@ type usagePayload struct {
 	Spent             int64  `json:"spent"`
 }
 
+// note is one of the brain's own events, written in turn with the agent's;
+// done gets what the write returned.
+type note struct {
+	kind    string
+	payload any
+	done    chan error
+}
+
 func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, budget int64,
-	events <-chan agent.Event, stop context.CancelCauseFunc,
+	events <-chan agent.Event, notes <-chan note, stop context.CancelCauseFunc,
 ) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		lost := false
-		for e := range events {
-			if lost {
-				continue
+		for {
+			select {
+			case e, ok := <-events:
+				if !ok {
+					return
+				}
+				if lost {
+					continue
+				}
+				err := recordOne(ctx, s, runID, worker, budget, e)
+				if err == nil {
+					continue
+				}
+				lost = errors.Is(err, ErrLostRun)
+				stop(err)
+			case n := <-notes:
+				// A run this worker lost refuses the write itself, with ErrLostRun.
+				n.done <- appendEvent(ctx, s, runID, worker, n.kind, n.payload)
 			}
-			err := recordOne(ctx, s, runID, worker, budget, e)
-			if err == nil {
-				continue
-			}
-			lost = errors.Is(err, ErrLostRun)
-			stop(err)
 		}
 	}()
 	return done

@@ -141,6 +141,10 @@ export type Run = {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** The run that delegated this one; null for a run a person started. */
+  parent_run_id: string | null;
+  /** 0 for a run a person started, one more for each delegation beneath it. */
+  depth: number;
 };
 
 /**
@@ -231,7 +235,13 @@ export type Agent = AgentSummary & {
   skills: string[];
   /** Tokens one run may spend. Absent when the deployment's default applies. */
   token_budget?: number;
+  delegation: Delegation;
+  /** Whom it may delegate to, by id, when delegation is listed. */
+  delegates: string[];
 };
+
+/** Whom an agent may hand work to: any other agent in its team, only its delegates, or no one. */
+export type Delegation = "team" | "listed" | "none";
 
 /**
  * POST and PUT /teams/{id}/agents. A PUT is whole, so an edit sends back what
@@ -251,6 +261,10 @@ export type AgentRequest = {
   mcp_servers?: MCPServerGrant[];
   skills?: string[];
   token_budget?: number;
+  /** Left out, the brain reads none. */
+  delegation?: Delegation;
+  /** Refused unless delegation is listed. */
+  delegates?: string[];
 };
 
 /** GET /teams/{id}/mcp-servers. Credentials are references, never values. */

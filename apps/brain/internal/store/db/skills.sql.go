@@ -108,14 +108,16 @@ func (q *Queries) GetSkill(ctx context.Context, id uuid.UUID) (Skill, error) {
 const listSkillsByTeam = `-- name: ListSkillsByTeam :many
 SELECT id, team_id, name, description, source, created_at, updated_at FROM skills
 WHERE team_id = $1
-  AND (NOT $2::bool
-   OR (created_at, id) < ($3::timestamptz, $4::uuid))
+  AND strpos(lower(name), lower($2::text)) > 0
+  AND (NOT $3::bool
+   OR (created_at, id) < ($4::timestamptz, $5::uuid))
 ORDER BY created_at DESC, id DESC
-LIMIT $5
+LIMIT $6
 `
 
 type ListSkillsByTeamParams struct {
 	TeamID         uuid.UUID
+	Q              string
 	UseCursor      bool
 	AfterCreatedAt time.Time
 	AfterID        uuid.UUID
@@ -138,6 +140,7 @@ type ListSkillsByTeamRow struct {
 func (q *Queries) ListSkillsByTeam(ctx context.Context, arg ListSkillsByTeamParams) ([]ListSkillsByTeamRow, error) {
 	rows, err := q.db.Query(ctx, listSkillsByTeam,
 		arg.TeamID,
+		arg.Q,
 		arg.UseCursor,
 		arg.AfterCreatedAt,
 		arg.AfterID,

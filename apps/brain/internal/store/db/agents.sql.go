@@ -12,6 +12,23 @@ import (
 	"github.com/google/uuid"
 )
 
+const addAgentDelegates = `-- name: AddAgentDelegates :exec
+INSERT INTO agent_delegates (agent_id, delegate_id, team_id)
+SELECT $1, unnest($2::uuid[]), $3
+`
+
+type AddAgentDelegatesParams struct {
+	AgentID     uuid.UUID
+	DelegateIds []uuid.UUID
+	TeamID      uuid.UUID
+}
+
+// One statement for the whole list, as the skills are: one outbox row.
+func (q *Queries) AddAgentDelegates(ctx context.Context, arg AddAgentDelegatesParams) error {
+	_, err := q.db.Exec(ctx, addAgentDelegates, arg.AgentID, arg.DelegateIds, arg.TeamID)
+	return err
+}
+
 const addAgentMCPServer = `-- name: AddAgentMCPServer :exec
 INSERT INTO agent_mcp_servers (agent_id, mcp_server_id, team_id, allow)
 VALUES ($1, $2, $3, $4)
@@ -52,6 +69,15 @@ func (q *Queries) AddAgentSkills(ctx context.Context, arg AddAgentSkillsParams) 
 	return err
 }
 
+const clearAgentDelegates = `-- name: ClearAgentDelegates :exec
+DELETE FROM agent_delegates WHERE agent_id = $1
+`
+
+func (q *Queries) ClearAgentDelegates(ctx context.Context, agentID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearAgentDelegates, agentID)
+	return err
+}
+
 const clearAgentMCPServers = `-- name: ClearAgentMCPServers :exec
 DELETE FROM agent_mcp_servers WHERE agent_id = $1
 `
@@ -75,13 +101,13 @@ INSERT INTO agents (
     team_id, name, description, kind, instructions,
     model_name, max_tokens, temperature, pattern, max_steps, steer_continuations,
     output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature,
-    token_budget
+    token_budget, delegation
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
     $12, $13, $14, $15, $16,
-    $17
-) RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget
+    $17, $18
+) RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation
 `
 
 type CreateAgentParams struct {
@@ -102,6 +128,7 @@ type CreateAgentParams struct {
 	ParserMaxTokens    *int32
 	ParserTemperature  *float64
 	TokenBudget        *int64
+	Delegation         string
 }
 
 func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent, error) {
@@ -123,6 +150,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.ParserMaxTokens,
 		arg.ParserTemperature,
 		arg.TokenBudget,
+		arg.Delegation,
 	)
 	var i Agent
 	err := row.Scan(
@@ -146,6 +174,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TokenBudget,
+		&i.Delegation,
 	)
 	return i, err
 }
@@ -160,7 +189,7 @@ func (q *Queries) DeleteAgent(ctx context.Context, id uuid.UUID) error {
 }
 
 const getAgent = `-- name: GetAgent :one
-SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget FROM agents WHERE id = $1
+SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation FROM agents WHERE id = $1
 `
 
 func (q *Queries) GetAgent(ctx context.Context, id uuid.UUID) (Agent, error) {
@@ -187,12 +216,13 @@ func (q *Queries) GetAgent(ctx context.Context, id uuid.UUID) (Agent, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TokenBudget,
+		&i.Delegation,
 	)
 	return i, err
 }
 
 const getAgentByName = `-- name: GetAgentByName :one
-SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget FROM agents
+SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation FROM agents
 WHERE team_id = $1 AND lower(name) = lower($2::text)
 `
 
@@ -227,8 +257,33 @@ func (q *Queries) GetAgentByName(ctx context.Context, arg GetAgentByNameParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TokenBudget,
+		&i.Delegation,
 	)
 	return i, err
+}
+
+const listAgentDelegates = `-- name: ListAgentDelegates :many
+SELECT delegate_id FROM agent_delegates WHERE agent_id = $1 ORDER BY delegate_id
+`
+
+func (q *Queries) ListAgentDelegates(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listAgentDelegates, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var delegate_id uuid.UUID
+		if err := rows.Scan(&delegate_id); err != nil {
+			return nil, err
+		}
+		items = append(items, delegate_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAgentMCPServers = `-- name: ListAgentMCPServers :many
@@ -285,16 +340,18 @@ func (q *Queries) ListAgentSkills(ctx context.Context, agentID uuid.UUID) ([]uui
 }
 
 const listAgentsByTeam = `-- name: ListAgentsByTeam :many
-SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget FROM agents
+SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation FROM agents
 WHERE team_id = $1
-  AND (NOT $2::bool
-   OR (created_at, id) < ($3::timestamptz, $4::uuid))
+  AND strpos(lower(name), lower($2::text)) > 0
+  AND (NOT $3::bool
+   OR (created_at, id) < ($4::timestamptz, $5::uuid))
 ORDER BY created_at DESC, id DESC
-LIMIT $5
+LIMIT $6
 `
 
 type ListAgentsByTeamParams struct {
 	TeamID         uuid.UUID
+	Q              string
 	UseCursor      bool
 	AfterCreatedAt time.Time
 	AfterID        uuid.UUID
@@ -304,6 +361,7 @@ type ListAgentsByTeamParams struct {
 func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamParams) ([]Agent, error) {
 	rows, err := q.db.Query(ctx, listAgentsByTeam,
 		arg.TeamID,
+		arg.Q,
 		arg.UseCursor,
 		arg.AfterCreatedAt,
 		arg.AfterID,
@@ -337,6 +395,7 @@ func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamPara
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.TokenBudget,
+			&i.Delegation,
 		); err != nil {
 			return nil, err
 		}
@@ -470,20 +529,25 @@ func (q *Queries) ListGrantedToolIDs(ctx context.Context, agentID uuid.UUID) ([]
 }
 
 const listReachableAgentIDs = `-- name: ListReachableAgentIDs :many
-SELECT id FROM agents
-WHERE team_id = $1 AND id <> $2
-ORDER BY id
+SELECT a.id FROM agents a
+JOIN agents caller ON caller.id = $1::uuid AND caller.team_id = a.team_id
+WHERE a.team_id = $2::uuid AND a.id <> caller.id
+  AND (caller.delegation = 'team'
+    OR (caller.delegation = 'listed' AND EXISTS (
+          SELECT 1 FROM agent_delegates d
+          WHERE d.agent_id = caller.id AND d.delegate_id = a.id)))
+ORDER BY a.id
 `
 
 type ListReachableAgentIDsParams struct {
-	TeamID  uuid.UUID
 	AgentID uuid.UUID
+	TeamID  uuid.UUID
 }
 
-// What the graph tool may return as an agent, until slice C narrows it by
-// the caller's delegation setting: the rest of the team, never the caller.
+// What the graph tool may return as an agent: whom the caller may delegate
+// to. The rest of the team, only those it lists, or nobody; never itself.
 func (q *Queries) ListReachableAgentIDs(ctx context.Context, arg ListReachableAgentIDsParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, listReachableAgentIDs, arg.TeamID, arg.AgentID)
+	rows, err := q.db.Query(ctx, listReachableAgentIDs, arg.AgentID, arg.TeamID)
 	if err != nil {
 		return nil, err
 	}
@@ -519,9 +583,10 @@ UPDATE agents SET
     parser_max_tokens   = $13,
     parser_temperature  = $14,
     token_budget        = $15,
+    delegation          = $16,
     updated_at          = now()
-WHERE id = $16
-RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget
+WHERE id = $17
+RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation
 `
 
 type UpdateAgentParams struct {
@@ -540,6 +605,7 @@ type UpdateAgentParams struct {
 	ParserMaxTokens    *int32
 	ParserTemperature  *float64
 	TokenBudget        *int64
+	Delegation         string
 	ID                 uuid.UUID
 }
 
@@ -561,6 +627,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.ParserMaxTokens,
 		arg.ParserTemperature,
 		arg.TokenBudget,
+		arg.Delegation,
 		arg.ID,
 	)
 	var i Agent
@@ -585,6 +652,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TokenBudget,
+		&i.Delegation,
 	)
 	return i, err
 }

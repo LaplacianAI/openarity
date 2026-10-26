@@ -190,7 +190,7 @@ func feedWithin(t *testing.T, s EventStore, runID uuid.UUID, budget int64, event
 
 	st := &stops{}
 	ch := make(chan agent.Event)
-	done := record(t.Context(), s, runID, worker, budget, ch, st.stop)
+	done := record(t.Context(), s, runID, worker, budget, ch, nil, st.stop)
 	for _, e := range events {
 		select {
 		case ch <- e:

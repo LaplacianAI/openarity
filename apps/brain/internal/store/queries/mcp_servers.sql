@@ -9,6 +9,7 @@ SELECT * FROM mcp_servers WHERE id = $1;
 -- name: ListMCPServersByTeam :many
 SELECT * FROM mcp_servers
 WHERE team_id = sqlc.arg('team_id')
+  AND strpos(lower(name), lower(sqlc.arg('q')::text)) > 0
   AND (NOT sqlc.arg('use_cursor')::bool
    OR (created_at, id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
 ORDER BY created_at DESC, id DESC

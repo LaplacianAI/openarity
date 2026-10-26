@@ -38,6 +38,8 @@ export type ToolCall = {
   truncated: boolean;
   /** Null until the result arrives. */
   result: ToolResult | null;
+  /** The run a `delegate` call started, from the `delegated` event; absent until it arrives. */
+  delegated?: { agent: string; runId: string };
 };
 
 export type Step = {
@@ -195,6 +197,16 @@ export function groupTrace(events: readonly RunEvent[]): Trace {
         }
         break;
       }
+      case "delegated": {
+        // Written while the call runs, so the child is reachable before its report.
+        const call = calls.find((c) => c.id !== null && c.id === text(d.call_id));
+        const runId = text(d.run_id);
+        if (call && runId) {
+          call.delegated = { agent: text(d.agent), runId };
+        } else if (current) current.other.push(e);
+        else trace.items.push({ type: "other", event: e });
+        break;
+      }
       case "finished":
         trace.finished = { status: text(d.status), error: text(d.error) };
         break;
@@ -219,6 +231,38 @@ function pairOf(calls: ToolCall[], id: string | null, name: string): ToolCall | 
   if (id !== null) return waiting.find((c) => c.id === id);
   const anonymous = waiting.filter((c) => c.id === null);
   return anonymous.find((c) => c.name === name) ?? anonymous[0];
+}
+
+export type DelegateReport = { agent: string; run: string; status: string; body: string };
+
+const REPORT_HEAD = /^<report agent="([^"]*)" run="([^"]*)" status="([^"]*)" end="([^"]*)">\n/;
+
+const ESCAPES: Record<string, string> = {
+  "&#34;": '"',
+  "&#39;": "'",
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+};
+
+/**
+ * A delegate call's output read as the envelope the brain wraps a child's
+ * answer in, or null when it is not one. The body ends only at the closing
+ * tag that carries the envelope's own end, which the child never saw; a
+ * closing tag the child wrote is part of what it said.
+ */
+export function delegateReport(output: string): DelegateReport | null {
+  const head = REPORT_HEAD.exec(output);
+  if (!head) return null;
+  const [opening, agent = "", run = "", status = "", end = ""] = head;
+  const closing = `\n</report end="${end}">`;
+  if (!output.endsWith(closing) || output.length < opening.length + closing.length) return null;
+  return {
+    agent: agent.replace(/&#34;|&#39;|&amp;|&lt;|&gt;/g, (m) => ESCAPES[m] ?? m),
+    run,
+    status,
+    body: output.slice(opening.length, output.length - closing.length),
+  };
 }
 
 /** The steps alone, for counting. */

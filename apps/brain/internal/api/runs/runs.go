@@ -263,5 +263,6 @@ func view(r db.Run) run {
 		Input: r.Input, Output: r.Output, Error: r.Error,
 		InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
 		CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+		ParentRunID: r.ParentRunID, Depth: r.Depth,
 	}
 }

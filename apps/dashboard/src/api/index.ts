@@ -284,8 +284,15 @@ export function getPermissions(teamId: string, signal?: AbortSignal): Promise<Te
 
 /* ----------------------------------------------------------------- skills */
 
-export function listSkills(teamId: string, cursor?: string | null): Promise<Page<SkillSummary>> {
-  return request<Page<SkillSummary>>(`/teams/${teamId}/skills${pageQuery(cursor)}`);
+/** search narrows the list to names containing q, a page of limit at a time. */
+export function listSkills(
+  teamId: string,
+  cursor?: string | null,
+  search?: Search,
+): Promise<Page<SkillSummary>> {
+  return request<Page<SkillSummary>>(
+    `/teams/${teamId}/skills${pageQuery(cursor, search?.limit, search?.q)}`,
+  );
 }
 
 export function getSkill(teamId: string, skillId: string): Promise<Skill> {
@@ -332,8 +339,15 @@ export function skillBody(upload: SkillUpload): FormData | File {
 
 /* ----------------------------------------------------------------- agents */
 
-export function listAgents(teamId: string, cursor?: string | null): Promise<Page<AgentSummary>> {
-  return request<Page<AgentSummary>>(`/teams/${teamId}/agents${pageQuery(cursor)}`);
+/** search narrows the list to names containing q, a page of limit at a time. */
+export function listAgents(
+  teamId: string,
+  cursor?: string | null,
+  search?: Search,
+): Promise<Page<AgentSummary>> {
+  return request<Page<AgentSummary>>(
+    `/teams/${teamId}/agents${pageQuery(cursor, search?.limit, search?.q)}`,
+  );
 }
 
 export function getAgent(teamId: string, agentId: string): Promise<Agent> {
@@ -355,8 +369,15 @@ export function deleteAgent(teamId: string, agentId: string): Promise<void> {
 
 /* ------------------------------------------------------------ mcp servers */
 
-export function listMCPServers(teamId: string, cursor?: string | null): Promise<Page<MCPServer>> {
-  return request<Page<MCPServer>>(`/teams/${teamId}/mcp-servers${pageQuery(cursor)}`);
+/** search narrows the list to names containing q, a page of limit at a time. */
+export function listMCPServers(
+  teamId: string,
+  cursor?: string | null,
+  search?: Search,
+): Promise<Page<MCPServer>> {
+  return request<Page<MCPServer>>(
+    `/teams/${teamId}/mcp-servers${pageQuery(cursor, search?.limit, search?.q)}`,
+  );
 }
 
 export function createMCPServer(teamId: string, server: MCPServerRequest): Promise<MCPServer> {
@@ -377,6 +398,17 @@ export function replaceMCPServer(
 export function deleteMCPServer(teamId: string, serverId: string): Promise<void> {
   return request<void>(`/teams/${teamId}/mcp-servers/${serverId}`, { method: "DELETE" });
 }
+
+export function getMCPServer(teamId: string, serverId: string): Promise<MCPServer> {
+  return request<MCPServer>(`/teams/${teamId}/mcp-servers/${serverId}`);
+}
+
+/** The loops an agent's pattern may name: short, sorted, and always whole. */
+export function listLoops(teamId: string): Promise<{ items: { name: string }[] }> {
+  return request<{ items: { name: string }[] }>(`/teams/${teamId}/loops`);
+}
+
+export type Search = { q?: string; limit?: number };
 
 export function listMCPTools(teamId: string, serverId: string): Promise<{ items: MCPTool[] }> {
   return request<{ items: MCPTool[] }>(`/teams/${teamId}/mcp-servers/${serverId}/tools`);

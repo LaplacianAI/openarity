@@ -44,6 +44,7 @@ type Builder struct {
 	objects        Objects
 	mcp            MCPClients
 	graph          *GraphDeps
+	delegates      *DelegateDeps
 	connectTimeout time.Duration
 }
 
@@ -78,7 +79,7 @@ func Loops() []string {
 	return names
 }
 
-func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session) (Built, error) {
+func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, l Lineage) (Built, error) {
 	a, err := b.agent(ctx, run)
 	if err != nil {
 		return Built{}, err
@@ -100,12 +101,42 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session) 
 		built.Spec.Tools = append(built.Spec.Tools, GraphTool(*b.graph, run.TeamID, a.ID))
 	}
 
+	delegate, ok, err := b.delegateTool(ctx, a, run, l)
+	if err != nil {
+		built.Close()
+		return Built{}, err
+	}
+	if ok {
+		built.Spec.Tools = append(built.Spec.Tools, delegate)
+	}
+
 	built.Spec.Skills, err = b.skills(ctx, run.TeamID, a.ID)
 	if err != nil {
 		built.Close()
 		return Built{}, err
 	}
 	return built, nil
+}
+
+func (b *Builder) delegateTool(ctx context.Context, a db.Agent, run db.Run, l Lineage) (agent.Tool, bool, error) {
+	if b.delegates == nil || run.Depth >= maxDepth {
+		return agent.Tool{}, false, nil
+	}
+
+	switch a.Delegation {
+	case "team":
+	case "listed":
+		ids, err := b.delegates.Store.ListAgentDelegates(ctx, a.ID)
+		if err != nil {
+			return agent.Tool{}, false, fmt.Errorf("reading whom %q may delegate to: %w", a.Name, err)
+		}
+		if len(ids) == 0 {
+			return agent.Tool{}, false, nil
+		}
+	default:
+		return agent.Tool{}, false, nil
+	}
+	return DelegateTool(*b.delegates, a, run, l), true, nil
 }
 
 func (b *Builder) agent(ctx context.Context, run db.Run) (db.Agent, error) {
@@ -176,10 +207,10 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, built *Built) ([
 			if !allowed(s, g.Allow, t.Name) {
 				continue
 			}
-			if t.Name == GraphToolName {
+			if t.Name == GraphToolName || t.Name == DelegateToolName {
 				built.Unavailable = append(built.Unavailable, Unavailable{
-					Name:   GraphToolName,
-					Reason: fmt.Sprintf("the MCP server %q offers a tool named graph, which is the brain's own", s.Name),
+					Name:   t.Name,
+					Reason: fmt.Sprintf("the MCP server %q offers a tool named %s, which is the brain's own", s.Name, t.Name),
 				})
 				continue
 			}

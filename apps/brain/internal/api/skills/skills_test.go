@@ -1143,3 +1143,27 @@ func TestAFailureOfOursIsA500ThatLeaksNothing(t *testing.T) {
 func skillEntry(path, data string) skill.Entry {
 	return skill.Entry{Path: path, Data: []byte(data)}
 }
+
+// A search reaches the query as typed, trimmed; one that cannot be a search
+// is refused before the store is asked.
+func TestListPassesTheSearchThrough(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	s := newRouteStore()
+	call(t, s, newBucket(s.txStore), &fakeAuthz{}, memberOf(teamID), http.MethodGet, collection(teamID)+"?q=%20Invoice%20", nothing)
+	if len(s.listArgs) != 1 || s.listArgs[0].Q != "Invoice" {
+		t.Errorf("asked %+v, want q Invoice", s.listArgs)
+	}
+}
+
+func TestListRefusesASearchItCannotUse(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	s := newRouteStore()
+	rec := call(t, s, newBucket(s.txStore), &fakeAuthz{}, memberOf(teamID), http.MethodGet, collection(teamID)+"?q=a%00b", nothing)
+	if rec.Code != http.StatusBadRequest || len(s.listArgs) != 0 {
+		t.Errorf("status %d after %d store calls, want 400 and none", rec.Code, len(s.listArgs))
+	}
+}

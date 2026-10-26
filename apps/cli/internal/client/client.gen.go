@@ -42,6 +42,27 @@ func (e AuthConfigEnvironment) Valid() bool {
 	}
 }
 
+// Defines values for Delegation.
+const (
+	DelegationListed Delegation = "listed"
+	DelegationNone   Delegation = "none"
+	DelegationTeam   Delegation = "team"
+)
+
+// Valid indicates whether the value is a known member of the Delegation enum.
+func (e Delegation) Valid() bool {
+	switch e {
+	case DelegationListed:
+		return true
+	case DelegationNone:
+		return true
+	case DelegationTeam:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GraphEdgeType.
 const (
 	CONTAINS GraphEdgeType = "CONTAINS"
@@ -122,28 +143,28 @@ func (e RunStatus) Valid() bool {
 
 // Defines values for SearchProvider.
 const (
-	Brave          SearchProvider = "brave"
-	FirecrawlCloud SearchProvider = "firecrawl-cloud"
-	FirecrawlOss   SearchProvider = "firecrawl-oss"
-	None           SearchProvider = "none"
-	Searxng        SearchProvider = "searxng"
-	Tavily         SearchProvider = "tavily"
+	SearchProviderBrave          SearchProvider = "brave"
+	SearchProviderFirecrawlCloud SearchProvider = "firecrawl-cloud"
+	SearchProviderFirecrawlOss   SearchProvider = "firecrawl-oss"
+	SearchProviderNone           SearchProvider = "none"
+	SearchProviderSearxng        SearchProvider = "searxng"
+	SearchProviderTavily         SearchProvider = "tavily"
 )
 
 // Valid indicates whether the value is a known member of the SearchProvider enum.
 func (e SearchProvider) Valid() bool {
 	switch e {
-	case Brave:
+	case SearchProviderBrave:
 		return true
-	case FirecrawlCloud:
+	case SearchProviderFirecrawlCloud:
 		return true
-	case FirecrawlOss:
+	case SearchProviderFirecrawlOss:
 		return true
-	case None:
+	case SearchProviderNone:
 		return true
-	case Searxng:
+	case SearchProviderSearxng:
 		return true
-	case Tavily:
+	case SearchProviderTavily:
 		return true
 	default:
 		return false
@@ -289,7 +310,16 @@ type AddMemberRequest struct {
 
 // Agent defines model for Agent.
 type Agent struct {
-	CreatedAt    time.Time          `json:"created_at" yaml:"created_at"`
+	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
+
+	// Delegates The agents it may delegate to when delegation is listed. Ordered by id
+	Delegates []openapi_types.UUID `json:"delegates" yaml:"delegates"`
+
+	// Delegation Whom the agent may hand work to with the delegate tool: any other
+	// agent in its team, only its delegates, or no one. An agent set to
+	// none is not given the tool. Left out of a request, it is none: the
+	// agent works alone, and a PUT replaces the whole agent.
+	Delegation   Delegation         `json:"delegation" yaml:"delegation"`
 	Description  string             `json:"description" yaml:"description"`
 	ID           openapi_types.UUID `json:"id" yaml:"id"`
 	Instructions string             `json:"instructions" yaml:"instructions"`
@@ -332,6 +362,16 @@ type AgentPage struct {
 
 // AgentRequest defines model for AgentRequest.
 type AgentRequest struct {
+	// Delegates Read only when delegation is listed, and refused otherwise. Agents
+	// of this team, by id, each once; never the agent itself.
+	Delegates *[]openapi_types.UUID `json:"delegates,omitempty" yaml:"delegates,omitempty"`
+
+	// Delegation Whom the agent may hand work to with the delegate tool: any other
+	// agent in its team, only its delegates, or no one. An agent set to
+	// none is not given the tool. Left out of a request, it is none: the
+	// agent works alone, and a PUT replaces the whole agent.
+	Delegation *Delegation `json:"delegation,omitempty" yaml:"delegation,omitempty"`
+
 	// Description What it is for, shown where agents are chosen
 	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
 
@@ -579,6 +619,12 @@ type CreatedChannel struct {
 	SigningSecret *string            `json:"signing_secret,omitempty" yaml:"signing_secret,omitempty"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
 }
+
+// Delegation Whom the agent may hand work to with the delegate tool: any other
+// agent in its team, only its delegates, or no one. An agent set to
+// none is not given the tool. Left out of a request, it is none: the
+// agent works alone, and a PUT replaces the whole agent.
+type Delegation string
 
 // GraphEdge defines model for GraphEdge.
 type GraphEdge struct {
@@ -874,6 +920,9 @@ type Run struct {
 	Agent     string    `json:"agent" yaml:"agent"`
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
 
+	// Depth 0 for a run a person started, one more for each delegation beneath it
+	Depth int32 `json:"depth" yaml:"depth"`
+
 	// Error Why it failed, null unless it did
 	Error       *string            `json:"error,omitempty" yaml:"error,omitempty"`
 	FinishedAt  *time.Time         `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`
@@ -882,9 +931,12 @@ type Run struct {
 	InputTokens int64              `json:"input_tokens" yaml:"input_tokens"`
 
 	// Output The agent's answer, null until it succeeds
-	Output       *string            `json:"output,omitempty" yaml:"output,omitempty"`
-	OutputTokens int64              `json:"output_tokens" yaml:"output_tokens"`
-	SessionID    openapi_types.UUID `json:"session_id" yaml:"session_id"`
+	Output       *string `json:"output,omitempty" yaml:"output,omitempty"`
+	OutputTokens int64   `json:"output_tokens" yaml:"output_tokens"`
+
+	// ParentRunID The run that delegated this one; null for a run a person started
+	ParentRunID *openapi_types.UUID `json:"parent_run_id,omitempty" yaml:"parent_run_id,omitempty"`
+	SessionID   openapi_types.UUID  `json:"session_id" yaml:"session_id"`
 
 	// StartedAt When a worker first took it, null while queued
 	StartedAt *time.Time `json:"started_at,omitempty" yaml:"started_at,omitempty"`
@@ -1279,6 +1331,9 @@ type Cursor = string
 // Limit defines model for Limit.
 type Limit = int32
 
+// Query Examples: invoice
+type Query = string
+
 // RunID defines model for RunID.
 type RunID = openapi_types.UUID
 
@@ -1313,6 +1368,12 @@ type ListAgentsParams struct {
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Q Only the rows whose name contains this, ignoring case. It is taken
+	// literally, so `%` and `_` are characters, not wildcards. Spaces around
+	// it are dropped, and an empty one lists everything. A cursor from a
+	// search goes on within the same search.
+	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
 }
 
 // ListChannelsParams defines parameters for ListChannels.
@@ -1384,6 +1445,12 @@ type ListMCPServersParams struct {
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Q Only the rows whose name contains this, ignoring case. It is taken
+	// literally, so `%` and `_` are characters, not wildcards. Spaces around
+	// it are dropped, and an empty one lists everything. A cursor from a
+	// search goes on within the same search.
+	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
 }
 
 // ListTeamMembersParams defines parameters for ListTeamMembers.
@@ -1465,6 +1532,12 @@ type ListSkillsParams struct {
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Q Only the rows whose name contains this, ignoring case. It is taken
+	// literally, so `%` and `_` are characters, not wildcards. Spaces around
+	// it are dropped, and an empty one lists everything. A cursor from a
+	// search goes on within the same search.
+	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
 }
 
 // ListUsersParams defines parameters for ListUsers.
@@ -4325,6 +4398,18 @@ func NewListAgentsRequest(server string, id TeamID, params *ListAgentsParams) (*
 
 		}
 
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -5186,6 +5271,18 @@ func NewListMCPServersRequest(server string, id TeamID, params *ListMCPServersPa
 		if params.Cursor != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -6414,6 +6511,18 @@ func NewListSkillsRequest(server string, id TeamID, params *ListSkillsParams) (*
 		if params.Cursor != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {

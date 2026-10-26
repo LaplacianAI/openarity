@@ -977,6 +977,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Query"
       responses:
         "200":
           description: A page of skills, newest first
@@ -1380,6 +1381,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Query"
       responses:
         "200":
           description: A page of agents, newest first
@@ -1822,6 +1824,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Query"
       responses:
         "200":
           description: A page of servers, newest first
@@ -2221,6 +2224,20 @@ components:
         been altered is a 400 rather than a silent restart.
       schema:
         type: string
+
+    Query:
+      name: q
+      in: query
+      required: false
+      description: |
+        Only the rows whose name contains this, ignoring case. It is taken
+        literally, so `%` and `_` are characters, not wildcards. Spaces around
+        it are dropped, and an empty one lists everything. A cursor from a
+        search goes on within the same search.
+      schema:
+        type: string
+        maxLength: 200
+        examples: [invoice]
 
     TeamID:
       name: id
@@ -3354,7 +3371,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/AgentSummary"
         - type: object
-          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills]
+          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills, delegation, delegates]
           properties:
             instructions:
               type: string
@@ -3387,6 +3404,14 @@ components:
               description: |
                 What one run of the agent may spend, input and output tokens
                 together. Absent when the agent uses the deployment's default.
+            delegation:
+              $ref: "#/components/schemas/Delegation"
+            delegates:
+              type: array
+              description: The agents it may delegate to when delegation is listed. Ordered by id
+              items:
+                type: string
+                format: uuid
 
     AgentRequest:
       type: object
@@ -3453,6 +3478,26 @@ components:
             it out for the deployment's default, 1,000,000. A run keeps the
             budget it started with if the agent is edited while it runs.
           examples: [200000]
+        delegation:
+          $ref: "#/components/schemas/Delegation"
+        delegates:
+          type: array
+          description: |
+            Read only when delegation is listed, and refused otherwise. Agents
+            of this team, by id, each once; never the agent itself.
+          items:
+            type: string
+            format: uuid
+
+    Delegation:
+      type: string
+      enum: [team, listed, none]
+      default: none
+      description: |
+        Whom the agent may hand work to with the delegate tool: any other
+        agent in its team, only its delegates, or no one. An agent set to
+        none is not given the tool. Left out of a request, it is none: the
+        agent works alone, and a PUT replaces the whole agent.
 
     AgentPage:
       type: object
@@ -3608,7 +3653,17 @@ components:
         - input_tokens
         - output_tokens
         - created_at
+        - depth
       properties:
+        parent_run_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The run that delegated this one; null for a run a person started
+        depth:
+          type: integer
+          format: int32
+          description: 0 for a run a person started, one more for each delegation beneath it
         id:
           type: string
           format: uuid

@@ -410,3 +410,58 @@ func TestMapPageWithAZeroLimitKeepsNothing(t *testing.T) {
 		t.Errorf("cursor = %q, but no row was kept to point at", *page.NextCursor)
 	}
 }
+
+// --- Query ---------------------------------------------------------------
+
+func queryOf(t *testing.T, raw string) (string, *httptest.ResponseRecorder) {
+	t.Helper()
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/things"+raw, nil)
+	rec := httptest.NewRecorder()
+	q, ok := Query(rec, req)
+	if !ok {
+		return "", rec
+	}
+	return q, rec
+}
+
+// A search is what a person typed into a picker: spaces around it are not
+// part of it, and no search lists everything.
+func TestQueryReadsWhatWasTyped(t *testing.T) {
+	t.Parallel()
+
+	for raw, want := range map[string]string{
+		"":                                    "",
+		"?q=":                                 "",
+		"?q=%20%20":                           "",
+		"?q=invoice":                          "invoice",
+		"?q=%20Invoice%20Rec%20":              "Invoice Rec",
+		"?q=50%25":                            "50%",
+		"?q=" + strings.Repeat("a", MaxQuery): strings.Repeat("a", MaxQuery),
+	} {
+		got, rec := queryOf(t, raw)
+		if rec.Code != http.StatusOK || got != want {
+			t.Errorf("%q gave %q (%d), want %q", raw, got, rec.Code, want)
+		}
+	}
+}
+
+// Postgres text cannot hold a NUL, and a search longer than any name can
+// only be a mistake; both are the caller's to fix.
+func TestQueryRefusesWhatCannotBeASearch(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		"?q=" + strings.Repeat("a", MaxQuery+1),
+		"?q=a%00b",
+		"?q=%ff",
+	} {
+		got, rec := queryOf(t, raw)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%.40q gave %d, want 400", raw, rec.Code)
+		}
+		if got != "" {
+			t.Errorf("%.40q returned %q alongside a refusal", raw, got)
+		}
+	}
+}

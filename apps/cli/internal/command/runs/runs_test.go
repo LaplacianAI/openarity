@@ -542,3 +542,54 @@ func TestCancelReportsRefusals(t *testing.T) {
 		})
 	}
 }
+
+const parentID = "5e55a1b2-0000-4000-8000-0000000000aa"
+
+// A delegate's run says which run started it, in every format, so a child
+// found on its own leads back to its parent.
+func TestAChildRunNamesTheRunThatDelegatedIt(t *testing.T) {
+	child := runJSON(runID, "succeeded", `,"parent_run_id":"`+parentID+`","depth":1`)
+	for _, format := range []string{"json", "table"} {
+		t.Run(format, func(t *testing.T) {
+			clitest.Routes(t, with("GET /teams/{id}/runs/{runID}", clitest.Reply{Status: http.StatusOK, Body: child}))
+
+			out, err := clitest.Execute(t, commands, "runs", "get", "platform", runID, "-o", format)
+			if err != nil {
+				t.Fatalf("runs get: %v\n%s", err, out)
+			}
+			if format == "json" {
+				var got map[string]any
+				if err := json.Unmarshal([]byte(out), &got); err != nil {
+					t.Fatalf("not json: %v\n%s", err, out)
+				}
+				if got["parent_run_id"] != parentID || got["depth"] != float64(1) {
+					t.Errorf("parent %v depth %v, want %s at depth 1", got["parent_run_id"], got["depth"], parentID)
+				}
+				return
+			}
+			if !strings.Contains(out, "delegated by") || !strings.Contains(out, "oa runs get platform "+parentID) {
+				t.Errorf("the table does not lead to the parent:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestARunAPersonStartedHasNoParent(t *testing.T) {
+	clitest.Routes(t, with("GET /teams/{id}/runs/{runID}", clitest.Reply{Status: http.StatusOK, Body: runJSON(runID, "succeeded", `,"depth":0`)}))
+
+	out, err := clitest.Execute(t, commands, "runs", "get", "platform", runID, "-o", "json")
+	if err != nil {
+		t.Fatalf("runs get: %v\n%s", err, out)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not json: %v\n%s", err, out)
+	}
+	if v, has := got["parent_run_id"]; !has || v != nil || got["depth"] != float64(0) {
+		t.Errorf("parent %v (present %v) depth %v, want null at depth 0", v, has, got["depth"])
+	}
+	table, _ := clitest.Execute(t, commands, "runs", "get", "platform", runID)
+	if strings.Contains(table, "delegated by") {
+		t.Errorf("a top-level run claims a parent:\n%s", table)
+	}
+}

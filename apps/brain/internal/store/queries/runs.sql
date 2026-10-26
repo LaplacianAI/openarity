@@ -62,12 +62,26 @@ WHERE id = sqlc.arg('id') AND worker = sqlc.arg('worker')::text AND status = 'ru
 
 -- Queued: cancelled now, since no worker holds it. Running: flagged for the
 -- worker's next heartbeat. Finished: no row, which the handler answers 409.
+-- A queued run can still have children running, left by a worker that
+-- stopped mid-delegation; it will never run again to end them, so they are
+-- cancelled with it, at any depth. A running run's children are its own to end.
 -- name: RequestRunCancel :one
+WITH RECURSIVE below AS (
+    SELECT r.id FROM runs r
+    WHERE r.parent_run_id = sqlc.arg('id')::uuid
+      AND EXISTS (SELECT 1 FROM runs q WHERE q.id = sqlc.arg('id')::uuid AND q.status = 'queued')
+    UNION ALL
+    SELECT r.id FROM runs r JOIN below b ON r.parent_run_id = b.id
+), ended AS (
+    UPDATE runs SET status = 'cancelled', finished_at = now(),
+                    cancel_requested_at = coalesce(cancel_requested_at, now())
+    WHERE runs.id IN (SELECT below.id FROM below) AND runs.status = 'running'
+)
 UPDATE runs SET
     cancel_requested_at = coalesce(cancel_requested_at, now()),
     status      = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
     finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END
-WHERE id = sqlc.arg('id') AND status IN ('queued', 'running')
+WHERE runs.id = sqlc.arg('id')::uuid AND runs.status IN ('queued', 'running')
 RETURNING *;
 
 -- name: ListUnstartedRuns :many
@@ -79,11 +93,12 @@ LIMIT 100;
 
 -- One winner per stale run: the row is locked while it is handed back, and
 -- the old worker's next heartbeat finds it no longer running and stops.
+-- A child is never taken over: only its parent decides what becomes of it.
 -- name: TakeOverStaleRuns :many
 UPDATE runs SET status = 'queued', worker = NULL, heartbeat_at = NULL
 WHERE id IN (
     SELECT id FROM runs
-    WHERE status = 'running'
+    WHERE status = 'running' AND parent_run_id IS NULL
       AND heartbeat_at < now() - make_interval(secs => sqlc.arg('stale_seconds')::float8)
     ORDER BY heartbeat_at
     LIMIT 20
@@ -99,3 +114,42 @@ WHERE session_id = sqlc.arg('session_id')
    OR (created_at, id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('page_size');
+
+-- A child is born running and held by its parent's worker: never queued, so
+-- the sweep never starts it as a run of its own. Session, root and user come
+-- from the parent; the agent is selected within the team, so another team's
+-- agent writes nothing.
+-- name: StartChildRun :one
+INSERT INTO runs (id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth,
+                  agent_id, agent_name, user_id, status, input, token_budget,
+                  worker, heartbeat_at, started_at)
+SELECT sqlc.arg('id')::uuid, p.team_id, p.session_id, p.id, p.root_run_id,
+       sqlc.arg('parent_tool_call')::text, p.depth + 1,
+       a.id, a.name, p.user_id, 'running', sqlc.arg('input')::text, sqlc.arg('token_budget')::bigint,
+       sqlc.arg('worker')::text, now(), now()
+FROM runs p
+JOIN agents a ON a.id = sqlc.arg('agent_id')::uuid AND a.team_id = p.team_id
+WHERE p.id = sqlc.arg('parent_id')::uuid AND p.team_id = sqlc.arg('team_id')::uuid
+RETURNING *;
+
+-- What a tree has spent, for the delegate tool's budget check. Elapsed is on
+-- the database's clock, from when the root first started.
+-- name: TreeUsage :one
+SELECT coalesce(sum(r.input_tokens + r.output_tokens), 0)::bigint AS tokens,
+       count(*)::bigint AS runs,
+       coalesce(extract(epoch FROM now() - (
+           SELECT started_at FROM runs WHERE id = sqlc.arg('root_id')::uuid)), 0)::float8 AS elapsed_seconds
+FROM runs r
+WHERE r.root_run_id = sqlc.arg('root_id')::uuid;
+
+-- After a crash the resumed parent asks again rather than finding what it
+-- asked before, so whatever was still running beneath it fails, at any depth.
+-- name: ReapChildren :many
+WITH RECURSIVE below AS (
+    SELECT id FROM runs WHERE parent_run_id = sqlc.arg('parent_id')::uuid
+    UNION ALL
+    SELECT r.id FROM runs r JOIN below b ON r.parent_run_id = b.id
+)
+UPDATE runs SET status = 'failed', error = sqlc.arg('reason')::text, finished_at = now()
+WHERE id IN (SELECT id FROM below) AND status = 'running'
+RETURNING id;

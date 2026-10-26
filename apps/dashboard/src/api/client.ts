@@ -165,10 +165,11 @@ async function describe(res: Response): Promise<string> {
  * A cursor page. `cursor` is opaque and comes from the previous page — the
  * only thing a caller may do with it is send it back.
  */
-export function pageQuery(cursor?: string | null, limit?: number): string {
+export function pageQuery(cursor?: string | null, limit?: number, q?: string): string {
   const params = new URLSearchParams();
   if (cursor) params.set("cursor", cursor);
   if (limit) params.set("limit", String(limit));
+  if (q?.trim()) params.set("q", q.trim());
   const query = params.toString();
   return query ? `?${query}` : "";
 }

@@ -350,6 +350,8 @@ function run(id: string, agent: string, status: string, extra: Record<string, un
     created_at: STAMP,
     started_at: STAMP,
     finished_at: null,
+    parent_run_id: null,
+    depth: 0,
     ...extra,
   };
 }
@@ -1091,4 +1093,151 @@ it("does not report its own abort as a failure", async () => {
   live.push(frame(1, "step", { step: 1 }));
   await waitFor(() => expect(pane().querySelectorAll("[data-step]")).toHaveLength(1));
   expect(within(pane()).queryByRole("alert")).toBeNull();
+});
+
+/* ------------------------------------------------------------- delegation */
+
+describe("a delegation in the trace", () => {
+  const CHILD = "5e55a1b2-0000-4000-8000-000000000002";
+  const brief = JSON.stringify({
+    agent: "billing",
+    objective: "Refund order 4411",
+    output: "The refund id",
+  });
+  const report = (status: string, body: string) =>
+    `<report agent="billing" run="${CHILD}" status="${status}" end="K7QP2X">\n${body}\n</report end="K7QP2X">`;
+
+  it("leads to the child as soon as it starts, before its report is back", async () => {
+    const live = feed();
+    listed({
+      [RUNS]: { body: { items: [run("r1", "triage", "running")] } },
+      [EVENTS]: () => ({ stream: live.stream }),
+    });
+
+    await open("?tab=runs");
+    live.push(frame(1, "step", { step: 1 }));
+    live.push(frame(2, "tool_call", { id: "d1", name: "delegate", arguments: brief }));
+    await waitFor(() => expect(card("delegate").dataset.state).toBe("pending"));
+    expect(card("delegate")).toHaveTextContent("billing");
+    expect(card("delegate")).toHaveTextContent("Refund order 4411");
+    expect(within(card("delegate")).queryByRole("link")).toBeNull();
+
+    live.push(frame(3, "delegated", { call_id: "d1", agent: "billing", run_id: CHILD, depth: 1 }));
+    const link = await within(card("delegate")).findByRole("link", { name: /billing's run/i });
+    expect(link).toHaveAttribute("href", `${PAGE}?tab=runs&run=${CHILD}`);
+    expect(card("delegate").dataset.state).toBe("pending");
+
+    live.push(
+      frame(4, "tool_result", {
+        id: "d1",
+        name: "delegate",
+        output: report("succeeded", "Refunded as re_991."),
+        duration_ms: 1200,
+      }),
+    );
+    expect(await within(card("delegate")).findByText("Refunded as re_991.")).toBeInTheDocument();
+    expect(within(card("delegate")).getByText("succeeded")).toBeInTheDocument();
+    expect(within(card("delegate")).getByRole("link", { name: /billing's run/i })).toBeVisible();
+  });
+
+  it("says when the child did not succeed, from its report", async () => {
+    listed({
+      [RUNS]: { body: { items: [run("r1", "triage", "succeeded")] } },
+      [EVENTS]: () => ({
+        stream: chunks(
+          frame(1, "tool_call", { id: "d1", name: "delegate", arguments: brief }),
+          frame(2, "delegated", { call_id: "d1", agent: "billing", run_id: CHILD, depth: 1 }),
+          frame(3, "tool_result", {
+            id: "d1",
+            name: "delegate",
+            output: report("failed", "stripe answered 402"),
+          }),
+          END,
+        ),
+      }),
+    });
+
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    expect(card("delegate").dataset.state).toBe("failed");
+    expect(within(card("delegate")).getByText("failed")).toBeInTheDocument();
+    expect(card("delegate")).toHaveTextContent("stripe answered 402");
+  });
+
+  it("shows a refused delegation's reason, with no child to lead to", async () => {
+    listed({
+      [RUNS]: { body: { items: [run("r1", "triage", "succeeded")] } },
+      [EVENTS]: () => ({
+        stream: chunks(
+          frame(1, "tool_call", { id: "d1", name: "delegate", arguments: brief }),
+          frame(2, "tool_result", {
+            id: "d1",
+            name: "delegate",
+            output: "",
+            error: "you may only delegate to: clerk",
+          }),
+          END,
+        ),
+      }),
+    });
+
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    expect(card("delegate").dataset.state).toBe("failed");
+    expect(card("delegate")).toHaveTextContent("you may only delegate to: clerk");
+    expect(within(card("delegate")).queryByRole("link")).toBeNull();
+  });
+
+  it("shows a brief and a report as text, never as markup", async () => {
+    const markup = '<img src=x onerror="alert(1)"><b>bold</b>';
+    listed({
+      [RUNS]: { body: { items: [run("r1", "triage", "succeeded")] } },
+      [EVENTS]: () => ({
+        stream: chunks(
+          frame(1, "tool_call", {
+            id: "d1",
+            name: "delegate",
+            arguments: JSON.stringify({ agent: markup, objective: markup, output: "x" }),
+          }),
+          frame(2, "delegated", { call_id: "d1", agent: markup, run_id: CHILD, depth: 1 }),
+          frame(3, "tool_result", {
+            id: "d1",
+            name: "delegate",
+            output: report("succeeded", markup),
+          }),
+          END,
+        ),
+      }),
+    });
+
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    expect(card("delegate").textContent).toContain(markup);
+    expect(card("delegate").querySelector("img, b")).toBeNull();
+  });
+
+  it("leads a child's page back to the run that delegated it", async () => {
+    const parent = run("r1", "triage", "succeeded");
+    const child = run(CHILD, "billing", "succeeded", { parent_run_id: "r1", depth: 1 });
+    listed({
+      [RUNS]: { body: { items: [parent] } },
+      [RUN]: (s) => ({ body: s.path.endsWith(`/runs/${CHILD}`) ? child : parent }),
+      [EVENTS]: () => ({ stream: chunks(END) }),
+    });
+
+    await open(`?tab=runs&run=${CHILD}`);
+    const back = await within(pane()).findByRole("link", { name: /delegated by triage/i });
+    expect(back).toHaveAttribute("href", `${PAGE}?tab=runs&run=r1`);
+  });
+
+  it("says nothing of a parent for a run a person started", async () => {
+    listed({
+      [RUNS]: { body: { items: [run("r1", "triage", "succeeded")] } },
+      [EVENTS]: () => ({ stream: chunks(END) }),
+    });
+
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    expect(within(pane()).queryByText(/delegated by/i)).toBeNull();
+  });
 });

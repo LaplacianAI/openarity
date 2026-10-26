@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 )
 
 // The limit is int32 because that is what a Postgres LIMIT parameter is. Doing
@@ -87,4 +89,24 @@ func Limit(w http.ResponseWriter, r *http.Request) (int32, bool) {
 	}
 
 	return int32(n), true
+}
+
+// MaxQuery bounds a search. It is longer than any name, so a longer one is a
+// mistake.
+const MaxQuery = 200
+
+// Query is a list's q: what a person typed into a search, trimmed, and empty
+// when there is none. Postgres text holds no NUL and no broken UTF-8, so
+// either is the caller's 400 rather than the query's 500.
+func Query(w http.ResponseWriter, r *http.Request) (string, bool) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	switch {
+	case len(q) > MaxQuery:
+		http.Error(w, "q is at most 200 bytes", http.StatusBadRequest)
+		return "", false
+	case !utf8.ValidString(q) || strings.ContainsRune(q, 0):
+		http.Error(w, "q must be text", http.StatusBadRequest)
+		return "", false
+	}
+	return q, true
 }

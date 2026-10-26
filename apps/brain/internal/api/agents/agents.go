@@ -27,6 +27,7 @@ type Store interface {
 	ListAgentsByTeam(ctx context.Context, arg db.ListAgentsByTeamParams) ([]db.Agent, error)
 	ListAgentMCPServers(ctx context.Context, agentID uuid.UUID) ([]db.AgentMcpServer, error)
 	ListAgentSkills(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error)
+	ListAgentDelegates(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error)
 	DeleteAgent(ctx context.Context, id uuid.UUID) error
 	InTx(ctx context.Context, fn func(Queries) error) error
 }
@@ -38,6 +39,8 @@ type Queries interface {
 	ClearAgentMCPServers(ctx context.Context, agentID uuid.UUID) error
 	AddAgentSkills(ctx context.Context, arg db.AddAgentSkillsParams) error
 	ClearAgentSkills(ctx context.Context, agentID uuid.UUID) error
+	AddAgentDelegates(ctx context.Context, arg db.AddAgentDelegatesParams) error
+	ClearAgentDelegates(ctx context.Context, agentID uuid.UUID) error
 }
 
 type handler struct {
@@ -47,8 +50,9 @@ type handler struct {
 }
 
 type grants struct {
-	servers []serverGrant
-	skills  []uuid.UUID
+	servers   []serverGrant
+	skills    []uuid.UUID
+	delegates []uuid.UUID
 }
 
 func New(logger *slog.Logger, s Store, loops []string) *api.Router {
@@ -124,6 +128,10 @@ func (h *handler) replace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "kind cannot change: this agent is "+current.Kind, http.StatusBadRequest)
 		return
 	}
+	if slices.Contains(req.Delegates, current.ID) {
+		http.Error(w, "an agent cannot list itself", http.StatusBadRequest)
+		return
+	}
 
 	params, err := columns(req)
 	if err != nil {
@@ -141,6 +149,9 @@ func (h *handler) replace(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if err := q.ClearAgentSkills(r.Context(), row.ID); err != nil {
+			return err
+		}
+		if err := q.ClearAgentDelegates(r.Context(), row.ID); err != nil {
 			return err
 		}
 		return grant(r.Context(), q, row, req)
@@ -175,8 +186,13 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to list agent skills", err)
 		return
 	}
+	delegates, err := h.store.ListAgentDelegates(r.Context(), row.ID)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to list agent delegates", err)
+		return
+	}
 
-	h.write(w, u, http.StatusOK, row, stored(servers, skills))
+	h.write(w, u, http.StatusOK, row, stored(servers, skills, delegates))
 }
 
 func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
@@ -268,6 +284,10 @@ func (h *handler) writeFailed(w http.ResponseWriter, u *auth.User, err error) bo
 		http.Error(w, "not found", http.StatusNotFound)
 	case isPG && pgErr.Code == codeUniqueViolation:
 		http.Error(w, "an agent with that name already exists", http.StatusConflict)
+	case isPG && pgErr.ConstraintName == "agent_delegates_delegate_in_team":
+		http.Error(w, "a listed delegate is not an agent in this team", http.StatusBadRequest)
+	case isPG && pgErr.ConstraintName == "agent_delegates_not_self":
+		http.Error(w, "an agent cannot list itself", http.StatusBadRequest)
 	case isPG && slices.Contains(grantConstraints, pgErr.ConstraintName):
 		http.Error(w, "a granted server or skill does not exist in this team", http.StatusBadRequest)
 	default:
@@ -305,7 +325,7 @@ func columns(req agentRequest) (db.CreateAgentParams, error) {
 		Name: req.Name, Description: req.Description, Instructions: req.Instructions,
 		ModelName: req.Model.Name, MaxTokens: req.Model.MaxTokens, Temperature: req.Model.Temperature,
 		Pattern: req.Pattern, MaxSteps: req.MaxSteps, SteerContinuations: req.SteerContinuations,
-		Parser: req.Parser, TokenBudget: req.TokenBudget,
+		Parser: req.Parser, TokenBudget: req.TokenBudget, Delegation: delegationOf(req),
 	}
 
 	if req.OutputSchema != nil {
@@ -330,7 +350,7 @@ func updateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
 		Pattern: c.Pattern, MaxSteps: c.MaxSteps, SteerContinuations: c.SteerContinuations,
 		OutputSchema: c.OutputSchema, Parser: c.Parser,
 		ParserModelName: c.ParserModelName, ParserMaxTokens: c.ParserMaxTokens, ParserTemperature: c.ParserTemperature,
-		TokenBudget: c.TokenBudget,
+		TokenBudget: c.TokenBudget, Delegation: c.Delegation,
 	}
 }
 
@@ -344,29 +364,40 @@ func grant(ctx context.Context, q Queries, row db.Agent, req agentRequest) error
 		}
 	}
 
-	if len(req.Skills) == 0 {
+	if len(req.Skills) > 0 {
+		if err := q.AddAgentSkills(ctx, db.AddAgentSkillsParams{AgentID: row.ID, SkillIds: req.Skills, TeamID: row.TeamID}); err != nil {
+			return err
+		}
+	}
+	if len(req.Delegates) == 0 {
 		return nil
 	}
-	return q.AddAgentSkills(ctx, db.AddAgentSkillsParams{AgentID: row.ID, SkillIds: req.Skills, TeamID: row.TeamID})
+	return q.AddAgentDelegates(ctx, db.AddAgentDelegatesParams{AgentID: row.ID, DelegateIds: req.Delegates, TeamID: row.TeamID})
 }
 
 func requested(req agentRequest) grants {
-	g := grants{servers: slices.Clone(req.MCPServers), skills: slices.Clone(req.Skills)}
+	g := grants{servers: slices.Clone(req.MCPServers), skills: slices.Clone(req.Skills), delegates: slices.Clone(req.Delegates)}
 	slices.SortFunc(g.servers, func(a, b serverGrant) int { return bytes.Compare(a.ID[:], b.ID[:]) })
 	slices.SortFunc(g.skills, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
+	slices.SortFunc(g.delegates, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
 	return g
 }
 
-func stored(rows []db.AgentMcpServer, skills []uuid.UUID) grants {
+func stored(rows []db.AgentMcpServer, skills, delegates []uuid.UUID) grants {
 	servers := make([]serverGrant, len(rows))
 	for i, row := range rows {
 		servers[i] = serverGrant{ID: row.McpServerID, Allow: row.Allow}
 	}
-	return grants{servers: servers, skills: skills}
+	return grants{servers: servers, skills: skills, delegates: delegates}
 }
 
 func page(w http.ResponseWriter, r *http.Request, teamID uuid.UUID, limit int32) (db.ListAgentsByTeamParams, bool) {
 	params := db.ListAgentsByTeamParams{TeamID: teamID, PageSize: limit + 1}
+	q, ok := api.Query(w, r)
+	if !ok {
+		return params, false
+	}
+	params.Q = q
 
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {
@@ -394,12 +425,17 @@ func view(row db.Agent, g grants) (detail, error) {
 		Parser:             row.Parser,
 		MCPServers:         g.servers,
 		Skills:             g.skills,
+		Delegation:         row.Delegation,
+		Delegates:          g.delegates,
 	}
 	if d.MCPServers == nil {
 		d.MCPServers = []serverGrant{}
 	}
 	if d.Skills == nil {
 		d.Skills = []uuid.UUID{}
+	}
+	if d.Delegates == nil {
+		d.Delegates = []uuid.UUID{}
 	}
 
 	if row.OutputSchema != nil {

@@ -58,15 +58,22 @@ type runView struct {
 	CreatedAt    time.Time  `json:"created_at" yaml:"created_at"`
 	StartedAt    *time.Time `json:"started_at" yaml:"started_at"`
 	FinishedAt   *time.Time `json:"finished_at" yaml:"finished_at"`
+	ParentRunID  *string    `json:"parent_run_id" yaml:"parent_run_id"`
+	Depth        int32      `json:"depth" yaml:"depth"`
 }
 
 func viewOf(r *client.Run) runView {
-	return runView{
+	v := runView{
 		ID: r.ID.String(), SessionID: r.SessionID.String(), Agent: r.Agent, Status: string(r.Status),
 		Input: r.Input, Output: r.Output, Error: r.Error,
 		InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
-		CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+		CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Depth: r.Depth,
 	}
+	if r.ParentRunID != nil {
+		parent := r.ParentRunID.String()
+		v.ParentRunID = &parent
+	}
+	return v
 }
 
 func newStartCmd(opts *cli.Options) *cobra.Command {
@@ -119,7 +126,7 @@ func newStartCmd(opts *cli.Options) *cobra.Command {
 				return cli.Needs(err, writePermission)
 			}
 			if !following {
-				return printRun(opts, run, "started")
+				return printRun(opts, run, "started", args[0])
 			}
 
 			err = opts.Out.Line(viewOf(run), printer.Options{
@@ -247,7 +254,7 @@ func newGetCmd(opts *cli.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printRun(opts, run, "")
+			return printRun(opts, run, "", args[0])
 		},
 	}
 }
@@ -344,7 +351,7 @@ func newCancelCmd(opts *cli.Options) *cobra.Command {
 			if run.Status != client.Cancelled {
 				did = "cancelling"
 			}
-			if err := printRun(opts, run, did); err != nil {
+			if err := printRun(opts, run, did, args[0]); err != nil {
 				return err
 			}
 			if run.Status != client.Cancelled {
@@ -364,7 +371,8 @@ func parseRun(args []string) (uuid.UUID, error) {
 	return id, nil
 }
 
-func printRun(opts *cli.Options, r *client.Run, did string) error {
+// teamRef is the team as it was typed, for the command that reads a parent.
+func printRun(opts *cli.Options, r *client.Run, did, teamRef string) error {
 	view := viewOf(r)
 	err := opts.Out.Print(view, printer.Options{
 		Table: func(table *printer.Table) {
@@ -375,6 +383,10 @@ func printRun(opts *cli.Options, r *client.Run, did string) error {
 			table.Row(head, opts.Styles.Value.Render(cli.Safe(view.Agent)), opts.Styles.Muted.Render(view.ID))
 			table.Row("status", status(opts, view.Status), "")
 			table.Row("session", view.SessionID, "")
+			if view.ParentRunID != nil {
+				table.Row("delegated by", *view.ParentRunID,
+					opts.Styles.Muted.Render("oa runs get "+cli.Safe(teamRef)+" "+*view.ParentRunID))
+			}
 			table.Row("input", cli.Safe(view.Input), "")
 			if view.Error != nil {
 				table.Row("error", opts.Styles.Err.Render(cli.Safe(*view.Error)), "")

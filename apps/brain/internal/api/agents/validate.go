@@ -43,7 +43,10 @@ func validate(req agentRequest, loops []string) error {
 	if err := checkOutput(req); err != nil {
 		return err
 	}
-	return checkGrants(req)
+	if err := checkGrants(req); err != nil {
+		return err
+	}
+	return checkDelegation(req)
 }
 
 func hasNUL(values ...string) bool {
@@ -131,6 +134,31 @@ func checkGrants(req agentRequest) error {
 			return fmt.Errorf("skills grants %s twice", id)
 		}
 		skills[id] = true
+	}
+	return nil
+}
+
+func delegationOf(req agentRequest) string {
+	if req.Delegation == nil {
+		return "none"
+	}
+	return *req.Delegation
+}
+
+func checkDelegation(req agentRequest) error {
+	switch d := delegationOf(req); {
+	case d != "team" && d != "listed" && d != "none":
+		return errors.New("delegation must be team, listed or none")
+	case d != "listed" && len(req.Delegates) > 0:
+		return errors.New("delegates are only read when delegation is listed")
+	}
+
+	seen := map[uuid.UUID]bool{}
+	for _, id := range req.Delegates {
+		if seen[id] {
+			return fmt.Errorf("delegates lists %s twice", id)
+		}
+		seen[id] = true
 	}
 	return nil
 }
