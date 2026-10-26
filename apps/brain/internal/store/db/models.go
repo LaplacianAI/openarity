@@ -212,6 +212,7 @@ type Run struct {
 	StartedAt         *time.Time
 	FinishedAt        *time.Time
 	TokenBudget       *int64
+	Hub               bool
 }
 
 type RunEvent struct {
@@ -288,6 +289,7 @@ type TeamSetting struct {
 	Learning           bool
 	CompactionMessages int32
 	UpdatedAt          time.Time
+	HubAgentID         *uuid.UUID
 }
 
 type User struct {

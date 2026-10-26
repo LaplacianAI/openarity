@@ -124,3 +124,20 @@ FROM agent_mcp_servers g
 JOIN mcp_tools t ON t.mcp_server_id = g.mcp_server_id
 WHERE g.agent_id = $1 AND (g.allow IS NULL OR t.name = ANY (g.allow))
 ORDER BY t.id;
+
+-- The hub's reach: every agent, tool and skill in the team, leaving out the
+-- hub agent itself when there is one. Empty lists, never nulls.
+-- name: ListTeamReach :one
+SELECT
+    coalesce((SELECT array_agg(a.id ORDER BY a.id) FROM agents a
+              WHERE a.team_id = sqlc.arg('team_id')::uuid
+                AND a.id IS DISTINCT FROM sqlc.narg('exclude')::uuid), '{}')::uuid[] AS agent_ids,
+    coalesce((SELECT array_agg(t.id ORDER BY t.id) FROM mcp_tools t
+              WHERE t.team_id = sqlc.arg('team_id')::uuid), '{}')::uuid[] AS tool_ids,
+    coalesce((SELECT array_agg(k.id ORDER BY k.id) FROM skills k
+              WHERE k.team_id = sqlc.arg('team_id')::uuid), '{}')::uuid[] AS skill_ids;
+
+-- Whether the hub has anyone to hand work to.
+-- name: CountOtherAgents :one
+SELECT count(*) FROM agents
+WHERE team_id = sqlc.arg('team_id')::uuid AND id IS DISTINCT FROM sqlc.narg('exclude')::uuid;
