@@ -932,8 +932,13 @@ type Run struct {
 	Depth int32 `json:"depth" yaml:"depth"`
 
 	// Error Why it failed, null unless it did
-	Error       *string            `json:"error,omitempty" yaml:"error,omitempty"`
-	FinishedAt  *time.Time         `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`
+	Error      *string    `json:"error,omitempty" yaml:"error,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`
+
+	// Hub Whether the run was started for the team rather than for an
+	// agent. Its `agent` is the hub's name: the chosen agent's, or
+	// `orchestrator`.
+	Hub         bool               `json:"hub" yaml:"hub"`
 	ID          openapi_types.UUID `json:"id" yaml:"id"`
 	Input       string             `json:"input" yaml:"input"`
 	InputTokens int64              `json:"input_tokens" yaml:"input_tokens"`
@@ -964,10 +969,10 @@ type RunPage struct {
 
 // RunRequest defines model for RunRequest.
 type RunRequest struct {
-	// Agent The name of an agent in this team
+	// Agent The name of an agent in this team. Absent or empty asks the team's hub.
 	//
 	// Examples: triage
-	Agent string `json:"agent" yaml:"agent"`
+	Agent *string `json:"agent,omitempty" yaml:"agent,omitempty"`
 
 	// Input What the agent is asked to do. At most 100 KiB, with no NUL character.
 	//
@@ -2196,11 +2201,16 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 	GetTeamPermissions(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StartRunWithBody Start a run of an agent
+	// StartRunWithBody Start a run of an agent, or ask the team's hub
 	//
 	// Requires `run:write` in this team. The run is recorded and queued
 	// before the reply, and a worker picks it up; follow it with
 	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `agent` the run is the team's hub's: the agent chosen in the
+	// team's settings, or the built-in orchestrator when none is. The
+	// orchestrator runs on the team's model, so with none set it is
+	// refused with a 409.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -2212,11 +2222,16 @@ type ClientInterface interface {
 	// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
 	StartRunWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StartRun Start a run of an agent
+	// StartRun Start a run of an agent, or ask the team's hub
 	//
 	// Requires `run:write` in this team. The run is recorded and queued
 	// before the reply, and a worker picks it up; follow it with
 	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `agent` the run is the team's hub's: the agent chosen in the
+	// team's settings, or the built-in orchestrator when none is. The
+	// orchestrator runs on the team's model, so with none set it is
+	// refused with a 409.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -3499,11 +3514,16 @@ func (c *Client) GetTeamPermissions(ctx context.Context, id TeamID, reqEditors .
 	return c.Client.Do(req)
 }
 
-// StartRunWithBody Start a run of an agent
+// StartRunWithBody Start a run of an agent, or ask the team's hub
 //
 // Requires `run:write` in this team. The run is recorded and queued
 // before the reply, and a worker picks it up; follow it with
 // `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `agent` the run is the team's hub's: the agent chosen in the
+// team's settings, or the built-in orchestrator when none is. The
+// orchestrator runs on the team's model, so with none set it is
+// refused with a 409.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -3525,11 +3545,16 @@ func (c *Client) StartRunWithBody(ctx context.Context, id TeamID, contentType st
 	return c.Client.Do(req)
 }
 
-// StartRun Start a run of an agent
+// StartRun Start a run of an agent, or ask the team's hub
 //
 // Requires `run:write` in this team. The run is recorded and queued
 // before the reply, and a worker picks it up; follow it with
 // `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `agent` the run is the team's hub's: the agent chosen in the
+// team's settings, or the built-in orchestrator when none is. The
+// orchestrator runs on the team's model, so with none set it is
+// refused with a 409.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -7573,11 +7598,16 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 	GetTeamPermissionsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamPermissionsResponse, error)
 
-	// StartRunWithBodyWithResponse Start a run of an agent
+	// StartRunWithBodyWithResponse Start a run of an agent, or ask the team's hub
 	//
 	// Requires `run:write` in this team. The run is recorded and queued
 	// before the reply, and a worker picks it up; follow it with
 	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `agent` the run is the team's hub's: the agent chosen in the
+	// team's settings, or the built-in orchestrator when none is. The
+	// orchestrator runs on the team's model, so with none set it is
+	// refused with a 409.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -7589,11 +7619,16 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
 	StartRunWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartRunResponse, error)
 
-	// StartRunWithResponse Start a run of an agent
+	// StartRunWithResponse Start a run of an agent, or ask the team's hub
 	//
 	// Requires `run:write` in this team. The run is recorded and queued
 	// before the reply, and a worker picks it up; follow it with
 	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `agent` the run is the team's hub's: the agent chosen in the
+	// team's settings, or the built-in orchestrator when none is. The
+	// orchestrator runs on the team's model, so with none set it is
+	// refused with a 409.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -11296,11 +11331,16 @@ func (c *ClientWithResponses) GetTeamPermissionsWithResponse(ctx context.Context
 	return ParseGetTeamPermissionsResponse(rsp)
 }
 
-// StartRunWithBodyWithResponse Start a run of an agent
+// StartRunWithBodyWithResponse Start a run of an agent, or ask the team's hub
 //
 // Requires `run:write` in this team. The run is recorded and queued
 // before the reply, and a worker picks it up; follow it with
 // `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `agent` the run is the team's hub's: the agent chosen in the
+// team's settings, or the built-in orchestrator when none is. The
+// orchestrator runs on the team's model, so with none set it is
+// refused with a 409.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -11318,11 +11358,16 @@ func (c *ClientWithResponses) StartRunWithBodyWithResponse(ctx context.Context, 
 	return ParseStartRunResponse(rsp)
 }
 
-// StartRunWithResponse Start a run of an agent
+// StartRunWithResponse Start a run of an agent, or ask the team's hub
 //
 // Requires `run:write` in this team. The run is recorded and queued
 // before the reply, and a worker picks it up; follow it with
 // `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `agent` the run is the team's hub's: the agent chosen in the
+// team's settings, or the built-in orchestrator when none is. The
+// orchestrator runs on the team's model, so with none set it is
+// refused with a 409.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a

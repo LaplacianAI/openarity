@@ -146,3 +146,41 @@ func TestARefusedRunLeavesNoSessionBehind(t *testing.T) {
 		t.Errorf("%d runs written", n)
 	}
 }
+
+// A hub start reads the team's hub as it inserts, in the direct session made
+// for it, and ignores any agent id it was handed.
+func TestAHubStartIsTheTeamsHubInADirectSession(t *testing.T) {
+	w := newRunWorld(t)
+
+	r, err := w.store.StartRun(t.Context(), runs.StartArgs{
+		ID: uuid.New(), TeamID: w.team, AgentID: w.otherAgent, UserID: w.user, Input: "hello", Hub: true,
+	})
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if !r.Hub || r.AgentID != nil || r.AgentName != "orchestrator" || r.TeamID != w.team {
+		t.Errorf("run is hub %v, agent %v %q in %s; want the team's orchestrator", r.Hub, r.AgentID, r.AgentName, r.TeamID)
+	}
+	var kind string
+	if err := w.raw.QueryRow(t.Context(), `SELECT kind FROM sessions WHERE id = $1`, r.SessionID).Scan(&kind); err != nil {
+		t.Fatalf("read the run's session: %v", err)
+	}
+	if kind != "direct" {
+		t.Errorf("session is %s, want direct", kind)
+	}
+
+	if _, err := w.raw.Exec(t.Context(),
+		`INSERT INTO team_settings (team_id, search_provider, compaction_messages, hub_agent_id) VALUES ($1, 'none', 100, $2)`,
+		w.team, w.agent); err != nil {
+		t.Fatalf("choose the hub: %v", err)
+	}
+	r, err = w.store.StartRun(t.Context(), runs.StartArgs{
+		ID: uuid.New(), TeamID: w.team, UserID: w.user, Input: "hello", Hub: true,
+	})
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if !r.Hub || r.AgentID == nil || *r.AgentID != w.agent || r.AgentName != "triage" {
+		t.Errorf("run is hub %v, agent %v %q; want triage", r.Hub, r.AgentID, r.AgentName)
+	}
+}

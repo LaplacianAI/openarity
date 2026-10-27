@@ -1563,11 +1563,16 @@ paths:
     post:
       operationId: startRun
       tags: [runs]
-      summary: Start a run of an agent
+      summary: Start a run of an agent, or ask the team's hub
       description: |
         Requires `run:write` in this team. The run is recorded and queued
         before the reply, and a worker picks it up; follow it with
         `GET /teams/{id}/runs/{runID}/events`.
+
+        With no `agent` the run is the team's hub's: the agent chosen in the
+        team's settings, or the built-in orchestrator when none is. The
+        orchestrator runs on the team's model, so with none set it is
+        refused with a 409.
 
         With no `session_id` the run gets a direct session of its own, owned
         by the caller. A named session must be one the caller can read: a
@@ -1588,9 +1593,9 @@ paths:
                 $ref: "#/components/schemas/Run"
         "400":
           description: |
-            The body breaks a rule, named in the sentence: no agent, no
-            input, input over 100 KiB or holding a NUL character, or a body
-            that is not the shape above. Nothing is written.
+            The body breaks a rule, named in the sentence: no input, input
+            over 100 KiB or holding a NUL character, or a body that is not
+            the shape above. Nothing is written.
           content:
             text/plain:
               schema:
@@ -1610,6 +1615,16 @@ paths:
               schema:
                 type: string
                 examples: ["no agent in this team has that name"]
+        "409":
+          description: |
+            The run names no agent, the team chose no hub, and its settings
+            have no model for the built-in orchestrator. Nothing is written.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples:
+                  - "the team has no model set, so its orchestrator cannot run; set one in the team's settings"
 
   /teams/{id}/runs/{runID}:
     parameters:
@@ -3652,12 +3667,12 @@ components:
 
     RunRequest:
       type: object
-      required: [agent, input]
+      required: [input]
       additionalProperties: false
       properties:
         agent:
           type: string
-          description: The name of an agent in this team
+          description: The name of an agent in this team. Absent or empty asks the team's hub.
           examples: ["triage"]
         input:
           type: string
@@ -3683,6 +3698,7 @@ components:
         - output_tokens
         - created_at
         - depth
+        - hub
       properties:
         parent_run_id:
           type: string
@@ -3693,6 +3709,12 @@ components:
           type: integer
           format: int32
           description: 0 for a run a person started, one more for each delegation beneath it
+        hub:
+          type: boolean
+          description: |
+            Whether the run was started for the team rather than for an
+            agent. Its `agent` is the hub's name: the chosen agent's, or
+            `orchestrator`.
         id:
           type: string
           format: uuid

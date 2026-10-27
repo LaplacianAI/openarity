@@ -28,6 +28,7 @@ type StartArgs struct {
 	UserID    uuid.UUID
 	SessionID *uuid.UUID
 	Input     string
+	Hub       bool
 }
 
 type Store interface {
@@ -38,6 +39,7 @@ type Store interface {
 	ListRunEvents(ctx context.Context, arg db.ListRunEventsParams) ([]db.RunEvent, error)
 	ListRunsBySession(ctx context.Context, arg db.ListRunsBySessionParams) ([]db.Run, error)
 	StartRun(ctx context.Context, arg StartArgs) (db.Run, error)
+	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 }
 
 type Starter interface {
@@ -76,9 +78,6 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
-	case req.Agent == "":
-		http.Error(w, "agent is required", http.StatusBadRequest)
-		return
 	case req.Input == "":
 		http.Error(w, "input is required", http.StatusBadRequest)
 		return
@@ -104,20 +103,28 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	agent, err := h.store.GetAgentByName(r.Context(), db.GetAgentByNameParams{TeamID: teamID, Name: req.Agent})
-	if errors.Is(err, pgx.ErrNoRows) {
-		http.Error(w, "no agent in this team has that name", http.StatusNotFound)
-		return
+	args := StartArgs{
+		ID: uuid.New(), TeamID: teamID, UserID: u.ID, SessionID: req.SessionID, Input: req.Input,
+		Hub: req.Agent == "",
 	}
-	if err != nil {
-		api.Fail(w, h.logger, u, "failed to read the agent", err)
-		return
+	if args.Hub {
+		if !h.hubCanRun(w, r, teamID) {
+			return
+		}
+	} else {
+		agent, err := h.store.GetAgentByName(r.Context(), db.GetAgentByNameParams{TeamID: teamID, Name: req.Agent})
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "no agent in this team has that name", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			api.Fail(w, h.logger, u, "failed to read the agent", err)
+			return
+		}
+		args.AgentID = agent.ID
 	}
 
-	row, err := h.store.StartRun(r.Context(), StartArgs{
-		ID: uuid.New(), TeamID: teamID, AgentID: agent.ID, UserID: u.ID,
-		SessionID: req.SessionID, Input: req.Input,
-	})
+	row, err := h.store.StartRun(r.Context(), args)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "no agent in this team has that name", http.StatusNotFound)
 		return
@@ -132,6 +139,20 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 			"run_id", row.ID, "error", err)
 	}
 	api.WriteJSON(w, h.logger, http.StatusAccepted, view(row))
+}
+
+func (h *handler) hubCanRun(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) bool {
+	s, err := h.store.GetTeamSettings(r.Context(), teamID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		api.Fail(w, h.logger, api.Caller(r), "failed to read the team's settings", err)
+		return false
+	}
+	if s.HubAgentID == nil && s.ModelName == nil {
+		http.Error(w, "the team has no model set, so its orchestrator cannot run; set one in the team's settings",
+			http.StatusConflict)
+		return false
+	}
+	return true
 }
 
 func (h *handler) get(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +284,6 @@ func view(r db.Run) run {
 		Input: r.Input, Output: r.Output, Error: r.Error,
 		InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
 		CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
-		ParentRunID: r.ParentRunID, Depth: r.Depth,
+		ParentRunID: r.ParentRunID, Depth: r.Depth, Hub: r.Hub,
 	}
 }

@@ -103,7 +103,8 @@ func newStartCmd(opts *cli.Options) *cobra.Command {
 				return err
 			}
 
-			body := client.StartRunJSONRequestBody{Agent: strings.TrimSpace(args[1]), Input: input}
+			agent := strings.TrimSpace(args[1])
+			body := client.StartRunJSONRequestBody{Agent: &agent, Input: input}
 			if session != "" {
 				id, err := uuid.Parse(strings.TrimSpace(session))
 				if err != nil {
