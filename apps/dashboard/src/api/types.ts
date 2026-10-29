@@ -145,6 +145,8 @@ export type Run = {
   parent_run_id: string | null;
   /** 0 for a run a person started, one more for each delegation beneath it. */
   depth: number;
+  /** Started for the team rather than for an agent: its agent is the team's hub. */
+  hub: boolean;
 };
 
 /**
@@ -343,6 +345,8 @@ export type TeamSettings = {
   search: { provider: SearchProvider; url: string | null; key_set: boolean };
   learning: boolean;
   compaction_messages: number;
+  /** The agent every message reaches first; null for the built-in orchestrator. */
+  hub: { id: string; name: string } | null;
   updated_at: string | null;
 };
 
@@ -355,4 +359,6 @@ export type TeamSettingsRequest = {
   search: { provider: SearchProvider; url?: string; api_key?: string };
   learning: boolean;
   compaction_messages: number;
+  /** An agent's name in the team; null for the built-in orchestrator. */
+  hub: string | null;
 };

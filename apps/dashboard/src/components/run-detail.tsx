@@ -14,7 +14,9 @@ import {
   Ban,
   CheckCircle2,
   ChevronRight,
+  Circle,
   CircleDashed,
+  CircleDot,
   Clock,
   Loader2,
   Users,
@@ -33,8 +35,12 @@ import {
   type GraphHit,
   graphHits,
   groupTrace,
+  type PlanItem,
+  type PlanStatus,
   pretty,
+  type SearchResults,
   type Step,
+  searchResults,
   stepsOf,
   type ToolCall,
   type Trace,
@@ -174,6 +180,15 @@ export function RunDetail({
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="truncate text-base font-semibold tracking-tight">{run.agent}</h2>
               <RunStatus status={run.status} pill />
+              {run.hub ? (
+                <span
+                  data-hub
+                  title="Started for the team: its hub answered"
+                  className="rounded-full border border-border bg-surface px-2 py-0.5 text-xs font-medium"
+                >
+                  hub
+                </span>
+              ) : null}
               {live ? <LiveBadge /> : null}
             </div>
             {run.parent_run_id ? (
@@ -212,6 +227,12 @@ export function RunDetail({
           {run.input}
         </p>
       </Section>
+
+      {trace.plan ? (
+        <Section title="Plan">
+          <PlanList items={trace.plan} />
+        </Section>
+      ) : null}
 
       {run.output ? (
         <Section title="Answer">
@@ -428,6 +449,15 @@ function TraceView({
             return (
               <Note key={key} kind="resumed">
                 Resumed with {item.messages} earlier message{item.messages === 1 ? "" : "s"}
+              </Note>
+            );
+          case "plan":
+            return (
+              <Note key={key} kind="plan">
+                <span className="font-medium text-foreground">Plan</span>
+                <div className="mt-1">
+                  <PlanList items={item.items} />
+                </div>
               </Note>
             );
           case "unavailable":
@@ -748,6 +778,8 @@ function DelegateCard({
 function ResultView({ name, output }: { name: string; output: string }) {
   const hits = name === "graph" ? graphHits(output) : null;
   if (hits) return <GraphResults hits={hits} raw={output} />;
+  const found = name === "web_search" ? searchResults(output) : null;
+  if (found) return <SearchList results={found} raw={output} />;
   if (output === "") return <p className="text-xs text-muted-foreground">No output.</p>;
   return (
     <div className="space-y-1.5">
@@ -847,6 +879,113 @@ function GraphResults({ hits, raw }: { hits: GraphHit[]; raw: string }) {
           })}
         </ol>
       )}
+      <RawToggle raw={raw} />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------- plan */
+
+const PLAN: Record<PlanStatus, { icon: typeof Clock; word: string; tone: string }> = {
+  pending: { icon: Circle, word: "pending", tone: "text-muted-foreground" },
+  in_progress: { icon: CircleDot, word: "in progress", tone: "text-primary" },
+  done: { icon: CheckCircle2, word: "done", tone: "text-success" },
+};
+
+/** A plan as a checklist: each status an icon and its word, never colour alone. */
+function PlanList({ items }: { items: PlanItem[] }) {
+  if (items.length === 0) {
+    return <p className="text-xs text-muted-foreground">The plan is empty.</p>;
+  }
+  return (
+    <ul className="space-y-1">
+      {items.map((item, i) => {
+        const s = PLAN[item.status];
+        const Icon = s.icon;
+        return (
+          <li
+            // biome-ignore lint/suspicious/noArrayIndexKey: a plan is a list in order, and its steps may repeat
+            key={i}
+            data-status={item.status}
+            className="flex items-start gap-2 text-sm"
+          >
+            <Icon aria-hidden className={cn("mt-0.5 size-3.5 shrink-0", s.tone)} />
+            <span className="w-20 shrink-0 text-xs text-muted-foreground">{s.word}</span>
+            <span
+              className={cn(
+                "min-w-0 break-words",
+                item.status === "done" && "text-muted-foreground line-through",
+              )}
+            >
+              {item.text}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/* ----------------------------------------------------------- search result */
+
+/** The address a hit may link to: the web's only. Anything else is shown, never followed. */
+function webURL(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function SearchList({ results, raw }: { results: SearchResults; raw: string }) {
+  return (
+    <div className="space-y-2">
+      {results.hits.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No results.</p>
+      ) : (
+        <ol aria-label="Search results" className="space-y-2">
+          {results.hits.map((h, i) => {
+            const href = webURL(h.url);
+            const title = h.title || h.url;
+            return (
+              <li
+                // biome-ignore lint/suspicious/noArrayIndexKey: ranked, and two pages may share a title
+                key={i}
+                data-result
+                className="flex items-start gap-3"
+              >
+                <span className="w-4 shrink-0 pt-0.5 text-right text-[11px] text-muted-foreground tabular-nums">
+                  {i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  {href ? (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer nofollow"
+                      className="break-words text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                    >
+                      {title}
+                    </a>
+                  ) : (
+                    <span className="break-words text-xs font-medium">{title}</span>
+                  )}
+                  <p className="truncate font-mono text-[11px] text-muted-foreground">{h.url}</p>
+                  {h.snippet ? (
+                    <p className="mt-0.5 line-clamp-2 break-words text-xs text-muted-foreground">
+                      {h.snippet}
+                    </p>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {results.cut ? (
+        <p className="text-xs text-muted-foreground">The brain cut these results at 16 KiB.</p>
+      ) : null}
       <RawToggle raw={raw} />
     </div>
   );

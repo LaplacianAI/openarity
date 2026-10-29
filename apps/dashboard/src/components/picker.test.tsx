@@ -186,3 +186,42 @@ describe("the picker", () => {
     expect(screen.getByTestId("extra-s0")).toHaveTextContent("only some");
   });
 });
+
+describe("a picker of one", () => {
+  function One({ initial = [] as Picked[] }) {
+    const [value, setValue] = useState<Picked[]>(initial);
+    return (
+      <>
+        <Picker
+          label="Skills"
+          noun="skill"
+          value={value}
+          onChange={setValue}
+          search={searcher()}
+          searchKey={["one"]}
+          max={1}
+        />
+        <output data-testid="chosen">{value.map((v) => v.name).join(",")}</output>
+      </>
+    );
+  }
+
+  it("replaces its pick rather than adding a second", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <One initial={[SKILLS[3] as Picked]} />
+      </QueryClientProvider>,
+    );
+
+    // Full, it offers to change the pick rather than to add one.
+    expect(screen.queryByRole("button", { name: /add skill/i })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /change skill/i }));
+    const option = await screen.findByRole("option", { name: "payroll" });
+    expect(screen.getByRole("listbox")).not.toHaveAttribute("aria-multiselectable");
+    await userEvent.click(option);
+    expect(chosen()).toBe("payroll");
+    // One pick is the whole choice, so the popover closes on it.
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+  });
+});
