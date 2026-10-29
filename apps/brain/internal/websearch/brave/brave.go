@@ -49,7 +49,7 @@ func (s searcher) Search(ctx context.Context, q string, n int) ([]websearch.Hit,
 	if err := websearch.Decode(websearch.Brave, body, &r); err != nil {
 		return nil, err
 	}
-	found := r.Web.Results[:min(n, len(r.Web.Results))]
+	found := r.Web.Results[:min(max(n, 0), len(r.Web.Results))]
 	hits := make([]websearch.Hit, 0, len(found))
 	for _, x := range found {
 		hits = append(hits, websearch.Hit{Title: x.Title, URL: x.URL, Snippet: x.Description})

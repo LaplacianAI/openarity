@@ -226,7 +226,7 @@ func newFixture() *fixture {
 		run:     db.Run{ID: uuid.New(), TeamID: teamID, AgentID: &a.ID, AgentName: a.Name},
 	}
 	f.graph = newGraphFixture()
-	f.builder = NewBuilder(f.store, f.objects, f.clients, f.graph.deps())
+	f.builder = NewBuilder(f.store, f.objects, f.clients, f.graph.deps(), nil)
 	return f
 }
 
@@ -657,7 +657,7 @@ func TestConnectingGivesUpAtItsTimeout(t *testing.T) {
 func TestTheConnectTimeoutIsThirtySeconds(t *testing.T) {
 	t.Parallel()
 
-	if got := NewBuilder(nil, nil, nil, nil).connectTimeout; got != 30*time.Second {
+	if got := NewBuilder(nil, nil, nil, nil, nil).connectTimeout; got != 30*time.Second {
 		t.Errorf("connectTimeout = %v, want 30s", got)
 	}
 }
@@ -916,7 +916,7 @@ func TestBuildBindsTheGraphTool(t *testing.T) {
 
 func TestBuildWithoutTheGraphSaysWhy(t *testing.T) {
 	f := newFixture()
-	f.builder = NewBuilder(f.store, f.objects, f.clients, nil)
+	f.builder = NewBuilder(f.store, f.objects, f.clients, nil, nil)
 
 	built := f.build(t)
 

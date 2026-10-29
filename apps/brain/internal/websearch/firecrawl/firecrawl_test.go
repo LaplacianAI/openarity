@@ -92,3 +92,16 @@ func TestErrorsNameTheProviderAsTheTeamSetIt(t *testing.T) {
 		}
 	}
 }
+
+// Search is a port anyone may call; a count below one finds nothing rather
+// than panicking the worker that asked.
+func TestACountBelowOneFindsNothing(t *testing.T) {
+	srv := websearchtest.Serve(t, http.StatusOK, reply)
+
+	for _, n := range []int{0, -1} {
+		got, err := firecrawl.New(websearch.FirecrawlCloud, srv.URL, key, websearchtest.Client()).Search(t.Context(), "x", n)
+		if err != nil || got == nil || len(got) != 0 {
+			t.Errorf("n %d: hits %#v, err %v; want an empty list", n, got, err)
+		}
+	}
+}

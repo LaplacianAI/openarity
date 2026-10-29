@@ -136,6 +136,7 @@ type execFixture struct {
 	agent    uuid.UUID
 	run      uuid.UUID
 	graph    *fakeSearcher
+	search   *SearchDeps
 }
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -190,7 +191,7 @@ func (f *execFixture) executor(t *testing.T, clients agent.ClientFactory, endpoi
 		t.Fatalf("agent.New: %v", err)
 	}
 	builder := NewBuilder(f.store, &fakeObjects{data: map[string]string{}}, &fakeClients{client: &http.Client{}},
-		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store})
+		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store}, f.search)
 	e := NewExecutor(f.store, builder, runner, endpoint, f.sessions, quietLogger())
 	e.every = 20 * time.Millisecond
 	return e
@@ -1541,7 +1542,7 @@ func TestTheDelegatedEventWaitsForItsCall(t *testing.T) {
 	}
 	slow := slowToolCalls{Store: f.store, delay: 150 * time.Millisecond}
 	builder := NewBuilder(f.store, &fakeObjects{data: map[string]string{}}, &fakeClients{client: &http.Client{}},
-		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store})
+		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store}, nil)
 	f.exec = NewExecutor(slow, builder, runner, agent.Endpoint{BaseURL: "http://model.test"}, f.sessions, quietLogger())
 	f.exec.every = 20 * time.Millisecond
 

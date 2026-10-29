@@ -46,13 +46,14 @@ type Builder struct {
 	objects        Objects
 	mcp            MCPClients
 	graph          *GraphDeps
+	search         *SearchDeps
 	delegates      *DelegateDeps
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 }
 
-func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps) *Builder {
-	return &Builder{store: s, objects: o, mcp: m, graph: g, connectTimeout: connectTimeout}
+func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps, search *SearchDeps) *Builder {
+	return &Builder{store: s, objects: o, mcp: m, graph: g, search: search, connectTimeout: connectTimeout}
 }
 
 type Unavailable struct{ Name, Reason string }
@@ -120,6 +121,17 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			built.Spec.Tools = append(built.Spec.Tools, PlanTool(func(ctx context.Context, kind string, p any) error {
 				return b.note(ctx, run.ID, l.Worker, kind, p)
 			}))
+		}
+		search, unavailable, err := b.webSearch(ctx, run.TeamID)
+		if err != nil {
+			built.Close()
+			return Built{}, err
+		}
+		if unavailable != nil {
+			built.Unavailable = append(built.Unavailable, *unavailable)
+		}
+		if search != nil {
+			built.Spec.Tools = append(built.Spec.Tools, *search)
 		}
 	}
 
@@ -222,7 +234,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, built *Built) ([
 			if !allowed(s, g.Allow, t.Name) {
 				continue
 			}
-			if t.Name == GraphToolName || t.Name == DelegateToolName || t.Name == PlanToolName {
+			if t.Name == GraphToolName || t.Name == DelegateToolName || t.Name == PlanToolName || t.Name == WebSearchToolName {
 				built.Unavailable = append(built.Unavailable, Unavailable{
 					Name:   t.Name,
 					Reason: fmt.Sprintf("the MCP server %q offers a tool named %s, which is the brain's own", s.Name, t.Name),
