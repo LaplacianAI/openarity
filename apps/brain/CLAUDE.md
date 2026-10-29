@@ -464,10 +464,17 @@ reinstalled.
   and are never narrowed. `nil` keeps every grant and an empty narrowing
   keeps none; nothing sets it until the outfitter, and a child's own
   delegates are built without it.
-- **`graph`, `delegate`, `plan` and `web_search` are the brain's names.** A bare
-  MCP server's tool by one of them is left out with a `tool_unavailable`
-  event, for every agent and not only the hub, since any agent can be chosen
-  as the hub.
+- **A server may not take a name the brain's own tool has on that run.**
+  `graph` and `delegate` on every run; `plan` and `web_search` on the hub's
+  alone, decided per run by `reserved`. A bare MCP server's tool of a
+  reserved name is left out with a `tool_unavailable` event. Reserving `plan`
+  and `web_search` for every agent, because any agent may be chosen as the
+  hub, cost a plain research agent its search server's `web_search` on the
+  upgrade; the clash only exists while the agent runs as the hub.
+- **A hub with no graph answers alone.** Agents are found through the graph
+  and listed nowhere else, so with no embedding model the hub is given no
+  `delegate` and is told the team cannot be searched, rather than being
+  left to guess names.
 - **The drain ticks once a minute, not every ten seconds.** DBOS keeps a row
   per tick and deletes none: measured, 98 ticks left 98 workflow rows and 98
   step rows, about 560 bytes a tick before indexes. The job's durable state is

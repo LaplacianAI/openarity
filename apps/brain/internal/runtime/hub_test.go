@@ -37,6 +37,7 @@ How you reply:
 - Plain text with light Markdown.`
 
 	wantAlone   = "This team has no agents yet, so you answer everything yourself."
+	wantNoGraph = "This team's agents cannot be searched here, so you answer everything yourself."
 	wantNoModel = "the team has no model set, so its orchestrator cannot run; set one in the team's settings"
 )
 
@@ -464,5 +465,57 @@ func TestABuiltInHubWithNoModelFailsNamingTheSetting(t *testing.T) {
 	wantStatus(t, f.row(t), "failed", wantNoModel)
 	if n := len(f.model.requests()); n != 0 {
 		t.Errorf("the model was asked %d times", n)
+	}
+}
+
+// --- found by the final review ---
+
+// plan and web_search are the brain's names only while the brain's own tools
+// of those names are there: on the hub. An agent running as itself keeps a
+// server's tool of either name.
+func TestAPlainAgentKeepsAServersPlanAndWebSearch(t *testing.T) {
+	f := newFixture()
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", serve(t, "plan", "web_search", "fetch").url, true)}
+
+	built := f.build(t)
+
+	if got := toolNames(built); !slices.Equal(got, []string{"fetch", "plan", "web_search"}) {
+		t.Errorf("MCP tools = %v, want the server's plan and web_search kept", got)
+	}
+	if len(built.Unavailable) != 0 {
+		t.Errorf("unavailable = %+v, want nothing", built.Unavailable)
+	}
+}
+
+// graph and delegate stay the brain's names for every agent: every agent may
+// be given either.
+func TestAPlainAgentStillLosesAServersGraphAndDelegate(t *testing.T) {
+	f := newFixture()
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", serve(t, "graph", "delegate").url, true)}
+
+	built := f.build(t)
+
+	if got := toolNames(built); len(got) != 0 || len(built.Unavailable) != 2 {
+		t.Errorf("MCP tools %v, unavailable %+v; want both left out and said so", got, built.Unavailable)
+	}
+}
+
+// With no embedding model the team's agents cannot be found: the graph is how
+// the hub finds them, and the prompt says they are listed nowhere else. So it
+// is not given delegate, and is told it answers alone.
+func TestAHubWithNoGraphAnswersAlone(t *testing.T) {
+	f := newFixture()
+	f.asOrchestrator()
+	f.teamModel()
+	f.withTeam(3)
+	f.builder.graph = nil
+
+	built := f.build(t)
+
+	if got := delegateTools(built); len(got) != 0 {
+		t.Errorf("delegate tools = %d with no graph to find anyone through", len(got))
+	}
+	if got, want := systemOf(built), wantHubPrompt+"\n\n"+wantNoGraph; got != want {
+		t.Errorf("system = %q, want %q", got, want)
 	}
 }

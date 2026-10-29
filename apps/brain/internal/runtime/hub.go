@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	HubName     = "orchestrator"
-	hubMaxSteps = 24
-	hubAlone    = "This team has no agents yet, so you answer everything yourself."
+	HubName         = "orchestrator"
+	hubMaxSteps     = 24
+	hubAlone        = "This team has no agents yet, so you answer everything yourself."
+	hubUnsearchable = "This team's agents cannot be searched here, so you answer everything yourself."
 )
 
 const HubPrompt = `You are this team's assistant. Every message to the team reaches you first.
@@ -80,6 +81,9 @@ func (b *Builder) delegateFor(ctx context.Context, a db.Agent, run db.Run, l Lin
 	if !run.Hub {
 		return b.delegateTool(ctx, a, run, l)
 	}
+	if b.graph == nil {
+		return agent.Tool{}, false, nil
+	}
 	n, err := b.store.CountOtherAgents(ctx, db.CountOtherAgentsParams{TeamID: run.TeamID, Exclude: self(a)})
 	if err != nil {
 		return agent.Tool{}, false, fmt.Errorf("counting the team's agents: %w", err)
@@ -90,15 +94,26 @@ func (b *Builder) delegateFor(ctx context.Context, a db.Agent, run db.Run, l Lin
 	return DelegateTool(*b.delegates, a, run, l), true, nil
 }
 
-func hubSystem(a db.Agent, alone bool) []agent.Content {
+func hubSystem(a db.Agent, alone string) []agent.Content {
 	prompt := HubPrompt
-	if alone {
-		prompt += "\n\n" + hubAlone
+	if alone != "" {
+		prompt += "\n\n" + alone
 	}
 	if a.Instructions != "" {
 		prompt += "\n\n" + a.Instructions
 	}
 	return agent.System(prompt)
+}
+
+func (b *Builder) alone(delegates bool) string {
+	switch {
+	case delegates:
+		return ""
+	case b.graph == nil:
+		return hubUnsearchable
+	default:
+		return hubAlone
+	}
 }
 
 func self(a db.Agent) *uuid.UUID {

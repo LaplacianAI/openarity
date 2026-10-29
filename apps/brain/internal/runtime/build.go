@@ -93,7 +93,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	built.Spec.Session = session
 
 	if a.ID != uuid.Nil {
-		built.Spec.Tools, err = b.tools(ctx, a.ID, l.Narrow, &built)
+		built.Spec.Tools, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, &built)
 		if err != nil {
 			built.Close()
 			return Built{}, err
@@ -116,7 +116,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		built.Spec.Tools = append(built.Spec.Tools, delegate)
 	}
 	if run.Hub {
-		built.Spec.System = hubSystem(a, !ok)
+		built.Spec.System = hubSystem(a, b.alone(ok))
 		if b.note != nil {
 			built.Spec.Tools = append(built.Spec.Tools, PlanTool(func(ctx context.Context, kind string, p any) error {
 				return b.note(ctx, run.ID, l.Worker, kind, p)
@@ -207,7 +207,7 @@ func specOf(a db.Agent) agent.Spec {
 	return spec
 }
 
-func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, built *Built) ([]agent.Tool, error) {
+func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hub bool, built *Built) ([]agent.Tool, error) {
 	grants, err := b.store.ListGrantedMCPServers(ctx, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("reading the agent's MCP servers: %w", err)
@@ -237,7 +237,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, bu
 			if !n.keepsTool(t.Name) {
 				continue
 			}
-			if t.Name == GraphToolName || t.Name == DelegateToolName || t.Name == PlanToolName || t.Name == WebSearchToolName {
+			if reserved(t.Name, hub) {
 				built.Unavailable = append(built.Unavailable, Unavailable{
 					Name:   t.Name,
 					Reason: fmt.Sprintf("the MCP server %q offers a tool named %s, which is the brain's own", s.Name, t.Name),
@@ -252,6 +252,16 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, bu
 		}
 	}
 	return out, nil
+}
+
+func reserved(name string, hub bool) bool {
+	switch name {
+	case GraphToolName, DelegateToolName:
+		return true
+	case PlanToolName, WebSearchToolName:
+		return hub
+	}
+	return false
 }
 
 func (b *Builder) connect(ctx context.Context, s db.McpServer) (*mcp.Session, error) {
