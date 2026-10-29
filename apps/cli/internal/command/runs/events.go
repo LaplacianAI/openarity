@@ -57,6 +57,14 @@ type payload struct {
 	CachedInputTokens int64    `json:"cached_input_tokens"`
 	Spent             int64    `json:"spent"`
 	Status            string   `json:"status"`
+
+	Items []planEntry `json:"items"`
+}
+
+// planEntry is one step of the hub's plan, as its plan event carries it.
+type planEntry struct {
+	Text   string `json:"text"`
+	Status string `json:"status"`
 }
 
 // follow is how a run's events are printed: from where, with how much detail,

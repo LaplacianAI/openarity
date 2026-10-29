@@ -19,13 +19,13 @@ const maxKeyBytes = 4096
 var settingFlags = []string{
 	"model", "max-tokens", "temperature", "no-model",
 	"search", "search-url", "search-key-stdin", "no-search-key",
-	"learning", "compaction-messages",
+	"learning", "compaction-messages", "hub", "no-hub",
 }
 
 func newSettingsCmd(opts *cli.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "settings",
-		Short: "A team's model, web search, learning and compaction",
+		Short: "A team's model, web search, learning, compaction and hub",
 		Long: "Every member can read a team's settings. Changing them needs\n" +
 			"team:settings in the team, which only admin holds by default.",
 	}
@@ -68,6 +68,8 @@ type settingsFlags struct {
 	noKey       bool
 	learning    string
 	compaction  int32
+	hub         string
+	noHub       bool
 }
 
 func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
@@ -141,6 +143,8 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().BoolVar(&f.noKey, "no-search-key", false, "firecrawl-oss only: run the instance with no key")
 	cmd.Flags().StringVar(&f.learning, "learning", "", "on or off")
 	cmd.Flags().Int32Var(&f.compaction, "compaction-messages", 0, "messages before a transcript compacts, 10 to 10000")
+	cmd.Flags().StringVar(&f.hub, "hub", "", "the agent every message reaches first, by name")
+	cmd.Flags().BoolVar(&f.noHub, "no-hub", false, "return the team to the built-in orchestrator")
 	return cmd
 }
 
@@ -158,6 +162,10 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return errors.New("--search-key-stdin and --no-search-key contradict each other")
 	case changed("learning") && f.learning != "on" && f.learning != "off":
 		return fmt.Errorf("--learning takes on or off, not %q", f.learning)
+	case changed("hub") && f.noHub:
+		return errors.New("--hub and --no-hub contradict each other")
+	case changed("hub") && strings.TrimSpace(f.hub) == "":
+		return errors.New("--hub takes an agent's name; --no-hub returns the team to the built-in orchestrator")
 	}
 	return nil
 }
@@ -177,6 +185,11 @@ func (f *settingsFlags) apply(
 			URL:      cur.Search.URL,
 			APIKey:   key,
 		},
+	}
+	// The PUT is whole: a hub not sent back is a hub cleared.
+	if cur.Hub != nil {
+		name := cur.Hub.Name
+		req.Hub = &name
 	}
 
 	switch {
@@ -213,6 +226,13 @@ func (f *settingsFlags) apply(
 	}
 	if changed("compaction-messages") {
 		req.CompactionMessages = f.compaction
+	}
+	switch {
+	case f.noHub:
+		req.Hub = nil
+	case changed("hub"):
+		name := strings.TrimSpace(f.hub)
+		req.Hub = &name
 	}
 	return req
 }
@@ -264,6 +284,11 @@ func printSettings(opts *cli.Options, s *client.TeamSettings) error {
 			}
 			table.Row(label("learning"), value(learning))
 			table.Row(label("compaction"), value(strconv.Itoa(int(s.CompactionMessages))+" messages"))
+			if s.Hub == nil {
+				table.Row(label("hub"), muted("orchestrator (built in)"))
+			} else {
+				table.Row(label("hub"), value(cli.Safe(s.Hub.Name)))
+			}
 		},
 	})
 }

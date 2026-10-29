@@ -163,11 +163,12 @@ func TestStartRefusesBadInputWithoutAskingTheBrain(t *testing.T) {
 		args  []string
 		want  string
 	}{
-		"an empty input":      {args: []string{"runs", "start", "platform", "triage", "  "}, want: "empty"},
-		"an empty stdin":      {stdin: "\n", args: []string{"runs", "start", "platform", "triage", "-"}, want: "empty"},
-		"a session by name":   {args: []string{"runs", "start", "platform", "triage", "go", "--session", "support"}, want: "not a session id"},
-		"no input at all":     {args: []string{"runs", "start", "platform", "triage"}, want: "accepts 3 arg"},
-		"no agent and no run": {args: []string{"runs", "start", "platform"}, want: "accepts 3 arg"},
+		"an empty input":     {args: []string{"runs", "start", "platform", "triage", "  "}, want: "empty"},
+		"an empty stdin":     {stdin: "\n", args: []string{"runs", "start", "platform", "triage", "-"}, want: "empty"},
+		"a session by name":  {args: []string{"runs", "start", "platform", "triage", "go", "--session", "support"}, want: "not a session id"},
+		"no input at all":    {args: []string{"runs", "start", "platform"}, want: "accepts between 2 and 3 arg"},
+		"four arguments":     {args: []string{"runs", "start", "platform", "triage", "go", "now"}, want: "accepts between 2 and 3 arg"},
+		"an empty hub input": {args: []string{"runs", "start", "platform", "  "}, want: "empty"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			script := clitest.Routes(t, with("POST /teams/{id}/runs", clitest.Reply{Status: http.StatusAccepted, Body: queuedRun}))
@@ -210,6 +211,44 @@ func TestStartKeepsTheBrainsReasonForAnUnknownAgent(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no agent in this team has that name") {
 		t.Errorf("the brain's reason was dropped: %v", err)
+	}
+}
+
+// Two arguments ask the team's hub: no agent is sent, and the brain starts
+// whichever agent the team chose, or the built-in orchestrator.
+func TestStartWithNoAgentAsksTheHub(t *testing.T) {
+	script := clitest.Routes(t, with("POST /teams/{id}/runs", clitest.Reply{Status: http.StatusAccepted, Body: queuedRun}))
+
+	out, err := clitest.Execute(t, commands, "runs", "start", "platform", "What is due this week?")
+	if err != nil {
+		t.Fatalf("runs start: %v\n%s", err, out)
+	}
+	body := bodyOf(t, script, http.MethodPost, runsPath)
+	if _, sent := body["agent"]; sent || body["input"] != "What is due this week?" {
+		t.Errorf("body = %v, want the input and no agent", body)
+	}
+}
+
+func TestStartWithNoAgentReadsTheInputFromStdin(t *testing.T) {
+	script := clitest.Routes(t, with("POST /teams/{id}/runs", clitest.Reply{Status: http.StatusAccepted, Body: queuedRun}))
+
+	if out, err := clitest.ExecuteWithStdin(t, commands, "What is due?\n", "runs", "start", "platform", "-"); err != nil {
+		t.Fatalf("runs start -: %v\n%s", err, out)
+	}
+	if got := bodyOf(t, script, http.MethodPost, runsPath)["input"]; got != "What is due?\n" {
+		t.Errorf("input = %q, want stdin exactly", got)
+	}
+}
+
+// With no model and no hub chosen, the orchestrator cannot run; the brain's
+// sentence says where to fix it, and has to survive.
+func TestStartKeepsTheBrainsReasonWhenTheHubCannotRun(t *testing.T) {
+	const why = "the team has no model set, so its orchestrator cannot run; set one in the team's settings"
+	clitest.Routes(t, with("POST /teams/{id}/runs", clitest.Reply{Status: http.StatusConflict, Body: why}))
+
+	_, err := clitest.Execute(t, commands, "runs", "start", "platform", "hi")
+	if err == nil || !strings.Contains(err.Error(), why) {
+		t.Errorf("err = %v, want the brain's sentence", err)
 	}
 }
 

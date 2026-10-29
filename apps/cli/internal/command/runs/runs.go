@@ -84,27 +84,35 @@ func newStartCmd(opts *cli.Options) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "start <team> <agent> <input>",
-		Short: "Start an agent on a task",
-		Long: "Needs run:write in the team. The agent is named, not looked up: the\n" +
-			"brain resolves it as it queues the run. The input is what the agent is\n" +
-			"asked to do, at most 100 KiB; - reads it from stdin.\n\n" +
+		Use:   "start <team> [agent] <input>",
+		Short: "Ask the team's hub, or start an agent on a task",
+		Long: "Needs run:write in the team. With no agent the run is the team's hub's:\n" +
+			"the agent chosen in its settings, or the built-in orchestrator. A named\n" +
+			"agent is not looked up: the brain resolves it as it queues the run. The\n" +
+			"input is what is asked, at most 100 KiB; - reads it from stdin.\n\n" +
 			"--follow prints the run's events as they happen and exits once it ends,\n" +
 			"non-zero unless it succeeded. Ctrl-C stops following, not the run.\n" +
 			"--verbose adds each step's tokens and prints tool results whole.\n\n" +
+			"    oa runs start platform 'What is due this week?'\n" +
 			"    oa runs start platform triage 'Sort the issues opened today.'\n" +
 			"    oa runs start platform triage - --follow < task.md\n" +
 			"    oa runs start platform triage 'And the ones from yesterday?' \\\n" +
 			"        --session c7e2a940-51f6-4c3b-8d7a-0e9b3f1a6c52",
-		Args: cobra.ExactArgs(3),
+		Args: cobra.RangeArgs(2, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			input, err := readInput(cmd.InOrStdin(), args[2])
+			input, err := readInput(cmd.InOrStdin(), args[len(args)-1])
 			if err != nil {
 				return err
 			}
 
-			agent := strings.TrimSpace(args[1])
-			body := client.StartRunJSONRequestBody{Agent: &agent, Input: input}
+			body := client.StartRunJSONRequestBody{Input: input}
+			if len(args) == 3 {
+				agent := strings.TrimSpace(args[1])
+				if agent == "" {
+					return errors.New("name an agent, or leave it out to ask the team's hub")
+				}
+				body.Agent = &agent
+			}
 			if session != "" {
 				id, err := uuid.Parse(strings.TrimSpace(session))
 				if err != nil {

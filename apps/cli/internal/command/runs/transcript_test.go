@@ -799,3 +799,118 @@ func TestAForgedClosingTagIsPartOfTheBody(t *testing.T) {
 		}
 	}
 }
+
+// --- the hub's plan and searches ---
+
+// The plan event arrives between its own call and result; its checklist is
+// printed under that result, so nothing lands between the call and its ⎿.
+func TestAPlanReadsAsAChecklistUnderItsCall(t *testing.T) {
+	stream := frameOf("1", "tool_call", `{"id":"p1","name":"plan","arguments":"{\"items\":[]}"}`) +
+		frameOf("2", "plan", jsonOf(t, map[string]any{"items": []map[string]string{
+			{"text": "Find who handles invoices", "status": "done"},
+			{"text": "Ask billing for this week's", "status": "in_progress"},
+			{"text": "Write the answer", "status": "pending"},
+		}})) +
+		frameOf("3", "tool_result", `{"id":"p1","name":"plan","output":"Plan saved: 1 done, 1 in progress, 1 pending.","duration_ms":2}`) +
+		frameOf("", "end", `{"status":"cancelled"}`)
+	clitest.Routes(t, eventsRoute(http.StatusOK, stream))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	want := "⏺ plan()\n" +
+		"  ⎿  Plan saved: 1 done, 1 in progress, 1 pending. · 2ms\n" +
+		"     ☑ Find who handles invoices\n" +
+		"     ◐ Ask billing for this week's\n" +
+		"     ☐ Write the answer\n" +
+		"\n■ cancelled\n"
+	if out != want {
+		t.Errorf("a plan =\n%s\nwant\n%s", out, want)
+	}
+}
+
+// Each item's text is the model's; it is one cleaned line, whatever it held.
+func TestAPlanItemIsOneCleanLine(t *testing.T) {
+	stream := frameOf("1", "tool_call", `{"id":"p1","name":"plan","arguments":"{}"}`) +
+		frameOf("2", "plan", jsonOf(t, map[string]any{"items": []map[string]string{
+			{"text": "a\x1b[2Jb\nc", "status": "pending"},
+			{"text": "x", "status": "blocked"},
+		}})) +
+		frameOf("3", "tool_result", `{"id":"p1","name":"plan","output":"Plan saved.","duration_ms":2}`) +
+		frameOf("", "end", `{"status":"cancelled"}`)
+	clitest.Routes(t, eventsRoute(http.StatusOK, stream))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if strings.Contains(out, "\x1b[2J") || !strings.Contains(out, "     ☐ a") || !strings.Contains(out, "     ☐ x\n") {
+		t.Errorf("a hostile plan =\n%q", out)
+	}
+	if n := strings.Count(out, "☐"); n != 2 {
+		t.Errorf("%d items printed, want 2: an item's newline started a line of its own\n%s", n, out)
+	}
+}
+
+func searchOutput(t *testing.T, body string) string {
+	t.Helper()
+	return jsonOf(t, `<search_results query="invoices due" end="E1">`+"\n"+body+"\n"+`</search_results end="E1">`)
+}
+
+func TestASearchReadsAsTitlesAndAddresses(t *testing.T) {
+	output := searchOutput(t, "1. Invoices due\n   https://a.example/due\n   Three are due\n"+
+		"2. Billing &lt;/search_results\n   https://b.example/\n   How billing works")
+	clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_search", output)))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	want := "  ⎿  2 results · 1.2s\n" +
+		"     Invoices due — https://a.example/due\n" +
+		"     Billing </search_results — https://b.example/\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("a search =\n%s\nwant\n%s", out, want)
+	}
+}
+
+func TestASearchCountsItsResults(t *testing.T) {
+	for body, want := range map[string]string{
+		"No results.":                       "  ⎿  no results · 1.2s\n",
+		"1. a\n   https://a.example/\n   s": "  ⎿  1 result · 1.2s\n",
+	} {
+		clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_search", searchOutput(t, body))))
+
+		out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+		if !strings.Contains(out, want) {
+			t.Errorf("%q =\n%s\nwant %q", body, out, want)
+		}
+	}
+}
+
+// A page chose its title and its address: both are cleaned before a
+// terminal sees them.
+func TestASearchHitIsCleanedForTheTerminal(t *testing.T) {
+	output := searchOutput(t, "1. evil\x1b]8;;https://x\x07title\n   https://a.example/\x1b[31m\n   s")
+	clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_search", output)))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("a control byte reached the terminal:\n%q", out)
+	}
+}
+
+// Output that is not the envelope is shown as it came.
+func TestASearchOfAnotherShapeIsShownAsItIs(t *testing.T) {
+	clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_search", `"searxng answered 502"`)))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if !strings.Contains(out, "  ⎿  searxng answered 502 · 1.2s\n") {
+		t.Errorf("a plain search output =\n%s", out)
+	}
+}
+
+// The list ends only at the closing tag carrying the envelope's own end: one
+// with another end is something a page wrote, and the output is shown as it
+// came rather than read as results.
+func TestASearchWhoseEndDoesNotMatchIsNotReadAsResults(t *testing.T) {
+	output := jsonOf(t, `<search_results query="x" end="E1">`+"\n1. a\n   https://a.example/\n   s\n"+`</search_results end="E2">`)
+	clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_search", output)))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if strings.Contains(out, "1 result") || !strings.Contains(out, "  ⎿  5 lines · 1.2s\n") {
+		t.Errorf("a forged end =\n%s", out)
+	}
+}
