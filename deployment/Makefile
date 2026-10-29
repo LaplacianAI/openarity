@@ -48,10 +48,16 @@ COMPOSE := docker compose -f docker-compose.yml
 #   OLLAMA is a local embedding model for either gateway to route to. It has
 #   no credentials and so no guards, which is why it is in down, ps and
 #   destroy where the gateways are not.
+#   SEARXNG is a search engine for the hub's web_search. Its :? guard on the
+#   secret keeps it out of down, ps and destroy for the gateways' reason.
+#   It is also the one overlay that changes a brain service: the worker joins
+#   its network, so a later target without it (dev, image) puts the worker
+#   back on the default network alone. `make searxng` again reattaches it.
 IMAGE     := -f docker-compose.image.yml
 LITELLM   := -f docker-compose.litellm.yml
 OMNIROUTE := -f docker-compose.omniroute.yml
 OLLAMA    := -f docker-compose.ollama.yml
+SEARXNG   := -f docker-compose.searxng.yml
 OIDC    := -f docker-compose.authentik.yml
 DEX     := -f docker-compose.dex.yml
 BAO     := -f docker-compose.openbao.yml
@@ -191,6 +197,29 @@ ollama-down:
 	$(COMPOSE) $(OLLAMA) stop ollama
 
 # ---------------------------------------------------------------------------
+# A search engine for the hub's web_search, with no account and no key. The
+# worker dials it on a network of its own at a fixed address, which is the one
+# address MCP_PRIVATE_NETWORKS has to name; see docker-compose.searxng.yml.
+#
+# A running worker is recreated onto that network. One not running is left
+# alone, so this works with the brain on the host too.
+
+## searxng: add SearXNG for web_search — needs SEARXNG_SECRET in .env
+searxng:
+	$(COMPOSE) $(SEARXNG) up -d --wait searxng
+	@if [ -n "$$($(COMPOSE) $(PROFILE) ps -q worker)" ]; then \
+	  $(COMPOSE) $(SEARXNG) $(PROFILE) up -d --no-deps worker; \
+	fi
+	@printf '\n%s\n%s\n%s\n\n' \
+	  "searxng    http://$${BIND_ADDR:-127.0.0.1}:$${SEARXNG_PORT:-18080}" \
+	  "teams      oa teams settings set <team> --search searxng --search-url http://searxng:8080" \
+	  "worker     OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.250/32"
+
+## searxng-down: stop SearXNG
+searxng-down:
+	$(COMPOSE) $(SEARXNG) stop searxng
+
+# ---------------------------------------------------------------------------
 
 ## dev: dependencies and the brain, built from your working tree
 dev:
@@ -308,6 +337,6 @@ bao:
 	$(COMPOSE) $(BAO) $(PROFILE) up -d --build
 
 .PHONY: help up objects dex dex-hash dex-down litellm litellm-down \
-        omniroute omniroute-down ollama ollama-down dev image staging restart \
+        omniroute omniroute-down ollama ollama-down searxng searxng-down dev image staging restart \
         pull ps logs down destroy bao-up bao-init bao-status bao-approle \
         bao-policy bao

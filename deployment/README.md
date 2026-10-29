@@ -73,6 +73,7 @@ make dex        # and dex: OIDC from a committed config, one small container
 make staging    # image plus authentik: OIDC only, no development token
 make objects    # add SeaweedFS and create the bucket — for the object store tests
 make ollama     # add a local embedding model, for the graph
+make searxng    # add SearXNG, a search engine for the hub's web_search
 make ps         # what is running, and on which ports
 make logs       # follow the brain; make logs service=authentik-server
 make down       # stop everything, keeping the data
@@ -594,6 +595,38 @@ Two things the worker's log says, and what they mean:
 - **`a change was not projected`**, with the row it names. A warning the first
   three times, since it is usually something arriving out of order, and an
   error after.
+
+## Web search
+
+The hub's `web_search` asks the provider a team chooses in its settings:
+Brave, Tavily or Firecrawl with a key, or a SearXNG of your own with none.
+`make searxng` runs one:
+
+```sh
+openssl rand -hex 32                      # SEARXNG_SECRET in .env
+make searxng
+oa teams settings set <team> --search searxng --search-url http://searxng:8080
+```
+
+The worker refuses to dial a private address unless
+`OPENARITY_MCP_PRIVATE_NETWORKS` names it, and SearXNG's address is private.
+So SearXNG sits on a network of its own, shared only with the worker, at
+`172.31.255.250`, and that one address is what to name:
+
+```sh
+OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.250/32
+```
+
+Naming the compose network instead would let any URL a team saves reach
+Postgres and OpenBao too. With the brain on your machine rather than in a
+container, SearXNG is at `http://127.0.0.1:18080` and the address to name is
+`127.0.0.1/32`, which opens every loopback port the same way: for local work
+only.
+
+SearXNG asks the public engines from this machine's address, so a busy team
+can be rate-limited by them; Brave and Tavily are the answer then. `make dev`
+and `make image` recreate the worker without the search network, and `make
+searxng` again puts it back.
 
 ## Kubernetes
 

@@ -1,0 +1,72 @@
+# SearXNG, a metasearch engine the hub's web_search can use with no account
+# and no key.
+#
+# Measured: a 381 MB image, about 120 MB resident, ready in about 2 seconds.
+# It asks the public engines (Google, Bing, DuckDuckGo and others) from this
+# machine's address, so a busy team can be rate-limited by them.
+#
+#   cd deployment
+#   cp .env.example .env                        # then fill in the SearXNG block
+#   docker compose -f docker-compose.yml -f docker-compose.searxng.yml up -d
+#
+# A team chooses it in its settings, not here:
+#
+#   oa teams settings set <team> --search searxng --search-url http://searxng:8080
+#
+# The brain refuses to dial a private address unless MCP_PRIVATE_NETWORKS
+# names it, and a container's address is private. Naming the compose network
+# would also open Postgres and OpenBao to any URL a team saves, so SearXNG
+# sits on a network of its own at a fixed address, shared only with the
+# worker (which runs the agents), and only that address is named:
+#
+#   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.250/32
+#
+# Only the worker dials SearXNG: the settings API checks a URL's host only
+# when it is a literal address, so the brain itself never needs to reach it.
+#
+# With the brain on the host instead, it reaches SearXNG at the published
+# port, http://127.0.0.1:18080, and 127.0.0.1/32 has to be named. That opens
+# every port on this machine's loopback to a saved URL, so it is for local
+# work only.
+
+name: openarity
+
+services:
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      # Signs the preferences cookie. No default: with settings.yml mounted
+      # read-only the image cannot write one of its own, so the shipped
+      # "ultrasecretkey" stands and SearXNG exits refusing it.
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET in deployment/.env}
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${SEARXNG_PORT:-18080}:8080"
+    networks:
+      search:
+        ipv4_address: 172.31.255.250
+    healthcheck:
+      # Measured: ready in about 2 seconds. wget is in the image, and exits
+      # non-zero on any status other than 2xx.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    networks:
+      - default
+      - search
+
+networks:
+  # A /29 holds six addresses: the gateway, SearXNG and the worker, with room
+  # for the worker to be recreated without waiting for its old address. If it
+  # collides with a network on this machine, change both the subnet and
+  # SearXNG's address, and the /32 in MCP_PRIVATE_NETWORKS with them.
+  search:
+    ipam:
+      config:
+        - subnet: 172.31.255.248/29
