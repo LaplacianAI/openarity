@@ -551,6 +551,23 @@ func TestAnAgentDeletedWhileStartingIsNotFound(t *testing.T) {
 	}
 }
 
+// CreateHubRun selects the team as it inserts, so a hub run with no row is a
+// team deleted after the request was authorized; no agent was named to miss.
+func TestAHubRunWithNoRowSaysTheTeamIsGone(t *testing.T) {
+	w := newWorld(t)
+	w.withModel()
+	w.store.startErr = pgx.ErrNoRows
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": "hi"})
+
+	if rec.Code != http.StatusNotFound || strings.TrimSpace(rec.Body.String()) != "no such team" {
+		t.Errorf("status %d %q, want 404 %q", rec.Code, rec.Body, "no such team")
+	}
+	if len(w.starter.ids) != 0 {
+		t.Errorf("enqueued %v, want nothing", w.starter.ids)
+	}
+}
+
 func TestAStartThatFailsIsA500ThatLeaksNothing(t *testing.T) {
 	w := newWorld(t)
 	w.store.startErr = errAny

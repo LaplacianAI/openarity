@@ -26,7 +26,7 @@ DELETE FROM run_events WHERE kind = 'plan';
 ALTER TABLE run_events DROP CONSTRAINT run_events_kind_known;
 ALTER TABLE run_events ADD CONSTRAINT run_events_kind_known CHECK (kind IN (
     'started', 'resumed', 'step', 'tool_call', 'tool_result', 'usage',
-    'tool_unavailable', 'finished', 'delegated'));
+    'tool_unavailable', 'finished', 'delegated')) NOT VALID;
 
 ALTER TABLE team_settings DROP COLUMN hub_agent_id;
 ALTER TABLE runs DROP COLUMN hub;

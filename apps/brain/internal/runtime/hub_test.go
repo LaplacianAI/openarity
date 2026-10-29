@@ -519,3 +519,25 @@ func TestAHubWithNoGraphAnswersAlone(t *testing.T) {
 		t.Errorf("system = %q, want %q", got, want)
 	}
 }
+
+// The started event names who answers. A hub run whose agent was deleted
+// before it started is answered by the orchestrator, and says so, though the
+// run's row keeps the name it was queued under.
+func TestADeletedHubsRunStartsAsTheOrchestrator(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("Hello.", 10, 2)))
+	f.hubRun(t, "team/model")
+	if _, err := f.raw.Exec(t.Context(),
+		`UPDATE runs SET agent_id = $2, agent_name = 'triage' WHERE id = $1`, f.run, f.agent); err != nil {
+		t.Fatalf("make the run the chosen hub's: %v", err)
+	}
+	if _, err := f.raw.Exec(t.Context(), `DELETE FROM agents WHERE id = $1`, f.agent); err != nil {
+		t.Fatalf("delete the hub agent: %v", err)
+	}
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	if started := payload[startedPayload](t, f.events(t)[0]); started.Agent != HubName || started.Model != "team/model" {
+		t.Errorf("started = %+v, want the orchestrator on team/model", started)
+	}
+}

@@ -232,7 +232,7 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 			Role:    agent.RoleUser,
 			Content: []agent.Content{{Type: agent.ContentText, Text: row.Input}},
 		}}
-		err = appendEvent(ctx, e.store, row.ID, l.Worker, "started", startedOf(row.AgentName, built.Spec))
+		err = appendEvent(ctx, e.store, row.ID, l.Worker, "started", startedOf(built.Agent, built.Spec))
 	}
 	if err != nil {
 		return "", err

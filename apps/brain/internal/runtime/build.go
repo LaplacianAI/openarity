@@ -60,6 +60,7 @@ type Unavailable struct{ Name, Reason string }
 
 type Built struct {
 	Spec        agent.Spec
+	Agent       string
 	Unavailable []Unavailable
 	sessions    []*mcp.Session
 }
@@ -89,7 +90,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		return Built{}, err
 	}
 
-	built := Built{Spec: specOf(a)}
+	built := Built{Spec: specOf(a), Agent: a.Name}
 	built.Spec.Session = session
 
 	if a.ID != uuid.Nil {

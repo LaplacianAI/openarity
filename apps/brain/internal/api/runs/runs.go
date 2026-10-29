@@ -126,6 +126,10 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 
 	row, err := h.store.StartRun(r.Context(), args)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if args.Hub {
+			http.Error(w, "no such team", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "no agent in this team has that name", http.StatusNotFound)
 		return
 	}
