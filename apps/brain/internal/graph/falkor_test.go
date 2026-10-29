@@ -1411,10 +1411,16 @@ func TestEveryOperationOnATeamWaitsForItsTurn(t *testing.T) {
 		}
 	}
 
-	// Another team is not held up by this one.
+	// Another team is not held up by this one. Its write is a real round trip
+	// that also creates the team's graph, which under -race and a parallel
+	// suite can outlast short() (CI saw it). This turn is held until release,
+	// so a write that waited on it would never finish: any finite deadline
+	// tells the two apart, and a generous one stops load failing the test.
 	other := uuid.New()
 	t.Cleanup(func() { _ = g.DropTeam(context.WithoutCancel(t.Context()), other) })
-	if err := g.PutNode(short(), other, bare(LabelAgent)); err != nil {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := g.PutNode(ctx, other, bare(LabelAgent)); err != nil {
 		t.Errorf("another team waited on this one: %v", err)
 	}
 
