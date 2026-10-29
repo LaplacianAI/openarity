@@ -35,6 +35,12 @@ type fakeStore struct {
 	skills     []db.Skill
 	skillsErr  error
 	files      map[uuid.UUID][]db.SkillFile
+
+	settings    *db.TeamSetting
+	settingsErr error
+	others      int64
+	othersErr   error
+	othersAsked []db.CountOtherAgentsParams
 }
 
 func (f *fakeStore) GetAgent(_ context.Context, id uuid.UUID) (db.Agent, error) {

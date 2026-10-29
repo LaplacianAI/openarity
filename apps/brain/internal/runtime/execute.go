@@ -386,5 +386,6 @@ func runOf(r db.ClaimRunRow) db.Run {
 		OutputTokens: r.OutputTokens, Worker: r.Worker, HeartbeatAt: r.HeartbeatAt,
 		CancelRequestedAt: r.CancelRequestedAt, CreatedAt: r.CreatedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, TokenBudget: r.TokenBudget,
+		Hub: r.Hub,
 	}
 }

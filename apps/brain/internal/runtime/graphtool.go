@@ -64,6 +64,7 @@ type ReachStore interface {
 	ListReachableAgentIDs(ctx context.Context, arg db.ListReachableAgentIDsParams) ([]uuid.UUID, error)
 	ListGrantedToolIDs(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error)
 	ListAgentSkills(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error)
+	ListTeamReach(ctx context.Context, arg db.ListTeamReachParams) (db.ListTeamReachRow, error)
 }
 
 type GraphDeps struct {
@@ -71,6 +72,8 @@ type GraphDeps struct {
 	Embed  QueryEmbedder
 	Store  ReachStore
 }
+
+type ReachSource func(ctx context.Context) (graph.Reach, error)
 
 type graphArgs struct {
 	Query string    `json:"query"`
@@ -95,7 +98,7 @@ type graphOutput struct {
 	Results []graphResult `json:"results"`
 }
 
-func GraphTool(deps GraphDeps, team, agentID uuid.UUID) agent.Tool {
+func GraphTool(deps GraphDeps, team uuid.UUID, reach ReachSource) agent.Tool {
 	return agent.Tool{
 		Name:        GraphToolName,
 		Description: graphDescription,
@@ -109,7 +112,7 @@ func GraphTool(deps GraphDeps, team, agentID uuid.UUID) agent.Tool {
 				return render(nil)
 			}
 
-			reach, err := reachOf(ctx, deps.Store, team, agentID)
+			scope, err := reach(ctx)
 			if err != nil {
 				return "", err
 			}
@@ -121,7 +124,7 @@ func GraphTool(deps GraphDeps, team, agentID uuid.UUID) agent.Tool {
 
 			hits, err := deps.Search.Search(ctx, team, graph.Search{
 				Vector: vectors[0], Model: deps.Embed.Model(),
-				Kinds: kinds, Hops: hops, Reach: reach, Limit: graphResults,
+				Kinds: kinds, Hops: hops, Reach: scope, Limit: graphResults,
 			})
 			if err != nil {
 				return "", fmt.Errorf("searching the graph: %w", err)
@@ -173,20 +176,32 @@ func parseGraphArgs(raw json.RawMessage) (string, []graph.Kind, int, error) {
 	return query, kinds, a.Hops, nil
 }
 
-func reachOf(ctx context.Context, s ReachStore, team, agentID uuid.UUID) (graph.Reach, error) {
-	agents, err := s.ListReachableAgentIDs(ctx, db.ListReachableAgentIDsParams{TeamID: team, AgentID: agentID})
-	if err != nil {
-		return graph.Reach{}, fmt.Errorf("reading the agents this agent may reach: %w", err)
+func agentReach(s ReachStore, team, agentID uuid.UUID) ReachSource {
+	return func(ctx context.Context) (graph.Reach, error) {
+		agents, err := s.ListReachableAgentIDs(ctx, db.ListReachableAgentIDsParams{TeamID: team, AgentID: agentID})
+		if err != nil {
+			return graph.Reach{}, fmt.Errorf("reading the agents this agent may reach: %w", err)
+		}
+		tools, err := s.ListGrantedToolIDs(ctx, agentID)
+		if err != nil {
+			return graph.Reach{}, fmt.Errorf("reading the tools this agent may reach: %w", err)
+		}
+		skills, err := s.ListAgentSkills(ctx, agentID)
+		if err != nil {
+			return graph.Reach{}, fmt.Errorf("reading the skills this agent may reach: %w", err)
+		}
+		return graph.Reach{Agents: agents, Tools: tools, Skills: skills}, nil
 	}
-	tools, err := s.ListGrantedToolIDs(ctx, agentID)
-	if err != nil {
-		return graph.Reach{}, fmt.Errorf("reading the tools this agent may reach: %w", err)
+}
+
+func teamReach(s ReachStore, team uuid.UUID, exclude *uuid.UUID) ReachSource {
+	return func(ctx context.Context) (graph.Reach, error) {
+		r, err := s.ListTeamReach(ctx, db.ListTeamReachParams{TeamID: team, Exclude: exclude})
+		if err != nil {
+			return graph.Reach{}, fmt.Errorf("reading what the team holds: %w", err)
+		}
+		return graph.Reach{Agents: r.AgentIds, Tools: r.ToolIds, Skills: r.SkillIds}, nil
 	}
-	skills, err := s.ListAgentSkills(ctx, agentID)
-	if err != nil {
-		return graph.Reach{}, fmt.Errorf("reading the skills this agent may reach: %w", err)
-	}
-	return graph.Reach{Agents: agents, Tools: tools, Skills: skills}, nil
 }
 
 func render(hits []graph.Hit) (string, error) {

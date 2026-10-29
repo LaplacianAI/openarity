@@ -29,6 +29,8 @@ type BuildStore interface {
 	ListGrantedMCPServers(ctx context.Context, agentID uuid.UUID) ([]db.ListGrantedMCPServersRow, error)
 	ListGrantedSkills(ctx context.Context, agentID uuid.UUID) ([]db.Skill, error)
 	ListSkillFiles(ctx context.Context, skillID uuid.UUID) ([]db.SkillFile, error)
+	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
+	CountOtherAgents(ctx context.Context, arg db.CountOtherAgentsParams) (int64, error)
 }
 
 type Objects interface {
@@ -80,7 +82,7 @@ func Loops() []string {
 }
 
 func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, l Lineage) (Built, error) {
-	a, err := b.agent(ctx, run)
+	a, err := b.agentFor(ctx, run)
 	if err != nil {
 		return Built{}, err
 	}
@@ -88,20 +90,22 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	built := Built{Spec: specOf(a)}
 	built.Spec.Session = session
 
-	built.Spec.Tools, err = b.tools(ctx, a.ID, &built)
-	if err != nil {
-		built.Close()
-		return Built{}, err
+	if a.ID != uuid.Nil {
+		built.Spec.Tools, err = b.tools(ctx, a.ID, &built)
+		if err != nil {
+			built.Close()
+			return Built{}, err
+		}
 	}
 	if b.graph == nil {
 		built.Unavailable = append(built.Unavailable, Unavailable{
 			Name: GraphToolName, Reason: "no embedding model is configured, so the team's graph is not built",
 		})
 	} else {
-		built.Spec.Tools = append(built.Spec.Tools, GraphTool(*b.graph, run.TeamID, a.ID))
+		built.Spec.Tools = append(built.Spec.Tools, GraphTool(*b.graph, run.TeamID, b.reach(run, a)))
 	}
 
-	delegate, ok, err := b.delegateTool(ctx, a, run, l)
+	delegate, ok, err := b.delegateFor(ctx, a, run, l)
 	if err != nil {
 		built.Close()
 		return Built{}, err
@@ -109,11 +113,16 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	if ok {
 		built.Spec.Tools = append(built.Spec.Tools, delegate)
 	}
+	if run.Hub {
+		built.Spec.System = hubSystem(a, !ok)
+	}
 
-	built.Spec.Skills, err = b.skills(ctx, run.TeamID, a.ID)
-	if err != nil {
-		built.Close()
-		return Built{}, err
+	if a.ID != uuid.Nil {
+		built.Spec.Skills, err = b.skills(ctx, run.TeamID, a.ID)
+		if err != nil {
+			built.Close()
+			return Built{}, err
+		}
 	}
 	return built, nil
 }
