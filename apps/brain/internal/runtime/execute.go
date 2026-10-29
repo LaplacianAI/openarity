@@ -86,6 +86,7 @@ func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
 		lostAfter: heartbeatLostAfter,
 	}
 	b.delegates = &DelegateDeps{Store: s, Run: e}
+	b.note = e.note
 	return e
 }
 

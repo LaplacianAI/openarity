@@ -270,7 +270,7 @@ func (f *fixture) buildErr(t *testing.T) error {
 func toolNames(built Built) []string {
 	out := make([]string, 0, len(built.Spec.Tools))
 	for _, tl := range built.Spec.Tools {
-		if tl.Description != graphDescription && tl.Description != delegateDescription {
+		if tl.Description != graphDescription && tl.Description != delegateDescription && tl.Description != planDescription {
 			out = append(out, tl.Name)
 		}
 	}

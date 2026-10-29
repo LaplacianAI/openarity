@@ -47,6 +47,7 @@ type Builder struct {
 	mcp            MCPClients
 	graph          *GraphDeps
 	delegates      *DelegateDeps
+	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 }
 
@@ -115,6 +116,11 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	}
 	if run.Hub {
 		built.Spec.System = hubSystem(a, !ok)
+		if b.note != nil {
+			built.Spec.Tools = append(built.Spec.Tools, PlanTool(func(ctx context.Context, kind string, p any) error {
+				return b.note(ctx, run.ID, l.Worker, kind, p)
+			}))
+		}
 	}
 
 	if a.ID != uuid.Nil {
@@ -216,7 +222,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, built *Built) ([
 			if !allowed(s, g.Allow, t.Name) {
 				continue
 			}
-			if t.Name == GraphToolName || t.Name == DelegateToolName {
+			if t.Name == GraphToolName || t.Name == DelegateToolName || t.Name == PlanToolName {
 				built.Unavailable = append(built.Unavailable, Unavailable{
 					Name:   t.Name,
 					Reason: fmt.Sprintf("the MCP server %q offers a tool named %s, which is the brain's own", s.Name, t.Name),
