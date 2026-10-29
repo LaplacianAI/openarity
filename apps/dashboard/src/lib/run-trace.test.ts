@@ -514,6 +514,22 @@ describe("searchResults", () => {
     expect(searchResults(out.replace('end="E1">', 'end="E2">'))).toBeNull();
   });
 
+  // The brain escapes only a tag's opening <, so any other entity is the page's own text.
+  it("keeps a hit's other entities as the page wrote them", () => {
+    const got = searchResults(
+      wrap(
+        "1. Tom &amp; Jerry &lt;b> &#34;x&#34;\n   https://a.example/?a=1&amp;b=2\n   &lt;div> &gt; &lt;/SEARCH_RESULTS",
+      ),
+    );
+    expect(got?.hits).toEqual([
+      {
+        title: "Tom &amp; Jerry &lt;b> &#34;x&#34;",
+        url: "https://a.example/?a=1&amp;b=2",
+        snippet: "&lt;div> &gt; </SEARCH_RESULTS",
+      },
+    ]);
+  });
+
   it("is null for anything that is not the envelope", () => {
     expect(searchResults("brave answered 429")).toBeNull();
     expect(searchResults("")).toBeNull();

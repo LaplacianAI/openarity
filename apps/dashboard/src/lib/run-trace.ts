@@ -305,11 +305,17 @@ function unescaped(s: string): string {
   return s.replace(/&#34;|&#39;|&amp;|&lt;|&gt;/g, (m) => ESCAPES[m] ?? m);
 }
 
+// A hit's field has only the < of an envelope tag escaped; the rest is the page's.
+function untagged(s: string): string {
+  return s.replace(/&lt;(\/?search_results)/gi, "<$1");
+}
+
 /**
  * A web_search call's output read as the envelope the brain wraps results in,
  * or null when it is not one. As with a report, the list ends only at the
  * closing tag that carries the envelope's own end; every hit's fields are the
- * page's, one line each, with the tags the brain escaped read back as text.
+ * page's, one line each, with the tags the brain escaped read back as text
+ * and every other entity left as the page wrote it.
  */
 export function searchResults(output: string): SearchResults | null {
   const head = SEARCH_HEAD.exec(output);
@@ -325,13 +331,13 @@ export function searchResults(output: string): SearchResults | null {
   for (const line of body.split("\n")) {
     const numbered = /^\d+\. (.*)$/.exec(line);
     if (numbered) {
-      hit = { title: unescaped(numbered[1] ?? ""), url: "", snippet: "" };
+      hit = { title: untagged(numbered[1] ?? ""), url: "", snippet: "" };
       results.hits.push(hit);
       field = 0;
     } else if (line === SEARCH_CUT) {
       results.cut = true;
     } else if (hit && line.startsWith("   ")) {
-      const value = unescaped(line.slice(3));
+      const value = untagged(line.slice(3));
       if (field === 0) hit.url = value;
       else hit.snippet = value;
       field += 1;
