@@ -50,6 +50,7 @@ const (
 type Lineage struct {
 	Worker string
 	Chain  []uuid.UUID
+	Narrow *Narrowing
 }
 
 type Delegation struct {

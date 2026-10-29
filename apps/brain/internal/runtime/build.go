@@ -93,7 +93,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	built.Spec.Session = session
 
 	if a.ID != uuid.Nil {
-		built.Spec.Tools, err = b.tools(ctx, a.ID, &built)
+		built.Spec.Tools, err = b.tools(ctx, a.ID, l.Narrow, &built)
 		if err != nil {
 			built.Close()
 			return Built{}, err
@@ -136,7 +136,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	}
 
 	if a.ID != uuid.Nil {
-		built.Spec.Skills, err = b.skills(ctx, run.TeamID, a.ID)
+		built.Spec.Skills, err = b.skills(ctx, run.TeamID, a.ID, l.Narrow)
 		if err != nil {
 			built.Close()
 			return Built{}, err
@@ -207,7 +207,7 @@ func specOf(a db.Agent) agent.Spec {
 	return spec
 }
 
-func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, built *Built) ([]agent.Tool, error) {
+func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, built *Built) ([]agent.Tool, error) {
 	grants, err := b.store.ListGrantedMCPServers(ctx, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("reading the agent's MCP servers: %w", err)
@@ -232,6 +232,9 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, built *Built) ([
 
 		for _, t := range live.Tools() {
 			if !allowed(s, g.Allow, t.Name) {
+				continue
+			}
+			if !n.keepsTool(t.Name) {
 				continue
 			}
 			if t.Name == GraphToolName || t.Name == DelegateToolName || t.Name == PlanToolName || t.Name == WebSearchToolName {
@@ -287,7 +290,7 @@ func limited(t agent.Tool) agent.Tool {
 	return t
 }
 
-func (b *Builder) skills(ctx context.Context, teamID, agentID uuid.UUID) ([]agent.Skill, error) {
+func (b *Builder) skills(ctx context.Context, teamID, agentID uuid.UUID, n *Narrowing) ([]agent.Skill, error) {
 	rows, err := b.store.ListGrantedSkills(ctx, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("reading the agent's skills: %w", err)
@@ -295,6 +298,10 @@ func (b *Builder) skills(ctx context.Context, teamID, agentID uuid.UUID) ([]agen
 
 	out := make([]agent.Skill, 0, len(rows))
 	for _, row := range rows {
+		if !n.keepsSkill(row.ID) {
+			continue
+		}
+
 		files, err := b.store.ListSkillFiles(ctx, row.ID)
 		if err != nil {
 			return nil, fmt.Errorf("reading the files of skill %q: %w", row.Name, err)
