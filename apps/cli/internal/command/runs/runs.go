@@ -60,6 +60,7 @@ type runView struct {
 	FinishedAt   *time.Time `json:"finished_at" yaml:"finished_at"`
 	ParentRunID  *string    `json:"parent_run_id" yaml:"parent_run_id"`
 	Depth        int32      `json:"depth" yaml:"depth"`
+	Hub          bool       `json:"hub" yaml:"hub"`
 }
 
 func viewOf(r *client.Run) runView {
@@ -68,6 +69,7 @@ func viewOf(r *client.Run) runView {
 		Input: r.Input, Output: r.Output, Error: r.Error,
 		InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
 		CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Depth: r.Depth,
+		Hub: r.Hub,
 	}
 	if r.ParentRunID != nil {
 		parent := r.ParentRunID.String()
@@ -392,6 +394,9 @@ func printRun(opts *cli.Options, r *client.Run, did, teamRef string) error {
 			table.Row(head, opts.Styles.Value.Render(cli.Safe(view.Agent)), opts.Styles.Muted.Render(view.ID))
 			table.Row("status", status(opts, view.Status), "")
 			table.Row("session", view.SessionID, "")
+			if view.Hub {
+				table.Row("hub", "answered as the team's hub", "")
+			}
 			if view.ParentRunID != nil {
 				table.Row("delegated by", *view.ParentRunID,
 					opts.Styles.Muted.Render("oa runs get "+cli.Safe(teamRef)+" "+*view.ParentRunID))

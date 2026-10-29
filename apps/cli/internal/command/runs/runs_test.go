@@ -632,3 +632,35 @@ func TestARunAPersonStartedHasNoParent(t *testing.T) {
 		t.Errorf("a top-level run claims a parent:\n%s", table)
 	}
 }
+
+// A run started for the team says so in every format: the view is built field
+// by field, so a field the brain sends and the view lacks is silently dropped.
+func TestAHubRunSaysItWasTheHubs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		extra string
+		hub   bool
+	}{
+		"the hub's":  {`,"hub":true,"depth":0`, true},
+		"an agent's": {`,"hub":false,"depth":0`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clitest.Routes(t, with("GET /teams/{id}/runs/{runID}", clitest.Reply{Status: http.StatusOK, Body: runJSON(runID, "succeeded", tc.extra)}))
+
+			out, err := clitest.Execute(t, commands, "runs", "get", "platform", runID, "-o", "json")
+			if err != nil {
+				t.Fatalf("runs get: %v\n%s", err, out)
+			}
+			var got map[string]any
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatalf("not json: %v\n%s", err, out)
+			}
+			if got["hub"] != tc.hub {
+				t.Errorf("hub = %v, want %v", got["hub"], tc.hub)
+			}
+			table, _ := clitest.Execute(t, commands, "runs", "get", "platform", runID)
+			if strings.Contains(table, "the team's hub") != tc.hub {
+				t.Errorf("the table says hub %v, want %v:\n%s", !tc.hub, tc.hub, table)
+			}
+		})
+	}
+}
