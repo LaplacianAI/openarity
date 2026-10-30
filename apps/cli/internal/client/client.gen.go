@@ -350,6 +350,10 @@ type Agent struct {
 	// together. Absent when the agent uses the deployment's default.
 	TokenBudget *int64    `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
 	UpdatedAt   time.Time `json:"updated_at" yaml:"updated_at"`
+
+	// Web Whether the agent has web_search and web_fetch when it runs as
+	// itself. The team's hub has both whatever this says.
+	Web bool `json:"web" yaml:"web"`
 }
 
 // AgentPage defines model for AgentPage.
@@ -418,6 +422,13 @@ type AgentRequest struct {
 	//
 	// Examples: 200000
 	TokenBudget *int64 `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
+
+	// Web Gives the agent web_search and web_fetch. The team's hub has both
+	// whatever this says. web_search also needs the team's search
+	// provider; web_fetch needs nothing. Left out, it is false, and a
+	// PUT replaces the whole agent, so a replace that leaves it out
+	// takes the grant away.
+	Web *bool `json:"web,omitempty" yaml:"web,omitempty"`
 }
 
 // AgentSummary defines model for AgentSummary.
