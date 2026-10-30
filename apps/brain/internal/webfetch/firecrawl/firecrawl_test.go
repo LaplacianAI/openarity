@@ -16,7 +16,7 @@ const (
 	key   = "fc-sekrit-0042"
 	asked = "https://go.dev/doc"
 	reply = `{"success":true,"data":{"markdown":"# Documentation\n\nRead me first",
-		"metadata":{"title":"Documentation - The Go Programming Language","sourceURL":"https://go.dev/doc/"}}}`
+		"metadata":{"title":"Documentation - The Go Programming Language","sourceURL":"https://go.dev/doc","url":"https://go.dev/doc/"}}}`
 )
 
 func TestAScrapeAsksForMarkdownWithTheKey(t *testing.T) {
@@ -38,6 +38,8 @@ func TestAScrapeAsksForMarkdownWithTheKey(t *testing.T) {
 	}
 }
 
+// The page's address is where Firecrawl ended after its redirects
+// (metadata.url), never the one asked for (sourceURL): the runtime judges it.
 // The markdown is Firecrawl's, passed through; the cut is the runtime's.
 func TestAScrapeReturnsThePage(t *testing.T) {
 	srv := websearchtest.Serve(t, http.StatusOK, reply)
@@ -53,12 +55,26 @@ func TestAScrapeReturnsThePage(t *testing.T) {
 	}
 }
 
-func TestAPageWithNoSourceURLKeepsTheOneAskedFor(t *testing.T) {
-	srv := websearchtest.Serve(t, http.StatusOK, `{"success":true,"data":{"markdown":"hi","metadata":{}}}`)
+// A redirect inside Firecrawl's network is where a private address hides, so
+// the requested address is never taken for the final one.
+func TestARedirectIsReportedWhereItEnded(t *testing.T) {
+	srv := websearchtest.Serve(t, http.StatusOK, `{"success":true,"data":{"markdown":"x",
+		"metadata":{"sourceURL":"https://go.dev/r","url":"http://169.254.169.254/latest"}}}`)
 
 	got, err := firecrawl.New(websearch.FirecrawlCloud, srv.URL, key, websearchtest.Client()).Fetch(t.Context(), asked)
-	if err != nil || got.URL != asked || got.Title != "" || got.Markdown != "hi" {
-		t.Errorf("page = %+v, err %v; want %s, untitled, hi", got, err, asked)
+	if err != nil || got.URL != "http://169.254.169.254/latest" {
+		t.Errorf("page = %+v, err %v; want the final address", got, err)
+	}
+}
+
+// With no final address there is nothing to judge: the page says none, and
+// the runtime refuses it, rather than trusting the address asked for.
+func TestAPageWithNoFinalURLSaysNone(t *testing.T) {
+	srv := websearchtest.Serve(t, http.StatusOK, `{"success":true,"data":{"markdown":"hi","metadata":{"sourceURL":"https://go.dev/doc"}}}`)
+
+	got, err := firecrawl.New(websearch.FirecrawlCloud, srv.URL, key, websearchtest.Client()).Fetch(t.Context(), asked)
+	if err != nil || got.URL != "" || got.Markdown != "hi" {
+		t.Errorf("page = %+v, err %v; want no address", got, err)
 	}
 }
 
