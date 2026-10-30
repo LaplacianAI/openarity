@@ -32,6 +32,8 @@ import { Button } from "@/components/ui/button";
 import {
   argumentPairs,
   delegateReport,
+  type FetchedPage,
+  fetchedPage,
   type GraphHit,
   graphHits,
   groupTrace,
@@ -780,6 +782,8 @@ function ResultView({ name, output }: { name: string; output: string }) {
   if (hits) return <GraphResults hits={hits} raw={output} />;
   const found = name === "web_search" ? searchResults(output) : null;
   if (found) return <SearchList results={found} raw={output} />;
+  const page = name === "web_fetch" ? fetchedPage(output) : null;
+  if (page) return <PageView page={page} raw={output} />;
   if (output === "") return <p className="text-xs text-muted-foreground">No output.</p>;
   return (
     <div className="space-y-1.5">
@@ -986,6 +990,65 @@ function SearchList({ results, raw }: { results: SearchResults; raw: string }) {
       {results.cut ? (
         <p className="text-xs text-muted-foreground">The brain cut these results at 16 KiB.</p>
       ) : null}
+      <RawToggle raw={raw} />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ fetched page */
+
+function sizeOf(text: string): string {
+  const bytes = new TextEncoder().encode(text).length;
+  return bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 1024)} KiB`;
+}
+
+/** A page web_fetch read: a link only to the web, and its markdown as text, folded away. */
+function PageView({ page, raw }: { page: FetchedPage; raw: string }) {
+  const [open, setOpen] = useState(false);
+  const href = webURL(page.url);
+  const title = page.title || page.url;
+  return (
+    <div className="space-y-1.5">
+      <div className="min-w-0">
+        {href ? (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            className="break-words text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            {title}
+          </a>
+        ) : (
+          <span className="break-words text-xs font-medium">{title}</span>
+        )}
+        <p className="truncate font-mono text-[11px] text-muted-foreground">{page.url}</p>
+        <p className="text-[11px] text-muted-foreground tabular-nums">
+          {page.cut ? `${sizeOf(page.markdown)} · cut by the brain` : sizeOf(page.markdown)}
+        </p>
+      </div>
+      <div>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+          className="inline-flex items-center gap-1 rounded text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <ChevronRight
+            aria-hidden
+            className={cn("size-3 transition-transform", open && "rotate-90")}
+          />
+          {open ? "Hide the page" : "Show the page"}
+        </button>
+        {open ? (
+          <pre
+            data-page-body
+            className="mt-1.5 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed"
+          >
+            {page.markdown}
+          </pre>
+        ) : null}
+      </div>
       <RawToggle raw={raw} />
     </div>
   );

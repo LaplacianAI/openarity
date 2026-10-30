@@ -240,6 +240,8 @@ export type Agent = AgentSummary & {
   delegation: Delegation;
   /** Whom it may delegate to, by id, when delegation is listed. */
   delegates: string[];
+  /** web_search and web_fetch, granted together. A hub has both whatever this says. */
+  web: boolean;
 };
 
 /** Whom an agent may hand work to: any other agent in its team, only its delegates, or no one. */
@@ -267,6 +269,8 @@ export type AgentRequest = {
   delegation?: Delegation;
   /** Refused unless delegation is listed. */
   delegates?: string[];
+  /** Left out, the brain reads false. */
+  web?: boolean;
 };
 
 /** GET /teams/{id}/mcp-servers. Credentials are references, never values. */

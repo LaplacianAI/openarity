@@ -1364,3 +1364,88 @@ describe("the hub in the trace", () => {
     expect(within(card("web_search")).getByText("No results.")).toBeInTheDocument();
   });
 });
+
+/* ------------------------------------------------------------ fetched page */
+
+describe("a fetched page in the trace", () => {
+  function fetched(output: string) {
+    listed({
+      [RUNS]: { body: { items: [run("r1", "researcher", "succeeded")] } },
+      [EVENTS]: () => ({
+        stream: chunks(
+          frame(1, "step", { step: 1 }),
+          frame(2, "tool_call", {
+            id: "f1",
+            name: "web_fetch",
+            arguments: '{"url":"https://go.dev/"}',
+          }),
+          frame(3, "tool_result", { id: "f1", name: "web_fetch", output }),
+          END,
+        ),
+      }),
+    });
+  }
+
+  it("draws the page as a link that carries no referrer, its title and body as text", async () => {
+    fetched(
+      '<page url="https://go.dev/doc/go1.26" title="&lt;img src=x onerror=alert(1)&gt; Go 1.26" end="E1">\n' +
+        "# Go 1.26\n\n<script>alert(1)</script> Tom &amp; Jerry\n" +
+        `${"a".repeat(3000)}\n` +
+        '</page end="E1">',
+    );
+
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    const page = card("web_fetch");
+
+    const link = within(page).getByRole("link");
+    expect(link).toHaveAttribute("href", "https://go.dev/doc/go1.26");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer nofollow");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveTextContent("<img src=x onerror=alert(1)> Go 1.26");
+    expect(within(page).getByText("3 KiB")).toBeInTheDocument();
+    expect(within(page).queryByText(/cut/i)).toBeNull();
+
+    // The body is folded away, and when shown it is text, never markup.
+    expect(page.querySelector("[data-page-body]")).toBeNull();
+    await userEvent.click(within(page).getByRole("button", { name: /show the page/i }));
+    const body = page.querySelector("[data-page-body]");
+    expect(body?.tagName).toBe("PRE");
+    expect(body).toHaveTextContent("<script>alert(1)</script> Tom &amp; Jerry");
+    expect(page.querySelector("img, script")).toBeNull();
+  });
+
+  it("shows an address that is not the web's, never following it", async () => {
+    fetched('<page url="javascript:alert(1)" title="Not a link" end="E1">\nx\n</page end="E1">');
+
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    const page = card("web_fetch");
+
+    expect(within(page).queryByRole("link")).toBeNull();
+    expect(within(page).getByText("Not a link")).toBeInTheDocument();
+    expect(within(page).getByText("javascript:alert(1)")).toBeInTheDocument();
+  });
+
+  it("says when the brain cut the page", async () => {
+    fetched(
+      `<page url="https://a.example/" title="" end="E1">\n${"a".repeat(32 << 10)}\n[the page was cut at 32 KiB]\n</page end="E1">`,
+    );
+
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    expect(within(card("web_fetch")).getByText("32 KiB · cut by the brain")).toBeInTheDocument();
+  });
+
+  it("shows a fetch that failed as what the tool said", async () => {
+    fetched("the page is application/pdf, which web_fetch does not read");
+
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    expect(
+      within(card("web_fetch")).getByText(
+        "the page is application/pdf, which web_fetch does not read",
+      ),
+    ).toBeInTheDocument();
+  });
+});
