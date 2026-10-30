@@ -1019,3 +1019,19 @@ func TestAFetchOfAnotherShapeIsShownAsItIs(t *testing.T) {
 		t.Errorf("a plain fetch output =\n%s", out)
 	}
 }
+
+// The fetcher's own cut, at 2 MiB, reads as cut too; a line the page wrote
+// itself arrives escaped, and is not.
+func TestEitherCutLineReadsAsCutAndAPagesOwnDoesNot(t *testing.T) {
+	for body, want := range map[string]string{
+		"aaaa\n[the page was cut: only its first 2 MiB were read]": "  ⎿  A — https://a.example/ · 4 B · cut · 1.2s\n",
+		"aaaa\n\\[the page was cut at 32 KiB]":                     "  ⎿  A — https://a.example/ · 34 B · 1.2s\n",
+	} {
+		clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_fetch", pageOutput(t, "https://a.example/", "A", body))))
+
+		out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+		if !strings.Contains(out, want) {
+			t.Errorf("%q =\n%s\nwant %q", body, out, want)
+		}
+	}
+}

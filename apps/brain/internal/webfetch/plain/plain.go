@@ -40,17 +40,24 @@ func (f fetcher) Fetch(ctx context.Context, url string) (webfetch.Page, error) {
 	}
 	contentType := resp.Header.Get("Content-Type")
 	media, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		media = "of no type it names"
-	}
-	html, ok := readable(media)
-	if !ok {
+	named := err == nil
+	if _, ok := readable(media); named && !ok {
 		return webfetch.Page{}, fmt.Errorf("the page is %s, which web_fetch does not read", media)
 	}
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
 		return webfetch.Page{}, fmt.Errorf("reading the page: %w", err)
+	}
+	// A page that names no type is sniffed from its bytes. The sniffer's
+	// charset is a guess, so only the media type is kept.
+	if !named {
+		media, _, _ = mime.ParseMediaType(http.DetectContentType(raw))
+		contentType = media
+	}
+	html, ok := readable(media)
+	if !ok {
+		return webfetch.Page{}, fmt.Errorf("the page is %s, which web_fetch does not read", media)
 	}
 	cut := len(raw) > maxBody
 	if cut {

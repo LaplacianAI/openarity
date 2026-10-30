@@ -465,17 +465,24 @@ reinstalled.
   results are: `<page url title end>`, both attributes HTML-escaped, the
   title folded to one line, and every `<page` or `</page` in the body escaped
   whatever its case. The body is cut at 32 KiB where a rune starts, after
-  escaping, with a line saying so; the line is also added when the fetcher
-  stopped reading early. The url must be http or https, carry no user, name a
-  host and fit in 2,048 bytes.
+  escaping, with a line saying so; when the plain fetch stopped at 2 MiB and
+  what is left is shorter, the line says that instead. A line the page wrote
+  that starts like the brain's is escaped with a backslash, so only the
+  brain's says the page was cut. The url must be http or https, carry no
+  user, name a host and fit in 2,048 bytes, and a host a browser would read
+  as a number (`2130706433`, `0x7f.1`, `127.1`) is refused unless it is an IP
+  address as written: resolvers and scrapers disagree on what it names.
 - **A fetch dials public addresses only.** `MCP_PRIVATE_NETWORKS` is for
   addresses an operator chose; a fetch URL is a model's, often repeating what
   a page told it, and honouring the allowance would make any page a way into
   the operator's network. The plain fetch's client is `hub.Public` at dial
   time, on every redirect (five at most, http or https only), with no proxy
-  and an Openarity User-Agent. It reads at most 2 MiB through the page's
-  charset and cuts there rather than refusing; a type it cannot read as text
-  (a PDF, an image) is a tool error naming the type. HTML goes through
+  and an Openarity User-Agent. It reads at most 2 MiB and cuts there rather
+  than refusing. A charset the header names wins; without one, valid UTF-8 is
+  read as UTF-8, because the stock sniffer takes an ASCII first KiB for
+  windows-1252, and only other bytes are sniffed. A type the header names and
+  it cannot read as text (a PDF, an image) is refused before the body is
+  read; a page that names no type is sniffed from its bytes. HTML goes through
   readability first, so the article comes before menus and banners, and falls
   back to the whole page when there is no article.
 - **A team's Firecrawl is judged before and after it reads.** Firecrawl
@@ -485,8 +492,10 @@ reinstalled.
   requested `sourceURL`) is judged the same way afterwards: a redirect to a
   private address returns no page. Firecrawl's own lookup can still differ
   from the brain's, which only network rules on a self-hosted Firecrawl
-  close. Firecrawl's reply is read through the search client, so one over
-  2 MiB is refused, not cut.
+  close. A scrape renders the page, so its client waits 45 s where search
+  waits 15, on the same guarded transport, and Firecrawl is told to stop at
+  40 s so that a slow page ends as Firecrawl's answer. Its reply is read
+  through the search client's helpers, so one over 2 MiB is refused, not cut.
 - **The web tools read the team's settings once.** A key that cannot be read
   costs `web_search`, with its event, and `web_fetch` falls back to the plain
   read; so does a Firecrawl that cannot be built. A team with no provider has

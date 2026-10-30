@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"time"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill/hub"
@@ -25,9 +26,18 @@ type resolver interface {
 func newFetch(searchClient *http.Client, r resolver) *runtime.FetchDeps {
 	return &runtime.FetchDeps{
 		Plain:    plain.New(webfetch.NewClient(hub.Public)),
-		Scrapers: newScrapers(searchClient),
+		Scrapers: newScrapers(scrapeClient(searchClient)),
 		Public:   publicHost(r),
 	}
+}
+
+// scrapeClient is the search client, on the same guarded transport, given 45 s:
+// a scrape renders the page on Firecrawl's side, and Firecrawl is told to stop
+// at 40 s so that it answers first.
+func scrapeClient(search *http.Client) *http.Client {
+	c := *search
+	c.Timeout = 45 * time.Second
+	return &c
 }
 
 func newScrapers(client *http.Client) runtime.Scrapers {

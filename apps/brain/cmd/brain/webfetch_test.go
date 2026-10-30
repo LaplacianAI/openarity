@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/websearch"
 )
@@ -172,5 +174,44 @@ func TestAZonedAddressIsRefused(t *testing.T) {
 		if err := public(t.Context(), host); err == nil || err.Error() != host+" is not a public address" {
 			t.Errorf("%s: err = %v", host, err)
 		}
+	}
+}
+
+// A scrape renders the page on Firecrawl's side and takes longer than a
+// search: its client waits 45 s, on the same guarded transport, and the
+// search client keeps its own 15 s.
+func TestAScrapeWaitsLongerThanASearch(t *testing.T) {
+	search := &http.Client{Timeout: 15 * time.Second, Transport: &hostsAsked{}}
+
+	scrape := scrapeClient(search)
+
+	if scrape.Timeout != 45*time.Second || scrape.Transport != search.Transport || search.Timeout != 15*time.Second {
+		t.Errorf("scrape %v on %T, search %v; want 45s on the same transport, search untouched", scrape.Timeout, scrape.Transport, search.Timeout)
+	}
+}
+
+// deadlineAsked records the deadline each request carried: the client's
+// Timeout reaches the transport as the request's context deadline.
+type deadlineAsked struct{ left []time.Duration }
+
+func (d *deadlineAsked) RoundTrip(r *http.Request) (*http.Response, error) {
+	if dl, ok := r.Context().Deadline(); ok {
+		d.left = append(d.left, time.Until(dl))
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`)), Header: http.Header{}, Request: r}, nil
+}
+
+// The wired scraper waits the scrape's 45 s, not the search client's 15 s.
+func TestTheWiredScraperWaitsTheScrapesTime(t *testing.T) {
+	asked := &deadlineAsked{}
+	search := &http.Client{Timeout: 15 * time.Second, Transport: asked}
+
+	f, err := newFetch(search, &fakeResolver{}).Scrapers(websearch.FirecrawlCloud, "", "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.Fetch(t.Context(), "https://go.dev/")
+	if len(asked.left) != 1 || asked.left[0] < 30*time.Second {
+		t.Errorf("the scrape had %v left; want about 45s", asked.left)
 	}
 }

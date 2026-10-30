@@ -29,7 +29,7 @@ func TestAScrapeAsksForMarkdownWithTheKey(t *testing.T) {
 			}
 			want := websearchtest.Asked{
 				Method: "POST", Path: "/v2/scrape", Auth: "Bearer " + key, Query: map[string][]string{},
-				Body: map[string]any{"url": asked, "formats": []any{"markdown"}},
+				Body: map[string]any{"url": asked, "formats": []any{"markdown"}, "timeout": float64(40000)},
 			}
 			if got := srv.Requests(); len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 				t.Errorf("asked %+v, want %+v", got, want)

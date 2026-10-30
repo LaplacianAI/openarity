@@ -520,7 +520,13 @@ var (
 	pageTagEsc = regexp.MustCompile(`(?i)&lt;(/?page)`)
 )
 
-const pageCut = "\n[the page was cut at 32 KiB]"
+// pageCuts are the brain's cut lines: at 32 KiB of what the model reads, and
+// at 2 MiB of the page when the plain fetch stopped there. A line the page
+// wrote itself arrives escaped with a backslash, so it matches neither.
+var pageCuts = []string{
+	"\n[the page was cut at 32 KiB]",
+	"\n[the page was cut: only its first 2 MiB were read]",
+}
 
 // pageIn reads web_fetch's envelope. The page ends only at the closing tag
 // carrying the envelope's own end; both attributes are escaped in full by the
@@ -535,11 +541,17 @@ func pageIn(output string) (page, bool) {
 		return page{}, false
 	}
 	body := output[len(m[0]) : len(output)-len(closing)]
-	cut := strings.HasSuffix(body, pageCut)
+	cut := false
+	for _, line := range pageCuts {
+		if trimmed, ok := strings.CutSuffix(body, line); ok {
+			body, cut = trimmed, true
+			break
+		}
+	}
 	return page{
 		url:   html.UnescapeString(m[1]),
 		title: html.UnescapeString(m[2]),
-		body:  pageTagEsc.ReplaceAllString(strings.TrimSuffix(body, pageCut), "<$1"),
+		body:  pageTagEsc.ReplaceAllString(body, "<$1"),
 		cut:   cut,
 	}, true
 }

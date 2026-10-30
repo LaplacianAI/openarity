@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strings"
@@ -37,6 +38,10 @@ var webFetchSchema = json.RawMessage(`{
 }`)
 
 var pageTag = regexp.MustCompile(`(?i)<(/?page)`)
+
+// cutLine is the start of the brain's own cut lines; a page that writes one
+// has it escaped, so only the brain's, last, says the page was cut.
+var cutLine = regexp.MustCompile(`(?m)^(\[the page was cut)`)
 
 type Scrapers func(p websearch.Provider, url, key string) (webfetch.Fetcher, error)
 
@@ -106,6 +111,8 @@ func parseFetch(raw json.RawMessage) (address, host string, err error) {
 		return "", "", errors.New("url may not carry a user name or password")
 	case u.Hostname() == "":
 		return "", "", errors.New("url has no host")
+	case numericHost(u.Hostname()):
+		return "", "", fmt.Errorf("url's host %s is a number but not an IP address", u.Hostname())
 	}
 	return address, u.Hostname(), nil
 }
@@ -123,13 +130,33 @@ func endedPublic(ctx context.Context, public func(context.Context, string) error
 	return nil
 }
 
+// numericHost is a host a browser reads as an IPv4 address, because its last
+// label is a number, that is not one as written: 2130706433, 0x7f.1, 127.1 or
+// 127.0.0.01. Resolvers and scrapers disagree on what such a host names, so
+// it is refused rather than judged.
+func numericHost(host string) bool {
+	if _, err := netip.ParseAddr(host); err == nil {
+		return false
+	}
+	labels := strings.Split(strings.TrimSuffix(host, "."), ".")
+	last := strings.ToLower(labels[len(labels)-1])
+	if hex, ok := strings.CutPrefix(last, "0x"); ok {
+		return strings.Trim(hex, "0123456789abcdef") == ""
+	}
+	return last != "" && strings.Trim(last, "0123456789") == ""
+}
+
 func pageResult(p webfetch.Page, end string) string {
 	body := pageTag.ReplaceAllString(p.Markdown, "&lt;$1")
+	body = cutLine.ReplaceAllString(body, `\$1`)
 	if strings.TrimSpace(body) == "" {
 		body = "The page has no text."
 	}
-	if len(body) > maxPageBody || p.Cut {
+	switch {
+	case len(body) > maxPageBody:
 		body = cut(body, maxPageBody, "") + "\n[the page was cut at 32 KiB]"
+	case p.Cut:
+		body += "\n[the page was cut: only its first 2 MiB were read]"
 	}
 	title := strings.Join(strings.Fields(p.Title), " ")
 	return fmt.Sprintf("<page url=\"%s\" title=\"%s\" end=\"%s\">\n%s\n</page end=\"%s\">",

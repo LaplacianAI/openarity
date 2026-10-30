@@ -349,7 +349,13 @@ export function searchResults(output: string): SearchResults | null {
 export type FetchedPage = { url: string; title: string; markdown: string; cut: boolean };
 
 const PAGE_HEAD = /^<page url="([^"]*)" title="([^"]*)" end="([^"]*)">\n/;
-const PAGE_CUT = "\n[the page was cut at 32 KiB]";
+// The brain cuts what the model reads at 32 KiB; the plain fetch stops at
+// 2 MiB of the page. A line the page wrote itself arrives escaped with a
+// backslash, so it matches neither.
+const PAGE_CUTS = [
+  "\n[the page was cut at 32 KiB]",
+  "\n[the page was cut: only its first 2 MiB were read]",
+];
 
 /**
  * A web_fetch call's output read as the envelope the brain wraps a page in,
@@ -366,8 +372,9 @@ export function fetchedPage(output: string): FetchedPage | null {
   if (!output.endsWith(closing) || output.length < opening.length + closing.length) return null;
 
   let body = output.slice(opening.length, output.length - closing.length);
-  const cut = body.endsWith(PAGE_CUT);
-  if (cut) body = body.slice(0, body.length - PAGE_CUT.length);
+  const marker = PAGE_CUTS.find((m) => body.endsWith(m));
+  if (marker) body = body.slice(0, body.length - marker.length);
+  const cut = marker !== undefined;
   return {
     url: unescaped(url),
     title: unescaped(title),

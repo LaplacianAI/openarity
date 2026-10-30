@@ -574,6 +574,19 @@ describe("fetchedPage", () => {
     expect(got?.markdown).toBe("aaaa");
   });
 
+  it("reads the fetcher's cut too, which stopped at 2 MiB", () => {
+    const got = fetchedPage(wrap("aaaa\n[the page was cut: only its first 2 MiB were read]"));
+    expect(got?.cut).toBe(true);
+    expect(got?.markdown).toBe("aaaa");
+  });
+
+  // A page that wrote the brain's line has it escaped; it is the page's text.
+  it("is not cut by a line the page wrote itself", () => {
+    const got = fetchedPage(wrap("intro\n\\[the page was cut at 32 KiB]"));
+    expect(got?.cut).toBe(false);
+    expect(got?.markdown).toBe("intro\n\\[the page was cut at 32 KiB]");
+  });
+
   // The brain escapes only a tag's opening <, so any other entity is the page's own text.
   it("reads the body's escaped tags back as text, and leaves its other entities alone", () => {
     const got = fetchedPage(

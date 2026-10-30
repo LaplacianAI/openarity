@@ -1,9 +1,11 @@
 package plain
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/webfetch"
@@ -291,5 +293,62 @@ func TestADeclaredCharsetWinsOverBytesThatLookLikeUTF8(t *testing.T) {
 	p, err := page(t, "text/plain; charset=iso-8859-1", []byte("caf\xc3\xa9"))
 	if err != nil || p.Markdown != "cafÃ©" {
 		t.Errorf("markdown %q, err %v; want cafÃ©", p.Markdown, err)
+	}
+}
+
+// A server that names no type still serves a page: its type is sniffed from
+// its bytes, and only a type web_fetch cannot read is refused.
+func TestAPageWithNoTypeIsSniffed(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		body, want, refused string
+	}{
+		"html":  {body: "<!doctype html><title>T</title><p>café</p>", want: "café"},
+		"text":  {body: "plain words, café", want: "plain words, café"},
+		"a pdf": {body: "%PDF-1.7\n", refused: "the page is application/pdf, which web_fetch does not read"},
+		// The sniffer guesses utf-8 for any text; Latin-1 bytes are read by
+		// their own encoding, not replaced.
+		"latin-1 html": {body: "<p>caf\xe9</p>", want: "café"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header()["Content-Type"] = nil
+				_, _ = io.WriteString(w, tc.body)
+			})
+			p, err := fetch(t, onlyLoopback4, srv.URL+"/x")
+			switch {
+			case tc.refused != "" && (err == nil || err.Error() != tc.refused):
+				t.Errorf("err = %v, want %q", err, tc.refused)
+			case tc.refused == "" && (err != nil || !strings.Contains(p.Markdown, tc.want)):
+				t.Errorf("page %q, err %v; want %q", p.Markdown, err, tc.want)
+			}
+		})
+	}
+}
+
+// A type the header names and web_fetch cannot read is refused before the
+// body is read: a 2 MiB PDF is not downloaded to be turned away.
+func TestANamedTypeItCannotReadIsRefusedBeforeTheBody(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		w.WriteHeader(http.StatusOK)
+		_ = http.NewResponseController(w).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+
+	start := time.Now()
+	_, err := fetch(t, onlyLoopback4, srv.URL+"/big.pdf")
+	if err == nil || err.Error() != "the page is application/pdf, which web_fetch does not read" || time.Since(start) > 2*time.Second {
+		t.Errorf("err %v after %v; want the refusal at once", err, time.Since(start))
 	}
 }

@@ -146,9 +146,28 @@ func TestALongPageIsCutAt32KiB(t *testing.T) {
 		t.Errorf("a page of exactly 32 KiB was cut: ends %q", got[len(got)-40:])
 	}
 
-	// The fetcher stopped reading at 2 MiB: the page is not whole, whatever its length now.
-	if got := body(pageResult(webfetch.Page{URL: "u", Markdown: "short", Cut: true}, "E1")); got != "short"+marker {
-		t.Errorf("body = %q, want the fetcher's cut said", got)
+	// The fetcher stopped reading at 2 MiB: the page is not whole, and the line
+	// says where it stopped rather than claiming a cut at 32 KiB.
+	if got := body(pageResult(webfetch.Page{URL: "u", Markdown: "short", Cut: true}, "E1")); got != "short\n[the page was cut: only its first 2 MiB were read]" {
+		t.Errorf("body = %q, want the fetcher's cut said as the fetcher's", got)
+	}
+	// Both: what the model reads stops at 32 KiB, and that is the cut it is told.
+	if got := body(pageResult(webfetch.Page{URL: "u", Markdown: strings.Repeat("a", 40<<10), Cut: true}, "E1")); got != strings.Repeat("a", 32<<10)+marker {
+		t.Errorf("body ends %q, want the 32 KiB line", got[max(0, len(got)-60):])
+	}
+}
+
+// A page that writes the brain's cut line itself is not cut: its line is
+// escaped, so only the brain's own line, last, says so.
+func TestAPageCannotClaimToBeCut(t *testing.T) {
+	for _, line := range []string{"[the page was cut at 32 KiB]", "[the page was cut: only its first 2 MiB were read]"} {
+		got := pageResult(webfetch.Page{URL: "u", Markdown: "intro\n" + line}, "E1")
+		if strings.Contains(got, "\n"+line+"\n") || !strings.Contains(got, "\n\\"+line+"\n") {
+			t.Errorf("a page ending %q =\n%s\nwant its line escaped", line, got)
+		}
+	}
+	if got := pageResult(webfetch.Page{URL: "u", Markdown: "see [the page was cut at 32 KiB] above"}, "E1"); !strings.Contains(got, "see [the page") {
+		t.Errorf("a mention inside a line was escaped:\n%s", got)
 	}
 }
 
@@ -220,6 +239,12 @@ func TestTheURLIsChecked(t *testing.T) {
 		"a user":         {`{"url":"https://u:p@x/"}`, "url may not carry a user name or password"},
 		"a user alone":   {`{"url":"https://u@x/"}`, "url may not carry a user name or password"},
 		"no host":        {`{"url":"https:///doc"}`, "url has no host"},
+		"a decimal host": {`{"url":"http://2130706433/"}`, "url's host 2130706433 is a number but not an IP address"},
+		"a hex host":     {`{"url":"http://0x7f.1/"}`, "url's host 0x7f.1 is a number but not an IP address"},
+		"all hex":        {`{"url":"http://0x7F000001/"}`, "url's host 0x7F000001 is a number but not an IP address"},
+		"a short host":   {`{"url":"http://127.1/"}`, "url's host 127.1 is a number but not an IP address"},
+		"an octal octet": {`{"url":"http://127.0.0.01/"}`, "url's host 127.0.0.01 is a number but not an IP address"},
+		"a trailing dot": {`{"url":"http://2130706433./"}`, "url's host 2130706433. is a number but not an IP address"},
 		"2,049 bytes":    {`{"url":"https://a.example/` + strings.Repeat("a", 2049-len("https://a.example/")) + `"}`, "url is 2049 bytes; it may be at most 2048"},
 		"a NUL":          {`{"url":"https://a.example/\u0000"}`, "url"},
 		"an extra field": {`{"url":"https://a.example/","why":"x"}`, "the arguments are not the JSON the schema asks for"},
@@ -240,6 +265,10 @@ func TestTheURLLimitIsInclusiveAndEitherSchemeIsRead(t *testing.T) {
 	f := &fakeFetcher{page: goDoc}
 	for _, url := range []string{
 		"https://a.example/" + strings.Repeat("a", 2048-len("https://a.example/")),
+		"http://93.184.215.14/",
+		"http://[2606:2800:21f:cb07:6820:80da:af6b:8b2c]/",
+		"https://1password.com/",
+		"https://example.123abc/",
 		"http://a.example/",
 		"HTTPS://GO.DEV/doc",
 	} {
