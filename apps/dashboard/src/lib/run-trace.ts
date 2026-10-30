@@ -61,9 +61,14 @@ export type Started = {
   skills: string[];
 };
 
+export type PlanStatus = "pending" | "in_progress" | "done";
+
+export type PlanItem = { text: string; status: PlanStatus };
+
 /** What happened, in order. Steps and the run-level events between them. */
 export type TraceItem =
   | { type: "step"; step: Step }
+  | { type: "plan"; items: PlanItem[] }
   | { type: "resumed"; messages: number }
   | { type: "unavailable"; name: string; reason: string }
   | { type: "other"; event: RunEvent };
@@ -76,6 +81,8 @@ export type Trace = {
   /** The stream's closing `end` frame: nothing more will arrive. */
   ended: { status: string } | null;
   usage: Tokens;
+  /** The hub's plan as it last kept it; null until it keeps one. */
+  plan: PlanItem[] | null;
 };
 
 function emptyTokens(): Tokens {
@@ -107,6 +114,7 @@ export function groupTrace(events: readonly RunEvent[]): Trace {
     finished: null,
     ended: null,
     usage: emptyTokens(),
+    plan: null,
   };
   let current: Step | null = null;
   const calls: ToolCall[] = [];
@@ -207,6 +215,13 @@ export function groupTrace(events: readonly RunEvent[]): Trace {
         else trace.items.push({ type: "other", event: e });
         break;
       }
+      case "plan": {
+        // Each plan replaces the last; each stays where it was kept.
+        const items = planItems(d.items);
+        trace.plan = items;
+        trace.items.push({ type: "plan", items });
+        break;
+      }
       case "finished":
         trace.finished = { status: text(d.status), error: text(d.error) };
         break;
@@ -219,6 +234,20 @@ export function groupTrace(events: readonly RunEvent[]): Trace {
     }
   }
   return trace;
+}
+
+const STATUSES: readonly PlanStatus[] = ["pending", "in_progress", "done"];
+
+/** A plan's items, an item with no text dropped and an unknown status read as pending. */
+function planItems(v: unknown): PlanItem[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((raw) => {
+    const item = record(raw);
+    const t = text(item.text);
+    if (t === "") return [];
+    const s = text(item.status) as PlanStatus;
+    return [{ text: t, status: STATUSES.includes(s) ? s : "pending" }];
+  });
 }
 
 /**
@@ -263,6 +292,58 @@ export function delegateReport(output: string): DelegateReport | null {
     status,
     body: output.slice(opening.length, output.length - closing.length),
   };
+}
+
+export type SearchHit = { title: string; url: string; snippet: string };
+
+export type SearchResults = { query: string; hits: SearchHit[]; cut: boolean };
+
+const SEARCH_HEAD = /^<search_results query="([^"]*)" end="([^"]*)">\n/;
+const SEARCH_CUT = "[the results were cut at 16 KiB]";
+
+function unescaped(s: string): string {
+  return s.replace(/&#34;|&#39;|&amp;|&lt;|&gt;/g, (m) => ESCAPES[m] ?? m);
+}
+
+// A hit's field has only the < of an envelope tag escaped; the rest is the page's.
+function untagged(s: string): string {
+  return s.replace(/&lt;(\/?search_results)/gi, "<$1");
+}
+
+/**
+ * A web_search call's output read as the envelope the brain wraps results in,
+ * or null when it is not one. As with a report, the list ends only at the
+ * closing tag that carries the envelope's own end; every hit's fields are the
+ * page's, one line each, with the tags the brain escaped read back as text
+ * and every other entity left as the page wrote it.
+ */
+export function searchResults(output: string): SearchResults | null {
+  const head = SEARCH_HEAD.exec(output);
+  if (!head) return null;
+  const [opening, query = "", end = ""] = head;
+  const closing = `\n</search_results end="${end}">`;
+  if (!output.endsWith(closing) || output.length < opening.length + closing.length) return null;
+
+  const body = output.slice(opening.length, output.length - closing.length);
+  const results: SearchResults = { query: unescaped(query), hits: [], cut: false };
+  let hit: SearchHit | null = null;
+  let field = 0;
+  for (const line of body.split("\n")) {
+    const numbered = /^\d+\. (.*)$/.exec(line);
+    if (numbered) {
+      hit = { title: untagged(numbered[1] ?? ""), url: "", snippet: "" };
+      results.hits.push(hit);
+      field = 0;
+    } else if (line === SEARCH_CUT) {
+      results.cut = true;
+    } else if (hit && line.startsWith("   ")) {
+      const value = untagged(line.slice(3));
+      if (field === 0) hit.url = value;
+      else hit.snippet = value;
+      field += 1;
+    }
+  }
+  return results;
 }
 
 /** The steps alone, for counting. */

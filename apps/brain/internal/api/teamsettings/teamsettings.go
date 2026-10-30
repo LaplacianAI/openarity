@@ -3,6 +3,7 @@ package teamsettings
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -24,6 +25,8 @@ type Store interface {
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 	UpsertTeamSettings(ctx context.Context, arg db.UpsertTeamSettingsParams) (db.TeamSetting, error)
 	RecordDeletedSecret(ctx context.Context, arg db.RecordDeletedSecretParams) error
+	GetAgent(ctx context.Context, id uuid.UUID) (db.Agent, error)
+	GetAgentByName(ctx context.Context, arg db.GetAgentByNameParams) (db.Agent, error)
 }
 
 type Secrets interface {
@@ -63,7 +66,14 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		api.WriteJSON(w, h.logger, http.StatusOK, defaults())
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, view(row))
+
+	hub, err := h.hubOf(r.Context(), teamID, row.HubAgentID)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read the team's hub", err)
+		return
+	}
+
+	api.WriteJSON(w, h.logger, http.StatusOK, view(row, hub))
 }
 
 func (h *handler) put(w http.ResponseWriter, r *http.Request) {
@@ -94,12 +104,17 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hub, ok := h.hub(w, r, teamID, req.Hub)
+	if !ok {
+		return
+	}
+
 	secretID, written, ok := h.searchKey(w, r, teamID, req.Search, stored)
 	if !ok {
 		return
 	}
 
-	saved, err := h.store.UpsertTeamSettings(r.Context(), params(teamID, req, secretID))
+	saved, err := h.store.UpsertTeamSettings(r.Context(), params(teamID, req, secretID, hub))
 	if err != nil {
 		if written != "" {
 			h.forget(r.Context(), teamID, written)
@@ -107,7 +122,7 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to save team settings", err)
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, view(saved))
+	api.WriteJSON(w, h.logger, http.StatusOK, view(saved, hub))
 }
 
 func (h *handler) stored(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, bool, error) {
@@ -119,6 +134,39 @@ func (h *handler) stored(ctx context.Context, teamID uuid.UUID) (db.TeamSetting,
 		return db.TeamSetting{}, false, err
 	}
 	return row, true, nil
+}
+
+func (h *handler) hub(w http.ResponseWriter, r *http.Request, teamID uuid.UUID, name *string) (*hubRef, bool) {
+	if name == nil {
+		return nil, true
+	}
+	a, err := h.store.GetAgentByName(r.Context(), db.GetAgentByNameParams{TeamID: teamID, Name: *name})
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, fmt.Sprintf("no agent in this team is named %q", *name), http.StatusBadRequest)
+		return nil, false
+	}
+	if err != nil {
+		api.Fail(w, h.logger, api.Caller(r), "failed to read the hub agent", err)
+		return nil, false
+	}
+	return &hubRef{ID: a.ID, Name: a.Name}, true
+}
+
+func (h *handler) hubOf(ctx context.Context, teamID uuid.UUID, id *uuid.UUID) (*hubRef, error) {
+	if id == nil {
+		return nil, nil
+	}
+	a, err := h.store.GetAgent(ctx, *id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if a.TeamID != teamID {
+		return nil, nil
+	}
+	return &hubRef{ID: a.ID, Name: a.Name}, nil
 }
 
 func (h *handler) searchKey(
@@ -148,7 +196,7 @@ func (h *handler) forget(ctx context.Context, teamID uuid.UUID, path string) {
 	}
 }
 
-func params(teamID uuid.UUID, req settingsRequest, secretID *uuid.UUID) db.UpsertTeamSettingsParams {
+func params(teamID uuid.UUID, req settingsRequest, secretID *uuid.UUID, hub *hubRef) db.UpsertTeamSettingsParams {
 	p := db.UpsertTeamSettingsParams{
 		TeamID:             teamID,
 		SearchProvider:     req.Search.Provider,
@@ -160,10 +208,13 @@ func params(teamID uuid.UUID, req settingsRequest, secretID *uuid.UUID) db.Upser
 	if m := req.Model; m != nil {
 		p.ModelName, p.ModelMaxTokens, p.ModelTemperature = &m.Name, &m.MaxTokens, m.Temperature
 	}
+	if hub != nil {
+		p.HubAgentID = &hub.ID
+	}
 	return p
 }
 
-func view(row db.TeamSetting) settings {
+func view(row db.TeamSetting, hub *hubRef) settings {
 	s := settings{
 		Search: search{
 			Provider: row.SearchProvider,
@@ -172,6 +223,7 @@ func view(row db.TeamSetting) settings {
 		},
 		Learning:           row.Learning,
 		CompactionMessages: row.CompactionMessages,
+		Hub:                hub,
 		UpdatedAt:          &row.UpdatedAt,
 	}
 	if row.ModelName != nil && row.ModelMaxTokens != nil {

@@ -50,6 +50,7 @@ const (
 type Lineage struct {
 	Worker string
 	Chain  []uuid.UUID
+	Narrow *Narrowing
 }
 
 type Delegation struct {
@@ -86,6 +87,7 @@ func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
 		lostAfter: heartbeatLostAfter,
 	}
 	b.delegates = &DelegateDeps{Store: s, Run: e}
+	b.note = e.note
 	return e
 }
 
@@ -230,7 +232,7 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 			Role:    agent.RoleUser,
 			Content: []agent.Content{{Type: agent.ContentText, Text: row.Input}},
 		}}
-		err = appendEvent(ctx, e.store, row.ID, l.Worker, "started", startedOf(row.AgentName, built.Spec))
+		err = appendEvent(ctx, e.store, row.ID, l.Worker, "started", startedOf(built.Agent, built.Spec))
 	}
 	if err != nil {
 		return "", err
@@ -386,5 +388,6 @@ func runOf(r db.ClaimRunRow) db.Run {
 		OutputTokens: r.OutputTokens, Worker: r.Worker, HeartbeatAt: r.HeartbeatAt,
 		CancelRequestedAt: r.CancelRequestedAt, CreatedAt: r.CreatedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, TokenBudget: r.TokenBudget,
+		Hub: r.Hub,
 	}
 }

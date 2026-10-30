@@ -320,3 +320,100 @@ func TestSettingsSetShowsTheBrainsReason(t *testing.T) {
 		t.Errorf("err = %v, want the brain's reason", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// the hub
+
+const hubSaved = `{"model":null,"search":{"provider":"none","url":null,"key_set":false},
+  "learning":false,"compaction_messages":100,
+  "hub":{"id":"11111111-1111-1111-1111-111111111111","name":"triage"},
+  "updated_at":"2026-10-21T09:00:00Z"}`
+
+func TestSettingsShowNamesTheHub(t *testing.T) {
+	for stored, want := range map[string]string{
+		neverSaved: "orchestrator (built in)",
+		hubSaved:   "triage",
+	} {
+		settingsRoutes(t, stored, http.StatusOK)
+
+		out, err := clitest.Execute(t, commands, "teams", "settings", "show", teamID)
+		if err != nil {
+			t.Fatalf("teams settings show: %v", err)
+		}
+		if !strings.Contains(out, "hub") || !strings.Contains(out, want) {
+			t.Errorf("want the hub as %q:\n%s", want, out)
+		}
+	}
+}
+
+// The PUT is whole: a change to anything else must send the hub back, or it
+// quietly returns the team to the built-in orchestrator.
+func TestSettingsSetKeepsTheHub(t *testing.T) {
+	script := settingsRoutes(t, hubSaved, http.StatusOK)
+
+	if out, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--learning", "on"); err != nil {
+		t.Fatalf("teams settings set: %v\n%s", err, out)
+	}
+	if got := put(t, script)["hub"]; got != "triage" {
+		t.Errorf("hub = %v, want triage kept", got)
+	}
+}
+
+func TestSettingsSetChoosesTheHubByName(t *testing.T) {
+	script := settingsRoutes(t, neverSaved, http.StatusOK)
+
+	if out, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--hub", "billing"); err != nil {
+		t.Fatalf("teams settings set --hub: %v\n%s", err, out)
+	}
+	if got := put(t, script)["hub"]; got != "billing" {
+		t.Errorf("hub = %v, want billing", got)
+	}
+}
+
+// The brain reads a hub left out as one cleared: the PUT is whole.
+func TestNoHubSendsNone(t *testing.T) {
+	script := settingsRoutes(t, hubSaved, http.StatusOK)
+
+	if out, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--no-hub"); err != nil {
+		t.Fatalf("teams settings set --no-hub: %v\n%s", err, out)
+	}
+	if got := put(t, script)["hub"]; got != nil {
+		t.Errorf("hub = %v, want none", got)
+	}
+}
+
+func TestTheHubFlagsRefuseBeforeSending(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"both":         {[]string{"--hub", "triage", "--no-hub"}, "--hub and --no-hub contradict each other"},
+		"an empty hub": {[]string{"--hub", "  "}, "--hub takes an agent's name; --no-hub returns the team to the built-in orchestrator"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script := settingsRoutes(t, hubSaved, http.StatusOK)
+
+			_, err := clitest.Execute(t, commands, append([]string{"teams", "settings", "set", teamID}, tc.args...)...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want %q", err, tc.want)
+			}
+			if n := len(script.All()); n != 0 {
+				t.Errorf("the brain was asked %d times", n)
+			}
+		})
+	}
+}
+
+// The brain names an agent not in the team; that sentence is the only place
+// a typo is reported.
+func TestSettingsSetKeepsTheBrainsReasonForAnUnknownHub(t *testing.T) {
+	clitest.Routes(t, map[string]clitest.Reply{
+		"GET " + settingsPath: {Status: http.StatusOK, Body: neverSaved},
+		"PUT " + settingsPath: {Status: http.StatusBadRequest, Body: `no agent in this team is named "triag"`},
+	})
+
+	_, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--hub", "triag")
+	if err == nil || !strings.Contains(err.Error(), `no agent in this team is named "triag"`) {
+		t.Errorf("err = %v, want the brain's sentence", err)
+	}
+}

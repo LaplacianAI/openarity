@@ -12,7 +12,7 @@ import (
 )
 
 const getTeamSettings = `-- name: GetTeamSettings :one
-SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at FROM team_settings WHERE team_id = $1
+SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id FROM team_settings WHERE team_id = $1
 `
 
 // No row means the team never saved: the caller reads that as the defaults.
@@ -30,6 +30,7 @@ func (q *Queries) GetTeamSettings(ctx context.Context, teamID uuid.UUID) (TeamSe
 		&i.Learning,
 		&i.CompactionMessages,
 		&i.UpdatedAt,
+		&i.HubAgentID,
 	)
 	return i, err
 }
@@ -57,12 +58,12 @@ INSERT INTO team_settings (
     team_id,
     model_name, model_max_tokens, model_temperature,
     search_provider, search_url, search_secret_id,
-    learning, compaction_messages
+    learning, compaction_messages, hub_agent_id
 ) VALUES (
     $1,
     $2, $3, $4,
     $5, $6, $7,
-    $8, $9
+    $8, $9, $10
 )
 ON CONFLICT (team_id) DO UPDATE SET
     model_name          = EXCLUDED.model_name,
@@ -73,8 +74,9 @@ ON CONFLICT (team_id) DO UPDATE SET
     search_secret_id    = EXCLUDED.search_secret_id,
     learning            = EXCLUDED.learning,
     compaction_messages = EXCLUDED.compaction_messages,
+    hub_agent_id        = EXCLUDED.hub_agent_id,
     updated_at          = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id
 `
 
 type UpsertTeamSettingsParams struct {
@@ -87,6 +89,7 @@ type UpsertTeamSettingsParams struct {
 	SearchSecretID     *uuid.UUID
 	Learning           bool
 	CompactionMessages int32
+	HubAgentID         *uuid.UUID
 }
 
 // The whole row every time. A save that keeps the search key passes the same
@@ -103,6 +106,7 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		arg.SearchSecretID,
 		arg.Learning,
 		arg.CompactionMessages,
+		arg.HubAgentID,
 	)
 	var i TeamSetting
 	err := row.Scan(
@@ -116,6 +120,7 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		&i.Learning,
 		&i.CompactionMessages,
 		&i.UpdatedAt,
+		&i.HubAgentID,
 	)
 	return i, err
 }

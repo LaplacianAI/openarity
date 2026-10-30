@@ -163,11 +163,12 @@ func TestStartRefusesBadInputWithoutAskingTheBrain(t *testing.T) {
 		args  []string
 		want  string
 	}{
-		"an empty input":      {args: []string{"runs", "start", "platform", "triage", "  "}, want: "empty"},
-		"an empty stdin":      {stdin: "\n", args: []string{"runs", "start", "platform", "triage", "-"}, want: "empty"},
-		"a session by name":   {args: []string{"runs", "start", "platform", "triage", "go", "--session", "support"}, want: "not a session id"},
-		"no input at all":     {args: []string{"runs", "start", "platform", "triage"}, want: "accepts 3 arg"},
-		"no agent and no run": {args: []string{"runs", "start", "platform"}, want: "accepts 3 arg"},
+		"an empty input":     {args: []string{"runs", "start", "platform", "triage", "  "}, want: "empty"},
+		"an empty stdin":     {stdin: "\n", args: []string{"runs", "start", "platform", "triage", "-"}, want: "empty"},
+		"a session by name":  {args: []string{"runs", "start", "platform", "triage", "go", "--session", "support"}, want: "not a session id"},
+		"no input at all":    {args: []string{"runs", "start", "platform"}, want: "accepts between 2 and 3 arg"},
+		"four arguments":     {args: []string{"runs", "start", "platform", "triage", "go", "now"}, want: "accepts between 2 and 3 arg"},
+		"an empty hub input": {args: []string{"runs", "start", "platform", "  "}, want: "empty"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			script := clitest.Routes(t, with("POST /teams/{id}/runs", clitest.Reply{Status: http.StatusAccepted, Body: queuedRun}))
@@ -210,6 +211,44 @@ func TestStartKeepsTheBrainsReasonForAnUnknownAgent(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no agent in this team has that name") {
 		t.Errorf("the brain's reason was dropped: %v", err)
+	}
+}
+
+// Two arguments ask the team's hub: no agent is sent, and the brain starts
+// whichever agent the team chose, or the built-in orchestrator.
+func TestStartWithNoAgentAsksTheHub(t *testing.T) {
+	script := clitest.Routes(t, with("POST /teams/{id}/runs", clitest.Reply{Status: http.StatusAccepted, Body: queuedRun}))
+
+	out, err := clitest.Execute(t, commands, "runs", "start", "platform", "What is due this week?")
+	if err != nil {
+		t.Fatalf("runs start: %v\n%s", err, out)
+	}
+	body := bodyOf(t, script, http.MethodPost, runsPath)
+	if _, sent := body["agent"]; sent || body["input"] != "What is due this week?" {
+		t.Errorf("body = %v, want the input and no agent", body)
+	}
+}
+
+func TestStartWithNoAgentReadsTheInputFromStdin(t *testing.T) {
+	script := clitest.Routes(t, with("POST /teams/{id}/runs", clitest.Reply{Status: http.StatusAccepted, Body: queuedRun}))
+
+	if out, err := clitest.ExecuteWithStdin(t, commands, "What is due?\n", "runs", "start", "platform", "-"); err != nil {
+		t.Fatalf("runs start -: %v\n%s", err, out)
+	}
+	if got := bodyOf(t, script, http.MethodPost, runsPath)["input"]; got != "What is due?\n" {
+		t.Errorf("input = %q, want stdin exactly", got)
+	}
+}
+
+// With no model and no hub chosen, the orchestrator cannot run; the brain's
+// sentence says where to fix it, and has to survive.
+func TestStartKeepsTheBrainsReasonWhenTheHubCannotRun(t *testing.T) {
+	const why = "the team has no model set, so its orchestrator cannot run; set one in the team's settings"
+	clitest.Routes(t, with("POST /teams/{id}/runs", clitest.Reply{Status: http.StatusConflict, Body: why}))
+
+	_, err := clitest.Execute(t, commands, "runs", "start", "platform", "hi")
+	if err == nil || !strings.Contains(err.Error(), why) {
+		t.Errorf("err = %v, want the brain's sentence", err)
 	}
 }
 
@@ -591,5 +630,37 @@ func TestARunAPersonStartedHasNoParent(t *testing.T) {
 	table, _ := clitest.Execute(t, commands, "runs", "get", "platform", runID)
 	if strings.Contains(table, "delegated by") {
 		t.Errorf("a top-level run claims a parent:\n%s", table)
+	}
+}
+
+// A run started for the team says so in every format: the view is built field
+// by field, so a field the brain sends and the view lacks is silently dropped.
+func TestAHubRunSaysItWasTheHubs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		extra string
+		hub   bool
+	}{
+		"the hub's":  {`,"hub":true,"depth":0`, true},
+		"an agent's": {`,"hub":false,"depth":0`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clitest.Routes(t, with("GET /teams/{id}/runs/{runID}", clitest.Reply{Status: http.StatusOK, Body: runJSON(runID, "succeeded", tc.extra)}))
+
+			out, err := clitest.Execute(t, commands, "runs", "get", "platform", runID, "-o", "json")
+			if err != nil {
+				t.Fatalf("runs get: %v\n%s", err, out)
+			}
+			var got map[string]any
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatalf("not json: %v\n%s", err, out)
+			}
+			if got["hub"] != tc.hub {
+				t.Errorf("hub = %v, want %v", got["hub"], tc.hub)
+			}
+			table, _ := clitest.Execute(t, commands, "runs", "get", "platform", runID)
+			if strings.Contains(table, "the team's hub") != tc.hub {
+				t.Errorf("the table says hub %v, want %v:\n%s", !tc.hub, tc.hub, table)
+			}
+		})
 	}
 }

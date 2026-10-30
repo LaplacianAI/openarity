@@ -660,6 +660,14 @@ type GraphNode struct {
 // GraphNodeLabel A Toolkit is an MCP server
 type GraphNodeLabel string
 
+// HubRef defines model for HubRef.
+type HubRef struct {
+	ID openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Name Examples: triage
+	Name string `json:"name" yaml:"name"`
+}
+
 // Loop defines model for Loop.
 type Loop struct {
 	// Name The value an agent's `pattern` takes to use this loop
@@ -924,8 +932,13 @@ type Run struct {
 	Depth int32 `json:"depth" yaml:"depth"`
 
 	// Error Why it failed, null unless it did
-	Error       *string            `json:"error,omitempty" yaml:"error,omitempty"`
-	FinishedAt  *time.Time         `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`
+	Error      *string    `json:"error,omitempty" yaml:"error,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`
+
+	// Hub Whether the run was started for the team rather than for an
+	// agent. Its `agent` is the hub's name: the chosen agent's, or
+	// `orchestrator`.
+	Hub         bool               `json:"hub" yaml:"hub"`
 	ID          openapi_types.UUID `json:"id" yaml:"id"`
 	Input       string             `json:"input" yaml:"input"`
 	InputTokens int64              `json:"input_tokens" yaml:"input_tokens"`
@@ -956,10 +969,10 @@ type RunPage struct {
 
 // RunRequest defines model for RunRequest.
 type RunRequest struct {
-	// Agent The name of an agent in this team
+	// Agent The name of an agent in this team. Absent or empty asks the team's hub.
 	//
 	// Examples: triage
-	Agent string `json:"agent" yaml:"agent"`
+	Agent *string `json:"agent,omitempty" yaml:"agent,omitempty"`
 
 	// Input What the agent is asked to do. At most 100 KiB, with no NUL character.
 	//
@@ -1235,12 +1248,17 @@ type TeamPermissions struct {
 	SuperAdmin bool `json:"super_admin" yaml:"super_admin"`
 }
 
-// TeamSettings `model` and `updated_at` are always sent, null when unset; optional
-// here only so a generated client decodes null as absent rather than as
-// a zero value.
+// TeamSettings `model`, `hub` and `updated_at` are always sent, null when unset;
+// optional here only so a generated client decodes null as absent
+// rather than as a zero value.
 type TeamSettings struct {
 	// CompactionMessages Messages before a transcript compacts. Stored now; compaction reads it from a later release.
 	CompactionMessages int32 `json:"compaction_messages" yaml:"compaction_messages"`
+
+	// Hub The agent that answers a run started for the team rather than
+	// for an agent. Null for the built-in orchestrator, which it is
+	// again when the chosen agent is deleted.
+	Hub *HubRef `json:"hub,omitempty" yaml:"hub,omitempty"`
 
 	// Learning Whether the learner writes learnings after each run, for approval
 	Learning bool `json:"learning" yaml:"learning"`
@@ -1256,7 +1274,14 @@ type TeamSettings struct {
 // TeamSettingsRequest defines model for TeamSettingsRequest.
 type TeamSettingsRequest struct {
 	CompactionMessages int32 `json:"compaction_messages" yaml:"compaction_messages"`
-	Learning           bool  `json:"learning" yaml:"learning"`
+
+	// Hub The name of an agent in this team, ignoring case. Null or absent
+	// for the built-in orchestrator.
+	//
+	//
+	// Examples: triage
+	Hub      *string `json:"hub,omitempty" yaml:"hub,omitempty"`
+	Learning bool    `json:"learning" yaml:"learning"`
 
 	// Model Null or absent for no model, which stops the built-in agents running.
 	Model  *ModelRef             `json:"model,omitempty" yaml:"model,omitempty"`
@@ -2176,11 +2201,16 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 	GetTeamPermissions(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StartRunWithBody Start a run of an agent
+	// StartRunWithBody Start a run of an agent, or ask the team's hub
 	//
 	// Requires `run:write` in this team. The run is recorded and queued
 	// before the reply, and a worker picks it up; follow it with
 	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `agent` the run is the team's hub's: the agent chosen in the
+	// team's settings, or the built-in orchestrator when none is. The
+	// orchestrator runs on the team's model, so with none set it is
+	// refused with a 409.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -2192,11 +2222,16 @@ type ClientInterface interface {
 	// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
 	StartRunWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StartRun Start a run of an agent
+	// StartRun Start a run of an agent, or ask the team's hub
 	//
 	// Requires `run:write` in this team. The run is recorded and queued
 	// before the reply, and a worker picks it up; follow it with
 	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `agent` the run is the team's hub's: the agent chosen in the
+	// team's settings, or the built-in orchestrator when none is. The
+	// orchestrator runs on the team's model, so with none set it is
+	// refused with a 409.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -2359,8 +2394,9 @@ type ClientInterface interface {
 	//
 	// Any member may read them. A team that never saved reads the
 	// defaults: no model, search off, learning off, compaction at 100
-	// messages, and `updated_at` null. The search key is never returned;
-	// `search.key_set` says whether there is one.
+	// messages, the built-in orchestrator as its hub, and `updated_at`
+	// null. The search key is never returned; `search.key_set` says
+	// whether there is one.
 	//
 	// Corresponds with GET /teams/{id}/settings (the `GetTeamSettings` operationId).
 	GetTeamSettings(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2369,7 +2405,8 @@ type ClientInterface interface {
 	//
 	// Requires `team:settings` in this team. The whole set every time: a
 	// field left out is not a field left alone. A missing `model` means no
-	// model, the same as null.
+	// model, the same as null, and a missing `hub` means the built-in
+	// orchestrator.
 	//
 	// The search key is the exception, because it cannot be read back to
 	// send again. Leave out `search.api_key` and the stored key is kept,
@@ -2390,7 +2427,8 @@ type ClientInterface interface {
 	//
 	// Requires `team:settings` in this team. The whole set every time: a
 	// field left out is not a field left alone. A missing `model` means no
-	// model, the same as null.
+	// model, the same as null, and a missing `hub` means the built-in
+	// orchestrator.
 	//
 	// The search key is the exception, because it cannot be read back to
 	// send again. Leave out `search.api_key` and the stored key is kept,
@@ -3476,11 +3514,16 @@ func (c *Client) GetTeamPermissions(ctx context.Context, id TeamID, reqEditors .
 	return c.Client.Do(req)
 }
 
-// StartRunWithBody Start a run of an agent
+// StartRunWithBody Start a run of an agent, or ask the team's hub
 //
 // Requires `run:write` in this team. The run is recorded and queued
 // before the reply, and a worker picks it up; follow it with
 // `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `agent` the run is the team's hub's: the agent chosen in the
+// team's settings, or the built-in orchestrator when none is. The
+// orchestrator runs on the team's model, so with none set it is
+// refused with a 409.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -3502,11 +3545,16 @@ func (c *Client) StartRunWithBody(ctx context.Context, id TeamID, contentType st
 	return c.Client.Do(req)
 }
 
-// StartRun Start a run of an agent
+// StartRun Start a run of an agent, or ask the team's hub
 //
 // Requires `run:write` in this team. The run is recorded and queued
 // before the reply, and a worker picks it up; follow it with
 // `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `agent` the run is the team's hub's: the agent chosen in the
+// team's settings, or the built-in orchestrator when none is. The
+// orchestrator runs on the team's model, so with none set it is
+// refused with a 409.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -3769,8 +3817,9 @@ func (c *Client) ListSessionRuns(ctx context.Context, id TeamID, sessionID opena
 //
 // Any member may read them. A team that never saved reads the
 // defaults: no model, search off, learning off, compaction at 100
-// messages, and `updated_at` null. The search key is never returned;
-// `search.key_set` says whether there is one.
+// messages, the built-in orchestrator as its hub, and `updated_at`
+// null. The search key is never returned; `search.key_set` says
+// whether there is one.
 //
 // Corresponds with GET /teams/{id}/settings (the `GetTeamSettings` operationId).
 func (c *Client) GetTeamSettings(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3789,7 +3838,8 @@ func (c *Client) GetTeamSettings(ctx context.Context, id TeamID, reqEditors ...R
 //
 // Requires `team:settings` in this team. The whole set every time: a
 // field left out is not a field left alone. A missing `model` means no
-// model, the same as null.
+// model, the same as null, and a missing `hub` means the built-in
+// orchestrator.
 //
 // The search key is the exception, because it cannot be read back to
 // send again. Leave out `search.api_key` and the stored key is kept,
@@ -3820,7 +3870,8 @@ func (c *Client) SaveTeamSettingsWithBody(ctx context.Context, id TeamID, conten
 //
 // Requires `team:settings` in this team. The whole set every time: a
 // field left out is not a field left alone. A missing `model` means no
-// model, the same as null.
+// model, the same as null, and a missing `hub` means the built-in
+// orchestrator.
 //
 // The search key is the exception, because it cannot be read back to
 // send again. Leave out `search.api_key` and the stored key is kept,
@@ -7547,11 +7598,16 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 	GetTeamPermissionsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamPermissionsResponse, error)
 
-	// StartRunWithBodyWithResponse Start a run of an agent
+	// StartRunWithBodyWithResponse Start a run of an agent, or ask the team's hub
 	//
 	// Requires `run:write` in this team. The run is recorded and queued
 	// before the reply, and a worker picks it up; follow it with
 	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `agent` the run is the team's hub's: the agent chosen in the
+	// team's settings, or the built-in orchestrator when none is. The
+	// orchestrator runs on the team's model, so with none set it is
+	// refused with a 409.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -7563,11 +7619,16 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
 	StartRunWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartRunResponse, error)
 
-	// StartRunWithResponse Start a run of an agent
+	// StartRunWithResponse Start a run of an agent, or ask the team's hub
 	//
 	// Requires `run:write` in this team. The run is recorded and queued
 	// before the reply, and a worker picks it up; follow it with
 	// `GET /teams/{id}/runs/{runID}/events`.
+	//
+	// With no `agent` the run is the team's hub's: the agent chosen in the
+	// team's settings, or the built-in orchestrator when none is. The
+	// orchestrator runs on the team's model, so with none set it is
+	// refused with a 409.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -7748,8 +7809,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Any member may read them. A team that never saved reads the
 	// defaults: no model, search off, learning off, compaction at 100
-	// messages, and `updated_at` null. The search key is never returned;
-	// `search.key_set` says whether there is one.
+	// messages, the built-in orchestrator as its hub, and `updated_at`
+	// null. The search key is never returned; `search.key_set` says
+	// whether there is one.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7760,7 +7822,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Requires `team:settings` in this team. The whole set every time: a
 	// field left out is not a field left alone. A missing `model` means no
-	// model, the same as null.
+	// model, the same as null, and a missing `hub` means the built-in
+	// orchestrator.
 	//
 	// The search key is the exception, because it cannot be read back to
 	// send again. Leave out `search.api_key` and the stored key is kept,
@@ -7781,7 +7844,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Requires `team:settings` in this team. The whole set every time: a
 	// field left out is not a field left alone. A missing `model` means no
-	// model, the same as null.
+	// model, the same as null, and a missing `hub` means the built-in
+	// orchestrator.
 	//
 	// The search key is the exception, because it cannot be read back to
 	// send again. Leave out `search.api_key` and the stored key is kept,
@@ -11267,11 +11331,16 @@ func (c *ClientWithResponses) GetTeamPermissionsWithResponse(ctx context.Context
 	return ParseGetTeamPermissionsResponse(rsp)
 }
 
-// StartRunWithBodyWithResponse Start a run of an agent
+// StartRunWithBodyWithResponse Start a run of an agent, or ask the team's hub
 //
 // Requires `run:write` in this team. The run is recorded and queued
 // before the reply, and a worker picks it up; follow it with
 // `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `agent` the run is the team's hub's: the agent chosen in the
+// team's settings, or the built-in orchestrator when none is. The
+// orchestrator runs on the team's model, so with none set it is
+// refused with a 409.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -11289,11 +11358,16 @@ func (c *ClientWithResponses) StartRunWithBodyWithResponse(ctx context.Context, 
 	return ParseStartRunResponse(rsp)
 }
 
-// StartRunWithResponse Start a run of an agent
+// StartRunWithResponse Start a run of an agent, or ask the team's hub
 //
 // Requires `run:write` in this team. The run is recorded and queued
 // before the reply, and a worker picks it up; follow it with
 // `GET /teams/{id}/runs/{runID}/events`.
+//
+// With no `agent` the run is the team's hub's: the agent chosen in the
+// team's settings, or the built-in orchestrator when none is. The
+// orchestrator runs on the team's model, so with none set it is
+// refused with a 409.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -11534,8 +11608,9 @@ func (c *ClientWithResponses) ListSessionRunsWithResponse(ctx context.Context, i
 //
 // Any member may read them. A team that never saved reads the
 // defaults: no model, search off, learning off, compaction at 100
-// messages, and `updated_at` null. The search key is never returned;
-// `search.key_set` says whether there is one.
+// messages, the built-in orchestrator as its hub, and `updated_at`
+// null. The search key is never returned; `search.key_set` says
+// whether there is one.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -11552,7 +11627,8 @@ func (c *ClientWithResponses) GetTeamSettingsWithResponse(ctx context.Context, i
 //
 // Requires `team:settings` in this team. The whole set every time: a
 // field left out is not a field left alone. A missing `model` means no
-// model, the same as null.
+// model, the same as null, and a missing `hub` means the built-in
+// orchestrator.
 //
 // The search key is the exception, because it cannot be read back to
 // send again. Leave out `search.api_key` and the stored key is kept,
@@ -11579,7 +11655,8 @@ func (c *ClientWithResponses) SaveTeamSettingsWithBodyWithResponse(ctx context.C
 //
 // Requires `team:settings` in this team. The whole set every time: a
 // field left out is not a field left alone. A missing `model` means no
-// model, the same as null.
+// model, the same as null, and a missing `hub` means the built-in
+// orchestrator.
 //
 // The search key is the exception, because it cannot be read back to
 // send again. Leave out `search.api_key` and the stored key is kept,

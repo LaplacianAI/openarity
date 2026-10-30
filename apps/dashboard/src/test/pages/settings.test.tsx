@@ -20,6 +20,7 @@ const NEVER: TeamSettings = {
   search: { provider: "none", url: null, key_set: false },
   learning: false,
   compaction_messages: 100,
+  hub: null,
   updated_at: null,
 };
 
@@ -28,6 +29,7 @@ const BRAVE: TeamSettings = {
   search: { provider: "brave", url: null, key_set: true },
   learning: false,
   compaction_messages: 250,
+  hub: null,
   updated_at: "2026-10-21T09:00:00Z",
 };
 
@@ -55,6 +57,7 @@ describe("the request the form sends", () => {
       search: { provider: "brave" },
       learning: false,
       compaction_messages: 250,
+      hub: null,
     });
   });
 
@@ -172,6 +175,7 @@ it("saves the learning switch without touching the key", async () => {
     search: { provider: "brave" },
     learning: true,
     compaction_messages: 250,
+    hub: null,
   });
 });
 
@@ -245,4 +249,80 @@ it("shows the brain's refusal", async () => {
   await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent(/link-local/);
+});
+
+describe("the hub", () => {
+  const TRIAGE = { id: "a-triage", name: "triage" };
+  const WITH_HUB: TeamSettings = { ...BRAVE, hub: TRIAGE };
+
+  it("sends the chosen hub by name, and null for the built-in orchestrator", () => {
+    expect(settingsRequest(draftOf(WITH_HUB), WITH_HUB)).toMatchObject({ hub: "triage" });
+    expect(settingsRequest({ ...draftOf(WITH_HUB), hub: null }, WITH_HUB)).toMatchObject({
+      hub: null,
+    });
+  });
+
+  it("says the built-in orchestrator answers when none is chosen", async () => {
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: NEVER } });
+    show(Settings);
+
+    expect(await screen.findByText("The built-in orchestrator")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Every message reaches the hub first. Leave empty for the built-in orchestrator.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the chosen hub through a save that changes something else", async () => {
+    const seen = brain({
+      ...team(["team:settings"]),
+      "GET /teams/{id}/settings": { body: WITH_HUB },
+      "PUT /teams/{id}/settings": { body: saved({ ...WITH_HUB, learning: true }) },
+    });
+    show(Settings);
+
+    const hub = await screen.findByRole("list", { name: "Hub" });
+    expect(hub).toHaveTextContent("triage");
+    await userEvent.click(screen.getByLabelText(/learn from each run/i));
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(put(seen)).toBeDefined());
+    expect(put(seen).hub).toBe("triage");
+  });
+
+  it("clears the hub back to the built-in orchestrator, sending null", async () => {
+    const seen = brain({
+      ...team(["team:settings"]),
+      "GET /teams/{id}/settings": { body: WITH_HUB },
+      "PUT /teams/{id}/settings": { body: saved(BRAVE) },
+    });
+    show(Settings);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Remove triage" }));
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(put(seen)).toBeDefined());
+    expect(put(seen)).toHaveProperty("hub", null);
+  });
+
+  it("chooses an agent of the team as its hub", async () => {
+    const seen = brain({
+      ...team(["team:settings"]),
+      "GET /teams/{id}/settings": { body: NEVER },
+      "GET /teams/{id}/agents": { body: { items: [TRIAGE, { id: "a-billing", name: "billing" }] } },
+      "PUT /teams/{id}/settings": {
+        body: saved({ ...NEVER, hub: { id: "a-billing", name: "billing" } }),
+      },
+    });
+    show(Settings);
+
+    await userEvent.click(await screen.findByRole("button", { name: /add agent/i }));
+    await userEvent.click(await screen.findByRole("option", { name: "billing" }));
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(put(seen)).toBeDefined());
+    expect(put(seen).hub).toBe("billing");
+  });
 });

@@ -8,6 +8,20 @@ FROM agents a
 WHERE a.id = sqlc.arg('agent_id') AND a.team_id = sqlc.arg('team_id')
 RETURNING *;
 
+-- The team's hub at the root: its chosen agent, or the built-in orchestrator
+-- when none is set. The agent is read in this statement, so a hub deleted a
+-- moment before is already the orchestrator. No team, no row.
+-- name: CreateHubRun :one
+INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input, token_budget, hub)
+SELECT sqlc.arg('id')::uuid, t.id, sqlc.arg('session_id')::uuid, sqlc.arg('id')::uuid,
+       a.id, coalesce(a.name, 'orchestrator'), sqlc.narg('user_id')::uuid, sqlc.arg('input')::text,
+       a.token_budget, true
+FROM teams t
+LEFT JOIN team_settings s ON s.team_id = t.id
+LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = t.id
+WHERE t.id = sqlc.arg('team_id')::uuid
+RETURNING *;
+
 -- The session rule from ListSessionsByTeam, applied to the run's session.
 -- name: GetRunVisible :one
 SELECT * FROM runs r

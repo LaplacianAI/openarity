@@ -1,0 +1,21 @@
+# SearXNG for the brain's web_search. Everything not named here is the
+# image's default; see docker-compose.searxng.yml for how the brain reaches it.
+use_default_settings: true
+
+server:
+  # The secret comes from SEARXNG_SECRET in the environment, never this file.
+  #
+  # The limiter rate-limits by client address and needs Valkey to count. Its
+  # one client here is the brain's worker, so it would count nothing useful
+  # and add a container.
+  limiter: false
+  public_instance: false
+  image_proxy: false
+
+search:
+  # json is what the brain reads; html keeps the page usable for a person
+  # checking results by hand. JSON is off in the image's defaults, and a
+  # request for it then answers 403.
+  formats:
+    - html
+    - json

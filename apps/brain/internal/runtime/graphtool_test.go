@@ -57,6 +57,10 @@ type fakeReach struct {
 	agentsAsked           []db.ListReachableAgentIDsParams
 	agentsErr, toolsErr   error
 	skillsErr             error
+
+	teamAgents []uuid.UUID
+	teamAsked  []db.ListTeamReachParams
+	teamErr    error
 }
 
 func (f *fakeReach) ListReachableAgentIDs(_ context.Context, arg db.ListReachableAgentIDsParams) ([]uuid.UUID, error) {
@@ -93,13 +97,13 @@ func newGraphFixture() *graphFixture {
 
 func (f *graphFixture) invoke(t *testing.T, args string) (string, error) {
 	t.Helper()
-	tool := GraphTool(GraphDeps{Search: f.search, Embed: f.embed, Store: f.reach}, f.team, f.agent)
+	tool := GraphTool(GraphDeps{Search: f.search, Embed: f.embed, Store: f.reach}, f.team, agentReach(f.reach, f.team, f.agent))
 	return tool.Invoke(t.Context(), json.RawMessage(args))
 }
 
 func TestGraphToolIsNamedGraphAndDescribesItsArguments(t *testing.T) {
 	f := newGraphFixture()
-	tool := GraphTool(GraphDeps{Search: f.search, Embed: f.embed, Store: f.reach}, f.team, f.agent)
+	tool := GraphTool(GraphDeps{Search: f.search, Embed: f.embed, Store: f.reach}, f.team, agentReach(f.reach, f.team, f.agent))
 
 	if tool.Name != GraphToolName || GraphToolName != "graph" {
 		t.Errorf("name = %q, want graph", tool.Name)

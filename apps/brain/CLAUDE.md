@@ -85,6 +85,7 @@ apps/brain/
     importer.go        newImporter: where a skill may be imported from
     discoverer.go      newDiscoverer: what MCP discovery may reach
     runtime.go         newRunJob: the builder, the runner and the executor, for the worker
+    websearch.go       newSearchers: a team's search provider, built from its settings
     logger.go          newLogger()
   internal/config/     configuration: load, validate, redact
   internal/server/     the two listeners: build, run, shut down; mounts Routers
@@ -131,8 +132,14 @@ apps/brain/
     events.go          what a run does, as run_events, within its token budget
     execute.go         one run: claim, heartbeat, run to the end, finish
     graphtool.go       graph(query, kinds, hops), bound to every run
+    hub.go             the hub: the built-in orchestrator, or the team's chosen agent, reaching the whole team
     job.go             the run queue, the sweep that takes over stale runs, the Enqueuer
+    narrow.go          a child built with fewer than its grants, for the outfitter
+    plan.go            plan(items), the hub's checklist, each change a run event
     report.go          a child's answer, wrapped as data for the parent to read
+    websearch.go       web_search(query, limit), the hub's, its results in an envelope
+  internal/websearch/  the port: Provider, Hit, Searcher, and the one guarded client
+    <provider>/        searxng, brave, tavily, firecrawl: each exports New
   internal/worker/     the background process: a registry of Jobs, and Run
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary
@@ -410,6 +417,64 @@ reinstalled.
   escaping, cut where a rune starts, with a line naming the child's run for
   the rest. Escaping alone left look-alikes (`＜/report＞`, a zero-width
   space); the unguessable end is what makes them text.
+- **The hub is a role a run has, not a kind of agent.** `runs.hub` marks a run
+  started for the team rather than for an agent: `POST /runs` with no agent.
+  `CreateHubRun` writes the team's chosen agent onto the row in the same
+  statement, or none for the built-in orchestrator, so the hub is decided
+  once per run: changing the setting mid-run does not change who answers,
+  and a hub agent deleted since resumes as the orchestrator. The same agent
+  delegated to is only itself — hub prompt, `plan`, `web_search` and the
+  whole team's reach come from the run's flag, never from the agent's row,
+  and a check keeps the flag on roots only.
+- **The built-in orchestrator is no agent row.** It is built in `hub.go` with
+  `uuid.Nil` for an id, react for 24 steps, on the team's model; with none
+  set it is refused at `POST /runs` with a 409 and fails at build with the
+  same sentence. `uuid.Nil` is what keeps it holding no grants, excluding
+  nothing from the team's reach, and never matching a real agent in the
+  delegate checks. A team's agent may be named `orchestrator` too; the hub
+  badge, not the name, is what says which ran.
+- **Deleting the hub agent nulls the setting, and the API keeps the hub in
+  its team.** `team_settings.hub_agent_id` is `ON DELETE SET NULL`, which returns
+  the team to the orchestrator. Postgres 13 has no `SET NULL (column)`, so a
+  composite key would null `team_id` too; same-team is the API's to enforce,
+  and `CreateHubRun` and `GET /settings` both read a hub outside the team as
+  none rather than trust the row.
+- **Search results are data in an envelope only the brain can close.** As a
+  report is: `<search_results query end>` with `end` from `rand.Text()`, fresh
+  per call. Every title, address and snippet is the page's to choose, so each
+  is folded to one line and has `<search_results` and `</search_results`
+  escaped whatever its case: a hit cannot close the list or start a line that
+  reads as the next result. Snippets are cut at 500 bytes and the list at
+  16 KiB, each where a rune starts.
+- **A self-hosted search URL is checked when the brain dials it.** The search
+  client's `Control` refuses any address `reachable(MCP_PRIVATE_NETWORKS)`
+  refuses, and link-local always, mapped or zoned. It sets no proxy, since a
+  proxy would dial for it and the guard would see only the proxy, follows no
+  redirect, and reads at most 2 MiB in 15 seconds. The settings API judges a
+  URL with the same predicate, so a team cannot save an address the worker
+  then reaches. An error names the provider and the status and never what
+  the provider said: a refusal can quote the key back.
+- **A missing search key costs the tool, not the run.** A key not in the
+  store, a store that is down, or a provider that cannot be built leaves
+  `web_search` out with a `tool_unavailable` event saying why; a provider
+  that fails mid-run is a tool error the model works around.
+- **Narrowing never adds a grant.** `Lineage.Narrow` keeps only the MCP tools
+  and skills it names, checked after a grant's own allow-list, so a name
+  never granted is ignored. The brain's own tools are added after the grants
+  and are never narrowed. `nil` keeps every grant and an empty narrowing
+  keeps none; nothing sets it until the outfitter, and a child's own
+  delegates are built without it.
+- **A server may not take a name the brain's own tool has on that run.**
+  `graph` and `delegate` on every run; `plan` and `web_search` on the hub's
+  alone, decided per run by `reserved`. A bare MCP server's tool of a
+  reserved name is left out with a `tool_unavailable` event. Reserving `plan`
+  and `web_search` for every agent, because any agent may be chosen as the
+  hub, cost a plain research agent its search server's `web_search` on the
+  upgrade; the clash only exists while the agent runs as the hub.
+- **A hub with no graph answers alone.** Agents are found through the graph
+  and listed nowhere else, so with no embedding model the hub is given no
+  `delegate` and is told the team cannot be searched, rather than being
+  left to guess names.
 - **The drain ticks once a minute, not every ten seconds.** DBOS keeps a row
   per tick and deletes none: measured, 98 ticks left 98 workflow rows and 98
   step rows, about 560 bytes a tick before indexes. The job's durable state is

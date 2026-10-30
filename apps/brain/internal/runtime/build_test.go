@@ -35,6 +35,12 @@ type fakeStore struct {
 	skills     []db.Skill
 	skillsErr  error
 	files      map[uuid.UUID][]db.SkillFile
+
+	settings    *db.TeamSetting
+	settingsErr error
+	others      int64
+	othersErr   error
+	othersAsked []db.CountOtherAgentsParams
 }
 
 func (f *fakeStore) GetAgent(_ context.Context, id uuid.UUID) (db.Agent, error) {
@@ -220,7 +226,7 @@ func newFixture() *fixture {
 		run:     db.Run{ID: uuid.New(), TeamID: teamID, AgentID: &a.ID, AgentName: a.Name},
 	}
 	f.graph = newGraphFixture()
-	f.builder = NewBuilder(f.store, f.objects, f.clients, f.graph.deps())
+	f.builder = NewBuilder(f.store, f.objects, f.clients, f.graph.deps(), nil)
 	return f
 }
 
@@ -264,7 +270,7 @@ func (f *fixture) buildErr(t *testing.T) error {
 func toolNames(built Built) []string {
 	out := make([]string, 0, len(built.Spec.Tools))
 	for _, tl := range built.Spec.Tools {
-		if tl.Description != graphDescription && tl.Description != delegateDescription {
+		if tl.Description != graphDescription && tl.Description != delegateDescription && tl.Description != planDescription {
 			out = append(out, tl.Name)
 		}
 	}
@@ -651,7 +657,7 @@ func TestConnectingGivesUpAtItsTimeout(t *testing.T) {
 func TestTheConnectTimeoutIsThirtySeconds(t *testing.T) {
 	t.Parallel()
 
-	if got := NewBuilder(nil, nil, nil, nil).connectTimeout; got != 30*time.Second {
+	if got := NewBuilder(nil, nil, nil, nil, nil).connectTimeout; got != 30*time.Second {
 		t.Errorf("connectTimeout = %v, want 30s", got)
 	}
 }
@@ -910,7 +916,7 @@ func TestBuildBindsTheGraphTool(t *testing.T) {
 
 func TestBuildWithoutTheGraphSaysWhy(t *testing.T) {
 	f := newFixture()
-	f.builder = NewBuilder(f.store, f.objects, f.clients, nil)
+	f.builder = NewBuilder(f.store, f.objects, f.clients, nil, nil)
 
 	built := f.build(t)
 

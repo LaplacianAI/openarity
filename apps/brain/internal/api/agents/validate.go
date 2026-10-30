@@ -23,6 +23,8 @@ func validate(req agentRequest, loops []string) error {
 	switch {
 	case req.Name == "" || len(req.Name) > maxNameBytes || strings.TrimSpace(req.Name) != req.Name:
 		return errors.New("name must be 1-200 bytes with no space at either end")
+	case strings.EqualFold(req.Name, "orchestrator"):
+		return errors.New("orchestrator is the built-in hub's name; choose another")
 	case req.Pattern == "":
 		return errors.New("pattern is required")
 	case !slices.Contains(loops, req.Pattern):

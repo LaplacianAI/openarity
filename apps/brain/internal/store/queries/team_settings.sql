@@ -10,12 +10,12 @@ INSERT INTO team_settings (
     team_id,
     model_name, model_max_tokens, model_temperature,
     search_provider, search_url, search_secret_id,
-    learning, compaction_messages
+    learning, compaction_messages, hub_agent_id
 ) VALUES (
     sqlc.arg(team_id),
     sqlc.narg(model_name), sqlc.narg(model_max_tokens), sqlc.narg(model_temperature),
     sqlc.arg(search_provider), sqlc.narg(search_url), sqlc.narg(search_secret_id),
-    sqlc.arg(learning), sqlc.arg(compaction_messages)
+    sqlc.arg(learning), sqlc.arg(compaction_messages), sqlc.narg(hub_agent_id)
 )
 ON CONFLICT (team_id) DO UPDATE SET
     model_name          = EXCLUDED.model_name,
@@ -26,6 +26,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     search_secret_id    = EXCLUDED.search_secret_id,
     learning            = EXCLUDED.learning,
     compaction_messages = EXCLUDED.compaction_messages,
+    hub_agent_id        = EXCLUDED.hub_agent_id,
     updated_at          = now()
 RETURNING *;
 

@@ -96,6 +96,24 @@ func (q *Queries) ClearAgentSkills(ctx context.Context, agentID uuid.UUID) error
 	return err
 }
 
+const countOtherAgents = `-- name: CountOtherAgents :one
+SELECT count(*) FROM agents
+WHERE team_id = $1::uuid AND id IS DISTINCT FROM $2::uuid
+`
+
+type CountOtherAgentsParams struct {
+	TeamID  uuid.UUID
+	Exclude *uuid.UUID
+}
+
+// Whether the hub has anyone to hand work to.
+func (q *Queries) CountOtherAgents(ctx context.Context, arg CountOtherAgentsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countOtherAgents, arg.TeamID, arg.Exclude)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAgent = `-- name: CreateAgent :one
 INSERT INTO agents (
     team_id, name, description, kind, instructions,
@@ -564,6 +582,37 @@ func (q *Queries) ListReachableAgentIDs(ctx context.Context, arg ListReachableAg
 		return nil, err
 	}
 	return items, nil
+}
+
+const listTeamReach = `-- name: ListTeamReach :one
+SELECT
+    coalesce((SELECT array_agg(a.id ORDER BY a.id) FROM agents a
+              WHERE a.team_id = $1::uuid
+                AND a.id IS DISTINCT FROM $2::uuid), '{}')::uuid[] AS agent_ids,
+    coalesce((SELECT array_agg(t.id ORDER BY t.id) FROM mcp_tools t
+              WHERE t.team_id = $1::uuid), '{}')::uuid[] AS tool_ids,
+    coalesce((SELECT array_agg(k.id ORDER BY k.id) FROM skills k
+              WHERE k.team_id = $1::uuid), '{}')::uuid[] AS skill_ids
+`
+
+type ListTeamReachParams struct {
+	TeamID  uuid.UUID
+	Exclude *uuid.UUID
+}
+
+type ListTeamReachRow struct {
+	AgentIds []uuid.UUID
+	ToolIds  []uuid.UUID
+	SkillIds []uuid.UUID
+}
+
+// The hub's reach: every agent, tool and skill in the team, leaving out the
+// hub agent itself when there is one. Empty lists, never nulls.
+func (q *Queries) ListTeamReach(ctx context.Context, arg ListTeamReachParams) (ListTeamReachRow, error) {
+	row := q.db.QueryRow(ctx, listTeamReach, arg.TeamID, arg.Exclude)
+	var i ListTeamReachRow
+	err := row.Scan(&i.AgentIds, &i.ToolIds, &i.SkillIds)
+	return i, err
 }
 
 const updateAgent = `-- name: UpdateAgent :one

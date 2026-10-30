@@ -2,10 +2,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 
-import { getTeamSettings, saveTeamSettings } from "@/api";
+import { getTeamSettings, listAgents, saveTeamSettings } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type { SearchProvider, TeamSettings, TeamSettingsRequest } from "@/api/types";
+import { type Picked, Picker } from "@/components/picker";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +29,9 @@ const PROVIDERS: { value: SearchProvider; label: string }[] = [
 
 const SELF_HOSTED: SearchProvider[] = ["searxng", "firecrawl-oss"];
 const KEY_REQUIRED: SearchProvider[] = ["brave", "tavily", "firecrawl-cloud"];
+
+/** How many agents one search for the hub offers. */
+const PICK_PAGE = 20;
 
 /** The brain's own bounds; checked here so a typo is caught before a round trip. */
 const MIN_COMPACTION = 10;
@@ -89,6 +93,8 @@ export type SettingsDraft = {
   dropKey: boolean;
   learning: boolean;
   compaction: string;
+  /** The chosen hub agent; null for the built-in orchestrator. */
+  hub: Picked | null;
 };
 
 export function draftOf(s: TeamSettings): SettingsDraft {
@@ -103,6 +109,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     dropKey: false,
     learning: s.learning,
     compaction: String(s.compaction_messages),
+    hub: s.hub,
   };
 }
 
@@ -174,6 +181,8 @@ export function settingsRequest(
     search,
     learning: d.learning,
     compaction_messages: compaction,
+    // Whole, as the rest is: null sends the team back to the built-in orchestrator.
+    hub: d.hub?.name ?? null,
   };
 }
 
@@ -279,6 +288,27 @@ function SettingsForm({
               No model — the built-in agents do not run, and messages are stored unanswered.
             </p>
           )}
+        </Section>
+
+        <Section title="Hub">
+          <p className="text-xs text-muted-foreground">
+            Every message reaches the hub first. Leave empty for the built-in orchestrator.
+          </p>
+          {draft.hub === null ? <p className="text-sm">The built-in orchestrator</p> : null}
+          <Picker
+            label="Hub"
+            noun="agent"
+            max={1}
+            value={draft.hub ? [draft.hub] : []}
+            onChange={(next) => set({ hub: next[0] ?? null })}
+            search={(q) =>
+              listAgents(teamId, null, { q, limit: PICK_PAGE }).then((page) => ({
+                items: page.items.map((a) => ({ id: a.id, name: a.name })),
+                more: Boolean(page.next_cursor),
+              }))
+            }
+            searchKey={["agents", teamId]}
+          />
         </Section>
 
         <Section title="Web search">

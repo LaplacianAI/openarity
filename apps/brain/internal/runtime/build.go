@@ -29,6 +29,8 @@ type BuildStore interface {
 	ListGrantedMCPServers(ctx context.Context, agentID uuid.UUID) ([]db.ListGrantedMCPServersRow, error)
 	ListGrantedSkills(ctx context.Context, agentID uuid.UUID) ([]db.Skill, error)
 	ListSkillFiles(ctx context.Context, skillID uuid.UUID) ([]db.SkillFile, error)
+	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
+	CountOtherAgents(ctx context.Context, arg db.CountOtherAgentsParams) (int64, error)
 }
 
 type Objects interface {
@@ -44,18 +46,21 @@ type Builder struct {
 	objects        Objects
 	mcp            MCPClients
 	graph          *GraphDeps
+	search         *SearchDeps
 	delegates      *DelegateDeps
+	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 }
 
-func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps) *Builder {
-	return &Builder{store: s, objects: o, mcp: m, graph: g, connectTimeout: connectTimeout}
+func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps, search *SearchDeps) *Builder {
+	return &Builder{store: s, objects: o, mcp: m, graph: g, search: search, connectTimeout: connectTimeout}
 }
 
 type Unavailable struct{ Name, Reason string }
 
 type Built struct {
 	Spec        agent.Spec
+	Agent       string
 	Unavailable []Unavailable
 	sessions    []*mcp.Session
 }
@@ -80,28 +85,30 @@ func Loops() []string {
 }
 
 func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, l Lineage) (Built, error) {
-	a, err := b.agent(ctx, run)
+	a, err := b.agentFor(ctx, run)
 	if err != nil {
 		return Built{}, err
 	}
 
-	built := Built{Spec: specOf(a)}
+	built := Built{Spec: specOf(a), Agent: a.Name}
 	built.Spec.Session = session
 
-	built.Spec.Tools, err = b.tools(ctx, a.ID, &built)
-	if err != nil {
-		built.Close()
-		return Built{}, err
+	if a.ID != uuid.Nil {
+		built.Spec.Tools, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, &built)
+		if err != nil {
+			built.Close()
+			return Built{}, err
+		}
 	}
 	if b.graph == nil {
 		built.Unavailable = append(built.Unavailable, Unavailable{
 			Name: GraphToolName, Reason: "no embedding model is configured, so the team's graph is not built",
 		})
 	} else {
-		built.Spec.Tools = append(built.Spec.Tools, GraphTool(*b.graph, run.TeamID, a.ID))
+		built.Spec.Tools = append(built.Spec.Tools, GraphTool(*b.graph, run.TeamID, b.reach(run, a)))
 	}
 
-	delegate, ok, err := b.delegateTool(ctx, a, run, l)
+	delegate, ok, err := b.delegateFor(ctx, a, run, l)
 	if err != nil {
 		built.Close()
 		return Built{}, err
@@ -109,11 +116,32 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	if ok {
 		built.Spec.Tools = append(built.Spec.Tools, delegate)
 	}
+	if run.Hub {
+		built.Spec.System = hubSystem(a, b.alone(ok))
+		if b.note != nil {
+			built.Spec.Tools = append(built.Spec.Tools, PlanTool(func(ctx context.Context, kind string, p any) error {
+				return b.note(ctx, run.ID, l.Worker, kind, p)
+			}))
+		}
+		search, unavailable, err := b.webSearch(ctx, run.TeamID)
+		if err != nil {
+			built.Close()
+			return Built{}, err
+		}
+		if unavailable != nil {
+			built.Unavailable = append(built.Unavailable, *unavailable)
+		}
+		if search != nil {
+			built.Spec.Tools = append(built.Spec.Tools, *search)
+		}
+	}
 
-	built.Spec.Skills, err = b.skills(ctx, run.TeamID, a.ID)
-	if err != nil {
-		built.Close()
-		return Built{}, err
+	if a.ID != uuid.Nil {
+		built.Spec.Skills, err = b.skills(ctx, run.TeamID, a.ID, l.Narrow)
+		if err != nil {
+			built.Close()
+			return Built{}, err
+		}
 	}
 	return built, nil
 }
@@ -180,7 +208,7 @@ func specOf(a db.Agent) agent.Spec {
 	return spec
 }
 
-func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, built *Built) ([]agent.Tool, error) {
+func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hub bool, built *Built) ([]agent.Tool, error) {
 	grants, err := b.store.ListGrantedMCPServers(ctx, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("reading the agent's MCP servers: %w", err)
@@ -207,7 +235,10 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, built *Built) ([
 			if !allowed(s, g.Allow, t.Name) {
 				continue
 			}
-			if t.Name == GraphToolName || t.Name == DelegateToolName {
+			if !n.keepsTool(t.Name) {
+				continue
+			}
+			if reserved(t.Name, hub) {
 				built.Unavailable = append(built.Unavailable, Unavailable{
 					Name:   t.Name,
 					Reason: fmt.Sprintf("the MCP server %q offers a tool named %s, which is the brain's own", s.Name, t.Name),
@@ -222,6 +253,16 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, built *Built) ([
 		}
 	}
 	return out, nil
+}
+
+func reserved(name string, hub bool) bool {
+	switch name {
+	case GraphToolName, DelegateToolName:
+		return true
+	case PlanToolName, WebSearchToolName:
+		return hub
+	}
+	return false
 }
 
 func (b *Builder) connect(ctx context.Context, s db.McpServer) (*mcp.Session, error) {
@@ -260,7 +301,7 @@ func limited(t agent.Tool) agent.Tool {
 	return t
 }
 
-func (b *Builder) skills(ctx context.Context, teamID, agentID uuid.UUID) ([]agent.Skill, error) {
+func (b *Builder) skills(ctx context.Context, teamID, agentID uuid.UUID, n *Narrowing) ([]agent.Skill, error) {
 	rows, err := b.store.ListGrantedSkills(ctx, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("reading the agent's skills: %w", err)
@@ -268,6 +309,10 @@ func (b *Builder) skills(ctx context.Context, teamID, agentID uuid.UUID) ([]agen
 
 	out := make([]agent.Skill, 0, len(rows))
 	for _, row := range rows {
+		if !n.keepsSkill(row.ID) {
+			continue
+		}
+
 		files, err := b.store.ListSkillFiles(ctx, row.ID)
 		if err != nil {
 			return nil, fmt.Errorf("reading the files of skill %q: %w", row.Name, err)

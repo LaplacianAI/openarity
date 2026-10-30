@@ -27,6 +27,8 @@ const (
 	previewLines  = 5
 	graphTool     = "graph"
 	delegateTool  = "delegate"
+	planTool      = "plan"
+	searchTool    = "web_search"
 
 	bullet     = "⏺"
 	elbow      = "  ⎿  "
@@ -71,6 +73,11 @@ type transcript struct {
 	awaiting bool
 	lastCall string
 	calls    map[string]string
+
+	// plan is the plan event that arrived while its own call waited for its
+	// result, printed under that result rather than between the two.
+	plan    []planEntry
+	planned bool
 
 	step      int
 	steps     int
@@ -140,6 +147,14 @@ func (t *transcript) event(f frame, p payload) error {
 		t.result(p)
 	case "delegated":
 		// The child of a delegate call still running; its report names it too.
+	case planTool:
+		if t.awaiting {
+			t.plan, t.planned = p.Items, true
+			break
+		}
+		t.block()
+		t.line(t.paint.mark(bullet) + " " + planTool)
+		t.preview(planRows(p.Items), func(s string) string { return s })
 	case "tool_unavailable":
 		t.block()
 		t.line(t.paint.warn(t.clip("⚠ " + cli.Line(p.Name) + " unavailable: " + cli.Line(p.Reason))))
@@ -204,8 +219,12 @@ func (t *transcript) call(p payload) {
 
 func (t *transcript) callLine(p payload) string {
 	args := p.Arguments
-	if p.Name == delegateTool {
+	switch p.Name {
+	case delegateTool:
 		args = briefOf(args)
+	case planTool:
+		// The whole list is the checklist printed under the result.
+		args = ""
 	}
 	text := t.clip(bullet + " " + cli.Line(p.Name) + "(" + arguments(args) + ")")
 	return t.paint.mark(bullet) + strings.TrimPrefix(text, bullet)
@@ -246,6 +265,10 @@ func (t *transcript) result(p payload) {
 	summary, rows := describe(p)
 	if r, ok := reportIn(p.Output); ok && p.Name == delegateTool {
 		summary, rows = t.reported(r)
+	}
+	if p.Name == planTool && t.planned {
+		rows = planRows(t.plan)
+		t.plan, t.planned = nil, false
 	}
 	t.line(elbow + t.clipAfter(elbow+tail, summary) + t.paint.muted(tail))
 	t.preview(rows, func(s string) string { return s })
@@ -322,8 +345,13 @@ func (t *transcript) reported(r report) (string, []string) {
 
 // describe is a tool's output as a summary line and the rows under it.
 func describe(p payload) (string, []string) {
-	if p.Name == graphTool {
+	switch p.Name {
+	case graphTool:
 		if summary, rows, ok := graphRows(p.Output); ok {
+			return summary, rows
+		}
+	case searchTool:
+		if summary, rows, ok := searchRows(p.Output); ok {
 			return summary, rows
 		}
 	}
@@ -416,6 +444,62 @@ func graphRows(output string) (string, []string, bool) {
 		noun = " result"
 	}
 	return strconv.Itoa(len(hits)) + noun, rows, true
+}
+
+// planRows is a plan as a checklist: ☑ done, ◐ in progress, ☐ anything
+// else. Each item's text is the model's, one cleaned line.
+func planRows(items []planEntry) []string {
+	rows := make([]string, 0, len(items))
+	for _, it := range items {
+		mark := "☐"
+		switch it.Status {
+		case "done":
+			mark = "☑"
+		case "in_progress":
+			mark = "◐"
+		}
+		rows = append(rows, mark+" "+cli.Line(it.Text))
+	}
+	return rows
+}
+
+var searchHead = regexp.MustCompile(`^<search_results query="([^"]*)" end="([^"]*)">\n`)
+
+// searchRows reads web_search's envelope as one row per hit, title — url.
+// The list ends only at the closing tag carrying the envelope's own end; a
+// page's title or address is cleaned before a terminal sees it. Output that
+// is not the envelope is not a search result, and is shown like any other.
+func searchRows(output string) (string, []string, bool) {
+	m := searchHead.FindStringSubmatch(output)
+	if m == nil {
+		return "", nil, false
+	}
+	closing := "\n</search_results end=\"" + m[2] + "\">"
+	if !strings.HasSuffix(output, closing) || len(output) < len(m[0])+len(closing) {
+		return "", nil, false
+	}
+
+	var rows []string
+	title, field := "", 0
+	for _, line := range strings.Split(output[len(m[0]):len(output)-len(closing)], "\n") {
+		number, rest, numbered := strings.Cut(line, ". ")
+		switch {
+		case numbered && number != "" && strings.Trim(number, "0123456789") == "":
+			title, field = html.UnescapeString(rest), 0
+		case strings.HasPrefix(line, "   ") && field == 0:
+			rows = append(rows, cli.Line(title)+" — "+cli.Line(html.UnescapeString(line[3:])))
+			field++
+		}
+	}
+
+	switch len(rows) {
+	case 0:
+		return "no results", nil, true
+	case 1:
+		return "1 result", rows, true
+	default:
+		return strconv.Itoa(len(rows)) + " results", rows, true
+	}
 }
 
 // finish prints the answer, when there is one, and how the run ended.

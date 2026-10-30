@@ -72,6 +72,8 @@ func TestEachRuleHasItsSentence(t *testing.T) {
 		"a long name":                {func(r *agentRequest) { r.Name = strings.Repeat("n", 201) }, "name must be 1-200 bytes"},
 		"a padded name":              {func(r *agentRequest) { r.Name = " triage" }, "no space at either end"},
 		"a name ending in a newline": {func(r *agentRequest) { r.Name = "triage\n" }, "no space at either end"},
+		"the orchestrator's name":    {func(r *agentRequest) { r.Name = "orchestrator" }, "orchestrator is the built-in hub's name"},
+		"it in another case":         {func(r *agentRequest) { r.Name = "Orchestrator" }, "orchestrator is the built-in hub's name"},
 		"no pattern":                 {func(r *agentRequest) { r.Pattern = "" }, "pattern is required"},
 		"a loop the brain does not run": {
 			func(r *agentRequest) { r.Pattern = "code" }, "pattern must be a loop the brain runs: react, plan, critic-pass",

@@ -40,6 +40,7 @@ export function Picker({
   searchKey,
   exclude = [],
   extra,
+  max,
 }: {
   /** Names the chips' list and the search, as a person reads them. */
   label: string;
@@ -54,6 +55,8 @@ export function Picker({
   exclude?: string[];
   /** More on a chip, after its name. */
   extra?: (p: Picked) => ReactNode;
+  /** At most this many: a pick past it drops the oldest, so 1 replaces. */
+  max?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
@@ -74,8 +77,20 @@ export function Picker({
   const options = (results.data?.items ?? []).filter((o) => !exclude.includes(o.id));
   const chosen = new Set(value.map((v) => v.id));
 
-  const toggle = (o: Picked) =>
-    onChange(chosen.has(o.id) ? value.filter((v) => v.id !== o.id) : [...value, o]);
+  const single = max === 1;
+  const full = max !== undefined && value.length >= max;
+  const toggle = (o: Picked) => {
+    if (chosen.has(o.id)) {
+      onChange(value.filter((v) => v.id !== o.id));
+      return;
+    }
+    onChange(max === undefined ? [...value, o] : [...value, o].slice(-max));
+    // One pick is the whole choice: nothing more to add.
+    if (single) {
+      setOpen(false);
+      setTyped("");
+    }
+  };
 
   const optionId = (i: number) => `${listId}-${i}`;
 
@@ -144,7 +159,7 @@ export function Picker({
             className="inline-flex items-center gap-1 rounded border border-dashed border-border px-1.5 py-0.5 text-xs text-muted-foreground hover:border-border-strong hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
           >
             <Plus aria-hidden className="size-3" />
-            Add {noun}
+            {full ? "Change" : "Add"} {noun}
           </button>
         </Popover.Trigger>
         <Popover.Portal>
@@ -176,7 +191,7 @@ export function Picker({
               id={listId}
               role="listbox"
               aria-label={label}
-              aria-multiselectable="true"
+              aria-multiselectable={single ? undefined : "true"}
               className="max-h-64 overflow-y-auto"
             >
               {options.map((o, i) => (

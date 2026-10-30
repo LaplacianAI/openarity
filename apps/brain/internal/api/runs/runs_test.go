@@ -41,6 +41,9 @@ type fakeStore struct {
 	runs     map[uuid.UUID]db.Run
 	events   map[uuid.UUID][]db.RunEvent
 
+	settings    *db.TeamSetting
+	settingsErr error
+
 	startErr   error
 	readErr    error
 	sessionErr error
@@ -76,6 +79,19 @@ func (s *fakeStore) GetAgentByName(_ context.Context, arg db.GetAgentByNameParam
 		return db.Agent{}, pgx.ErrNoRows
 	}
 	return a, nil
+}
+
+func (s *fakeStore) GetTeamSettings(_ context.Context, team uuid.UUID) (db.TeamSetting, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	if s.settingsErr != nil {
+		return db.TeamSetting{}, s.settingsErr
+	}
+	if s.settings == nil || s.settings.TeamID != team {
+		return db.TeamSetting{}, pgx.ErrNoRows
+	}
+	return *s.settings, nil
 }
 
 func (s *fakeStore) GetSessionVisible(_ context.Context, arg db.GetSessionVisibleParams) (db.Session, error) {
@@ -184,6 +200,18 @@ func (s *fakeStore) StartRun(_ context.Context, arg StartArgs) (db.Run, error) {
 	r := db.Run{
 		ID: arg.ID, TeamID: arg.TeamID, SessionID: session, AgentID: &arg.AgentID, AgentName: "triage",
 		UserID: &arg.UserID, Status: "queued", Input: arg.Input, CreatedAt: time.Now(),
+	}
+	// CreateHubRun reads the hub as it inserts: the chosen agent, or none.
+	if arg.Hub {
+		r.Hub, r.AgentID, r.AgentName = true, nil, "orchestrator"
+		if st := s.settings; st != nil && st.TeamID == arg.TeamID && st.HubAgentID != nil {
+			r.AgentID = st.HubAgentID
+			for _, a := range s.agents {
+				if a.ID == *st.HubAgentID {
+					r.AgentName = a.Name
+				}
+			}
+		}
 	}
 	s.runs[r.ID] = r
 	return r, nil
@@ -463,7 +491,6 @@ func TestARefusedBodyNeverReachesTheStore(t *testing.T) {
 		body any
 		says string
 	}{
-		"no agent":          {map[string]any{"input": "hi"}, "agent is required"},
 		"no input":          {map[string]any{"agent": "triage"}, "input is required"},
 		"empty input":       {start("", nil), "input is required"},
 		"input over 100KiB": {start(strings.Repeat("a", maxInputBytes+1), nil), "at most 100 KiB"},
@@ -524,6 +551,23 @@ func TestAnAgentDeletedWhileStartingIsNotFound(t *testing.T) {
 	}
 }
 
+// CreateHubRun selects the team as it inserts, so a hub run with no row is a
+// team deleted after the request was authorized; no agent was named to miss.
+func TestAHubRunWithNoRowSaysTheTeamIsGone(t *testing.T) {
+	w := newWorld(t)
+	w.withModel()
+	w.store.startErr = pgx.ErrNoRows
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": "hi"})
+
+	if rec.Code != http.StatusNotFound || strings.TrimSpace(rec.Body.String()) != "no such team" {
+		t.Errorf("status %d %q, want 404 %q", rec.Code, rec.Body, "no such team")
+	}
+	if len(w.starter.ids) != 0 {
+		t.Errorf("enqueued %v, want nothing", w.starter.ids)
+	}
+}
+
 func TestAStartThatFailsIsA500ThatLeaksNothing(t *testing.T) {
 	w := newWorld(t)
 	w.store.startErr = errAny
@@ -559,14 +603,14 @@ func TestTheRunIsReadAsItIs(t *testing.T) {
 	for _, k := range []string{
 		"id", "session_id", "agent", "status", "input", "output", "error",
 		"input_tokens", "output_tokens", "created_at", "started_at", "finished_at",
-		"parent_run_id", "depth",
+		"parent_run_id", "depth", "hub",
 	} {
 		if _, ok := keys[k]; !ok {
 			t.Errorf("the run has no %q", k)
 		}
 	}
-	if len(keys) != 14 {
-		t.Errorf("the run has %d fields, want the 14 in the contract", len(keys))
+	if len(keys) != 15 {
+		t.Errorf("the run has %d fields, want the 15 in the contract", len(keys))
 	}
 	if keys["parent_run_id"] != nil || keys["depth"] != float64(0) {
 		t.Errorf("a top-level run says parent %v depth %v, want null and 0", keys["parent_run_id"], keys["depth"])
@@ -918,5 +962,145 @@ func TestAFailedListIsA500ThatLeaksNothing(t *testing.T) {
 				t.Error("runs were listed after the session could not be read")
 			}
 		})
+	}
+}
+
+// --- the hub ---
+
+const noModel = "the team has no model set, so its orchestrator cannot run; set one in the team's settings"
+
+// withModel saves the team's settings with a model, as a team that can run
+// its orchestrator has.
+func (w *world) withModel() {
+	name, maxTokens := "gpt-5", int32(4096)
+	w.store.settings = &db.TeamSetting{TeamID: w.team, ModelName: &name, ModelMaxTokens: &maxTokens}
+}
+
+// isHub reads "hub" off the wire, apart from the package's own types.
+func isHub(t *testing.T, rec *httptest.ResponseRecorder) bool {
+	t.Helper()
+
+	var out struct {
+		Hub *bool `json:"hub"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode %q: %v", rec.Body, err)
+	}
+	if out.Hub == nil {
+		t.Fatalf("%s has no \"hub\"", rec.Body)
+	}
+	return *out.Hub
+}
+
+func TestARunNamingNoAgentIsTheHubs(t *testing.T) {
+	for name, body := range map[string]map[string]any{
+		"left out": {"input": "what is due this week?"},
+		"empty":    {"agent": "", "input": "what is due this week?"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			w.withModel()
+
+			rec := w.call(t, w.me, http.MethodPost, w.runs(), body)
+
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("status %d (%s), want 202", rec.Code, rec.Body)
+			}
+			if got := decodeRun(t, rec); got.Agent != "orchestrator" || got.Status != "queued" {
+				t.Errorf("run = %+v, want the orchestrator, queued", got)
+			}
+			if !isHub(t, rec) {
+				t.Error("hub = false for a run that named no agent")
+			}
+			a := w.store.started[0]
+			if !a.Hub || a.AgentID != uuid.Nil || a.TeamID != w.team || a.UserID != w.me.ID || a.Input != "what is due this week?" {
+				t.Errorf("started with %+v, want the team's hub for the caller", a)
+			}
+			if len(w.starter.ids) != 1 {
+				t.Errorf("enqueued %v, want the hub run", w.starter.ids)
+			}
+		})
+	}
+}
+
+// The built-in orchestrator runs on the team's model; with none set it is
+// refused before anything is written, and says where to fix it.
+func TestTheOrchestratorNeedsTheTeamsModel(t *testing.T) {
+	for name, settings := range map[string]*db.TeamSetting{
+		"never saved":           nil,
+		"saved with no model":   {SearchProvider: "none"},
+		"its hub agent deleted": {SearchProvider: "none", HubAgentID: nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			if settings != nil {
+				settings.TeamID = w.team
+				w.store.settings = settings
+			}
+
+			rec := w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": "hi"})
+
+			if rec.Code != http.StatusConflict || strings.TrimSpace(rec.Body.String()) != noModel {
+				t.Errorf("status %d %q, want 409 %q", rec.Code, rec.Body, noModel)
+			}
+			if len(w.store.started) != 0 || len(w.starter.ids) != 0 {
+				t.Errorf("%d started, %d enqueued; want nothing", len(w.store.started), len(w.starter.ids))
+			}
+		})
+	}
+}
+
+// A chosen hub is an agent with a model of its own.
+func TestAChosenHubRunsWithoutTheTeamsModel(t *testing.T) {
+	w := newWorld(t)
+	w.store.settings = &db.TeamSetting{TeamID: w.team, SearchProvider: "none", HubAgentID: &w.agent.ID}
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": "hi"})
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d (%s), want 202", rec.Code, rec.Body)
+	}
+	if got := decodeRun(t, rec); got.Agent != "triage" || !isHub(t, rec) {
+		t.Errorf("run = %+v, want triage as the hub", got)
+	}
+}
+
+func TestARunNamingAnAgentIsUnchanged(t *testing.T) {
+	w := newWorld(t)
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), start("hi", nil))
+
+	if rec.Code != http.StatusAccepted || isHub(t, rec) {
+		t.Errorf("status %d hub %v, want 202 and not the hub's", rec.Code, isHub(t, rec))
+	}
+	if a := w.store.started[0]; a.Hub || a.AgentID != w.agent.ID {
+		t.Errorf("started with %+v, want triage, not the hub", a)
+	}
+}
+
+func TestAFailedSettingsReadStartsNothing(t *testing.T) {
+	w := newWorld(t)
+	w.store.settingsErr = errAny
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": "hi"})
+
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "reset by peer") {
+		t.Errorf("status %d %q, want a 500 that says nothing", rec.Code, rec.Body)
+	}
+	if len(w.store.started) != 0 {
+		t.Error("a run was started without the settings")
+	}
+}
+
+// A body that breaks a rule is refused before the settings are read, as it
+// is before an agent is.
+func TestARefusedHubBodyNeverReachesTheStore(t *testing.T) {
+	w := newWorld(t)
+	w.withModel()
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": ""})
+
+	if rec.Code != http.StatusBadRequest || w.store.touched() != 0 {
+		t.Errorf("status %d, store asked %d things; want 400 and nothing asked", rec.Code, w.store.touched())
 	}
 }
