@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/websearch"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
@@ -137,39 +138,55 @@ func cut(s string, n int, mark string) string {
 	return s[:n] + mark
 }
 
-func (b *Builder) webSearch(ctx context.Context, teamID uuid.UUID) (*agent.Tool, *Unavailable, error) {
-	if b.search == nil {
+func (b *Builder) webTools(ctx context.Context, teamID uuid.UUID) ([]agent.Tool, []Unavailable, error) {
+	if b.search == nil && b.fetch == nil {
 		return nil, nil, nil
 	}
 	s, err := b.store.GetTeamSettings(ctx, teamID)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && s.SearchProvider == noSearchProvider) {
-		return nil, nil, nil
+	if errors.Is(err, pgx.ErrNoRows) {
+		s, err = db.TeamSetting{SearchProvider: noSearchProvider}, nil
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading the team's settings: %w", err)
 	}
 
-	key := ""
-	if s.SearchSecretID != nil {
-		key, err = b.search.Secrets.Get(ctx, secrets.Path(teamID, secrets.KindSearch, *s.SearchSecretID), searchKeyField)
-		switch {
-		case errors.Is(err, secrets.ErrNotFound):
-			return nil, &Unavailable{Name: WebSearchToolName, Reason: "the team's search key could not be read"}, nil
-		case err != nil:
-			return nil, &Unavailable{ //nolint:nilerr // the run goes on without the tool; its event says why
-				Name: WebSearchToolName, Reason: "the secret store is unavailable, so the team's search key could not be read",
-			}, nil
+	provider := websearch.Provider(s.SearchProvider)
+	address := ""
+	if s.SearchUrl != nil {
+		address = *s.SearchUrl
+	}
+	key, keyed, missing := b.searchKey(ctx, teamID, s)
+
+	var tools []agent.Tool
+	var unavailable []Unavailable
+	if b.search != nil && provider != noSearchProvider {
+		if missing != nil {
+			unavailable = append(unavailable, *missing)
+		} else if searcher, err := b.search.New(provider, address, key); err != nil {
+			unavailable = append(unavailable, Unavailable{Name: WebSearchToolName, Reason: err.Error()})
+		} else {
+			tools = append(tools, WebSearchTool(searcher))
 		}
 	}
+	if b.fetch != nil {
+		tools = append(tools, b.fetchTool(provider, address, key, keyed))
+	}
+	return tools, unavailable, nil
+}
 
-	url := ""
-	if s.SearchUrl != nil {
-		url = *s.SearchUrl
+func (b *Builder) searchKey(ctx context.Context, teamID uuid.UUID, s db.TeamSetting) (string, bool, *Unavailable) {
+	if s.SearchProvider == noSearchProvider || s.SearchSecretID == nil {
+		return "", true, nil
 	}
-	searcher, err := b.search.New(websearch.Provider(s.SearchProvider), url, key)
-	if err != nil {
-		return nil, &Unavailable{Name: WebSearchToolName, Reason: err.Error()}, nil //nolint:nilerr // the run goes on without the tool; its event says why
+	if b.search == nil {
+		return "", false, nil
 	}
-	tool := WebSearchTool(searcher)
-	return &tool, nil, nil
+	key, err := b.search.Secrets.Get(ctx, secrets.Path(teamID, secrets.KindSearch, *s.SearchSecretID), searchKeyField)
+	switch {
+	case errors.Is(err, secrets.ErrNotFound):
+		return "", false, &Unavailable{Name: WebSearchToolName, Reason: "the team's search key could not be read"}
+	case err != nil:
+		return "", false, &Unavailable{Name: WebSearchToolName, Reason: "the secret store is unavailable, so the team's search key could not be read"}
+	}
+	return key, true, nil
 }

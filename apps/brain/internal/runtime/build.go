@@ -47,13 +47,14 @@ type Builder struct {
 	mcp            MCPClients
 	graph          *GraphDeps
 	search         *SearchDeps
+	fetch          *FetchDeps
 	delegates      *DelegateDeps
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 }
 
-func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps, search *SearchDeps) *Builder {
-	return &Builder{store: s, objects: o, mcp: m, graph: g, search: search, connectTimeout: connectTimeout}
+func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps, search *SearchDeps, fetch *FetchDeps) *Builder {
+	return &Builder{store: s, objects: o, mcp: m, graph: g, search: search, fetch: fetch, connectTimeout: connectTimeout}
 }
 
 type Unavailable struct{ Name, Reason string }
@@ -93,8 +94,9 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	built := Built{Spec: specOf(a), Agent: a.Name}
 	built.Spec.Session = session
 
+	web := run.Hub || a.Web
 	if a.ID != uuid.Nil {
-		built.Spec.Tools, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, &built)
+		built.Spec.Tools, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, web, &built)
 		if err != nil {
 			built.Close()
 			return Built{}, err
@@ -123,17 +125,16 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 				return b.note(ctx, run.ID, l.Worker, kind, p)
 			}))
 		}
-		search, unavailable, err := b.webSearch(ctx, run.TeamID)
+	}
+
+	if web {
+		tools, unavailable, err := b.webTools(ctx, run.TeamID)
 		if err != nil {
 			built.Close()
 			return Built{}, err
 		}
-		if unavailable != nil {
-			built.Unavailable = append(built.Unavailable, *unavailable)
-		}
-		if search != nil {
-			built.Spec.Tools = append(built.Spec.Tools, *search)
-		}
+		built.Unavailable = append(built.Unavailable, unavailable...)
+		built.Spec.Tools = append(built.Spec.Tools, tools...)
 	}
 
 	if a.ID != uuid.Nil {
@@ -208,7 +209,7 @@ func specOf(a db.Agent) agent.Spec {
 	return spec
 }
 
-func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hub bool, built *Built) ([]agent.Tool, error) {
+func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hub, web bool, built *Built) ([]agent.Tool, error) {
 	grants, err := b.store.ListGrantedMCPServers(ctx, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("reading the agent's MCP servers: %w", err)
@@ -238,7 +239,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 			if !n.keepsTool(t.Name) {
 				continue
 			}
-			if reserved(t.Name, hub) {
+			if reserved(t.Name, hub, web) {
 				built.Unavailable = append(built.Unavailable, Unavailable{
 					Name:   t.Name,
 					Reason: fmt.Sprintf("the MCP server %q offers a tool named %s, which is the brain's own", s.Name, t.Name),
@@ -255,12 +256,14 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 	return out, nil
 }
 
-func reserved(name string, hub bool) bool {
+func reserved(name string, hub, web bool) bool {
 	switch name {
 	case GraphToolName, DelegateToolName:
 		return true
-	case PlanToolName, WebSearchToolName:
+	case PlanToolName:
 		return hub
+	case WebSearchToolName, WebFetchToolName:
+		return web
 	}
 	return false
 }
