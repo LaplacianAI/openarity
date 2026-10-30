@@ -32,6 +32,7 @@ type Agent struct {
 	UpdatedAt          time.Time
 	TokenBudget        *int64
 	Delegation         string
+	Web                bool
 }
 
 type AgentDelegate struct {
