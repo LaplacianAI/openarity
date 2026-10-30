@@ -19,7 +19,8 @@
 #
 # Staging is one slot because the server is small: authentik, OpenBao,
 # SeaweedFS, Postgres and FalkorDB run once, and only migrate, brain and
-# worker are replaced.
+# worker are replaced. SearXNG, when the server's .env opts into it, is
+# started if it is not running and otherwise left alone.
 #
 # Main and every pull request share one database, so the teams, agents and
 # channels made on staging are there whatever is deployed. A pull request's
@@ -78,14 +79,24 @@ fi
 
 # The files `make staging` composes, in the same order, so a deploy runs the
 # stack an operator would get by hand.
+files=(
+	-f "$DEPLOYMENT/docker-compose.yml"
+	-f "$DEPLOYMENT/docker-compose.authentik.yml"
+	-f "$DEPLOYMENT/docker-compose.image.yml"
+	-f "$DEPLOYMENT/docker-compose.openbao.yml"
+	-f "$DEPLOYMENT/docker-compose.objects.yml"
+)
+# SearXNG is the server's to opt into, by setting SEARXNG_SECRET in .env: its
+# overlay refuses to start without one. The overlay is also what puts the
+# worker on SearXNG's network, so once it is opted into, every deploy has to
+# include it or the recreated worker can no longer reach it.
+searxng=0
+if grep -Eq "^SEARXNG_SECRET=[^\"'[:space:]]" "$DEPLOYMENT/.env" 2>/dev/null; then
+	files+=(-f "$DEPLOYMENT/docker-compose.searxng.yml")
+	searxng=1
+fi
 compose() {
-	docker compose --project-directory "$DEPLOYMENT" \
-		-f "$DEPLOYMENT/docker-compose.yml" \
-		-f "$DEPLOYMENT/docker-compose.authentik.yml" \
-		-f "$DEPLOYMENT/docker-compose.image.yml" \
-		-f "$DEPLOYMENT/docker-compose.openbao.yml" \
-		-f "$DEPLOYMENT/docker-compose.objects.yml" \
-		--profile brain "$@"
+	docker compose --project-directory "$DEPLOYMENT" "${files[@]}" --profile brain "$@"
 }
 
 psql_postgres() {
@@ -124,6 +135,11 @@ switch() {
 	export BRAIN_TAG="$tag@$digest" OPENARITY_DATABASE="$DATABASE"
 	compose pull migrate brain worker
 	compose run --rm --no-deps migrate || refuse "the migration of $DATABASE failed; the brain was not replaced"
+	# Started, not recreated: running already, it is left alone, so a deploy
+	# never interrupts a search in flight.
+	if [ "$searxng" = 1 ]; then
+		compose up -d --no-deps searxng
+	fi
 	compose up -d --no-deps --force-recreate brain worker
 	wait_healthy
 
