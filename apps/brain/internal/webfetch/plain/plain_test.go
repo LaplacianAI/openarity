@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/webfetch"
 )
@@ -221,5 +222,74 @@ func TestAKOI8RPageReadsAsUTF8(t *testing.T) {
 				t.Errorf("markdown %q err %v, want мир", p.Markdown, err)
 			}
 		})
+	}
+}
+
+// A page that names no charset is most often UTF-8: JSON always is, and many
+// servers send text and markdown without one. The charset sniffer reads only
+// the first KiB and falls back to windows-1252 when that is ASCII, which read
+// "café" as "cafÃ©".
+func TestAUTF8PageThatNamesNoCharsetReadsAsUTF8(t *testing.T) {
+	t.Parallel()
+
+	prefix := strings.Repeat("a", 1100)
+	for contentType, body := range map[string]string{
+		"application/json": `{"pad":"` + prefix + `","word":"café ünïcode"}`,
+		"text/markdown":    prefix + "\n\ncafé ünïcode",
+		"text/plain":       prefix + "\ncafé ünïcode",
+		"text/html":        "<p>" + prefix + "</p><p>café ünïcode</p>",
+	} {
+		t.Run(contentType, func(t *testing.T) {
+			t.Parallel()
+
+			p, err := page(t, contentType, []byte(body))
+			if err != nil || !strings.Contains(p.Markdown, "café ünïcode") || strings.Contains(p.Markdown, "Ã") {
+				t.Errorf("err %v, markdown ends %q; want café ünïcode", err, p.Markdown[max(0, len(p.Markdown)-40):])
+			}
+		})
+	}
+}
+
+// The cut at 2 MiB can fall inside a character; the half kept is dropped, not
+// taken as a sign that the page is not UTF-8.
+func TestAPageCutInsideACharacterStaysUTF8(t *testing.T) {
+	t.Parallel()
+
+	p, err := page(t, "text/plain", []byte("a"+strings.Repeat("é", 1<<20+10)))
+	if err != nil || !p.Cut || !utf8.ValidString(p.Markdown) || strings.Contains(p.Markdown, "Ã") ||
+		strings.Trim(p.Markdown, "aé") != "" {
+		t.Errorf("err %v, cut %v, valid %v, ends %q", err, p.Cut, utf8.ValidString(p.Markdown), p.Markdown[len(p.Markdown)-8:])
+	}
+}
+
+// An empty page is a page with no text, not an encoding that could not be read.
+func TestAnEmptyPageIsNotAnError(t *testing.T) {
+	t.Parallel()
+
+	for _, contentType := range []string{"text/plain", "text/html; charset=utf-8"} {
+		if p, err := page(t, contentType, nil); err != nil || strings.TrimSpace(p.Markdown) != "" {
+			t.Errorf("%s: page %+v, err %v; want an empty page", contentType, p, err)
+		}
+	}
+}
+
+// The cut is exactly the 2 MiB the fetch reads, not a byte more.
+func TestACutPageKeepsExactly2MiB(t *testing.T) {
+	t.Parallel()
+
+	p, err := page(t, "text/plain", []byte(strings.Repeat("a", 3<<20)))
+	if err != nil || !p.Cut || len(p.Markdown) != 2<<20 {
+		t.Errorf("err %v, cut %v, %d bytes; want exactly %d", err, p.Cut, len(p.Markdown), 2<<20)
+	}
+}
+
+// A charset the header names wins, even over bytes that would also read as
+// UTF-8: 0xC3 0xA9 is "Ã©" in Latin-1, and the page said Latin-1.
+func TestADeclaredCharsetWinsOverBytesThatLookLikeUTF8(t *testing.T) {
+	t.Parallel()
+
+	p, err := page(t, "text/plain; charset=iso-8859-1", []byte("caf\xc3\xa9"))
+	if err != nil || p.Markdown != "cafÃ©" {
+		t.Errorf("markdown %q, err %v; want cafÃ©", p.Markdown, err)
 	}
 }

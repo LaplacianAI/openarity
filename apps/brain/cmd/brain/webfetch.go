@@ -64,7 +64,9 @@ func publicHost(r resolver) func(ctx context.Context, host string) error {
 			return fmt.Errorf("%s is not a public address", host)
 		}
 		for _, a := range addrs {
-			if !hub.Public(a) {
+			// A zone never matches a prefix, so hub.Public would read a zoned
+			// address as public; a zoned address is a link's, never the internet's.
+			if a.Zone() != "" || !hub.Public(a) {
 				return fmt.Errorf("%s is not a public address", host)
 			}
 		}

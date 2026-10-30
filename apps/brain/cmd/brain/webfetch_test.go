@@ -160,3 +160,17 @@ func TestTheWiredFetchReachesPublicAddressesOnly(t *testing.T) {
 		t.Errorf("the scraper asked %v, err %v; want it on the search client", asked.urls, err)
 	}
 }
+
+// A zone never matches a prefix, so a zoned address read as public whatever it
+// was: the NAT64 form of the metadata address with a zone passed. A zoned
+// address is a link's, never the internet's.
+func TestAZonedAddressIsRefused(t *testing.T) {
+	r := &fakeResolver{answers: map[string][]netip.Addr{"zoned.example": {netip.MustParseAddr("2001:4860:4802:32::15%eth0")}}}
+	public := publicHost(r)
+
+	for _, host := range []string{"64:ff9b::a9fe:a9fe%eth0", "fe80::1%eth0", "2001:4860:4802:32::15%eth0", "zoned.example"} {
+		if err := public(t.Context(), host); err == nil || err.Error() != host+" is not a public address" {
+			t.Errorf("%s: err = %v", host, err)
+		}
+	}
+}
