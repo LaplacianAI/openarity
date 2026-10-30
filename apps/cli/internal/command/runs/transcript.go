@@ -29,6 +29,7 @@ const (
 	delegateTool  = "delegate"
 	planTool      = "plan"
 	searchTool    = "web_search"
+	fetchTool     = "web_fetch"
 
 	bullet     = "⏺"
 	elbow      = "  ⎿  "
@@ -266,6 +267,9 @@ func (t *transcript) result(p payload) {
 	if r, ok := reportIn(p.Output); ok && p.Name == delegateTool {
 		summary, rows = t.reported(r)
 	}
+	if pg, ok := pageIn(p.Output); ok && p.Name == fetchTool && t.verbose {
+		rows = trimBlank(cli.Lines(pg.body))
+	}
 	if p.Name == planTool && t.planned {
 		rows = planRows(t.plan)
 		t.plan, t.planned = nil, false
@@ -353,6 +357,10 @@ func describe(p payload) (string, []string) {
 	case searchTool:
 		if summary, rows, ok := searchRows(p.Output); ok {
 			return summary, rows
+		}
+	case fetchTool:
+		if pg, ok := pageIn(p.Output); ok {
+			return pageRow(pg), nil
 		}
 	}
 
@@ -500,6 +508,61 @@ func searchRows(output string) (string, []string, bool) {
 	default:
 		return strconv.Itoa(len(rows)) + " results", rows, true
 	}
+}
+
+type page struct {
+	url, title, body string
+	cut              bool
+}
+
+var (
+	pageHead   = regexp.MustCompile(`^<page url="([^"]*)" title="([^"]*)" end="([^"]*)">\n`)
+	pageTagEsc = regexp.MustCompile(`(?i)&lt;(/?page)`)
+)
+
+const pageCut = "\n[the page was cut at 32 KiB]"
+
+// pageIn reads web_fetch's envelope. The page ends only at the closing tag
+// carrying the envelope's own end; both attributes are escaped in full by the
+// brain, and the body has only the tags' < escaped.
+func pageIn(output string) (page, bool) {
+	m := pageHead.FindStringSubmatch(output)
+	if m == nil {
+		return page{}, false
+	}
+	closing := "\n</page end=\"" + m[3] + "\">"
+	if !strings.HasSuffix(output, closing) || len(output) < len(m[0])+len(closing) {
+		return page{}, false
+	}
+	body := output[len(m[0]) : len(output)-len(closing)]
+	cut := strings.HasSuffix(body, pageCut)
+	return page{
+		url:   html.UnescapeString(m[1]),
+		title: html.UnescapeString(m[2]),
+		body:  pageTagEsc.ReplaceAllString(strings.TrimSuffix(body, pageCut), "<$1"),
+		cut:   cut,
+	}, true
+}
+
+// pageRow is a page as title — url · size, and whether the brain cut it. A
+// page chose its title and its address, so both are cleaned.
+func pageRow(pg page) string {
+	row := cli.Line(pg.url)
+	if pg.title != "" {
+		row = cli.Line(pg.title) + " — " + row
+	}
+	row += " · " + sizeOf(len(pg.body))
+	if pg.cut {
+		row += " · cut"
+	}
+	return row
+}
+
+func sizeOf(n int) string {
+	if n < 1024 {
+		return strconv.Itoa(n) + " B"
+	}
+	return strconv.Itoa((n+512)/1024) + " KiB"
 }
 
 // finish prints the answer, when there is one, and how the run ended.

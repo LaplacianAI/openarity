@@ -478,3 +478,65 @@ func TestAgentsGetShowsWhomItMayHandWorkTo(t *testing.T) {
 		})
 	}
 }
+
+// web_search and web_fetch come as one grant; the brain reads false when it
+// is left out, so the CLI sends only what the file says.
+func TestAFileSendsItsWebAsWritten(t *testing.T) {
+	for name, tc := range map[string]struct {
+		yaml string
+		want any
+	}{
+		"left out": {"", nil},
+		"on":       {"web: true\n", true},
+		"off":      {"web: false\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script, err := delegating(t, tc.yaml)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := sent(t, script, http.MethodPost)["web"]; got != tc.want {
+				t.Errorf("web = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAgentsGetSaysWhetherItIsOnTheWeb(t *testing.T) {
+	for name, tc := range map[string]struct {
+		web  string
+		want string
+	}{
+		"on":  {`"web":true,`, "web on web_search and web_fetch"},
+		"off": {`"web":false,`, "web off"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clitest.Routes(t, routes(map[string]clitest.Reply{
+				"GET /teams/{id}/agents/{agentID}": {Status: http.StatusOK, Body: strings.Replace(oneAgent, `"max_steps":5,`, `"max_steps":5,`+tc.web, 1)},
+			}))
+			out, err := clitest.Execute(t, commands, "agents", "get", "platform", "triage")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var row string
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, "web ") {
+					row = strings.Join(strings.Fields(line), " ")
+				}
+			}
+			if row != tc.want {
+				t.Errorf("web row = %q, want %q:\n%s", row, tc.want, out)
+			}
+		})
+	}
+}
+
+func TestTheCreateHelpShowsTheWebGrant(t *testing.T) {
+	out, err := clitest.Execute(t, commands, "agents", "create", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "    web: true") {
+		t.Errorf("the help does not show web: true:\n%s", out)
+	}
+}

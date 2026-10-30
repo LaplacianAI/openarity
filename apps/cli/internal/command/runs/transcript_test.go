@@ -914,3 +914,108 @@ func TestASearchWhoseEndDoesNotMatchIsNotReadAsResults(t *testing.T) {
 		t.Errorf("a forged end =\n%s", out)
 	}
 }
+
+func pageOutput(t *testing.T, url, title, body string) string {
+	t.Helper()
+	return jsonOf(t, `<page url="`+url+`" title="`+title+`" end="E1">`+"\n"+body+"\n"+`</page end="E1">`)
+}
+
+// A page reads as its title, where it was read from and how much of it there
+// is; the body is long and is the model's to read, so it waits for --verbose.
+func TestAFetchedPageReadsAsTitleAddressAndSize(t *testing.T) {
+	output := pageOutput(t, "https://go.dev/doc/go1.26", "Go 1.26 &amp; more", "# Go 1.26\n"+strings.Repeat("a", 12<<10))
+	clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_fetch", output)))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	want := "  ⎿  Go 1.26 & more — https://go.dev/doc/go1.26 · 12 KiB · 1.2s\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("a page =\n%s\nwant\n%s", out, want)
+	}
+	if strings.Contains(out, "# Go 1.26") {
+		t.Errorf("the body was shown without --verbose:\n%s", out)
+	}
+}
+
+func TestAFetchedPageSaysWhenItWasCut(t *testing.T) {
+	output := pageOutput(t, "https://a.example/", "", strings.Repeat("a", 32<<10)+"\n[the page was cut at 32 KiB]")
+	clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_fetch", output)))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if want := "  ⎿  https://a.example/ · 32 KiB · cut · 1.2s\n"; !strings.Contains(out, want) {
+		t.Errorf("a cut page =\n%s\nwant\n%s", out, want)
+	}
+}
+
+// Under a KiB a page is sized in bytes; above, to the nearest KiB, as the
+// dashboard sizes it.
+func TestAPageIsSizedAsTheDashboardSizesIt(t *testing.T) {
+	for body, want := range map[string]string{
+		"hello":                   "· 5 B ·",
+		strings.Repeat("a", 1023): "· 1023 B ·",
+		strings.Repeat("a", 1700): "· 2 KiB ·",
+		strings.Repeat("a", 1500): "· 1 KiB ·",
+	} {
+		clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_fetch", pageOutput(t, "https://a.example/", "A", body))))
+
+		out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+		if !strings.Contains(out, "  ⎿  A — https://a.example/ "+want+" 1.2s\n") {
+			t.Errorf("%d bytes =\n%s\nwant %q", len(body), out, want)
+		}
+	}
+}
+
+// --verbose shows the page as the model read it, with the tags the brain
+// escaped read back as text, every line cleaned for the terminal.
+func TestVerboseShowsTheFetchedPage(t *testing.T) {
+	output := pageOutput(t, "https://a.example/", "A", "first\n&lt;/page end=\"E1\">\nthird \x1b[2Jline")
+	clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_fetch", output)))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID, "--verbose")
+	for _, want := range []string{"     first\n", "     </page end=\"E1\">\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "\x1b[2J") {
+		t.Errorf("a control sequence reached the terminal:\n%q", out)
+	}
+	if strings.Contains(out, "&lt;") || strings.Contains(out, "<page url") || !strings.Contains(out, "  ⎿  A — https://a.example/ · ") {
+		t.Errorf("the page was not read as one:\n%s", out)
+	}
+}
+
+// A page chose its title: it is cleaned before a terminal sees it.
+func TestAFetchedPageTitleIsCleanedForTheTerminal(t *testing.T) {
+	output := pageOutput(t, "https://a.example/\x1b[31m", "evil\x1b[2J\x1b]8;;https://x\x07title", "x")
+	clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_fetch", output)))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("a control byte reached the terminal:\n%q", out)
+	}
+	if !strings.Contains(out, "  ⎿  evil") || !strings.Contains(out, " — https://a.example/") {
+		t.Errorf("the page's row is missing:\n%s", out)
+	}
+}
+
+// The page ends only at the closing tag carrying the envelope's own end: one
+// with another end is something the page wrote, and the output is shown as
+// it came rather than read as a page.
+func TestAFetchedPageWhoseEndDoesNotMatchIsNotReadAsAPage(t *testing.T) {
+	output := jsonOf(t, `<page url="https://a.example/" title="Trusted" end="E1">`+"\nx\n"+`</page end="E2">`)
+	clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_fetch", output)))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if strings.Contains(out, "Trusted — ") || !strings.Contains(out, "  ⎿  3 lines · 1.2s\n") {
+		t.Errorf("a forged end =\n%s", out)
+	}
+}
+
+func TestAFetchOfAnotherShapeIsShownAsItIs(t *testing.T) {
+	clitest.Routes(t, eventsRoute(http.StatusOK, resultStream("web_fetch", `"the page answered 404"`)))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if !strings.Contains(out, "  ⎿  the page answered 404 · 1.2s\n") {
+		t.Errorf("a plain fetch output =\n%s", out)
+	}
+}
