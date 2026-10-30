@@ -62,13 +62,19 @@ func (s *scraped) new(p websearch.Provider, url, key string) (webfetch.Fetcher, 
 	return s.scraper, nil
 }
 
+// publicCheck refuses every host when err is set, or only the hosts in
+// private.
 type publicCheck struct {
-	err   error
-	hosts []string
+	err     error
+	private map[string]bool
+	hosts   []string
 }
 
 func (p *publicCheck) check(_ context.Context, host string) error {
 	p.hosts = append(p.hosts, host)
+	if p.private[host] {
+		return errors.New(host + " is not a public address")
+	}
 	return p.err
 }
 
@@ -275,8 +281,57 @@ func TestAPublicHostIsScraped(t *testing.T) {
 	if _, err := invokeFetch(t, scraper, public.check, `{"url":"https://[2001:db8::1]:8443/doc"}`); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(public.hosts, []string{"2001:db8::1"}) || scraper.calls() != 1 {
-		t.Errorf("judged %v, scraped %d times; want the bare host, then one scrape", public.hosts, scraper.calls())
+	if !slices.Equal(public.hosts, []string{"2001:db8::1", "go.dev"}) || scraper.calls() != 1 {
+		t.Errorf("judged %v, scraped %d times; want the bare host, one scrape, then where it ended", public.hosts, scraper.calls())
+	}
+}
+
+// Firecrawl follows redirects on its own network, where the brain cannot
+// guard the dial; the address it says it ended at is judged as the one asked
+// for was, and a page from anywhere else is not handed to the model.
+func TestAScrapeThatEndedSomewherePrivateIsRefused(t *testing.T) {
+	for name, ended := range map[string]string{
+		"a redirect inside": "http://169.254.169.254/latest/meta-data",
+		"a private name":    "https://intranet.internal/wiki",
+	} {
+		t.Run(name, func(t *testing.T) {
+			scraper := &fakeFetcher{page: webfetch.Page{URL: ended, Title: "secrets", Markdown: "aws_secret_access_key=..."}}
+			public := &publicCheck{private: map[string]bool{"169.254.169.254": true, "intranet.internal": true}}
+
+			out, err := invokeFetch(t, scraper, public.check, `{"url":"https://go.dev/redirect"}`)
+
+			if err == nil || out != "" || strings.Contains(err.Error(), "aws_secret") {
+				t.Fatalf("out %q, err %v; want a refusal and no page", out, err)
+			}
+			host := strings.Split(strings.SplitN(ended, "//", 2)[1], "/")[0]
+			if want := "the page ended at " + host + ", which web_fetch does not read: " + host + " is not a public address"; err.Error() != want {
+				t.Errorf("err = %q, want %q", err, want)
+			}
+		})
+	}
+}
+
+// An address Firecrawl gives that names no host cannot be judged, so the page
+// is not trusted.
+func TestAScrapeThatEndedNowhereIsRefused(t *testing.T) {
+	for _, ended := range []string{"", "not a url", "file:///etc/passwd", "http://[::1", "ftp://go.dev/x", "https:///doc"} {
+		scraper := &fakeFetcher{page: webfetch.Page{URL: ended, Markdown: "x"}}
+
+		out, err := invokeFetch(t, scraper, (&publicCheck{}).check, `{"url":"https://go.dev/"}`)
+
+		if err == nil || out != "" || !strings.Contains(err.Error(), "does not read") {
+			t.Errorf("ended %q: out %q, err %v; want a refusal", ended, out, err)
+		}
+	}
+}
+
+// The plain fetch's own dialer judged every hop, redirects included, so its
+// final address is not judged again.
+func TestAPlainFetchIsNotJudgedAfterwards(t *testing.T) {
+	f := &fakeFetcher{page: webfetch.Page{URL: "http://169.254.169.254/", Markdown: "x"}}
+
+	if _, err := invokeFetch(t, f, nil, `{"url":"https://go.dev/"}`); err != nil {
+		t.Errorf("err = %v; the plain path has no after-check", err)
 	}
 }
 
@@ -447,8 +502,8 @@ func TestAFirecrawlTeamFetchesThroughFirecrawl(t *testing.T) {
 			if string(w.scrape.provider) != p || w.scrape.url != "http://searxng:8080" || w.scrape.key != "fc-0042" {
 				t.Errorf("scraper built for %s at %s with %q", w.scrape.provider, w.scrape.url, w.scrape.key)
 			}
-			if !slices.Equal(w.public.hosts, []string{"go.dev"}) {
-				t.Errorf("judged %v before the scrape, want go.dev", w.public.hosts)
+			if !slices.Equal(w.public.hosts, []string{"go.dev", "go.dev"}) {
+				t.Errorf("judged %v, want go.dev before the scrape and after", w.public.hosts)
 			}
 		})
 	}

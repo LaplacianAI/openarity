@@ -69,6 +69,11 @@ func WebFetchTool(f webfetch.Fetcher, public func(context.Context, string) error
 			if err != nil {
 				return "", err
 			}
+			if public != nil {
+				if err := endedPublic(ctx, public, page.URL); err != nil {
+					return "", err
+				}
+			}
 			return pageResult(page, rand.Text()), nil
 		},
 	}
@@ -103,6 +108,19 @@ func parseFetch(raw json.RawMessage) (address, host string, err error) {
 		return "", "", errors.New("url has no host")
 	}
 	return address, u.Hostname(), nil
+}
+
+// endedPublic judges where a scrape says it ended, as the address asked for
+// was judged: a scraper follows redirects on a network the brain cannot guard.
+func endedPublic(ctx context.Context, public func(context.Context, string) error, ended string) error {
+	u, err := url.Parse(ended)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return errors.New("the scraper did not say where the page ended, so web_fetch does not read it")
+	}
+	if err := public(ctx, u.Hostname()); err != nil {
+		return fmt.Errorf("the page ended at %s, which web_fetch does not read: %w", u.Hostname(), err)
+	}
+	return nil
 }
 
 func pageResult(p webfetch.Page, end string) string {
