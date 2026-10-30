@@ -58,6 +58,9 @@ LITELLM   := -f docker-compose.litellm.yml
 OMNIROUTE := -f docker-compose.omniroute.yml
 OLLAMA    := -f docker-compose.ollama.yml
 SEARXNG   := -f docker-compose.searxng.yml
+# staging takes SearXNG when .env opts into it, as deploy.sh does, so a stack
+# brought up by hand matches a deployed one.
+STAGING_SEARXNG := $(if $(shell grep -Eq "^SEARXNG_SECRET=[^\"'[:space:]]" .env 2>/dev/null && echo y),$(SEARXNG))
 OIDC    := -f docker-compose.authentik.yml
 DEX     := -f docker-compose.dex.yml
 BAO     := -f docker-compose.openbao.yml
@@ -240,7 +243,7 @@ image:
 # is the point. See OPENBAO.md; `make bao-approle` prints them.
 ## staging: published image, authentik, real OpenBao and SeaweedFS — needs .env
 staging:
-	$(COMPOSE) $(OIDC) $(IMAGE) $(BAO) $(OBJECTS) $(PROFILE) up -d
+	$(COMPOSE) $(OIDC) $(IMAGE) $(BAO) $(OBJECTS) $(STAGING_SEARXNG) $(PROFILE) up -d
 
 ## restart: recreate every running container, keeping volumes
 restart:

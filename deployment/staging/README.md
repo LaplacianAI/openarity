@@ -135,6 +135,29 @@ that listener alone, with no port opened on the server:
 A provider then posts to `https://<HOOKS_HOST>/hooks/<provider>/<channel id>`.
 Every request still has to carry a valid signature for its channel.
 
+### Web search with SearXNG
+
+Brave, Tavily and Firecrawl are public hosts, and a team only needs its key
+in its settings. SearXNG runs on the server instead and is opted into in
+`deployment/.env`:
+
+```sh
+SEARXNG_SECRET=<openssl rand -hex 32>
+OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.250/32
+```
+
+From then on, `make staging` and every deploy include
+`docker-compose.searxng.yml`. A deploy starts SearXNG if it is not running and
+recreates the worker on its network. A team chooses it with:
+
+```sh
+oa teams settings set <team> --search searxng --search-url http://searxng:8080
+```
+
+To turn it off, run `make searxng-down` first and then remove the secret.
+The overlay needs the secret even to stop the container. Deploys check for
+the secret on every run, so the next one leaves SearXNG out.
+
 ### 2. Keep the checkout on main
 
 `deploy.sh` and the compose files are read from this checkout, never from a
