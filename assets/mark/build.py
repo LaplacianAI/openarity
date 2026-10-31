@@ -86,7 +86,8 @@ FILES = {
 
 COPIES = {
     "logo.svg": ["assets", "site/static/images"],
-    "favicon.svg": ["assets", "site/static/images", "apps/dashboard/public"],
+    # The site root, not images/: the docs theme asks for /favicon.svg there.
+    "favicon.svg": ["assets", "site/static", "apps/dashboard/public"],
     "logo-wordmark.svg": ["assets", "site/static/images"],
 }
 

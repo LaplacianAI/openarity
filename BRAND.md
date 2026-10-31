@@ -69,15 +69,17 @@ Load-bearing:
 |`assets/logo.svg`|the mark, 64 x 64|
 |`assets/logo-wordmark.svg`|mark and name locked up, 232 x 64|
 |`assets/favicon.svg`|browser tab|
-|`site/static/images/*.svg`|the site's copies|
+|`site/static/images/logo.svg`, `logo-wordmark.svg`|the site's copies; the navbar shows the wordmark|
+|`site/static/favicon.svg`, `favicon.ico`, `favicon-16x16.png`, `favicon-32x32.png`, `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, `site.webmanifest`|the docs site's icons, at its root: the names and the place its theme, Hextra, links. Anything missing there is filled with Hextra's own icon|
 |`apps/dashboard/public/favicon.svg`|the dashboard's copy; Vite's publicDir cannot reach outside the app|
 |`assets/mark/geometry.py`|the numbers|
-|`assets/mark/build.py`|writes every SVG above from them|
+|`assets/mark/build.py`|writes every SVG above from them; standard library only|
+|`assets/mark/raster.py`|writes the site's PNG and ICO icons and its manifest; needs Pillow|
 |`assets/mark/intro.py`|the presentation opener, in Manim|
 |`assets/mark/intro-dark.mp4`, `intro-light.mp4`|the opener, rendered|
 
-**Edit `geometry.py` and run `python3 assets/mark/build.py`; never edit an SVG
-by hand.** It writes every copy, so none can go stale, and
+**Edit `geometry.py` and run `python3 assets/mark/build.py` and
+`python3 assets/mark/raster.py`; never edit an icon by hand.** It writes every copy, so none can go stale, and
 `apps/dashboard/src/test/favicon.test.ts` fails if the dashboard's copy and
 `assets/favicon.svg` differ anyway.
 
