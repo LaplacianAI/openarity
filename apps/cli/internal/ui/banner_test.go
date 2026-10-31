@@ -9,11 +9,9 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 )
 
-// There is no terminal art yet. The mark is K5, which has no ASCII form — it
-// was rasterised onto character grids at 13x9, 21x11 and 25x13 and every one
-// is static, because cells cannot carry ten crossing edges. Braille works,
-// but the mark itself is still under discussion, so the banner is the
-// wordmark alone rather than art built twice. See BRAND.md.
+// There is no terminal art yet, so the banner is the wordmark alone. If the
+// mark is ever drawn here it is the whole of it in braille, never a different
+// picture. See BRAND.md.
 func TestTheBannerCarriesTheName(t *testing.T) {
 	t.Parallel()
 

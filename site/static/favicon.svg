@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="openarity">
+  <title>openarity</title>
+  <!-- The openarity mark: a squircle O cut once on the diagonal into two
+       agents, with a visor and two nodes on the cut - an agent that is a
+       pair, and a graph edge between them. Written by assets/mark/build.py
+       from geometry.py; edit those, not this file. See BRAND.md.
+
+       The theme switch is inside the file, not currentColor: an SVG in an
+       <img> is a separate document and inherits no colour, so currentColor
+       renders black, and on GitHub in dark mode that is black on black. -->
+  <style>
+    .mark { fill: #0B6A5C; }
+    @media (prefers-color-scheme: dark) {
+      .mark { fill: #5FD3BC; }
+    }
+  </style>
+  <mask id="oa-favicon-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+    <rect x="4" y="4" width="56" height="56" rx="17.4" fill="#fff"/>
+    <rect x="16.85" y="22.1" width="30.3" height="19.8" rx="3.5" fill="#000"/>
+    <path d="M0 0L64 64" stroke="#000" stroke-width="5"/>
+    <circle cx="15.4" cy="15.4" r="4.8" fill="#000"/>
+    <circle cx="48.6" cy="48.6" r="4.8" fill="#000"/>
+  </mask>
+  <rect class="mark" width="64" height="64" mask="url(#oa-favicon-cut)"/>
+</svg>
