@@ -431,15 +431,22 @@ ensure_litellm() {
 }
 
 ensure_omniroute() {
+	local addr
 	OMNIROUTE_PORT=$(env_value OMNIROUTE_PORT || true)
 	OMNIROUTE_PORT=${OMNIROUTE_PORT:-20128}
+	# Asked where it is published: OMNIROUTE_BIND can move it off BIND_ADDR,
+	# and waiting at REACH_ADDR then waits out the deadline on a closed port.
+	addr=$(env_value OMNIROUTE_BIND || true)
+	case "$addr" in
+		"" | 0.0.0.0) addr=$REACH_ADDR ;;
+	esac
 
 	$COMPOSE up -d omniroute >/dev/null
-	wait_answering "http://$REACH_ADDR:$OMNIROUTE_PORT/v1/models"
+	wait_answering "http://$addr:$OMNIROUTE_PORT/v1/models"
 
-	GATEWAY_URL="http://$REACH_ADDR:$OMNIROUTE_PORT/v1"
+	GATEWAY_URL="http://$addr:$OMNIROUTE_PORT/v1"
 	GATEWAY_KEY=$(env_value OMNIROUTE_API_KEY || true)
-	GATEWAY_DASHBOARD="http://$REACH_ADDR:$OMNIROUTE_PORT/dashboard"
+	GATEWAY_DASHBOARD="http://$addr:$OMNIROUTE_PORT/dashboard"
 
 	# The in-network address, for the reason given in ensure_litellm.
 	env_set OPENARITY_LLM_BASE_URL "http://omniroute:20128/v1"
@@ -509,6 +516,9 @@ public_urls() {
 # forwarded scheme it would say http://, every token would carry that, and
 # the brain would reject them all with a message about issuers.
 ensure_https() {
+	# Made here, as this user: a bind mount of a missing folder has Docker
+	# make it, owned by root, and no site file could then be written into it.
+	mkdir -p caddy/sites
 	$COMPOSE up -d --build caddy >/dev/null
 
 	local want="$AUTH_URL/application/o/openarity/" got deadline

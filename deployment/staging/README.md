@@ -110,6 +110,18 @@ give it HTTPS on two names you own:
 Signing in again is needed afterwards: the issuer changed, so tokens from the
 old one are refused.
 
+A gateway's console can have a name of its own the same way. Add a third
+DNS-only A record, then a site block for it, and run step 4 again:
+
+```sh
+mkdir -p caddy/sites
+printf '%s\n' '<console name> {' '	reverse_proxy omniroute:20128' '}' > caddy/sites/omniroute.caddy
+```
+
+`caddy/sites/` is ignored by git, like `.env`. With the console on HTTPS,
+`OMNIROUTE_BIND=127.0.0.1` in `.env` takes its plain-HTTP port off the
+network; the brain reaches OmniRoute inside compose and is unaffected.
+
 ### Webhooks from the internet
 
 Providers have to reach the webhook listener, which the steps above keep on

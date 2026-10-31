@@ -31,6 +31,8 @@ services:
       - "${BIND_ADDR:-127.0.0.1}:443:443"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Further names, a site block per file; see the end of the Caddyfile.
+      - ./caddy/sites:/etc/caddy/sites:ro
       # The certificates and the ACME account. Losing it means asking Let's
       # Encrypt again, which is rate limited per name.
       - caddy-data:/data
