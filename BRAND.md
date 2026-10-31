@@ -9,100 +9,125 @@ first.
 
 ## The mark
 
-K5 — the complete graph on five vertices. Five nodes, every pair joined, ten
-edges.
+A squircle **O**, cut once on the diagonal into two halves, with a visor and
+two nodes on the cut.
 
-It is the **smallest non-planar graph**: by Kuratowski's theorem, K5 and K3,3
-are the two obstructions to drawing a graph in the plane without crossings. So
-the mark is the smallest graph that cannot be flattened — for a platform whose
-argument is that capability is not a flat list.
+- **Two agents.** The halves are identical and only make the O together; the
+  cut between them is the hand-off.
+- **A graph.** The two nodes sit on the cut, so it reads as an edge between
+  them - quietly, at the sizes where it can be seen.
+- **A machine.** The visor is the opening of the O, made wide and low, so the
+  shape reads as something built rather than drawn: a head with no face.
+
+It replaced K5, the complete graph on five vertices, which read as a figure
+hanging in a frame - partly because of a fill bug (below), and partly because
+any five dots and crossing lines make a body.
+
+### Why this shape and not another
+
+Every candidate was judged by what it could be mistaken for, because a mark
+is read before it is understood. These were drawn and refused:
+
+|Shape|Read as|
+|---|---|
+|K5, a square with a hub and crossing diagonals|a figure hanging in a frame|
+|a ring with a dot leaving it|an egg cell; and suggestive|
+|a ring with a line leaving it|the male symbol, a magnifying glass, a key|
+|a ring of dots|a loading spinner|
+|four squares around a round hole|the Chase octagon; Microsoft|
+|a robot head|a cartoon; Baymax|
+|an O cut on the other diagonal|the "no" slash, Ø|
+
+So the rules below are mostly about keeping it away from those.
 
 ### The drawing
 
-A square with a hub, not a circle.
+All numbers are in a 64-unit box, and live in `assets/mark/geometry.py`:
 
-Every drawing of K5 must cross somewhere; that is what non-planar means, and no
-layout escapes it. But a circular layout puts the crossings in a **pentagram**,
-which reads as an occult symbol rather than a network — that was the first
-draft and it went straight in the bin. Here the four outer nodes make a square,
-the fifth sits at the centre, and the two long diagonals bow around it. The
-crossing is still there. It just is not a star.
+|Part|Value|
+|---|---|
+|body|a 48 x 48 rounded square at (8, 8), corner radius 14.9|
+|visor|26 x 17, corner radius 3, centred|
+|cut|3 wide, along y = x: top-left to bottom-right|
+|nodes|radius 3.1, on the cut, 14.3 from the centre on each axis|
 
-```text
-4 sides + 4 spokes + 2 bowed diagonals = 10 edges
-```
+Load-bearing:
 
-Two numbers in `assets/logo.svg` are load-bearing:
-
-- **The bow is perpendicular to each diagonal, not vertical.** A vertical
-  offset of the same magnitude leaves only `1/√2` of it as real clearance from
-  the hub, and the hub is swallowed. It was, until it was measured.
-- **The hub is larger than the outer nodes** (5.2 against 4.2). At equal size
-  it reads as a crossing artefact rather than a vertex.
+- **The cut runs top-left to bottom-right.** The other diagonal is the
+  "no" slash, and the mark becomes Ø.
+- **The visor is square-cornered, not a pill.** A pill turns the cut and the
+  visor into one bent line - a Z - and reads soft.
+- **The visor is tall enough to stay an O.** At 12 high it was a slot; at 17
+  the opening still reads as the letter.
+- **The cut, the visor and the nodes are a mask, not shapes in a colour.**
+  The page shows through them, so the mark sits on any background.
 
 ### Files
 
 |File|For|
 |---|---|
-|`assets/logo.svg`|the mark, 64×64|
-|`assets/logo-wordmark.svg`|mark and name locked up, 232×64|
-|`assets/favicon.svg`|browser tab, 32×32|
-|`apps/dashboard/public/favicon.svg`|the same file; Vite's publicDir cannot reach outside the app|
+|`assets/logo.svg`|the mark, 64 x 64|
+|`assets/logo-wordmark.svg`|mark and name locked up, 232 x 64|
+|`assets/favicon.svg`|browser tab|
+|`site/static/images/*.svg`|the site's copies|
+|`apps/dashboard/public/favicon.svg`|the dashboard's copy; Vite's publicDir cannot reach outside the app|
+|`assets/mark/geometry.py`|the numbers|
+|`assets/mark/build.py`|writes every SVG above from them|
+|`assets/mark/intro.py`|the presentation opener, in Manim|
+|`assets/mark/intro-dark.mp4`, `intro-light.mp4`|the opener, rendered|
 
-The dashboard's copy is checked against this one by `src/test/favicon.test.ts`,
-because a copy with nothing watching it goes stale silently — the mark gets a
-new colour here and the tab keeps the old one, and nothing fails.
+**Edit `geometry.py` and run `python3 assets/mark/build.py`; never edit an SVG
+by hand.** It writes every copy, so none can go stale, and
+`apps/dashboard/src/test/favicon.test.ts` fails if the dashboard's copy and
+`assets/favicon.svg` differ anyway.
 
-**The favicon is not a scaled copy.** At 16px the full mark's 2.2/64 strokes
-fall below one device pixel and the edges vanish. It carries heavier strokes,
-proportionally larger nodes, and a tighter bow.
+**The favicon is not a scaled copy.** It fills more of its box and carries a
+wider cut and larger nodes, so at 32 px the nodes are a clear notch and at
+16 px they still widen the cut where they sit.
 
 **Each file switches theme by itself**, with a `prefers-color-scheme` query in
 a `<style>` block rather than `currentColor`. An SVG embedded with `<img>` is a
 separate document and inherits no colour from the page, so a `currentColor`
-mark renders **black** — which on GitHub in dark mode is black on black. The
-internal query works there, as a favicon, and standalone.
+mark renders **black** - which on GitHub in dark mode is black on black.
 
-The limit of that: it follows the browser's theme, not the background it
-happens to sit on. A page with both a light and a dark section must inline the
-SVG and style `.mark` directly.
+**The style sets `fill`, and nothing in the mark relies on `fill="none"`.**
+A CSS rule beats a presentation attribute, which is how the previous mark's
+`.mark { fill }` filled in its curved diagonals and drew the hanging figure.
+Every part here is a fill or a hole.
+
+The limit of the theme switch: it follows the browser's theme, not the
+background it happens to sit on. A page with both a light and a dark section
+must inline the SVG and style `.mark` directly.
+
+### Motion
+
+**The mark is still everywhere.** The opener in `assets/mark/` is for
+presentations only - the start of a talk or a demo, where it is seen once. A
+swarm of agents converges into the outline, the O splits into two, the visor
+opens, a signal runs down the cut from one node to the other, and the name
+arrives. Six and a half seconds; nothing in the product animates the mark.
+
+The opener sets the name in Avenir Next until a typeface is chosen (see "Not
+decided yet"); changing it is one line in `intro.py` and a re-render.
 
 ### In a terminal
 
-K5 has no ASCII form. It was rasterised onto character grids at 13×9, 21×11 and
-25×13 and every one is static — cells cannot carry ten crossing edges. What
-works is **braille**, which gives 2×4 sub-cells per character:
-
-```text
-⠀⣤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⡄⠄
-⠀⡿⡑⢄⠀⠀⠀⠀⠀⠀⠀⠀⡠⢊⡇⠁
-⠀⡇⢳⡀⠑⢄⠀⠀⠀⠀⡠⠊⢀⡞⡇⠀
-⠀⡇⠀⠳⡀⠀⠑⢄⡤⠊⠀⢀⠞⠀⡇⠀
-⠀⡇⠀⠀⠙⢆⡠⠋⠕⢅⡰⠋⠀⠀⡇⠀
-⠀⡇⠀⠀⡠⠊⠑⢦⡴⠊⠑⢄⠀⠀⡇⠀
-⠀⡇⡠⢊⣠⠴⠚⠁⠈⠓⠦⣄⡑⢄⡇⠀
-⠀⠍⠍⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠅⠅
-```
-
-Sixteen cells by eight. Twelve by six still reads; ten by five is mud, so that
-is the floor.
-
-Braille needs a font that has the glyphs, which most terminal fonts do and some
-do not. **The fallback is the wordmark alone, never a different mark.** Drawing
-a wheel — the square and hub without the bowed diagonals — would be eight edges
-and a different graph, which is worse than no picture.
+No terminal art yet; the CLI's banner is the wordmark alone. If one is drawn,
+it is the whole mark - body, visor, cut - in braille, which gives 2 x 4
+sub-cells per character; never a different picture.
 
 ### Rules
 
-- **All ten edges, or none.** A version missing the diagonals is a wheel, not
-  K5, and the whole point is the graph it is.
-- **Never on a circle.** That is the pentagram, and the reason this layout
-  exists.
-- **Nodes are filled, and the hub is the largest.**
+- **Two halves, one cut, top-left to bottom-right.** Never the other
+  diagonal, never a second cut, never the halves apart except in the opener.
+- **The gaps stay open.** Never fill the cut, the visor or the nodes with a
+  colour; they are holes.
 - **The wordmark is lowercase**: `openarity`, never `OpenArity` or
   `OPENARITY`. The one exception is an environment variable prefix, where the
   shell decides the case.
-- **Never stretch it.** The square is square.
+- **Never stretch it, never rotate it.** The squircle is square.
+- **One colour per theme**: the accent below. No gradient, no outline, no
+  shadow.
 - **The mark is decoration, not status.** It belongs on a first-run screen and
   a page header. A mark on every command stops being a mark.
 
