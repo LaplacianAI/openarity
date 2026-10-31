@@ -3,6 +3,7 @@ import { useState } from "react";
 import { beginLogin, pkceAvailable } from "@/api/oidc";
 import { useAuthConfig } from "@/api/session";
 import { setToken } from "@/api/token";
+import { Mark } from "@/components/mark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,9 +20,9 @@ export function SignIn() {
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6">
-      <div className="flex items-center gap-2 pb-6">
-        <span className="size-2 rounded-[2px] bg-primary" aria-hidden />
-        <span className="text-sm font-semibold tracking-tight">Openarity</span>
+      <div className="flex items-center gap-2.5 pb-6">
+        <Mark className="size-8" />
+        <span className="text-lg font-semibold tracking-tight">openarity</span>
       </div>
 
       {config.isPending ? (
