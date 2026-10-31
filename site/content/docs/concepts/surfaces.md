@@ -68,7 +68,8 @@ compiled in; it asks.
 ## What this page is not
 
 It is not a roadmap. There is no order, no quarter and no commitment, and the
-graph that all of it depends on does not exist yet.
+none of the surfaces is built. The graph they would share is; [Platform](../platform/index.md)
+says how far it goes.
 
 The reason to publish it anyway is that it explains the shape of what *is*
 built. The module boundary, the normalised message, the per-run capability

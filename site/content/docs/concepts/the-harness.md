@@ -81,9 +81,10 @@ replays the ticks it missed while it was down.
 Being honest about this is the point of the page.
 
 **There is no audit trail.** Requests are logged with structured fields and the
-caller's identity, which is not the same thing. The checklist asks for every
-context retrieval and tool invocation recorded against an agent identity, and
-that record does not exist yet.
+caller's identity, and every run keeps its events — each tool call and what came
+back — with the run and its agent, which `oa runs events` reads back. That is a
+run's trace, not an audit trail: nothing makes it tamper-evident, nothing
+records what happens outside a run, and there is no export for an auditor.
 
 **There is no sandbox.** `code` is a declared pattern name that the runner
 refuses, because running model-written code needs process confinement —

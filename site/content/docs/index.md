@@ -38,5 +38,5 @@ reviewer noticing.
 
 !!! warning
 
-    Early. There is no release and no stable API. The graph, the planner and the
-    dashboard do not exist yet — every page says what is built and what is not.
+    Early. There is no release and no stable API, and every page says what is
+    built and what is not.

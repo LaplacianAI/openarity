@@ -55,10 +55,13 @@ better answer than returning forty things that read alike.
 
 !!! warning
 
-    **The graph is not built yet.** This page describes the design the rest of the
-    system is being shaped around, not something you can run today. What exists is
-    in [Platform](../platform/index.md) and [Agent SDK](../agent-sdk/index.md), and both say plainly
-    what they do and do not do.
+    **The graph is built; the walk this page argues for is only partly.** Each
+    team's agents, MCP servers, tools and skills are projected into it, and every
+    run's `graph` tool searches it, scoped to what the caller can reach before
+    anything is scored. The hub finds the agent to hand work to that way.
+    Learnings are not in it yet, and a run still receives the tools its agent was
+    granted rather than the ones a walk would select. What runs is in
+    [Platform](../platform/index.md).
 
 ## This is graph engineering, not GraphRAG
 
