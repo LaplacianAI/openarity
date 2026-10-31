@@ -70,8 +70,11 @@ services:
       # (STORAGE_ENCRYPTION_KEY and API_KEY_SECRET). Delete this volume and
       # every issued API key stops working.
       - omniroute-data:/app/data
+    # OMNIROUTE_BIND, when the console has an HTTPS name of its own (see
+    # caddy/sites/): 127.0.0.1 there keeps this plain-HTTP port off the tailnet
+    # or LAN, and the brain is unaffected, reaching omniroute:20128 in-network.
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:${OMNIROUTE_PORT:-20128}:20128"
+      - "${OMNIROUTE_BIND:-${BIND_ADDR:-127.0.0.1}}:${OMNIROUTE_PORT:-20128}:20128"
     # No healthcheck. /health returns 404 and /v1/models answers 401 without a
     # key, so a correct probe has to accept a status curl and wget both treat
     # as failure — and which of the two this image even ships is unverified.

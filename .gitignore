@@ -9,6 +9,10 @@ vendor/
 # OpenBao. See deployment/OPENBAO.md.
 deployment/openbao/keys/
 
+# Caddy's site blocks beyond the dashboard and authentik: each names a host on
+# one machine, so like .env they are that machine's, never the repo's.
+deployment/caddy/sites/
+
 # Editor state, except the settings that belong to the project rather than to
 # a person. .vscode/settings.json declares compose's !reset and !override
 # tags, without which every contributor sees "Unresolved tag" on a file that
