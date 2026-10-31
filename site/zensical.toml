@@ -23,6 +23,12 @@ nav = [
     "docs/platform/index.md",
     "docs/platform/quick-start.md",
     "docs/platform/configuration.md",
+    "docs/platform/hub.md",
+    "docs/platform/agents.md",
+    "docs/platform/skills.md",
+    "docs/platform/mcp-servers.md",
+    "docs/platform/web.md",
+    "docs/platform/dashboard.md",
   ] },
   { "Agent SDK" = [
     "docs/agent-sdk/index.md",

@@ -25,31 +25,67 @@ case-insensitively.
 
 ## Endpoints
 
+Every operation in [`openapi.yaml`](https://github.com/LaplacianAI/openarity/blo
+b/main/apps/brain/api/openapi.yaml), in its order, with its summary. The spec is
+the contract — the CLI's client is generated from it — so it holds every request
+and response field this table leaves out.
+
 | Method | Path | What it does |
-| ------ | ------------------------------------------------------------ | ---------------------------------------- |
-| GET    | `/healthz`                                                    | Liveness                                 |
-| GET    | `/readyz`                                                     | Readiness — 503 when Postgres is unreachable |
-| GET    | `/auth/config`                                                | How to obtain a token                    |
-| GET    | `/whoami`                                                     | The authenticated caller                 |
-| GET    | `/teams`                                                      | List teams                               |
-| POST   | `/teams`                                                      | Create a team                            |
-| GET    | `/teams/{id}`                                                 | Read one team                            |
-| GET    | `/teams/{id}/members`                                         | List a team's members                    |
-| POST   | `/teams/{id}/members`                                         | Add a member                             |
-| DELETE | `/teams/{id}/members/{userID}`                                | Remove a member                          |
-| GET    | `/teams/{id}/channels`                                        | List a team's channels                   |
-| POST   | `/teams/{id}/channels`                                        | Connect a channel                        |
-| DELETE | `/teams/{id}/channels/{channelID}`                            | Disconnect a channel                     |
-| GET    | `/teams/{id}/channels/{channelID}/senders/pending`            | List senders waiting to be approved      |
-| GET    | `/teams/{id}/channels/{channelID}/senders`                    | List approved senders                    |
-| POST   | `/teams/{id}/channels/{channelID}/senders`                    | Approve a sender                         |
-| DELETE | `/teams/{id}/channels/{channelID}/senders`                    | Remove a sender, or dismiss a pending one |
-| GET    | `/teams/{id}/channels/{channelID}/sessions`                   | List a channel's conversations           |
-| GET    | `/teams/{id}/sessions`                                        | List every conversation in a team        |
-| GET    | `/teams/{id}/sessions/{sessionID}/messages`                   | Read a conversation                      |
-| GET    | `/teams/{id}/sessions/{sessionID}/attachments`                | List the files in a conversation         |
-| GET    | `/teams/{id}/sessions/{sessionID}/attachments/{attachmentID}` | Download a file                          |
-| GET    | `/users`                                                      | Find a user                              |
+| ------ | ------------------------------------------------------------- | -------------------------------------------------- |
+| GET    | `/healthz`                                                    | Liveness                                           |
+| GET    | `/readyz`                                                     | Readiness                                          |
+| GET    | `/auth/config`                                                | How to obtain a token                              |
+| GET    | `/whoami`                                                     | The authenticated caller                           |
+| GET    | `/teams`                                                      | List teams                                         |
+| POST   | `/teams`                                                      | Create a team                                      |
+| GET    | `/teams/{id}`                                                 | Read one team                                      |
+| GET    | `/teams/{id}/permissions`                                     | What the caller may do in a team                   |
+| GET    | `/teams/{id}/members`                                         | List a team's members                              |
+| POST   | `/teams/{id}/members`                                         | Add a member                                       |
+| DELETE | `/teams/{id}/members/{userID}`                                | Remove a member                                    |
+| GET    | `/teams/{id}/channels`                                        | List a team's channels                             |
+| POST   | `/teams/{id}/channels`                                        | Connect a channel                                  |
+| DELETE | `/teams/{id}/channels/{channelID}`                            | Disconnect a channel                               |
+| GET    | `/teams/{id}/channels/{channelID}/senders/pending`            | List senders waiting to be approved                |
+| GET    | `/teams/{id}/channels/{channelID}/senders`                    | List approved senders                              |
+| POST   | `/teams/{id}/channels/{channelID}/senders`                    | Approve a sender                                   |
+| DELETE | `/teams/{id}/channels/{channelID}/senders`                    | Remove a sender, or dismiss a pending one          |
+| GET    | `/teams/{id}/channels/{channelID}/sessions`                   | List a channel's conversations                     |
+| GET    | `/teams/{id}/sessions`                                        | List every conversation in a team                  |
+| GET    | `/teams/{id}/sessions/{sessionID}`                            | Read a conversation's details                      |
+| GET    | `/teams/{id}/sessions/{sessionID}/messages`                   | Read a conversation                                |
+| GET    | `/teams/{id}/sessions/{sessionID}/runs`                       | List the runs in a conversation                    |
+| GET    | `/teams/{id}/sessions/{sessionID}/attachments`                | List the files in a conversation                   |
+| GET    | `/teams/{id}/sessions/{sessionID}/attachments/{attachmentID}` | Download a file                                    |
+| GET    | `/teams/{id}/skills`                                          | List a team's skills                               |
+| POST   | `/teams/{id}/skills`                                          | Upload a skill                                     |
+| GET    | `/teams/{id}/skills/{skillID}`                                | Read a skill                                       |
+| PUT    | `/teams/{id}/skills/{skillID}`                                | Replace a skill                                    |
+| DELETE | `/teams/{id}/skills/{skillID}`                                | Delete a skill                                     |
+| GET    | `/teams/{id}/skills/{skillID}/files/{path}`                   | Download one of a skill's files                    |
+| POST   | `/teams/{id}/skills/import`                                   | Import a skill from GitHub or a zip on the web     |
+| POST   | `/teams/{id}/skills/{skillID}/sync`                           | Fetch an imported skill's source again             |
+| GET    | `/teams/{id}/agents`                                          | List a team's agents                               |
+| POST   | `/teams/{id}/agents`                                          | Define an agent                                    |
+| GET    | `/teams/{id}/agents/{agentID}`                                | Read an agent, with its grants                     |
+| PUT    | `/teams/{id}/agents/{agentID}`                                | Replace an agent and its grants                    |
+| DELETE | `/teams/{id}/agents/{agentID}`                                | Delete an agent                                    |
+| GET    | `/teams/{id}/loops`                                           | List the loops an agent may use                    |
+| POST   | `/teams/{id}/runs`                                            | Start a run of an agent, or ask the team's hub     |
+| GET    | `/teams/{id}/runs/{runID}`                                    | Read a run                                         |
+| GET    | `/teams/{id}/runs/{runID}/events`                             | Follow what a run does                             |
+| POST   | `/teams/{id}/runs/{runID}/cancel`                             | Cancel a run                                       |
+| GET    | `/teams/{id}/settings`                                        | Read a team's settings                             |
+| PUT    | `/teams/{id}/settings`                                        | Change a team's settings                           |
+| GET    | `/teams/{id}/mcp-servers`                                     | List a team's MCP servers                          |
+| POST   | `/teams/{id}/mcp-servers`                                     | Register an MCP server                             |
+| GET    | `/teams/{id}/mcp-servers/{serverID}`                          | Read an MCP server                                 |
+| PUT    | `/teams/{id}/mcp-servers/{serverID}`                          | Replace an MCP server                              |
+| DELETE | `/teams/{id}/mcp-servers/{serverID}`                          | Delete an MCP server                               |
+| GET    | `/teams/{id}/mcp-servers/{serverID}/tools`                    | List the tools a server offers                     |
+| POST   | `/teams/{id}/mcp-servers/{serverID}/discover`                 | Ask a server which tools it offers, and store them |
+| GET    | `/teams/{id}/graph`                                           | The team's graph                                   |
+| GET    | `/users`                                                      | Find a user                                        |
 
 ## Two things that surprise people
 
