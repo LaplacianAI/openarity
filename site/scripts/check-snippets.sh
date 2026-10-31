@@ -4,7 +4,7 @@
 # against the working tree rather than the published module.
 #
 # The pages claim their snippets are what runs. Nothing else checks that: a
-# rename in sdk/agent breaks every page quoting the old name, and Hugo will
+# rename in sdk/agent breaks every page quoting the old name, and the site will
 # happily build and publish all of them.
 #
 # Blocks that do not start with `package main` are excerpts — an interface, a

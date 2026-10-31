@@ -1,16 +1,13 @@
 ---
 title: Surfaces
-weight: 3
-aliases:
-  - /docs/surfaces/
 ---
 
-{{< callout type="error" >}}
-**None of this is built.** This page is direction, not documentation. Nothing
-here has a date, an API or an issue you can subscribe to, and the design is
-still moving. What runs today is in [Platform](../platform) and
-[Agent SDK](../agent-sdk).
-{{< /callout >}}
+!!! danger
+
+    **None of this is built.** This page is direction, not documentation. Nothing
+    here has a date, an API or an issue you can subscribe to, and the design is
+    still moving. What runs today is in [Platform](../platform/index.md) and
+    [Agent SDK](../agent-sdk/index.md).
 
 Openarity is one graph with more than one way in.
 
@@ -38,13 +35,15 @@ graph means each new surface needs none.
 
 ## The surfaces
 
-{{< cards >}}
-  {{< card title="Openarity Code" subtitle="Agents on a repository — review, migration, the on-call trail. The surface where a learning is cheapest to earn, because tests say whether it was right." >}}
-  {{< card title="Openarity Work" subtitle="Agents in the channels people already use. Slack, Discord, Telegram and webhooks normalise into one message, so a surface is an adapter rather than a product." >}}
-  {{< card title="Openarity Knowledge" subtitle="The organisation's own graph, queried directly. Not a second knowledge base — the same nodes the agents traverse, with a person doing the walking." >}}
-  {{< card title="Openarity Design" subtitle="Agents on design files and design systems, where the constraint is a system rather than a compiler." >}}
-  {{< card title="Openarity Mobile" subtitle="The phone client. An agent run is long, so the useful mobile surface is approval and interruption rather than authoring." >}}
-{{< /cards >}}
+<div class="grid cards" markdown>
+
+  - **Openarity Code**: Agents on a repository — review, migration, the on-call trail. The surface where a learning is cheapest to earn, because tests say whether it was right.
+  - **Openarity Work**: Agents in the channels people already use. Slack, Discord, Telegram and webhooks normalise into one message, so a surface is an adapter rather than a product.
+  - **Openarity Knowledge**: The organisation's own graph, queried directly. Not a second knowledge base — the same nodes the agents traverse, with a person doing the walking.
+  - **Openarity Design**: Agents on design files and design systems, where the constraint is a system rather than a compiler.
+  - **Openarity Mobile**: The phone client. An agent run is long, so the useful mobile surface is approval and interruption rather than authoring.
+
+</div>
 
 ## What already points this way
 
@@ -69,7 +68,8 @@ compiled in; it asks.
 ## What this page is not
 
 It is not a roadmap. There is no order, no quarter and no commitment, and the
-graph that all of it depends on does not exist yet.
+none of the surfaces is built. The graph they would share is; [Platform](../platform/index.md)
+says how far it goes.
 
 The reason to publish it anyway is that it explains the shape of what *is*
 built. The module boundary, the normalised message, the per-run capability

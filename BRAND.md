@@ -69,12 +69,12 @@ Load-bearing:
 |`assets/logo.svg`|the mark, 64 x 64|
 |`assets/logo-wordmark.svg`|mark and name locked up, 232 x 64|
 |`assets/favicon.svg`|browser tab|
-|`site/static/images/logo.svg`, `logo-wordmark.svg`|the site's copies; the navbar shows the wordmark|
-|`site/static/favicon.svg`, `favicon.ico`, `favicon-16x16.png`, `favicon-32x32.png`, `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, `site.webmanifest`|the docs site's icons, at its root: the names and the place its theme, Hextra, links. Anything missing there is filled with Hextra's own icon|
+|`site/content/assets/logo.svg`, `logo-wordmark.svg`, `favicon.svg`|the docs site's copies; the header shows the mark, the tab the favicon|
+|`site/content/assets/apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, `site.webmanifest`|what an SVG cannot be: the iOS home-screen icon and the web manifest, linked from `site/overrides/main.html`|
 |`apps/dashboard/public/favicon.svg`|the dashboard's copy; Vite's publicDir cannot reach outside the app|
 |`assets/mark/geometry.py`|the numbers|
 |`assets/mark/build.py`|writes every SVG above from them; standard library only|
-|`assets/mark/raster.py`|writes the site's PNG and ICO icons and its manifest; needs Pillow|
+|`assets/mark/raster.py`|writes the site's home-screen icons and its manifest; needs Pillow|
 |`assets/mark/intro.py`|the presentation opener, in Manim|
 |`assets/mark/intro-dark.mp4`, `intro-light.mp4`|the opener, rendered|
 |`assets/mark/intro-dark.gif`, `intro-light.gif`|the opener at 720 px and 30 fps, for the README: GitHub plays a GIF inline and an MP4 not at all|

@@ -1,8 +1,5 @@
 ---
 title: Why a graph
-weight: 1
-aliases:
-  - /docs/why-a-graph/
 ---
 
 Every agent platform has to answer one question before it can do anything else:
@@ -56,12 +53,15 @@ becomes *what is reachable from here*, which is a different query with a
 different failure mode: it can return nothing, and returning nothing is a
 better answer than returning forty things that read alike.
 
-{{< callout type="warning" >}}
-**The graph is not built yet.** This page describes the design the rest of the
-system is being shaped around, not something you can run today. What exists is
-in [Platform](../platform) and [Agent SDK](../agent-sdk), and both say plainly
-what they do and do not do.
-{{< /callout >}}
+!!! warning
+
+    **The graph is built; the walk this page argues for is only partly.** Each
+    team's agents, MCP servers, tools and skills are projected into it, and every
+    run's `graph` tool searches it, scoped to what the caller can reach before
+    anything is scored. The hub finds the agent to hand work to that way.
+    Learnings are not in it yet, and a run still receives the tools its agent was
+    granted rather than the ones a walk would select. What runs is in
+    [Platform](../platform/index.md).
 
 ## This is graph engineering, not GraphRAG
 
@@ -129,4 +129,4 @@ meaningful.
 entry in the tool list, because the listing is a cheap projection of a subgraph
 and the body is only paid for when the walk actually reaches it. That is
 progressive disclosure applied to capability, and it is the shape the graph
-will feed. See [Tools and skills](../agent-sdk/tools-and-skills).
+will feed. See [Tools and skills](../agent-sdk/tools-and-skills.md).

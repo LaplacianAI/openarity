@@ -21,12 +21,6 @@ deployment/caddy/sites/
 !.vscode/settings.json
 !.vscode/extensions.json
 
-# Hugo
-site/public/
-site/resources/
-site/.hugo_build.lock
-site/_vendor/
-
 # Playwright MCP scratch output. The screenshot tool writes into the working
 # directory rather than the scratch folder, so the wildcard catches those too.
 .playwright-mcp/
@@ -53,3 +47,7 @@ __pycache__/
 # Designs and implementation plans are written and kept locally. They are
 # working notes, not documentation, and stay out of the public repository.
 docs/superpowers/
+
+# The docs site's build output and Zensical's cache.
+site/public/
+site/.cache/

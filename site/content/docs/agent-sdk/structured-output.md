@@ -1,6 +1,5 @@
 ---
 title: Structured output
-weight: 7
 ---
 
 Getting an answer your program can read, instead of a paragraph it has to parse.

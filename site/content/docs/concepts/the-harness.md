@@ -1,8 +1,5 @@
 ---
 title: The harness
-weight: 2
-aliases:
-  - /docs/the-harness/
 ---
 
 A model with tools is a demo. What makes it a system anyone will run against
@@ -43,7 +40,7 @@ to reach a store, a grant, or a credential. A CI check goes further and fails
 if the core packages link a provider SDK at all, because one convenient import
 would quietly make the model interface decorative.
 
-The consequence is the shape described in [Why a graph](../why-a-graph): which
+The consequence is the shape described in [Why a graph](why-a-graph.md): which
 tools and skills a run may see is an authorisation decision, made where the
 authority lives, and the loop only ever receives the answer.
 
@@ -74,19 +71,20 @@ unreadable immediately, before a single object has been deleted.
 erasure has been outstanding for a day. `brain worker` runs it on a schedule and
 replays the ticks it missed while it was down.
 
-{{< callout type="warning" >}}
-A deployment that never runs the worker never erases anything outside Postgres.
-The rows go; the bytes stay.
-{{< /callout >}}
+!!! warning
+
+    A deployment that never runs the worker never erases anything outside Postgres.
+    The rows go; the bytes stay.
 
 ## What is not built
 
 Being honest about this is the point of the page.
 
 **There is no audit trail.** Requests are logged with structured fields and the
-caller's identity, which is not the same thing. The checklist asks for every
-context retrieval and tool invocation recorded against an agent identity, and
-that record does not exist yet.
+caller's identity, and every run keeps its events — each tool call and what came
+back — with the run and its agent, which `oa runs events` reads back. That is a
+run's trace, not an audit trail: nothing makes it tamper-evident, nothing
+records what happens outside a run, and there is no export for an auditor.
 
 **There is no sandbox.** `code` is a declared pattern name that the runner
 refuses, because running model-written code needs process confinement —
@@ -97,8 +95,10 @@ achievable in-process and needs no privilege the service does not already have.
 **There are no approval gates.** Nothing pauses a run for a human before a
 high-stakes call. The event stream is the seam this would sit on.
 
-**There is no graph.** The store is Postgres; the graph database is configured
-and unused, and marked as such.
+**The graph does not yet choose a run's tools.** Each team's agents, MCP
+servers, tools and skills are projected into it and every run can search it,
+but a run still receives the tools its agent was granted rather than the ones
+a walk would select, and learnings are not in it.
 
 ## Why the boundaries are structural
 

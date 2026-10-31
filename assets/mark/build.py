@@ -85,10 +85,9 @@ FILES = {
 }
 
 COPIES = {
-    "logo.svg": ["assets", "site/static/images"],
-    # The site root, not images/: the docs theme asks for /favicon.svg there.
-    "favicon.svg": ["assets", "site/static", "apps/dashboard/public"],
-    "logo-wordmark.svg": ["assets", "site/static/images"],
+    "logo.svg": ["assets", "site/content/assets"],
+    "favicon.svg": ["assets", "site/content/assets", "apps/dashboard/public"],
+    "logo-wordmark.svg": ["assets", "site/content/assets"],
 }
 
 if __name__ == "__main__":

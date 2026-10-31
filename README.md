@@ -17,10 +17,10 @@ the argument for a graph, the harness around a run, and the docs.
   <img src="assets/mark/intro-light.gif" alt="A swarm of agents joined by edges converges into the openarity mark, a rounded-square O; it splits on the diagonal into two halves, a visor opens, a signal runs down the cut from one node to the other, and the name openarity arrives beside it" width="720">
 </picture>
 
-> **Early.** There is no release and no stable API yet. What exists is the
-> service skeleton described below and an agent loop the brain does not call
-> yet. The design is still moving — open an issue before building anything
-> substantial on top of it.
+> **Early.** There is no release and no stable API yet. The brain runs agents,
+> a hub that delegates through a team's graph, and a dashboard; what it does
+> not do yet is listed below. The design is still moving — open an issue before
+> building anything substantial on top of it.
 
 ## The idea
 
@@ -64,8 +64,7 @@ learning earned in one is capability in every other with nothing to integrate.
 Three things run: the `brain` service, `oa`, the CLI that talks to it, and
 `sdk/agent`, the reasoning patterns a run happens inside.
 
-The brain is production-shaped, but it does not yet do anything an agent
-platform does:
+Beside running agents (below), the brain is production-shaped:
 
 - Two HTTP listeners, one for the API and one for webhooks, with full timeouts
   and graceful shutdown on `SIGINT`/`SIGTERM`
@@ -151,11 +150,19 @@ Which tools and skills a run may see is decided by the brain against its graph.
 That is an authorisation decision, and a separate Go module is what stops it
 leaking into the library: `sdk/agent` *cannot* import `apps/brain/internal`.
 
-Not built yet: the graph, the planner, and outbound replies — the brain can
-hold a conversation's messages but cannot yet answer one. The
-agent loop exists as a library and runs end to end against a real gateway, but
-nothing in the brain calls it, so no message reaches a model. Slack, Discord and Telegram adapters are not written; the seam they
-plug into is, and `custom` is a working generic webhook in the meantime.
+The brain runs agents through it: a run starts from `oa runs start` or the HTTP
+API, and executes inside `sdk/agent` against the team's model.
+Each team has a hub, the built-in orchestrator or an agent it names, which
+plans, finds an agent in the team's graph and delegates to it, and can search
+the web and read a page. The graph holds the team's agents, MCP servers, tools
+and skills, projected from Postgres into FalkorDB. The dashboard is served at
+`/ui`.
+
+Not built yet: answering a channel — a message that arrives is stored, and
+nothing starts a run from it, so nothing replies. Slack, Discord and Telegram
+adapters are not written; the seam they plug into is, and `custom` is a working
+generic webhook in the meantime. Learnings are not in the graph, and there is
+no sandbox for model-written code.
 
 ## Quick start
 
@@ -677,7 +684,7 @@ sdk/agent/      the agent loop, as a library
   patterns/     the reasoning patterns — ReAct, plan-then-act, ReWOO, reflection
   models/       clients for anything speaking OpenAI chat completions
   examples/     runnable agents, against a stub gateway or a real one
-site/           the documentation site, built with Hugo
+site/           the documentation site, built with Zensical
 deployment/     manifests
 go.work         ties every Go module in the repository together
 ```
