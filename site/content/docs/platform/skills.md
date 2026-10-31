@@ -31,11 +31,14 @@ makes it the team's own: it is no longer synced.
 
 ```sh
 oa skills get platform pdf                # frontmatter, source, files
-oa skills cat platform pdf SKILL.md       # one file's bytes, as stored
+oa skills get platform pdf -o yaml        # the same, with SKILL.md's body
+oa skills cat platform pdf forms.md       # one bundled file's bytes, as stored
 oa agents replace platform triage -f triage.yaml --skill pdf
 ```
 
-`oa skills cat` writes the stored bytes to stdout; to a terminal it refuses a
+`SKILL.md` is kept as the skill's frontmatter and body, not as a file, so
+`oa skills get` shows it and `oa skills cat` reads the files beside it. `cat`
+writes the stored bytes to stdout; to a terminal it refuses a
 file holding control characters unless given `--raw`, since a skill's files are
 written by its team or its author.
 
