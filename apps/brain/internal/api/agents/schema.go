@@ -60,6 +60,7 @@ type detail struct {
 	TokenBudget        *int64        `json:"token_budget,omitempty"`
 	Delegation         string        `json:"delegation"`
 	Delegates          []uuid.UUID   `json:"delegates"`
+	Web                bool          `json:"web"`
 }
 
 type agentRequest struct {
@@ -79,6 +80,7 @@ type agentRequest struct {
 	TokenBudget        *int64        `json:"token_budget"`
 	Delegation         *string       `json:"delegation"`
 	Delegates          []uuid.UUID   `json:"delegates"`
+	Web                *bool         `json:"web"`
 }
 
 type agentCursor struct {

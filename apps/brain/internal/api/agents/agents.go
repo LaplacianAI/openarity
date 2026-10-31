@@ -326,6 +326,7 @@ func columns(req agentRequest) (db.CreateAgentParams, error) {
 		ModelName: req.Model.Name, MaxTokens: req.Model.MaxTokens, Temperature: req.Model.Temperature,
 		Pattern: req.Pattern, MaxSteps: req.MaxSteps, SteerContinuations: req.SteerContinuations,
 		Parser: req.Parser, TokenBudget: req.TokenBudget, Delegation: delegationOf(req),
+		Web: req.Web != nil && *req.Web,
 	}
 
 	if req.OutputSchema != nil {
@@ -350,7 +351,7 @@ func updateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
 		Pattern: c.Pattern, MaxSteps: c.MaxSteps, SteerContinuations: c.SteerContinuations,
 		OutputSchema: c.OutputSchema, Parser: c.Parser,
 		ParserModelName: c.ParserModelName, ParserMaxTokens: c.ParserMaxTokens, ParserTemperature: c.ParserTemperature,
-		TokenBudget: c.TokenBudget, Delegation: c.Delegation,
+		TokenBudget: c.TokenBudget, Delegation: c.Delegation, Web: c.Web,
 	}
 }
 
@@ -427,6 +428,7 @@ func view(row db.Agent, g grants) (detail, error) {
 		Skills:             g.skills,
 		Delegation:         row.Delegation,
 		Delegates:          g.delegates,
+		Web:                row.Web,
 	}
 	if d.MCPServers == nil {
 		d.MCPServers = []serverGrant{}

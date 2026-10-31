@@ -26,25 +26,29 @@ var linkLocal = []netip.Prefix{
 	netip.MustParsePrefix("fe80::/10"),
 }
 
-func NewClient(allow func(netip.Addr) bool) *http.Client {
+func Transport(allow func(netip.Addr) bool, noun string) *http.Transport {
 	dialer := &net.Dialer{
 		Timeout: dialTimeout,
 		Control: func(_, address string, _ syscall.RawConn) error {
 			ap, err := netip.ParseAddrPort(address)
 			if err != nil || !dialable(ap.Addr(), allow) {
-				return fmt.Errorf("%s is not an address web search may reach", address)
+				return fmt.Errorf("%s is not an address %s may reach", address, noun)
 			}
 			return nil
 		},
 	}
+	return &http.Transport{
+		DialContext:         dialer.DialContext,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSHandshakeTimeout: dialTimeout,
+		ForceAttemptHTTP2:   true,
+	}
+}
+
+func NewClient(allow func(netip.Addr) bool) *http.Client {
 	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			DialContext:         dialer.DialContext,
-			TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
-			TLSHandshakeTimeout: dialTimeout,
-			ForceAttemptHTTP2:   true,
-		},
+		Timeout:   timeout,
+		Transport: Transport(allow, "web search"),
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return errors.New("a search provider may not redirect")
 		},

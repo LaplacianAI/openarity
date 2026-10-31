@@ -3390,7 +3390,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/AgentSummary"
         - type: object
-          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills, delegation, delegates]
+          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills, delegation, delegates, web]
           properties:
             instructions:
               type: string
@@ -3431,6 +3431,11 @@ components:
               items:
                 type: string
                 format: uuid
+            web:
+              type: boolean
+              description: |
+                Whether the agent has web_search and web_fetch when it runs as
+                itself. The team's hub has both whatever this says.
 
     AgentRequest:
       type: object
@@ -3507,6 +3512,15 @@ components:
           items:
             type: string
             format: uuid
+        web:
+          type: boolean
+          default: false
+          description: |
+            Gives the agent web_search and web_fetch. The team's hub has both
+            whatever this says. web_search also needs the team's search
+            provider; web_fetch needs nothing. Left out, it is false, and a
+            PUT replaces the whole agent, so a replace that leaves it out
+            takes the grant away.
 
     Delegation:
       type: string

@@ -346,6 +346,43 @@ export function searchResults(output: string): SearchResults | null {
   return results;
 }
 
+export type FetchedPage = { url: string; title: string; markdown: string; cut: boolean };
+
+const PAGE_HEAD = /^<page url="([^"]*)" title="([^"]*)" end="([^"]*)">\n/;
+// The brain cuts what the model reads at 32 KiB; the plain fetch stops at
+// 2 MiB of the page. A line the page wrote itself arrives escaped with a
+// backslash, so it matches neither.
+const PAGE_CUTS = [
+  "\n[the page was cut at 32 KiB]",
+  "\n[the page was cut: only its first 2 MiB were read]",
+];
+
+/**
+ * A web_fetch call's output read as the envelope the brain wraps a page in,
+ * or null when it is not one. The page ends only at the closing tag that
+ * carries the envelope's own end. Both attributes are escaped in full by the
+ * brain and read back in full; the body has only the tags' < escaped, so
+ * every other entity is the page's own text.
+ */
+export function fetchedPage(output: string): FetchedPage | null {
+  const head = PAGE_HEAD.exec(output);
+  if (!head) return null;
+  const [opening, url = "", title = "", end = ""] = head;
+  const closing = `\n</page end="${end}">`;
+  if (!output.endsWith(closing) || output.length < opening.length + closing.length) return null;
+
+  let body = output.slice(opening.length, output.length - closing.length);
+  const marker = PAGE_CUTS.find((m) => body.endsWith(m));
+  if (marker) body = body.slice(0, body.length - marker.length);
+  const cut = marker !== undefined;
+  return {
+    url: unescaped(url),
+    title: unescaped(title),
+    markdown: body.replace(/&lt;(\/?page)/gi, "<$1"),
+    cut,
+  };
+}
+
 /** The steps alone, for counting. */
 export function stepsOf(trace: Trace): Step[] {
   return trace.items.flatMap((i) => (i.type === "step" ? [i.step] : []));

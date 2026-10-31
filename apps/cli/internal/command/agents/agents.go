@@ -267,7 +267,9 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"    max_steps: 5\n" +
 			"    # whom it may hand work to: none (alone, the default), team, or listed\n" +
 			"    delegation: listed\n" +
-			"    delegates: [billing]   # by name or id; read only with listed\n\n" +
+			"    delegates: [billing]   # by name or id; read only with listed\n" +
+			"    # web_search and web_fetch; off unless set\n" +
+			"    web: true\n\n" +
 			"    oa agents create platform -f triage.yaml \\\n" +
 			"        --mcp-server github=search_code --skill pdf-processing",
 		Args: cobra.ExactArgs(1),
@@ -417,6 +419,11 @@ func printAgent(opts *cli.Options, a *client.Agent, did string) error {
 			table.Row("delegation", cli.Safe(string(a.Delegation)), delegationNote(a.Delegation))
 			for _, id := range a.Delegates {
 				table.Row("delegate", id.String(), "")
+			}
+			if a.Web {
+				table.Row("web", "on", "web_search and web_fetch")
+			} else {
+				table.Row("web", "off", "")
 			}
 		},
 	})

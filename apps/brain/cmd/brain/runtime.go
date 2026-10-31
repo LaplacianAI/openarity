@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"net"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
@@ -28,11 +29,10 @@ func newRunJob(
 		return nil, fmt.Errorf("building the agent runner: %w", err)
 	}
 
-	search := &runtime.SearchDeps{
-		Secrets: secretStore,
-		New:     newSearchers(websearch.NewClient(reachable(cfg.MCPPrivateNetworks))),
-	}
-	builder := runtime.NewBuilder(dbStore, attachments, newDiscoverer(cfg, secretStore), graphDeps, search)
+	searchClient := websearch.NewClient(reachable(cfg.MCPPrivateNetworks))
+	search := &runtime.SearchDeps{Secrets: secretStore, New: newSearchers(searchClient)}
+	builder := runtime.NewBuilder(dbStore, attachments, newDiscoverer(cfg, secretStore), graphDeps, search,
+		newFetch(searchClient, net.DefaultResolver))
 	endpoint := agent.Endpoint{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
 	executor := runtime.NewExecutor(dbStore, builder, runner, endpoint, postgres.New(dbStore.Pool()), logger)
 

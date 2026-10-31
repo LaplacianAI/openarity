@@ -353,6 +353,7 @@ type Draft = {
   delegation: Delegation;
   /** Kept while another choice is shown, and sent only with listed. */
   delegates: string[];
+  web: boolean;
 };
 
 /** The brain refuses more; this only says so before the round trip. */
@@ -371,6 +372,7 @@ const EMPTY: Draft = {
   skills: [],
   delegation: "none",
   delegates: [],
+  web: false,
 };
 
 /**
@@ -404,6 +406,7 @@ export function agentRequest(d: Draft): AgentRequest | string {
     ...(budget === undefined ? {} : { token_budget: budget }),
     delegation: d.delegation,
     ...(d.delegation === "listed" ? { delegates: d.delegates } : {}),
+    web: d.web,
   };
 }
 
@@ -422,6 +425,7 @@ export function draftOf(a: Agent): Draft {
     skills: a.skills,
     delegation: a.delegation,
     delegates: a.delegates,
+    web: a.web === true,
   };
 }
 
@@ -757,6 +761,13 @@ function AgentForm({
             searchKey={["skills", teamId]}
           />
         </div>
+      </fieldset>
+      <fieldset>
+        <legend className="mb-1 text-xs font-medium">Web</legend>
+        <label className="flex items-center gap-1.5 text-xs">
+          <input type="checkbox" checked={draft.web} onChange={() => set({ web: !draft.web })} />
+          Can search the web and read pages — web_search and web_fetch
+        </label>
       </fieldset>
       <Delegates
         teamId={teamId}

@@ -140,7 +140,7 @@ func (s *fakeStore) CreateAgent(_ context.Context, p db.CreateAgentParams) (db.A
 		Pattern: p.Pattern, MaxSteps: p.MaxSteps, SteerContinuations: p.SteerContinuations,
 		OutputSchema: p.OutputSchema, Parser: p.Parser, ParserModelName: p.ParserModelName,
 		ParserMaxTokens: p.ParserMaxTokens, ParserTemperature: p.ParserTemperature, TokenBudget: p.TokenBudget,
-		Delegation: p.Delegation, CreatedAt: now, UpdatedAt: now,
+		Delegation: p.Delegation, Web: p.Web, CreatedAt: now, UpdatedAt: now,
 	}
 	s.agents[a.ID] = a
 	return a, nil
@@ -166,7 +166,7 @@ func (s *fakeStore) UpdateAgent(_ context.Context, p db.UpdateAgentParams) (db.A
 	a.Pattern, a.MaxSteps, a.SteerContinuations = p.Pattern, p.MaxSteps, p.SteerContinuations
 	a.OutputSchema, a.Parser = p.OutputSchema, p.Parser
 	a.ParserModelName, a.ParserMaxTokens, a.ParserTemperature = p.ParserModelName, p.ParserMaxTokens, p.ParserTemperature
-	a.TokenBudget, a.Delegation = p.TokenBudget, p.Delegation
+	a.TokenBudget, a.Delegation, a.Web = p.TokenBudget, p.Delegation, p.Web
 	a.UpdatedAt = time.Now()
 	s.agents[a.ID] = a
 	return a, nil
@@ -580,7 +580,7 @@ func TestOnlyContractedFieldsAreSerialised(t *testing.T) {
 	s := newFakeStore(plain, full)
 
 	detailKeys := slices.Sorted(slices.Values(append(slices.Clone(summaryKeys),
-		"instructions", "max_steps", "steer_continuations", "parser", "mcp_servers", "skills", "delegation", "delegates")))
+		"instructions", "max_steps", "steer_continuations", "parser", "mcp_servers", "skills", "delegation", "delegates", "web")))
 	if got := keysOf(t, call(t, s, &fakeAuthz{}, memberOf(team), http.MethodGet, one(team, plain.ID), nil).Body.Bytes()); !slices.Equal(got, detailKeys) {
 		t.Errorf("plain agent keys = %v, want %v", got, detailKeys)
 	}

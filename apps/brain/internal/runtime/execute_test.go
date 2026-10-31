@@ -191,7 +191,7 @@ func (f *execFixture) executor(t *testing.T, clients agent.ClientFactory, endpoi
 		t.Fatalf("agent.New: %v", err)
 	}
 	builder := NewBuilder(f.store, &fakeObjects{data: map[string]string{}}, &fakeClients{client: &http.Client{}},
-		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store}, f.search)
+		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store}, f.search, nil)
 	e := NewExecutor(f.store, builder, runner, endpoint, f.sessions, quietLogger())
 	e.every = 20 * time.Millisecond
 	return e
@@ -1542,7 +1542,7 @@ func TestTheDelegatedEventWaitsForItsCall(t *testing.T) {
 	}
 	slow := slowToolCalls{Store: f.store, delay: 150 * time.Millisecond}
 	builder := NewBuilder(f.store, &fakeObjects{data: map[string]string{}}, &fakeClients{client: &http.Client{}},
-		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store}, nil)
+		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store}, nil, nil)
 	f.exec = NewExecutor(slow, builder, runner, agent.Endpoint{BaseURL: "http://model.test"}, f.sessions, quietLogger())
 	f.exec.every = 20 * time.Millisecond
 

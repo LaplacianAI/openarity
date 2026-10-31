@@ -86,6 +86,7 @@ apps/brain/
     discoverer.go      newDiscoverer: what MCP discovery may reach
     runtime.go         newRunJob: the builder, the runner and the executor, for the worker
     websearch.go       newSearchers: a team's search provider, built from its settings
+    webfetch.go        newFetch: the plain fetch, a team's Firecrawl, and the public-host check
     logger.go          newLogger()
   internal/config/     configuration: load, validate, redact
   internal/server/     the two listeners: build, run, shut down; mounts Routers
@@ -137,9 +138,13 @@ apps/brain/
     narrow.go          a child built with fewer than its grants, for the outfitter
     plan.go            plan(items), the hub's checklist, each change a run event
     report.go          a child's answer, wrapped as data for the parent to read
-    websearch.go       web_search(query, limit), the hub's, its results in an envelope
+    websearch.go       web_search(query, limit) and webTools, the one settings read for both web tools
+    webfetch.go        web_fetch(url), the page in an envelope, cut at 32 KiB
   internal/websearch/  the port: Provider, Hit, Searcher, and the one guarded client
     <provider>/        searxng, brave, tavily, firecrawl: each exports New
+  internal/webfetch/   the port: Page, Fetcher, and a client that dials public addresses only
+    plain/             the brain's own read: readability, then markdown
+    firecrawl/         a team's Firecrawl: /v2/scrape
   internal/worker/     the background process: a registry of Jobs, and Run
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary
@@ -423,9 +428,11 @@ reinstalled.
   statement, or none for the built-in orchestrator, so the hub is decided
   once per run: changing the setting mid-run does not change who answers,
   and a hub agent deleted since resumes as the orchestrator. The same agent
-  delegated to is only itself — hub prompt, `plan`, `web_search` and the
-  whole team's reach come from the run's flag, never from the agent's row,
-  and a check keeps the flag on roots only.
+  delegated to is only itself — hub prompt, `plan` and the whole team's
+  reach come from the run's flag, never from the agent's row, and a check
+  keeps the flag on roots only. The web tools come from either: a run has
+  them when it is the hub's or its agent has `web: true`, so a delegate has
+  them only by its own grant.
 - **The built-in orchestrator is no agent row.** It is built in `hub.go` with
   `uuid.Nil` for an id, react for 24 steps, on the team's model; with none
   set it is refused at `POST /runs` with a 409 and fails at build with the
@@ -454,6 +461,46 @@ reinstalled.
   URL with the same predicate, so a team cannot save an address the worker
   then reaches. An error names the provider and the status and never what
   the provider said: a refusal can quote the key back.
+- **A page is data in an envelope only the brain can close.** As search
+  results are: `<page url title end>`, both attributes HTML-escaped, the
+  title folded to one line, and every `<page` or `</page` in the body escaped
+  whatever its case. The body is cut at 32 KiB where a rune starts, after
+  escaping, with a line saying so; when the plain fetch stopped at 2 MiB and
+  what is left is shorter, the line says that instead. A line the page wrote
+  that starts like the brain's is escaped with a backslash, so only the
+  brain's says the page was cut. The url must be http or https, carry no
+  user, name a host and fit in 2,048 bytes, and a host a browser would read
+  as a number (`2130706433`, `0x7f.1`, `127.1`) is refused unless it is an IP
+  address as written: resolvers and scrapers disagree on what it names.
+- **A fetch dials public addresses only.** `MCP_PRIVATE_NETWORKS` is for
+  addresses an operator chose; a fetch URL is a model's, often repeating what
+  a page told it, and honouring the allowance would make any page a way into
+  the operator's network. The plain fetch's client is `hub.Public` at dial
+  time, on every redirect (five at most, http or https only), with no proxy
+  and an Openarity User-Agent. It reads at most 2 MiB and cuts there rather
+  than refusing. A charset the header names wins; without one, valid UTF-8 is
+  read as UTF-8, because the stock sniffer takes an ASCII first KiB for
+  windows-1252, and only other bytes are sniffed. A type the header names and
+  it cannot read as text (a PDF, an image) is refused before the body is
+  read; a page that names no type is sniffed from its bytes. HTML goes through
+  readability first, so the article comes before menus and banners, and falls
+  back to the whole page when there is no article.
+- **A team's Firecrawl is judged before and after it reads.** Firecrawl
+  dials from its own network, which the brain cannot guard, so the host is
+  resolved and refused unless every answer is public before Firecrawl is
+  asked, and the address it says it ended at (`metadata.url`, never the
+  requested `sourceURL`) is judged the same way afterwards: a redirect to a
+  private address returns no page. Firecrawl's own lookup can still differ
+  from the brain's, which only network rules on a self-hosted Firecrawl
+  close. A scrape renders the page, so its client waits 45 s where search
+  waits 15, on the same guarded transport, and Firecrawl is told to stop at
+  40 s so that a slow page ends as Firecrawl's answer. Its reply is read
+  through the search client's helpers, so one over 2 MiB is refused, not cut.
+- **The web tools read the team's settings once.** A key that cannot be read
+  costs `web_search`, with its event, and `web_fetch` falls back to the plain
+  read; so does a Firecrawl that cannot be built. A team with no provider has
+  `web_fetch` alone, and nothing is said: that is the team's choice, as it is
+  for the hub's search.
 - **A missing search key costs the tool, not the run.** A key not in the
   store, a store that is down, or a provider that cannot be built leaves
   `web_search` out with a `tool_unavailable` event saying why; a provider
@@ -465,12 +512,13 @@ reinstalled.
   keeps none; nothing sets it until the outfitter, and a child's own
   delegates are built without it.
 - **A server may not take a name the brain's own tool has on that run.**
-  `graph` and `delegate` on every run; `plan` and `web_search` on the hub's
-  alone, decided per run by `reserved`. A bare MCP server's tool of a
-  reserved name is left out with a `tool_unavailable` event. Reserving `plan`
-  and `web_search` for every agent, because any agent may be chosen as the
-  hub, cost a plain research agent its search server's `web_search` on the
-  upgrade; the clash only exists while the agent runs as the hub.
+  `graph` and `delegate` on every run; `plan` on the hub's; `web_search` and
+  `web_fetch` on a run with the web (the hub's, or an agent's with `web:
+  true`), decided per run by `reserved`. A bare MCP server's tool of a
+  reserved name is left out with a `tool_unavailable` event. Reserving them
+  for every agent, because any agent may be chosen as the hub or granted the
+  web, cost a plain research agent its search server's `web_search` on the
+  upgrade; the clash only exists while the brain's own tool is there.
 - **A hub with no graph answers alone.** Agents are found through the graph
   and listed nowhere else, so with no embedding model the hub is given no
   `delegate` and is told the team cannot be searched, rather than being

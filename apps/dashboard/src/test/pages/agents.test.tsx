@@ -91,6 +91,7 @@ const draft = {
   skills: ["s1"],
   delegation: "none" as const,
   delegates: [] as string[],
+  web: false,
 };
 
 describe("the define form", () => {
@@ -105,6 +106,7 @@ describe("the define form", () => {
       mcp_servers: [{ id: "m1" }],
       skills: ["s1"],
       delegation: "none",
+      web: false,
     });
   });
 
@@ -302,6 +304,7 @@ describe("editing an agent", () => {
     skills: ["s1"],
     token_budget: 250000,
     delegation: "none",
+    web: false,
   };
 
   function editing(agent: Record<string, unknown>, put: Record<string, unknown> = {}) {
@@ -763,6 +766,110 @@ describe("the form's pickers", () => {
         { id: "m1", allow: ["search_code"] },
         { id: "m2" },
       ]);
+    });
+  });
+});
+
+/* ------------------------------------------------------------------ the web */
+
+// web_search and web_fetch come as one grant. A new agent is off the web,
+// as the brain's own default is.
+describe("whether an agent is on the web", () => {
+  const WEB = /search the web and read pages/i;
+
+  it("sends the grant as the form holds it", () => {
+    expect(agentRequest({ ...draft, web: true })).toMatchObject({ web: true });
+    expect(agentRequest(draft)).toMatchObject({ web: false });
+  });
+
+  async function defining() {
+    const seen = brain({
+      ...team(["agent:write"]),
+      ...registry,
+      "POST /teams/{id}/agents": { status: 201, body: { ...triage, id: "a9", name: "reviewer" } },
+    });
+    show(Agents);
+    await userEvent.click(await screen.findByRole("button", { name: /define agent/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "reviewer");
+    await userEvent.type(screen.getByLabelText(/^model$/i), "m");
+    return seen;
+  }
+
+  function created(seen: { method: string; body: unknown }[]) {
+    return JSON.parse(String(seen.find((s) => s.method === "POST")?.body));
+  }
+
+  it("defines a new agent off the web unless the box is ticked", async () => {
+    const seen = await defining();
+
+    expect(screen.getByRole("checkbox", { name: WEB })).not.toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+    expect(created(seen).web).toBe(false);
+  });
+
+  it("sends web: true once the box is ticked", async () => {
+    const seen = await defining();
+    await userEvent.click(screen.getByRole("checkbox", { name: WEB }));
+    await userEvent.click(screen.getByRole("button", { name: /^define$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+    expect(created(seen).web).toBe(true);
+  });
+
+  describe("on an agent that has it", () => {
+    const stored = {
+      ...triage,
+      instructions: "",
+      max_steps: 5,
+      steer_continuations: 0,
+      parser: false,
+      mcp_servers: [],
+      skills: [],
+      delegation: "none",
+      delegates: [],
+      web: true,
+    };
+
+    function editing() {
+      return brain({
+        ...team(["agent:write"]),
+        ...registry,
+        "GET /teams/{id}/agents/{agentID}": { body: stored },
+        "PUT /teams/{id}/agents/{agentID}": { body: stored },
+      });
+    }
+
+    async function openEdit() {
+      show(Agents);
+      const [first] = await screen.findAllByRole("button", { name: /^edit$/i });
+      await userEvent.click(first as HTMLElement);
+      await screen.findByRole("heading", { name: /edit agent/i });
+    }
+
+    async function save(seen: { method: string; body: unknown }[]) {
+      await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+      await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+      return JSON.parse(String(seen.find((s) => s.method === "PUT")?.body));
+    }
+
+    // A PUT is whole: a save about something else must not take the web away.
+    it("keeps the grant through a save that changes something else", async () => {
+      const seen = editing();
+      await openEdit();
+
+      expect(screen.getByRole("checkbox", { name: WEB })).toBeChecked();
+      await userEvent.type(screen.getByLabelText(/^description$/i), " and more");
+      expect(await save(seen)).toMatchObject({ web: true, description: "Sorts issues and more" });
+    });
+
+    it("takes the grant away when the box is unticked", async () => {
+      const seen = editing();
+      await openEdit();
+      await userEvent.click(screen.getByRole("checkbox", { name: WEB }));
+
+      expect((await save(seen)).web).toBe(false);
     });
   });
 });
