@@ -10,7 +10,10 @@
   --md-default-fg-color--light: #5F6763;
   --md-code-bg-color: #F2ECE0;
   --md-primary-fg-color: #0B6A5C;
+  --md-primary-fg-color--light: #3E8C80;
+  --md-primary-fg-color--dark: #08554A;
   --md-accent-fg-color: #0B6A5C;
+  --md-accent-fg-color--transparent: rgba(11, 106, 92, 0.1);
   --md-typeset-a-color: #0B6A5C;
 }
 
@@ -20,6 +23,9 @@
   --md-default-fg-color--light: #8A9391;
   --md-code-bg-color: #232B2F;
   --md-primary-fg-color: #5FD3BC;
+  --md-primary-fg-color--light: #8DE0CF;
+  --md-primary-fg-color--dark: #3FB39C;
   --md-accent-fg-color: #5FD3BC;
+  --md-accent-fg-color--transparent: rgba(95, 211, 188, 0.1);
   --md-typeset-a-color: #5FD3BC;
 }

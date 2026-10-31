@@ -95,8 +95,10 @@ achievable in-process and needs no privilege the service does not already have.
 **There are no approval gates.** Nothing pauses a run for a human before a
 high-stakes call. The event stream is the seam this would sit on.
 
-**There is no graph.** The store is Postgres; the graph database is configured
-and unused, and marked as such.
+**The graph does not yet choose a run's tools.** Each team's agents, MCP
+servers, tools and skills are projected into it and every run can search it,
+but a run still receives the tools its agent was granted rather than the ones
+a walk would select, and learnings are not in it.
 
 ## Why the boundaries are structural
 

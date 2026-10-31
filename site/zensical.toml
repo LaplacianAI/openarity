@@ -14,7 +14,7 @@ site_dir = "public"
 extra_css = ["stylesheets/brand.css"]
 nav = [
   { "Home" = "index.md" },
-  { "Get started" = [
+  { "Overview" = [
     "docs/index.md",
     "docs/get-started/index.md",
     "docs/get-started/docker.md",

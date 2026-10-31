@@ -19,6 +19,5 @@ The ports are unusual enough to be worth repeating:
 | API      | `127.0.0.1:21120` | everything a caller authenticates for |
 | Webhook  | `127.0.0.1:21121` | inbound channel deliveries      |
 
-Several entries — FalkorDB, Redis, Vault, the model router — are present and
-marked *not used yet*. They are configured ahead of the code that will read
-them, and the README says which is which.
+One entry, Redis, is present and marked *not used yet*: it is configured
+ahead of the code that will read it, and the README says so.

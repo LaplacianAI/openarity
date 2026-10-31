@@ -29,7 +29,7 @@ brain reads it when it connects, so a credential is never in a request, a row
 or a log.
 
 **Discovery connects from the brain**, and only to a public address or a range
-its operator allowed with `MCP_PRIVATE_NETWORKS`. A command server is not
+its operator allowed with `OPENARITY_MCP_PRIVATE_NETWORKS`. A command server is not
 started by the brain to discover it.
 
 **Tool names.** A server's tools reach the model as `<server>__<tool>`, unless

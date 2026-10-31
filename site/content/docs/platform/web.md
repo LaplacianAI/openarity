@@ -21,6 +21,12 @@ The providers are `searxng` (self-hosted, no key), `brave`, `tavily`,
 readable by every process on the machine and lands in shell history — and is
 kept in the secret store. A team with no provider has no `web_search`.
 
+The brain dials a search provider only at a public address, or in a range named
+in `OPENARITY_MCP_PRIVATE_NETWORKS`. A SearXNG beside the brain, as in the
+example, is at a private address: `deployment/docker-compose.searxng.yml` runs
+one and says which `/32` to name. Without it, the setting saves and every
+`web_search` fails.
+
 ## Reading a page
 
 `web_fetch(url)` takes an `http` or `https` address and returns the page as
@@ -29,7 +35,7 @@ every other team has them read by the brain itself:
 
 - **Public addresses only**, checked on every redirect — at most five — so a
   page cannot send the brain to a private network or a cloud metadata address.
-  `MCP_PRIVATE_NETWORKS` does not apply: that is for addresses an operator
+  `OPENARITY_MCP_PRIVATE_NETWORKS` does not apply: that is for addresses an operator
   chose, and a fetch URL is a model's.
 - **HTML, XHTML, plain text, markdown and JSON.** A type it cannot read, such as
   a PDF, is refused before the body is read. HTML is reduced to its article
