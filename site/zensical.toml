@@ -1,8 +1,7 @@
 # The documentation site: `make serve` previews it, `make build` writes public/.
 #
-# docs_dir is content/ so each page keeps the path, and so the URL, it had on
-# the Hugo site; site_dir is public/ for the same reason, which is what CI
-# uploads.
+# docs_dir is content/ so each page keeps the path, and so the URL, it had
+# before the move to Zensical; site_dir is public/, which is what CI uploads.
 
 [project]
 site_name = "openarity"
@@ -52,6 +51,7 @@ nav = [
 
 [project.theme]
 language = "en"
+custom_dir = "overrides"
 logo = "assets/logo.svg"
 favicon = "assets/favicon.svg"
 features = [
@@ -97,9 +97,9 @@ pymdownx.inlinehilite = {}
 pymdownx.superfences = {}
 pymdownx.tabbed.alternate_style = true
 
-# Every address the Hugo site answered keeps answering: Hugo's front-matter
-# aliases, and Examples, which moved under the Agent SDK because its examples
-# are the SDK's.
+# Every address the site answered before the move keeps answering: the old
+# front-matter aliases, and Examples, which moved under the Agent SDK because
+# its examples are the SDK's.
 [project.plugins.redirects.redirect_maps]
 "docs/surfaces.md" = "docs/concepts/surfaces.md"
 "docs/the-harness.md" = "docs/concepts/the-harness.md"

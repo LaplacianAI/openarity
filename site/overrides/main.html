@@ -1,0 +1,8 @@
+{#- The tab icon is the theme's favicon setting, the SVG that follows the
+    reader's theme. These are what an SVG cannot be: a home-screen icon for
+    iOS, and the web manifest. assets/mark/raster.py writes the PNGs. -#}
+{% extends "base.html" %}
+{% block extrahead %}
+  <link rel="apple-touch-icon" href="{{ 'assets/apple-touch-icon.png' | url }}">
+  <link rel="manifest" href="{{ 'assets/site.webmanifest' | url }}">
+{% endblock %}

@@ -1,16 +1,14 @@
-"""Write the raster icons the docs site's theme asks for, from geometry.py.
+"""Write the docs site's raster icons from geometry.py.
 
     python3 assets/mark/raster.py      # needs Pillow: pip install pillow
 
-Hextra links favicon.ico, favicon-16x16.png, favicon-32x32.png,
-apple-touch-icon.png and site.webmanifest at the site root, beside
-favicon.svg. Without them the theme's own icons fill those links, and Safari
-and a home screen show Hextra rather than openarity.
+Only what an SVG cannot be: the icon iOS puts on a home screen, and the two a
+web manifest asks for, beside the manifest itself. The tab icon stays the SVG,
+which follows the reader's theme; site/overrides/main.html links these, after
+the theme's own favicon link, so none of them is a rel="icon" that could win
+over the SVG.
 
-A PNG cannot follow the reader's theme the way the SVG does, so the tab sizes
-use the light accent, which holds on both light and dark tab bars; the
-home-screen icons sit on the light background, since iOS fills transparency
-with black.
+They sit on the light background, since iOS fills transparency with black.
 """
 
 import json
@@ -18,10 +16,10 @@ import pathlib
 
 from PIL import Image, ImageDraw
 
-from geometry import BOX, FAVICON, LIGHT, MARK
+from geometry import BOX, LIGHT, MARK
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SITE = ROOT / "site/static"
+SITE = ROOT / "site/content/assets"
 PAPER = "#FBF7EF"  # BRAND.md bg, light
 SS = 8  # supersampling, for clean edges
 
@@ -47,9 +45,6 @@ def render(g, px, background=None):
 
 
 if __name__ == "__main__":
-    for px in (16, 32):
-        render(FAVICON, px).save(SITE / f"favicon-{px}x{px}.png")
-    render(FAVICON, 48).save(SITE / "favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)])
     render(MARK, 180, PAPER).save(SITE / "apple-touch-icon.png")
     for px in (192, 512):
         render(MARK, px, PAPER).save(SITE / f"icon-{px}.png")

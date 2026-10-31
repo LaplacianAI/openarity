@@ -50,7 +50,7 @@ apps/cli/          oa, the command-line client
 apps/dashboard/    the web dashboard, built into the brain and served at /ui
 sdk/agent/         the agent loop, as a library
   examples/        runnable agents; `make example` runs every one of them
-site/              the documentation site, built with Hugo and published
+site/              the documentation site, built with Zensical and published
                    to https://laplacianai.github.io/openarity
 deployment/        manifests
 go.work            ties every Go module in the repository together
@@ -98,9 +98,9 @@ traps that cost a debugging session the first time — dispatching a tool call
 from a turn that was truncated at `MaxTokens`, and a stub gateway that repeats
 its usage on every chunk so the run reports five times the tokens it spent.
 
-`site` needs [Hugo extended](https://gohugo.io/installation/) and nothing else;
-its theme is a Hugo module, so the Go toolchain fetches it on first build.
-`make serve` renders at `http://localhost:1313` as you write, and `make check`
+`site` needs [uv](https://docs.astral.sh/uv/) and Go: `uvx` fetches Zensical at
+the version the Makefile pins, so nothing is installed into the system.
+`make serve` renders at `http://localhost:8000` as you write, and `make check`
 compiles every Go program the documentation quotes against the working tree —
 a rename in `sdk/agent` fails there rather than publishing a page that cannot
 compile.

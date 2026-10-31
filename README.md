@@ -677,7 +677,7 @@ sdk/agent/      the agent loop, as a library
   patterns/     the reasoning patterns — ReAct, plan-then-act, ReWOO, reflection
   models/       clients for anything speaking OpenAI chat completions
   examples/     runnable agents, against a stub gateway or a real one
-site/           the documentation site, built with Hugo
+site/           the documentation site, built with Zensical
 deployment/     manifests
 go.work         ties every Go module in the repository together
 ```
