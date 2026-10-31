@@ -1,5 +1,5 @@
 ---
-title: openarity
+title: Capability is not a flat list
 ---
 
 # openarity
@@ -9,8 +9,8 @@ title: openarity
 An open-source agent platform that selects capability by walking a graph
 rather than ranking a list — and an enterprise harness around the run.
 
-![A swarm of agents joined by edges converges into the openarity mark, a rounded-square O; it splits on the diagonal into two halves, a visor opens, a signal runs down the cut from one node to the other, and the name openarity arrives beside it](assets/intro-light.gif#only-light)
-![A swarm of agents joined by edges converges into the openarity mark, a rounded-square O; it splits on the diagonal into two halves, a visor opens, a signal runs down the cut from one node to the other, and the name openarity arrives beside it](assets/intro-dark.gif#only-dark)
+![A swarm of agents joined by edges converges into the openarity mark, a rounded-square O; it splits on the diagonal into two halves, a visor opens, a signal runs down the cut from one node to the other, and the name openarity arrives beside it](assets/intro-light.gif#only-light){ loading=lazy }
+![A swarm of agents joined by edges converges into the openarity mark, a rounded-square O; it splits on the diagonal into two halves, a visor opens, a signal runs down the cut from one node to the other, and the name openarity arrives beside it](assets/intro-dark.gif#only-dark){ loading=lazy }
 
 ## Get started
 

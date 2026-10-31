@@ -25,9 +25,9 @@ case-insensitively.
 
 ## Endpoints
 
-Every operation in [`openapi.yaml`](https://github.com/LaplacianAI/openarity/blo
-b/main/apps/brain/api/openapi.yaml), in its order, with its summary. The spec is
-the contract — the CLI's client is generated from it — so it holds every request
+Every operation in
+[`openapi.yaml`](https://github.com/LaplacianAI/openarity/blob/main/apps/brain/api/openapi.yaml),
+in its order, with its summary. The spec is the contract — the CLI's client is generated from it — so it holds every request
 and response field this table leaves out.
 
 | Method | Path | What it does |
