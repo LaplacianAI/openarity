@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { isActive } from "@/lib/nav";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -98,7 +99,7 @@ function Sidebar({ pathname }: { pathname: string }) {
       </div>
       <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main">
         {NAV.map((item) => {
-          const active = item.exact ? pathname === item.to : pathname.startsWith(item.to);
+          const active = isActive(pathname, item);
           const Icon = item.icon;
           return (
             <Link
