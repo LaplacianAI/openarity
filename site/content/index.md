@@ -2,6 +2,8 @@
 title: openarity
 ---
 
+# openarity
+
 **Capability is not a flat list.**
 
 An open-source agent platform that selects capability by walking a graph

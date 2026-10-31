@@ -75,17 +75,20 @@ features = [
   "search.highlight",
 ]
 
-[[project.theme.palette]]
-media = "(prefers-color-scheme: dark)"
-scheme = "slate"
-toggle.icon = "lucide/sun"
-toggle.name = "Switch to light mode"
-
+# Light first. Zensical 0.0.74 renders a first visit in the first palette listed
+# and does not then switch to the one the reader's system prefers, so with dark
+# first a light-mode reader got the dark site. Measured, both ways, in a browser.
 [[project.theme.palette]]
 media = "(prefers-color-scheme: light)"
 scheme = "default"
 toggle.icon = "lucide/moon"
 toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to light mode"
 
 [project.markdown_extensions]
 abbr = {}
