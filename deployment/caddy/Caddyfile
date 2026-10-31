@@ -28,3 +28,9 @@
 {$HTTPS_AUTH_HOST} {
 	reverse_proxy authentik-server:9000
 }
+
+# Any further names, one site block per file, from caddy/sites/ beside this
+# one: a gateway's console, say. That folder is the machine's, like .env, so
+# git ignores it, and with nothing in it this matches no file and Caddy serves
+# the two names above alone. Each name needs a DNS-only A record like them.
+import /etc/caddy/sites/*.caddy
