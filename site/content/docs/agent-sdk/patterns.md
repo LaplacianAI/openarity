@@ -1,6 +1,5 @@
 ---
 title: Patterns
-weight: 2
 ---
 
 A pattern is the shape of the reasoning a run happens inside. `Runner.Run`
@@ -66,12 +65,12 @@ Steps refer to earlier ones by position:
 `#E1` is substituted with step one's output before step two runs. A forward
 reference is refused by name rather than sent as literal text.
 
-{{< callout type="info" >}}
-ReWOO only *saves* tokens on a dependent chain like the one above. Current
-models ask for independent calls together in one turn, so ReAct pays a single
-model call for all of them and ReWOO saves nothing — measured against a real
-gateway, it cost more.
-{{< /callout >}}
+!!! info
+
+    ReWOO only *saves* tokens on a dependent chain like the one above. Current
+    models ask for independent calls together in one turn, so ReAct pays a single
+    model call for all of them and ReWOO saves nothing — measured against a real
+    gateway, it cost more.
 
 Measured on the dependent chain, same task, same gateway:
 
@@ -149,11 +148,11 @@ following it, and the critique never enters the conversation at all — a caller
 handing the messages back next turn would otherwise be giving the model two
 answers to the same question and an argument between them.
 
-{{< callout type="info" >}}
-This is reflection, not [Reflexion](https://arxiv.org/abs/2303.11366). Reflection
-iterates within one task and remembers nothing afterwards; Reflexion carries
-what it learned across separate attempts. Only the first is implemented.
-{{< /callout >}}
+!!! info
+
+    This is reflection, not [Reflexion](https://arxiv.org/abs/2303.11366). Reflection
+    iterates within one task and remembers nothing afterwards; Reflexion carries
+    what it learned across separate attempts. Only the first is implemented.
 
 ## Writing your own
 
@@ -163,4 +162,4 @@ apply your deployment's rule around it, and keep its name so nothing about the
 spec has to know the wrapper is there.
 
 That is the extension point the library exists for, and it has a page of its
-own: [Writing a pattern](../custom-patterns).
+own: [Writing a pattern](custom-patterns.md).

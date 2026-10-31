@@ -1,6 +1,5 @@
 ---
 title: HTTP API
-weight: 2
 ---
 
 The brain serves two listeners. This page describes the API one,

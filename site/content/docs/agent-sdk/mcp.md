@@ -1,6 +1,5 @@
 ---
 title: MCP servers as tools
-weight: 4
 ---
 
 `tools/mcp` connects to Model Context Protocol servers and hands back
@@ -33,12 +32,12 @@ mcp.Server{Name: "github", Command: []string{"npx", "-y", "@modelcontextprotocol
 mcp.Server{Name: "docs", URL: "https://mcp.example.com/mcp", HTTPClient: authorised}
 ```
 
-{{< callout type="warning" >}}
-**A child process inherits nothing unless you say so.** Go's `exec` gives a
-`nil` environment the parent's *entire* environment, so a stdio server you just
-launched would see every credential this process holds. `Env` is passed through
-verbatim and an unset one means empty, not inherited.
-{{< /callout >}}
+!!! warning
+
+    **A child process inherits nothing unless you say so.** Go's `exec` gives a
+    `nil` environment the parent's *entire* environment, so a stdio server you just
+    launched would see every credential this process holds. `Env` is passed through
+    verbatim and an unset one means empty, not inherited.
 
 There is no token field on `Server`. A credential for an HTTP server belongs in
 your `http.Client`'s transport — a string on a struct ends up in a log line the
@@ -84,7 +83,7 @@ string reads to a model as a tool that did nothing, and it calls it again.
 
 At connect, not per call. MCP servers may notify that their tools changed;
 honouring that mid-run changes what the agent already decided to do, and for
-[ReWOO](../patterns#rewoo) it would change the ground under a plan that is
+[ReWOO](patterns.md#rewoo) it would change the ground under a plan that is
 already fixed. Reconnect between runs instead.
 
 Pagination is followed to the end. A server with more tools than fit in one
@@ -93,7 +92,7 @@ response is ordinary, and stopping at the first page loses the rest silently.
 ## How many tools is too many
 
 Enough that it is the reason this project exists. Measured tool selection
-[collapses as the pool grows](../../why-a-graph); a few ordinary servers put
+[collapses as the pool grows](../concepts/why-a-graph.md); a few ordinary servers put
 tens of thousands of tokens of schema in front of the model before anyone has
 said anything.
 

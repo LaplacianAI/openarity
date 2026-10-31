@@ -1,7 +1,5 @@
 ---
 title: Agent SDK
-weight: 4
-next: /docs/agent-sdk/install
 ---
 
 `sdk/agent` is the agent loop as a Go library. It receives a fully resolved spec
@@ -17,17 +15,19 @@ about the platform it was written for.
 go get github.com/LaplacianAI/openarity/sdk/agent
 ```
 
-{{< cards >}}
-  {{< card link="install" title="Install and first agent" subtitle="A whole working agent in about forty lines." >}}
-  {{< card link="patterns" title="Patterns" subtitle="ReAct, plan-then-act, ReWOO and reflection — what each costs and when it wins." >}}
-  {{< card link="custom-patterns" title="Writing a pattern" subtitle="The extension point that matters: your rules, in your code, keeping the shipped name." >}}
-  {{< card link="mcp" title="MCP servers as tools" subtitle="Connect a server, get []agent.Tool. The loop never learns MCP exists." >}}
-  {{< card link="tools-and-skills" title="Tools and skills" subtitle="Why sixty skills cost one entry in the tool list." >}}
-  {{< card link="steering" title="Steering a run" subtitle="Saying something to an agent that has already started, and where those words land." >}}
-  {{< card link="structured-output" title="Structured output" subtitle="A schema the answer has to fit, and a cheaper model to fit it." >}}
-  {{< card link="sessions" title="Sessions" subtitle="Steering a run no process is holding, and resuming one whose process has gone." >}}
-  {{< card link="/docs/examples" title="Examples" subtitle="Eleven runnable agents, each one a single file. They need no key." >}}
-{{< /cards >}}
+<div class="grid cards" markdown>
+
+  - **[Install and first agent](install.md)**: A whole working agent in about forty lines.
+  - **[Patterns](patterns.md)**: ReAct, plan-then-act, ReWOO and reflection — what each costs and when it wins.
+  - **[Writing a pattern](custom-patterns.md)**: The extension point that matters: your rules, in your code, keeping the shipped name.
+  - **[MCP servers as tools](mcp.md)**: Connect a server, get []agent.Tool. The loop never learns MCP exists.
+  - **[Tools and skills](tools-and-skills.md)**: Why sixty skills cost one entry in the tool list.
+  - **[Steering a run](steering.md)**: Saying something to an agent that has already started, and where those words land.
+  - **[Structured output](structured-output.md)**: A schema the answer has to fit, and a cheaper model to fit it.
+  - **[Sessions](sessions.md)**: Steering a run no process is holding, and resuming one whose process has gone.
+  - **[Examples](examples.md)**: Eleven runnable agents, each one a single file. They need no key.
+
+</div>
 
 ## Why it is separate
 
@@ -39,8 +39,8 @@ The same property is what makes it useful to you: nothing else in the
 repository comes with it. One direct dependency, no database, no server, no
 configuration file.
 
-{{< callout type="info" >}}
-Reference documentation is generated from the source on
-[pkg.go.dev](https://pkg.go.dev/github.com/LaplacianAI/openarity/sdk/agent).
-These pages are the narrative half.
-{{< /callout >}}
+!!! info
+
+    Reference documentation is generated from the source on
+    [pkg.go.dev](https://pkg.go.dev/github.com/LaplacianAI/openarity/sdk/agent).
+    These pages are the narrative half.

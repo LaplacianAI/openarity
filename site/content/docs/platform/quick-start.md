@@ -1,6 +1,5 @@
 ---
 title: Quick start
-weight: 1
 ---
 
 The brain on its own, against a Postgres you already have — which is what you
@@ -9,15 +8,14 @@ and no container to rebuild.
 
 For the whole thing instead — a real identity provider, a secret store that
 survives a restart, the dashboard — that is one command and it is on the
-[Docker page](/docs/get-started/docker). This page needs Go; that one does not.
+[Docker page](../get-started/docker.md). This page needs Go; that one does not.
 
 Needs Go 1.26.10 and a Postgres 13 or newer you can reach. 13 is where
 `gen_random_uuid()` became built-in, which the first migration uses. Running the
 *tests* needs 18.
 
-{{% steps %}}
 
-### Clone and create the schema
+### 1. Clone and create the schema
 
 ```sh
 git clone https://github.com/LaplacianAI/openarity
@@ -29,7 +27,7 @@ go run ./cmd/brain migrate up
 Migrations run behind an advisory lock, so two instances starting at once is
 safe. `brain migrate down` rolls the last one back.
 
-### Give it a way to authenticate callers
+### 2. Give it a way to authenticate callers
 
 ```sh
 export OPENARITY_DEV_TOKEN=letmein
@@ -40,7 +38,7 @@ The service refuses to start with no authentication configured rather than
 serving an open API. For a real provider, set `OPENARITY_OIDC_ENABLED` and
 `OPENARITY_OIDC_ISSUER` instead.
 
-### Serve
+### 3. Serve
 
 ```sh
 go run ./cmd/brain
@@ -49,7 +47,7 @@ go run ./cmd/brain
 Two listeners come up — the API on `21120` and webhooks on `21121`. Ctrl-C
 shuts both down gracefully.
 
-### Talk to it
+### 4. Talk to it
 
 ```sh
 curl -s 127.0.0.1:21120/healthz    # ok
@@ -61,7 +59,6 @@ curl -s -H 'Authorization: Bearer letmein' 127.0.0.1:21120/whoami
 
 Everything but the probes needs a token. Without one: 401.
 
-{{% /steps %}}
 
 ## The other commands
 
@@ -78,6 +75,6 @@ schedule, replays the ticks it missed while it was down, sweeps once at startup
 so a fresh deployment is not idle for an interval, and refuses to start if the
 secret store cannot delete.
 
-{{< callout type="warning" >}}
-A deployment that never runs the worker never erases anything outside Postgres.
-{{< /callout >}}
+!!! warning
+
+    A deployment that never runs the worker never erases anything outside Postgres.

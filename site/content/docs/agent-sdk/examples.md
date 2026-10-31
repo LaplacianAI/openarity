@@ -1,6 +1,5 @@
 ---
 title: Examples
-weight: 5
 ---
 
 Eleven runnable agents live in [`sdk/agent/examples`](https://github.com/LaplacianAI/openarity/tree/main/sdk/agent/examples).
@@ -89,10 +88,10 @@ go run ./examples/skills
 a real model tells you whether the prompt, the tool descriptions and the skill
 descriptions actually work.
 
-{{< callout type="info" >}}
-`0 cached` against a real gateway usually means the prefix was too short rather
-than that caching failed. Anthropic's minimum is 512 tokens for Opus 4.7 and
-newer and 1,024 for Sonnet; a request under it is served without caching and
-without an error. A one-sentence system prompt and two skill descriptions do not
-reach it.
-{{< /callout >}}
+!!! info
+
+    `0 cached` against a real gateway usually means the prefix was too short rather
+    than that caching failed. Anthropic's minimum is 512 tokens for Opus 4.7 and
+    newer and 1,024 for Sonnet; a request under it is served without caching and
+    without an error. A one-sentence system prompt and two skill descriptions do not
+    reach it.

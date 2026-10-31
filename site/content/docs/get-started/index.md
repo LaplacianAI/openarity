@@ -1,19 +1,17 @@
 ---
 title: Get started
-weight: 1
-aliases:
-  - /docs/install/
-next: /docs/get-started/docker
 ---
 
 There are three ways in, and which one you want depends on what you are about
 to do.
 
-{{< cards >}}
-  {{< card link="docker" title="Run the whole stack" icon="server" subtitle="One command: Postgres, a secret store, an identity provider, the brain and the dashboard." >}}
-  {{< card link="/docs/platform/quick-start" title="Run the brain from source" icon="download" subtitle="A brain against a Postgres you already have, in about five commands. Needs Go." >}}
-  {{< card link="/docs/agent-sdk/install" title="Use the SDK on its own" icon="code" subtitle="go get one module and write an agent. No brain, no database, no configuration file." >}}
-{{< /cards >}}
+<div class="grid cards" markdown>
+
+  - **[Run the whole stack](docker.md)**: One command: Postgres, a secret store, an identity provider, the brain and the dashboard.
+  - **[Run the brain from source](../platform/quick-start.md)**: A brain against a Postgres you already have, in about five commands. Needs Go.
+  - **[Use the SDK on its own](../agent-sdk/install.md)**: go get one module and write an agent. No brain, no database, no configuration file.
+
+</div>
 
 ## Which one
 
@@ -30,8 +28,8 @@ deployment does.
 with one dependency, no database and no server, so it drops into a project that
 has no interest in the rest of Openarity.
 
-{{< callout type="warning" >}}
-Nothing is released. There is no image to pull that is not built from this
-repository, no signed installer, and no stable API. Every page here says what
-is built and what is not.
-{{< /callout >}}
+!!! warning
+
+    Nothing is released. There is no image to pull that is not built from this
+    repository, no signed installer, and no stable API. Every page here says what
+    is built and what is not.

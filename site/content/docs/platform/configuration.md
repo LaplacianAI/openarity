@@ -1,6 +1,5 @@
 ---
 title: Configuration
-weight: 2
 ---
 
 Configuration is environment-only, prefixed `OPENARITY_`, and validated at

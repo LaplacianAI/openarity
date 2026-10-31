@@ -35,6 +35,7 @@ nav = [
     "docs/agent-sdk/steering.md",
     "docs/agent-sdk/structured-output.md",
     "docs/agent-sdk/sessions.md",
+    "docs/agent-sdk/examples.md",
   ] },
   { "Concepts" = [
     "docs/concepts/index.md",
@@ -42,7 +43,6 @@ nav = [
     "docs/concepts/the-harness.md",
     "docs/concepts/surfaces.md",
   ] },
-  { "Examples" = ["docs/examples/index.md"] },
   { "Reference" = [
     "docs/reference/index.md",
     "docs/reference/cli.md",
@@ -96,3 +96,14 @@ pymdownx.highlight.pygments_lang_class = true
 pymdownx.inlinehilite = {}
 pymdownx.superfences = {}
 pymdownx.tabbed.alternate_style = true
+
+# Every address the Hugo site answered keeps answering: Hugo's front-matter
+# aliases, and Examples, which moved under the Agent SDK because its examples
+# are the SDK's.
+[project.plugins.redirects.redirect_maps]
+"docs/surfaces.md" = "docs/concepts/surfaces.md"
+"docs/the-harness.md" = "docs/concepts/the-harness.md"
+"docs/why-a-graph.md" = "docs/concepts/why-a-graph.md"
+"docs/install.md" = "docs/get-started/index.md"
+"docs/install/docker.md" = "docs/get-started/docker.md"
+"docs/examples/index.md" = "docs/agent-sdk/examples.md"

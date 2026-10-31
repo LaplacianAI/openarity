@@ -1,8 +1,5 @@
 ---
 title: The harness
-weight: 2
-aliases:
-  - /docs/the-harness/
 ---
 
 A model with tools is a demo. What makes it a system anyone will run against
@@ -43,7 +40,7 @@ to reach a store, a grant, or a credential. A CI check goes further and fails
 if the core packages link a provider SDK at all, because one convenient import
 would quietly make the model interface decorative.
 
-The consequence is the shape described in [Why a graph](../why-a-graph): which
+The consequence is the shape described in [Why a graph](why-a-graph.md): which
 tools and skills a run may see is an authorisation decision, made where the
 authority lives, and the loop only ever receives the answer.
 
@@ -74,10 +71,10 @@ unreadable immediately, before a single object has been deleted.
 erasure has been outstanding for a day. `brain worker` runs it on a schedule and
 replays the ticks it missed while it was down.
 
-{{< callout type="warning" >}}
-A deployment that never runs the worker never erases anything outside Postgres.
-The rows go; the bytes stay.
-{{< /callout >}}
+!!! warning
+
+    A deployment that never runs the worker never erases anything outside Postgres.
+    The rows go; the bytes stay.
 
 ## What is not built
 

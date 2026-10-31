@@ -1,6 +1,5 @@
 ---
 title: Tools and skills
-weight: 5
 ---
 
 ## Tools
@@ -60,10 +59,10 @@ caller a different tool array, and none of them would share a cache entry. With
 one `Skill` tool the array is byte-identical across callers, and only the
 listing differs, one block later.
 
-{{< callout type="info" >}}
-Two cache breakpoints is the design, not a compromise: the tool list is shared
-by everyone, the skill listing is shared by everyone offered the same skills.
-{{< /callout >}}
+!!! info
+
+    Two cache breakpoints is the design, not a compromise: the tool list is shared
+    by everyone, the skill listing is shared by everyone offered the same skills.
 
 ### What the loop guarantees
 

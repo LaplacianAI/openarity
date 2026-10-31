@@ -1,6 +1,5 @@
 ---
 title: Install and first agent
-weight: 1
 ---
 
 ```sh
@@ -10,14 +9,14 @@ go get github.com/LaplacianAI/openarity/sdk/agent
 Needs Go 1.26.10. There are two direct dependencies and you build only the ones
 you import: `github.com/openai/openai-go/v3` sits behind
 [`models/openaicompat`](#talking-to-a-real-gateway), and the official MCP SDK
-behind [`tools/mcp`](../mcp). The core packages and the patterns link neither,
+behind [`tools/mcp`](mcp.md). The core packages and the patterns link neither,
 which a `make check` step enforces rather than assumes.
 
-{{< callout type="warning" >}}
-`go get` resolves to `v0.1.0`. It is a `v0`, so nothing about the API is
-promised yet — pin the version rather than tracking `@latest`, and read what
-changed before moving.
-{{< /callout >}}
+!!! warning
+
+    `go get` resolves to `v0.1.0`. It is a `v0`, so nothing about the API is
+    promised yet — pin the version rather than tracking `@latest`, and read what
+    changed before moving.
 
 ## A whole agent
 

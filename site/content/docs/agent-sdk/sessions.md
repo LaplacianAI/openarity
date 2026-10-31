@@ -1,6 +1,5 @@
 ---
 title: Sessions
-weight: 8
 ---
 
 Steering a run no process is holding, and resuming one whose process has gone.
@@ -82,12 +81,12 @@ instruction on every turn, and the model never concludes.
 `Run.Steer` still works and still costs no round trip. Use it when you are
 holding the run; use the session when you are not.
 
-{{< callout type="warning" >}}
-`Result.UnappliedSteers` keeps its old meaning: steers that reached the
-in-memory box and never made it onto a request. Once a session is in play it
-is no longer the complete list of what is undelivered — a steer still sitting
-in the store was never taken, so it stays there and the next run collects it.
-{{< /callout >}}
+!!! warning
+
+    `Result.UnappliedSteers` keeps its old meaning: steers that reached the
+    in-memory box and never made it onto a request. Once a session is in play it
+    is no longer the complete list of what is undelivered — a steer still sitting
+    in the store was never taken, so it stays there and the next run collects it.
 
 ## Resuming
 
@@ -140,15 +139,15 @@ so a save per request would never write the answer.
 That sets the granularity: **a run that dies mid-step resumes from the step
 before and redoes the one it was in, tool calls included.**
 
-{{< callout type="warning" >}}
-A tool with a side effect can therefore run twice. A message sent, a ticket
-filed. Nothing here prevents that, and a deployment whose tools are not
-idempotent should know it.
+!!! warning
 
-This is LangGraph's behaviour too — resuming re-runs the whole node rather
-than continuing after the `interrupt()` — so it is a known shape rather than a
-novel risk.
-{{< /callout >}}
+    A tool with a side effect can therefore run twice. A message sent, a ticket
+    filed. Nothing here prevents that, and a deployment whose tools are not
+    idempotent should know it.
+
+    This is LangGraph's behaviour too — resuming re-runs the whole node rather
+    than continuing after the `interrupt()` — so it is a known shape rather than a
+    novel risk.
 
 ## The stores
 

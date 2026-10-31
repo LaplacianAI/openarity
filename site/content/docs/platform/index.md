@@ -1,17 +1,17 @@
 ---
 title: Platform
-weight: 3
-next: /docs/platform/quick-start
 ---
 
 The `brain` service, `oa` the CLI, and the inbound gateway they share.
 
-{{< cards >}}
-  {{< card link="quick-start" title="Quick start" subtitle="A brain against a local Postgres, in about five commands." >}}
-  {{< card link="configuration" title="Configuration" subtitle="Every environment variable, its default, and whether it is used yet." >}}
-  {{< card link="/docs/reference/cli" title="oa, the CLI" subtitle="Every command and subcommand, and the flags that apply to all of them." >}}
-  {{< card link="/docs/reference/http-api" title="HTTP API" subtitle="Every endpoint the brain serves, and how a caller authenticates." >}}
-{{< /cards >}}
+<div class="grid cards" markdown>
+
+  - **[Quick start](quick-start.md)**: A brain against a local Postgres, in about five commands.
+  - **[Configuration](configuration.md)**: Every environment variable, its default, and whether it is used yet.
+  - **[oa, the CLI](../reference/cli.md)**: Every command and subcommand, and the flags that apply to all of them.
+  - **[HTTP API](../reference/http-api.md)**: Every endpoint the brain serves, and how a caller authenticates.
+
+</div>
 
 ## What runs today
 

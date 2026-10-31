@@ -1,6 +1,5 @@
 ---
 title: oa, the CLI
-weight: 1
 ---
 
 `oa` talks to a brain over its HTTP API and holds no state of its own beyond a
@@ -58,7 +57,7 @@ Lists page. A paged command prints `{items, next_cursor}` under `-o json` and
 tells you the command to run for the next page under `-o table`; `--limit` and
 `--cursor` control it.
 
-{{< callout type="info" >}}
-This table is the command tree as `oa --help` prints it. For the flags and the
-prose belonging to one command, ask it: `oa channels senders approve --help`.
-{{< /callout >}}
+!!! info
+
+    This table is the command tree as `oa --help` prints it. For the flags and the
+    prose belonging to one command, ask it: `oa channels senders approve --help`.

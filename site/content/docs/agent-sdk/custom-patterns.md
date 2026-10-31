@@ -1,6 +1,5 @@
 ---
 title: Writing a pattern
-weight: 3
 ---
 
 A pattern is the shape of the reasoning a run happens inside. `Runner.Run`

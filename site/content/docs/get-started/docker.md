@@ -1,8 +1,5 @@
 ---
 title: Docker
-aliases:
-  - /docs/install/docker/
-weight: 1
 ---
 
 One command, from a clone to a dashboard you can sign in to.
@@ -77,13 +74,13 @@ On a laptop that rules out `127.0.0.1`, because a container's loopback is not
 your machine's, and `host.docker.internal` does not resolve on a macOS host
 either. So the stack publishes on your LAN address.
 
-{{< callout type="warning" >}}
-**The identity provider and Postgres are reachable from your network** for as
-long as the stack is up. That is the trade for a browser login that works. On
-an untrusted network, run the brain on the host instead — see the
-[platform quick start](/docs/platform/quick-start) — and leave `BIND_ADDR`
-alone.
-{{< /callout >}}
+!!! warning
+
+    **The identity provider and Postgres are reachable from your network** for as
+    long as the stack is up. That is the trade for a browser login that works. On
+    an untrusted network, run the brain on the host instead — see the
+    [platform quick start](../platform/quick-start.md) — and leave `BIND_ADDR`
+    alone.
 
 `BIND_ADDR` is an address to *bind*, and `0.0.0.0` is a perfectly good one: it
 publishes on every interface. It is not an address anything can *reach*, so no
