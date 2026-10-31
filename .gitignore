@@ -53,3 +53,7 @@ __pycache__/
 # Designs and implementation plans are written and kept locally. They are
 # working notes, not documentation, and stay out of the public repository.
 docs/superpowers/
+
+# The docs site's build output and Zensical's cache.
+site/public/
+site/.cache/
