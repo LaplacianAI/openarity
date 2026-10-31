@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" alt="" width="72">
+
 # Openarity
 
 [![ci](https://github.com/LaplacianAI/openarity/actions/workflows/ci.yml/badge.svg)](https://github.com/LaplacianAI/openarity/actions/workflows/ci.yml)
@@ -9,6 +11,11 @@ knowledge graph, not a list.
 
 **[laplacianai.github.io/openarity](https://laplacianai.github.io/openarity)** —
 the argument for a graph, the harness around a run, and the docs.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/mark/intro-dark.gif">
+  <img src="assets/mark/intro-light.gif" alt="A swarm of agents joined by edges converges into the openarity mark, a rounded-square O; it splits on the diagonal into two halves, a visor opens, a signal runs down the cut from one node to the other, and the name openarity arrives beside it" width="720">
+</picture>
 
 > **Early.** There is no release and no stable API yet. What exists is the
 > service skeleton described below and an agent loop the brain does not call

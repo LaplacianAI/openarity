@@ -77,6 +77,7 @@ Load-bearing:
 |`assets/mark/raster.py`|writes the site's PNG and ICO icons and its manifest; needs Pillow|
 |`assets/mark/intro.py`|the presentation opener, in Manim|
 |`assets/mark/intro-dark.mp4`, `intro-light.mp4`|the opener, rendered|
+|`assets/mark/intro-dark.gif`, `intro-light.gif`|the opener at 720 px and 30 fps, for the README: GitHub plays a GIF inline and an MP4 not at all|
 
 **Edit `geometry.py` and run `python3 assets/mark/build.py` and
 `python3 assets/mark/raster.py`; never edit an icon by hand.** It writes every copy, so none can go stale, and
@@ -104,7 +105,8 @@ must inline the SVG and style `.mark` directly.
 ### Motion
 
 **The mark is still everywhere.** The opener in `assets/mark/` is for
-presentations only - the start of a talk or a demo, where it is seen once. A
+presentations only - the start of a talk or a demo, where it is seen once -
+and the head of the README, which is the project's first slide. A
 swarm of agents converges into the outline, the O splits into two, the visor
 opens, a signal runs down the cut from one node to the other, and the name
 arrives. Six and a half seconds; nothing in the product animates the mark.
