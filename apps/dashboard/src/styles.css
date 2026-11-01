@@ -10,11 +10,16 @@
  * The @theme inline block maps CSS custom properties to Tailwind utility
  * classes (e.g. --color-primary -> bg-primary, text-primary).
  *
- * The :root and .dark blocks define the actual color values using oklch.
- * All colors MUST use oklch format.
+ * The colours are BRAND.md's palette, Spectral, and nothing else. Each block
+ * starts with its eight roles as --spectral-*, copied from BRAND.md's table in
+ * the hex it is written in there; src/test/palette.test.ts fails when a copy
+ * disagrees. Every token after them is a role, or a mix of roles in oklch —
+ * a border is text mixed into the background, not a grey of its own — so a
+ * change in BRAND.md reaches every token from those eight lines.
  *
  * To add a new semantic color:
- * 1. Add the variable to :root (light value) and .dark (dark value)
+ * 1. Add the variable to :root (light value) and .dark (dark value), as a
+ *    --spectral-* role or a color-mix of them
  * 2. Register it in @theme inline as --color-<name>: var(--<name>)
  */
 
@@ -71,85 +76,105 @@
 
 :root {
   --radius: 0.375rem;
-  --background: oklch(0.985 0.003 106);
-  --foreground: oklch(0.24 0.012 96);
-  --surface: oklch(0.965 0.004 106);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.24 0.012 96);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.24 0.012 96);
-  --primary: oklch(0.45 0.062 183);
-  --primary-foreground: oklch(0.985 0.004 180);
-  --secondary: oklch(0.945 0.005 106);
-  --secondary-foreground: oklch(0.3 0.012 96);
-  --muted: oklch(0.955 0.004 106);
-  --muted-foreground: oklch(0.52 0.011 96);
-  --accent: oklch(0.93 0.017 183);
-  --accent-foreground: oklch(0.33 0.05 183);
-  --destructive: oklch(0.51 0.16 27);
-  --destructive-foreground: oklch(0.985 0.004 106);
-  --success: oklch(0.5 0.098 152);
-  --success-foreground: oklch(0.985 0.004 106);
-  --warning: oklch(0.62 0.11 76);
-  --warning-foreground: oklch(0.22 0.03 76);
-  --border: oklch(0.905 0.005 106);
-  --border-strong: oklch(0.84 0.007 106);
-  --input: oklch(0.89 0.005 106);
-  --ring: oklch(0.45 0.062 183);
-  --chart-1: oklch(0.45 0.062 183);
-  --chart-2: oklch(0.62 0.11 76);
-  --chart-3: oklch(0.5 0.098 152);
-  --chart-4: oklch(0.51 0.16 27);
-  --chart-5: oklch(0.52 0.011 96);
-  --sidebar: oklch(0.965 0.004 106);
-  --sidebar-foreground: oklch(0.24 0.012 96);
-  --sidebar-primary: oklch(0.45 0.062 183);
-  --sidebar-primary-foreground: oklch(0.985 0.004 180);
-  --sidebar-accent: oklch(0.93 0.017 183);
-  --sidebar-accent-foreground: oklch(0.33 0.05 183);
-  --sidebar-border: oklch(0.905 0.005 106);
-  --sidebar-ring: oklch(0.45 0.062 183);
+  /* BRAND.md, light column */
+  --spectral-bg: #FBF7EF;
+  --spectral-surface: #F2ECE0;
+  --spectral-text: #2E3A3D;
+  --spectral-muted: #5F6763;
+  --spectral-accent: #0B6A5C;
+  --spectral-ok: #41692A;
+  --spectral-warn: #85540F;
+  --spectral-error: #A83229;
+
+  --background: var(--spectral-bg);
+  --foreground: var(--spectral-text);
+  --surface: var(--spectral-surface);
+  --card: var(--spectral-surface);
+  --card-foreground: var(--spectral-text);
+  --popover: var(--spectral-surface);
+  --popover-foreground: var(--spectral-text);
+  --primary: var(--spectral-accent);
+  --primary-foreground: var(--spectral-bg);
+  --secondary: color-mix(in oklch, var(--spectral-text) 7%, var(--spectral-surface));
+  --secondary-foreground: var(--spectral-text);
+  --muted: color-mix(in oklch, var(--spectral-text) 5%, var(--spectral-surface));
+  --muted-foreground: var(--spectral-muted);
+  --accent: color-mix(in oklch, var(--spectral-accent) 10%, var(--spectral-bg));
+  --accent-foreground: var(--spectral-accent);
+  --destructive: var(--spectral-error);
+  --destructive-foreground: var(--spectral-bg);
+  --success: var(--spectral-ok);
+  --success-foreground: var(--spectral-bg);
+  --warning: var(--spectral-warn);
+  --warning-foreground: var(--spectral-bg);
+  --border: color-mix(in oklch, var(--spectral-text) 13%, var(--spectral-bg));
+  --border-strong: color-mix(in oklch, var(--spectral-text) 22%, var(--spectral-bg));
+  --input: color-mix(in oklch, var(--spectral-text) 16%, var(--spectral-bg));
+  --ring: var(--spectral-accent);
+  --chart-1: var(--spectral-accent);
+  --chart-2: var(--spectral-warn);
+  --chart-3: var(--spectral-ok);
+  --chart-4: var(--spectral-error);
+  --chart-5: var(--spectral-muted);
+  --sidebar: var(--spectral-surface);
+  --sidebar-foreground: var(--spectral-text);
+  --sidebar-primary: var(--spectral-accent);
+  --sidebar-primary-foreground: var(--spectral-bg);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--spectral-accent);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--spectral-accent);
 }
 
 .dark {
-  --background: oklch(0.185 0.006 106);
-  --foreground: oklch(0.925 0.004 106);
-  --surface: oklch(0.215 0.006 106);
-  --card: oklch(0.225 0.006 106);
-  --card-foreground: oklch(0.925 0.004 106);
-  --popover: oklch(0.225 0.006 106);
-  --popover-foreground: oklch(0.925 0.004 106);
-  --primary: oklch(0.72 0.084 183);
-  --primary-foreground: oklch(0.19 0.02 183);
-  --secondary: oklch(0.265 0.006 106);
-  --secondary-foreground: oklch(0.92 0.004 106);
-  --muted: oklch(0.255 0.006 106);
-  --muted-foreground: oklch(0.66 0.008 106);
-  --accent: oklch(0.3 0.03 183);
-  --accent-foreground: oklch(0.88 0.05 183);
-  --destructive: oklch(0.63 0.17 27);
-  --destructive-foreground: oklch(0.16 0.01 27);
-  --success: oklch(0.68 0.11 152);
-  --success-foreground: oklch(0.17 0.02 152);
-  --warning: oklch(0.76 0.12 76);
-  --warning-foreground: oklch(0.19 0.03 76);
-  --border: oklch(0.3 0.006 106);
-  --border-strong: oklch(0.38 0.007 106);
-  --input: oklch(0.33 0.006 106);
-  --ring: oklch(0.72 0.084 183);
-  --chart-1: oklch(0.72 0.084 183);
-  --chart-2: oklch(0.76 0.12 76);
-  --chart-3: oklch(0.68 0.11 152);
-  --chart-4: oklch(0.63 0.17 27);
-  --chart-5: oklch(0.66 0.008 106);
-  --sidebar: oklch(0.205 0.006 106);
-  --sidebar-foreground: oklch(0.925 0.004 106);
-  --sidebar-primary: oklch(0.72 0.084 183);
-  --sidebar-primary-foreground: oklch(0.19 0.02 183);
-  --sidebar-accent: oklch(0.3 0.03 183);
-  --sidebar-accent-foreground: oklch(0.88 0.05 183);
-  --sidebar-border: oklch(0.3 0.006 106);
-  --sidebar-ring: oklch(0.72 0.084 183);
+  /* BRAND.md, dark column */
+  --spectral-bg: #1A2023;
+  --spectral-surface: #232B2F;
+  --spectral-text: #D9D3C7;
+  --spectral-muted: #8A9391;
+  --spectral-accent: #5FD3BC;
+  --spectral-ok: #93C97E;
+  --spectral-warn: #E3B778;
+  --spectral-error: #E88A82;
+
+  --background: var(--spectral-bg);
+  --foreground: var(--spectral-text);
+  --surface: var(--spectral-surface);
+  --card: var(--spectral-surface);
+  --card-foreground: var(--spectral-text);
+  --popover: var(--spectral-surface);
+  --popover-foreground: var(--spectral-text);
+  --primary: var(--spectral-accent);
+  --primary-foreground: var(--spectral-bg);
+  --secondary: color-mix(in oklch, var(--spectral-text) 8%, var(--spectral-surface));
+  --secondary-foreground: var(--spectral-text);
+  --muted: color-mix(in oklch, var(--spectral-text) 6%, var(--spectral-surface));
+  --muted-foreground: var(--spectral-muted);
+  --accent: color-mix(in oklch, var(--spectral-accent) 14%, var(--spectral-bg));
+  --accent-foreground: var(--spectral-accent);
+  --destructive: var(--spectral-error);
+  --destructive-foreground: var(--spectral-bg);
+  --success: var(--spectral-ok);
+  --success-foreground: var(--spectral-bg);
+  --warning: var(--spectral-warn);
+  --warning-foreground: var(--spectral-bg);
+  --border: color-mix(in oklch, var(--spectral-text) 13%, var(--spectral-bg));
+  --border-strong: color-mix(in oklch, var(--spectral-text) 22%, var(--spectral-bg));
+  --input: color-mix(in oklch, var(--spectral-text) 16%, var(--spectral-bg));
+  --ring: var(--spectral-accent);
+  --chart-1: var(--spectral-accent);
+  --chart-2: var(--spectral-warn);
+  --chart-3: var(--spectral-ok);
+  --chart-4: var(--spectral-error);
+  --chart-5: var(--spectral-muted);
+  --sidebar: var(--spectral-surface);
+  --sidebar-foreground: var(--spectral-text);
+  --sidebar-primary: var(--spectral-accent);
+  --sidebar-primary-foreground: var(--spectral-bg);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--spectral-accent);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--spectral-accent);
 }
 
 @utility row-focus {

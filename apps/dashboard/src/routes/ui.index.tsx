@@ -34,7 +34,7 @@ function Overview() {
         <PageHeader title="Overview" />
         <EmptyState
           title="You are not in any team"
-          body="Everything in Openarity is scoped to a team — channels, sessions and the senders waiting for approval all belong to one. Create the first team to begin."
+          body="Everything in openarity is scoped to a team — channels, sessions and the senders waiting for approval all belong to one. Create the first team to begin."
           action={
             <Button asChild size="sm">
               <Link to="/ui/teams">Go to teams</Link>

@@ -72,6 +72,7 @@ Load-bearing:
 |`site/content/assets/logo.svg`, `logo-wordmark.svg`, `favicon.svg`|the docs site's copies; the header shows the mark, the tab the favicon|
 |`site/content/assets/apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, `site.webmanifest`|what an SVG cannot be: the iOS home-screen icon and the web manifest, linked from `site/overrides/main.html`|
 |`apps/dashboard/public/favicon.svg`|the dashboard's copy; Vite's publicDir cannot reach outside the app|
+|`apps/dashboard/src/components/mark.tsx`|the mark inline, in the sidebar and on sign-in: the dashboard's theme is a class on `<html>`, which an `<img>` cannot see; `mark.test.tsx` fails if its parts and `assets/logo.svg`'s differ|
 |`assets/mark/geometry.py`|the numbers|
 |`assets/mark/build.py`|writes every SVG above from them; standard library only|
 |`assets/mark/raster.py`|writes the site's home-screen icons and its manifest; needs Pillow|
@@ -83,6 +84,13 @@ Load-bearing:
 `python3 assets/mark/raster.py`; never edit an icon by hand.** It writes every copy, so none can go stale, and
 `apps/dashboard/src/test/favicon.test.ts` fails if the dashboard's copy and
 `assets/favicon.svg` differ anyway.
+
+`mark.tsx` is the one copy `build.py` does not write, since it is a React
+component: a change to `geometry.py` is copied into it by hand, and its test
+fails until it is. The palette is copied the same way, into
+`apps/dashboard/src/styles.css` as `--spectral-*`, and
+`apps/dashboard/src/test/palette.test.ts` reads the table below and fails when
+a value there and in `styles.css` disagree.
 
 **The favicon is not a scaled copy.** It fills more of its box and carries a
 wider cut and larger nodes, so at 32 px the nodes are a clear notch and at
@@ -208,5 +216,5 @@ Two rules that follow from that:
 ## Not decided yet
 
 A typeface, raster fallbacks for the favicon, and anything for the dashboard
-beyond the palette above and the mark in its tab. They belong with the first
+beyond the palette above, the mark in its tab, and the mark beside its name. They belong with the first
 design that needs them, and choosing them now would mean choosing them twice.
