@@ -13,7 +13,7 @@ import (
 )
 
 const createTeam = `-- name: CreateTeam :one
-INSERT INTO teams (name) VALUES ($1) RETURNING id, name, created_at, updated_at
+INSERT INTO teams (name) VALUES ($1) RETURNING id, name, created_at, updated_at, deleted_at
 `
 
 func (q *Queries) CreateTeam(ctx context.Context, name string) (Team, error) {
@@ -24,6 +24,7 @@ func (q *Queries) CreateTeam(ctx context.Context, name string) (Team, error) {
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -37,8 +38,25 @@ func (q *Queries) DeleteTeam(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const getLiveTeam = `-- name: GetLiveTeam :one
+SELECT id, name, created_at, updated_at, deleted_at FROM teams WHERE id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) GetLiveTeam(ctx context.Context, id uuid.UUID) (Team, error) {
+	row := q.db.QueryRow(ctx, getLiveTeam, id)
+	var i Team
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getTeam = `-- name: GetTeam :one
-SELECT id, name, created_at, updated_at FROM teams WHERE id = $1
+SELECT id, name, created_at, updated_at, deleted_at FROM teams WHERE id = $1
 `
 
 func (q *Queries) GetTeam(ctx context.Context, id uuid.UUID) (Team, error) {
@@ -49,14 +67,61 @@ func (q *Queries) GetTeam(ctx context.Context, id uuid.UUID) (Team, error) {
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
+const listDeletedTeams = `-- name: ListDeletedTeams :many
+SELECT id, name, created_at, updated_at, deleted_at FROM teams
+WHERE deleted_at IS NOT NULL AND
+    (NOT $1::bool OR (created_at, id) < ($2::timestamptz, $3::uuid))
+ORDER BY created_at DESC, id DESC
+LIMIT $4
+`
+
+type ListDeletedTeamsParams struct {
+	UseCursor      bool
+	AfterCreatedAt time.Time
+	AfterID        uuid.UUID
+	PageSize       int32
+}
+
+func (q *Queries) ListDeletedTeams(ctx context.Context, arg ListDeletedTeamsParams) ([]Team, error) {
+	rows, err := q.db.Query(ctx, listDeletedTeams,
+		arg.UseCursor,
+		arg.AfterCreatedAt,
+		arg.AfterID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Team
+	for rows.Next() {
+		var i Team
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTeams = `-- name: ListTeams :many
-SELECT id, name, created_at, updated_at FROM teams
-WHERE NOT $1::bool
-   OR (created_at, id) < ($2::timestamptz, $3::uuid)
+SELECT id, name, created_at, updated_at, deleted_at FROM teams
+WHERE deleted_at IS NULL AND 
+    (NOT $1::bool OR (created_at, id) < ($2::timestamptz, $3::uuid))
 ORDER BY created_at DESC, id DESC
 LIMIT $4
 `
@@ -87,6 +152,7 @@ func (q *Queries) ListTeams(ctx context.Context, arg ListTeamsParams) ([]Team, e
 			&i.Name,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -96,4 +162,89 @@ func (q *Queries) ListTeams(ctx context.Context, arg ListTeamsParams) ([]Team, e
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockLiveTeam = `-- name: LockLiveTeam :one
+SELECT id FROM teams WHERE id = $1 AND deleted_at IS NULL FOR SHARE
+`
+
+// Taken first by anything that starts work in a team, in the same
+// transaction as the write.
+func (q *Queries) LockLiveTeam(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockLiveTeam, id)
+	var id_2 uuid.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const purgeTeams = `-- name: PurgeTeams :many
+DELETE FROM teams
+WHERE id IN (SELECT id FROM teams
+             WHERE deleted_at < $1::timestamptz
+             ORDER BY deleted_at LIMIT $2)
+RETURNING id
+`
+
+type PurgeTeamsParams struct {
+	Before time.Time
+	Limit  int32
+}
+
+func (q *Queries) PurgeTeams(ctx context.Context, arg PurgeTeamsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, purgeTeams, arg.Before, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const restoreTeam = `-- name: RestoreTeam :one
+UPDATE teams SET deleted_at = NULL WHERE id = $1 RETURNING id, name, created_at, updated_at, deleted_at
+`
+
+// A live team that now holds the same name makes this fail with 23505.
+func (q *Queries) RestoreTeam(ctx context.Context, id uuid.UUID) (Team, error) {
+	row := q.db.QueryRow(ctx, restoreTeam, id)
+	var i Team
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const softDeleteTeam = `-- name: SoftDeleteTeam :execrows
+UPDATE teams SET deleted_at = now()
+WHERE teams.id = $1
+  AND teams.deleted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM runs
+                  WHERE runs.team_id = teams.id
+                    AND runs.status IN ('queued', 'running'))
+`
+
+// Refused while a run is queued or running. The UPDATE takes the row lock,
+// which conflicts with LockLiveTeam's FOR SHARE, so a run is either seen by
+// the NOT EXISTS or sees deleted_at set. Deleting a deleted team matches
+// nothing, so the first deleted_at, and with it the purge date, stays.
+func (q *Queries) SoftDeleteTeam(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, softDeleteTeam, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
