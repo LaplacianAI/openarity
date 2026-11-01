@@ -302,7 +302,7 @@ func newWorld(t *testing.T) *world {
 	w.store.agents["triage"] = w.agent
 
 	w.mux = http.NewServeMux()
-	New(discardLogger(), w.store, w.authz, w.starter).Register(w.mux, api.NewGuard(runRoutes(t), w.authz, discardLogger()))
+	New(discardLogger(), w.store, w.authz, w.starter).Register(w.mux, api.NewGuard(runRoutes(t), w.authz, liveTeams{}, discardLogger()))
 	return w
 }
 
@@ -1104,3 +1104,9 @@ func TestARefusedHubBodyNeverReachesTheStore(t *testing.T) {
 		t.Errorf("status %d, store asked %d things; want 400 and nothing asked", rec.Code, w.store.touched())
 	}
 }
+
+// liveTeams answers that no team is deleted. The guard's read-only rule for a
+// deleted team is tested once, in internal/api; here it must not get in the way.
+type liveTeams struct{}
+
+func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }

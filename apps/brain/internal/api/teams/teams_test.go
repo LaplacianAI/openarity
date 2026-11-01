@@ -306,7 +306,7 @@ func call(t *testing.T, s Store, a *fakeAuthz, u *auth.User, method, path, body 
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), s, a, testPurgeAfter).Register(mux, api.NewGuard(teamRoutes(t), a, discardLogger()))
+	New(discardLogger(), s, a, testPurgeAfter).Register(mux, api.NewGuard(teamRoutes(t), a, liveTeams{}, discardLogger()))
 
 	var reader io.Reader
 	if body != "" {
@@ -2447,3 +2447,9 @@ func TestListRejectsADeletedThatIsNotABoolean(t *testing.T) {
 		t.Error("a list was read with a malformed parameter")
 	}
 }
+
+// liveTeams answers that no team is deleted. The guard's read-only rule for a
+// deleted team is tested once, in internal/api; here it must not get in the way.
+type liveTeams struct{}
+
+func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }

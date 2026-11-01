@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -19,6 +20,15 @@ type Authorizer interface {
 	IsSuperAdmin(u *auth.User) bool
 	Can(ctx context.Context, u *auth.User, action authz.Action, r authz.Resource) (bool, error)
 	CanInAnyTeam(ctx context.Context, u *auth.User, action authz.Action) (bool, error)
+}
+
+type TeamState interface {
+	TeamDeleted(ctx context.Context, id uuid.UUID) (bool, error)
+}
+
+var writableWhenDeleted = map[string]bool{
+	"DELETE /teams/{id}":       true,
+	"POST /teams/{id}/restore": true,
 }
 
 type teamKey struct{}
@@ -40,14 +50,16 @@ func Caller(r *http.Request) *auth.User {
 type Guard struct {
 	routes  authz.Routes
 	authz   Authorizer
+	teams   TeamState
 	logger  *slog.Logger
 	wrapped map[string]bool
 }
 
-func NewGuard(routes authz.Routes, a Authorizer, logger *slog.Logger) *Guard {
+func NewGuard(routes authz.Routes, a Authorizer, teams TeamState, logger *slog.Logger) *Guard {
 	return &Guard{
 		routes:  routes,
 		authz:   a,
+		teams:   teams,
 		logger:  logger,
 		wrapped: make(map[string]bool, len(routes)),
 	}
@@ -68,6 +80,9 @@ func (g *Guard) Wrap(key string, next http.HandlerFunc) (http.HandlerFunc, error
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
+		if !g.writable(w, r, u, key) {
+			return
+		}
 		g.check(w, r, u, route, next)
 	}, nil
 }
@@ -81,6 +96,30 @@ func (g *Guard) Unused() []string {
 	}
 	slices.Sort(unused)
 	return unused
+}
+
+func (g *Guard) writable(w http.ResponseWriter, r *http.Request, u *auth.User, key string) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead || writableWhenDeleted[key] ||
+		!strings.Contains(key, "{"+teamPathValue+"}") || !g.authz.IsSuperAdmin(u) {
+		return true
+	}
+
+	id, err := uuid.Parse(r.PathValue(teamPathValue))
+	if err != nil {
+		return true // check answers 400 for it
+	}
+
+	deleted, err := g.teams.TeamDeleted(r.Context(), id)
+	if err != nil {
+		g.logger.Error("team state check failed", "path", r.URL.Path, "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return false
+	}
+	if deleted {
+		http.Error(w, "team is deleted; restore it first", http.StatusConflict)
+		return false
+	}
+	return true
 }
 
 func (g *Guard) check(

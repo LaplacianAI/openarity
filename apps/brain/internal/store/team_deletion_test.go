@@ -369,3 +369,30 @@ func TestPurgeTeamsHonoursTheLimit(t *testing.T) {
 		t.Errorf("%d teams left, want 1", n)
 	}
 }
+
+// The guard's question. A team that does not exist is not deleted: the
+// handler behind the guard answers 404 for it, as it always has.
+func TestTeamDeletedReadsTheMark(t *testing.T) {
+	s := queryStore(t)
+	live := mustCreate(t, s, "live")
+	gone := mustCreate(t, s, "gone")
+	softDelete(t, s, gone.ID)
+
+	for name, tc := range map[string]struct {
+		id   uuid.UUID
+		want bool
+	}{
+		"a live team":    {live.ID, false},
+		"a deleted team": {gone.ID, true},
+		"no such team":   {uuid.New(), false},
+	} {
+		got, err := s.TeamDeleted(t.Context(), tc.id)
+		if err != nil {
+			t.Errorf("%s: TeamDeleted: %v", name, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: TeamDeleted = %v, want %v", name, got, tc.want)
+		}
+	}
+}

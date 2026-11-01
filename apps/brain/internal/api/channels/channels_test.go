@@ -204,7 +204,7 @@ func callWith(
 
 	mux := http.NewServeMux()
 	New(discardLogger(), s, sec, p, hookBase).
-		Register(mux, api.NewGuard(channelRoutes(t), a, discardLogger()))
+		Register(mux, api.NewGuard(channelRoutes(t), a, liveTeams{}, discardLogger()))
 
 	var reader io.Reader
 	if body != "" {
@@ -803,3 +803,9 @@ func TestNoPublicAddressMeansNoHookURLAtAll(t *testing.T) {
 		t.Errorf("body %s names a hook_url with no public address configured", rec.Body)
 	}
 }
+
+// liveTeams answers that no team is deleted. The guard's read-only rule for a
+// deleted team is tested once, in internal/api; here it must not get in the way.
+type liveTeams struct{}
+
+func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }

@@ -71,7 +71,7 @@ func skillsMux(t *testing.T, importer *recordingImporter) *http.ServeMux {
 			}
 		}
 		mux := http.NewServeMux()
-		rr.Register(mux, api.NewGuard(routes, allowEverything{}, discardLogger()))
+		rr.Register(mux, api.NewGuard(routes, allowEverything{}, liveTeams{}, discardLogger()))
 		return mux
 	}
 	t.Fatal("newRouters built no router serving /skills/import")
@@ -177,3 +177,9 @@ func TestEachClientReachesOnlyItsOwnHosts(t *testing.T) {
 		}
 	}
 }
+
+// liveTeams answers that no team is deleted. The guard's read-only rule for a
+// deleted team is tested once, in internal/api; here it must not get in the way.
+type liveTeams struct{}
+
+func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }
