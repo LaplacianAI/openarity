@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"net/url"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 )
@@ -76,6 +77,9 @@ type Config struct {
 	EmbeddingAPIKey     string `env:"EMBEDDING_API_KEY" envDefault:""`
 	EmbeddingModel      string `env:"EMBEDDING_MODEL" envDefault:""`
 	EmbeddingDimensions int    `env:"EMBEDDING_DIMENSIONS" envDefault:"0"`
+
+	/* Team Configuration */
+	TeamPurgeAfter time.Duration `env:"TEAM_PURGE_AFTER" envDefault:"168h"`
 }
 
 func (c *Config) String() string {
@@ -85,7 +89,7 @@ func (c *Config) String() string {
 			"SecretsBackend:%s SecretsAddr:%s "+
 			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
 			"LLMBaseURL:%s SkillImportHosts:%v MCPPrivateNetworks:%v "+
-			"EmbeddingBaseURL:%s EmbeddingModel:%s EmbeddingDimensions:%d}",
+			"EmbeddingBaseURL:%s EmbeddingModel:%s EmbeddingDimensions:%d TeamPurgeAfter:%s}",
 		c.Environment,
 		c.LogLevel,
 		c.APIBind,
@@ -106,6 +110,7 @@ func (c *Config) String() string {
 		redactURL(c.EmbeddingBaseURL),
 		c.EmbeddingModel,
 		c.EmbeddingDimensions,
+		c.TeamPurgeAfter,
 	)
 }
 

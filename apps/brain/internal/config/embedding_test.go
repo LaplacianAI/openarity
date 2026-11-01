@@ -203,7 +203,7 @@ func TestStringShowsTheEmbeddingSettings(t *testing.T) {
 	for _, want := range []string{
 		" EmbeddingBaseURL:https://user:xxxxx@gateway.example.com/v1 ",
 		" EmbeddingModel:text-embedding-3-small ",
-		"EmbeddingDimensions:1536}",
+		" EmbeddingDimensions:1536 ",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("String() = %s, want it to contain %q", s, want)
