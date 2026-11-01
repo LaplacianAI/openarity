@@ -65,7 +65,7 @@ Do not wait to be asked. These changes make a document wrong:
 - **A new endpoint** → `apps/brain/api/openapi.yaml` first, since a test fails
   without it, then `site/content/docs/reference/http-api.md`.
 - **A new example under `sdk/agent/examples/`** → its README table and
-  `site/content/docs/examples/`.
+  `site/content/docs/agent-sdk/examples.md`.
 - **A dependency with a version floor** — a Postgres feature, a Go version →
   the prerequisites in both files.
 - **A feature actually shipping** → move it out of "not built yet" in the
