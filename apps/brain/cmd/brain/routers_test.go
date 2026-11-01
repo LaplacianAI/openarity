@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -182,5 +183,105 @@ func TestAHubStartIsTheTeamsHubInADirectSession(t *testing.T) {
 	}
 	if !r.Hub || r.AgentID == nil || *r.AgentID != w.agent || r.AgentName != "triage" {
 		t.Errorf("run is hub %v, agent %v %q; want triage", r.Hub, r.AgentID, r.AgentName)
+	}
+}
+
+// A delete is refused while a run is queued or running, so a deleted team has
+// nothing for a worker to claim. That holds only if a run cannot start in a
+// team in the middle of being deleted.
+func TestAStartedRunNeverLandsInADeletedTeam(t *testing.T) {
+	w := newRunWorld(t)
+
+	var started, refused int
+	for i := range 200 {
+		team, agent := w.freshTeam(t, i)
+
+		var (
+			wg       sync.WaitGroup
+			startErr error
+			deleted  int64
+			delErr   error
+		)
+		gate := make(chan struct{})
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-gate
+			_, startErr = w.store.StartRun(t.Context(), runs.StartArgs{
+				ID: uuid.New(), TeamID: team, AgentID: agent, UserID: w.user, Input: "hello",
+			})
+		}()
+		go func() {
+			defer wg.Done()
+			<-gate
+			deleted, delErr = w.store.SoftDeleteTeam(t.Context(), team)
+		}()
+		close(gate)
+		wg.Wait()
+
+		if delErr != nil {
+			t.Fatalf("round %d: SoftDeleteTeam: %v", i, delErr)
+		}
+		switch {
+		case startErr == nil && deleted == 0:
+			started++
+		case errors.Is(startErr, runs.ErrTeamDeleted) && deleted == 1:
+			refused++
+		default:
+			t.Errorf("round %d: StartRun = %v and the delete updated %d rows", i, startErr, deleted)
+		}
+
+		var live int
+		if err := w.raw.QueryRow(t.Context(), `
+			SELECT count(*) FROM runs r JOIN teams tm ON tm.id = r.team_id
+			WHERE tm.deleted_at IS NOT NULL AND r.status IN ('queued', 'running')`).Scan(&live); err != nil {
+			t.Fatalf("round %d: count: %v", i, err)
+		}
+		if live != 0 {
+			t.Fatalf("round %d: a deleted team holds %d live runs", i, live)
+		}
+	}
+	t.Logf("%d runs started first, %d deletes won", started, refused)
+}
+
+// freshTeam is a live team with an agent in it, one per round, so no round
+// inherits the last one's runs.
+func (w *runWorld) freshTeam(t *testing.T, round int) (team, agent uuid.UUID) {
+	t.Helper()
+
+	if err := w.raw.QueryRow(t.Context(),
+		`INSERT INTO teams (name) VALUES ('race-' || $1::int) RETURNING id`, round).Scan(&team); err != nil {
+		t.Fatalf("insert team: %v", err)
+	}
+	if err := w.raw.QueryRow(t.Context(), `
+		INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
+		VALUES ($1, 'triage', 'test/model', 1024, 'react', 5) RETURNING id`, team).Scan(&agent); err != nil {
+		t.Fatalf("insert agent: %v", err)
+	}
+	return team, agent
+}
+
+// After the delete has committed, a start is refused before it writes
+// anything: no direct session is left behind for a team being purged.
+func TestARunInADeletedTeamIsRefusedAndWritesNothing(t *testing.T) {
+	w := newRunWorld(t)
+	if n, err := w.store.SoftDeleteTeam(t.Context(), w.team); err != nil || n != 1 {
+		t.Fatalf("SoftDeleteTeam = %d, %v", n, err)
+	}
+	sessions := w.count(t, "sessions")
+
+	for name, arg := range map[string]runs.StartArgs{
+		"an agent's run": {ID: uuid.New(), TeamID: w.team, AgentID: w.agent, UserID: w.user, Input: "hello"},
+		"a hub run":      {ID: uuid.New(), TeamID: w.team, UserID: w.user, Input: "hello", Hub: true},
+	} {
+		if _, err := w.store.StartRun(t.Context(), arg); !errors.Is(err, runs.ErrTeamDeleted) {
+			t.Errorf("%s: StartRun = %v, want runs.ErrTeamDeleted", name, err)
+		}
+	}
+	if n := w.count(t, "sessions"); n != sessions {
+		t.Errorf("sessions went from %d to %d", sessions, n)
+	}
+	if n := w.count(t, "runs"); n != 0 {
+		t.Errorf("%d runs written", n)
 	}
 }

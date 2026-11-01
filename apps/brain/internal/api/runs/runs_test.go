@@ -568,6 +568,29 @@ func TestAHubRunWithNoRowSaysTheTeamIsGone(t *testing.T) {
 	}
 }
 
+// The store refuses a start in a team deleted since the request was
+// authorized. The answer is the one a team that does not exist gets, for an
+// agent's run and for the hub's alike.
+func TestARunInADeletedTeamIsNotFound(t *testing.T) {
+	for name, body := range map[string]map[string]any{
+		"an agent's run": start("hi", nil),
+		"a hub run":      {"input": "hi"},
+	} {
+		w := newWorld(t)
+		w.withModel()
+		w.store.startErr = ErrTeamDeleted
+
+		rec := w.call(t, w.me, http.MethodPost, w.runs(), body)
+
+		if rec.Code != http.StatusNotFound || strings.TrimSpace(rec.Body.String()) != "no such team" {
+			t.Errorf("%s: status %d %q, want 404 %q", name, rec.Code, rec.Body, "no such team")
+		}
+		if len(w.starter.ids) != 0 {
+			t.Errorf("%s: enqueued %v, want nothing", name, w.starter.ids)
+		}
+	}
+}
+
 func TestAStartThatFailsIsA500ThatLeaksNothing(t *testing.T) {
 	w := newWorld(t)
 	w.store.startErr = errAny

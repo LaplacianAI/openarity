@@ -21,6 +21,10 @@ const (
 	readEveryConversation = authz.Action("session:read_all")
 )
 
+// ErrTeamDeleted is StartRun refusing a team deleted since the request was
+// authorized. It answers as a team that does not exist.
+var ErrTeamDeleted = errors.New("team is deleted")
+
 type StartArgs struct {
 	ID        uuid.UUID
 	TeamID    uuid.UUID
@@ -125,6 +129,10 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 	}
 
 	row, err := h.store.StartRun(r.Context(), args)
+	if errors.Is(err, ErrTeamDeleted) {
+		http.Error(w, "no such team", http.StatusNotFound)
+		return
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		if args.Hub {
 			http.Error(w, "no such team", http.StatusNotFound)

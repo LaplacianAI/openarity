@@ -24,11 +24,20 @@ RETURNING id;
 -- name: GetLiveTeam :one
 SELECT * FROM teams WHERE id = $1 AND deleted_at IS NULL;
 
--- Refused while a run is queued or running. The UPDATE takes the row lock,
--- which conflicts with LockLiveTeam's FOR SHARE, so a run is either seen by
--- the NOT EXISTS or sees deleted_at set. Deleting a deleted team matches
--- nothing, so the first deleted_at, and with it the purge date, stays.
--- name: SoftDeleteTeam :execrows
+-- The lock half of a delete, taken in a statement of its own. It conflicts
+-- with LockLiveTeam's FOR SHARE, so it waits for a run being started to
+-- commit, and MarkTeamDeleted, the next statement, then has a snapshot that
+-- sees the run. Locking inside the UPDATE is not enough: an UPDATE that waits
+-- re-checks the team row but reads runs through the snapshot it began with.
+-- No deleted_at filter, so deleting a deleted team still serialises.
+-- name: LockTeamForDelete :one
+SELECT id FROM teams WHERE id = $1 FOR NO KEY UPDATE;
+
+-- Refused while a run is queued or running. Run only after
+-- LockTeamForDelete in the same transaction; store.SoftDeleteTeam does both.
+-- Deleting a deleted team matches nothing, so the first deleted_at, and with
+-- it the purge date, stays.
+-- name: MarkTeamDeleted :execrows
 UPDATE teams SET deleted_at = now()
 WHERE teams.id = $1
   AND teams.deleted_at IS NULL

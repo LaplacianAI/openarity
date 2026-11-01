@@ -177,6 +177,44 @@ func (q *Queries) LockLiveTeam(ctx context.Context, id uuid.UUID) (uuid.UUID, er
 	return id_2, err
 }
 
+const lockTeamForDelete = `-- name: LockTeamForDelete :one
+SELECT id FROM teams WHERE id = $1 FOR NO KEY UPDATE
+`
+
+// The lock half of a delete, taken in a statement of its own. It conflicts
+// with LockLiveTeam's FOR SHARE, so it waits for a run being started to
+// commit, and MarkTeamDeleted, the next statement, then has a snapshot that
+// sees the run. Locking inside the UPDATE is not enough: an UPDATE that waits
+// re-checks the team row but reads runs through the snapshot it began with.
+// No deleted_at filter, so deleting a deleted team still serialises.
+func (q *Queries) LockTeamForDelete(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockTeamForDelete, id)
+	var id_2 uuid.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const markTeamDeleted = `-- name: MarkTeamDeleted :execrows
+UPDATE teams SET deleted_at = now()
+WHERE teams.id = $1
+  AND teams.deleted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM runs
+                  WHERE runs.team_id = teams.id
+                    AND runs.status IN ('queued', 'running'))
+`
+
+// Refused while a run is queued or running. Run only after
+// LockTeamForDelete in the same transaction; store.SoftDeleteTeam does both.
+// Deleting a deleted team matches nothing, so the first deleted_at, and with
+// it the purge date, stays.
+func (q *Queries) MarkTeamDeleted(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markTeamDeleted, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const purgeTeams = `-- name: PurgeTeams :many
 DELETE FROM teams
 WHERE id IN (SELECT id FROM teams
@@ -226,25 +264,4 @@ func (q *Queries) RestoreTeam(ctx context.Context, id uuid.UUID) (Team, error) {
 		&i.DeletedAt,
 	)
 	return i, err
-}
-
-const softDeleteTeam = `-- name: SoftDeleteTeam :execrows
-UPDATE teams SET deleted_at = now()
-WHERE teams.id = $1
-  AND teams.deleted_at IS NULL
-  AND NOT EXISTS (SELECT 1 FROM runs
-                  WHERE runs.team_id = teams.id
-                    AND runs.status IN ('queued', 'running'))
-`
-
-// Refused while a run is queued or running. The UPDATE takes the row lock,
-// which conflicts with LockLiveTeam's FOR SHARE, so a run is either seen by
-// the NOT EXISTS or sees deleted_at set. Deleting a deleted team matches
-// nothing, so the first deleted_at, and with it the purge date, stays.
-func (q *Queries) SoftDeleteTeam(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, softDeleteTeam, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }

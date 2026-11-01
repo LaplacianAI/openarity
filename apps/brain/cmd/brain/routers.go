@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/authconfig"
@@ -111,6 +114,13 @@ type runStore struct{ *store.Store }
 func (s runStore) StartRun(ctx context.Context, arg runs.StartArgs) (db.Run, error) {
 	var run db.Run
 	err := s.InTx(ctx, func(q *db.Queries) error {
+		// Before the first write, so a delete waits for this run or refuses it.
+		if _, err := q.LockLiveTeam(ctx, arg.TeamID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return runs.ErrTeamDeleted
+			}
+			return err
+		}
 		sessionID := arg.SessionID
 		if sessionID == nil {
 			created, err := q.CreateDirectSession(ctx, db.CreateDirectSessionParams{TeamID: arg.TeamID, UserID: arg.UserID})
