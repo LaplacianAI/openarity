@@ -101,6 +101,16 @@
       "scope": "member"
     },
     {
+      "method": "DELETE",
+      "path": "/teams/{id}",
+      "scope": "super_admin"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/restore",
+      "scope": "super_admin"
+    },
+    {
       "method": "GET",
       "path": "/teams/{id}/members",
       "scope": "member"

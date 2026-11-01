@@ -443,6 +443,8 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"POST /teams":                         "super_admin",
 		"GET /teams":                          "authenticated",
 		"GET /teams/{id}":                     "member",
+		"DELETE /teams/{id}":                  "super_admin",
+		"POST /teams/{id}/restore":            "super_admin",
 		"GET /teams/{id}/members":             "member",
 		"POST /teams/{id}/members":            "team membership:write",
 		"DELETE /teams/{id}/members/{userID}": "team membership:write",

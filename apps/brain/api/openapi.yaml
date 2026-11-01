@@ -153,9 +153,20 @@ paths:
         A super admin sees every team, paged. Everyone else sees the teams
         they belong to, with their role in each, in a single page with no
         cursor — a person's own memberships are bounded.
+
+        Deleted teams are left out. A super admin asks for them with
+        `deleted=true`, which lists only deleted teams, each with the date it
+        is purged; from anyone else the parameter is ignored.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: deleted
+          in: query
+          required: false
+          description: List only deleted teams. Super admins only; ignored otherwise.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: A page of teams
@@ -216,6 +227,9 @@ paths:
         Members and super admins only. A team the caller may not see and a
         team that does not exist answer identically — a 403 would confirm the
         id is real.
+
+        A deleted team is 404 for its members. A super admin still reads it,
+        with `deleted_at` and `purge_at` set.
       responses:
         "200":
           description: The team, carrying the caller's role if they are a member
@@ -229,6 +243,77 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "404":
           $ref: "#/components/responses/NotFound"
+
+    delete:
+      operationId: deleteTeam
+      tags: [teams]
+      summary: Delete a team
+      description: |
+        Super admins only. The team is hidden and stopped at once: its members
+        no longer see it, its channels refuse webhooks, and no run can start
+        in it. Nothing is erased until `purge_at`, which is
+        `TEAM_PURGE_AFTER` (a week by default) after the delete; until then
+        `POST /teams/{id}/restore` brings it back whole.
+
+        Refused while a run in the team is queued or running: a delete does
+        not cancel work. Deleting a deleted team answers 204 and does not
+        move its purge date, so repeating the call cannot postpone an erasure.
+      responses:
+        "204":
+          description: Deleted, or already deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A run in the team is queued or running
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the team has runs in progress"]
+
+  /teams/{id}/restore:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    post:
+      operationId: restoreTeam
+      tags: [teams]
+      summary: Restore a deleted team
+      description: |
+        Super admins only. Everything comes back as it was — members,
+        channels, sessions, settings, grants — because nothing was removed.
+        Restoring a team that is not deleted answers 200 and changes nothing.
+
+        A deleted team's name is free for a new team at once, so the restore
+        is refused if a live team has taken it since; rename one of them
+        first. A purged team is gone and answers 404.
+      responses:
+        "200":
+          description: The team, live again
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A live team now has this team's name
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["a team with that name already exists"]
 
   /teams/{id}/permissions:
     parameters:
@@ -2569,6 +2654,21 @@ components:
             The caller's role in this team. Absent when they are not a member,
             which is the normal case for a super admin.
           examples: ["admin"]
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            When the team was deleted. Absent for a live team. Only a super
+            admin ever sees a deleted team.
+        purge_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            When a deleted team is erased for good, `deleted_at` plus
+            `TEAM_PURGE_AFTER`. Computed, never stored, so changing the setting
+            moves every pending purge. Absent for a live team.
 
     Member:
       type: object

@@ -7,9 +7,11 @@ import (
 )
 
 type team struct {
-	ID   uuid.UUID `json:"id"`
-	Name string    `json:"name"`
-	Role *string   `json:"role,omitempty"`
+	ID        uuid.UUID  `json:"id"`
+	Name      string     `json:"name"`
+	Role      *string    `json:"role,omitempty"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	PurgeAt   *time.Time `json:"purge_at,omitempty"`
 }
 
 type createRequest struct {

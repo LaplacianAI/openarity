@@ -1215,10 +1215,18 @@ type SkillUpload struct {
 
 // Team defines model for Team.
 type Team struct {
-	ID openapi_types.UUID `json:"id" yaml:"id"`
+	// DeletedAt When the team was deleted. Absent for a live team. Only a super
+	// admin ever sees a deleted team.
+	DeletedAt *time.Time         `json:"deleted_at,omitempty" yaml:"deleted_at,omitempty"`
+	ID        openapi_types.UUID `json:"id" yaml:"id"`
 
 	// Name Examples: platform
 	Name string `json:"name" yaml:"name"`
+
+	// PurgeAt When a deleted team is erased for good, `deleted_at` plus
+	// `TEAM_PURGE_AFTER`. Computed, never stored, so changing the setting
+	// moves every pending purge. Absent for a live team.
+	PurgeAt *time.Time `json:"purge_at,omitempty" yaml:"purge_at,omitempty"`
 
 	// Role The caller's role in this team. Absent when they are not a member,
 	// which is the normal case for a super admin.
@@ -1392,6 +1400,9 @@ type ListTeamsParams struct {
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Deleted List only deleted teams. Super admins only; ignored otherwise.
+	Deleted *bool `form:"deleted,omitempty" json:"deleted,omitempty" yaml:"deleted,omitempty"`
 }
 
 // ListAgentsParams defines parameters for ListAgents.
@@ -1741,6 +1752,10 @@ type ClientInterface interface {
 	// they belong to, with their role in each, in a single page with no
 	// cursor — a person's own memberships are bounded.
 	//
+	// Deleted teams are left out. A super admin asks for them with
+	// `deleted=true`, which lists only deleted teams, each with the date it
+	// is purged; from anyone else the parameter is ignored.
+	//
 	// Corresponds with GET /teams (the `ListTeams` operationId).
 	ListTeams(ctx context.Context, params *ListTeamsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1770,11 +1785,29 @@ type ClientInterface interface {
 	// Corresponds with POST /teams (the `CreateTeam` operationId).
 	CreateTeam(ctx context.Context, body CreateTeamJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteTeam Delete a team
+	//
+	// Super admins only. The team is hidden and stopped at once: its members
+	// no longer see it, its channels refuse webhooks, and no run can start
+	// in it. Nothing is erased until `purge_at`, which is
+	// `TEAM_PURGE_AFTER` (a week by default) after the delete; until then
+	// `POST /teams/{id}/restore` brings it back whole.
+	//
+	// Refused while a run in the team is queued or running: a delete does
+	// not cancel work. Deleting a deleted team answers 204 and does not
+	// move its purge date, so repeating the call cannot postpone an erasure.
+	//
+	// Corresponds with DELETE /teams/{id} (the `DeleteTeam` operationId).
+	DeleteTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetTeam Read one team
 	//
 	// Members and super admins only. A team the caller may not see and a
 	// team that does not exist answer identically — a 403 would confirm the
 	// id is real.
+	//
+	// A deleted team is 404 for its members. A super admin still reads it,
+	// with `deleted_at` and `purge_at` set.
 	//
 	// Corresponds with GET /teams/{id} (the `GetTeam` operationId).
 	GetTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2211,6 +2244,19 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 	GetTeamPermissions(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RestoreTeam Restore a deleted team
+	//
+	// Super admins only. Everything comes back as it was — members,
+	// channels, sessions, settings, grants — because nothing was removed.
+	// Restoring a team that is not deleted answers 200 and changes nothing.
+	//
+	// A deleted team's name is free for a new team at once, so the restore
+	// is refused if a live team has taken it since; rename one of them
+	// first. A purged team is gone and answers 404.
+	//
+	// Corresponds with POST /teams/{id}/restore (the `RestoreTeam` operationId).
+	RestoreTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartRunWithBody Start a run of an agent, or ask the team's hub
 	//
@@ -2684,6 +2730,10 @@ func (c *Client) GetReady(ctx context.Context, reqEditors ...RequestEditorFn) (*
 // they belong to, with their role in each, in a single page with no
 // cursor — a person's own memberships are bounded.
 //
+// Deleted teams are left out. A super admin asks for them with
+// `deleted=true`, which lists only deleted teams, each with the date it
+// is purged; from anyone else the parameter is ignored.
+//
 // Corresponds with GET /teams (the `ListTeams` operationId).
 func (c *Client) ListTeams(ctx context.Context, params *ListTeamsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListTeamsRequest(c.Server, params)
@@ -2743,11 +2793,39 @@ func (c *Client) CreateTeam(ctx context.Context, body CreateTeamJSONRequestBody,
 	return c.Client.Do(req)
 }
 
+// DeleteTeam Delete a team
+//
+// Super admins only. The team is hidden and stopped at once: its members
+// no longer see it, its channels refuse webhooks, and no run can start
+// in it. Nothing is erased until `purge_at`, which is
+// `TEAM_PURGE_AFTER` (a week by default) after the delete; until then
+// `POST /teams/{id}/restore` brings it back whole.
+//
+// Refused while a run in the team is queued or running: a delete does
+// not cancel work. Deleting a deleted team answers 204 and does not
+// move its purge date, so repeating the call cannot postpone an erasure.
+//
+// Corresponds with DELETE /teams/{id} (the `DeleteTeam` operationId).
+func (c *Client) DeleteTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteTeamRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetTeam Read one team
 //
 // Members and super admins only. A team the caller may not see and a
 // team that does not exist answer identically — a 403 would confirm the
 // id is real.
+//
+// A deleted team is 404 for its members. A super admin still reads it,
+// with `deleted_at` and `purge_at` set.
 //
 // Corresponds with GET /teams/{id} (the `GetTeam` operationId).
 func (c *Client) GetTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3515,6 +3593,29 @@ func (c *Client) RemoveTeamMember(ctx context.Context, id TeamID, userID openapi
 // Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 func (c *Client) GetTeamPermissions(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTeamPermissionsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RestoreTeam Restore a deleted team
+//
+// Super admins only. Everything comes back as it was — members,
+// channels, sessions, settings, grants — because nothing was removed.
+// Restoring a team that is not deleted answers 200 and changes nothing.
+//
+// A deleted team's name is free for a new team at once, so the restore
+// is refused if a live team has taken it since; rename one of them
+// first. A purged team is gone and answers 404.
+//
+// Corresponds with POST /teams/{id}/restore (the `RestoreTeam` operationId).
+func (c *Client) RestoreTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRestoreTeamRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -4313,6 +4414,18 @@ func NewListTeamsRequest(server string, params *ListTeamsParams) (*http.Request,
 
 		}
 
+		if params.Deleted != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "deleted", *params.Deleted, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -4363,6 +4476,40 @@ func NewCreateTeamRequestWithBody(server string, contentType string, body io.Rea
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteTeamRequest constructs an http.Request for the DeleteTeam method
+func NewDeleteTeamRequest(server string, id TeamID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -5828,6 +5975,40 @@ func NewGetTeamPermissionsRequest(server string, id TeamID) (*http.Request, erro
 	return req, nil
 }
 
+// NewRestoreTeamRequest constructs an http.Request for the RestoreTeam method
+func NewRestoreTeamRequest(server string, id TeamID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/restore", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewStartRunRequest calls the generic StartRun builder with application/json body
 func NewStartRunRequest(server string, id TeamID, body StartRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -7096,6 +7277,10 @@ type ClientWithResponsesInterface interface {
 	// they belong to, with their role in each, in a single page with no
 	// cursor — a person's own memberships are bounded.
 	//
+	// Deleted teams are left out. A super admin asks for them with
+	// `deleted=true`, which lists only deleted teams, each with the date it
+	// is purged; from anyone else the parameter is ignored.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /teams (the `ListTeams` operationId).
@@ -7127,11 +7312,31 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /teams (the `CreateTeam` operationId).
 	CreateTeamWithResponse(ctx context.Context, body CreateTeamJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTeamResponse, error)
 
+	// DeleteTeamWithResponse Delete a team
+	//
+	// Super admins only. The team is hidden and stopped at once: its members
+	// no longer see it, its channels refuse webhooks, and no run can start
+	// in it. Nothing is erased until `purge_at`, which is
+	// `TEAM_PURGE_AFTER` (a week by default) after the delete; until then
+	// `POST /teams/{id}/restore` brings it back whole.
+	//
+	// Refused while a run in the team is queued or running: a delete does
+	// not cancel work. Deleting a deleted team answers 204 and does not
+	// move its purge date, so repeating the call cannot postpone an erasure.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id} (the `DeleteTeam` operationId).
+	DeleteTeamWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*DeleteTeamResponse, error)
+
 	// GetTeamWithResponse Read one team
 	//
 	// Members and super admins only. A team the caller may not see and a
 	// team that does not exist answer identically — a 403 would confirm the
 	// id is real.
+	//
+	// A deleted team is 404 for its members. A super admin still reads it,
+	// with `deleted_at` and `purge_at` set.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7608,6 +7813,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 	GetTeamPermissionsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamPermissionsResponse, error)
+
+	// RestoreTeamWithResponse Restore a deleted team
+	//
+	// Super admins only. Everything comes back as it was — members,
+	// channels, sessions, settings, grants — because nothing was removed.
+	// Restoring a team that is not deleted answers 200 and changes nothing.
+	//
+	// A deleted team's name is free for a new team at once, so the restore
+	// is refused if a live team has taken it since; rename one of them
+	// first. A purged team is gone and answers 404.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/restore (the `RestoreTeam` operationId).
+	RestoreTeamWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*RestoreTeamResponse, error)
 
 	// StartRunWithBodyWithResponse Start a run of an agent, or ask the team's hub
 	//
@@ -8248,6 +8468,47 @@ func (r CreateTeamResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateTeamResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteTeamResponse401Headers the declared response headers of an HTTP 401 response for DeleteTeam
+type DeleteTeamResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DeleteTeamResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DeleteTeamResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteTeamResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteTeamResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteTeamResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteTeamResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -9501,6 +9762,54 @@ func (r GetTeamPermissionsResponse) ContentType() string {
 	return ""
 }
 
+// RestoreTeamResponse401Headers the declared response headers of an HTTP 401 response for RestoreTeam
+type RestoreTeamResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type RestoreTeamResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Team
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RestoreTeamResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RestoreTeamResponse) GetJSON200() *Team {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r RestoreTeamResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RestoreTeamResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RestoreTeamResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RestoreTeamResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // StartRunResponse401Headers the declared response headers of an HTTP 401 response for StartRun
 type StartRunResponse401Headers struct {
 	WWWAuthenticate *string
@@ -10607,6 +10916,10 @@ func (c *ClientWithResponses) GetReadyWithResponse(ctx context.Context, reqEdito
 // they belong to, with their role in each, in a single page with no
 // cursor — a person's own memberships are bounded.
 //
+// Deleted teams are left out. A super admin asks for them with
+// `deleted=true`, which lists only deleted teams, each with the date it
+// is purged; from anyone else the parameter is ignored.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /teams (the `ListTeams` operationId).
@@ -10656,11 +10969,37 @@ func (c *ClientWithResponses) CreateTeamWithResponse(ctx context.Context, body C
 	return ParseCreateTeamResponse(rsp)
 }
 
+// DeleteTeamWithResponse Delete a team
+//
+// Super admins only. The team is hidden and stopped at once: its members
+// no longer see it, its channels refuse webhooks, and no run can start
+// in it. Nothing is erased until `purge_at`, which is
+// `TEAM_PURGE_AFTER` (a week by default) after the delete; until then
+// `POST /teams/{id}/restore` brings it back whole.
+//
+// Refused while a run in the team is queued or running: a delete does
+// not cancel work. Deleting a deleted team answers 204 and does not
+// move its purge date, so repeating the call cannot postpone an erasure.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id} (the `DeleteTeam` operationId).
+func (c *ClientWithResponses) DeleteTeamWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*DeleteTeamResponse, error) {
+	rsp, err := c.DeleteTeam(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteTeamResponse(rsp)
+}
+
 // GetTeamWithResponse Read one team
 //
 // Members and super admins only. A team the caller may not see and a
 // team that does not exist answer identically — a 403 would confirm the
 // id is real.
+//
+// A deleted team is 404 for its members. A super admin still reads it,
+// with `deleted_at` and `purge_at` set.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -11340,6 +11679,27 @@ func (c *ClientWithResponses) GetTeamPermissionsWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseGetTeamPermissionsResponse(rsp)
+}
+
+// RestoreTeamWithResponse Restore a deleted team
+//
+// Super admins only. Everything comes back as it was — members,
+// channels, sessions, settings, grants — because nothing was removed.
+// Restoring a team that is not deleted answers 200 and changes nothing.
+//
+// A deleted team's name is free for a new team at once, so the restore
+// is refused if a live team has taken it since; rename one of them
+// first. A purged team is gone and answers 404.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/restore (the `RestoreTeam` operationId).
+func (c *ClientWithResponses) RestoreTeamWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*RestoreTeamResponse, error) {
+	rsp, err := c.RestoreTeam(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRestoreTeamResponse(rsp)
 }
 
 // StartRunWithBodyWithResponse Start a run of an agent, or ask the team's hub
@@ -12054,6 +12414,35 @@ func ParseCreateTeamResponse(rsp *http.Response) (*CreateTeamResponse, error) {
 	switch {
 	case rsp.StatusCode == 401:
 		var headers CreateTeamResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteTeamResponse parses an HTTP response from a DeleteTeamWithResponse call
+func ParseDeleteTeamResponse(rsp *http.Response) (*DeleteTeamResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteTeamResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DeleteTeamResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -13037,6 +13426,45 @@ func ParseGetTeamPermissionsResponse(rsp *http.Response) (*GetTeamPermissionsRes
 	switch {
 	case rsp.StatusCode == 401:
 		var headers GetTeamPermissionsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRestoreTeamResponse parses an HTTP response from a RestoreTeamWithResponse call
+func ParseRestoreTeamResponse(rsp *http.Response) (*RestoreTeamResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RestoreTeamResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Team
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers RestoreTeamResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

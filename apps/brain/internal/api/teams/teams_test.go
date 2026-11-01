@@ -50,6 +50,22 @@ type fakeStore struct {
 	listedUser   int
 	getTeamCalls int
 
+	// liveRuns holds the teams with a run queued or running, which
+	// SoftDeleteTeam refuses. restoreErr is what RestoreTeam fails with, as a
+	// name taken since would; purgedOnRestore has the team vanish between
+	// the handler's read and its write, as a purge tick would.
+	liveRuns        map[uuid.UUID]bool
+	restoreErr      error
+	purgedOnRestore bool
+
+	// calls is every team read and write in order, so a test can say which
+	// came first. softDeleted and restored record only the writes that
+	// changed a row.
+	calls       []string
+	softDeleted []uuid.UUID
+	restored    []uuid.UUID
+	deletedArgs []db.ListDeletedTeamsParams
+
 	// actions is what each role is granted, as rbac.json would; askedFor
 	// records which roles were looked up.
 	actions  map[string][]string
@@ -84,6 +100,7 @@ func (f *fakeStore) CreateTeam(_ context.Context, name string) (db.Team, error) 
 
 func (f *fakeStore) GetTeam(_ context.Context, id uuid.UUID) (db.Team, error) {
 	f.getTeamCalls++
+	f.calls = append(f.calls, "GetTeam")
 	if f.err != nil {
 		return db.Team{}, f.err
 	}
@@ -101,17 +118,83 @@ func (f *fakeStore) ListTeams(_ context.Context, arg db.ListTeamsParams) ([]db.T
 		return nil, f.err
 	}
 
-	rows := slices.Clone(f.teams)
-	// created_at DESC, id DESC
+	live := slices.DeleteFunc(slices.Clone(f.teams), func(t db.Team) bool { return t.DeletedAt != nil })
+	return pageTeams(live, arg.UseCursor, arg.AfterCreatedAt, arg.AfterID, arg.PageSize), nil
+}
+
+// pageTeams is the keyset both team lists share: created_at DESC, id DESC,
+// the cursor applied, then truncated.
+func pageTeams(rows []db.Team, useCursor bool, afterCreatedAt time.Time, afterID uuid.UUID, size int32) []db.Team {
 	slices.SortFunc(rows, func(a, b db.Team) int {
 		return -compareKey(a.CreatedAt.String(), a.ID, b.CreatedAt.String(), b.ID)
 	})
-	if arg.UseCursor {
+	if useCursor {
 		rows = slices.DeleteFunc(rows, func(t db.Team) bool {
-			return compareKey(t.CreatedAt.String(), t.ID, arg.AfterCreatedAt.String(), arg.AfterID) >= 0
+			return compareKey(t.CreatedAt.String(), t.ID, afterCreatedAt.String(), afterID) >= 0
 		})
 	}
-	return truncate(rows, arg.PageSize), nil
+	return truncate(rows, size)
+}
+
+func (f *fakeStore) GetLiveTeam(_ context.Context, id uuid.UUID) (db.Team, error) {
+	f.calls = append(f.calls, "GetLiveTeam")
+	if f.err != nil {
+		return db.Team{}, f.err
+	}
+	for _, t := range f.teams {
+		if t.ID == id && t.DeletedAt == nil {
+			return t, nil
+		}
+	}
+	return db.Team{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListDeletedTeams(_ context.Context, arg db.ListDeletedTeamsParams) ([]db.Team, error) {
+	f.deletedArgs = append(f.deletedArgs, arg)
+	if f.err != nil {
+		return nil, f.err
+	}
+	deleted := slices.DeleteFunc(slices.Clone(f.teams), func(t db.Team) bool { return t.DeletedAt == nil })
+	return pageTeams(deleted, arg.UseCursor, arg.AfterCreatedAt, arg.AfterID, arg.PageSize), nil
+}
+
+// SoftDeleteTeam is the guarded UPDATE: it matches a live team with no live
+// runs, and nothing else.
+func (f *fakeStore) SoftDeleteTeam(_ context.Context, id uuid.UUID) (int64, error) {
+	f.calls = append(f.calls, "SoftDeleteTeam")
+	if f.err != nil {
+		return 0, f.err
+	}
+	for i, t := range f.teams {
+		if t.ID == id && t.DeletedAt == nil && !f.liveRuns[id] {
+			at := deletedAt
+			f.teams[i].DeletedAt = &at
+			f.softDeleted = append(f.softDeleted, id)
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
+func (f *fakeStore) RestoreTeam(_ context.Context, id uuid.UUID) (db.Team, error) {
+	f.calls = append(f.calls, "RestoreTeam")
+	if f.err != nil {
+		return db.Team{}, f.err
+	}
+	if f.restoreErr != nil {
+		return db.Team{}, f.restoreErr
+	}
+	if f.purgedOnRestore {
+		f.teams = slices.DeleteFunc(f.teams, func(t db.Team) bool { return t.ID == id })
+	}
+	for i, t := range f.teams {
+		if t.ID == id {
+			f.teams[i].DeletedAt = nil
+			f.restored = append(f.restored, id)
+			return f.teams[i], nil
+		}
+	}
+	return db.Team{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) ListTeamMembers(_ context.Context, arg db.ListTeamMembersParams) ([]db.ListTeamMembersRow, error) {
@@ -202,6 +285,8 @@ func teamRoutes(t *testing.T) authz.Routes {
 	add("POST", "/teams", "super_admin", nil)
 	add("GET", "/teams", "authenticated", nil)
 	add("GET", "/teams/{id}", "member", nil)
+	add("DELETE", "/teams/{id}", "super_admin", nil)
+	add("POST", "/teams/{id}/restore", "super_admin", nil)
 	add("GET", "/teams/{id}/members", "member", nil)
 	add("GET", "/teams/{id}/permissions", "member", nil)
 	add("POST", "/teams/{id}/members", "team", &membership)
@@ -221,7 +306,7 @@ func call(t *testing.T, s Store, a *fakeAuthz, u *auth.User, method, path, body 
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), s, a).Register(mux, api.NewGuard(teamRoutes(t), a, discardLogger()))
+	New(discardLogger(), s, a, testPurgeAfter).Register(mux, api.NewGuard(teamRoutes(t), a, discardLogger()))
 
 	var reader io.Reader
 	if body != "" {
@@ -1531,6 +1616,8 @@ func TestEveryRouteRefusesARequestWithNoUser(t *testing.T) {
 		"members": {http.MethodGet, "/teams/" + id.String() + "/members", ""},
 		"add":     {http.MethodPost, "/teams/" + id.String() + "/members", `{"user_id":"` + userID.String() + `","role":"admin"}`},
 		"remove":  {http.MethodDelete, "/teams/" + id.String() + "/members/" + userID.String(), ""},
+		"delete":  {http.MethodDelete, "/teams/" + id.String(), ""},
+		"restore": {http.MethodPost, "/teams/" + id.String() + "/restore", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -1541,7 +1628,7 @@ func TestEveryRouteRefusesARequestWithNoUser(t *testing.T) {
 			if rec.Code != http.StatusInternalServerError {
 				t.Errorf("status = %d, want 500", rec.Code)
 			}
-			if s.getTeamCalls != 0 || len(s.teamArgs) != 0 || len(s.memberArgs) != 0 ||
+			if s.getTeamCalls != 0 || len(s.teamArgs) != 0 || len(s.memberArgs) != 0 || len(s.calls) != 0 ||
 				s.listedUser != 0 || len(s.created) != 0 || len(s.added) != 0 || len(s.removed) != 0 {
 				t.Error("the handler reached the store without a user")
 			}
@@ -1557,7 +1644,8 @@ func TestUndeclaredMethodsDoNotAnswer(t *testing.T) {
 	id, userID := uuid.New().String(), uuid.New().String()
 	for name, tc := range map[string]struct{ method, path string }{
 		"PUT on the collection": {http.MethodPut, "/teams"},
-		"DELETE on one team":    {http.MethodDelete, "/teams/" + id},
+		"GET on restore":        {http.MethodGet, "/teams/" + id + "/restore"},
+		"DELETE on restore":     {http.MethodDelete, "/teams/" + id + "/restore"},
 		"POST on one team":      {http.MethodPost, "/teams/" + id},
 		"PATCH on one team":     {http.MethodPatch, "/teams/" + id},
 		"DELETE on members":     {http.MethodDelete, "/teams/" + id + "/members"},
@@ -1574,7 +1662,7 @@ func TestUndeclaredMethodsDoNotAnswer(t *testing.T) {
 			if rec.Code != http.StatusMethodNotAllowed {
 				t.Errorf("status = %d, want 405", rec.Code)
 			}
-			if s.getTeamCalls != 0 || len(s.created) != 0 || len(s.added) != 0 || len(s.removed) != 0 {
+			if s.getTeamCalls != 0 || len(s.calls) != 0 || len(s.created) != 0 || len(s.added) != 0 || len(s.removed) != 0 {
 				t.Error("an undeclared method reached the store")
 			}
 		})
@@ -1835,5 +1923,527 @@ func TestPermissionsThatCannotBeReadAreAnError(t *testing.T) {
 	rec := call(t, s, &fakeAuthz{}, memberOf(teamID, "member"), http.MethodGet, "/teams/"+teamID.String()+"/permissions", "")
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "database") {
 		t.Errorf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+}
+
+// --- Deleting and restoring a team ---------------------------------------
+
+// Not the default week, so a handler that hardcodes 168h fails.
+const testPurgeAfter = 72 * time.Hour
+
+// deletedAt is when every team the fake deletes was deleted.
+var deletedAt = time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC)
+
+func deletedTeam(id uuid.UUID, name string) db.Team {
+	at := deletedAt
+	return db.Team{ID: id, Name: name, CreatedAt: time.Unix(100, 0), DeletedAt: &at}
+}
+
+// lifecycle is the wire shape of a team with its two dates, decoded here
+// rather than through team so these tests say what the client receives.
+type lifecycle struct {
+	ID        uuid.UUID  `json:"id"`
+	Name      string     `json:"name"`
+	DeletedAt *time.Time `json:"deleted_at"`
+	PurgeAt   *time.Time `json:"purge_at"`
+}
+
+func decodeLifecycle(t *testing.T, rec *httptest.ResponseRecorder) lifecycle {
+	t.Helper()
+
+	var got lifecycle
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body is not a team: %v (%s)", err, rec.Body)
+	}
+	return got
+}
+
+func lifecyclePage(t *testing.T, rec *httptest.ResponseRecorder) api.Page[lifecycle] {
+	t.Helper()
+
+	var got api.Page[lifecycle]
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body is not a page of teams: %v (%s)", err, rec.Body)
+	}
+	return got
+}
+
+func errorBody(rec *httptest.ResponseRecorder) string {
+	return strings.TrimSpace(rec.Body.String())
+}
+
+// --- DELETE /teams/{id} ---------------------------------------------------
+
+func TestDeleteMarksTheTeamDeleted(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{teams: []db.Team{{ID: id, Name: "platform"}}}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodDelete, "/teams/"+id.String(), "")
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rec.Code, rec.Body)
+	}
+	if !slices.Equal(s.softDeleted, []uuid.UUID{id}) {
+		t.Errorf("soft deleted %v, want [%s]", s.softDeleted, id)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("a 204 carries a body: %q", rec.Body)
+	}
+}
+
+// Deleting is platform-scoped, like creating. A team's own admin may not
+// delete it in this slice.
+func TestDeleteIsRefusedToEveryoneElse(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	for name, u := range map[string]*auth.User{
+		"an outsider":          outsider(),
+		"the team's own admin": memberOf(id, "admin"),
+		"a member of it":       memberOf(id, "member"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s := &fakeStore{teams: []db.Team{{ID: id, Name: "platform"}}}
+			rec := call(t, s, &fakeAuthz{allowed: true}, u, http.MethodDelete, "/teams/"+id.String(), "")
+
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("status = %d, want 403", rec.Code)
+			}
+			if len(s.calls) != 0 {
+				t.Errorf("the store was reached anyway: %v", s.calls)
+			}
+		})
+	}
+}
+
+// A repeat must not move the purge date: if it did, calling delete again
+// every few days would postpone an erasure for ever.
+func TestDeletingADeletedTeamKeepsItsPurgeDate(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{teams: []db.Team{{ID: id, Name: "platform"}}}
+
+	for i := range 2 {
+		rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodDelete, "/teams/"+id.String(), "")
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("delete %d: status = %d, want 204: %s", i+1, rec.Code, rec.Body)
+		}
+	}
+	if len(s.softDeleted) != 1 {
+		t.Errorf("the team was marked deleted %d times, want once", len(s.softDeleted))
+	}
+	if got := s.teams[0].DeletedAt; got == nil || !got.Equal(deletedAt) {
+		t.Errorf("deleted_at = %v, want the first delete's %v", got, deletedAt)
+	}
+}
+
+func TestDeleteOfAMissingTeamIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	s := &fakeStore{}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodDelete, "/teams/"+uuid.NewString(), "")
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404: %s", rec.Code, rec.Body)
+	}
+}
+
+// A delete refuses work in progress rather than cancelling it.
+func TestDeleteOfATeamWithRunsInProgressIsAConflict(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{teams: []db.Team{{ID: id, Name: "platform"}}, liveRuns: map[uuid.UUID]bool{id: true}}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodDelete, "/teams/"+id.String(), "")
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body)
+	}
+	if got := errorBody(rec); got != "the team has runs in progress" {
+		t.Errorf("body = %q, want %q", got, "the team has runs in progress")
+	}
+	if s.teams[0].DeletedAt != nil {
+		t.Error("the team was deleted with runs in progress")
+	}
+}
+
+// The update decides; a read only explains a refusal. A read taken first
+// could be stale by the time the update runs, and answer 204 for a team a
+// run has just started in.
+func TestDeleteReadsTheTeamOnlyAfterTheUpdate(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	for name, s := range map[string]*fakeStore{
+		"a live team":           {teams: []db.Team{{ID: id, Name: "platform"}}},
+		"a deleted team":        {teams: []db.Team{deletedTeam(id, "platform")}},
+		"a missing team":        {},
+		"a team with live runs": {teams: []db.Team{{ID: id, Name: "platform"}}, liveRuns: map[uuid.UUID]bool{id: true}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodDelete, "/teams/"+id.String(), "")
+
+			if len(s.calls) == 0 || s.calls[0] != "SoftDeleteTeam" {
+				t.Errorf("calls = %v, want SoftDeleteTeam first", s.calls)
+			}
+		})
+	}
+}
+
+func TestDeleteRejectsAMalformedID(t *testing.T) {
+	t.Parallel()
+
+	s := &fakeStore{}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodDelete, "/teams/not-a-uuid", "")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+	if len(s.calls) != 0 {
+		t.Errorf("the store was reached with a malformed id: %v", s.calls)
+	}
+}
+
+func TestDeleteReportsAStoreFailureAsInternal(t *testing.T) {
+	t.Parallel()
+
+	s := &fakeStore{err: errors.New("connection reset")}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodDelete, "/teams/"+uuid.NewString(), "")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "connection reset") {
+		t.Errorf("the store's error reached the caller: %s", rec.Body)
+	}
+}
+
+// --- POST /teams/{id}/restore ---------------------------------------------
+
+func TestRestoreBringsADeletedTeamBack(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{teams: []db.Team{deletedTeam(id, "platform")}}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodPost, "/teams/"+id.String()+"/restore", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if !slices.Equal(s.restored, []uuid.UUID{id}) {
+		t.Errorf("restored %v, want [%s]", s.restored, id)
+	}
+	got := decodeLifecycle(t, rec)
+	if got.ID != id || got.Name != "platform" {
+		t.Errorf("team = %+v, want %s platform", got, id)
+	}
+	if got.DeletedAt != nil || got.PurgeAt != nil {
+		t.Errorf("a restored team still carries deletion dates: %s", rec.Body)
+	}
+}
+
+// Restoring a live team answers with the team and touches nothing: there is
+// nothing to restore, and a write would only move updated_at.
+func TestRestoringALiveTeamWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{teams: []db.Team{{ID: id, Name: "platform"}}}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodPost, "/teams/"+id.String()+"/restore", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if slices.Contains(s.calls, "RestoreTeam") {
+		t.Errorf("a live team was written to: %v", s.calls)
+	}
+	if got := decodeLifecycle(t, rec); got.ID != id || got.Name != "platform" {
+		t.Errorf("team = %+v, want %s platform", got, id)
+	}
+}
+
+func TestRestoreIsRefusedToEveryoneElse(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	for name, u := range map[string]*auth.User{
+		"an outsider":          outsider(),
+		"the team's own admin": memberOf(id, "admin"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s := &fakeStore{teams: []db.Team{deletedTeam(id, "platform")}}
+			rec := call(t, s, &fakeAuthz{allowed: true}, u, http.MethodPost, "/teams/"+id.String()+"/restore", "")
+
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("status = %d, want 403", rec.Code)
+			}
+			if len(s.calls) != 0 {
+				t.Errorf("the store was reached anyway: %v", s.calls)
+			}
+		})
+	}
+}
+
+func TestRestoreOfAMissingTeamIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	s := &fakeStore{}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodPost, "/teams/"+uuid.NewString()+"/restore", "")
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404: %s", rec.Code, rec.Body)
+	}
+}
+
+// A purge tick can land between the handler's read and its write. The team
+// is gone, which is a 404, not a 500.
+func TestRestoreOfATeamPurgedMeanwhileIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{teams: []db.Team{deletedTeam(id, "platform")}, purgedOnRestore: true}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodPost, "/teams/"+id.String()+"/restore", "")
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404: %s", rec.Code, rec.Body)
+	}
+}
+
+// A deleted team's name is free at once, so a new team may hold it by the
+// time the old one is restored. The old one stays deleted.
+func TestRestoreWhenANewTeamHasTheNameIsAConflict(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{
+		teams:      []db.Team{deletedTeam(id, "platform")},
+		restoreErr: pgErr(codeUniqueViolation, "teams_live_name_key"),
+	}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodPost, "/teams/"+id.String()+"/restore", "")
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body)
+	}
+	if got := errorBody(rec); got != "a team with that name already exists" {
+		t.Errorf("body = %q, want %q", got, "a team with that name already exists")
+	}
+	if s.teams[0].DeletedAt == nil {
+		t.Error("the team was restored anyway")
+	}
+}
+
+func TestRestoreReportsAStoreFailureAsInternal(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{teams: []db.Team{deletedTeam(id, "platform")}, restoreErr: errors.New("connection reset")}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodPost, "/teams/"+id.String()+"/restore", "")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "connection reset") {
+		t.Errorf("the store's error reached the caller: %s", rec.Body)
+	}
+}
+
+func TestRestoreRejectsAMalformedID(t *testing.T) {
+	t.Parallel()
+
+	s := &fakeStore{}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodPost, "/teams/not-a-uuid/restore", "")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+	if len(s.calls) != 0 {
+		t.Errorf("the store was reached with a malformed id: %v", s.calls)
+	}
+}
+
+// --- Reading a deleted team -----------------------------------------------
+
+// purge_at is computed from the setting, never stored, so it moves when the
+// setting does.
+func TestGetShowsASuperAdminWhenADeletedTeamIsPurged(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{teams: []db.Team{deletedTeam(id, "platform")}}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodGet, "/teams/"+id.String(), "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	got := decodeLifecycle(t, rec)
+	if got.DeletedAt == nil || !got.DeletedAt.Equal(deletedAt) {
+		t.Errorf("deleted_at = %v, want %v", got.DeletedAt, deletedAt)
+	}
+	if want := deletedAt.Add(testPurgeAfter); got.PurgeAt == nil || !got.PurgeAt.Equal(want) {
+		t.Errorf("purge_at = %v, want %v", got.PurgeAt, want)
+	}
+}
+
+// The guard already hides it in production, because memberships leave a
+// deleted team out. This is the handler not relying on that alone.
+func TestGetHidesADeletedTeamFromItsMembers(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{teams: []db.Team{deletedTeam(id, "platform")}}
+	rec := call(t, s, &fakeAuthz{}, memberOf(id, "admin"), http.MethodGet, "/teams/"+id.String(), "")
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestALiveTeamCarriesNoDeletionDates(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	s := &fakeStore{teams: []db.Team{{ID: id, Name: "platform"}}}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodGet, "/teams/"+id.String(), "")
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body is not an object: %v", err)
+	}
+	for _, key := range []string{"deleted_at", "purge_at"} {
+		if _, present := got[key]; present {
+			t.Errorf("%s is present on a live team: %s", key, rec.Body)
+		}
+	}
+}
+
+// --- GET /teams?deleted=true ----------------------------------------------
+
+func TestListDeletedGivesASuperAdminOnlyDeletedTeams(t *testing.T) {
+	t.Parallel()
+
+	gone := uuid.New()
+	s := &fakeStore{teams: []db.Team{deletedTeam(gone, "gone"), {ID: uuid.New(), Name: "live"}}}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodGet, "/teams?deleted=true", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	page := lifecyclePage(t, rec)
+	if len(page.Items) != 1 || page.Items[0].ID != gone {
+		t.Fatalf("items = %+v, want only the deleted team", page.Items)
+	}
+	if want := deletedAt.Add(testPurgeAfter); page.Items[0].PurgeAt == nil || !page.Items[0].PurgeAt.Equal(want) {
+		t.Errorf("purge_at = %v, want %v", page.Items[0].PurgeAt, want)
+	}
+	if len(s.teamArgs) != 0 {
+		t.Error("the live list was asked as well")
+	}
+}
+
+func TestListDeletedPagesThroughEveryDeletedTeamExactlyOnce(t *testing.T) {
+	t.Parallel()
+
+	all := makeTeams(7)
+	var deleted []uuid.UUID
+	for i := range all {
+		if i%3 != 0 {
+			at := deletedAt
+			all[i].DeletedAt = &at
+			deleted = append(deleted, all[i].ID)
+		}
+	}
+	s := &fakeStore{teams: all}
+
+	seen := map[uuid.UUID]int{}
+	path := "/teams?deleted=true&limit=2"
+	for pages := 0; ; pages++ {
+		if pages > 10 {
+			t.Fatal("paging did not terminate")
+		}
+
+		rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodGet, path, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+		}
+		page := lifecyclePage(t, rec)
+		for _, tm := range page.Items {
+			seen[tm.ID]++
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		path = "/teams?deleted=true&limit=2&cursor=" + *page.NextCursor
+	}
+
+	if len(seen) != len(deleted) {
+		t.Errorf("saw %d distinct teams, want the %d deleted ones", len(seen), len(deleted))
+	}
+	for _, id := range deleted {
+		if seen[id] != 1 {
+			t.Errorf("deleted team %s appeared %d times", id, seen[id])
+		}
+	}
+	if len(s.teamArgs) != 0 {
+		t.Error("a page was read from the live list")
+	}
+}
+
+// Everyone else's list is their memberships, which never include a deleted
+// team. The parameter changes nothing for them.
+func TestListDeletedIsIgnoredForEveryoneElse(t *testing.T) {
+	t.Parallel()
+
+	mine := uuid.New()
+	s := &fakeStore{
+		teams:     []db.Team{deletedTeam(uuid.New(), "gone")},
+		userTeams: []db.ListUserTeamsRow{{ID: mine, Name: "platform", Role: "admin"}},
+	}
+	rec := call(t, s, &fakeAuthz{}, memberOf(mine, "admin"), http.MethodGet, "/teams?deleted=true", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if page := teamsPage(t, rec); len(page.Items) != 1 || page.Items[0].ID != mine {
+		t.Errorf("items = %+v, want only their own team", page.Items)
+	}
+	if len(s.deletedArgs) != 0 {
+		t.Error("the deleted list was read for a non-admin")
+	}
+}
+
+func TestListLeavesDeletedTeamsOutByDefault(t *testing.T) {
+	t.Parallel()
+
+	live := uuid.New()
+	s := &fakeStore{teams: []db.Team{deletedTeam(uuid.New(), "gone"), {ID: live, Name: "live"}}}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodGet, "/teams", "")
+
+	if page := teamsPage(t, rec); len(page.Items) != 1 || page.Items[0].ID != live {
+		t.Errorf("items = %+v, want only the live team", page.Items)
+	}
+	if len(s.deletedArgs) != 0 {
+		t.Error("the deleted list was read without being asked for")
+	}
+}
+
+func TestListRejectsADeletedThatIsNotABoolean(t *testing.T) {
+	t.Parallel()
+
+	s := &fakeStore{}
+	rec := call(t, s, &fakeAuthz{super: true}, outsider(), http.MethodGet, "/teams?deleted=maybe", "")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400: %s", rec.Code, rec.Body)
+	}
+	if len(s.teamArgs) != 0 || len(s.deletedArgs) != 0 {
+		t.Error("a list was read with a malformed parameter")
 	}
 }

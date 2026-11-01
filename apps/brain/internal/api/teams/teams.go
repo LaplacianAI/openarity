@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -34,6 +36,10 @@ type Store interface {
 	RemoveTeamMember(ctx context.Context, arg db.RemoveTeamMemberParams) error
 	FindUsersBySubject(ctx context.Context, arg db.FindUsersBySubjectParams) ([]db.FindUsersBySubjectRow, error)
 	ActionsFor(ctx context.Context, role string) ([]string, error)
+	GetLiveTeam(ctx context.Context, id uuid.UUID) (db.Team, error)
+	SoftDeleteTeam(ctx context.Context, id uuid.UUID) (int64, error)
+	RestoreTeam(ctx context.Context, id uuid.UUID) (db.Team, error)
+	ListDeletedTeams(ctx context.Context, arg db.ListDeletedTeamsParams) ([]db.Team, error)
 }
 
 type SuperAdmins interface {
@@ -44,15 +50,18 @@ type handler struct {
 	logger      *slog.Logger
 	store       Store
 	superAdmins SuperAdmins
+	purgeAfter  time.Duration
 }
 
-func New(logger *slog.Logger, s Store, a SuperAdmins) *api.Router {
-	h := &handler{logger: logger, store: s, superAdmins: a}
+func New(logger *slog.Logger, s Store, a SuperAdmins, purgeAfter time.Duration) *api.Router {
+	h := &handler{logger: logger, store: s, superAdmins: a, purgeAfter: purgeAfter}
 
 	r := api.NewRouter("/teams")
 	r.Post("", h.create)
 	r.Get("", h.list)
 	r.Get("/{id}", h.get)
+	r.Delete("/{id}", h.deleteTeam)
+	r.Post("/{id}/restore", h.restoreTeam)
 	r.Get("/{id}/permissions", h.permissions)
 	r.Get("/{id}/members", h.listMembers)
 	r.Post("/{id}/members", h.addMember)
@@ -106,12 +115,23 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	deleted, ok := deletedParam(w, r)
+	if !ok {
+		return
+	}
+
 	params, ok := h.teamPage(w, r, limit)
 	if !ok {
 		return
 	}
 
-	rows, err := h.store.ListTeams(r.Context(), params)
+	var rows []db.Team
+	var err error
+	if deleted {
+		rows, err = h.store.ListDeletedTeams(r.Context(), db.ListDeletedTeamsParams(params))
+	} else {
+		rows, err = h.store.ListTeams(r.Context(), params)
+	}
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to list teams", err)
 		return
@@ -119,13 +139,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 
 	page, err := api.MapPage(rows, limit,
 		func(row db.Team) any { return teamCursor{CreatedAt: row.CreatedAt, ID: row.ID} },
-		func(row db.Team) team {
-			t := team{ID: row.ID, Name: row.Name}
-			if role, ok := u.RoleIn(row.ID); ok {
-				t.Role = &role
-			}
-			return t
-		},
+		func(row db.Team) team { return h.wire(u, row) },
 	)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to page teams", err)
@@ -152,6 +166,32 @@ func (h *handler) teamPage(w http.ResponseWriter, r *http.Request, limit int32) 
 	params.AfterCreatedAt = c.CreatedAt
 	params.AfterID = c.ID
 	return params, true
+}
+
+func deletedParam(w http.ResponseWriter, r *http.Request) (bool, bool) {
+	raw := r.URL.Query().Get("deleted")
+	if raw == "" {
+		return false, true
+	}
+
+	deleted, err := strconv.ParseBool(raw)
+	if err != nil {
+		http.Error(w, "deleted must be true or false", http.StatusBadRequest)
+		return false, false
+	}
+	return deleted, true
+}
+
+func (h *handler) wire(u *auth.User, row db.Team) team {
+	t := team{ID: row.ID, Name: row.Name}
+	if role, ok := u.RoleIn(row.ID); ok {
+		t.Role = &role
+	}
+	if row.DeletedAt != nil {
+		purgeAt := row.DeletedAt.Add(h.purgeAfter)
+		t.DeletedAt, t.PurgeAt = row.DeletedAt, &purgeAt
+	}
+	return t
 }
 
 func (h *handler) myTeams(ctx context.Context, u *auth.User) ([]team, error) {
@@ -181,11 +221,79 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := team{ID: row.ID, Name: row.Name}
-	if role, isMember := u.RoleIn(id); isMember {
-		out.Role = &role
+	api.WriteJSON(w, h.logger, http.StatusOK, h.wire(u, row))
+}
+
+func (h *handler) deleteTeam(w http.ResponseWriter, r *http.Request) {
+	u := api.Caller(r)
+
+	id, ok := pathTeam(w, r)
+	if !ok {
+		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, out)
+
+	n, err := h.store.SoftDeleteTeam(r.Context(), id)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to delete team", err)
+		return
+	}
+	if n == 1 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	row, err := h.store.GetTeam(r.Context(), id)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		http.Error(w, "not found", http.StatusNotFound)
+	case err != nil:
+		api.Fail(w, h.logger, u, "failed to read team", err)
+	case row.DeletedAt != nil:
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "the team has runs in progress", http.StatusConflict)
+	}
+}
+
+func (h *handler) restoreTeam(w http.ResponseWriter, r *http.Request) {
+	u := api.Caller(r)
+
+	id, ok := pathTeam(w, r)
+	if !ok {
+		return
+	}
+
+	row, err := h.store.GetTeam(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read team", err)
+		return
+	}
+
+	if row.DeletedAt != nil {
+		row, err = h.store.RestoreTeam(r.Context(), id)
+		if err != nil {
+			h.failRestore(w, u, err)
+			return
+		}
+	}
+
+	api.WriteJSON(w, h.logger, http.StatusOK, h.wire(u, row))
+}
+
+func (h *handler) failRestore(w http.ResponseWriter, u *auth.User, err error) {
+	var pgErr *pgconn.PgError
+	switch {
+	case errors.As(err, &pgErr) && pgErr.Code == codeUniqueViolation:
+		http.Error(w, "a team with that name already exists", http.StatusConflict)
+	case errors.Is(err, pgx.ErrNoRows):
+		http.Error(w, "not found", http.StatusNotFound)
+	default:
+		api.Fail(w, h.logger, u, "failed to restore team", err)
+	}
 }
 
 func (h *handler) listMembers(w http.ResponseWriter, r *http.Request) {
@@ -330,6 +438,15 @@ func ambiguousSubject(rows []db.FindUsersBySubjectRow) string {
 		len(rows), strings.Join(named, ", "))
 }
 
+func pathTeam(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "team id must be a uuid", http.StatusBadRequest)
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
 func (h *handler) removeMember(w http.ResponseWriter, r *http.Request) {
 	u := api.Caller(r)
 
@@ -355,7 +472,12 @@ func (h *handler) removeMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) visibleTeam(w http.ResponseWriter, r *http.Request, u *auth.User, id uuid.UUID) (db.Team, bool) {
-	row, err := h.store.GetTeam(r.Context(), id)
+	read := h.store.GetLiveTeam
+	if h.superAdmins.IsSuperAdmin(u) {
+		read = h.store.GetTeam
+	}
+
+	row, err := read(r.Context(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return db.Team{}, false
