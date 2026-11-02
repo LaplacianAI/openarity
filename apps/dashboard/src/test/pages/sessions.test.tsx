@@ -1,6 +1,6 @@
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import { brain, chunks, feed, pageOf, type Seen, STAMP, showAt, TEAM, team } from "@/test/brain";
@@ -193,6 +193,34 @@ describe("the messages", () => {
     await screen.findByText("second");
     expect(said()).toEqual(["first", "second"]);
     expect(screen.getByText("user-ann")).toBeInTheDocument();
+    expect(screen.getByText("user-bob")).toBeInTheDocument();
+  });
+
+  // A message names the person its sender was bound to by id. The team's
+  // members turn that id into who they are; someone no longer a member keeps
+  // the id, which still says that someone did.
+  it("names who said it from the team's members, and keeps the id of anyone else", async () => {
+    listed({
+      [MESSAGES]: {
+        body: {
+          items: [
+            message("m2", "user-bob", "second", "2026-10-01T00:02:00Z"),
+            message("m1", "user-ann", "first", "2026-10-01T00:01:00Z"),
+          ],
+        },
+      },
+      "GET /teams/{id}/members": {
+        body: {
+          items: [
+            { user_id: "user-ann", subject: "ann", email: "ann@example.com", role: "member" },
+          ],
+        },
+      },
+    });
+
+    await open();
+    expect(await screen.findByText("ann@example.com")).toBeInTheDocument();
+    expect(screen.queryByText("user-ann")).toBeNull();
     expect(screen.getByText("user-bob")).toBeInTheDocument();
   });
 
@@ -557,6 +585,52 @@ describe("the runs", () => {
 /* ------------------------------------------------------------------ trace */
 
 describe("a run's trace", () => {
+  // On a wide screen there are no tabs: the conversation sits beside the run,
+  // and the run's trace is followed as it would be behind the Runs tab.
+  describe("on a wide screen", () => {
+    const real = window.matchMedia;
+    beforeEach(() => {
+      window.matchMedia = ((query: string) => ({
+        matches: query.includes("min-width"),
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })) as unknown as typeof window.matchMedia;
+    });
+    afterEach(() => {
+      window.matchMedia = real;
+    });
+
+    it("shows the conversation beside the run, and follows the run's trace", async () => {
+      listed({
+        [MESSAGES]: {
+          body: { items: [message("m1", "user-ann", "hello", "2026-10-01T00:01:00Z")] },
+        },
+        [RUNS]: { body: { items: [run("r1", "helper", "succeeded")] } },
+        [EVENTS]: () => ({
+          stream: chunks(
+            frame(1, "started", {
+              agent: "helper",
+              model: "m-1",
+              pattern: "react",
+              tools: [],
+              skills: [],
+            }),
+            frame(2, "step", { step: 1 }),
+            END,
+          ),
+        }),
+      });
+
+      await open();
+      expect(screen.queryByRole("tab")).toBeNull();
+      expect(await screen.findByText("hello")).toBeInTheDocument();
+      const detail = pane();
+      await waitFor(() => expect(detail.querySelectorAll("[data-step]")).toHaveLength(1));
+      expect(within(detail).getByText("Ended: succeeded")).toBeInTheDocument();
+    });
+  });
+
   it("groups what the run did into steps, read off the stream with the token", async () => {
     // CRLF line endings, a keep-alive, and a frame cut mid-line and between a
     // CR and its LF — what a proxy is free to do to a stream.
@@ -858,7 +932,7 @@ describe("a run's trace", () => {
 
     await open("?tab=runs");
     const detail = pane();
-    expect(await within(detail).findByText("Waiting for events…")).toBeInTheDocument();
+    expect(await within(detail).findByText("Waiting for the first step…")).toBeInTheDocument();
     expect(within(detail).getByText("Live")).toBeInTheDocument();
 
     live.push(frame(1, "step", { step: 1 }));
@@ -875,6 +949,65 @@ describe("a run's trace", () => {
 
     live.push(frame(4, "step", { step: 2 }));
     await waitFor(() => expect(detail.querySelectorAll("[data-step]")).toHaveLength(2));
+  });
+
+  // A finished run's history arrives over the same stream as a live one. Until
+  // it does, the trace is being read: "waiting" would say the run had nothing
+  // to show, and the header's zero steps would be a figure nobody counted.
+  it("says a finished run's steps are being read until its history arrives", async () => {
+    const history = feed();
+    listed({
+      [RUNS]: { body: { items: [run("r1", "helper", "succeeded")] } },
+      [EVENTS]: () => ({ stream: history.stream }),
+    });
+
+    await open("?tab=runs");
+    const detail = pane();
+    expect(
+      await within(detail).findByRole("status", { name: "Reading the run's steps" }),
+    ).toBeInTheDocument();
+    expect(within(detail).queryByText(/Waiting/)).toBeNull();
+    expect(within(detail).queryByText("Live")).toBeNull();
+    expect(detail.querySelector("dl")).toHaveTextContent("Steps…");
+
+    history.push(
+      frame(1, "started", {
+        agent: "helper",
+        model: "m-1",
+        pattern: "react",
+        tools: [],
+        skills: [],
+      }),
+    );
+    history.push(frame(2, "step", { step: 1 }));
+    await waitFor(() => expect(detail.querySelectorAll("[data-step]")).toHaveLength(1));
+    expect(within(detail).queryByRole("status", { name: "Reading the run's steps" })).toBeNull();
+    expect(detail.querySelector("dl")).toHaveTextContent("Modelm-1");
+    expect(detail.querySelector("dl")).toHaveTextContent("Steps1");
+  });
+
+  // The hub's header names who it handed work to, from the trace's delegate
+  // calls, so the delegation is read before the steps are.
+  it("names the agents a run handed work to in its header", async () => {
+    listed({
+      [RUNS]: { body: { items: [{ ...run("r1", "lead", "succeeded"), hub: true }] } },
+      [EVENTS]: () => ({
+        stream: chunks(
+          frame(1, "step", { step: 1 }),
+          frame(2, "tool_call", {
+            id: "c1",
+            name: "delegate",
+            arguments: '{"agent":"log-reader","objective":"why"}',
+          }),
+          frame(3, "delegated", { agent: "log-reader", call_id: "c1", depth: 1, run_id: "r2" }),
+          END,
+        ),
+      }),
+    });
+
+    await open("?tab=runs");
+    const header = await within(pane()).findByText("handed work to", { exact: false });
+    expect(header).toHaveTextContent("handed work to log-reader");
   });
 
   it("says a call got no result once the run is over, rather than waiting on it", async () => {
@@ -945,6 +1078,57 @@ describe("a run's trace", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(within(pane()).queryByRole("alert")).toBeNull();
     expect(within(pane()).getByRole("heading", { level: 2, name: "done-agent" })).toBeVisible();
+  });
+
+  // A finished run's history does not change, so coming back to it shows what
+  // was read rather than streaming it all again from the start.
+  it("reads a finished run's history once, however often it is chosen", async () => {
+    const seen = listed({
+      [RUNS]: {
+        body: {
+          items: [run("rA", "first-agent", "succeeded"), run("rB", "second-agent", "succeeded")],
+        },
+      },
+      [EVENTS]: () => ({ stream: chunks(frame(1, "step", { step: 1 }), END) }),
+    });
+
+    await open("?tab=runs");
+    expect(await within(pane()).findByText("Ended: succeeded")).toBeInTheDocument();
+    await userEvent.click(within(runList()).getByRole("link", { name: /second-agent/ }));
+    await within(pane()).findByRole("heading", { level: 2, name: "second-agent" });
+    expect(await within(pane()).findByText("Ended: succeeded")).toBeInTheDocument();
+    await userEvent.click(within(runList()).getByRole("link", { name: /first-agent/ }));
+    await within(pane()).findByRole("heading", { level: 2, name: "first-agent" });
+
+    expect(pane().querySelectorAll("[data-step]")).toHaveLength(1);
+    expect(within(pane()).getByText("Ended: succeeded")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(eventsSeen(seen).filter((s) => s.path.includes("/runs/rA/"))).toHaveLength(1);
+  });
+
+  // Re-reading the run once its stream ends must not follow it again: a second
+  // stream starts the trace over from nothing, and on a busy connection it may
+  // never be answered, leaving a finished run with no steps.
+  it("follows a run's stream once, and keeps its steps after the run is read again", async () => {
+    let streams = 0;
+    let listings = 0;
+    listed({
+      [RUNS]: () => {
+        listings += 1;
+        return { body: { items: [run("r1", "helper", "succeeded")] } };
+      },
+      [EVENTS]: () => {
+        streams += 1;
+        return { stream: chunks(frame(1, "step", { step: 1 }), END) };
+      },
+    });
+
+    await open("?tab=runs");
+    expect(await within(pane()).findByText("Ended: succeeded")).toBeInTheDocument();
+    await waitFor(() => expect(listings).toBe(2));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(streams).toBe(1);
+    expect(pane().querySelectorAll("[data-step]")).toHaveLength(1);
   });
 
   it("reads the run again once its stream says it has ended", async () => {

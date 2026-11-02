@@ -6,7 +6,7 @@
  * as React text — or, for the answer alone, as markdown with raw HTML off —
  * and never as markup.
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
@@ -29,6 +29,7 @@ import { cancelRun, followRunEvents, getRun } from "@/api";
 import type { Run, RunEvent } from "@/api/types";
 import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   argumentPairs,
   delegateReport,
@@ -52,11 +53,11 @@ import { cn } from "@/lib/utils";
 /* ----------------------------------------------------------------- status */
 
 const STATUS: Record<string, { icon: typeof Clock; tone: string; spin?: boolean }> = {
-  queued: { icon: Clock, tone: "text-warning" },
-  running: { icon: Loader2, tone: "text-primary", spin: true },
-  succeeded: { icon: CheckCircle2, tone: "text-success" },
-  failed: { icon: XCircle, tone: "text-destructive" },
-  cancelled: { icon: Ban, tone: "text-muted-foreground" },
+  queued: { icon: Clock, tone: "text-waiting" },
+  running: { icon: Loader2, tone: "text-running", spin: true },
+  succeeded: { icon: CheckCircle2, tone: "text-succeeded" },
+  failed: { icon: XCircle, tone: "text-failed" },
+  cancelled: { icon: Ban, tone: "text-cancelled" },
 };
 
 export function isLive(status: string): boolean {
@@ -72,7 +73,7 @@ export function RunStatus({ status, pill = false }: { status: string; pill?: boo
       data-status={status}
       className={cn(
         "inline-flex items-center gap-1 text-xs",
-        pill && "rounded-full border border-border bg-card px-2 py-0.5 font-medium",
+        pill && "rounded-full border border-sheet-edge px-2 py-0.5 font-medium",
       )}
     >
       <Icon aria-hidden className={cn("size-3.5 shrink-0", s.tone, s.spin && "animate-spin")} />
@@ -110,13 +111,25 @@ function useNow(on: boolean): number {
 
 /* ----------------------------------------------------------------- stream */
 
+/** What has been read of a run's stream, kept across mounts. */
+type Followed = { events: RunEvent[]; ended: boolean };
+
 /**
  * Follows a run's events for as long as this is mounted on that run. Choosing
  * another run or leaving the page aborts the stream: a running run's stream
  * otherwise stays open for as long as the run does.
+ *
+ * What was read is kept in the query cache under the run, so mounting the
+ * same run again does not start its trace over: a run whose stream has ended
+ * is shown from the cache and not followed again, and one still going is
+ * followed on from the last event seen.
  */
 function useRunEvents(teamId: string, runId: string, onEnded: () => void) {
-  const [events, setEvents] = useState<RunEvent[]>([]);
+  const qc = useQueryClient();
+  const key = useMemo(() => ["run-events", teamId, runId], [teamId, runId]);
+  const [events, setEvents] = useState<RunEvent[]>(
+    () => qc.getQueryData<Followed>(key)?.events ?? [],
+  );
   const [failed, setFailed] = useState<string | null>(null);
 
   // A ref, because onEnded is a fresh closure every render and restarting the
@@ -125,17 +138,25 @@ function useRunEvents(teamId: string, runId: string, onEnded: () => void) {
   onEndedRef.current = onEnded;
 
   useEffect(() => {
-    const abort = new AbortController();
-    setEvents([]);
+    const held = qc.getQueryData<Followed>(key) ?? { events: [], ended: false };
+    setEvents(held.events);
     setFailed(null);
+    if (held.ended) return;
+
+    const abort = new AbortController();
+    let read = held.events;
+    const last = read.at(-1)?.seq ?? null;
     followRunEvents(
       teamId,
       runId,
       (e) => {
-        setEvents((prev) => [...prev, e]);
+        read = [...read, e];
+        qc.setQueryData<Followed>(key, { events: read, ended: e.kind === "end" });
+        setEvents(read);
         if (e.kind === "end") onEndedRef.current();
       },
       abort.signal,
+      last,
     ).catch((err: unknown) => {
       // Aborted by this effect's own cleanup — another run was chosen, or
       // the page went away — which is not a failure to report.
@@ -143,7 +164,7 @@ function useRunEvents(teamId: string, runId: string, onEnded: () => void) {
       setFailed(err instanceof Error ? err.message : String(err));
     });
     return () => abort.abort();
-  }, [teamId, runId]);
+  }, [qc, key, teamId, runId]);
 
   return { events, failed };
 }
@@ -168,6 +189,17 @@ export function RunDetail({
   const now = useNow(live);
 
   const steps = stepsOf(trace).length;
+  // Until the stream has answered, the trace's figures are unknown, not zero.
+  const reading = events.length === 0 && !failed;
+  const delegates = [
+    ...new Set(
+      stepsOf(trace).flatMap((st) =>
+        st.calls.flatMap((c) =>
+          c.name === "delegate" && c.delegated?.agent ? [c.delegated.agent] : [],
+        ),
+      ),
+    ),
+  ];
   const spent = trace.usage.total > 0 ? trace.usage.total : run.input_tokens + run.output_tokens;
   const began = run.started_at ? Date.parse(run.started_at) : null;
   const took =
@@ -180,25 +212,35 @@ export function RunDetail({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="truncate text-base font-semibold tracking-tight">{run.agent}</h2>
+              <h2 className="truncate text-lg font-semibold tracking-tight">{run.agent}</h2>
               <RunStatus status={run.status} pill />
               {run.hub ? (
                 <span
                   data-hub
                   title="Started for the team: its hub answered"
-                  className="rounded-full border border-border bg-surface px-2 py-0.5 text-xs font-medium"
+                  className="rounded-full bg-card px-2 py-0.5 text-xs font-medium"
                 >
                   hub
                 </span>
               ) : null}
               {live ? <LiveBadge /> : null}
             </div>
+            {delegates.length > 0 ? (
+              <p
+                data-delegates
+                className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground"
+              >
+                <Users aria-hidden className="size-3.5" />
+                handed work to{" "}
+                <span className="font-medium text-foreground">{delegates.join(", ")}</span>
+              </p>
+            ) : null}
             {run.parent_run_id ? (
               <ParentLink teamId={teamId} sessionId={run.session_id} parentId={run.parent_run_id} />
             ) : null}
-            <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <Meta label="Model">{trace.started?.model || "—"}</Meta>
-              <Meta label="Steps">{steps}</Meta>
+            <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              <Meta label="Model">{reading ? "…" : trace.started?.model || "—"}</Meta>
+              <Meta label="Steps">{reading ? "…" : steps}</Meta>
               <Meta label="Tokens">{spent.toLocaleString("en-US")}</Meta>
               <Meta label="Duration">{took === null ? "—" : duration(took)}</Meta>
             </dl>
@@ -208,7 +250,7 @@ export function RunDetail({
           ) : null}
         </div>
         {trace.started && (trace.started.tools.length > 0 || trace.started.skills.length > 0) ? (
-          <div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="capabilities">
+          <div className="flex flex-wrap items-center gap-1.5" data-testid="capabilities">
             {trace.started.pattern ? <Chip muted>{trace.started.pattern}</Chip> : null}
             {trace.started.tools.map((t) => (
               <Chip key={`t-${t}`} icon={<Wrench aria-hidden className="size-3" />}>
@@ -238,7 +280,7 @@ export function RunDetail({
 
       {run.output ? (
         <Section title="Answer">
-          <div data-answer className="rounded-md border border-border bg-card px-4 py-3">
+          <div data-answer className="rounded-lg bg-card px-4 py-3">
             <Markdown>{run.output}</Markdown>
           </div>
         </Section>
@@ -247,7 +289,7 @@ export function RunDetail({
       {error ? (
         <div
           role="alert"
-          className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          className="flex gap-2 rounded-lg bg-destructive/8 px-3 py-2 text-sm text-destructive"
         >
           <XCircle aria-hidden className="mt-0.5 size-4 shrink-0" />
           <p className="whitespace-pre-wrap break-words">{error}</p>
@@ -269,12 +311,7 @@ export function RunDetail({
             Could not follow this run: {failed}
           </p>
         ) : null}
-        <TraceView
-          trace={trace}
-          live={live}
-          empty={events.length === 0 && !failed}
-          sessionId={run.session_id}
-        />
+        <TraceView trace={trace} live={live} empty={reading} sessionId={run.session_id} />
       </Section>
     </article>
   );
@@ -318,11 +355,8 @@ function Meta({ label, children }: { label: string; children: ReactNode }) {
 
 function LiveBadge() {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
-      <span aria-hidden className="relative flex size-1.5">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-60" />
-        <span className="relative inline-flex size-1.5 rounded-full bg-success" />
-      </span>
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-running/10 px-2 py-0.5 text-xs font-medium text-running">
+      <span aria-hidden className="size-1.5 rounded-full bg-running" />
       Live
     </span>
   );
@@ -373,9 +407,7 @@ function Section({
   return (
     <section aria-label={title}>
       <div className="mb-2 flex items-center justify-between gap-3">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {title}
-        </h3>
+        <h3 className="text-sm font-medium">{title}</h3>
         {aside}
       </div>
       {children}
@@ -398,8 +430,10 @@ function Chip({
     <span
       title={title}
       className={cn(
-        "inline-flex max-w-full items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-[11px]",
-        muted ? "bg-transparent text-muted-foreground" : "bg-surface text-foreground",
+        "inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs",
+        muted
+          ? "text-muted-foreground shadow-[inset_0_0_0_1px_var(--color-rule)]"
+          : "bg-card text-foreground",
       )}
     >
       {icon}
@@ -422,16 +456,24 @@ function TraceView({
   sessionId: string;
 }) {
   if (empty) {
-    return (
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        {live ? <Loader2 aria-hidden className="size-3.5 animate-spin" /> : null}
-        Waiting for events…
+    return live ? (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+        <Loader2 aria-hidden className="size-3.5 animate-spin" />
+        Waiting for the first step…
       </p>
+    ) : (
+      <div className="space-y-3" role="status" aria-label="Reading the run's steps">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-4/5" />
+      </div>
     );
   }
+  // Each step's bar is its tokens against the run's largest step.
+  const most = Math.max(1, ...stepsOf(trace).map((st) => st.usage.total));
   let numbered = 0;
   return (
-    <ol className="relative space-y-4">
+    <ol className="relative space-y-5">
       {trace.items.map((item, i) => {
         const key = `${item.type}-${i}`;
         switch (item.type) {
@@ -442,6 +484,8 @@ function TraceView({
                 key={key}
                 step={item.step}
                 index={item.step.number ?? numbered}
+                share={item.step.usage.total / most}
+                model={trace.started?.model ?? ""}
                 live={live}
                 last={i === trace.items.length - 1}
                 sessionId={sessionId}
@@ -512,12 +556,18 @@ function Note({
 function StepView({
   step,
   index,
+  share,
+  model,
   live,
   last,
   sessionId,
 }: {
   step: Step;
   index: number;
+  /** The model the run started on; a step names its own only when it differs. */
+  model: string;
+  /** This step's tokens as a share of the run's largest step, 0 to 1. */
+  share: number;
   live: boolean;
   last: boolean;
   sessionId: string;
@@ -526,30 +576,38 @@ function StepView({
     <li data-step={index} className="relative flex gap-3">
       {/* The timeline's rail, from this marker to the next. */}
       {!last ? (
-        <span aria-hidden className="absolute top-7 bottom-[-1rem] left-3 w-px bg-border" />
+        <span aria-hidden className="absolute top-7 bottom-[-1.25rem] left-3 w-px bg-rule" />
       ) : null}
       <span
         aria-hidden
-        className="relative flex size-6 shrink-0 items-center justify-center rounded-full border border-border-strong bg-card text-[11px] font-semibold tabular-nums"
+        className="relative flex size-6 shrink-0 items-center justify-center rounded-full bg-card text-xs font-medium tabular-nums shadow-[inset_0_0_0_1px_var(--color-sheet-edge)]"
       >
         {index}
       </span>
       <div className="min-w-0 flex-1 space-y-2">
-        <div className="flex h-6 items-center gap-2 text-sm">
+        <div className="flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           <span className="font-medium">Step {index}</span>
           {step.usage.total > 0 ? (
-            <span data-usage className="text-xs text-muted-foreground tabular-nums">
-              {tokens(step.usage.total)}
+            <span className="flex items-center gap-2">
+              {/* One track for every step, so the bars compare. */}
+              <span aria-hidden className="h-1.5 w-28 overflow-hidden rounded-full bg-rule sm:w-48">
+                <span
+                  data-bar
+                  className="block h-full rounded-full bg-primary/70"
+                  style={{ width: `${Math.max(2, Math.round(share * 100))}%` }}
+                />
+              </span>
+              <span data-usage className="text-xs text-muted-foreground tabular-nums">
+                {tokens(step.usage.total)}
+              </span>
             </span>
           ) : null}
-          {step.models.length > 0 ? (
-            <span className="truncate text-xs text-muted-foreground">
-              · {step.models.join(", ")}
-            </span>
+          {step.models.some((m) => m !== model) ? (
+            <span className="truncate text-xs text-muted-foreground">{step.models.join(", ")}</span>
           ) : null}
         </div>
         {step.calls.length > 0 ? (
-          <ul className="space-y-2">
+          <ul className="divide-y divide-rule rounded-lg bg-card">
             {step.calls.map((c, i) =>
               c.name === "delegate" ? (
                 <DelegateCard key={c.id ?? `n${i}`} call={c} live={live} sessionId={sessionId} />
@@ -603,13 +661,16 @@ function ToolCallCard({ call, live }: { call: ToolCall; live: boolean }) {
     <li
       data-call={call.name}
       data-state={pending ? "pending" : failed ? "failed" : "done"}
-      className={cn(
-        "rounded-md border bg-card",
-        failed ? "border-destructive/40" : "border-border",
-      )}
+      className="first:rounded-t-lg last:rounded-b-lg"
     >
       <div className="flex items-start gap-2 px-3 py-2">
-        <Wrench aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+        <Wrench
+          aria-hidden
+          className={cn(
+            "mt-0.5 size-3.5 shrink-0",
+            failed ? "text-failed" : "text-muted-foreground",
+          )}
+        />
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="flex items-center gap-2">
             <span className="font-mono text-xs font-medium">{call.name}</span>
@@ -631,7 +692,7 @@ function ToolCallCard({ call, live }: { call: ToolCall; live: boolean }) {
                   key={k}
                   data-arg={k}
                   title={v.length > CHIP_MAX ? v : undefined}
-                  className="inline-flex max-w-full items-center rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-[11px]"
+                  className="inline-flex max-w-full items-center rounded-md px-1.5 py-0.5 font-mono text-xs shadow-[inset_0_0_0_1px_var(--color-rule)]"
                 >
                   <span className="text-muted-foreground">{k}:</span>
                   <span className="ml-1 truncate">{clipped(v, CHIP_MAX)}</span>
@@ -656,7 +717,7 @@ function ToolCallCard({ call, live }: { call: ToolCall; live: boolean }) {
         </span>
       </div>
       {result ? (
-        <div className="border-t border-border px-3 py-2">
+        <div className="pr-3 pb-2.5 pl-8.5">
           {failed ? (
             <p className="whitespace-pre-wrap break-words font-mono text-xs text-destructive">
               {result.error}
@@ -700,23 +761,19 @@ function DelegateCard({
   const state = result === null ? "pending" : failed ? "failed" : "done";
 
   return (
-    <li
-      data-call={call.name}
-      data-state={state}
-      className={cn(
-        "rounded-md border bg-card",
-        failed ? "border-destructive/40" : "border-border",
-      )}
-    >
+    <li data-call={call.name} data-state={state} className="first:rounded-t-lg last:rounded-b-lg">
       <div className="flex items-start gap-2 px-3 py-2">
-        <Users aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+        <Users
+          aria-hidden
+          className={cn("mt-0.5 size-3.5 shrink-0", failed ? "text-failed" : "text-primary")}
+        />
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-xs font-medium">delegate</span>
             <span aria-hidden className="text-xs text-muted-foreground">
               →
             </span>
-            <span data-target className="truncate text-xs font-medium">
+            <span data-target className="truncate text-sm font-medium">
               {target || "an agent it did not name"}
             </span>
             {report ? <RunStatus status={report.status} /> : null}
@@ -755,7 +812,7 @@ function DelegateCard({
         </span>
       </div>
       {result ? (
-        <div className="border-t border-border px-3 py-2">
+        <div className="pr-3 pb-2.5 pl-8.5">
           {result.error ? (
             <p className="whitespace-pre-wrap break-words font-mono text-xs text-destructive">
               {result.error}
@@ -814,7 +871,7 @@ function RawToggle({ raw }: { raw: string }) {
       {open ? (
         <pre
           data-raw
-          className="mt-1.5 max-h-80 overflow-auto rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed"
+          className="mt-1.5 max-h-80 overflow-auto rounded-md bg-sheet p-3 font-mono text-xs leading-relaxed shadow-[inset_0_0_0_1px_var(--color-rule)]"
         >
           {pretty(raw)}
         </pre>
