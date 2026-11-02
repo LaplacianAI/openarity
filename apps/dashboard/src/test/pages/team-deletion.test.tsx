@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
@@ -259,9 +259,7 @@ describe("whether the nav offers Deleted teams", () => {
   it("does not for someone with no teams, whom the brain answers with none deleted", async () => {
     const seen = brain({ "GET /teams": { body: { items: [] } } });
     const { result } = await offers();
-    await waitFor(() =>
-      expect(seen.some((s) => s.path.includes("deleted=true"))).toBe(true),
-    );
+    await waitFor(() => expect(seen.some((s) => s.path.includes("deleted=true"))).toBe(true));
     expect(result.current).toBe(false);
   });
 
