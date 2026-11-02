@@ -102,6 +102,9 @@ describe("the sessions list", () => {
     const router = at("/ui/sessions");
     await screen.findByRole("link", { name: /ticket-42/ });
 
+    // What the screen is for, beside its title, comes first.
+    await userEvent.tab();
+    expect(screen.getByRole("button", { name: "What is Sessions?" })).toHaveFocus();
     await userEvent.tab();
     expect(screen.getByRole("link", { name: /ticket-42/ })).toHaveFocus();
     await userEvent.keyboard("{Enter}");
