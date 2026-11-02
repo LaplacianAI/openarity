@@ -6,6 +6,7 @@ import { getTeamSettings, listAgents, saveTeamSettings } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type { SearchProvider, TeamSettings, TeamSettingsRequest } from "@/api/types";
+import { DeleteTeamDialog } from "@/components/delete-team-dialog";
 import { type Picked, Picker } from "@/components/picker";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
 import { Button } from "@/components/ui/button";
@@ -78,7 +79,33 @@ function Settings() {
           canWrite={canWrite}
         />
       )}
+
+      {teamId && teamName && perms.superAdmin ? (
+        <DangerZone teamId={teamId} teamName={teamName} />
+      ) : null}
     </div>
+  );
+}
+
+/** Super admins only: the brain refuses a delete from anyone else. */
+function DangerZone({ teamId, teamName }: { teamId: string; teamName: string }) {
+  return (
+    <section
+      aria-labelledby="danger-zone"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/40 bg-card p-4"
+    >
+      <div className="space-y-1">
+        <h2 id="danger-zone" className="text-sm font-medium text-destructive">
+          Delete this team
+        </h2>
+        <p className="max-w-xl text-xs text-muted-foreground">
+          Its members lose access right away, and its name can be used again. A super admin can
+          restore it from Deleted teams until it is erased for good. Not possible while a run is
+          waiting or running.
+        </p>
+      </div>
+      <DeleteTeamDialog teamId={teamId} teamName={teamName} />
+    </section>
   );
 }
 

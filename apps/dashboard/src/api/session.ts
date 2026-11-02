@@ -70,6 +70,18 @@ export function useToken(): string | null {
 }
 
 /**
+ * Drops the remembered team, for when it no longer exists. The next read of
+ * the teams list falls back to the first one.
+ */
+export function forgetTeam() {
+  try {
+    window.sessionStorage.removeItem(TEAM_KEY);
+  } catch {
+    // Nothing was remembered.
+  }
+}
+
+/**
  * The team every other call is scoped to.
  *
  * Defaults to the first the brain returns rather than making the operator

@@ -18,6 +18,12 @@ export type Permissions = {
   can: (permission: string) => boolean;
   /** Not yet known: a screen shows no write action rather than one that flickers. */
   isPending: boolean;
+  /**
+   * True only when the brain said so. Unlike `can`, a failed read offers
+   * nothing: what it gates is deleting a team, not a write that names its
+   * own refusal.
+   */
+  superAdmin: boolean;
 };
 
 export function usePermissions(teamId: string | null): Permissions {
@@ -38,5 +44,6 @@ export function usePermissions(teamId: string | null): Permissions {
       return Boolean(data && (data.super_admin || data.actions.includes(permission)));
     },
     isPending: query.isPending && Boolean(teamId),
+    superAdmin: query.data?.super_admin === true,
   };
 }

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
+  ArchiveRestore,
   BookOpen,
   Bot,
   Inbox,
@@ -15,6 +16,7 @@ import {
   Users,
 } from "lucide-react";
 import { fetchWhoami } from "@/api";
+import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam, useToken } from "@/api/session";
 import { setToken } from "@/api/token";
 import { SignIn } from "@/components/sign-in";
@@ -45,6 +47,29 @@ const NAV = [
   { to: "/ui/graph", label: "Graph", icon: Network, exact: false },
   { to: "/ui/settings", label: "Team settings", icon: Settings, exact: false },
 ] as const;
+
+const DELETED_TEAMS = {
+  to: "/ui/teams/deleted",
+  label: "Deleted teams",
+  icon: ArchiveRestore,
+  exact: false,
+} as const;
+
+type NavItem = (typeof NAV)[number] | typeof DELETED_TEAMS;
+
+/** The sidebar's entries. Deleted teams sits under Teams, for super admins only. */
+export function navFor(superAdmin: boolean): readonly NavItem[] {
+  if (!superAdmin) return NAV;
+  const at = NAV.findIndex((i) => i.to === "/ui/teams") + 1;
+  return [...NAV.slice(0, at), DELETED_TEAMS, ...NAV.slice(at)];
+}
+
+/** The entry a path belongs to: the longest that matches, so a nested page lights only itself. */
+function activeOf(items: readonly NavItem[], pathname: string): string | undefined {
+  return items
+    .filter((i) => (i.exact ? pathname === i.to : pathname.startsWith(i.to)))
+    .sort((a, b) => b.to.length - a.to.length)[0]?.to;
+}
 
 function UiLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -89,6 +114,10 @@ function UiLayout() {
 }
 
 function Sidebar({ pathname }: { pathname: string }) {
+  const { teamId } = useCurrentTeam();
+  const items = navFor(usePermissions(teamId).superAdmin);
+  const active = activeOf(items, pathname);
+
   return (
     <aside className="hidden w-56 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
       <div className="flex h-12 items-center gap-2 border-b border-sidebar-border px-4">
@@ -96,8 +125,7 @@ function Sidebar({ pathname }: { pathname: string }) {
         <span className="text-sm font-semibold tracking-tight">Openarity</span>
       </div>
       <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main">
-        {NAV.map((item) => {
-          const active = item.exact ? pathname === item.to : pathname.startsWith(item.to);
+        {items.map((item) => {
           const Icon = item.icon;
           return (
             <Link
@@ -105,7 +133,7 @@ function Sidebar({ pathname }: { pathname: string }) {
               to={item.to}
               className={cn(
                 "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
-                active
+                item.to === active
                   ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                   : "text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}

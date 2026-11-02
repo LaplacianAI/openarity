@@ -64,6 +64,21 @@ export function createTeam(name: string): Promise<Team> {
   return request<Team>("/teams", { method: "POST", body: { name } });
 }
 
+/** Super admins only. The brain ignores the flag for anyone else and lists their live teams. */
+export function listDeletedTeams(cursor?: string | null): Promise<Page<Team>> {
+  const query = pageQuery(cursor);
+  return request<Page<Team>>(`/teams${query ? `${query}&` : "?"}deleted=true`);
+}
+
+/** Marks the team deleted; it can be restored until the brain purges it. */
+export function deleteTeam(teamId: string): Promise<void> {
+  return request<void>(`/teams/${teamId}`, { method: "DELETE" });
+}
+
+export function restoreTeam(teamId: string): Promise<Team> {
+  return request<Team>(`/teams/${teamId}/restore`, { method: "POST" });
+}
+
 /* ---------------------------------------------------------------- members */
 
 export function listMembers(teamId: string, cursor?: string | null): Promise<Page<Member>> {
