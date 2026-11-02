@@ -82,7 +82,8 @@ Beside running agents (below), the brain is production-shaped:
   pre-provisioned
 - Role-based authorisation. Roles and their permissions are rows, so adding a
   role is a migration rather than a release
-- A teams API — create a team, list them, and manage membership
+- A teams API — create a team, list them, manage membership, and delete one,
+  which can be restored until it is purged a week later
 - An inbound gateway. A channel is a team's connection to one platform; its
   webhook arrives on the public listener, is verified against that channel's
   own signing secret, and becomes a normalised message whatever sent it
@@ -116,8 +117,8 @@ Beside running agents (below), the brain is production-shaped:
   the built-in
 - `--output table|json|yaml` on every command, so output is readable or
   parseable without a second tool
-- Teams and membership from the terminal — list, create, and add or remove a
-  member, instead of a `psql` session against the brain's database
+- Teams and membership from the terminal — list, create, delete and restore a
+  team, and add or remove a member, instead of a `psql` session against the brain's database
 - Channels — connect one, list them, disconnect it. The signing secret is
   generated for you and shown once, or read from stdin if you have one already;
   there is no `--secret` flag, because a command line is world-readable
@@ -205,10 +206,10 @@ go run ./cmd/brain               # serve; Ctrl-C to shut down
 ```
 
 `brain reap` is the third command, and a deployment needs it on a schedule.
-Deleting a team, a channel or a person removes their rows; it cannot remove the
+Purging a deleted team, or deleting a channel or a person, removes their rows; it cannot remove the
 attachment bytes in the object store or the secrets in the vault, because
 Postgres has no transaction that spans them. Each deletion records what it owes
-instead, and `reap` completes it — destroying a deleted team's key first, which
+instead, and `reap` completes it — destroying a purged team's key first, which
 makes every one of its attachments unreadable immediately. It is idempotent and
 safe to run twice at once, exits non-zero when an erasure has been outstanding
 for a day, and a deployment that never runs it never erases anything outside
@@ -373,6 +374,9 @@ than by uuid:
 ```sh
 oa teams list
 oa teams create platform                      # super admins only
+oa teams delete platform                      # super admins only; restorable for a week
+oa teams list --deleted
+oa teams restore platform
 
 oa teams members list platform
 oa teams members add platform alice --role member
