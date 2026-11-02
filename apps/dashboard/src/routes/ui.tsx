@@ -15,7 +15,7 @@ import {
   Sun,
   Users,
 } from "lucide-react";
-import { fetchWhoami } from "@/api";
+import { fetchWhoami, listDeletedTeams } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam, useToken } from "@/api/session";
 import { setToken } from "@/api/token";
@@ -62,6 +62,24 @@ export function navFor(superAdmin: boolean): readonly NavItem[] {
   if (!superAdmin) return NAV;
   const at = NAV.findIndex((i) => i.to === "/ui/teams") + 1;
   return [...NAV.slice(0, at), DELETED_TEAMS, ...NAV.slice(at)];
+}
+
+/**
+ * Whether the sidebar offers Deleted teams. Super admin is read from the
+ * current team's permissions, so once the last live team is deleted there is
+ * no team to ask; then the deleted list itself answers, because the brain
+ * gives deleted rows to a super admin and live ones to anyone else.
+ */
+export function useOffersDeletedTeams(): boolean {
+  const { teamId, isPending } = useCurrentTeam();
+  const { superAdmin } = usePermissions(teamId);
+  const deleted = useQuery({
+    queryKey: ["teams", "deleted", "any"],
+    queryFn: () => listDeletedTeams(),
+    enabled: !isPending && !teamId,
+    staleTime: 60_000,
+  });
+  return superAdmin || Boolean(deleted.data?.items.some((t) => t.deleted_at));
 }
 
 /** The entry a path belongs to: the longest that matches, so a nested page lights only itself. */
@@ -114,8 +132,7 @@ function UiLayout() {
 }
 
 function Sidebar({ pathname }: { pathname: string }) {
-  const { teamId } = useCurrentTeam();
-  const items = navFor(usePermissions(teamId).superAdmin);
+  const items = navFor(useOffersDeletedTeams());
   const active = activeOf(items, pathname);
 
   return (

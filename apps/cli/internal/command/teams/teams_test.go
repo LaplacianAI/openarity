@@ -568,3 +568,36 @@ func TestListSendsNoDeletedUnlessAsked(t *testing.T) {
 		t.Errorf("query = %q, want no deleted parameter", got.Query)
 	}
 }
+
+// Review: the brain answers ?deleted=true from anyone but a super admin with
+// their live teams, which must never be printed as deleted ones.
+func TestListDeletedNeverShowsALiveTeam(t *testing.T) {
+	clitest.BrainStub(t, http.StatusOK, twoTeams)
+
+	out, err := clitest.Execute(t, commands, "teams", "list", "--deleted")
+	if err != nil {
+		t.Fatalf("teams list --deleted: %v", err)
+	}
+	if strings.Contains(out, "platform") || !strings.Contains(out, "no deleted teams") {
+		t.Errorf("live teams were listed as deleted:\n%s", out)
+	}
+
+	out, err = clitest.Execute(t, commands, "teams", "list", "--deleted", "-o", "json")
+	if err != nil {
+		t.Fatalf("-o json: %v", err)
+	}
+	if strings.Contains(out, "platform") || !strings.Contains(out, `"items": []`) {
+		t.Errorf("-o json carried live teams:\n%s", out)
+	}
+}
+
+// There is no way to rename a team, so no help may offer it as the way out.
+func TestRestoreHelpOffersNoRename(t *testing.T) {
+	out, err := clitest.Execute(t, commands, "teams", "restore", "--help")
+	if err != nil {
+		t.Fatalf("teams restore --help: %v", err)
+	}
+	if strings.Contains(out, "rename") {
+		t.Errorf("help offers a rename that does not exist:\n%s", out)
+	}
+}

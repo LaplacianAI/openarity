@@ -129,6 +129,8 @@ func TestNeedsNamesThePermissionOnlyForARefusal(t *testing.T) {
 func TestResolveDeletedTeamLooksOnlyAmongTheDeleted(t *testing.T) {
 	t.Parallel()
 
+	const goneAt = `"deleted_at":"2026-11-01T09:30:00Z"`
+
 	gone := uuid.New()
 	older, newer := uuid.New(), uuid.New()
 	var asked atomic.Int32
@@ -144,11 +146,11 @@ func TestResolveDeletedTeamLooksOnlyAmongTheDeleted(t *testing.T) {
 		}
 		switch r.URL.Query().Get("cursor") {
 		case "":
-			_, _ = w.Write([]byte(`{"items":[{"id":"` + older.String() + `","name":"twice"}],"next_cursor":"p2"}`))
+			_, _ = w.Write([]byte(`{"items":[{"id":"` + older.String() + `","name":"twice",` + goneAt + `}],"next_cursor":"p2"}`))
 		case "p2":
 			_, _ = w.Write([]byte(`{"items":[` +
-				`{"id":"` + gone.String() + `","name":"docs"},` +
-				`{"id":"` + newer.String() + `","name":"twice"}]}`))
+				`{"id":"` + gone.String() + `","name":"docs",` + goneAt + `},` +
+				`{"id":"` + newer.String() + `","name":"twice",` + goneAt + `}]}`))
 		default:
 			http.Error(w, "no such page", http.StatusBadRequest)
 		}
@@ -182,5 +184,29 @@ func TestResolveDeletedTeamLooksOnlyAmongTheDeleted(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `no deleted team named "nobody"`) ||
 		!strings.Contains(err.Error(), "oa teams list --deleted") {
 		t.Errorf("a miss said: %v", err)
+	}
+}
+
+// The brain answers ?deleted=true from anyone but a super admin with their
+// live teams. A live team of that name is not a deleted one to restore.
+func TestResolveDeletedTeamIgnoresALiveTeamAnsweredInstead(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /teams", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"id":"` + uuid.NewString() + `","name":"docs","role":"member"}]}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	api, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ResolveDeletedTeam(t.Context(), api, "docs")
+	if err == nil || !strings.Contains(err.Error(), `no deleted team named "docs"`) {
+		t.Errorf("a live team answered for a deleted one: %v", err)
 	}
 }

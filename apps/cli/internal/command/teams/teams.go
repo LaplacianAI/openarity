@@ -86,10 +86,23 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 	return cmd
 }
 
+// The brain answers ?deleted=true from anyone but a super admin with their
+// live teams, so only a team with a deletion date is shown as deleted.
 func printDeleted(opts *cli.Options, page *client.TeamPage) error {
+	items := make([]client.Team, 0, len(page.Items))
+	for _, team := range page.Items {
+		if team.DeletedAt != nil {
+			items = append(items, team)
+		}
+	}
+	next := page.NextCursor
+	if len(items) == 0 {
+		next = nil
+	}
+
 	return cli.PrintPage(opts, cli.Page[client.Team]{
-		Items:      page.Items,
-		NextCursor: page.NextCursor,
+		Items:      items,
+		NextCursor: next,
 		Empty:      "no deleted teams",
 		More:       "oa teams list --deleted",
 		Row: func(table *printer.Table, team client.Team) {
@@ -188,7 +201,7 @@ func newRestoreCmd(opts *cli.Options) *cobra.Command {
 		Short: "Bring back a deleted team before it is erased for good",
 		Long: "Super admins only. The name is looked up among deleted teams, so a live team\n" +
 			"that has taken it since is never the one restored; restoring then fails\n" +
-			"until that team is renamed or deleted.",
+			"for as long as that team keeps the name.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			api, err := opts.API(cmd.Context())

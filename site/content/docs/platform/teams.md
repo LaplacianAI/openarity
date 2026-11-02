@@ -42,8 +42,8 @@ oa teams restore platform
 
 A name given to `restore` is looked up among deleted teams only, so a live
 team that has taken the name since is never the one restored. Restoring then
-fails with `a team with that name already exists` until that team is renamed
-or deleted. Two deleted teams with the same name are reported with their ids;
+fails with `a team with that name already exists` for as long as that team
+keeps the name. Two deleted teams with the same name are reported with their ids;
 pass the id of the one you mean.
 
 ## Purging

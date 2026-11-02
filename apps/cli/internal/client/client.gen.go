@@ -2252,8 +2252,8 @@ type ClientInterface interface {
 	// Restoring a team that is not deleted answers 200 and changes nothing.
 	//
 	// A deleted team's name is free for a new team at once, so the restore
-	// is refused if a live team has taken it since; rename one of them
-	// first. A purged team is gone and answers 404.
+	// is refused for as long as a live team holds it. A purged team is
+	// gone and answers 404.
 	//
 	// Corresponds with POST /teams/{id}/restore (the `RestoreTeam` operationId).
 	RestoreTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3610,8 +3610,8 @@ func (c *Client) GetTeamPermissions(ctx context.Context, id TeamID, reqEditors .
 // Restoring a team that is not deleted answers 200 and changes nothing.
 //
 // A deleted team's name is free for a new team at once, so the restore
-// is refused if a live team has taken it since; rename one of them
-// first. A purged team is gone and answers 404.
+// is refused for as long as a live team holds it. A purged team is
+// gone and answers 404.
 //
 // Corresponds with POST /teams/{id}/restore (the `RestoreTeam` operationId).
 func (c *Client) RestoreTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7821,8 +7821,8 @@ type ClientWithResponsesInterface interface {
 	// Restoring a team that is not deleted answers 200 and changes nothing.
 	//
 	// A deleted team's name is free for a new team at once, so the restore
-	// is refused if a live team has taken it since; rename one of them
-	// first. A purged team is gone and answers 404.
+	// is refused for as long as a live team holds it. A purged team is
+	// gone and answers 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -11688,8 +11688,8 @@ func (c *ClientWithResponses) GetTeamPermissionsWithResponse(ctx context.Context
 // Restoring a team that is not deleted answers 200 and changes nothing.
 //
 // A deleted team's name is free for a new team at once, so the restore
-// is refused if a live team has taken it since; rename one of them
-// first. A purged team is gone and answers 404.
+// is refused for as long as a live team holds it. A purged team is
+// gone and answers 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //

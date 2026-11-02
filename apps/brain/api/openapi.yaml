@@ -290,8 +290,8 @@ paths:
         Restoring a team that is not deleted answers 200 and changes nothing.
 
         A deleted team's name is free for a new team at once, so the restore
-        is refused if a live team has taken it since; rename one of them
-        first. A purged team is gone and answers 404.
+        is refused for as long as a live team holds it. A purged team is
+        gone and answers 404.
       responses:
         "200":
           description: The team, live again

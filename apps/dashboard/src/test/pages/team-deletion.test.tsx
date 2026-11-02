@@ -1,5 +1,6 @@
-import { QueryClient } from "@tanstack/react-query";
-import { screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderHook, screen, waitFor, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -224,5 +225,51 @@ describe("the nav", () => {
     expect(labels(false)).not.toContain("Deleted teams");
     const admin = labels(true);
     expect(admin[admin.indexOf("Teams") + 1]).toBe("Deleted teams");
+  });
+});
+
+describe("whether the nav offers Deleted teams", () => {
+  async function offers() {
+    const { useOffersDeletedTeams } = await import("@/routes/ui");
+    setToken("a-token");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    return renderHook(() => useOffersDeletedTeams(), { wrapper });
+  }
+
+  it("does for a super admin in a live team", async () => {
+    brain(team([], true));
+    const { result } = await offers();
+    await waitFor(() => expect(result.current).toBe(true));
+  });
+
+  // Review: a super admin who deleted their only team has no team to ask
+  // permissions in, and the toast still sends them to Deleted teams.
+  it("does once the super admin's last team is deleted", async () => {
+    brain({
+      "GET /teams": (s) =>
+        s.path.includes("deleted=true") ? { body: { items: [GONE] } } : { body: { items: [] } },
+    });
+    const { result } = await offers();
+    await waitFor(() => expect(result.current).toBe(true));
+  });
+
+  it("does not for someone with no teams, whom the brain answers with none deleted", async () => {
+    const seen = brain({ "GET /teams": { body: { items: [] } } });
+    const { result } = await offers();
+    await waitFor(() =>
+      expect(seen.some((s) => s.path.includes("deleted=true"))).toBe(true),
+    );
+    expect(result.current).toBe(false);
+  });
+
+  it("asks nothing more of a member who has a team", async () => {
+    const seen = brain(team([], false));
+    const { result } = await offers();
+    await waitFor(() => expect(seen.some((s) => s.path.includes("/permissions"))).toBe(true));
+    expect(result.current).toBe(false);
+    expect(seen.some((s) => s.path.includes("deleted=true"))).toBe(false);
   });
 });

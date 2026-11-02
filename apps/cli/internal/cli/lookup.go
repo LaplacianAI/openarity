@@ -78,8 +78,9 @@ func ResolveDeletedTeam(ctx context.Context, api *client.ClientWithResponses, re
 			return uuid.Nil, fmt.Errorf("look up the deleted team %q: %w", ref, err)
 		}
 
+		// Anyone but a super admin is answered with their live teams.
 		for _, team := range page.Items {
-			if team.Name == ref {
+			if team.Name == ref && team.DeletedAt != nil {
 				found = append(found, team.ID)
 			}
 		}
