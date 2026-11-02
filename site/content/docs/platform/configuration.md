@@ -19,5 +19,8 @@ The ports are unusual enough to be worth repeating:
 | API      | `127.0.0.1:21120` | everything a caller authenticates for |
 | Webhook  | `127.0.0.1:21121` | inbound channel deliveries      |
 
+How long a deleted team can be restored is `OPENARITY_TEAM_PURGE_AFTER`, a
+week by default; [Deleting a team](teams.md) has the rest.
+
 One entry, Redis, is present and marked *not used yet*: it is configured
 ahead of the code that will read it, and the README says so.

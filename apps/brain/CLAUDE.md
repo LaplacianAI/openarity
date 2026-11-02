@@ -127,6 +127,7 @@ apps/brain/
     job.go             the drain as background work
   internal/reaper/     the sweep: one loop, one Effect per outside system
     job.go             the reaper as background work: SweepAll, and its Job
+  internal/purge/      erasing deleted teams once TEAM_PURGE_AFTER has passed
   internal/runtime/    a run: the agent built from its row, executed, recorded
     build.go           the Spec, its granted MCP tools and skills; Patterns and Loops
     delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run
@@ -296,6 +297,30 @@ reinstalled.
 
 ## Decisions worth not relitigating
 
+- **A team is deleted in two steps: marked, then purged.** `teams.deleted_at`
+  hides it from every reader but `GetTeam`, frees its name through the partial
+  unique index, and is undone by a restore; `internal/purge` erases it once
+  `TEAM_PURGE_AFTER` has passed, through the cascade and tombstones that were
+  already there. `GetTeam` stays unfiltered because the graph projector reads
+  `ErrNoRows` as "drop this team's graph"; handlers read `GetLiveTeam`, and a
+  super admin reads `GetTeam`. `purge_at` is computed on read, never stored, so
+  changing the window moves every pending purge.
+- **A delete locks the team in a statement of its own, then marks it.**
+  `StartRun` takes `LockLiveTeam` (`FOR SHARE`) before its first write, and
+  that alone was not enough: an UPDATE that waits on a lock re-checks the row
+  it waited for, but its `NOT EXISTS` over `runs` reads the snapshot the
+  statement began with, and missed the run that had just committed.
+  `SoftDeleteTeam` therefore takes `LockTeamForDelete` (`FOR NO KEY UPDATE`)
+  first and runs `MarkTeamDeleted` as the next statement, whose snapshot sees
+  the run. The race test fails without either lock. The same reasoning puts
+  the window on `PurgeTeams`' outer `DELETE` as well as in its pick: a restore
+  committing while the purge waits on the row must keep the team.
+- **A deleted team is read-only even to a super admin, and the guard says
+  so.** `Guard.Wrap` asks `TeamState` before any write a super admin sends to
+  a `{id}` route, and answers 409 unless the route is deleting the team again
+  or restoring it. Members never pay the query: `ListUserTeams` already leaves
+  a deleted team out of their memberships, so the scope checks refuse them
+  first.
 - **Config is env-only.** No config files, no flags for the server, no Viper.
   Kubernetes injects env natively, and the config surface stays small because
   secrets live in Vault rather than here.

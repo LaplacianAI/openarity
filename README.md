@@ -575,6 +575,17 @@ and changing the model means `brain graph rebuild`.
 The two `path#key` settings name a secret, never hold one. The shipped OpenBao
 policy lets the brain read under `platform/` for exactly these.
 
+### Teams
+
+| Variable                     | Default | What it does                                                 |
+| ---------------------------- | ------- | ------------------------------------------------------------ |
+| `OPENARITY_TEAM_PURGE_AFTER` | `168h`  | How long a deleted team can be restored before it is erased  |
+
+A Go duration, so it is written in hours: `168h` is a week, and `7d` is
+refused. Anything outside `1h` to `2160h` (90 days) fails the start. A deleted
+team's purge date is computed from it rather than stored, so changing it and
+restarting moves every pending purge at once.
+
 ### Secrets and object storage
 
 Both pick an implementation by name. Nothing is inferred from which other
