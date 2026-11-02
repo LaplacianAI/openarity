@@ -5,8 +5,11 @@ import (
 	"errors"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 )
@@ -168,4 +171,34 @@ func TestRunSendsNothingToTheProcessStreams(t *testing.T) {
 	if len(leaked) != 0 {
 		t.Errorf("run wrote to os.Stdout directly: %q", leaked)
 	}
+}
+
+// Help is read by people who run oa, not by whoever deploys the brain, so it
+// never names the brain's settings. Only oa's own environment variables,
+// which its user sets, may appear, and a shell variable in an example.
+func TestHelpNamesNoBrainSetting(t *testing.T) {
+	ours := map[string]bool{
+		"OPENARITY_SERVER": true, "OPENARITY_TOKEN": true, "OPENARITY_OUTPUT": true,
+		"OPENARITY_THEME": true, "OPENARITY_DEV_TOKEN": true, "OPENARITY_CONFIG_DIR": true,
+		"OPENARITY_NO_KEYCHAIN": true,
+	}
+	setting := regexp.MustCompile(`\$?\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b`)
+
+	var walk func(cmd *cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		text := cmd.Short + "\n" + cmd.Long + "\n" + cmd.Flags().FlagUsages()
+		for _, name := range setting.FindAllString(text, -1) {
+			bare := strings.TrimPrefix(name, "$")
+			if name != bare && !strings.HasPrefix(bare, "OPENARITY_") {
+				continue // an example's own shell variable, such as $SLACK_SIGNING_SECRET
+			}
+			if !ours[bare] {
+				t.Errorf("%q names %s, a setting its reader cannot change", cmd.CommandPath(), name)
+			}
+		}
+		for _, sub := range cmd.Commands() {
+			walk(sub)
+		}
+	}
+	walk(cli.NewRoot(io.Discard, io.Discard, commands))
 }

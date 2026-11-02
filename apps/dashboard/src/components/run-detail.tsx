@@ -988,7 +988,9 @@ function SearchList({ results, raw }: { results: SearchResults; raw: string }) {
         </ol>
       )}
       {results.cut ? (
-        <p className="text-xs text-muted-foreground">The brain cut these results at 16 KiB.</p>
+        <p className="text-xs text-muted-foreground">
+          The brain cut these results at their size limit.
+        </p>
       ) : null}
       <RawToggle raw={raw} />
     </div>

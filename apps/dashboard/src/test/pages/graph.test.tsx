@@ -179,7 +179,8 @@ it("asks for a bounded graph", async () => {
   expect(seen.find((s) => s.path.includes("/graph"))?.path).toBe(`/teams/${TEAM}/graph?limit=500`);
 });
 
-// A 503 is a brain with no embedding model, not a fault. It says what to set.
+// A 503 is a brain with no embedding model, not a fault. It says who can fix
+// it, in words, not the brain's setting names.
 it("explains a graph that is not enabled", async () => {
   brain({
     ...team([]),
@@ -190,7 +191,8 @@ it("explains a graph that is not enabled", async () => {
   expect(
     await screen.findByRole("heading", { name: /the graph is not enabled/i }),
   ).toBeInTheDocument();
-  expect(screen.getByText(/OPENARITY_EMBEDDING_MODEL/)).toBeInTheDocument();
+  expect(screen.getByText(/once this brain has an embedding model/i)).toBeInTheDocument();
+  expect(document.body.textContent).not.toMatch(/OPENARITY_|make |\.md\b/);
 });
 
 it("says so when the graph holds only the team", async () => {

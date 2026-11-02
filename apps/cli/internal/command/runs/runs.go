@@ -27,8 +27,8 @@ func New(opts *cli.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "runs",
 		Short: "Start an agent on a task, and follow what it does",
-		Long: "A run is one agent working through one input: it is queued, a worker\n" +
-			"takes it, and it ends succeeded, failed or cancelled. Every run belongs\n" +
+		Long: "A run is one agent working through one input: it is queued, it starts,\n" +
+			"and it ends succeeded, failed or cancelled. Every run belongs\n" +
 			"to a conversation — name one with --session, or the run gets a direct\n" +
 			"session of its own.\n\n" +
 			"A run is visible where its session is. Starting or cancelling one needs\n" +
@@ -330,7 +330,7 @@ func newCancelCmd(opts *cli.Options) *cobra.Command {
 		Use:   "cancel <team> <run>",
 		Short: "Stop a run",
 		Long: "Needs run:write in the team. A queued run ends at once. A running one\n" +
-			"is marked and stops at its worker's next heartbeat, within 15 seconds;\n" +
+			"is asked to stop, and stops within about 15 seconds;\n" +
 			"`oa runs events` shows it end.\n\n" +
 			"    oa runs cancel platform 0b7c3e52-8a41-4f6d-9e2b-5c1a7d3f8e60",
 		Args: cobra.ExactArgs(2),

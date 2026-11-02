@@ -82,7 +82,7 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 
 	paging.Flags(cmd)
 	cmd.Flags().BoolVar(&deleted, "deleted", false,
-		"only deleted teams, with when each is purged (super admins only)")
+		"only deleted teams, with when each is erased for good (super admins only)")
 	return cmd
 }
 
@@ -95,7 +95,7 @@ func printDeleted(opts *cli.Options, page *client.TeamPage) error {
 		Row: func(table *printer.Table, team client.Team) {
 			table.Row(opts.Styles.Value.Render(team.Name),
 				opts.Styles.Muted.Render("deleted "+stamp(team.DeletedAt)),
-				"purges "+stamp(team.PurgeAt),
+				"erased "+stamp(team.PurgeAt),
 				opts.Styles.Muted.Render(team.ID.String()))
 		},
 	})
@@ -113,11 +113,11 @@ func newDeleteCmd(opts *cli.Options) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "delete <team>",
-		Short: "Delete a team; it can be restored until it is purged",
-		Long: "Super admins only. The team disappears for its members at once and its\n" +
-			"name is free. It is erased for good once the brain's TEAM_PURGE_AFTER has\n" +
-			"passed, and until then `oa teams restore` brings it back whole. Refused\n" +
-			"while a run is queued or running in it.",
+		Short: "Delete a team; it can be restored until it is erased for good",
+		Long: "Super admins only. Its members lose access right away, and its name can\n" +
+			"be used again. It is erased for good after a while, usually a week, and\n" +
+			"until then `oa teams restore` brings it back whole. Not possible while a\n" +
+			"run is waiting or running in it.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.NonInteractive && !yes {
@@ -147,7 +147,7 @@ func newDeleteCmd(opts *cli.Options) *cobra.Command {
 				return err
 			}
 
-			// The purge date is the brain's to say: TEAM_PURGE_AFTER is its setting.
+			// The purge date is the brain's to say: the window is its setting.
 			gone, err := cli.Result(api.GetTeamWithResponse(cmd.Context(), id))
 			if err != nil {
 				return fmt.Errorf("the team was deleted, but reading it back failed: %w", err)
@@ -156,7 +156,7 @@ func newDeleteCmd(opts *cli.Options) *cobra.Command {
 				Table: func(table *printer.Table) {
 					table.Row(opts.Styles.OK.Render("deleted"),
 						opts.Styles.Value.Render(gone.Name),
-						opts.Styles.Muted.Render("purged on "+stamp(gone.PurgeAt)))
+						opts.Styles.Muted.Render("restorable until "+stamp(gone.PurgeAt)))
 				},
 			})
 		},
@@ -170,7 +170,7 @@ func newDeleteCmd(opts *cli.Options) *cobra.Command {
 // takes only the exact name: a y is too easy to type at the wrong team.
 func confirmName(cmd *cobra.Command, opts *cli.Options, name string) error {
 	fmt.Fprintf(opts.Stderr,
-		"Delete team %q? It can be restored until it is purged. Type the name to confirm: ", name)
+		"Delete team %q? It can be restored until it is erased for good. Type the name to confirm: ", name)
 
 	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 	if err != nil && line == "" {
@@ -185,7 +185,7 @@ func confirmName(cmd *cobra.Command, opts *cli.Options, name string) error {
 func newRestoreCmd(opts *cli.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "restore <team>",
-		Short: "Bring back a deleted team before it is purged",
+		Short: "Bring back a deleted team before it is erased for good",
 		Long: "Super admins only. The name is looked up among deleted teams, so a live team\n" +
 			"that has taken it since is never the one restored; restoring then fails\n" +
 			"until that team is renamed or deleted.",

@@ -211,15 +211,15 @@ function Graph() {
       ) : unavailable ? (
         <EmptyState
           title="The graph is not enabled"
-          body={`${graph.error?.message ?? "No graph"}. The worker projects agents, tools and skills into the graph once an embedding model is set: OPENARITY_EMBEDDING_MODEL and OPENARITY_EMBEDDING_DIMENSIONS.`}
-          hint="See “The graph” in deployment/README.md — `make ollama` runs a model on your machine."
+          body="Agents, tools and skills are added to the graph once this brain has an embedding model to search them with."
+          hint="Ask whoever runs this brain to connect an embedding model."
         />
       ) : graph.isError ? (
         <EmptyState title="The graph could not be read" body={graph.error.message} />
       ) : graph.data.nodes.length <= 1 ? (
         <EmptyState
           title="Nothing in the graph yet"
-          body="Define an agent, register an MCP server or upload a skill, and it appears here once the worker has projected it."
+          body="Define an agent, register an MCP server or upload a skill, and it appears here once it has been indexed."
         />
       ) : (
         <>

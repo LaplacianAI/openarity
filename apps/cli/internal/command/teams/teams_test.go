@@ -399,7 +399,7 @@ func TestDeleteAsksForTheNameThenSaysWhenItIsPurged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("teams delete: %v\n%s", err, out)
 	}
-	for _, want := range []string{`Delete team "platform"?`, "Type the name to confirm", "deleted", "purged on 2026-11-08"} {
+	for _, want := range []string{`Delete team "platform"?`, "Type the name to confirm", "deleted", "restorable until 2026-11-08"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output is missing %q:\n%s", want, out)
 		}
@@ -529,7 +529,7 @@ func TestListDeletedShowsWhenEachIsPurged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("teams list --deleted: %v", err)
 	}
-	for _, want := range []string{"platform", "deleted 2026-11-01", "purges 2026-11-08"} {
+	for _, want := range []string{"platform", "deleted 2026-11-01", "erased 2026-11-08"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the table is missing %q:\n%s", want, out)
 		}

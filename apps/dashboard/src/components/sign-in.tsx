@@ -33,7 +33,7 @@ export function SignIn() {
       ) : config.data.dev_token_accepted ? (
         <DevToken />
       ) : (
-        <NoWayIn environment={config.data.environment} />
+        <NoWayIn />
       )}
     </div>
   );
@@ -72,7 +72,7 @@ function DevToken() {
           autoComplete="off"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="OPENARITY_DEV_TOKEN"
+          placeholder="Paste the development token"
         />
       </div>
       <Button type="submit" size="sm" disabled={!value.trim()}>
@@ -141,15 +141,13 @@ function Oidc({ issuer, clientId }: { issuer: string; clientId: string }) {
   );
 }
 
-function NoWayIn({ environment }: { environment: string }) {
+function NoWayIn() {
   return (
     <div role="alert" className="rounded-md border border-border-strong bg-surface px-4 py-4">
       <h1 className="text-sm font-semibold">This brain accepts no logins</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        It is running in <span className="font-mono">{environment}</span> with no identity provider
-        configured and no development token, so there is no way to authenticate. Set{" "}
-        <span className="font-mono">OPENARITY_OIDC_ENABLED</span> and an issuer, or run it in
-        development.
+        It has no identity provider connected and no development sign-in, so there is no way to sign
+        in. Ask whoever runs it to connect an identity provider.
       </p>
     </div>
   );

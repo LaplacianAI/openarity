@@ -205,8 +205,8 @@ func newImportCmd(opts *cli.Options) *cobra.Command {
 			"    github:<owner>/<repo>/<path>@<ref>\n" +
 			"    https://<an allowed host>/<path>.zip\n\n" +
 			"The brain fetches it, so the source is reached from the brain and not\n" +
-			"from here. A zip host has to be listed in the brain's\n" +
-			"OPENARITY_SKILL_IMPORT_HOSTS. The exact commit or digest is recorded,\n" +
+			"from here. A zip host has to be one the brain's operator has allowed.\n" +
+			"The exact commit or digest is recorded,\n" +
 			"and `oa skills sync` fetches it again.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {

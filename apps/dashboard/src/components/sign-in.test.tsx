@@ -87,6 +87,9 @@ it("says so when the brain accepts no logins at all", async () => {
   show();
 
   expect(await screen.findByText(/accepts no logins/i)).toBeInTheDocument();
+  // Whoever reads this cannot set the brain's environment; it says who can.
+  expect(screen.getByText(/whoever runs it/i)).toBeInTheDocument();
+  expect(document.body.textContent).not.toMatch(/OPENARITY_|staging/);
 });
 
 it("reports an unreachable brain instead of waiting forever", async () => {
