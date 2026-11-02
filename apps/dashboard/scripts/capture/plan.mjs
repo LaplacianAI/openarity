@@ -81,3 +81,16 @@ export function resolveBase(env) {
   }
   return url.origin;
 }
+
+/**
+ * The screens to shoot: every one, or those `names` lists (comma-separated),
+ * kept in the plan's order. A name the plan does not have is refused rather
+ * than matching nothing and reporting success.
+ */
+export function only(screens, names) {
+  if (!names) return screens;
+  const wanted = names.split(",").map((n) => n.trim());
+  const unknown = wanted.filter((n) => !screens.some((s) => s.name === n));
+  if (unknown.length > 0) throw new Error(`no such screen: ${unknown.join(", ")}`);
+  return screens.filter((s) => wanted.includes(s.name));
+}

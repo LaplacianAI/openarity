@@ -10,6 +10,8 @@ import { defineConfig } from "vitest/config";
 // The build stays in this directory. Getting it into the brain binary is the
 // Makefile's job, not this file's — a Vite config that knows where a Go
 // package lives breaks the day somebody moves one.
+const brain = process.env.DASHBOARD_BRAIN || "http://127.0.0.1:21120";
+
 export default defineConfig({
   plugins: [
     // Before the React plugin, which is what the router plugin's own docs
@@ -29,14 +31,17 @@ export default defineConfig({
   },
   server: {
     // `npm run dev` serves the SPA on its own port and proxies the API to a
-    // brain running on the host, so the dev loop keeps hot reload without the
-    // page being cross-origin from what it calls.
-    proxy: {
-      "/auth": "http://127.0.0.1:21120",
-      "/teams": "http://127.0.0.1:21120",
-      "/users": "http://127.0.0.1:21120",
-      "/whoami": "http://127.0.0.1:21120",
-    },
+    // brain, so the dev loop keeps hot reload without the page being
+    // cross-origin from what it calls. The brain on this machine unless
+    // DASHBOARD_BRAIN names another, such as a staging one whose data a
+    // screen is judged against; changeOrigin lets an HTTPS brain behind a
+    // proxy route the request by its own host name.
+    proxy: Object.fromEntries(
+      ["/auth", "/teams", "/users", "/whoami"].map((path) => [
+        path,
+        { target: brain, changeOrigin: true },
+      ]),
+    ),
   },
   test: {
     // jsdom rather than the default node environment: these are components,
