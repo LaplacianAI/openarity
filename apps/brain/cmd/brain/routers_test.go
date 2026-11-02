@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 
@@ -10,7 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/runs"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 type runWorld struct {
@@ -283,5 +286,60 @@ func TestARunInADeletedTeamIsRefusedAndWritesNothing(t *testing.T) {
 	}
 	if n := w.count(t, "runs"); n != 0 {
 		t.Errorf("%d runs written", n)
+	}
+}
+
+// The gateway's inbox against Postgres: a delivery that reaches a team
+// deleted after its channel was read writes no message, and leaves a
+// tombstone the reaper can claim at once for every object fetched for it.
+func TestADeliveryToADeletedTeamLeavesClaimableTombstones(t *testing.T) {
+	w := newRunWorld(t)
+	ch, err := w.store.CreateChannel(t.Context(), db.CreateChannelParams{
+		TeamID: w.team, Provider: "custom", Name: "inbox",
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	if n, err := w.store.SoftDeleteTeam(t.Context(), w.team); err != nil || n != 1 {
+		t.Fatalf("SoftDeleteTeam = %d, %v", n, err)
+	}
+	messages := w.count(t, "messages")
+
+	keys := []string{"teams/" + w.team.String() + "/a", "teams/" + w.team.String() + "/b"}
+	d := gateway.Delivery{
+		UserID: w.user,
+		Inbound: gateway.Inbound{
+			ExternalID: "m-1", Author: gateway.Author{Ref: "u-1"},
+			Session: gateway.Session{Ref: "c-1", Kind: gateway.SessionGroup}, Text: "hi",
+		},
+	}
+	for _, k := range keys {
+		d.Files = append(d.Files, gateway.Stored{ObjectKey: k, MediaType: "image/png", SizeBytes: 1, Filename: "f.png"})
+	}
+
+	err = gateway.NewInbox(inbox{w.store.Store}).Deliver(t.Context(),
+		gateway.Channel{ID: ch.ID, TeamID: w.team}, []gateway.Delivery{d})
+	if !errors.Is(err, gateway.ErrTeamDeleted) {
+		t.Fatalf("Deliver = %v, want gateway.ErrTeamDeleted", err)
+	}
+
+	rows, err := w.raw.Query(t.Context(), `
+		SELECT object_key FROM deleted_objects
+		WHERE team_id = $1 AND claimable_after <= now() ORDER BY object_key`, w.team)
+	if err != nil {
+		t.Fatalf("read tombstones: %v", err)
+	}
+	got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if !slices.Equal(got, keys) {
+		t.Errorf("claimable tombstones = %v, want %v", got, keys)
+	}
+	if n := w.count(t, "messages"); n != messages {
+		t.Errorf("messages went from %d to %d", messages, n)
+	}
+	if n := w.count(t, "attachments"); n != 0 {
+		t.Errorf("%d attachments written", n)
 	}
 }

@@ -114,7 +114,7 @@ gets a retry, "we won't" does not.**
 | Status | When | Because |
 | --- | --- | --- |
 | **200** | delivered, or deliberately dropped | an unapproved sender, a body no adapter can parse, a reaction — a retry brings the same thing back |
-| **403** | bad signature, unknown channel, deleted channel, a channel belonging to another provider | all four are the same answer on purpose: a different status or message tells a stranger which channel ids exist |
+| **403** | bad signature, unknown channel, deleted channel, a channel whose team is deleted, a channel belonging to another provider | all five are the same answer on purpose: a different status or message tells a stranger which channel ids exist. A team deleted after the channel was read is refused inside `Deliver`, which tombstones the objects already fetched for it in the same transaction |
 | **413** | body over `maxBody` | |
 | **500** | our database or the sink failed | the one failure a retry actually fixes. Every write on this path is idempotent, so asking again is free — answering 200 loses the message with nothing anywhere recording that it existed |
 | **503** | a declared credential could not be read | fail closed. `Verify` is never called with `""` |

@@ -30,6 +30,14 @@ type inboxStore struct {
 	err        error
 	sessionErr error
 
+	// The team is live for the first liveFor locks and deleted after; zero
+	// means live for good. lockErr is a lock that failed outright.
+	liveFor  int
+	deleted  bool
+	lockErr  error
+	locks    []uuid.UUID
+	reserved []db.ReserveObjectsParams
+
 	calls        []db.InsertMessageParams
 	sessionCalls []db.EnsureSessionParams
 }
@@ -51,11 +59,29 @@ func (f *inboxStore) InTx(_ context.Context, fn func(Queries) error) error {
 	ids := maps.Clone(f.ids)
 	sessions := maps.Clone(f.sessions)
 	attachments := slices.Clone(f.attachments)
+	reserved := slices.Clone(f.reserved)
 
 	if err := fn(f); err != nil {
 		f.stored, f.ids, f.sessions, f.attachments = stored, ids, sessions, attachments
+		f.reserved = reserved
 		return err
 	}
+	return nil
+}
+
+func (f *inboxStore) LockLiveTeam(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	f.locks = append(f.locks, id)
+	if f.lockErr != nil {
+		return uuid.Nil, f.lockErr
+	}
+	if f.deleted || (f.liveFor > 0 && len(f.locks) > f.liveFor) {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	return id, nil
+}
+
+func (f *inboxStore) ReserveObjects(_ context.Context, arg db.ReserveObjectsParams) error {
+	f.reserved = append(f.reserved, arg)
 	return nil
 }
 
@@ -720,5 +746,122 @@ func TestARetryAfterAFailedAttachmentStillStoresIt(t *testing.T) {
 	if written != 1 {
 		t.Fatalf("the attachment was written %d times across both attempts; "+
 			"the retry has to complete what the first attempt could not", written)
+	}
+}
+
+// --- a team deleted under a delivery --------------------------------------
+
+func withFiles(d Delivery, keys ...string) Delivery {
+	for _, k := range keys {
+		d.Files = append(d.Files, stored(k, k+".png"))
+	}
+	return d
+}
+
+func reservedKeys(f *inboxStore) []string {
+	var keys []string
+	for _, r := range f.reserved {
+		keys = append(keys, r.ObjectKeys...)
+	}
+	return keys
+}
+
+// The channel was read while the team was live and the files were uploaded;
+// the team was deleted before the write. Nothing is written for it, and every
+// object uploaded for it is tombstoned in the refusal's own transaction, so
+// the reaper deletes bytes no row will ever name.
+func TestADeliveryToADeletedTeamTombstonesItsFiles(t *testing.T) {
+	t.Parallel()
+
+	f := newInboxStore()
+	f.deleted = true
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{
+		withFiles(delivery("m-1", "one"), "k1", "k2"),
+		withFiles(delivery("m-2", "two"), "k3"),
+	})
+
+	if !errors.Is(err, ErrTeamDeleted) {
+		t.Fatalf("Deliver = %v, want ErrTeamDeleted", err)
+	}
+	if got := reservedKeys(f); !slices.Equal(got, []string{"k1", "k2", "k3"}) {
+		t.Errorf("tombstoned %v, want every fetched key", got)
+	}
+	for _, r := range f.reserved {
+		if r.TeamID != ch.TeamID || r.HoldSeconds != 0 {
+			t.Errorf("tombstone %+v, want the channel's team and no hold", r)
+		}
+	}
+	if len(f.stored) != 0 || len(f.sessions) != 0 || len(f.attachments) != 0 {
+		t.Errorf("wrote %d messages, %d sessions, %d attachments for a deleted team",
+			len(f.stored), len(f.sessions), len(f.attachments))
+	}
+}
+
+// Each message is its own transaction, so a delete landing mid-batch keeps
+// what already committed (it belongs to the team, and the purge takes it with
+// the rest) and tombstones only the files of the messages it refused.
+func TestATeamDeletedMidBatchKeepsWhatLanded(t *testing.T) {
+	t.Parallel()
+
+	f := newInboxStore()
+	f.liveFor = 1
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{
+		withFiles(delivery("m-1", "one"), "k1"),
+		withFiles(delivery("m-2", "two"), "k2"),
+		withFiles(delivery("m-3", "three"), "k3"),
+	})
+
+	if !errors.Is(err, ErrTeamDeleted) {
+		t.Fatalf("Deliver = %v, want ErrTeamDeleted", err)
+	}
+	if len(f.stored) != 1 || len(f.attachments) != 1 || f.attachments[0].ObjectKey != "k1" {
+		t.Errorf("stored %d messages and %v, want only the first", len(f.stored), f.attachments)
+	}
+	if got := reservedKeys(f); !slices.Equal(got, []string{"k2", "k3"}) {
+		t.Errorf("tombstoned %v, want the refused messages' keys", got)
+	}
+}
+
+// The lock is the first statement of every message's transaction, on the
+// channel's team, so a delete either waits for the message or is seen by it.
+func TestEveryMessageLocksItsTeamFirst(t *testing.T) {
+	t.Parallel()
+
+	f := newInboxStore()
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	if err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{
+		delivery("m-1", "one"), delivery("m-2", "two"),
+	}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(f.locks) != 2 || f.locks[0] != ch.TeamID || f.locks[1] != ch.TeamID {
+		t.Errorf("locked %v, want the channel's team once per message", f.locks)
+	}
+	if len(f.reserved) != 0 {
+		t.Errorf("tombstoned %v on a live team", f.reserved)
+	}
+}
+
+// A lock that failed is not a deleted team: nothing is tombstoned, since the
+// row may yet be written on the provider's retry.
+func TestAFailedTeamLockIsReported(t *testing.T) {
+	t.Parallel()
+
+	f := newInboxStore()
+	f.lockErr = errors.New("connection reset")
+	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
+
+	err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{withFiles(delivery("m-1", "one"), "k1")})
+
+	if err == nil || errors.Is(err, ErrTeamDeleted) {
+		t.Fatalf("Deliver = %v, want the lock's error", err)
+	}
+	if len(f.reserved) != 0 || len(f.stored) != 0 {
+		t.Errorf("wrote %d messages and tombstoned %v after a failed lock", len(f.stored), f.reserved)
 	}
 }
