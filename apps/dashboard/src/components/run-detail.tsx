@@ -355,7 +355,12 @@ function Answer({ text }: { text: string }) {
       <div
         data-answer
         data-folded={String(folded)}
-        className={cn("rounded-lg bg-card px-4 py-3", folded && "max-h-80 overflow-hidden")}
+        className={cn(
+          "rounded-lg bg-card px-4 py-3",
+          // Fades out at the fold, so the cut reads as more to come.
+          folded &&
+            "max-h-80 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]",
+        )}
       >
         <Markdown>{text}</Markdown>
       </div>
@@ -718,7 +723,8 @@ function atLineEnd(s: string, max: number): string {
   if (s.length <= max) return s;
   const cut = s.lastIndexOf("\n", max);
   const head = cut > 0 ? s.slice(0, cut) : s.slice(0, s.lastIndexOf(" ", max));
-  return `${head.trimEnd()}…`;
+  // A stop already there, even inside closing emphasis, is not doubled.
+  return `${head.trimEnd().replace(/[.…]+([*_]*)$/, "$1")}…`;
 }
 
 function ToolCallCard({ call, live }: { call: ToolCall; live: boolean }) {
@@ -898,7 +904,7 @@ function DelegateCard({
                 {(report ? report.body : result.output).trim() ? (
                   <Markdown
                     htmlAsText
-                    className="text-xs [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h1,&_h2,&_h3]:mt-1 [&_h1,&_h2,&_h3]:mb-1 [&_h1,&_h2,&_h3]:font-medium [&_h1,&_h2,&_h3]:text-foreground"
+                    className="text-xs [&_code]:text-xs [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h1,&_h2,&_h3]:mt-1 [&_h1,&_h2,&_h3]:mb-1 [&_h1,&_h2,&_h3]:font-medium [&_h1,&_h2,&_h3]:text-foreground"
                   >
                     {atLineEnd(report ? report.body : result.output, PREVIEW * 2)}
                   </Markdown>
