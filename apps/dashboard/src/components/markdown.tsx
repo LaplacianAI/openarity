@@ -96,14 +96,26 @@ const components: Components = {
   ),
 };
 
-export function Markdown({ children, className }: { children: string; className?: string }) {
+/**
+ * `htmlAsText` shows raw HTML in the source as the text it is, where the
+ * default leaves it out: for writing whose every character should be seen.
+ */
+export function Markdown({
+  children,
+  className,
+  htmlAsText = false,
+}: {
+  children: string;
+  className?: string;
+  htmlAsText?: boolean;
+}) {
   return (
     <div
       className={cn("text-sm break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0", className)}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        skipHtml
+        skipHtml={!htmlAsText}
         urlTransform={urlTransform}
         components={components}
       >

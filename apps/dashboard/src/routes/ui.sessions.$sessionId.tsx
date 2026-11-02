@@ -501,7 +501,7 @@ function RunLink({ sessionId, run, current }: { sessionId: string; run: Run; cur
       data-run={run.id}
       className={cn(
         "flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px]",
-        current ? "bg-sheet shadow-[inset_0_0_0_1px_var(--color-sheet-edge)]" : "hover:bg-sheet/60",
+        current ? "bg-sheet shadow-[inset_0_0_0_1px_var(--color-primary)]" : "hover:bg-sheet/60",
       )}
     >
       <span data-agent className="min-w-0 flex-1 truncate text-sm font-medium">
