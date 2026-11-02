@@ -118,6 +118,40 @@ func (q *Queries) ListDeletedTeams(ctx context.Context, arg ListDeletedTeamsPara
 	return items, nil
 }
 
+const listPurgeableTeams = `-- name: ListPurgeableTeams :many
+SELECT id FROM teams
+WHERE deleted_at < $1::timestamptz
+ORDER BY deleted_at
+LIMIT $2
+`
+
+type ListPurgeableTeamsParams struct {
+	Before time.Time
+	Limit  int32
+}
+
+// What PurgeTeams would take, oldest first, for a tick whose batch failed
+// and now goes one team at a time.
+func (q *Queries) ListPurgeableTeams(ctx context.Context, arg ListPurgeableTeamsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listPurgeableTeams, arg.Before, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTeams = `-- name: ListTeams :many
 SELECT id, name, created_at, updated_at, deleted_at FROM teams
 WHERE deleted_at IS NULL AND 
@@ -209,6 +243,25 @@ WHERE teams.id = $1
 // it the purge date, stays.
 func (q *Queries) MarkTeamDeleted(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, markTeamDeleted, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeTeam = `-- name: PurgeTeam :execrows
+DELETE FROM teams WHERE id = $1 AND deleted_at < $2::timestamptz
+`
+
+type PurgeTeamParams struct {
+	ID     uuid.UUID
+	Before time.Time
+}
+
+// One team, and only if it is still past its window: a restore that landed
+// after the list was read keeps the team.
+func (q *Queries) PurgeTeam(ctx context.Context, arg PurgeTeamParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeTeam, arg.ID, arg.Before)
 	if err != nil {
 		return 0, err
 	}

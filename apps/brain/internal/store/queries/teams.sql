@@ -21,6 +21,19 @@ WHERE id IN (SELECT id FROM teams
              ORDER BY deleted_at LIMIT sqlc.arg('limit'))
 RETURNING id;
 
+-- What PurgeTeams would take, oldest first, for a tick whose batch failed
+-- and now goes one team at a time.
+-- name: ListPurgeableTeams :many
+SELECT id FROM teams
+WHERE deleted_at < sqlc.arg('before')::timestamptz
+ORDER BY deleted_at
+LIMIT sqlc.arg('limit');
+
+-- One team, and only if it is still past its window: a restore that landed
+-- after the list was read keeps the team.
+-- name: PurgeTeam :execrows
+DELETE FROM teams WHERE id = sqlc.arg('id') AND deleted_at < sqlc.arg('before')::timestamptz;
+
 -- name: GetLiveTeam :one
 SELECT * FROM teams WHERE id = $1 AND deleted_at IS NULL;
 
