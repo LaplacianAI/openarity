@@ -27,7 +27,8 @@ or when it may take longer than a caller will wait.
 
 ```text
 internal/reaper/job.go      the reaper's sweep
-internal/runtime/job.go     agent runs, when they land
+internal/runtime/job.go     agent runs, and the sweep that takes over stale ones
+internal/purge/job.go       erasing deleted teams once their window has passed
 ```
 
 **Never a shared `internal/jobs` package.** It would have to import every
@@ -124,14 +125,16 @@ ticks missed while the process was down, which is the one thing a Kubernetes
 
 ```go
 func newJobs(...) ([]worker.Job, func(), error) {
-	jobs := []worker.Job{reaper.SweepJob(logger, effects...)}
+	sweep := reaper.SweepJob(logger, effects...)
+	teamPurge := purge.Job(dbStore, cfg.TeamPurgeAfter, logger)
 
 	if cfg.EmbeddingModel == "" {
-		logger.WarnContext(ctx, "EMBEDDING_MODEL is not set, so the graph is not being projected")
-		return jobs, func() {}, nil
+		logger.WarnContext(ctx, "EMBEDDING_MODEL is not set, so the graph is not being projected or searched")
+		...
+		return []worker.Job{sweep, teamPurge, runs}, func() {}, nil
 	}
 	...
-	return append(jobs, graph.DrainJob(projector, logger)), closeGraph, nil
+	return []worker.Job{sweep, teamPurge, runs, graph.DrainJob(projector, logger)}, closeGraph, nil
 }
 ```
 

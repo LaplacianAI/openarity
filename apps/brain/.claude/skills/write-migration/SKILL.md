@@ -189,7 +189,7 @@ in full — is a structural fact.
 ## Step 5c — triggers and functions
 
 A trigger is the only thing that sees a cascade. **A cascade never runs your
-SQL**: deleting a team removes its attachments through channels, sessions and
+SQL**: purging a team removes its attachments through channels, sessions and
 messages without any Go code, and without any query in `queries/`, seeing a
 row. Anything that must happen on every delete — an outbox row, an audit
 entry — written as a Go statement catches only the deletes somebody remembered

@@ -34,6 +34,38 @@ DELETE FROM teams WHERE id = $1;
 The `:exec` row surprises people: `DELETE` matching nothing is not a failure in
 SQL. A caller that needs "did it exist" has to read first.
 
+`DeleteTeam` is only an example of the shape now: only tests call it. A team
+is marked deleted and purged later — see below.
+
+### A query that reads `teams` decides whether a deleted team counts
+
+A deleted team keeps its row, with `deleted_at` set, until the purge. Any query
+that answers anyone but a super admin filters it out, and so does a join that
+reaches a team's rows through it — `GetLiveTeam`, `ListUserTeams`,
+`ListTeamIDs` and `GetChannel` all carry `deleted_at IS NULL`. Forget it and a
+deleted team is still served to its old members.
+
+`GetTeam` is the one deliberate exception: the graph projector reads its
+`ErrNoRows` as "drop this team's graph", so it has to keep seeing a deleted
+team. Never add the filter there, and never call it from a handler a member
+can reach.
+
+### A check in a subquery reads the snapshot the statement began with
+
+An `UPDATE` or `DELETE` that waits on a row lock re-checks its own `WHERE`
+against the new row version, but `NOT EXISTS (...)` and `IN (SELECT ...)` keep
+the snapshot from before the wait. A guard written there misses whatever
+committed meanwhile:
+
+- **Lock first, in a statement of its own, then write.** `SoftDeleteTeam` takes
+  `LockTeamForDelete` and then runs `MarkTeamDeleted`, whose fresh snapshot
+  sees a run that started while it waited.
+- **Or repeat the condition on the outer statement.** `PurgeTeams` re-tests the
+  window on the `DELETE` itself, so a team restored under it is kept.
+
+Either way, prove it with a test that holds the other transaction open — see
+`test-with-postgres` step 5.
+
 ### An upsert that has to return the row it did not write
 
 `:execrows` answers "did anything happen"; it cannot answer "which row". The
