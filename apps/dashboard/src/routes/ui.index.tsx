@@ -31,7 +31,7 @@ function Overview() {
   if (teams.length === 0) {
     return (
       <div className="space-y-5">
-        <PageHeader title="Overview" />
+        <PageHeader title="Home" />
         <EmptyState
           title="You are not in any team"
           body="Everything in openarity is scoped to a team — channels, sessions and the senders waiting for approval all belong to one. Create the first team to begin."
@@ -49,7 +49,7 @@ function Overview() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Overview"
+        title="Home"
         description="Everything here is scoped to the current team and read from the brain."
       />
       <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
