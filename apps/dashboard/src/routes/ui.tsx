@@ -20,11 +20,17 @@ import {
   X,
 } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { fetchWhoami, listChannels, listDeletedTeams, listPendingSenders } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam, useToken } from "@/api/session";
 import { setToken } from "@/api/token";
+import {
+  CommandPalette,
+  type Destination,
+  SearchButton,
+  useCommandKey,
+} from "@/components/command-palette";
 import { Mark } from "@/components/mark";
 import { SignIn } from "@/components/sign-in";
 import { Button } from "@/components/ui/button";
@@ -214,6 +220,21 @@ function Shell({ pathname }: { pathname: string }) {
   const { teamId } = useCurrentTeam();
   const groups = navGroups(useOffersDeletedTeams());
   const waiting = useWaiting(teamId);
+  const [finding, setFinding] = useState(false);
+  const find = useCallback(() => setFinding(true), []);
+  useCommandKey(find);
+  const palette = (
+    <CommandPalette
+      open={finding}
+      onOpenChange={setFinding}
+      teamId={teamId}
+      screens={groups.flatMap((g) =>
+        g.items.map(
+          (i): Destination => ({ label: i.label, kind: "Screen", icon: i.icon, to: i.to }),
+        ),
+      )}
+    />
+  );
 
   if (layout === "phone") {
     return (
@@ -221,11 +242,15 @@ function Shell({ pathname }: { pathname: string }) {
         <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-2 bg-frame px-4">
           <Mark className="size-5 shrink-0" />
           <TeamSwitcher />
+          <span className="ml-auto">
+            <SearchButton onOpen={find} compact />
+          </span>
         </header>
         <main className="min-w-0 flex-1 px-4 pt-5 pb-24">
           <Outlet />
         </main>
         <QuickBar groups={groups} pathname={pathname} waiting={waiting} />
+        {palette}
       </div>
     );
   }
@@ -263,14 +288,17 @@ function Shell({ pathname }: { pathname: string }) {
             <Account rail={layout === "rail"} />
           </div>
         </aside>
-        <header className="col-start-2 flex h-12 min-w-0 items-center gap-2 pr-2">
+        <header className="col-start-2 grid h-12 min-w-0 grid-cols-[1fr_auto_1fr] items-center gap-2 pr-2">
           <TeamSwitcher />
+          <SearchButton onOpen={find} />
+          <span />
         </header>
         <main className="col-start-2 mr-2 mb-2 min-w-0 rounded-2xl border border-sheet-edge bg-sheet">
           <div className="px-6 py-6">
             <Outlet />
           </div>
         </main>
+        {palette}
       </div>
     </TooltipProvider>
   );
