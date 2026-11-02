@@ -17,6 +17,7 @@ import {
 import { fetchWhoami } from "@/api";
 import { useCurrentTeam, useToken } from "@/api/session";
 import { setToken } from "@/api/token";
+import { Mark } from "@/components/mark";
 import { SignIn } from "@/components/sign-in";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { isActive } from "@/lib/nav";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -92,12 +94,12 @@ function Sidebar({ pathname }: { pathname: string }) {
   return (
     <aside className="hidden w-56 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
       <div className="flex h-12 items-center gap-2 border-b border-sidebar-border px-4">
-        <span className="size-2 rounded-[2px] bg-primary" aria-hidden />
-        <span className="text-sm font-semibold tracking-tight">Openarity</span>
+        <Mark className="size-5" />
+        <span className="text-sm font-semibold tracking-tight">openarity</span>
       </div>
       <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main">
         {NAV.map((item) => {
-          const active = item.exact ? pathname === item.to : pathname.startsWith(item.to);
+          const active = isActive(pathname, item);
           const Icon = item.icon;
           return (
             <Link
@@ -133,7 +135,10 @@ function TopBar() {
   return (
     <header className="flex h-12 items-center justify-between gap-3 border-b border-border px-6">
       <div className="flex items-center gap-3 text-xs text-muted-foreground">
-        <span className="font-semibold text-foreground md:hidden">Openarity</span>
+        <span className="flex items-center gap-1.5 font-semibold text-foreground md:hidden">
+          <Mark className="size-4" />
+          openarity
+        </span>
         <span className="font-mono">{principal?.email ?? principal?.subject ?? "…"}</span>
         {teams.length > 1 ? (
           <Select value={teamId ?? undefined} onValueChange={choose}>
