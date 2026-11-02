@@ -99,11 +99,14 @@ function UiLayout() {
   // sign-in screen holding an authorization code nothing will ever redeem —
   // and the loop looks exactly like a provider that refused the login.
   const completingLogin = pathname.startsWith("/ui/callback");
+  // The states gallery is reviewed without a brain, so it has no shell to
+  // fetch for. Outside a dev build its route renders a bare "Not found".
+  const bare = completingLogin || pathname.startsWith("/ui/_gallery");
 
   // Everything else needs a token. Rendering the shell first and letting each
   // screen 401 on its own would show five simultaneous failures and none of
   // them would say what to do about it.
-  if (!token && !completingLogin) {
+  if (!token && !bare) {
     return (
       <div className="min-h-screen bg-background font-sans text-foreground">
         <SignIn />
@@ -111,7 +114,7 @@ function UiLayout() {
     );
   }
 
-  if (completingLogin) {
+  if (bare) {
     return (
       <div className="min-h-screen bg-background font-sans text-foreground">
         <Outlet />
