@@ -64,6 +64,15 @@ describe("the states gallery", () => {
     expect(calls[1]?.querySelector("details")).toHaveAttribute("open");
   });
 
+  // What a screen is for is read on request, not above every visit's work.
+  it("keeps a page's explanation behind What is this?", async () => {
+    show(Gallery);
+    const region = screen.getByRole("region", { name: "Page header" });
+    expect(within(region).queryByText(/long enough to wrap twice/)).toBeNull();
+    await userEvent.click(within(region).getByRole("button", { name: "What is Agents?" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(/long enough to wrap twice/);
+  });
+
   it("needs no brain", () => {
     const calls: unknown[] = [];
     const real = globalThis.fetch;
