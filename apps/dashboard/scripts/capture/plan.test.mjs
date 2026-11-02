@@ -39,6 +39,14 @@ describe("the capture plan", () => {
     expect(SCREENS.find((s) => s.name === "sign-in").path).toBe("/ui/");
   });
 
+  // The seed starts its runs in the eng-support group session; the newest
+  // session, which a plain "first link" opens, has none, so its Runs tab
+  // would be shot empty.
+  it("opens the session the showcase seed ran its agents in", () => {
+    const session = SCREENS.find((s) => s.name === "session");
+    expect(session.followName).toBe("eng-support");
+  });
+
   it("is every theme at every width", () => {
     expect(THEMES).toEqual(["light", "dark"]);
     expect(WIDTHS).toEqual([1440, 768, 390]);

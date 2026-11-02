@@ -68,8 +68,18 @@ async function login(base) {
   }
 }
 
+/**
+ * Waits for a screen to finish loading. After a click inside the app the
+ * network may already count as idle, so that wait returns at once; the
+ * skeletons a screen shows while it fetches are what says it is done.
+ */
 async function settle(page) {
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  await page
+    .waitForFunction(() => !document.querySelector('[data-slot="skeleton"]'), null, {
+      timeout: 15_000,
+    })
+    .catch(() => {});
 }
 
 async function shoot(page, file) {
@@ -87,12 +97,20 @@ async function captureScreen(page, base, label, screen, theme, width, report) {
     return;
   }
   if (screen.follow) {
-    const link = page.locator(`a[href*="${screen.follow}"]`).first();
+    const links = page.locator(`a[href*="${screen.follow}"]`);
+    const named = screen.followName
+      ? links.filter({ has: page.getByText(screen.followName, { exact: true }) })
+      : links;
+    const link = ((await named.count()) > 0 ? named : links).first();
     if ((await link.count()) === 0) {
       report.skipped.push({ screen: screen.name, theme, width, why: "nothing to open" });
       return;
     }
+    const from = page.url();
     await link.click();
+    await page.waitForURL((url) => url.href !== from, { timeout: 15_000 });
+    // The router keeps the old screen up until the new one has loaded.
+    await link.waitFor({ state: "detached", timeout: 15_000 });
     await settle(page);
   }
 

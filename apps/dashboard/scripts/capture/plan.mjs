@@ -8,8 +8,9 @@ export const THEMES = ["light", "dark"];
 export const WIDTHS = [1440, 768, 390];
 
 /**
- * Every screen the dashboard serves. `follow` opens the first link under that
- * path from the screen, for a page that needs an id; `tabs` are shot after the
+ * Every screen the dashboard serves. `follow` opens a link under that path
+ * from the screen, for a page that needs an id: the one named `followName`
+ * when the team has it, else the first; `tabs` are shot after the
  * first one is; `open` is the button that opens the screen's dialog; a
  * `signedOut` screen is shot with no session; a `devOnly` one exists only on
  * a dev server and is skipped elsewhere.
@@ -21,7 +22,13 @@ export const SCREENS = [
   { name: "channels", path: "/ui/channels", open: "New channel" },
   { name: "approvals", path: "/ui/approvals" },
   { name: "sessions", path: "/ui/sessions" },
-  { name: "session", path: "/ui/sessions", follow: "/ui/sessions/", tabs: ["Runs"] },
+  {
+    name: "session",
+    path: "/ui/sessions",
+    follow: "/ui/sessions/",
+    followName: "eng-support",
+    tabs: ["Runs"],
+  },
   { name: "agents", path: "/ui/agents", open: "Define agent" },
   { name: "servers", path: "/ui/servers", open: "Register server" },
   { name: "skills", path: "/ui/skills" },
