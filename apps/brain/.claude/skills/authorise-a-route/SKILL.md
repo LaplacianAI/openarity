@@ -21,7 +21,8 @@ request
   → LogRequests
   → Authenticate      token → auth.Principal, or 401.        internal/middleware
   → ResolveUser       principal → *auth.User with .Teams.    internal/middleware
-  → Guard             the route's scope decides the check.   internal/api
+  → Guard             a write to a deleted team? 409.        internal/api
+                      then the route's scope decides the check.
   → handler
 ```
 
@@ -223,10 +224,11 @@ does not serve*, because the guard never sees those routes.
 | You got | It means |
 | --- | --- |
 | 401 | no token or a bad one. The guard never ran. |
-| 403 on a `team` route | you are in the team, your role lacks the permission |
+| 403 on a `team` route | your role lacks the permission — or you are not in the team, which a deleted team's members no longer are |
 | 403 on an `any_team` route | no role you hold anywhere has the permission |
 | 403 on a `super_admin` route | you are not in `OPENARITY_SUPER_ADMINS` |
-| 404 on a `/teams/{id}` route | you are not a member — or it does not exist. Deliberately the same. |
+| 404 on a `/teams/{id}` route | you are not a member — or it does not exist, or it was deleted. Deliberately the same. |
+| 409 `team is deleted; restore it first` | a super admin wrote to a deleted team. Only `DELETE /teams/{id}` and its restore are let through. |
 | 400 `id must be a uuid` | the guard refused before asking anything |
 | 500 | the permission read failed, or there was no caller on the context |
 

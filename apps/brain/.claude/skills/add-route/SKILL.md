@@ -292,6 +292,10 @@ id, ok := api.TeamFrom(r.Context())      // member and team scopes only
 - **Never parse `{id}` yourself** on a `member` or `team` route. The guard
   parsed it to run the check; parsing again is a chance to get a different
   answer than the one that was authorised.
+- **A `super_admin` route with `{id}` has no team in the context.** The scope
+  checks the caller, not the team, so `api.TeamFrom` finds nothing there and a
+  handler that requires it answers 500. Parse the path itself and answer 400
+  for a value that is not a uuid, as `pathTeam` does in `api/teams`.
 
 ## Step 3b — a write that references another resource
 
