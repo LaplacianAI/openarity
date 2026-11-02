@@ -134,7 +134,7 @@ function UiLayout() {
     <div className="min-h-dvh bg-frame font-sans text-foreground md:grid md:grid-cols-[14.25rem_minmax(0,1fr)] md:grid-rows-[3rem_minmax(0,1fr)]">
       <Sidebar pathname={pathname} />
       <TopBar pathname={pathname} />
-      <main className="min-w-0 bg-sheet md:col-start-2 md:mr-2 md:mb-2 md:rounded-2xl md:border md:border-sheet-edge">
+      <main className="min-h-[calc(100dvh-3rem)] min-w-0 bg-sheet md:col-start-2 md:min-h-0 md:mr-2 md:mb-2 md:rounded-2xl md:border md:border-sheet-edge">
         <div className="px-4 py-5 md:px-6 md:py-6">
           <Outlet />
         </div>
@@ -251,7 +251,7 @@ function TopBar({ pathname }: { pathname: string }) {
       {teams.length > 1 ? (
         <Select value={teamId ?? undefined} onValueChange={choose}>
           <SelectTrigger
-            className="h-8 w-auto max-w-48 min-w-0 flex-1 border-transparent bg-transparent text-sm font-medium shadow-none hover:bg-sheet/60 sm:flex-none"
+            className="h-8 w-auto max-w-48 min-w-0 flex-1 border-transparent bg-transparent text-sm font-medium shadow-none hover:bg-sheet/60 sm:flex-none dark:bg-transparent dark:hover:bg-sheet/60"
             aria-label="Current team"
           >
             <SelectValue placeholder="Choose a team" />

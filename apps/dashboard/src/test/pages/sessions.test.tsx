@@ -811,7 +811,11 @@ describe("a run's trace", () => {
     expect(agent.querySelector("[data-via]")).toHaveTextContent("via skill invoice-reconciliation");
     expect(agent).toHaveTextContent("0.500");
 
-    expect(within(second as HTMLElement).getByText("Nothing in reach matched.")).toBeVisible();
+    // A finished call is folded to its line until it is opened.
+    const empty = within(second as HTMLElement).getByText("Nothing in reach matched.");
+    expect(empty).not.toBeVisible();
+    await userEvent.click((second as HTMLElement).querySelector("summary") as HTMLElement);
+    expect(empty).toBeVisible();
 
     // The graph's own view has the raw output behind it too.
     await userEvent.click(within(first as HTMLElement).getByRole("button", { name: "Show raw" }));
@@ -849,6 +853,27 @@ describe("a run's trace", () => {
     expect(sql.querySelector("[data-raw]")?.textContent).toBe(JSON.stringify(output, null, 2));
     await userEvent.click(within(sql).getByRole("button", { name: "Hide raw" }));
     expect(sql.querySelector("[data-raw]")).toBeNull();
+  });
+
+  // A long answer would push the trace off the bottom of the page. It is shown
+  // in part until asked for whole; a short one is shown whole.
+  it("folds a long answer until it is asked for whole", async () => {
+    const long = Array.from({ length: 60 }, (_, i) => `Line ${i} of a long answer.`).join("\n\n");
+    listed({
+      [RUNS]: { body: { items: [{ ...run("r1", "helper", "succeeded"), output: long }] } },
+      [EVENTS]: () => ({ stream: chunks(END) }),
+    });
+
+    await open("?tab=runs");
+    const answer = (await within(pane()).findByText("Line 0 of a long answer.")).closest(
+      "[data-answer]",
+    ) as HTMLElement;
+    expect(answer.dataset.folded).toBe("true");
+    await userEvent.click(within(pane()).getByRole("button", { name: "Show the whole answer" }));
+    expect(answer.dataset.folded).toBe("false");
+    expect(
+      within(pane()).getByRole("button", { name: "Show less of the answer" }),
+    ).toBeInTheDocument();
   });
 
   it("renders the answer's markdown, and nothing a model could use to attack the page", async () => {
@@ -1008,6 +1033,41 @@ describe("a run's trace", () => {
     await open("?tab=runs");
     const header = await within(pane()).findByText("handed work to", { exact: false });
     expect(header).toHaveTextContent("handed work to log-reader");
+  });
+
+  // The reader opens the step that matters: a call that answered is folded to
+  // its one line, one that failed is open on its error.
+  it("folds a call that answered and leaves one that failed open", async () => {
+    listed({
+      [RUNS]: { body: { items: [run("r1", "helper", "failed")] } },
+      [EVENTS]: () => ({
+        stream: chunks(
+          frame(1, "step", { step: 1 }),
+          frame(2, "tool_call", { id: "c1", name: "search", arguments: "{}" }),
+          frame(3, "tool_result", {
+            id: "c1",
+            name: "search",
+            output: "three results",
+            duration_ms: 4,
+          }),
+          frame(4, "tool_call", { id: "c2", name: "fetch", arguments: "{}" }),
+          frame(5, "tool_result", {
+            id: "c2",
+            name: "fetch",
+            error: "the host refused",
+            duration_ms: 2,
+          }),
+          END,
+        ),
+      }),
+    });
+
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    expect(card("search").querySelector("details")).not.toHaveAttribute("open");
+    expect(within(card("search")).getByText("three results")).not.toBeVisible();
+    expect(card("fetch").querySelector("details")).toHaveAttribute("open");
+    expect(within(card("fetch")).getByText("the host refused")).toBeVisible();
   });
 
   it("says a call got no result once the run is over, rather than waiting on it", async () => {
@@ -1371,6 +1431,47 @@ describe("a delegation in the trace", () => {
     expect(card("delegate").dataset.state).toBe("failed");
     expect(card("delegate")).toHaveTextContent("you may only delegate to: clerk");
     expect(within(card("delegate")).queryByRole("link")).toBeNull();
+  });
+
+  // A delegate answers in markdown. Its preview reads as the child wrote it,
+  // and a long one is cut where a line ends, never mid-word.
+  it("shows a delegate's report as markdown, cut where a line ends", async () => {
+    const body = [
+      "### Diagnostic summary",
+      "",
+      "- **Cause:** the bucket moved region",
+      ...Array.from({ length: 40 }, (_, i) => `- detail line number ${i} with some words`),
+    ].join("\n");
+    listed({
+      [RUNS]: { body: { items: [run("r1", "triage", "succeeded")] } },
+      [EVENTS]: () => ({
+        stream: chunks(
+          frame(1, "tool_call", {
+            id: "d1",
+            name: "delegate",
+            arguments: JSON.stringify({ agent: "billing", objective: "why" }),
+          }),
+          frame(2, "delegated", { call_id: "d1", agent: "billing", run_id: CHILD, depth: 1 }),
+          frame(3, "tool_result", {
+            id: "d1",
+            name: "delegate",
+            output: report("succeeded", body),
+          }),
+          END,
+        ),
+      }),
+    });
+
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    const preview = card("delegate").querySelector("[data-preview]") as HTMLElement;
+    expect(
+      within(preview).getByRole("heading", { name: "Diagnostic summary" }),
+    ).toBeInTheDocument();
+    expect(preview.querySelector("strong")).toHaveTextContent("Cause:");
+    expect(preview.textContent).not.toContain("###");
+    expect(preview.textContent).not.toContain("detail line number 39");
+    expect(preview.textContent).toMatch(/with some words…\s*$/);
   });
 
   it("shows a brief and a report as text, never as markup", async () => {

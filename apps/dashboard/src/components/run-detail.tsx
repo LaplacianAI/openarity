@@ -278,13 +278,7 @@ export function RunDetail({
         </Section>
       ) : null}
 
-      {run.output ? (
-        <Section title="Answer">
-          <div data-answer className="rounded-lg bg-card px-4 py-3">
-            <Markdown>{run.output}</Markdown>
-          </div>
-        </Section>
-      ) : null}
+      {run.output ? <Answer text={run.output} /> : null}
 
       {error ? (
         <div
@@ -300,7 +294,7 @@ export function RunDetail({
         title="Trace"
         aside={
           failed ? null : trace.ended ? (
-            <span className="text-xs text-muted-foreground">
+            <span className="sr-only">
               Ended{trace.ended.status ? `: ${trace.ended.status}` : ""}
             </span>
           ) : null
@@ -314,6 +308,39 @@ export function RunDetail({
         <TraceView trace={trace} live={live} empty={reading} sessionId={run.session_id} />
       </Section>
     </article>
+  );
+}
+
+/** Longer than this, an answer starts folded so the trace stays in reach. */
+const ANSWER_FOLD = 1500;
+
+function Answer({ text }: { text: string }) {
+  const long = text.length > ANSWER_FOLD;
+  const [whole, setWhole] = useState(false);
+  const folded = long && !whole;
+  return (
+    <Section title="Answer">
+      <div
+        data-answer
+        data-folded={String(folded)}
+        className={cn("rounded-lg bg-card px-4 py-3", folded && "max-h-80 overflow-hidden")}
+      >
+        <Markdown>{text}</Markdown>
+      </div>
+      {long ? (
+        <Button variant="ghost" size="sm" className="mt-1 -ml-2" onClick={() => setWhole(!whole)}>
+          <ChevronRight
+            aria-hidden
+            className={cn(
+              "size-3.5 transition-transform",
+              whole && "-rotate-90",
+              !whole && "rotate-90",
+            )}
+          />
+          {whole ? "Show less of the answer" : "Show the whole answer"}
+        </Button>
+      ) : null}
+    </Section>
   );
 }
 
@@ -543,9 +570,9 @@ function Note({
     <li data-event={kind} className="flex gap-3 text-xs text-muted-foreground">
       <span className="flex w-6 shrink-0 justify-center pt-0.5">
         {warn ? (
-          <AlertTriangle aria-hidden className="size-3.5 text-warning" />
+          <AlertTriangle aria-hidden className="size-3.5 text-waiting" />
         ) : (
-          <ChevronRight aria-hidden className="size-3.5" />
+          <span aria-hidden className="mt-1.5 size-1.5 rounded-full bg-border-strong" />
         )}
       </span>
       <div className="min-w-0 flex-1 break-words">{children}</div>
@@ -593,7 +620,10 @@ function StepView({
               <span aria-hidden className="h-1.5 w-28 overflow-hidden rounded-full bg-rule sm:w-48">
                 <span
                   data-bar
-                  className="block h-full rounded-full bg-primary/70"
+                  className={cn(
+                    "block h-full rounded-full",
+                    live && last ? "bg-running" : "bg-foreground/45",
+                  )}
                   style={{ width: `${Math.max(2, Math.round(share * 100))}%` }}
                 />
               </span>
@@ -651,6 +681,14 @@ function clipped(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+/** The first `max` characters, cut where a line ends so no word or mark is split. */
+function atLineEnd(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.lastIndexOf("\n", max);
+  const head = cut > 0 ? s.slice(0, cut) : s.slice(0, s.lastIndexOf(" ", max));
+  return `${head.trimEnd()}…`;
+}
+
 function ToolCallCard({ call, live }: { call: ToolCall; live: boolean }) {
   const result = call.result;
   const failed = Boolean(result?.error);
@@ -663,75 +701,76 @@ function ToolCallCard({ call, live }: { call: ToolCall; live: boolean }) {
       data-state={pending ? "pending" : failed ? "failed" : "done"}
       className="first:rounded-t-lg last:rounded-b-lg"
     >
-      <div className="flex items-start gap-2 px-3 py-2">
-        <Wrench
-          aria-hidden
-          className={cn(
-            "mt-0.5 size-3.5 shrink-0",
-            failed ? "text-failed" : "text-muted-foreground",
-          )}
-        />
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs font-medium">{call.name}</span>
-            {failed ? (
-              <span className="inline-flex items-center gap-1 text-xs text-destructive">
-                <XCircle aria-hidden className="size-3" /> failed
-              </span>
-            ) : null}
-            {call.truncated ? <span className="text-xs text-muted-foreground">(cut)</span> : null}
-          </div>
-          {call.arguments === null ? null : pairs === null ? (
-            <Chip muted title={call.arguments}>
-              {clipped(call.arguments, CHIP_MAX * 2)}
-            </Chip>
-          ) : pairs.length > 0 ? (
-            <div className="flex flex-wrap gap-1">
-              {pairs.map(([k, v]) => (
-                <span
-                  key={k}
-                  data-arg={k}
-                  title={v.length > CHIP_MAX ? v : undefined}
-                  className="inline-flex max-w-full items-center rounded-md px-1.5 py-0.5 font-mono text-xs shadow-[inset_0_0_0_1px_var(--color-rule)]"
-                >
-                  <span className="text-muted-foreground">{k}:</span>
-                  <span className="ml-1 truncate">{clipped(v, CHIP_MAX)}</span>
+      {/* Folded to its one line unless it failed or has not answered: the
+          reader opens the step that matters, not every step. */}
+      <details open={failed || pending} className="group">
+        <summary className="flex cursor-pointer list-none items-start gap-2 rounded-lg px-3 py-2 hover:bg-sheet/50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] [&::-webkit-details-marker]:hidden">
+          <ChevronRight
+            aria-hidden
+            className="mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+          />
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs font-medium">{call.name}</span>
+              {failed ? (
+                <span className="inline-flex items-center gap-1 text-xs text-destructive">
+                  <XCircle aria-hidden className="size-3" /> failed
                 </span>
-              ))}
+              ) : null}
+              {call.truncated ? <span className="text-xs text-muted-foreground">(cut)</span> : null}
             </div>
-          ) : null}
-        </div>
-        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-          {pending ? (
-            live ? (
-              <span className="inline-flex items-center gap-1" role="status">
-                <Loader2 aria-hidden className="size-3 animate-spin" />
-                running
-              </span>
+            {call.arguments === null ? null : pairs === null ? (
+              <Chip muted title={call.arguments}>
+                {clipped(call.arguments, CHIP_MAX * 2)}
+              </Chip>
+            ) : pairs.length > 0 ? (
+              <div className="flex flex-wrap gap-1 group-[:not([open])]:max-h-6 group-[:not([open])]:overflow-hidden">
+                {pairs.map(([k, v]) => (
+                  <span
+                    key={k}
+                    data-arg={k}
+                    title={v.length > CHIP_MAX ? v : undefined}
+                    className="inline-flex max-w-full items-center rounded-md px-1.5 py-0.5 font-mono text-xs shadow-[inset_0_0_0_1px_var(--color-rule)]"
+                  >
+                    <span className="text-muted-foreground">{k}:</span>
+                    <span className="ml-1 truncate">{clipped(v, CHIP_MAX)}</span>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            {pending ? (
+              live ? (
+                <span className="inline-flex items-center gap-1" role="status">
+                  <Loader2 aria-hidden className="size-3 animate-spin" />
+                  running
+                </span>
+              ) : (
+                "no result"
+              )
+            ) : result.durationMs !== null ? (
+              duration(result.durationMs)
+            ) : null}
+          </span>
+        </summary>
+        {result ? (
+          <div className="pr-3 pb-2.5 pl-8.5">
+            {failed ? (
+              <p className="whitespace-pre-wrap break-words font-mono text-xs text-destructive">
+                {result.error}
+              </p>
             ) : (
-              "no result"
-            )
-          ) : result.durationMs !== null ? (
-            duration(result.durationMs)
-          ) : null}
-        </span>
-      </div>
-      {result ? (
-        <div className="pr-3 pb-2.5 pl-8.5">
-          {failed ? (
-            <p className="whitespace-pre-wrap break-words font-mono text-xs text-destructive">
-              {result.error}
-            </p>
-          ) : (
-            <ResultView name={call.name} output={result.output} />
-          )}
-          {result.truncated ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              The brain cut this output at its size limit.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
+              <ResultView name={call.name} output={result.output} />
+            )}
+            {result.truncated ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                The brain cut this output at its size limit.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </details>
     </li>
   );
 }
@@ -765,7 +804,10 @@ function DelegateCard({
       <div className="flex items-start gap-2 px-3 py-2">
         <Users
           aria-hidden
-          className={cn("mt-0.5 size-3.5 shrink-0", failed ? "text-failed" : "text-primary")}
+          className={cn(
+            "mt-0.5 size-3.5 shrink-0",
+            failed ? "text-failed" : "text-muted-foreground",
+          )}
         />
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -819,12 +861,19 @@ function DelegateCard({
             </p>
           ) : (
             <div className="space-y-1.5">
-              <p
-                data-preview
-                className="whitespace-pre-wrap break-words text-xs text-muted-foreground"
-              >
-                {clipped(report ? report.body : result.output, PREVIEW) || "No answer."}
-              </p>
+              {/* The child answers in markdown; raw HTML in it stays text. */}
+              <div data-preview className="max-w-[75ch] text-muted-foreground">
+                {(report ? report.body : result.output).trim() ? (
+                  <Markdown
+                    htmlAsText
+                    className="text-xs [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h1,&_h2,&_h3]:mt-1 [&_h1,&_h2,&_h3]:mb-1 [&_h1,&_h2,&_h3]:font-medium [&_h1,&_h2,&_h3]:text-foreground"
+                  >
+                    {atLineEnd(report ? report.body : result.output, PREVIEW * 2)}
+                  </Markdown>
+                ) : (
+                  <p className="text-xs">No answer.</p>
+                )}
+              </div>
               <RawToggle raw={result.output} />
             </div>
           )}
@@ -898,12 +947,12 @@ function GraphResults({ hits, raw }: { hits: GraphHit[]; raw: string }) {
                 data-hit={h.name}
                 className="flex items-start gap-3 py-1.5 first:pt-0 last:pb-0"
               >
-                <span className="w-4 shrink-0 pt-0.5 text-right text-[11px] text-muted-foreground tabular-nums">
+                <span className="w-4 shrink-0 pt-0.5 text-right text-xs text-muted-foreground tabular-nums">
                   {i + 1}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="rounded border border-border bg-surface px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    <span className="rounded-md px-1.5 text-xs text-muted-foreground shadow-[inset_0_0_0_1px_var(--color-rule)]">
                       {h.kind}
                     </span>
                     <span className="truncate text-xs font-medium">{h.name}</span>
@@ -914,7 +963,7 @@ function GraphResults({ hits, raw }: { hits: GraphHit[]; raw: string }) {
                     </p>
                   ) : null}
                   {h.via.length > 0 ? (
-                    <p data-via className="mt-0.5 text-[11px] text-muted-foreground">
+                    <p data-via className="mt-0.5 text-xs text-muted-foreground">
                       via{" "}
                       {h.via.map((v, j) => (
                         <span key={`${v.kind}:${v.name}`}>
@@ -933,7 +982,7 @@ function GraphResults({ hits, raw }: { hits: GraphHit[]; raw: string }) {
                       style={{ width: `${(score * 100).toFixed(1)}%` }}
                     />
                   </span>
-                  <span className="font-mono text-[11px] tabular-nums">{h.score.toFixed(3)}</span>
+                  <span className="font-mono text-xs tabular-nums">{h.score.toFixed(3)}</span>
                 </div>
               </li>
             );
@@ -1016,7 +1065,7 @@ function SearchList({ results, raw }: { results: SearchResults; raw: string }) {
                 data-result
                 className="flex items-start gap-3"
               >
-                <span className="w-4 shrink-0 pt-0.5 text-right text-[11px] text-muted-foreground tabular-nums">
+                <span className="w-4 shrink-0 pt-0.5 text-right text-xs text-muted-foreground tabular-nums">
                   {i + 1}
                 </span>
                 <div className="min-w-0 flex-1">
@@ -1032,7 +1081,7 @@ function SearchList({ results, raw }: { results: SearchResults; raw: string }) {
                   ) : (
                     <span className="break-words text-xs font-medium">{title}</span>
                   )}
-                  <p className="truncate font-mono text-[11px] text-muted-foreground">{h.url}</p>
+                  <p className="truncate font-mono text-xs text-muted-foreground">{h.url}</p>
                   {h.snippet ? (
                     <p className="mt-0.5 line-clamp-2 break-words text-xs text-muted-foreground">
                       {h.snippet}
@@ -1081,8 +1130,8 @@ function PageView({ page, raw }: { page: FetchedPage; raw: string }) {
         ) : (
           <span className="break-words text-xs font-medium">{title}</span>
         )}
-        <p className="truncate font-mono text-[11px] text-muted-foreground">{page.url}</p>
-        <p className="text-[11px] text-muted-foreground tabular-nums">
+        <p className="truncate font-mono text-xs text-muted-foreground">{page.url}</p>
+        <p className="text-xs text-muted-foreground tabular-nums">
           {page.cut ? `${sizeOf(page.markdown)} · cut by the brain` : sizeOf(page.markdown)}
         </p>
       </div>
@@ -1102,7 +1151,7 @@ function PageView({ page, raw }: { page: FetchedPage; raw: string }) {
         {open ? (
           <pre
             data-page-body
-            className="mt-1.5 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed"
+            className="mt-1.5 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface p-3 font-mono text-xs leading-relaxed"
           >
             {page.markdown}
           </pre>

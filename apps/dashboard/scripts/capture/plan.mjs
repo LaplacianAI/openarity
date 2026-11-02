@@ -29,6 +29,21 @@ export const SCREENS = [
     followName: "eng-support",
     tabs: ["Runs"],
   },
+  // The run states the reference screen must be judged in, from the showcase
+  // seed's sessions: a failed step, a spent budget, ordinary tool calls and a
+  // cancelled run. A team without them falls back to its first session.
+  ...[
+    ["session-failed", "ops-alerts:t-2005"],
+    ["session-budget", "ops-alerts:t-2003"],
+    ["session-tools", "ops-alerts:dm-u-ines"],
+    ["session-cancelled", "eng-support:t-1004"],
+  ].map(([name, followName]) => ({
+    name,
+    path: "/ui/sessions",
+    follow: "/ui/sessions/",
+    followName,
+    tabs: ["Runs"],
+  })),
   { name: "agents", path: "/ui/agents", open: "Define agent" },
   { name: "servers", path: "/ui/servers", open: "Register server" },
   { name: "skills", path: "/ui/skills" },
