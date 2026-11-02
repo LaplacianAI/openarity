@@ -270,7 +270,8 @@ func (q *Queries) PurgeTeam(ctx context.Context, arg PurgeTeamParams) (int64, er
 
 const purgeTeams = `-- name: PurgeTeams :many
 DELETE FROM teams
-WHERE id IN (SELECT id FROM teams
+WHERE deleted_at < $1::timestamptz
+  AND id IN (SELECT id FROM teams
              WHERE deleted_at < $1::timestamptz
              ORDER BY deleted_at LIMIT $2)
 RETURNING id
@@ -281,6 +282,10 @@ type PurgeTeamsParams struct {
 	Limit  int32
 }
 
+// The window is checked on the row deleted as well as in the pick. A
+// restore that commits while this waits on the row would otherwise be
+// purged: a DELETE that waited re-tests only its own WHERE against the new
+// row, and the pick was made from a snapshot taken before the restore.
 func (q *Queries) PurgeTeams(ctx context.Context, arg PurgeTeamsParams) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, purgeTeams, arg.Before, arg.Limit)
 	if err != nil {

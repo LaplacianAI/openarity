@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"slices"
 	"testing"
 	"time"
@@ -394,5 +395,67 @@ func TestTeamDeletedReadsTheMark(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s: TeamDeleted = %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+// A restore that commits while a purge is waiting on the team's row keeps the
+// team. The purge picked the team from a snapshot taken before the restore,
+// so only a window check on the row it deletes, re-tested when it wakes, can
+// see that the team is live again. Both purge queries are held to it.
+func TestPurgeTeamsNeverTakesATeamRestoredUnderIt(t *testing.T) {
+	restoreUnderPurge(t, func(s *Store, _ uuid.UUID, before time.Time) error {
+		_, err := s.PurgeTeams(t.Context(), db.PurgeTeamsParams{Before: before, Limit: 10})
+		return err
+	})
+}
+
+func TestPurgeTeamNeverTakesATeamRestoredUnderIt(t *testing.T) {
+	restoreUnderPurge(t, func(s *Store, id uuid.UUID, before time.Time) error {
+		_, err := s.PurgeTeam(t.Context(), db.PurgeTeamParams{ID: id, Before: before})
+		return err
+	})
+}
+
+func restoreUnderPurge(t *testing.T, purge func(s *Store, id uuid.UUID, before time.Time) error) {
+	t.Helper()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "back")
+	deletedAgo(t, s, team.ID, 30*24*time.Hour)
+	before := dbNow(t, s).Add(-7 * 24 * time.Hour)
+
+	tx, err := s.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
+	if _, err := s.WithTx(tx).RestoreTeam(t.Context(), team.ID); err != nil {
+		t.Fatalf("RestoreTeam: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- purge(s, team.ID, before) }()
+
+	// The purge has to be waiting on the restore's lock, or this test would
+	// not be racing anything.
+	select {
+	case err := <-done:
+		t.Fatalf("the purge finished while the restore held the row: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatalf("commit the restore: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+
+	got, err := s.GetTeam(t.Context(), team.ID)
+	if err != nil {
+		t.Fatalf("the restored team was purged: %v", err)
+	}
+	if got.DeletedAt != nil {
+		t.Errorf("deleted_at = %v, want the restore's null", got.DeletedAt)
 	}
 }

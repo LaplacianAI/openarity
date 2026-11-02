@@ -14,9 +14,14 @@ WHERE deleted_at IS NULL AND
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('page_size');
 
+-- The window is checked on the row deleted as well as in the pick. A
+-- restore that commits while this waits on the row would otherwise be
+-- purged: a DELETE that waited re-tests only its own WHERE against the new
+-- row, and the pick was made from a snapshot taken before the restore.
 -- name: PurgeTeams :many
 DELETE FROM teams
-WHERE id IN (SELECT id FROM teams
+WHERE deleted_at < sqlc.arg('before')::timestamptz
+  AND id IN (SELECT id FROM teams
              WHERE deleted_at < sqlc.arg('before')::timestamptz
              ORDER BY deleted_at LIMIT sqlc.arg('limit'))
 RETURNING id;
