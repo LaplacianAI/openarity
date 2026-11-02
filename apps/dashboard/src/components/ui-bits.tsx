@@ -1,28 +1,67 @@
 import { Link } from "@tanstack/react-router";
+import { CircleHelp } from "lucide-react";
+import { Popover } from "radix-ui";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+/**
+ * The title row every screen opens with: the screen's name, what it finds
+ * worth saying right now, and its main action. What the screen is for sits
+ * behind "What is this?", for the reader who needs it, rather than above
+ * every visit's work.
+ */
 export function PageHeader({
   title,
+  finding,
   description,
   actions,
 }: {
   title: string;
+  /** One line under the title: the screen's finding, such as who is waiting. */
+  finding?: ReactNode;
+  /** What the screen is for, read on request. */
   description?: string;
   actions?: ReactNode;
 }) {
   return (
-    <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
-      <div>
-        <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
-        {description ? (
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
-        ) : null}
+    <header className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0 space-y-1">
+        <div className="flex items-center gap-1.5">
+          <h1 className="truncate text-xl font-semibold tracking-tight">{title}</h1>
+          {description ? <About title={title}>{description}</About> : null}
+        </div>
+        {finding ? <div className="text-sm text-muted-foreground">{finding}</div> : null}
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
     </header>
+  );
+}
+
+function About({ title, children }: { title: string; children: string }) {
+  return (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          aria-label={`What is ${title}?`}
+          className="flex size-6 items-center justify-center rounded-full text-muted-foreground hover:bg-card hover:text-foreground focus-visible:outline-2"
+        >
+          <CircleHelp aria-hidden className="size-4" />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          align="start"
+          sideOffset={6}
+          className="z-50 max-w-80 rounded-lg bg-popover p-3 text-sm text-popover-foreground shadow-lg ring-1 ring-sheet-edge outline-none"
+        >
+          {children}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
