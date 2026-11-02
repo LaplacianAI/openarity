@@ -5,6 +5,7 @@
       "src/**/*.ts",
       "src/**/*.tsx",
       "*.ts",
+      "scripts/**/*.mjs",
       "*.json",
       "!src/styles.css",
       "!src/routeTree.gen.ts"
