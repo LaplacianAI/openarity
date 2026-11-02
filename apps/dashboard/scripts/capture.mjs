@@ -68,16 +68,36 @@ async function login(base) {
   }
 }
 
+/** Requests each page has open, counted as they start and end. */
+const inflight = new WeakMap();
+
+function track(page) {
+  inflight.set(page, 0);
+  const done = () => inflight.set(page, Math.max(0, inflight.get(page) - 1));
+  page.on("request", () => inflight.set(page, inflight.get(page) + 1));
+  page.on("requestfinished", done);
+  page.on("requestfailed", done);
+}
+
 /**
- * Waits for a screen to finish loading. After a click inside the app the
- * network may already count as idle, so that wait returns at once; the
- * skeletons a screen shows while it fetches are what says it is done.
+ * Waits for a screen to finish loading: no request open for half a second,
+ * then no skeleton on the page. Playwright's own network-idle wait counts
+ * only from a navigation, so after a click inside the app it returns before
+ * the next screen has asked for anything. A stream that never ends, such as
+ * a running run's, is given up on after 15 seconds.
  */
 async function settle(page) {
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  const deadline = Date.now() + 15_000;
+  await page.waitForTimeout(100);
+  let quietSince = Date.now();
+  while (Date.now() < deadline) {
+    if (inflight.get(page) > 0) quietSince = Date.now();
+    else if (Date.now() - quietSince >= 500) break;
+    await page.waitForTimeout(50);
+  }
   await page
     .waitForFunction(() => !document.querySelector('[data-slot="skeleton"]'), null, {
-      timeout: 15_000,
+      timeout: Math.max(1, deadline - Date.now()),
     })
     .catch(() => {});
 }
@@ -88,9 +108,19 @@ async function shoot(page, file) {
   await page.screenshot({ path, fullPage: true, animations: "disabled" });
 }
 
+/** The saved session no longer signs in, so every screen would be sign-in. */
+class SignedOut extends Error {}
+
 async function captureScreen(page, base, label, screen, theme, width, report) {
   await page.goto(`${base}${screen.path}`);
   await settle(page);
+
+  // The app drops a session the brain refuses. Shooting on would write the
+  // sign-in screen over every shot of an earlier capture under this label.
+  if (!screen.signedOut) {
+    const held = await page.evaluate((key) => window.sessionStorage.getItem(key), SESSION_KEY);
+    if (!held) throw new SignedOut();
+  }
 
   if (screen.devOnly && (await page.getByText(/not found/i).count()) > 0) {
     report.skipped.push({ screen: screen.name, theme, width, why: "not on this server" });
@@ -171,9 +201,18 @@ async function capture(base, label) {
             { sessionKey: SESSION_KEY, themeKey: THEME_KEY, raw, theme },
           );
           const page = await context.newPage();
+          track(page);
           try {
             await captureScreen(page, base, label, screen, theme, width, report);
           } catch (err) {
+            if (err instanceof SignedOut) {
+              await context.close();
+              await browser.close();
+              console.error(
+                "The saved session has expired, so nothing was captured past this point. Run make capture-login, then capture again.",
+              );
+              process.exit(1);
+            }
             const why = String(err?.message ?? err)
               .split("\n")[0]
               .replaceAll(base, "<base>");
