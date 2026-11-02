@@ -6,8 +6,10 @@
  */
 import { type ReactNode, useId, useState } from "react";
 
+import type { Run, RunEvent } from "@/api/types";
 import { Markdown } from "@/components/markdown";
 import { Field, ReadOnlyNote, Tag, TextArea } from "@/components/registry-bits";
+import { RunView } from "@/components/run-detail";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,6 +44,104 @@ make check db=openarity_test
 \`\`\`
 
 > Restoring the team brings everything back as it was.`;
+
+/**
+ * A run still going: one call that answered (folded to its line), one that
+ * failed (open on its error), and a second step waiting on a call.
+ */
+function runningRun(): { run: Run; events: RunEvent[] } {
+  const started = new Date(Date.now() - 41_000).toISOString();
+  const run: Run = {
+    id: "gallery-run",
+    session_id: "gallery-session",
+    agent: "ops-lead",
+    status: "running",
+    input:
+      "Exports to the EU bucket have timed out three nights running. Find out why and say what to change.",
+    output: null,
+    error: null,
+    input_tokens: 2_310,
+    output_tokens: 412,
+    created_at: started,
+    started_at: started,
+    finished_at: null,
+    parent_run_id: null,
+    depth: 0,
+    hub: true,
+  };
+  let seq = 0;
+  const e = (kind: string, data: unknown): RunEvent => ({ seq: ++seq, kind, data });
+  const events = [
+    e("started", {
+      agent: "ops-lead",
+      model: "gemini-3.8-flash",
+      pattern: "react",
+      tools: ["web_search", "web_fetch", "graph"],
+      skills: ["incident-postmortem"],
+    }),
+    e("step", { step: 1 }),
+    e("usage", {
+      model: "gemini-3.8-flash",
+      input_tokens: 1_480,
+      output_tokens: 190,
+      cached_input_tokens: 0,
+      spent: 1_670,
+    }),
+    e("tool_call", {
+      id: "c1",
+      name: "web_search",
+      arguments: JSON.stringify({ query: "s3 PutObject RequestTimeout cross-region" }),
+    }),
+    e("tool_result", {
+      id: "c1",
+      name: "web_search",
+      output:
+        "Three results: the SDK's default socket timeout, cross-region transfer acceleration, and multipart upload sizing.",
+      duration_ms: 812,
+    }),
+    e("tool_call", {
+      id: "c2",
+      name: "web_fetch",
+      arguments: JSON.stringify({ url: "https://status.example.invalid/exports" }),
+    }),
+    e("tool_result", {
+      id: "c2",
+      name: "web_fetch",
+      error: "the host refused the connection",
+      duration_ms: 46,
+    }),
+    e("step", { step: 2 }),
+    e("usage", {
+      model: "gemini-3.8-flash",
+      input_tokens: 830,
+      output_tokens: 222,
+      cached_input_tokens: 0,
+      spent: 1_052,
+    }),
+    e("tool_call", {
+      id: "c3",
+      name: "graph",
+      arguments: JSON.stringify({ query: "who owns the export job" }),
+    }),
+  ];
+  return { run, events };
+}
+
+function RunDemo() {
+  const [{ run, events }] = useState(runningRun);
+  return (
+    <div className="max-w-3xl">
+      <RunView
+        teamId="gallery-team"
+        run={run}
+        canCancel
+        onChanged={() => {}}
+        events={events}
+        failed={null}
+      />
+    </div>
+  );
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   const id = useId();
@@ -250,6 +350,10 @@ export default function Gallery() {
 
       <Section title="Dialog">
         <DialogDemo />
+      </Section>
+
+      <Section title="Run">
+        <RunDemo />
       </Section>
     </div>
   );

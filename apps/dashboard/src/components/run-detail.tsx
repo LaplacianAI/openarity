@@ -184,6 +184,38 @@ export function RunDetail({
   onChanged: () => void;
 }) {
   const { events, failed } = useRunEvents(teamId, run.id, onChanged);
+  return (
+    <RunView
+      teamId={teamId}
+      run={run}
+      canCancel={canCancel}
+      onChanged={onChanged}
+      events={events}
+      failed={failed}
+    />
+  );
+}
+
+/**
+ * One run, drawn from the events read so far. Kept apart from the stream so
+ * the states gallery can show every state of a run from fixtures.
+ */
+export function RunView({
+  teamId,
+  run,
+  canCancel,
+  onChanged,
+  events,
+  failed,
+}: {
+  teamId: string;
+  run: Run;
+  canCancel: boolean;
+  onChanged: () => void;
+  events: RunEvent[];
+  /** Why the stream could not be followed, if it could not. */
+  failed: string | null;
+}) {
   const trace = useMemo(() => groupTrace(events), [events]);
   const live = isLive(run.status) && !trace.ended && !failed;
   const now = useNow(live);
