@@ -181,27 +181,27 @@ export function CommandPalette({
               className="h-12 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground sm:text-sm"
             />
           </div>
-          {/* biome-ignore lint/a11y/useSemanticElements: an ARIA listbox, driven from the input */}
-          <ul
+          <div
             id={listId}
             role="listbox"
             aria-label="Results"
             className="max-h-80 overflow-y-auto p-1.5"
           >
             {found.length === 0 ? (
-              <li className="px-3 py-6 text-center text-sm text-muted-foreground">
+              <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nothing by that name.
-              </li>
+              </p>
             ) : (
               found.map((d, i) => {
                 const Icon = d.icon;
                 const selected = i === current;
                 return (
                   // biome-ignore lint/a11y/useKeyWithClickEvents: the input above handles the keys
-                  <li
+                  <div
                     key={`${d.kind}-${d.label}-${d.params?.sessionId ?? ""}`}
                     id={`${listId}-${i}`}
                     role="option"
+                    tabIndex={-1}
                     aria-selected={selected}
                     onMouseMove={() => setAt(i)}
                     onClick={() => go(d)}
@@ -216,11 +216,11 @@ export function CommandPalette({
                     {selected ? (
                       <CornerDownLeft aria-hidden className="size-3.5 text-muted-foreground" />
                     ) : null}
-                  </li>
+                  </div>
                 );
               })
             )}
-          </ul>
+          </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
