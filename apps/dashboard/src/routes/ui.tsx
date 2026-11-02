@@ -6,6 +6,7 @@ import {
   Bot,
   Inbox,
   LayoutGrid,
+  Menu,
   MessagesSquare,
   Moon,
   Network,
@@ -14,7 +15,10 @@ import {
   Settings,
   Sun,
   Users,
+  X,
 } from "lucide-react";
+import { Dialog as DialogPrimitive } from "radix-ui";
+import { useState } from "react";
 import { fetchWhoami, listDeletedTeams } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam, useToken } from "@/api/session";
@@ -122,49 +126,71 @@ function UiLayout() {
     );
   }
 
+  // The framed sheet: the sidebar and the top bar share one ground, with no
+  // rule between them, and the work sits on a sheet inset from the window's
+  // right and bottom edges. Below md the frame goes and the sheet is the
+  // screen, with the navigation behind a menu.
   return (
-    <div className="flex min-h-screen bg-background font-sans text-foreground">
+    <div className="min-h-dvh bg-frame font-sans text-foreground md:grid md:grid-cols-[14.25rem_minmax(0,1fr)] md:grid-rows-[3rem_minmax(0,1fr)]">
       <Sidebar pathname={pathname} />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar />
-        <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-6">
+      <TopBar pathname={pathname} />
+      <main className="min-w-0 bg-sheet md:col-start-2 md:mr-2 md:mb-2 md:rounded-2xl md:border md:border-sheet-edge">
+        <div className="px-4 py-5 md:px-6 md:py-6">
           <Outlet />
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   );
 }
 
-function Sidebar({ pathname }: { pathname: string }) {
+function Brand() {
+  return (
+    <span className="flex items-center gap-2">
+      <Mark className="size-5" />
+      <span className="text-sm font-semibold tracking-tight">openarity</span>
+    </span>
+  );
+}
+
+function NavList({ pathname, onPick }: { pathname: string; onPick?: () => void }) {
   const items = navFor(useOffersDeletedTeams());
   const active = activeOf(items, pathname);
-
   return (
-    <aside className="hidden w-56 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
-      <div className="flex h-12 items-center gap-2 border-b border-sidebar-border px-4">
-        <Mark className="size-5" />
-        <span className="text-sm font-semibold tracking-tight">openarity</span>
+    <nav className="flex flex-col gap-0.5" aria-label="Main">
+      {items.map((item) => {
+        const Icon = item.icon;
+        const current = item.to === active;
+        return (
+          <Link
+            key={item.to}
+            to={item.to}
+            onClick={onPick}
+            aria-current={current ? "page" : undefined}
+            className={cn(
+              "flex min-h-9 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px]",
+              current
+                ? "bg-sheet font-medium text-foreground shadow-[inset_0_0_0_1px_var(--color-sheet-edge)]"
+                : "text-muted-foreground hover:bg-sheet/60 hover:text-foreground",
+            )}
+          >
+            <Icon className={cn("size-4", current && "text-primary")} aria-hidden />
+            <span className="flex-1">{item.label}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+function Sidebar({ pathname }: { pathname: string }) {
+  return (
+    <aside className="hidden flex-col md:row-span-2 md:flex">
+      <div className="flex h-12 shrink-0 items-center px-4">
+        <Brand />
       </div>
-      <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main">
-        {items.map((item) => {
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.to}
-              to={item.to}
-              className={cn(
-                "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
-                item.to === active
-                  ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-              )}
-            >
-              <Icon className="size-4" aria-hidden />
-              <span className="flex-1">{item.label}</span>
-            </Link>
-          );
-        })}
-      </nav>
+      <div className="flex-1 px-2 pt-1 pb-4">
+        <NavList pathname={pathname} />
+      </div>
       {/* No pending count in the sidebar: it would cost one request per
           channel on every page, because the brain counts pending senders per
           channel and not per install. */}
@@ -172,7 +198,44 @@ function Sidebar({ pathname }: { pathname: string }) {
   );
 }
 
-function TopBar() {
+/** The navigation on a phone: a sheet from the left, mounted only while open. */
+function MenuSheet({ pathname }: { pathname: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
+      <DialogPrimitive.Trigger asChild>
+        <Button variant="ghost" size="icon" className="-ml-2 md:hidden" aria-label="Open the menu">
+          <Menu className="size-5" />
+        </Button>
+      </DialogPrimitive.Trigger>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+        <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col bg-frame shadow-xl outline-none data-[state=open]:animate-in data-[state=open]:slide-in-from-left">
+          <div className="flex h-12 shrink-0 items-center justify-between px-4">
+            <DialogPrimitive.Title asChild>
+              <span>
+                <Brand />
+              </span>
+            </DialogPrimitive.Title>
+            <DialogPrimitive.Close asChild>
+              <Button variant="ghost" size="icon" aria-label="Close the menu">
+                <X className="size-5" />
+              </Button>
+            </DialogPrimitive.Close>
+          </div>
+          <DialogPrimitive.Description className="sr-only">
+            Every screen of the dashboard.
+          </DialogPrimitive.Description>
+          <div className="flex-1 overflow-y-auto px-2 pb-4">
+            <NavList pathname={pathname} onPick={() => setOpen(false)} />
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}
+
+function TopBar({ pathname }: { pathname: string }) {
   const { theme, toggle } = useTheme();
   const { teamId, teams, choose } = useCurrentTeam();
   const whoami = useQuery({ queryKey: ["whoami"], queryFn: ({ signal }) => fetchWhoami(signal) });
@@ -180,29 +243,34 @@ function TopBar() {
   const principal = whoami.data as { subject?: string; email?: string } | undefined;
 
   return (
-    <header className="flex h-12 items-center justify-between gap-3 border-b border-border px-6">
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5 font-semibold text-foreground md:hidden">
-          <Mark className="size-4" />
-          openarity
+    <header className="sticky top-0 z-40 flex h-12 min-w-0 items-center gap-2 bg-frame px-4 md:static md:col-start-2 md:pr-2 md:pl-0">
+      <MenuSheet pathname={pathname} />
+      <span className="md:hidden">
+        <Mark className="size-5" />
+      </span>
+      {teams.length > 1 ? (
+        <Select value={teamId ?? undefined} onValueChange={choose}>
+          <SelectTrigger
+            className="h-8 w-auto max-w-48 min-w-0 flex-1 border-transparent bg-transparent text-sm font-medium shadow-none hover:bg-sheet/60 sm:flex-none"
+            aria-label="Current team"
+          >
+            <SelectValue placeholder="Choose a team" />
+          </SelectTrigger>
+          <SelectContent>
+            {teams.map((t) => (
+              <SelectItem key={t.id} value={t.id}>
+                {t.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <span className="min-w-0 flex-1" />
+      )}
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        <span className="hidden max-w-56 truncate text-xs text-muted-foreground lg:inline">
+          {principal?.email ?? principal?.subject ?? "…"}
         </span>
-        <span className="font-mono">{principal?.email ?? principal?.subject ?? "…"}</span>
-        {teams.length > 1 ? (
-          <Select value={teamId ?? undefined} onValueChange={choose}>
-            <SelectTrigger className="h-7 w-48 text-xs" aria-label="Current team">
-              <SelectValue placeholder="Choose a team" />
-            </SelectTrigger>
-            <SelectContent>
-              {teams.map((t) => (
-                <SelectItem key={t.id} value={t.id}>
-                  {t.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : null}
-      </div>
-      <div className="flex items-center gap-1">
         <Button variant="ghost" size="sm" className="text-xs" onClick={() => setToken(null)}>
           Sign out
         </Button>
