@@ -369,3 +369,202 @@ func TestTeamsListWorksInEveryFormat(t *testing.T) {
 		}
 	}
 }
+
+// --- delete, restore, list --deleted ---------------------------------------
+
+const (
+	platformID = "6f1b8f4e-6d2a-4d1e-9a1e-2b8f4e6d2a4d"
+	livePage   = `{"items":[{"id":"` + platformID + `","name":"platform"}]}`
+	deletedOne = `{"id":"` + platformID + `","name":"platform",` +
+		`"deleted_at":"2026-11-01T09:30:00Z","purge_at":"2026-11-08T09:30:00Z"}`
+)
+
+func deleteRoutes(t *testing.T, deleteStatus int, deleteBody string) *clitest.Transcript {
+	t.Helper()
+
+	return clitest.Routes(t, map[string]clitest.Reply{
+		"GET /teams":         {Status: http.StatusOK, Body: livePage},
+		"GET /teams/{id}":    {Status: http.StatusOK, Body: deletedOne},
+		"DELETE /teams/{id}": {Status: deleteStatus, Body: deleteBody},
+	})
+}
+
+// A team is the thing whose loss is hardest to notice, so the name is typed
+// back, not a y. The date printed afterwards is the brain's purge_at, read
+// after the delete: the CLI cannot know TEAM_PURGE_AFTER.
+func TestDeleteAsksForTheNameThenSaysWhenItIsPurged(t *testing.T) {
+	script := deleteRoutes(t, http.StatusNoContent, "")
+
+	out, err := clitest.ExecuteWithStdin(t, commands, "platform\n", "teams", "delete", "platform")
+	if err != nil {
+		t.Fatalf("teams delete: %v\n%s", err, out)
+	}
+	for _, want := range []string{`Delete team "platform"?`, "Type the name to confirm", "deleted", "purged on 2026-11-08"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output is missing %q:\n%s", want, out)
+		}
+	}
+	if n := script.Calls(http.MethodDelete, "/teams/"+platformID); n != 1 {
+		t.Errorf("sent %d deletes, want 1", n)
+	}
+
+	// The delete comes after the prompt was answered and before the read of
+	// the purge date.
+	var order []string
+	for _, e := range script.All() {
+		order = append(order, e.Method+" "+e.Path)
+	}
+	if got := strings.Join(order, ", "); got != "GET /teams, GET /teams/"+platformID+", DELETE /teams/"+platformID+", GET /teams/"+platformID {
+		t.Errorf("requests = %s", got)
+	}
+}
+
+func TestDeleteAbortsUnlessTheExactNameIsTyped(t *testing.T) {
+	for _, typed := range []string{"", "\n", "plat\n", "PLATFORM\n", "y\n", "yes\n", " platform x\n"} {
+		script := deleteRoutes(t, http.StatusNoContent, "")
+
+		_, err := clitest.ExecuteWithStdin(t, commands, typed, "teams", "delete", "platform")
+		if err == nil {
+			t.Errorf("typing %q deleted the team", typed)
+		}
+		if n := script.Calls(http.MethodDelete, "/teams/"+platformID); n != 0 {
+			t.Errorf("typing %q sent %d deletes", typed, n)
+		}
+	}
+}
+
+func TestDeleteWithYesAsksNothing(t *testing.T) {
+	script := deleteRoutes(t, http.StatusNoContent, "")
+
+	out, err := clitest.ExecuteWithStdin(t, commands, "", "teams", "delete", platformID, "--yes")
+	if err != nil {
+		t.Fatalf("teams delete --yes: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "Type the name") {
+		t.Errorf("--yes still prompted:\n%s", out)
+	}
+	if n := script.Calls(http.MethodDelete, "/teams/"+platformID); n != 1 {
+		t.Errorf("sent %d deletes, want 1", n)
+	}
+}
+
+// A script that never sees a prompt must not hang on one, or read its next
+// line of input as a confirmation.
+func TestDeleteNonInteractiveNeedsYes(t *testing.T) {
+	script := deleteRoutes(t, http.StatusNoContent, "")
+
+	_, err := clitest.ExecuteWithStdin(t, commands, "platform\n", "teams", "delete", "platform", "--non-interactive")
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Errorf("err = %v, want it to ask for --yes", err)
+	}
+	if n := script.Calls(http.MethodDelete, "/teams/"+platformID); n != 0 {
+		t.Errorf("sent %d deletes without a confirmation", n)
+	}
+}
+
+func TestDeleteOfATeamWithRunsSaysWhy(t *testing.T) {
+	deleteRoutes(t, http.StatusConflict, "the team has runs in progress\n")
+
+	_, err := clitest.ExecuteWithStdin(t, commands, "", "teams", "delete", "platform", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "the team has runs in progress") {
+		t.Errorf("err = %v, want the brain's sentence", err)
+	}
+}
+
+func TestDeletePrintsTheTeamAsJSON(t *testing.T) {
+	deleteRoutes(t, http.StatusNoContent, "")
+
+	out, err := clitest.ExecuteWithStdin(t, commands, "", "teams", "delete", "platform", "--yes", "-o", "json")
+	if err != nil {
+		t.Fatalf("teams delete -o json: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not json, so a prompt or a note leaked into it: %v\n%s", err, out)
+	}
+	if got["purge_at"] != "2026-11-08T09:30:00Z" || got["name"] != "platform" {
+		t.Errorf("printed %v", got)
+	}
+}
+
+// The name resolves among the deleted teams, so a live team that took the
+// name meanwhile is never the one restored.
+func TestRestoreFindsTheDeletedTeamOfThatName(t *testing.T) {
+	script := clitest.Routes(t, map[string]clitest.Reply{
+		"GET /teams":               {Status: http.StatusOK, Body: `{"items":[` + deletedOne + `]}`},
+		"POST /teams/{id}/restore": {Status: http.StatusOK, Body: `{"id":"` + platformID + `","name":"platform"}`},
+	})
+
+	out, err := clitest.Execute(t, commands, "teams", "restore", "platform")
+	if err != nil {
+		t.Fatalf("teams restore: %v", err)
+	}
+	if !strings.Contains(out, "restored") || !strings.Contains(out, "platform") || !strings.Contains(out, platformID) {
+		t.Errorf("output = %q, want restored, the name and the id", out)
+	}
+	all := script.All()
+	if len(all) != 2 || !strings.Contains(all[0].Query, "deleted=true") {
+		t.Errorf("requests = %+v, want a lookup among deleted teams then the restore", all)
+	}
+	if n := script.Calls(http.MethodPost, "/teams/"+platformID+"/restore"); n != 1 {
+		t.Errorf("sent %d restores, want 1", n)
+	}
+}
+
+func TestRestoreWhenTheNameIsTakenSaysWhy(t *testing.T) {
+	clitest.Routes(t, map[string]clitest.Reply{
+		"POST /teams/{id}/restore": {Status: http.StatusConflict, Body: "a team with that name already exists\n"},
+	})
+
+	_, err := clitest.Execute(t, commands, "teams", "restore", platformID)
+	if err == nil || !strings.Contains(err.Error(), "a team with that name already exists") {
+		t.Errorf("err = %v, want the brain's sentence", err)
+	}
+}
+
+func TestListDeletedShowsWhenEachIsPurged(t *testing.T) {
+	got := clitest.BrainStub(t, http.StatusOK, `{"items":[`+deletedOne+`]}`)
+
+	out, err := clitest.Execute(t, commands, "teams", "list", "--deleted")
+	if err != nil {
+		t.Fatalf("teams list --deleted: %v", err)
+	}
+	for _, want := range []string{"platform", "deleted 2026-11-01", "purges 2026-11-08"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the table is missing %q:\n%s", want, out)
+		}
+	}
+	got.Lock()
+	query := got.Query
+	got.Unlock()
+	if !strings.Contains(query, "deleted=true") {
+		t.Errorf("query = %q, want deleted=true", query)
+	}
+
+	for _, format := range []string{"json", "yaml"} {
+		out, err := clitest.Execute(t, commands, "teams", "list", "--deleted", "-o", format)
+		if err != nil {
+			t.Fatalf("-o %s: %v", format, err)
+		}
+		for _, key := range []string{"deleted_at", "purge_at"} {
+			if !strings.Contains(out, key) {
+				t.Errorf("-o %s is missing %s:\n%s", format, key, out)
+			}
+		}
+	}
+}
+
+// The default list stays as it was: no flag, so an older brain is not sent a
+// parameter it would refuse.
+func TestListSendsNoDeletedUnlessAsked(t *testing.T) {
+	got := clitest.BrainStub(t, http.StatusOK, twoTeams)
+
+	if _, err := clitest.Execute(t, commands, "teams", "list"); err != nil {
+		t.Fatalf("teams list: %v", err)
+	}
+	got.Lock()
+	defer got.Unlock()
+	if strings.Contains(got.Query, "deleted") {
+		t.Errorf("query = %q, want no deleted parameter", got.Query)
+	}
+}

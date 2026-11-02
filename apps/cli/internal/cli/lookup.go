@@ -53,6 +53,65 @@ func ResolveTeam(ctx context.Context, api *client.ClientWithResponses, ref strin
 		ref, maxLookupPages)
 }
 
+// ResolveDeletedTeam looks a name up among deleted teams only, so a live
+// team that has taken the name since is never the answer. Every page is read:
+// a name can belong to more than one deleted team, and that is reported with
+// their ids rather than guessed.
+func ResolveDeletedTeam(ctx context.Context, api *client.ClientWithResponses, ref string) (uuid.UUID, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return uuid.Nil, errors.New("name a deleted team by name or id")
+	}
+	if id, err := uuid.Parse(ref); err == nil {
+		return id, nil
+	}
+
+	deleted := true
+	limit := lookupPageSize
+	var cursor *string
+	var found []uuid.UUID
+
+	for range maxLookupPages {
+		page, err := Result(api.ListTeamsWithResponse(ctx,
+			&client.ListTeamsParams{Limit: &limit, Cursor: cursor, Deleted: &deleted}))
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("look up the deleted team %q: %w", ref, err)
+		}
+
+		for _, team := range page.Items {
+			if team.Name == ref {
+				found = append(found, team.ID)
+			}
+		}
+
+		if page.NextCursor == nil {
+			return onlyOne(ref, found)
+		}
+		cursor = page.NextCursor
+	}
+
+	return uuid.Nil, fmt.Errorf(
+		"gave up looking for a deleted team named %q after %d pages — pass its id instead",
+		ref, maxLookupPages)
+}
+
+func onlyOne(ref string, found []uuid.UUID) (uuid.UUID, error) {
+	switch len(found) {
+	case 0:
+		return uuid.Nil, fmt.Errorf(
+			"no deleted team named %q — `oa teams list --deleted` shows them", ref)
+	case 1:
+		return found[0], nil
+	}
+
+	ids := make([]string, len(found))
+	for i, id := range found {
+		ids[i] = id.String()
+	}
+	return uuid.Nil, fmt.Errorf("%d deleted teams are named %q — pass one of their ids: %s",
+		len(found), ref, strings.Join(ids, ", "))
+}
+
 func ResolveMember(
 	ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, ref string,
 ) (uuid.UUID, error) {
