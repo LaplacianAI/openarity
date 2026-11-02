@@ -2,11 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -66,6 +69,20 @@ func (f *fakeAuthorizer) CanInAnyTeam(
 	return f.allowed, f.err
 }
 
+// fakeTeams says which teams are deleted and records every team it was asked
+// about, so a test can tell a guard that never looked from one that looked at
+// the wrong team.
+type fakeTeams struct {
+	deleted map[uuid.UUID]bool
+	err     error
+	asked   []uuid.UUID
+}
+
+func (f *fakeTeams) TeamDeleted(_ context.Context, id uuid.UUID) (bool, error) {
+	f.asked = append(f.asked, id)
+	return f.deleted[id], f.err
+}
+
 // guardFor builds a guard holding exactly one route, which is all any of these
 // tests needs.
 func guardFor(t *testing.T, method, path, scope string, permission *string, a Authorizer) *Guard {
@@ -75,7 +92,7 @@ func guardFor(t *testing.T, method, path, scope string, permission *string, a Au
 	if err := routes.Add(method, path, scope, permission); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	return NewGuard(routes, a, discardLogger())
+	return NewGuard(routes, a, &fakeTeams{}, discardLogger())
 }
 
 func ptr(s string) *string { return &s }
@@ -119,7 +136,7 @@ func respondOK(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.Stat
 func TestAnUnmappedRouteCannotBeRegistered(t *testing.T) {
 	t.Parallel()
 
-	g := NewGuard(authz.NewRoutes(), &fakeAuthorizer{}, discardLogger())
+	g := NewGuard(authz.NewRoutes(), &fakeAuthorizer{}, &fakeTeams{}, discardLogger())
 
 	_, err := g.Wrap("GET /forgotten", respondOK)
 	if err == nil {
@@ -475,7 +492,7 @@ func TestUnusedReportsRoutesNoRouterRegistered(t *testing.T) {
 		}
 	}
 
-	g := NewGuard(routes, &fakeAuthorizer{}, discardLogger())
+	g := NewGuard(routes, &fakeAuthorizer{}, &fakeTeams{}, discardLogger())
 	for _, key := range []string{"GET /users", "GET /whoami"} {
 		if _, err := g.Wrap(key, respondOK); err != nil {
 			t.Fatalf("Wrap(%s): %v", key, err)
@@ -498,5 +515,233 @@ func TestUnusedIsEmptyWhenEveryRouteIsRegistered(t *testing.T) {
 
 	if unused := g.Unused(); len(unused) != 0 {
 		t.Errorf("Unused() = %v, want none", unused)
+	}
+}
+
+// --- a deleted team is read-only ------------------------------------------
+
+const deletedTeamRefusal = "team is deleted; restore it first"
+
+// The two writes a deleted team still takes: deleting it again keeps its
+// purge date, and restoring it is the whole point of keeping it.
+var exemptWhenDeleted = map[string]bool{
+	"DELETE /teams/{id}":       true,
+	"POST /teams/{id}/restore": true,
+}
+
+type shippedRoute struct {
+	Method     string  `json:"method"`
+	Path       string  `json:"path"`
+	Scope      string  `json:"scope"`
+	Permission *string `json:"permission"`
+}
+
+// shippedRoutes reads the rbac.json that ships, so a route added tomorrow is
+// covered by these tests without anyone listing it here.
+func shippedRoutes(t *testing.T) (authz.Routes, []shippedRoute) {
+	t.Helper()
+
+	data, err := os.ReadFile("../store/rbac.json")
+	if err != nil {
+		t.Fatalf("read rbac.json: %v", err)
+	}
+	var f struct {
+		Routes []shippedRoute `json:"routes"`
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatalf("parse rbac.json: %v", err)
+	}
+
+	routes := authz.NewRoutes()
+	for _, r := range f.Routes {
+		if err := routes.Add(r.Method, r.Path, r.Scope, r.Permission); err != nil {
+			t.Fatalf("Add %s %s: %v", r.Method, r.Path, err)
+		}
+	}
+	return routes, f.Routes
+}
+
+var pathValue = regexp.MustCompile(`\{[^}]+\}`)
+
+// teamTarget fills a route's pattern: {id} with the team, anything else with
+// a fresh uuid.
+func teamTarget(pattern string, team uuid.UUID) string {
+	return pathValue.ReplaceAllStringFunc(pattern, func(v string) string {
+		if v == "{"+teamPathValue+"}" {
+			return team.String()
+		}
+		return uuid.NewString()
+	})
+}
+
+func isRead(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
+}
+
+// A super admin may look at a deleted team, delete it again or restore it,
+// and nothing else: every other write would change a team that is waiting to
+// be purged, and one that runs an agent would spend money on it.
+func TestADeletedTeamIsReadOnlyToASuperAdmin(t *testing.T) {
+	t.Parallel()
+
+	routes, shipped := shippedRoutes(t)
+	team := uuid.New()
+
+	var reads, writes, exempt int
+	for _, sr := range shipped {
+		if !strings.Contains(sr.Path, "{id}") {
+			continue
+		}
+		key := authz.RouteKey(sr.Method, sr.Path)
+
+		g := NewGuard(routes, &fakeAuthorizer{super: true, allowed: true},
+			&fakeTeams{deleted: map[uuid.UUID]bool{team: true}}, discardLogger())
+		ran := false
+		rec := run(t, g, sr.Method, sr.Path, teamTarget(sr.Path, team), testUser(),
+			func(w http.ResponseWriter, _ *http.Request) { ran = true; w.WriteHeader(http.StatusOK) })
+
+		switch {
+		case isRead(sr.Method) || exemptWhenDeleted[key]:
+			if isRead(sr.Method) {
+				reads++
+			} else {
+				exempt++
+			}
+			if rec.Code != http.StatusOK || !ran {
+				t.Errorf("%s: status = %d, ran = %v, want it let through", key, rec.Code, ran)
+			}
+		default:
+			writes++
+			if rec.Code != http.StatusConflict {
+				t.Errorf("%s: status = %d, want 409", key, rec.Code)
+			}
+			if got := strings.TrimSpace(rec.Body.String()); got != deletedTeamRefusal {
+				t.Errorf("%s: body = %q, want %q", key, got, deletedTeamRefusal)
+			}
+			if ran {
+				t.Errorf("%s: the handler ran on a deleted team", key)
+			}
+		}
+	}
+
+	// A loop that matched nothing would pass every assertion above.
+	if reads == 0 || writes == 0 || exempt != len(exemptWhenDeleted) {
+		t.Errorf("checked %d reads, %d writes and %d exempt routes; want some of each and both exemptions",
+			reads, writes, exempt)
+	}
+}
+
+// The same routes on a live team are untouched, and a write asks about the
+// team in its path rather than any team.
+func TestALiveTeamIsWritableToASuperAdmin(t *testing.T) {
+	t.Parallel()
+
+	routes, shipped := shippedRoutes(t)
+	team := uuid.New()
+
+	for _, sr := range shipped {
+		if !strings.Contains(sr.Path, "{id}") {
+			continue
+		}
+		key := authz.RouteKey(sr.Method, sr.Path)
+
+		teams := &fakeTeams{}
+		g := NewGuard(routes, &fakeAuthorizer{super: true, allowed: true}, teams, discardLogger())
+		ran := false
+		rec := run(t, g, sr.Method, sr.Path, teamTarget(sr.Path, team), testUser(),
+			func(w http.ResponseWriter, _ *http.Request) { ran = true; w.WriteHeader(http.StatusOK) })
+
+		if rec.Code != http.StatusOK || !ran {
+			t.Errorf("%s: status = %d, ran = %v, want it let through", key, rec.Code, ran)
+		}
+		if isRead(sr.Method) || exemptWhenDeleted[key] {
+			continue
+		}
+		if len(teams.asked) == 0 {
+			t.Errorf("%s: a write never asked whether its team was deleted", key)
+		}
+		for _, id := range teams.asked {
+			if id != team {
+				t.Errorf("%s: asked about team %s, want the one in the path %s", key, id, team)
+			}
+		}
+	}
+}
+
+// Not knowing is not the same as live: a write that cannot be checked is
+// refused, under every scope a team route can have.
+func TestATeamStateFailureIsAnInternalError(t *testing.T) {
+	t.Parallel()
+
+	for _, scope := range []struct {
+		name       string
+		permission *string
+	}{
+		{"member", nil},
+		{"team", ptr("membership:write")},
+		{"super_admin", nil},
+	} {
+		routes := authz.NewRoutes()
+		if err := routes.Add("POST", "/teams/{id}/members", scope.name, scope.permission); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+		g := NewGuard(routes, &fakeAuthorizer{super: true, allowed: true},
+			&fakeTeams{err: errCheckFailed}, discardLogger())
+
+		ran := false
+		rec := run(t, g, "POST", "/teams/{id}/members", "/teams/"+uuid.NewString()+"/members", testUser(),
+			func(http.ResponseWriter, *http.Request) { ran = true })
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("%s: status = %d, want 500", scope.name, rec.Code)
+		}
+		if ran {
+			t.Errorf("%s: the handler ran when the team's state was unknown", scope.name)
+		}
+	}
+}
+
+// A member never reaches a deleted team at all: ListUserTeams leaves it out
+// of their memberships, so the member and team checks already answer 404 or
+// 403. Asking again would be a query on every request for nothing.
+func TestAMemberNeverReadsTeamState(t *testing.T) {
+	t.Parallel()
+
+	routes, shipped := shippedRoutes(t)
+	team := uuid.New()
+	u := testUser(auth.Membership{TeamID: team, Role: "admin"})
+
+	teams := &fakeTeams{deleted: map[uuid.UUID]bool{team: true}}
+	g := NewGuard(routes, &fakeAuthorizer{super: false, allowed: true}, teams, discardLogger())
+
+	for _, sr := range shipped {
+		if !strings.Contains(sr.Path, "{id}") {
+			continue
+		}
+		run(t, g, sr.Method, sr.Path, teamTarget(sr.Path, team), u, respondOK)
+	}
+
+	if len(teams.asked) != 0 {
+		t.Errorf("a member's requests read the team's state %d times, want none", len(teams.asked))
+	}
+}
+
+// A route with no team in its path has no team to be deleted.
+func TestARouteWithNoTeamNeverReadsTeamState(t *testing.T) {
+	t.Parallel()
+
+	teams := &fakeTeams{}
+	routes := authz.NewRoutes()
+	if err := routes.Add("POST", "/teams", "super_admin", nil); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	g := NewGuard(routes, &fakeAuthorizer{super: true}, teams, discardLogger())
+
+	rec := run(t, g, "POST", "/teams", "/teams", testUser(), respondOK)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if len(teams.asked) != 0 {
+		t.Errorf("read the state of %v for a route with no team", teams.asked)
 	}
 }

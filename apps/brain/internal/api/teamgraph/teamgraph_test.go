@@ -54,7 +54,7 @@ func call(t *testing.T, v Viewer, u *auth.User, path string) *httptest.ResponseR
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mux := http.NewServeMux()
-	New(logger, v).Register(mux, api.NewGuard(routes, allow{}, logger))
+	New(logger, v).Register(mux, api.NewGuard(routes, allow{}, liveTeams{}, logger))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 	req = req.WithContext(auth.WithUser(req.Context(), u))
@@ -180,3 +180,9 @@ func TestAnotherTeamsGraphIsNotFound(t *testing.T) {
 		t.Errorf("status = %d, read %d times", rec.Code, len(v.teams))
 	}
 }
+
+// liveTeams answers that no team is deleted. The guard's read-only rule for a
+// deleted team is tested once, in internal/api; here it must not get in the way.
+type liveTeams struct{}
+
+func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }

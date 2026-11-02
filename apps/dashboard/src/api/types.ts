@@ -24,6 +24,10 @@ export type Team = {
   id: string;
   name: string;
   role?: string;
+  /** Set only on a deleted team, which only a super admin ever sees. */
+  deleted_at?: string;
+  /** deleted_at plus the brain's TEAM_PURGE_AFTER: when it is erased for good. */
+  purge_at?: string;
 };
 
 /** GET /teams/{id}/members. There is no nested user object and no join date. */

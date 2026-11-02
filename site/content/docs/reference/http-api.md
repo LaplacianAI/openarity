@@ -39,6 +39,8 @@ and response field this table leaves out.
 | GET    | `/teams`                                                      | List teams                                         |
 | POST   | `/teams`                                                      | Create a team                                      |
 | GET    | `/teams/{id}`                                                 | Read one team                                      |
+| DELETE | `/teams/{id}`                                                 | Delete a team (super admin)                        |
+| POST   | `/teams/{id}/restore`                                         | Restore a deleted team (super admin)               |
 | GET    | `/teams/{id}/permissions`                                     | What the caller may do in a team                   |
 | GET    | `/teams/{id}/members`                                         | List a team's members                              |
 | POST   | `/teams/{id}/members`                                         | Add a member                                       |

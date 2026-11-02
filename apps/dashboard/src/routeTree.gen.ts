@@ -23,6 +23,7 @@ import { Route as UiSessionsIndexRouteImport } from './routes/ui.sessions.index'
 import { Route as UiSessionsSessionIdRouteImport } from './routes/ui.sessions.$sessionId'
 import { Route as UiSkillsIndexRouteImport } from './routes/ui.skills.index'
 import { Route as UiTeamsIndexRouteImport } from './routes/ui.teams.index'
+import { Route as UiTeamsDeletedRouteImport } from './routes/ui.teams.deleted'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -94,6 +95,11 @@ const UiTeamsIndexRoute = UiTeamsIndexRouteImport.update({
   path: '/teams/',
   getParentRoute: () => UiRoute,
 } as any)
+const UiTeamsDeletedRoute = UiTeamsDeletedRouteImport.update({
+  id: '/teams/deleted',
+  path: '/teams/deleted',
+  getParentRoute: () => UiRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -104,6 +110,7 @@ export interface FileRoutesByFullPath {
   '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
+  '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
   '/ui/servers/': typeof UiServersIndexRoute
@@ -119,6 +126,7 @@ export interface FileRoutesByTo {
   '/ui/settings': typeof UiSettingsRoute
   '/ui': typeof UiIndexRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
+  '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents': typeof UiAgentsIndexRoute
   '/ui/channels': typeof UiChannelsIndexRoute
   '/ui/servers': typeof UiServersIndexRoute
@@ -136,6 +144,7 @@ export interface FileRoutesById {
   '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
+  '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
   '/ui/servers/': typeof UiServersIndexRoute
@@ -154,6 +163,7 @@ export interface FileRouteTypes {
     | '/ui/settings'
     | '/ui/'
     | '/ui/sessions/$sessionId'
+    | '/ui/teams/deleted'
     | '/ui/agents/'
     | '/ui/channels/'
     | '/ui/servers/'
@@ -169,6 +179,7 @@ export interface FileRouteTypes {
     | '/ui/settings'
     | '/ui'
     | '/ui/sessions/$sessionId'
+    | '/ui/teams/deleted'
     | '/ui/agents'
     | '/ui/channels'
     | '/ui/servers'
@@ -185,6 +196,7 @@ export interface FileRouteTypes {
     | '/ui/settings'
     | '/ui/'
     | '/ui/sessions/$sessionId'
+    | '/ui/teams/deleted'
     | '/ui/agents/'
     | '/ui/channels/'
     | '/ui/servers/'
@@ -298,6 +310,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiTeamsIndexRouteImport
       parentRoute: typeof UiRoute
     }
+    '/ui/teams/deleted': {
+      id: '/ui/teams/deleted'
+      path: '/teams/deleted'
+      fullPath: '/ui/teams/deleted'
+      preLoaderRoute: typeof UiTeamsDeletedRouteImport
+      parentRoute: typeof UiRoute
+    }
   }
 }
 
@@ -308,6 +327,7 @@ interface UiRouteChildren {
   UiSettingsRoute: typeof UiSettingsRoute
   UiIndexRoute: typeof UiIndexRoute
   UiSessionsSessionIdRoute: typeof UiSessionsSessionIdRoute
+  UiTeamsDeletedRoute: typeof UiTeamsDeletedRoute
   UiAgentsIndexRoute: typeof UiAgentsIndexRoute
   UiChannelsIndexRoute: typeof UiChannelsIndexRoute
   UiServersIndexRoute: typeof UiServersIndexRoute
@@ -323,6 +343,7 @@ const UiRouteChildren: UiRouteChildren = {
   UiSettingsRoute: UiSettingsRoute,
   UiIndexRoute: UiIndexRoute,
   UiSessionsSessionIdRoute: UiSessionsSessionIdRoute,
+  UiTeamsDeletedRoute: UiTeamsDeletedRoute,
   UiAgentsIndexRoute: UiAgentsIndexRoute,
   UiChannelsIndexRoute: UiChannelsIndexRoute,
   UiServersIndexRoute: UiServersIndexRoute,

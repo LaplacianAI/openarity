@@ -112,8 +112,14 @@ func (h *handler) hook(p Provider, rt Route) http.HandlerFunc {
 		}
 
 		if len(deliveries) > 0 {
-			if err := h.sink.Deliver(r.Context(),
-				Channel{ID: channel.ID, TeamID: channel.TeamID}, deliveries); err != nil {
+			err := h.sink.Deliver(r.Context(),
+				Channel{ID: channel.ID, TeamID: channel.TeamID}, deliveries)
+			if errors.Is(err, ErrTeamDeleted) {
+				h.logger.Info("gateway: delivery refused, the team is deleted", "channel_id", channel.ID)
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			if err != nil {
 				h.logger.Error("gateway: deliver", "channel_id", channel.ID, "error", err)
 				http.Error(w, "try again", http.StatusInternalServerError)
 				return

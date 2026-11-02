@@ -157,7 +157,7 @@ func (q *Queries) ListGraphEntities(ctx context.Context, teamID uuid.UUID) ([]Li
 }
 
 const listTeamIDs = `-- name: ListTeamIDs :many
-SELECT id FROM teams ORDER BY id
+SELECT id FROM teams WHERE deleted_at IS NULL ORDER BY id
 `
 
 func (q *Queries) ListTeamIDs(ctx context.Context) ([]uuid.UUID, error) {

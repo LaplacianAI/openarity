@@ -191,7 +191,7 @@ func mcpMux(t *testing.T, s *store.Store, d *recordingDiscoverer) *http.ServeMux
 			}
 		}
 		mux := http.NewServeMux()
-		rr.Register(mux, api.NewGuard(routes, allowEverything{}, discardLogger()))
+		rr.Register(mux, api.NewGuard(routes, allowEverything{}, liveTeams{}, discardLogger()))
 		return mux
 	}
 	t.Fatal("newRouters built no router serving /discover")

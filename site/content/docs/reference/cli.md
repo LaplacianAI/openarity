@@ -24,6 +24,9 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa config path`               | Print the config file location                           |
 | `oa teams list`                | List the teams you can see                               |
 | `oa teams create <name>`       | Create a team                                            |
+| `oa teams delete <team>`       | Delete a team; it can be restored until it is erased     |
+| `oa teams restore <team>`      | Bring back a deleted team                                |
+| `oa teams list --deleted`      | List deleted teams, and when each is erased              |
 | `oa teams members list <team>` | List a team's members                                    |
 | `oa teams members add <team> <user>` | Add someone to a team                              |
 | `oa teams members remove <team> <user>` | Take someone out of a team                      |

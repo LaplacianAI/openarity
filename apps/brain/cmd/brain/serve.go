@@ -41,7 +41,7 @@ func newGuard(
 		}
 	}
 
-	return api.NewGuard(routes, authorizer, logger), nil
+	return api.NewGuard(routes, authorizer, dbStore, logger), nil
 }
 
 func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore *store.Store) error {

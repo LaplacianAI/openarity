@@ -57,6 +57,7 @@ func TestLoadDefaults(t *testing.T) {
 		"EmbeddingAPIKey":        "",
 		"EmbeddingModel":         "",
 		"EmbeddingDimensions":    "0",
+		"TeamPurgeAfter":         "168h0m0s",
 	}
 	got := map[string]string{
 		"Environment":            string(cfg.Environment),
@@ -94,6 +95,7 @@ func TestLoadDefaults(t *testing.T) {
 		"EmbeddingAPIKey":        cfg.EmbeddingAPIKey,
 		"EmbeddingModel":         cfg.EmbeddingModel,
 		"EmbeddingDimensions":    strconv.Itoa(cfg.EmbeddingDimensions),
+		"TeamPurgeAfter":         cfg.TeamPurgeAfter.String(),
 	}
 	for k, w := range want {
 		if got[k] != w {

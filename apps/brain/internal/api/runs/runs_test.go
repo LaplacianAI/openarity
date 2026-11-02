@@ -302,7 +302,7 @@ func newWorld(t *testing.T) *world {
 	w.store.agents["triage"] = w.agent
 
 	w.mux = http.NewServeMux()
-	New(discardLogger(), w.store, w.authz, w.starter).Register(w.mux, api.NewGuard(runRoutes(t), w.authz, discardLogger()))
+	New(discardLogger(), w.store, w.authz, w.starter).Register(w.mux, api.NewGuard(runRoutes(t), w.authz, liveTeams{}, discardLogger()))
 	return w
 }
 
@@ -565,6 +565,29 @@ func TestAHubRunWithNoRowSaysTheTeamIsGone(t *testing.T) {
 	}
 	if len(w.starter.ids) != 0 {
 		t.Errorf("enqueued %v, want nothing", w.starter.ids)
+	}
+}
+
+// The store refuses a start in a team deleted since the request was
+// authorized. The answer is the one a team that does not exist gets, for an
+// agent's run and for the hub's alike.
+func TestARunInADeletedTeamIsNotFound(t *testing.T) {
+	for name, body := range map[string]map[string]any{
+		"an agent's run": start("hi", nil),
+		"a hub run":      {"input": "hi"},
+	} {
+		w := newWorld(t)
+		w.withModel()
+		w.store.startErr = ErrTeamDeleted
+
+		rec := w.call(t, w.me, http.MethodPost, w.runs(), body)
+
+		if rec.Code != http.StatusNotFound || strings.TrimSpace(rec.Body.String()) != "no such team" {
+			t.Errorf("%s: status %d %q, want 404 %q", name, rec.Code, rec.Body, "no such team")
+		}
+		if len(w.starter.ids) != 0 {
+			t.Errorf("%s: enqueued %v, want nothing", name, w.starter.ids)
+		}
 	}
 }
 
@@ -1104,3 +1127,9 @@ func TestARefusedHubBodyNeverReachesTheStore(t *testing.T) {
 		t.Errorf("status %d, store asked %d things; want 400 and nothing asked", rec.Code, w.store.touched())
 	}
 }
+
+// liveTeams answers that no team is deleted. The guard's read-only rule for a
+// deleted team is tested once, in internal/api; here it must not get in the way.
+type liveTeams struct{}
+
+func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }

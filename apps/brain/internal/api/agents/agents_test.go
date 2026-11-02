@@ -376,7 +376,7 @@ func callWith(t *testing.T, loops []string, s *fakeStore, a *fakeAuthz, u *auth.
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), s, loops).Register(mux, api.NewGuard(agentRoutes(t), a, discardLogger()))
+	New(discardLogger(), s, loops).Register(mux, api.NewGuard(agentRoutes(t), a, liveTeams{}, discardLogger()))
 
 	var in io.Reader = http.NoBody
 	switch b := body.(type) {
@@ -1311,3 +1311,9 @@ func TestListRefusesASearchItCannotUse(t *testing.T) {
 		t.Errorf("status %d after %d store calls, want 400 and none", rec.Code, len(s.listArgs))
 	}
 }
+
+// liveTeams answers that no team is deleted. The guard's read-only rule for a
+// deleted team is tested once, in internal/api; here it must not get in the way.
+type liveTeams struct{}
+
+func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }

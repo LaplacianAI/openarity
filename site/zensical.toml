@@ -23,6 +23,7 @@ nav = [
     "docs/platform/index.md",
     "docs/platform/quick-start.md",
     "docs/platform/configuration.md",
+    "docs/platform/teams.md",
     "docs/platform/hub.md",
     "docs/platform/agents.md",
     "docs/platform/skills.md",

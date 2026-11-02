@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -19,7 +20,11 @@ var (
 	postgresSchemes = []string{"postgres", "postgresql"}
 )
 
-const maxEmbeddingDimensions = 4096
+const (
+	maxEmbeddingDimensions = 4096
+	minTeamPurgeAfter      = time.Hour
+	maxTeamPurgeAfter      = 2160 * time.Hour
+)
 
 func checkHostPort(field, v string) error {
 	_, port, err := net.SplitHostPort(v)
@@ -218,6 +223,10 @@ func (c *Config) Validate() error {
 
 	if err := checkEmbedding(c.EmbeddingBaseURL, c.EmbeddingAPIKey, c.EmbeddingModel, c.EmbeddingDimensions); err != nil {
 		errs = append(errs, err)
+	}
+
+	if c.TeamPurgeAfter < minTeamPurgeAfter || c.TeamPurgeAfter > maxTeamPurgeAfter {
+		errs = append(errs, fmt.Errorf("TEAM_PURGE_AFTER is %s, and must be between 1h and 2160h", c.TeamPurgeAfter))
 	}
 
 	if c.DevToken != "" && c.Environment != EnvironmentDevelopment {

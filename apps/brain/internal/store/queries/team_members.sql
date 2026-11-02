@@ -3,6 +3,7 @@ SELECT t.id, t.name, tm.role
 FROM team_members tm
 JOIN teams t ON t.id = tm.team_id
 WHERE tm.user_id = $1
+AND t.deleted_at IS NULL
 ORDER BY t.name;
 
 -- name: AddTeamMember :one

@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -751,6 +752,20 @@ func TestADeletedChannelIsRefusedNotRetried(t *testing.T) {
 
 	h := newHarness(t)
 	h.store.getErr = pgx.ErrNoRows
+
+	if rec := h.send(t, `{}`, true); rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rec.Code)
+	}
+}
+
+// A team deleted between reading the channel and writing the message gets
+// the answer a deleted channel gets: refused, not retried, since a retry
+// would find the channel gone.
+func TestADeliveryToADeletedTeamIsRefusedNotRetried(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.sink.err = fmt.Errorf("deliver: %w", ErrTeamDeleted)
 
 	if rec := h.send(t, `{}`, true); rec.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", rec.Code)

@@ -299,7 +299,7 @@ func (f *fixture) get(t *testing.T, path string) *httptest.ResponseRecorder {
 
 	mux := http.NewServeMux()
 	New(discardLogger(), f.store, f.authz, f.objects).
-		Register(mux, api.NewGuard(routes(t), f.authz, discardLogger()))
+		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 	if f.caller != nil {
@@ -1023,3 +1023,9 @@ func TestAMalformedSessionIDIsRefusedWhenRead(t *testing.T) {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
+
+// liveTeams answers that no team is deleted. The guard's read-only rule for a
+// deleted team is tested once, in internal/api; here it must not get in the way.
+type liveTeams struct{}
+
+func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }

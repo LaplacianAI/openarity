@@ -122,3 +122,91 @@ func TestNeedsNamesThePermissionOnlyForARefusal(t *testing.T) {
 		t.Error("no error became one")
 	}
 }
+
+// A deleted team is found among the deleted ones only. Review focus 2: a
+// live team with the same name is never the answer, and two deleted teams
+// sharing a name are an ambiguity to report, not a guess to make.
+func TestResolveDeletedTeamLooksOnlyAmongTheDeleted(t *testing.T) {
+	t.Parallel()
+
+	const goneAt = `"deleted_at":"2026-11-01T09:30:00Z"`
+
+	gone := uuid.New()
+	older, newer := uuid.New(), uuid.New()
+	var asked atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /teams", func(w http.ResponseWriter, r *http.Request) {
+		asked.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("deleted") != "true" {
+			// The live list has a team of the same name: answering from it is
+			// the bug this test exists for.
+			_, _ = w.Write([]byte(`{"items":[{"id":"` + uuid.NewString() + `","name":"docs"}]}`))
+			return
+		}
+		switch r.URL.Query().Get("cursor") {
+		case "":
+			_, _ = w.Write([]byte(`{"items":[{"id":"` + older.String() + `","name":"twice",` + goneAt + `}],"next_cursor":"p2"}`))
+		case "p2":
+			_, _ = w.Write([]byte(`{"items":[` +
+				`{"id":"` + gone.String() + `","name":"docs",` + goneAt + `},` +
+				`{"id":"` + newer.String() + `","name":"twice",` + goneAt + `}]}`))
+		default:
+			http.Error(w, "no such page", http.StatusBadRequest)
+		}
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	api, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := ResolveDeletedTeam(t.Context(), api, " docs "); err != nil || got != gone {
+		t.Errorf("ResolveDeletedTeam(docs) = %v, %v; want the deleted %v", got, err, gone)
+	}
+
+	before := asked.Load()
+	if got, err := ResolveDeletedTeam(t.Context(), api, gone.String()); err != nil || got != gone || asked.Load() != before {
+		t.Errorf("an id was looked up, or changed: %v %v", got, err)
+	}
+	if _, err := ResolveDeletedTeam(t.Context(), api, " "); err == nil || asked.Load() != before {
+		t.Error("an empty name was accepted or sent")
+	}
+
+	_, err = ResolveDeletedTeam(t.Context(), api, "twice")
+	if err == nil || !strings.Contains(err.Error(), older.String()) || !strings.Contains(err.Error(), newer.String()) {
+		t.Errorf("two deleted teams named twice said: %v; want both ids named", err)
+	}
+
+	_, err = ResolveDeletedTeam(t.Context(), api, "nobody")
+	if err == nil || !strings.Contains(err.Error(), `no deleted team named "nobody"`) ||
+		!strings.Contains(err.Error(), "oa teams list --deleted") {
+		t.Errorf("a miss said: %v", err)
+	}
+}
+
+// The brain answers ?deleted=true from anyone but a super admin with their
+// live teams. A live team of that name is not a deleted one to restore.
+func TestResolveDeletedTeamIgnoresALiveTeamAnsweredInstead(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /teams", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"id":"` + uuid.NewString() + `","name":"docs","role":"member"}]}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	api, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ResolveDeletedTeam(t.Context(), api, "docs")
+	if err == nil || !strings.Contains(err.Error(), `no deleted team named "docs"`) {
+		t.Errorf("a live team answered for a deleted one: %v", err)
+	}
+}

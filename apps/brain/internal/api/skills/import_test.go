@@ -236,7 +236,7 @@ func TestAnImportOutlivesTheServersWriteTimeout(t *testing.T) {
 	imp.delay = 300 * time.Millisecond
 
 	mux := http.NewServeMux()
-	New(discardLogger(), s, newBucket(s.txStore), imp).Register(mux, api.NewGuard(skillRoutes(t), &fakeAuthz{allowed: true}, discardLogger()))
+	New(discardLogger(), s, newBucket(s.txStore), imp).Register(mux, api.NewGuard(skillRoutes(t), &fakeAuthz{allowed: true}, liveTeams{}, discardLogger()))
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, r.WithContext(auth.WithUser(r.Context(), memberOf(teamID))))
 	}))
@@ -659,7 +659,7 @@ func TestOnlyTheSourcesFailuresAreLogged(t *testing.T) {
 			s := newRouteStore()
 
 			mux := http.NewServeMux()
-			New(logger, s, newBucket(s.txStore), failing(tc.err)).Register(mux, api.NewGuard(skillRoutes(t), &fakeAuthz{allowed: true}, logger))
+			New(logger, s, newBucket(s.txStore), failing(tc.err)).Register(mux, api.NewGuard(skillRoutes(t), &fakeAuthz{allowed: true}, liveTeams{}, logger))
 			in := importBody(t, pdfRef)
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, importPath(teamID), in.body)
 			req.Header.Set("Content-Type", in.contentType)

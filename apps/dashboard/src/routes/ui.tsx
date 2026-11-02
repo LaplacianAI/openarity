@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
+  ArchiveRestore,
   BookOpen,
   Bot,
   Inbox,
@@ -14,7 +15,8 @@ import {
   Sun,
   Users,
 } from "lucide-react";
-import { fetchWhoami } from "@/api";
+import { fetchWhoami, listDeletedTeams } from "@/api";
+import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam, useToken } from "@/api/session";
 import { setToken } from "@/api/token";
 import { Mark } from "@/components/mark";
@@ -47,6 +49,46 @@ const NAV = [
   { to: "/ui/graph", label: "Graph", icon: Network, exact: false },
   { to: "/ui/settings", label: "Team settings", icon: Settings, exact: false },
 ] as const;
+
+const DELETED_TEAMS = {
+  to: "/ui/teams/deleted",
+  label: "Deleted teams",
+  icon: ArchiveRestore,
+  exact: false,
+} as const;
+
+type NavItem = (typeof NAV)[number] | typeof DELETED_TEAMS;
+
+/** The sidebar's entries. Deleted teams sits under Teams, for super admins only. */
+export function navFor(superAdmin: boolean): readonly NavItem[] {
+  if (!superAdmin) return NAV;
+  const at = NAV.findIndex((i) => i.to === "/ui/teams") + 1;
+  return [...NAV.slice(0, at), DELETED_TEAMS, ...NAV.slice(at)];
+}
+
+/**
+ * Whether the sidebar offers Deleted teams. Super admin is read from the
+ * current team's permissions, so once the last live team is deleted there is
+ * no team to ask; then the deleted list itself answers, because the brain
+ * gives deleted rows to a super admin and live ones to anyone else.
+ */
+export function useOffersDeletedTeams(): boolean {
+  const { teamId, isPending } = useCurrentTeam();
+  const { superAdmin } = usePermissions(teamId);
+  const deleted = useQuery({
+    queryKey: ["teams", "deleted", "any"],
+    queryFn: () => listDeletedTeams(),
+    enabled: !isPending && !teamId,
+    staleTime: 60_000,
+  });
+  return superAdmin || Boolean(deleted.data?.items.some((t) => t.deleted_at));
+}
+
+/** The entry a path belongs to: the longest that matches, so a nested page lights only itself. */
+function activeOf(items: readonly NavItem[], pathname: string): string | undefined {
+  return items.filter((i) => isActive(pathname, i)).sort((a, b) => b.to.length - a.to.length)[0]
+    ?.to;
+}
 
 function UiLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -91,6 +133,9 @@ function UiLayout() {
 }
 
 function Sidebar({ pathname }: { pathname: string }) {
+  const items = navFor(useOffersDeletedTeams());
+  const active = activeOf(items, pathname);
+
   return (
     <aside className="hidden w-56 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
       <div className="flex h-12 items-center gap-2 border-b border-sidebar-border px-4">
@@ -98,8 +143,7 @@ function Sidebar({ pathname }: { pathname: string }) {
         <span className="text-sm font-semibold tracking-tight">openarity</span>
       </div>
       <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main">
-        {NAV.map((item) => {
-          const active = isActive(pathname, item);
+        {items.map((item) => {
           const Icon = item.icon;
           return (
             <Link
@@ -107,7 +151,7 @@ function Sidebar({ pathname }: { pathname: string }) {
               to={item.to}
               className={cn(
                 "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
-                active
+                item.to === active
                   ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                   : "text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}

@@ -32,7 +32,7 @@ ORDER BY created_at
 LIMIT 1;
 
 -- name: ListTeamIDs :many
-SELECT id FROM teams ORDER BY id;
+SELECT id FROM teams WHERE deleted_at IS NULL ORDER BY id;
 
 -- A session lock, taken and released on one pinned connection by
 -- Store.WithAdvisoryLock. Session rather than transaction: the work it guards

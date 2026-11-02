@@ -10,6 +10,7 @@ The brain serves a web dashboard at `/ui` — on a local stack,
 | --------------- | -------------------------------------------------------------- |
 | Overview        | The team at a glance                                            |
 | Teams           | The teams you can see, and their members                       |
+| Deleted teams   | Super admins only: deleted teams, when each is erased, and restoring one |
 | Agents          | Defining and editing agents, their grants and the **Web** switch |
 | Skills          | Uploading, importing and reading skills                         |
 | MCP servers     | Registering servers and seeing the tools they offer             |
@@ -17,7 +18,7 @@ The brain serves a web dashboard at `/ui` — on a local stack,
 | Approval queue  | Senders nobody has vouched for yet: nothing they send reaches an agent until they are bound to a user |
 | Sessions        | Every conversation, its messages, and each run's trace — tool calls, delegations and fetched pages |
 | Graph           | The team's agents, servers, tools and skills as the graph holds them |
-| Settings        | The team's model, web search, learning, compaction and hub      |
+| Settings        | The team's model, web search, learning, compaction and hub; for a super admin, deleting the team |
 
 Sign-in needs a secure context, so a dashboard reached at a LAN or tailnet
 address must be served over HTTPS; on the machine itself, `127.0.0.1` works

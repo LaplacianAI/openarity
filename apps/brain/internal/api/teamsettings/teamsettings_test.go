@@ -184,7 +184,7 @@ func (e *env) call(t *testing.T, u *auth.User, method, body string) *httptest.Re
 
 	mux := http.NewServeMux()
 	New(discardLogger(), e.store, e.secrets, e.allow).
-		Register(mux, api.NewGuard(settingsRoutes(t), e.authz, discardLogger()))
+		Register(mux, api.NewGuard(settingsRoutes(t), e.authz, liveTeams{}, discardLogger()))
 
 	var reader io.Reader
 	if body != "" {
@@ -1135,3 +1135,9 @@ func TestAHubFromAnotherTeamIsNeverNamed(t *testing.T) {
 		t.Errorf("body %s names another team's agent", rec.Body)
 	}
 }
+
+// liveTeams answers that no team is deleted. The guard's read-only rule for a
+// deleted team is tested once, in internal/api; here it must not get in the way.
+type liveTeams struct{}
+
+func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }

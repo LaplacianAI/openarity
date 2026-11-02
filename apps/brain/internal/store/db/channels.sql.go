@@ -46,9 +46,14 @@ func (q *Queries) DeleteChannel(ctx context.Context, id uuid.UUID) error {
 }
 
 const getChannel = `-- name: GetChannel :one
-SELECT id, team_id, provider, name, created_at, updated_at FROM channels WHERE id = $1
+SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at
+FROM channels c
+JOIN teams t ON t.id = c.team_id
+WHERE c.id = $1 AND t.deleted_at IS NULL
 `
 
+// A deleted team's channel answers as an unknown one, so its webhooks are
+// refused before the gateway fetches any attachment.
 func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (Channel, error) {
 	row := q.db.QueryRow(ctx, getChannel, id)
 	var i Channel

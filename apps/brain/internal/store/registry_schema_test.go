@@ -320,9 +320,11 @@ func TestExistingAgentsSurviveTheChange(t *testing.T) {
 	if _, err := p.UpTo(t.Context(), beforeLoopsByTheRunner); err != nil {
 		t.Fatalf("UpTo(%d): %v", beforeLoopsByTheRunner, err)
 	}
-	team := mustCreate(t, s, "platform")
+	// Not CreateTeam: its RETURNING names every column of today's teams, and
+	// this schema is older than some of them.
+	teamID := scalar[uuid.UUID](t, s, `INSERT INTO teams (name) VALUES ('platform') RETURNING id`)
 	for _, loop := range oldLoops {
-		if err := insertAgentWithLoop(t, s, team.ID, loop, loop); err != nil {
+		if err := insertAgentWithLoop(t, s, teamID, loop, loop); err != nil {
 			t.Fatalf("an agent on %q before the change: %v", loop, err)
 		}
 	}
