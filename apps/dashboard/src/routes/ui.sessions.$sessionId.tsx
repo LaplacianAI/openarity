@@ -508,15 +508,12 @@ function RunLink({ sessionId, run, current }: { sessionId: string; run: Run; cur
         {run.agent}
       </span>
       <RunStatus status={run.status} />
-      <span className="w-24 text-right text-xs text-muted-foreground tabular-nums">
-        {total.toLocaleString("en-US")} tokens
+      <span className="flex basis-full gap-3 text-xs text-muted-foreground tabular-nums sm:basis-auto">
+        <span className="sm:w-24 sm:text-right">{total.toLocaleString("en-US")} tokens</span>
+        <time dateTime={run.created_at} className="sm:w-16 sm:text-right">
+          {relativeTime(run.created_at)}
+        </time>
       </span>
-      <time
-        dateTime={run.created_at}
-        className="w-16 text-right text-xs text-muted-foreground tabular-nums"
-      >
-        {relativeTime(run.created_at)}
-      </time>
     </Link>
   );
 }
