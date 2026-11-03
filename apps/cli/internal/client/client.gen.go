@@ -1944,7 +1944,10 @@ type ClientInterface interface {
 
 	// RemoveChannelSender Remove a sender, or dismiss a pending one
 	//
-	// Requires `sender:approve` in this team. Clears both the approval and
+	// Requires `sender:approve` in this team, and every permission the user
+	// the ref is bound to holds, if it is bound to a member of the team:
+	// removing a binding cuts its user off from the channel. Otherwise 403.
+	// Clears both the approval and
 	// any pending row for that ref, because the caller cannot always tell
 	// which they are looking at and the wrong guess leaves one behind.
 	//
@@ -1986,6 +1989,12 @@ type ClientInterface interface {
 	// would be a way to give somebody a voice in a team they do not belong
 	// to, needing only `sender:approve` rather than `membership:write`.
 	//
+	// The caller must also hold every permission `user_id` holds in this
+	// team, and every permission of whoever the ref is bound to now, when
+	// that is somebody else: an approver may let a stranger speak as a
+	// member or an approver, never as an admin, and may not take an admin's
+	// binding. Otherwise 403.
+	//
 	// A `sender_ref` that was never pending is accepted: an admin who
 	// already knows a provider id may link it before its owner has spoken.
 	//
@@ -2010,6 +2019,12 @@ type ClientInterface interface {
 	// `user_id` must already be a member of this team — otherwise approving
 	// would be a way to give somebody a voice in a team they do not belong
 	// to, needing only `sender:approve` rather than `membership:write`.
+	//
+	// The caller must also hold every permission `user_id` holds in this
+	// team, and every permission of whoever the ref is bound to now, when
+	// that is somebody else: an approver may let a stranger speak as a
+	// member or an approver, never as an admin, and may not take an admin's
+	// binding. Otherwise 403.
 	//
 	// A `sender_ref` that was never pending is accepted: an admin who
 	// already knows a provider id may link it before its owner has spoken.
@@ -3088,7 +3103,10 @@ func (c *Client) DeleteChannel(ctx context.Context, id TeamID, channelID openapi
 
 // RemoveChannelSender Remove a sender, or dismiss a pending one
 //
-// Requires `sender:approve` in this team. Clears both the approval and
+// Requires `sender:approve` in this team, and every permission the user
+// the ref is bound to holds, if it is bound to a member of the team:
+// removing a binding cuts its user off from the channel. Otherwise 403.
+// Clears both the approval and
 // any pending row for that ref, because the caller cannot always tell
 // which they are looking at and the wrong guess leaves one behind.
 //
@@ -3150,6 +3168,12 @@ func (c *Client) ListChannelSenders(ctx context.Context, id TeamID, channelID Ch
 // would be a way to give somebody a voice in a team they do not belong
 // to, needing only `sender:approve` rather than `membership:write`.
 //
+// The caller must also hold every permission `user_id` holds in this
+// team, and every permission of whoever the ref is bound to now, when
+// that is somebody else: an approver may let a stranger speak as a
+// member or an approver, never as an admin, and may not take an admin's
+// binding. Otherwise 403.
+//
 // A `sender_ref` that was never pending is accepted: an admin who
 // already knows a provider id may link it before its owner has spoken.
 //
@@ -3184,6 +3208,12 @@ func (c *Client) ApproveChannelSenderWithBody(ctx context.Context, id TeamID, ch
 // `user_id` must already be a member of this team — otherwise approving
 // would be a way to give somebody a voice in a team they do not belong
 // to, needing only `sender:approve` rather than `membership:write`.
+//
+// The caller must also hold every permission `user_id` holds in this
+// team, and every permission of whoever the ref is bound to now, when
+// that is somebody else: an approver may let a stranger speak as a
+// member or an approver, never as an admin, and may not take an admin's
+// binding. Otherwise 403.
 //
 // A `sender_ref` that was never pending is accepted: an admin who
 // already knows a provider id may link it before its owner has spoken.
@@ -7497,7 +7527,10 @@ type ClientWithResponsesInterface interface {
 
 	// RemoveChannelSenderWithResponse Remove a sender, or dismiss a pending one
 	//
-	// Requires `sender:approve` in this team. Clears both the approval and
+	// Requires `sender:approve` in this team, and every permission the user
+	// the ref is bound to holds, if it is bound to a member of the team:
+	// removing a binding cuts its user off from the channel. Otherwise 403.
+	// Clears both the approval and
 	// any pending row for that ref, because the caller cannot always tell
 	// which they are looking at and the wrong guess leaves one behind.
 	//
@@ -7543,6 +7576,12 @@ type ClientWithResponsesInterface interface {
 	// would be a way to give somebody a voice in a team they do not belong
 	// to, needing only `sender:approve` rather than `membership:write`.
 	//
+	// The caller must also hold every permission `user_id` holds in this
+	// team, and every permission of whoever the ref is bound to now, when
+	// that is somebody else: an approver may let a stranger speak as a
+	// member or an approver, never as an admin, and may not take an admin's
+	// binding. Otherwise 403.
+	//
 	// A `sender_ref` that was never pending is accepted: an admin who
 	// already knows a provider id may link it before its owner has spoken.
 	//
@@ -7567,6 +7606,12 @@ type ClientWithResponsesInterface interface {
 	// `user_id` must already be a member of this team — otherwise approving
 	// would be a way to give somebody a voice in a team they do not belong
 	// to, needing only `sender:approve` rather than `membership:write`.
+	//
+	// The caller must also hold every permission `user_id` holds in this
+	// team, and every permission of whoever the ref is bound to now, when
+	// that is somebody else: an approver may let a stranger speak as a
+	// member or an approver, never as an admin, and may not take an admin's
+	// binding. Otherwise 403.
 	//
 	// A `sender_ref` that was never pending is accepted: an admin who
 	// already knows a provider id may link it before its owner has spoken.
@@ -11238,7 +11283,10 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, id 
 
 // RemoveChannelSenderWithResponse Remove a sender, or dismiss a pending one
 //
-// Requires `sender:approve` in this team. Clears both the approval and
+// Requires `sender:approve` in this team, and every permission the user
+// the ref is bound to holds, if it is bound to a member of the team:
+// removing a binding cuts its user off from the channel. Otherwise 403.
+// Clears both the approval and
 // any pending row for that ref, because the caller cannot always tell
 // which they are looking at and the wrong guess leaves one behind.
 //
@@ -11296,6 +11344,12 @@ func (c *ClientWithResponses) ListChannelSendersWithResponse(ctx context.Context
 // would be a way to give somebody a voice in a team they do not belong
 // to, needing only `sender:approve` rather than `membership:write`.
 //
+// The caller must also hold every permission `user_id` holds in this
+// team, and every permission of whoever the ref is bound to now, when
+// that is somebody else: an approver may let a stranger speak as a
+// member or an approver, never as an admin, and may not take an admin's
+// binding. Otherwise 403.
+//
 // A `sender_ref` that was never pending is accepted: an admin who
 // already knows a provider id may link it before its owner has spoken.
 //
@@ -11326,6 +11380,12 @@ func (c *ClientWithResponses) ApproveChannelSenderWithBodyWithResponse(ctx conte
 // `user_id` must already be a member of this team — otherwise approving
 // would be a way to give somebody a voice in a team they do not belong
 // to, needing only `sender:approve` rather than `membership:write`.
+//
+// The caller must also hold every permission `user_id` holds in this
+// team, and every permission of whoever the ref is bound to now, when
+// that is somebody else: an approver may let a stranger speak as a
+// member or an approver, never as an admin, and may not take an admin's
+// binding. Otherwise 403.
 //
 // A `sender_ref` that was never pending is accepted: an admin who
 // already knows a provider id may link it before its owner has spoken.

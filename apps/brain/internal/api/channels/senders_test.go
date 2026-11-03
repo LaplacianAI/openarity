@@ -3,10 +3,10 @@ package channels
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +26,8 @@ type senderState struct {
 	pending  []db.PendingSender
 	approved []db.ChannelSender
 	members  map[uuid.UUID]string
+	// bound is who each ref speaks as now, for the rebind and remove checks.
+	bound map[string]uuid.UUID
 
 	approvals []approval
 	removals  []approval
@@ -33,6 +35,8 @@ type senderState struct {
 	pendingErr  error
 	approvedErr error
 	memberErr   error
+	boundErr    error
+	rolesErr    error
 	approveErr  error
 	removeErr   error
 }
@@ -83,6 +87,34 @@ func (f *fakeStore) FindTeamMember(_ context.Context, arg db.FindTeamMemberParam
 		return role, nil
 	}
 	return "", pgx.ErrNoRows
+}
+
+func (f *fakeStore) FindChannelSender(_ context.Context, arg db.FindChannelSenderParams) (uuid.UUID, error) {
+	if f.senders.boundErr != nil {
+		return uuid.Nil, f.senders.boundErr
+	}
+	if id, ok := f.senders.bound[arg.SenderRef]; ok {
+		return id, nil
+	}
+	return uuid.Nil, pgx.ErrNoRows
+}
+
+// The shipped roles, as rbac.json grants them. roles_test pins the file to
+// these, so a test here that drifted from it would be testing another product.
+var shippedRoles = map[string][]string{
+	"member":   {"agent:write", "skill:write", "tool:write", "run:write"},
+	"approver": {"agent:write", "skill:write", "tool:write", "run:write", "channel:read", "sender:approve"},
+	"admin": {
+		"agent:write", "tool:write", "skill:write", "channel:read", "channel:write", "sender:approve",
+		"session:read_all", "membership:write", "user:read", "run:write", "team:settings",
+	},
+}
+
+func (f *fakeStore) ListRolePermissions(_ context.Context, role string) ([]string, error) {
+	if f.senders.rolesErr != nil {
+		return nil, f.senders.rolesErr
+	}
+	return shippedRoles[role], nil
 }
 
 func (f *fakeStore) ApproveSender(_ context.Context, arg db.ApproveSenderParams) error {
@@ -203,8 +235,8 @@ func TestEachSenderRouteNeedsItsOwnPermission(t *testing.T) {
 			if rec := refused.do(t, tc.method, refused.base()+tc.suffix, tc.body); rec.Code != http.StatusForbidden {
 				t.Errorf("%s without %s = %d, want 403", name, tc.needs, rec.Code)
 			}
-			if !slices.Equal(refused.authz.asked, []authz.Action{tc.needs}) {
-				t.Errorf("%s asked the guard for %v, want [%s]", name, refused.authz.asked, tc.needs)
+			if len(refused.authz.asked) == 0 || refused.authz.asked[0] != tc.needs {
+				t.Errorf("%s asked the guard first for %v, want %s", name, refused.authz.asked, tc.needs)
 			}
 
 			// And the same request with the permission does not 403, so the
@@ -808,6 +840,158 @@ func TestEveryCursorInThisPackageCanBeEncoded(t *testing.T) {
 			if _, err := api.EncodeCursor(cursor); err != nil {
 				t.Errorf("a %s cursor no longer encodes: %v — the handler branch that "+
 					"handles this is now reachable and needs a test", name, err)
+			}
+		})
+	}
+}
+
+// --- who an approver may let a sender speak as ---
+
+// asRole makes the fixture's caller hold role, with Can answered from that
+// role's real grants for the guard and the handler alike, and returns the
+// ids of a member, an approver and an admin of the team besides the caller.
+func (f *senderFixture) asRole(role string) (member, approver, admin uuid.UUID) {
+	f.caller = memberOf(f.teamID, role)
+	f.authz = &fakeAuthz{holds: shippedRoles[role]}
+	member, approver, admin = uuid.New(), uuid.New(), uuid.New()
+	f.store.senders.members = map[uuid.UUID]string{
+		member: "member", approver: "approver", admin: "admin", f.caller.ID: role,
+	}
+	return member, approver, admin
+}
+
+// sender:approve is apart from membership:write, so the approve route is the
+// only thing between an approver and a stranger speaking as an admin. A user
+// may be spoken for only by someone holding everything they hold.
+func TestASenderMaySpeakOnlyAsSomeoneTheCallerCovers(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		caller string
+		target func(member, approver, admin, self uuid.UUID) uuid.UUID
+		want   int
+	}{
+		"an approver, as a member":    {"approver", func(m, _, _, _ uuid.UUID) uuid.UUID { return m }, http.StatusNoContent},
+		"an approver, as an approver": {"approver", func(_, ap, _, _ uuid.UUID) uuid.UUID { return ap }, http.StatusNoContent},
+		"an approver, as themselves":  {"approver", func(_, _, _, s uuid.UUID) uuid.UUID { return s }, http.StatusNoContent},
+		"an approver, as an admin":    {"approver", func(_, _, ad, _ uuid.UUID) uuid.UUID { return ad }, http.StatusForbidden},
+		"an admin, as an admin":       {"admin", func(_, _, ad, _ uuid.UUID) uuid.UUID { return ad }, http.StatusNoContent},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newSenderFixture(t)
+			member, approver, admin := f.asRole(tc.caller)
+			target := tc.target(member, approver, admin, f.caller.ID)
+
+			rec := f.approveUser(t, "U01ABC", target)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tc.want, rec.Body)
+			}
+			// A refusal has to do nothing, not merely answer nothing.
+			if bound := len(f.store.senders.approvals); (tc.want == http.StatusForbidden) != (bound == 0) {
+				t.Errorf("%d approvals written for a %d", bound, rec.Code)
+			}
+		})
+	}
+}
+
+// Approving a ref already bound to somebody takes it from them, and removing
+// one cuts them off. Both are refused when the caller does not cover whoever
+// holds the ref now; neither changes anything when refused.
+func TestASenderBoundToSomeoneTheCallerDoesNotCoverStaysTheirs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("rebinding it", func(t *testing.T) {
+		t.Parallel()
+		f := newSenderFixture(t)
+		member, _, admin := f.asRole("approver")
+		f.store.senders.bound = map[string]uuid.UUID{"U01ABC": admin}
+
+		if rec := f.approveUser(t, "U01ABC", member); rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body)
+		}
+		if len(f.store.senders.approvals) != 0 {
+			t.Error("the admin's binding was overwritten")
+		}
+	})
+
+	t.Run("removing it", func(t *testing.T) {
+		t.Parallel()
+		f := newSenderFixture(t)
+		_, _, admin := f.asRole("approver")
+		f.store.senders.bound = map[string]uuid.UUID{"U01ABC": admin}
+
+		if rec := f.do(t, http.MethodDelete, f.base()+"?ref=U01ABC", ""); rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body)
+		}
+		if len(f.store.senders.removals) != 0 {
+			t.Error("the admin's binding was removed")
+		}
+	})
+
+	// The rule protects the holder; it does not freeze every binding.
+	for name, holder := range map[string]func(member, self uuid.UUID) uuid.UUID{
+		"a member's":                     func(m, _ uuid.UUID) uuid.UUID { return m },
+		"somebody no longer in the team": func(uuid.UUID, uuid.UUID) uuid.UUID { return uuid.New() },
+	} {
+		t.Run("removing "+name, func(t *testing.T) {
+			t.Parallel()
+			f := newSenderFixture(t)
+			member, _, _ := f.asRole("approver")
+			f.store.senders.bound = map[string]uuid.UUID{"U01ABC": holder(member, f.caller.ID)}
+
+			if rec := f.do(t, http.MethodDelete, f.base()+"?ref=U01ABC", ""); rec.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want 204 (%s)", rec.Code, rec.Body)
+			}
+		})
+	}
+
+	t.Run("an admin moving an admin's binding", func(t *testing.T) {
+		t.Parallel()
+		f := newSenderFixture(t)
+		member, _, admin := f.asRole("admin")
+		f.store.senders.bound = map[string]uuid.UUID{"U01ABC": admin}
+
+		if rec := f.approveUser(t, "U01ABC", member); rec.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204 (%s)", rec.Code, rec.Body)
+		}
+	})
+}
+
+// A read that fails is unknown, not denied: a 500, and nothing written.
+func TestAFailedCoverCheckIsAnErrorAndChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("the database went away")
+	for name, tc := range map[string]struct {
+		breakIt func(f *senderFixture)
+		remove  bool
+	}{
+		"the target's role": {func(f *senderFixture) { f.store.senders.rolesErr = boom }, false},
+		// The guard asks first; fail only the handler's question after it.
+		"the caller's permissions": {func(f *senderFixture) { f.authz.err, f.authz.failFrom = boom, 2 }, false},
+		"the binding, on approve":  {func(f *senderFixture) { f.store.senders.boundErr = boom }, false},
+		"the binding, on remove":   {func(f *senderFixture) { f.store.senders.boundErr = boom }, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newSenderFixture(t)
+			member, _, _ := f.asRole("approver")
+			tc.breakIt(f)
+
+			var rec *httptest.ResponseRecorder
+			if tc.remove {
+				f.store.senders.bound = map[string]uuid.UUID{"U01ABC": member}
+				rec = f.do(t, http.MethodDelete, f.base()+"?ref=U01ABC", "")
+			} else {
+				rec = f.approveUser(t, "U01ABC", member)
+			}
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500 (%s)", rec.Code, rec.Body)
+			}
+			if len(f.store.senders.approvals)+len(f.store.senders.removals) != 0 {
+				t.Error("a binding changed after a failed check")
 			}
 		})
 	}

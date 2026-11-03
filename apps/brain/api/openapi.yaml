@@ -676,6 +676,12 @@ paths:
         would be a way to give somebody a voice in a team they do not belong
         to, needing only `sender:approve` rather than `membership:write`.
 
+        The caller must also hold every permission `user_id` holds in this
+        team, and every permission of whoever the ref is bound to now, when
+        that is somebody else: an approver may let a stranger speak as a
+        member or an approver, never as an admin, and may not take an admin's
+        binding. Otherwise 403.
+
         A `sender_ref` that was never pending is accepted: an admin who
         already knows a provider id may link it before its owner has spoken.
 
@@ -703,7 +709,10 @@ paths:
       tags: [channels]
       summary: Remove a sender, or dismiss a pending one
       description: |
-        Requires `sender:approve` in this team. Clears both the approval and
+        Requires `sender:approve` in this team, and every permission the user
+        the ref is bound to holds, if it is bound to a member of the team:
+        removing a binding cuts its user off from the channel. Otherwise 403.
+        Clears both the approval and
         any pending row for that ref, because the caller cannot always tell
         which they are looking at and the wrong guess leaves one behind.
 

@@ -49,7 +49,7 @@ func newRouters(
 	routers := []server.Router{
 		whoami.New(logger),
 		teams.New(logger, dbStore, authorizer, cfg.TeamPurgeAfter),
-		channels.New(logger, dbStore, secretWriter, registry, cfg.WebhookPublicURL),
+		channels.New(logger, dbStore, authorizer, secretWriter, registry, cfg.WebhookPublicURL),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
 		mcpservers.New(logger, mcpStore{dbStore}, discoverer),
 		agents.New(logger, agentStore{dbStore}, runtime.Loops()),
