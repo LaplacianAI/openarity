@@ -24,7 +24,26 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox, SwitchField } from "@/components/ui/switch";
+import {
+  RowActions,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Avatar, EmptyState, LoadMore, Mono, PageHeader, StatusDot } from "@/components/ui-bits";
 import { useTheme } from "@/lib/theme";
 
@@ -184,6 +203,86 @@ function Grid({ children }: { children: ReactNode }) {
   return <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{children}</div>;
 }
 
+const AGENTS = [
+  { name: "ops-lead", pattern: "react", runs: 1_204, tokens: 3_733_120 },
+  { name: "log-reader", pattern: "react", runs: 86, tokens: 412_880 },
+  { name: "runbook-writer", pattern: "plan", runs: 9, tokens: 61_002 },
+];
+
+function TableDemo() {
+  const [opened, setOpened] = useState<string | null>(null);
+  return (
+    <div className="space-y-2">
+      <Table>
+        <TableHeader>
+          <tr>
+            <TableHead>Agent</TableHead>
+            <TableHead>Pattern</TableHead>
+            <TableHead numeric>Runs</TableHead>
+            <TableHead numeric>Tokens</TableHead>
+            <TableHead>
+              <span className="sr-only">Actions</span>
+            </TableHead>
+          </tr>
+        </TableHeader>
+        <TableBody>
+          {AGENTS.map((a) => (
+            <TableRow key={a.name} onOpen={() => setOpened(a.name)}>
+              <TableCell className="font-medium">{a.name}</TableCell>
+              <TableCell label="Pattern">
+                <Tag>{a.pattern}</Tag>
+              </TableCell>
+              <TableCell label="Runs" numeric>
+                {a.runs.toLocaleString("en-US")}
+              </TableCell>
+              <TableCell label="Tokens" numeric>
+                {a.tokens.toLocaleString("en-US")}
+              </TableCell>
+              <TableCell>
+                <RowActions>
+                  <Button variant="ghost" size="sm">
+                    Edit
+                  </Button>
+                </RowActions>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <p className="text-xs text-muted-foreground" role="status">
+        {opened
+          ? `Opened ${opened}`
+          : "Click a row, or Tab to the table and use the arrows and Enter."}
+      </p>
+    </div>
+  );
+}
+
+function SheetDemo() {
+  return (
+    <Sheet>
+      <SheetTrigger asChild>
+        <Button variant="outline" size="sm">
+          Open the sheet
+        </Button>
+      </SheetTrigger>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Edit log-reader</SheetTitle>
+          <SheetDescription>Changes apply to the next run.</SheetDescription>
+        </SheetHeader>
+        <Field label="Model" htmlFor="g-sheet-model" hint="As the model gateway names it.">
+          <Input id="g-sheet-model" defaultValue="gemini-3.8-flash" />
+        </Field>
+        <SwitchField label="Web" description="Search the web and fetch pages." defaultChecked />
+        <SheetFooter>
+          <Button>Save</Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 function DialogDemo() {
   const [open, setOpen] = useState(false);
   return (
@@ -265,8 +364,21 @@ export default function Gallery() {
             </Field>
           </State>
           <State label="invalid">
-            <Field label="Name" htmlFor="g-invalid" hint="A team with that name already exists.">
-              <Input id="g-invalid" defaultValue="platform" aria-invalid />
+            <Field
+              label="Name"
+              htmlFor="g-invalid"
+              hint="Lowercase, as people will type it."
+              error="A team with that name already exists. Pick another name."
+            >
+              <Input id="g-invalid" defaultValue="platform" />
+            </Field>
+          </State>
+          <State label="with a limit">
+            <Field label="Description" htmlFor="g-limit" limit="58 of 280">
+              <Input
+                id="g-limit"
+                defaultValue="Reads stack traces and log excerpts, names the cause."
+              />
             </Field>
           </State>
           <State label="disabled">
@@ -415,6 +527,44 @@ export default function Gallery() {
             <JsonView value="{ truncated" label="output" />
           </State>
         </Grid>
+      </Section>
+
+      <Section title="Switches">
+        <Grid>
+          <State label="on">
+            <SwitchField label="Web" description="Search the web and fetch pages." defaultChecked />
+          </State>
+          <State label="off">
+            <SwitchField label="Graph" description="Read and write the team's graph." />
+          </State>
+          <State label="disabled">
+            <SwitchField label="Delegate" description="Hand work to other agents." disabled />
+          </State>
+          <State label="checkboxes">
+            <div className="flex items-center gap-4 text-sm">
+              <span className="flex items-center gap-2">
+                <Checkbox id="g-cb-web_search" defaultChecked />
+                <label htmlFor="g-cb-web_search">web_search</label>
+              </span>
+              <span className="flex items-center gap-2">
+                <Checkbox id="g-cb-web_fetch" />
+                <label htmlFor="g-cb-web_fetch">web_fetch</label>
+              </span>
+              <span className="flex items-center gap-2 opacity-50">
+                <Checkbox id="g-cb-graph" disabled />
+                <label htmlFor="g-cb-graph">graph</label>
+              </span>
+            </div>
+          </State>
+        </Grid>
+      </Section>
+
+      <Section title="Table">
+        <TableDemo />
+      </Section>
+
+      <Section title="Sheet">
+        <SheetDemo />
       </Section>
 
       <Section title="Read-only note">
