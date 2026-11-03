@@ -65,26 +65,7 @@ function About({ title, children }: { title: string; children: string }) {
   );
 }
 
-export function EmptyState({
-  title,
-  body,
-  action,
-  hint,
-}: {
-  title: string;
-  body: string;
-  action?: ReactNode;
-  hint?: string;
-}) {
-  return (
-    <div className="rounded-lg border border-dashed border-border-strong bg-surface px-6 py-10 text-center">
-      <h2 className="text-sm font-semibold">{title}</h2>
-      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{body}</p>
-      {action ? <div className="mt-4 flex justify-center gap-2">{action}</div> : null}
-      {hint ? <p className="mt-3 text-xs text-muted-foreground">{hint}</p> : null}
-    </div>
-  );
-}
+export { EmptyState } from "@/components/states";
 
 export function LoadMore({
   hasMore,
