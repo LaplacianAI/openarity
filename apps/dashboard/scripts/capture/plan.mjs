@@ -16,7 +16,7 @@ export const WIDTHS = [1440, 768, 390];
  * a dev server and is skipped elsewhere.
  */
 export const SCREENS = [
-  { name: "overview", path: "/ui/" },
+  { name: "overview", path: "/ui/", open: "Search, ⌘K" },
   { name: "teams", path: "/ui/teams" },
   { name: "deleted-teams", path: "/ui/teams/deleted" },
   { name: "channels", path: "/ui/channels", open: "New channel" },
