@@ -472,6 +472,25 @@ describe("the runs", () => {
     );
   });
 
+  it("reads the runs again when asked to after a failure", async () => {
+    let calls = 0;
+    listed({
+      [RUNS]: () => {
+        calls += 1;
+        return calls === 1
+          ? { status: 500, text: "the run store is unavailable" }
+          : { body: { items: [run("r1", "helper", "succeeded")] } };
+      },
+      [EVENTS]: () => ({ stream: feed().stream }),
+    });
+    await open("?tab=runs");
+    const panel = tabPanel("Runs");
+    await userEvent.click(await within(panel).findByRole("button", { name: "Try again" }));
+    await within(panel).findByRole("navigation", { name: "Runs" });
+    expect(agents()).toEqual(["helper"]);
+    expect(within(panel).queryByRole("alert")).toBeNull();
+  });
+
   it("shows the newest run unless the URL names another, and puts the choice in the URL", async () => {
     const seen = listed({
       [RUNS]: {
@@ -711,6 +730,11 @@ describe("a run's trace", () => {
     expect(meta).toHaveTextContent("Steps2");
     expect(meta).toHaveTextContent("Tokens1,445");
     expect(meta).toHaveTextContent("Duration1m 5s");
+    // The finding under the title: where it failed, before the reader scrolls.
+    expect(detail.querySelector("[data-finding]")).toHaveTextContent(
+      "Failed at step 2, in lookup.",
+    );
+    expect(within(detail).getByRole("button", { name: "Copy the run id r1" })).toBeInTheDocument();
     const caps = within(detail).getByTestId("capabilities");
     expect(caps).toHaveTextContent("react");
     expect(caps).toHaveTextContent("search");

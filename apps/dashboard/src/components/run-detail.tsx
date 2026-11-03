@@ -25,6 +25,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { cancelRun, followRunEvents, getRun } from "@/api";
 import type { Run, RunEvent } from "@/api/types";
+import { CopyId } from "@/components/facts";
 import { Markdown } from "@/components/markdown";
 import { isLive, LiveBadge, StatusPill as RunStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
@@ -67,6 +68,37 @@ export function duration(ms: number): string {
   const rest = Math.round(s % 60);
   if (m < 60) return `${m}m ${rest}s`;
   return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+/**
+ * The line under a run's title that answers what the screen is for: where the
+ * run failed, or which step its tokens went to. Null while it runs, and when
+ * there is nothing the trace would not show at a glance.
+ */
+export function runFinding(run: Run, trace: Trace): string | null {
+  const status = trace.finished?.status || run.status;
+  const steps = stepsOf(trace);
+  // As the trace numbers them: the agent's count, else the position.
+  const numberOf = (i: number) => steps[i]?.number ?? i + 1;
+
+  if (status === "failed") {
+    const at = steps.findIndex((st) => st.calls.some((c) => c.result?.error));
+    if (at >= 0) {
+      const call = steps[at]?.calls.find((c) => c.result?.error);
+      return `Failed at step ${numberOf(at)}, in ${call?.name}.`;
+    }
+    return steps.length > 0 ? `Failed at step ${numberOf(steps.length - 1)}.` : null;
+  }
+  if (status !== "succeeded" || steps.length < 2) return null;
+
+  const total = steps.reduce((n, st) => n + st.usage.total, 0);
+  if (total === 0) return null;
+  let most = 0;
+  steps.forEach((st, i) => {
+    if (st.usage.total > (steps[most]?.usage.total ?? 0)) most = i;
+  });
+  const share = Math.round(((steps[most]?.usage.total ?? 0) / total) * 100);
+  return `Step ${numberOf(most)} spent ${share}% of the tokens.`;
 }
 
 /** Ticks once a second while `on`, so a live duration counts up. */
@@ -208,6 +240,7 @@ export function RunView({
   const took =
     began === null ? null : (run.finished_at ? Date.parse(run.finished_at) : now) - began;
   const error = run.error ?? (trace.finished?.error || null);
+  const finding = runFinding(run, trace);
 
   return (
     <article aria-label={`Run of ${run.agent}`} className="space-y-6">
@@ -228,6 +261,11 @@ export function RunView({
               ) : null}
               {live ? <LiveBadge /> : null}
             </div>
+            {finding ? (
+              <p data-finding className="text-sm">
+                {finding}
+              </p>
+            ) : null}
             {delegates.length > 0 ? (
               <p
                 data-delegates
@@ -246,6 +284,9 @@ export function RunView({
               <Meta label="Steps">{reading ? "…" : steps}</Meta>
               <Meta label="Tokens">{spent.toLocaleString("en-US")}</Meta>
               <Meta label="Duration">{took === null ? "—" : duration(took)}</Meta>
+              <Meta label="Run">
+                <CopyId value={run.id} label="run id" />
+              </Meta>
             </dl>
           </div>
           {isLive(run.status) && canCancel ? (
@@ -406,11 +447,11 @@ function CancelButton({
       <Button
         variant="outline"
         size="sm"
-        disabled={cancel.isPending}
+        loading={cancel.isPending}
         onClick={() => cancel.mutate()}
         aria-label={`Cancel the run of ${run.agent}`}
       >
-        {cancel.isPending ? "Cancelling…" : "Cancel"}
+        Cancel
       </Button>
       {cancel.isError ? (
         <p role="alert" className="text-xs text-destructive">
@@ -599,7 +640,14 @@ function StepView({
   sessionId: string;
 }) {
   return (
-    <li data-step={index} className="relative flex gap-3">
+    <li
+      data-step={index}
+      className={cn(
+        "relative flex gap-3",
+        // A step that arrives while the run streams fades in; nothing else moves.
+        live && "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-120",
+      )}
+    >
       {/* The timeline's rail, from this marker to the next. */}
       {!last ? (
         <span aria-hidden className="absolute top-7 bottom-[-1.25rem] left-3 w-px bg-rule" />
@@ -937,7 +985,7 @@ function GraphResults({ hits, raw }: { hits: GraphHit[]; raw: string }) {
       {hits.length === 0 ? (
         <p className="text-xs text-muted-foreground">Nothing in reach matched.</p>
       ) : (
-        <ol aria-label="Graph matches" className="divide-y divide-border">
+        <ol aria-label="Graph matches" className="divide-y divide-rule">
           {hits.map((h, i) => {
             const score = Math.min(1, Math.max(0, h.score));
             return (
@@ -975,10 +1023,10 @@ function GraphResults({ hits, raw }: { hits: GraphHit[]; raw: string }) {
                   ) : null}
                 </div>
                 <div className="flex w-24 shrink-0 items-center gap-2 pt-1">
-                  <span aria-hidden className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                  <span aria-hidden className="h-1.5 flex-1 overflow-hidden rounded-full bg-rule">
                     <span
                       data-bar
-                      className="block h-full rounded-full bg-primary"
+                      className="block h-full rounded-full bg-foreground/45"
                       style={{ width: `${(score * 100).toFixed(1)}%` }}
                     />
                   </span>
@@ -998,7 +1046,7 @@ function GraphResults({ hits, raw }: { hits: GraphHit[]; raw: string }) {
 
 const PLAN: Record<PlanStatus, { icon: typeof Clock; word: string; tone: string }> = {
   pending: { icon: Circle, word: "pending", tone: "text-muted-foreground" },
-  in_progress: { icon: CircleDot, word: "in progress", tone: "text-primary" },
+  in_progress: { icon: CircleDot, word: "in progress", tone: "text-running" },
   done: { icon: CheckCircle2, word: "done", tone: "text-success" },
 };
 
@@ -1151,7 +1199,7 @@ function PageView({ page, raw }: { page: FetchedPage; raw: string }) {
         {open ? (
           <pre
             data-page-body
-            className="mt-1.5 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface p-3 font-mono text-xs leading-relaxed"
+            className="mt-1.5 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-sheet p-3 font-mono text-xs leading-relaxed shadow-[inset_0_0_0_1px_var(--color-rule)]"
           >
             {page.markdown}
           </pre>
