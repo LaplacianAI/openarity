@@ -233,6 +233,8 @@ Warm graphite paper with a single cool teal: BRAND's Spectral palette, copied in
 
 **The reference screen.** A title row (breadcrumb, headline, a status line of state, kind and times joined by middle dots), then two halves. At 1280px and wider they sit side by side, conversation on the left (two fifths) and the run on the right (three fifths), 32px apart. Narrower, they stack behind a line of tabs (Messages, Runs) that the URL remembers.
 
+**The finding.** A finished run's title is followed by one line in full ink at 14px that answers the screen's question before the trace does: "Failed at step 2, in lookup.", "Failed before its first step." or "Step 2 spent 62% of the tokens." A running run, and a run of one step that succeeded, have no finding: the status and the trace already say it.
+
 **Rhythm.** 24px between major blocks of a page or a run (header, answer, trace); 12px between a section head and its content and between related lines; 20px between steps on the trace; 8px between messages. Rows pad 10-12px vertically and 12px across. Lists divide with a rule, not with gaps between cards.
 
 **The timeline.** Each step is a 24px numbered circle on a 1px rule that runs down to the next, with the step's name, its token bar (112px track at 390, 192px from 640) and its count on one line. Tool calls under a step sit in one card, one line each, divided by rules; a delegation's child run nests under its call.

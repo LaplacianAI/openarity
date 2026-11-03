@@ -22,12 +22,15 @@ import { ApiError, nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type { Attachment, Page, Run, Session } from "@/api/types";
+import { Time } from "@/components/facts";
 import { RunDetail, RunStatus } from "@/components/run-detail";
+import { ErrorState } from "@/components/states";
+import { StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { EmptyState, LoadMore, Mono, StatusDot } from "@/components/ui-bits";
-import { absoluteTime, fileSize, relativeTime, sessionTone } from "@/lib/format";
+import { EmptyState, LoadMore, Mono } from "@/components/ui-bits";
+import { absoluteTime, fileSize } from "@/lib/format";
 import { useMediaQuery } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
@@ -136,26 +139,25 @@ function SessionPage() {
         <h1 className="truncate text-xl font-semibold tracking-tight">{title}</h1>
         {s ? (
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5">
-              <StatusDot tone={sessionTone(s.status)} />
-              <span className="text-foreground">{s.status}</span>
-            </span>
+            <StatusPill status={s.status} className="text-sm text-foreground" />
             <span aria-hidden>·</span>
             <span>{s.kind}</span>
             <span aria-hidden>·</span>
             <span>
-              started <time dateTime={s.started_at}>{relativeTime(s.started_at)}</time>
+              started <Time iso={s.started_at} />
             </span>
             <span aria-hidden>·</span>
             <span>
-              last message{" "}
-              <time dateTime={s.last_message_at}>{relativeTime(s.last_message_at)}</time>
+              last message <Time iso={s.last_message_at} />
             </span>
           </p>
         ) : session.isError ? (
-          <p role="alert" className="text-xs text-destructive">
-            {session.error.message}
-          </p>
+          <ErrorState
+            what="this session's details"
+            error={session.error}
+            onRetry={() => session.refetch()}
+            retrying={session.isRefetching}
+          />
         ) : session.isPending && teamId ? (
           <Skeleton className="h-4 w-64" />
         ) : null}
@@ -281,9 +283,12 @@ function Messages({ teamId, sessionId }: { teamId: string; sessionId: string }) 
           <Skeleton className="h-14 w-4/5" />
         </div>
       ) : messages.isError ? (
-        <p role="alert" className="text-sm text-destructive">
-          {messages.error.message}
-        </p>
+        <ErrorState
+          what="the messages"
+          error={messages.error}
+          onRetry={() => messages.refetch()}
+          retrying={messages.isRefetching}
+        />
       ) : said.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nothing has been said here.</p>
       ) : (
@@ -327,9 +332,12 @@ function Messages({ teamId, sessionId }: { teamId: string; sessionId: string }) 
 
       {messages.isSuccess ? (
         attachments.isError ? (
-          <p role="alert" className="text-xs text-destructive">
-            {attachments.error.message}
-          </p>
+          <ErrorState
+            what="the attachments"
+            error={attachments.error}
+            onRetry={() => attachments.refetch()}
+            retrying={attachments.isRefetching}
+          />
         ) : files.length > 0 ? (
           <section aria-label="Attachments" className="space-y-2 pt-2">
             <h3 className="text-sm font-medium">Attachments</h3>
@@ -360,10 +368,10 @@ function Messages({ teamId, sessionId }: { teamId: string; sessionId: string }) 
               <Button
                 variant="outline"
                 size="sm"
-                disabled={attachments.isFetchingNextPage}
+                loading={attachments.isFetchingNextPage}
                 onClick={() => attachments.fetchNextPage()}
               >
-                {attachments.isFetchingNextPage ? "Loading…" : "More attachments"}
+                More attachments
               </Button>
             ) : null}
           </section>
@@ -429,9 +437,12 @@ function Runs({
   }
   if (runs.isError) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {runs.error.message}
-      </p>
+      <ErrorState
+        what="the runs"
+        error={runs.error}
+        onRetry={() => runs.refetch()}
+        retrying={runs.isRefetching}
+      />
     );
   }
   if (rows.length === 0) {
@@ -471,9 +482,12 @@ function Runs({
         ) : chosen ? (
           <p className="text-sm text-muted-foreground">That run belongs to another session.</p>
         ) : linked.isError ? (
-          <p role="alert" className="text-sm text-destructive">
-            {linked.error.message}
-          </p>
+          <ErrorState
+            what="that run"
+            error={linked.error}
+            onRetry={() => linked.refetch()}
+            retrying={linked.isRefetching}
+          />
         ) : (
           <div className="space-y-3">
             <Skeleton className="h-6 w-48" />
@@ -505,9 +519,7 @@ function RunLink({ sessionId, run, current }: { sessionId: string; run: Run; cur
       <RunStatus status={run.status} />
       <span className="flex basis-full gap-3 text-xs text-muted-foreground tabular-nums sm:basis-auto">
         <span className="sm:w-24 sm:text-right">{total.toLocaleString("en-US")} tokens</span>
-        <time dateTime={run.created_at} className="sm:w-16 sm:text-right">
-          {relativeTime(run.created_at)}
-        </time>
+        <Time iso={run.created_at} className="sm:w-16 sm:text-right" />
       </span>
     </Link>
   );
