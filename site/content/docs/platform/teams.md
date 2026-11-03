@@ -23,8 +23,9 @@ deleted changes nothing, and keeps its first purge date.
 
 ## What a deleted team is
 
-- **For its members** it is gone: every route in it answers 404, it is left
-  out of their team list, and its channels refuse deliveries as if they did
+- **For its members** it is gone: every route in it answers as it would for
+  a team that does not exist (404, or 403 where the route needs a
+  permission), it is left out of their team list, and its channels refuse deliveries as if they did
   not exist.
 - **For a super admin** it is read-only. It can be read, deleted again or
   restored, and every other write answers 409 with `team is deleted; restore
@@ -45,6 +46,11 @@ team that has taken the name since is never the one restored. Restoring then
 fails with `a team with that name already exists` for as long as that team
 keeps the name. Two deleted teams with the same name are reported with their ids;
 pass the id of the one you mean.
+
+A restored team's graph is the one it had when it was deleted. If every
+team's graph was rebuilt while it was deleted, for a new embedding model
+say, rebuild its graph too with `brain graph rebuild --team <id>`: a rebuild
+of every team leaves deleted teams out.
 
 ## Purging
 
