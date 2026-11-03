@@ -5,8 +5,8 @@ import { Anchor, Markdown, safeHref, urlTransform } from "./markdown";
 
 describe("safeHref", () => {
   it("keeps http and https", () => {
-    expect(safeHref("https://example.com/a?b=1")).toBe("https://example.com/a?b=1");
-    expect(safeHref("http://example.com")).toBe("http://example.com/");
+    expect(safeHref("https://example.com/a?b=1")).toBe("https://example.com/a?b=1"); // taste-skill-ignore: the reserved example domain, on purpose
+    expect(safeHref("http://example.com")).toBe("http://example.com/"); // taste-skill-ignore: the reserved example domain, on purpose
   });
 
   it("refuses every other scheme, and anything relative", () => {

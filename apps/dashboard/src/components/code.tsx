@@ -44,7 +44,7 @@ export function CodeBlock({
           "overflow-x-hidden p-3 pr-10 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap",
           long &&
             !open &&
-            "max-h-60 overflow-y-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]",
+            "max-h-60 overflow-y-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]", // taste-skill-ignore: a mask fade on a fold, not a fill
         )}
       >
         {code}
