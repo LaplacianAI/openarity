@@ -319,8 +319,11 @@ Two answers you may get instead of a 204:
   name. The reply lists the ids; retry with one of them in place of the
   subject. Only possible once a second issuer is configured.
 
-The roles that exist are `admin` and `member`, and they are rows: anything else
-comes back as a 400 from a rejected foreign key, not as a CLI error.
+The roles that ship are `member`, `approver` and `admin`, each holding
+everything the one before it does: an `approver` is a member who may also let
+waiting senders in, and an `admin` also connects channels and manages the
+team. They are rows: anything else comes back as a 400 from a rejected foreign
+key, not as a CLI error.
 
 From then on that person manages the team's membership themselves, without
 being a super admin.

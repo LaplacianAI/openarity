@@ -1944,7 +1944,7 @@ type ClientInterface interface {
 
 	// RemoveChannelSender Remove a sender, or dismiss a pending one
 	//
-	// Requires `channel:write` in this team. Clears both the approval and
+	// Requires `sender:approve` in this team. Clears both the approval and
 	// any pending row for that ref, because the caller cannot always tell
 	// which they are looking at and the wrong guess leaves one behind.
 	//
@@ -1966,7 +1966,7 @@ type ClientInterface interface {
 
 	// ListChannelSenders List approved senders
 	//
-	// Requires `channel:write` in this team. Who may speak to the agent
+	// Requires `channel:read` in this team. Who may speak to the agent
 	// through this channel, and as whom.
 	//
 	// Corresponds with GET /teams/{id}/channels/{channelID}/senders (the `ListChannelSenders` operationId).
@@ -1974,14 +1974,17 @@ type ClientInterface interface {
 
 	// ApproveChannelSenderWithBody Approve a sender
 	//
-	// Requires `channel:write` in this team. Links a provider-side sender to
-	// a user and takes them out of the pending queue, in one statement.
+	// Requires `sender:approve` in this team, which `admin` and `approver`
+	// hold. Links a provider-side sender to a user and takes them out of the
+	// pending queue, in one statement.
 	//
-	// This is what lets somebody instruct an agent as a named user, so it is
-	// an admin act rather than a member one. `user_id` must already be a
-	// member of this team — otherwise approving would be a way to give
-	// somebody a voice in a team they do not belong to, needing only
-	// `channel:write` rather than `membership:write`.
+	// This is what lets somebody instruct an agent as a named user, so it
+	// takes a permission of its own rather than one every member holds. It
+	// is apart from `channel:write`, so an approver can let people in
+	// without being able to rewire the channel or its signing secret.
+	// `user_id` must already be a member of this team — otherwise approving
+	// would be a way to give somebody a voice in a team they do not belong
+	// to, needing only `sender:approve` rather than `membership:write`.
 	//
 	// A `sender_ref` that was never pending is accepted: an admin who
 	// already knows a provider id may link it before its owner has spoken.
@@ -1996,14 +1999,17 @@ type ClientInterface interface {
 
 	// ApproveChannelSender Approve a sender
 	//
-	// Requires `channel:write` in this team. Links a provider-side sender to
-	// a user and takes them out of the pending queue, in one statement.
+	// Requires `sender:approve` in this team, which `admin` and `approver`
+	// hold. Links a provider-side sender to a user and takes them out of the
+	// pending queue, in one statement.
 	//
-	// This is what lets somebody instruct an agent as a named user, so it is
-	// an admin act rather than a member one. `user_id` must already be a
-	// member of this team — otherwise approving would be a way to give
-	// somebody a voice in a team they do not belong to, needing only
-	// `channel:write` rather than `membership:write`.
+	// This is what lets somebody instruct an agent as a named user, so it
+	// takes a permission of its own rather than one every member holds. It
+	// is apart from `channel:write`, so an approver can let people in
+	// without being able to rewire the channel or its signing secret.
+	// `user_id` must already be a member of this team — otherwise approving
+	// would be a way to give somebody a voice in a team they do not belong
+	// to, needing only `sender:approve` rather than `membership:write`.
 	//
 	// A `sender_ref` that was never pending is accepted: an admin who
 	// already knows a provider id may link it before its owner has spoken.
@@ -2018,9 +2024,9 @@ type ClientInterface interface {
 
 	// ListPendingSenders List senders waiting to be approved
 	//
-	// Requires `channel:write` in this team — the same permission as
-	// connecting the channel, because this queue is only actionable by
-	// whoever can approve, and it holds text a stranger chose.
+	// Requires `channel:read` in this team. The queue holds text a
+	// stranger chose, so it goes only to those who can act on it: every
+	// role the brain ships with `channel:read` also holds `sender:approve`.
 	//
 	// A sender the brain has never linked to a user has their provider-side
 	// id and display name recorded here, bounded to 50 per channel, and
@@ -3082,7 +3088,7 @@ func (c *Client) DeleteChannel(ctx context.Context, id TeamID, channelID openapi
 
 // RemoveChannelSender Remove a sender, or dismiss a pending one
 //
-// Requires `channel:write` in this team. Clears both the approval and
+// Requires `sender:approve` in this team. Clears both the approval and
 // any pending row for that ref, because the caller cannot always tell
 // which they are looking at and the wrong guess leaves one behind.
 //
@@ -3114,7 +3120,7 @@ func (c *Client) RemoveChannelSender(ctx context.Context, id TeamID, channelID C
 
 // ListChannelSenders List approved senders
 //
-// Requires `channel:write` in this team. Who may speak to the agent
+// Requires `channel:read` in this team. Who may speak to the agent
 // through this channel, and as whom.
 //
 // Corresponds with GET /teams/{id}/channels/{channelID}/senders (the `ListChannelSenders` operationId).
@@ -3132,14 +3138,17 @@ func (c *Client) ListChannelSenders(ctx context.Context, id TeamID, channelID Ch
 
 // ApproveChannelSenderWithBody Approve a sender
 //
-// Requires `channel:write` in this team. Links a provider-side sender to
-// a user and takes them out of the pending queue, in one statement.
+// Requires `sender:approve` in this team, which `admin` and `approver`
+// hold. Links a provider-side sender to a user and takes them out of the
+// pending queue, in one statement.
 //
-// This is what lets somebody instruct an agent as a named user, so it is
-// an admin act rather than a member one. `user_id` must already be a
-// member of this team — otherwise approving would be a way to give
-// somebody a voice in a team they do not belong to, needing only
-// `channel:write` rather than `membership:write`.
+// This is what lets somebody instruct an agent as a named user, so it
+// takes a permission of its own rather than one every member holds. It
+// is apart from `channel:write`, so an approver can let people in
+// without being able to rewire the channel or its signing secret.
+// `user_id` must already be a member of this team — otherwise approving
+// would be a way to give somebody a voice in a team they do not belong
+// to, needing only `sender:approve` rather than `membership:write`.
 //
 // A `sender_ref` that was never pending is accepted: an admin who
 // already knows a provider id may link it before its owner has spoken.
@@ -3164,14 +3173,17 @@ func (c *Client) ApproveChannelSenderWithBody(ctx context.Context, id TeamID, ch
 
 // ApproveChannelSender Approve a sender
 //
-// Requires `channel:write` in this team. Links a provider-side sender to
-// a user and takes them out of the pending queue, in one statement.
+// Requires `sender:approve` in this team, which `admin` and `approver`
+// hold. Links a provider-side sender to a user and takes them out of the
+// pending queue, in one statement.
 //
-// This is what lets somebody instruct an agent as a named user, so it is
-// an admin act rather than a member one. `user_id` must already be a
-// member of this team — otherwise approving would be a way to give
-// somebody a voice in a team they do not belong to, needing only
-// `channel:write` rather than `membership:write`.
+// This is what lets somebody instruct an agent as a named user, so it
+// takes a permission of its own rather than one every member holds. It
+// is apart from `channel:write`, so an approver can let people in
+// without being able to rewire the channel or its signing secret.
+// `user_id` must already be a member of this team — otherwise approving
+// would be a way to give somebody a voice in a team they do not belong
+// to, needing only `sender:approve` rather than `membership:write`.
 //
 // A `sender_ref` that was never pending is accepted: an admin who
 // already knows a provider id may link it before its owner has spoken.
@@ -3196,9 +3208,9 @@ func (c *Client) ApproveChannelSender(ctx context.Context, id TeamID, channelID 
 
 // ListPendingSenders List senders waiting to be approved
 //
-// Requires `channel:write` in this team — the same permission as
-// connecting the channel, because this queue is only actionable by
-// whoever can approve, and it holds text a stranger chose.
+// Requires `channel:read` in this team. The queue holds text a
+// stranger chose, so it goes only to those who can act on it: every
+// role the brain ships with `channel:read` also holds `sender:approve`.
 //
 // A sender the brain has never linked to a user has their provider-side
 // id and display name recorded here, bounded to 50 per channel, and
@@ -7485,7 +7497,7 @@ type ClientWithResponsesInterface interface {
 
 	// RemoveChannelSenderWithResponse Remove a sender, or dismiss a pending one
 	//
-	// Requires `channel:write` in this team. Clears both the approval and
+	// Requires `sender:approve` in this team. Clears both the approval and
 	// any pending row for that ref, because the caller cannot always tell
 	// which they are looking at and the wrong guess leaves one behind.
 	//
@@ -7509,7 +7521,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListChannelSendersWithResponse List approved senders
 	//
-	// Requires `channel:write` in this team. Who may speak to the agent
+	// Requires `channel:read` in this team. Who may speak to the agent
 	// through this channel, and as whom.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -7519,14 +7531,17 @@ type ClientWithResponsesInterface interface {
 
 	// ApproveChannelSenderWithBodyWithResponse Approve a sender
 	//
-	// Requires `channel:write` in this team. Links a provider-side sender to
-	// a user and takes them out of the pending queue, in one statement.
+	// Requires `sender:approve` in this team, which `admin` and `approver`
+	// hold. Links a provider-side sender to a user and takes them out of the
+	// pending queue, in one statement.
 	//
-	// This is what lets somebody instruct an agent as a named user, so it is
-	// an admin act rather than a member one. `user_id` must already be a
-	// member of this team — otherwise approving would be a way to give
-	// somebody a voice in a team they do not belong to, needing only
-	// `channel:write` rather than `membership:write`.
+	// This is what lets somebody instruct an agent as a named user, so it
+	// takes a permission of its own rather than one every member holds. It
+	// is apart from `channel:write`, so an approver can let people in
+	// without being able to rewire the channel or its signing secret.
+	// `user_id` must already be a member of this team — otherwise approving
+	// would be a way to give somebody a voice in a team they do not belong
+	// to, needing only `sender:approve` rather than `membership:write`.
 	//
 	// A `sender_ref` that was never pending is accepted: an admin who
 	// already knows a provider id may link it before its owner has spoken.
@@ -7541,14 +7556,17 @@ type ClientWithResponsesInterface interface {
 
 	// ApproveChannelSenderWithResponse Approve a sender
 	//
-	// Requires `channel:write` in this team. Links a provider-side sender to
-	// a user and takes them out of the pending queue, in one statement.
+	// Requires `sender:approve` in this team, which `admin` and `approver`
+	// hold. Links a provider-side sender to a user and takes them out of the
+	// pending queue, in one statement.
 	//
-	// This is what lets somebody instruct an agent as a named user, so it is
-	// an admin act rather than a member one. `user_id` must already be a
-	// member of this team — otherwise approving would be a way to give
-	// somebody a voice in a team they do not belong to, needing only
-	// `channel:write` rather than `membership:write`.
+	// This is what lets somebody instruct an agent as a named user, so it
+	// takes a permission of its own rather than one every member holds. It
+	// is apart from `channel:write`, so an approver can let people in
+	// without being able to rewire the channel or its signing secret.
+	// `user_id` must already be a member of this team — otherwise approving
+	// would be a way to give somebody a voice in a team they do not belong
+	// to, needing only `sender:approve` rather than `membership:write`.
 	//
 	// A `sender_ref` that was never pending is accepted: an admin who
 	// already knows a provider id may link it before its owner has spoken.
@@ -7563,9 +7581,9 @@ type ClientWithResponsesInterface interface {
 
 	// ListPendingSendersWithResponse List senders waiting to be approved
 	//
-	// Requires `channel:write` in this team — the same permission as
-	// connecting the channel, because this queue is only actionable by
-	// whoever can approve, and it holds text a stranger chose.
+	// Requires `channel:read` in this team. The queue holds text a
+	// stranger chose, so it goes only to those who can act on it: every
+	// role the brain ships with `channel:read` also holds `sender:approve`.
 	//
 	// A sender the brain has never linked to a user has their provider-side
 	// id and display name recorded here, bounded to 50 per channel, and
@@ -11220,7 +11238,7 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, id 
 
 // RemoveChannelSenderWithResponse Remove a sender, or dismiss a pending one
 //
-// Requires `channel:write` in this team. Clears both the approval and
+// Requires `sender:approve` in this team. Clears both the approval and
 // any pending row for that ref, because the caller cannot always tell
 // which they are looking at and the wrong guess leaves one behind.
 //
@@ -11250,7 +11268,7 @@ func (c *ClientWithResponses) RemoveChannelSenderWithResponse(ctx context.Contex
 
 // ListChannelSendersWithResponse List approved senders
 //
-// Requires `channel:write` in this team. Who may speak to the agent
+// Requires `channel:read` in this team. Who may speak to the agent
 // through this channel, and as whom.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -11266,14 +11284,17 @@ func (c *ClientWithResponses) ListChannelSendersWithResponse(ctx context.Context
 
 // ApproveChannelSenderWithBodyWithResponse Approve a sender
 //
-// Requires `channel:write` in this team. Links a provider-side sender to
-// a user and takes them out of the pending queue, in one statement.
+// Requires `sender:approve` in this team, which `admin` and `approver`
+// hold. Links a provider-side sender to a user and takes them out of the
+// pending queue, in one statement.
 //
-// This is what lets somebody instruct an agent as a named user, so it is
-// an admin act rather than a member one. `user_id` must already be a
-// member of this team — otherwise approving would be a way to give
-// somebody a voice in a team they do not belong to, needing only
-// `channel:write` rather than `membership:write`.
+// This is what lets somebody instruct an agent as a named user, so it
+// takes a permission of its own rather than one every member holds. It
+// is apart from `channel:write`, so an approver can let people in
+// without being able to rewire the channel or its signing secret.
+// `user_id` must already be a member of this team — otherwise approving
+// would be a way to give somebody a voice in a team they do not belong
+// to, needing only `sender:approve` rather than `membership:write`.
 //
 // A `sender_ref` that was never pending is accepted: an admin who
 // already knows a provider id may link it before its owner has spoken.
@@ -11294,14 +11315,17 @@ func (c *ClientWithResponses) ApproveChannelSenderWithBodyWithResponse(ctx conte
 
 // ApproveChannelSenderWithResponse Approve a sender
 //
-// Requires `channel:write` in this team. Links a provider-side sender to
-// a user and takes them out of the pending queue, in one statement.
+// Requires `sender:approve` in this team, which `admin` and `approver`
+// hold. Links a provider-side sender to a user and takes them out of the
+// pending queue, in one statement.
 //
-// This is what lets somebody instruct an agent as a named user, so it is
-// an admin act rather than a member one. `user_id` must already be a
-// member of this team — otherwise approving would be a way to give
-// somebody a voice in a team they do not belong to, needing only
-// `channel:write` rather than `membership:write`.
+// This is what lets somebody instruct an agent as a named user, so it
+// takes a permission of its own rather than one every member holds. It
+// is apart from `channel:write`, so an approver can let people in
+// without being able to rewire the channel or its signing secret.
+// `user_id` must already be a member of this team — otherwise approving
+// would be a way to give somebody a voice in a team they do not belong
+// to, needing only `sender:approve` rather than `membership:write`.
 //
 // A `sender_ref` that was never pending is accepted: an admin who
 // already knows a provider id may link it before its owner has spoken.
@@ -11322,9 +11346,9 @@ func (c *ClientWithResponses) ApproveChannelSenderWithResponse(ctx context.Conte
 
 // ListPendingSendersWithResponse List senders waiting to be approved
 //
-// Requires `channel:write` in this team — the same permission as
-// connecting the channel, because this queue is only actionable by
-// whoever can approve, and it holds text a stranger chose.
+// Requires `channel:read` in this team. The queue holds text a
+// stranger chose, so it goes only to those who can act on it: every
+// role the brain ships with `channel:read` also holds `sender:approve`.
 //
 // A sender the brain has never linked to a user has their provider-side
 // id and display name recorded here, bounded to 50 per channel, and

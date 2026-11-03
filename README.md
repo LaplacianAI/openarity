@@ -422,9 +422,10 @@ printf %s "$SLACK_SIGNING_SECRET" |
     oa channels create platform slack --provider slack --secret-stdin
 ```
 
-Who may speak through a channel is a separate decision from connecting it. A
-sender nobody has approved gets their provider-side id recorded and their
-message dropped:
+Who may speak through a channel is a separate decision from connecting it, and
+a separate permission: an `approver` may let senders in without being able to
+change the channel. A sender nobody has approved gets their provider-side id
+recorded and their message dropped:
 
 ```sh
 oa channels senders pending platform support

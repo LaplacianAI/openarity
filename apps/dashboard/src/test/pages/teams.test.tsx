@@ -1,5 +1,6 @@
 import { screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import { brain, pageOf, show, team } from "@/test/brain";
@@ -37,4 +38,22 @@ it("offers them with membership:write", async () => {
 
   expect(await screen.findByRole("button", { name: /^remove$/i })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /^add$/i })).toBeInTheDocument();
+});
+
+// The brain ships three roles, nested: member, then approver (who also lets
+// waiting senders in), then admin. Each one must be grantable from here.
+it("offers every role the brain ships", async () => {
+  brain({ ...team(["membership:write"]), ...people });
+  show(Teams);
+
+  // A Radix select opens from the keyboard in jsdom, which has no pointer
+  // capture, and scrolls its highlighted option into view, which jsdom lacks.
+  Element.prototype.scrollIntoView = vi.fn();
+  onTestFinished(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+  (await screen.findByRole("combobox", { name: "Role" })).focus();
+  await userEvent.keyboard("{ArrowDown}");
+  const offered = (await screen.findAllByRole("option")).map((o) => o.textContent);
+  expect(offered).toEqual(["member", "approver", "admin"]);
 });

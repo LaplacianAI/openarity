@@ -17,7 +17,7 @@ export type Page<T> = {
   next_cursor?: string;
 };
 
-export type Role = "admin" | "member";
+export type Role = "admin" | "approver" | "member";
 
 /** GET /teams, GET /teams/{id}. `role` is present only when listing your own. */
 export type Team = {

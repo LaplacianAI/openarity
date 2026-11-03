@@ -100,7 +100,7 @@ func newMembersAddCmd(opts *cli.Options) *cobra.Command {
 			"you can name needs no permission to read the directory — only\n" +
 			"membership:write in this team.\n\n" +
 			"The role must name a row in the brain's `roles` table — it ships with\n" +
-			"admin and member, and a deployment may add its own. An unknown one is\n" +
+			"admin, approver and member, and a deployment may add its own. An unknown one is\n" +
 			"rejected by the database, so the brain answers 400 rather than storing\n" +
 			"something nothing can grant.",
 		Args: cobra.ExactArgs(2),

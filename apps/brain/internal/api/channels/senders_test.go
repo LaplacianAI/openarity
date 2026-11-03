@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -174,23 +176,24 @@ func sendersPage(t *testing.T, rec *httptest.ResponseRecorder) api.Page[channelS
 
 // --- authorisation ---
 
-// Approving a stranger grants them the right to instruct an agent as a named
-// user. That is the same kind of act as connecting the channel, so it carries
-// the same permission — and the handler contains no check, because the guard
-// runs first.
-func TestEverySenderRouteNeedsChannelWrite(t *testing.T) {
+// Reading the senders is channel:read and changing them is sender:approve,
+// apart from channel:write: an approver may let a stranger in without being
+// trusted to rewire the channel. The handler contains no check, because the
+// guard runs first, so the guard is asked exactly once, for exactly that.
+func TestEachSenderRouteNeedsItsOwnPermission(t *testing.T) {
 	t.Parallel()
 
 	for name, tc := range map[string]struct {
 		method  string
 		suffix  string
 		body    string
+		needs   authz.Action
 		granted int
 	}{
-		"list pending":  {http.MethodGet, "/pending", "", http.StatusOK},
-		"list approved": {http.MethodGet, "", "", http.StatusOK},
-		"approve":       {http.MethodPost, "", "", http.StatusBadRequest},
-		"remove":        {http.MethodDelete, "?ref=U01ABC", "", http.StatusNoContent},
+		"list pending":  {http.MethodGet, "/pending", "", "channel:read", http.StatusOK},
+		"list approved": {http.MethodGet, "", "", "channel:read", http.StatusOK},
+		"approve":       {http.MethodPost, "", "", "sender:approve", http.StatusBadRequest},
+		"remove":        {http.MethodDelete, "?ref=U01ABC", "", "sender:approve", http.StatusNoContent},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -198,7 +201,10 @@ func TestEverySenderRouteNeedsChannelWrite(t *testing.T) {
 			refused := newSenderFixture(t)
 			refused.authz.allowed = false
 			if rec := refused.do(t, tc.method, refused.base()+tc.suffix, tc.body); rec.Code != http.StatusForbidden {
-				t.Errorf("%s without channel:write = %d, want 403", name, rec.Code)
+				t.Errorf("%s without %s = %d, want 403", name, tc.needs, rec.Code)
+			}
+			if !slices.Equal(refused.authz.asked, []authz.Action{tc.needs}) {
+				t.Errorf("%s asked the guard for %v, want [%s]", name, refused.authz.asked, tc.needs)
 			}
 
 			// And the same request with the permission does not 403, so the
@@ -206,7 +212,7 @@ func TestEverySenderRouteNeedsChannelWrite(t *testing.T) {
 			// being broken.
 			granted := newSenderFixture(t)
 			if rec := granted.do(t, tc.method, granted.base()+tc.suffix, tc.body); rec.Code == http.StatusForbidden {
-				t.Errorf("%s with channel:write = 403", name)
+				t.Errorf("%s with %s = 403", name, tc.needs)
 			}
 		})
 	}

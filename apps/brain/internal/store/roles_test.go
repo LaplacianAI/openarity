@@ -13,7 +13,7 @@ import (
 // Whether the grants match rbac.json is rbac_test.go's question, not this
 // file's.
 
-// The two seeded roles are the system working at all. A deployment that boots
+// The seeded roles are the system working at all. A deployment that boots
 // with an empty roles table can grant nobody anything, and the failure is
 // silent — every membership insert simply fails a foreign key.
 func TestSeededRolesExist(t *testing.T) {
@@ -31,8 +31,8 @@ func TestSeededRolesExist(t *testing.T) {
 			t.Errorf("role %q has no description", r.Name)
 		}
 	}
-	if !slices.Equal(names, []string{"admin", "member"}) {
-		t.Errorf("roles = %v, want [admin member]", names)
+	if !slices.Equal(names, []string{"admin", "approver", "member"}) {
+		t.Errorf("roles = %v, want [admin approver member]", names)
 	}
 }
 
@@ -41,8 +41,17 @@ func TestSeededPermissions(t *testing.T) {
 
 	for role, want := range map[string][]string{
 		"admin": {
-			"agent:write", "channel:write", "membership:write", "run:write",
-			"session:read_all", "skill:write", "team:settings", "tool:write", "user:read",
+			"agent:write", "channel:read", "channel:write", "membership:write", "run:write",
+			"sender:approve", "session:read_all", "skill:write", "team:settings", "tool:write",
+			"user:read",
+		},
+		// A member who also lets strangers in. Not channel:write: approving a
+		// sender is not the same trust as rewiring the channel it came in on.
+		// Not session:read_all either, so the brain's "moderator", who may
+		// read anyone's direct conversation, is not who this role is.
+		"approver": {
+			"agent:write", "channel:read", "run:write", "sender:approve", "skill:write",
+			"tool:write",
 		},
 		// Not team:settings: the model every message runs on is a cost
 		// decision, and the search key is a credential.
@@ -59,23 +68,28 @@ func TestSeededPermissions(t *testing.T) {
 	}
 }
 
-// admin must be able to do everything member can. A member who can do
-// something their admin cannot is a hole nobody would think to look for.
-func TestAdminIsASupersetOfMember(t *testing.T) {
+// The shipped roles nest: member within approver within admin. A membership
+// holds one role, so moving someone up must never take anything away, and a
+// permission added to one role and forgotten on the next would do exactly
+// that without a word.
+func TestTheShippedRolesNest(t *testing.T) {
 	s := queryStore(t)
 
-	admin, err := s.ListRolePermissions(t.Context(), "admin")
-	if err != nil {
-		t.Fatalf("ListRolePermissions(admin): %v", err)
-	}
-	member, err := s.ListRolePermissions(t.Context(), "member")
-	if err != nil {
-		t.Fatalf("ListRolePermissions(member): %v", err)
-	}
-
-	for _, action := range member {
-		if !slices.Contains(admin, action) {
-			t.Errorf("member may %q and admin may not", action)
+	chain := []string{"member", "approver", "admin"}
+	for i := range len(chain) - 1 {
+		lower, higher := chain[i], chain[i+1]
+		low, err := s.ListRolePermissions(t.Context(), lower)
+		if err != nil {
+			t.Fatalf("ListRolePermissions(%s): %v", lower, err)
+		}
+		high, err := s.ListRolePermissions(t.Context(), higher)
+		if err != nil {
+			t.Fatalf("ListRolePermissions(%s): %v", higher, err)
+		}
+		for _, action := range low {
+			if !slices.Contains(high, action) {
+				t.Errorf("%s may %q and %s may not", lower, action, higher)
+			}
 		}
 	}
 }
