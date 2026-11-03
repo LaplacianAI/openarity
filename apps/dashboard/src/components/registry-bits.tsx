@@ -15,28 +15,7 @@ export function ReadOnlyNote({ permission, what }: { permission: string; what: s
   );
 }
 
-/** A labelled field with the hint beneath it, for the registry's forms. */
-export function Field({
-  label,
-  hint,
-  children,
-  htmlFor,
-}: {
-  label: string;
-  hint?: string;
-  children: ReactNode;
-  htmlFor: string;
-}) {
-  return (
-    <div className="space-y-1">
-      <label htmlFor={htmlFor} className="text-xs font-medium">
-        {label}
-      </label>
-      {children}
-      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
-    </div>
-  );
-}
+export { Field } from "@/components/ui/field";
 
 export { Textarea as TextArea } from "@/components/ui/input";
 
