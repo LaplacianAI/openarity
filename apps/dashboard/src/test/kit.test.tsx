@@ -7,6 +7,11 @@ import { CodeBlock, JsonView } from "@/components/code";
 import { CopyId, KeyValue, KeyValues, Time } from "@/components/facts";
 import { EmptyState, ErrorState, ForbiddenState } from "@/components/states";
 import { Count, StatusPill } from "@/components/status";
+import { Field } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { SwitchField } from "@/components/ui/switch";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 function mount(ui: ReactNode) {
@@ -190,5 +195,126 @@ describe("the states a block can be in", () => {
     mount(<ForbiddenState what="this team's sessions" permission="session:read" />);
     expect(screen.getByText("You can't see this team's sessions.")).toBeInTheDocument();
     expect(screen.getByText("session:read")).toBeInTheDocument();
+  });
+});
+
+describe("a field", () => {
+  it("joins its hint and its error to the control, and marks it invalid", () => {
+    mount(
+      <Field label="Name" htmlFor="f" hint="Lowercase." error="That name is taken.">
+        <Input id="f" />
+      </Field>,
+    );
+    const input = screen.getByRole("textbox", { name: "Name" });
+    expect(input).toHaveAccessibleDescription("Lowercase. That name is taken.");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("is valid and undescribed when there is nothing to say", () => {
+    mount(
+      <Field label="Name" htmlFor="f">
+        <Input id="f" />
+      </Field>,
+    );
+    const input = screen.getByRole("textbox", { name: "Name" });
+    expect(input).not.toHaveAttribute("aria-describedby");
+    expect(input).not.toHaveAttribute("aria-invalid");
+  });
+
+  // A comment or a stray space beside the control must not break the wiring.
+  it("finds its control among children that are not elements", () => {
+    mount(
+      <Field label="Secret" htmlFor="f" hint="Sent once.">
+        {null} <Input id="f" />
+      </Field>,
+    );
+    expect(screen.getByLabelText("Secret")).toHaveAccessibleDescription("Sent once.");
+  });
+
+  it("shows a limit beside the label, not in a tooltip", () => {
+    mount(
+      <Field label="Description" htmlFor="f" limit="58 of 280">
+        <Input id="f" />
+      </Field>,
+    );
+    expect(screen.getByText("58 of 280")).toBeVisible();
+  });
+});
+
+describe("a switch", () => {
+  it("is named by its label, described by what it does, and toggles from the whole row", async () => {
+    const user = userEvent.setup();
+    mount(<SwitchField label="Web" description="Search the web and fetch pages." />);
+    const sw = screen.getByRole("switch", { name: "Web" });
+    expect(sw).toHaveAccessibleDescription("Search the web and fetch pages.");
+    expect(sw).not.toBeChecked();
+    await user.click(screen.getByText("Search the web and fetch pages."));
+    expect(sw).toBeChecked();
+  });
+});
+
+describe("a table", () => {
+  function rows(onOpen: (n: string) => void) {
+    return mount(
+      <Table>
+        <TableBody>
+          {["a", "b", "c"].map((n) => (
+            <TableRow key={n} onOpen={() => onOpen(n)}>
+              <TableCell>{n}</TableCell>
+              <TableCell>
+                <button type="button">Edit {n}</button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>,
+    );
+  }
+
+  it("is one tab stop, moved through with the arrows and opened with Enter", async () => {
+    const user = userEvent.setup();
+    const opened = vi.fn();
+    rows(opened);
+    const [a, b, c] = screen.getAllByRole("row");
+
+    await user.tab();
+    expect(a).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(b).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(c).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(opened).toHaveBeenCalledWith("c");
+
+    // Only the row last focused stays in the tab order.
+    expect(screen.getAllByRole("row").map((r) => r.tabIndex)).toEqual([-1, -1, 0]);
+  });
+
+  it("opens on a click, but not on a click meant for a control inside it", async () => {
+    const user = userEvent.setup();
+    const opened = vi.fn();
+    rows(opened);
+    await user.click(screen.getByRole("button", { name: "Edit a" }));
+    expect(opened).not.toHaveBeenCalled();
+    await user.click(screen.getByText("b"));
+    expect(opened).toHaveBeenCalledWith("b");
+  });
+});
+
+describe("a sheet", () => {
+  it("opens as a dialog named by its title, and closes", async () => {
+    const user = userEvent.setup();
+    mount(
+      <Sheet>
+        <SheetTrigger>Edit</SheetTrigger>
+        <SheetContent aria-describedby={undefined}>
+          <SheetTitle>Edit log-reader</SheetTitle>
+        </SheetContent>
+      </Sheet>,
+    );
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const sheet = await screen.findByRole("dialog", { name: "Edit log-reader" });
+    await user.click(within(sheet).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
