@@ -20,13 +20,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, EmptyState, LoadMore, Mono, PageHeader, StatusDot } from "@/components/ui-bits";
 import { useTheme } from "@/lib/theme";
 
-const VARIANTS = ["default", "destructive", "outline", "secondary", "ghost", "link"] as const;
-const SIZES = ["xs", "sm", "default", "lg"] as const;
+const VARIANTS = ["default", "outline", "ghost", "destructive"] as const;
+const SIZES = ["sm", "default"] as const;
 
 const LONG =
   "A description long enough to wrap twice at a phone's width, because the states that break a layout are the long ones: a team named by a committee, an agent whose instructions were pasted whole, an error the brain explained at length.";
@@ -159,7 +158,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function State({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
       {children}
     </div>
   );
@@ -220,6 +219,9 @@ export default function Gallery() {
             <div key={variant} className="flex flex-wrap items-center gap-2">
               <Button variant={variant}>{variant}</Button>
               <Button variant={variant} disabled>
+                {variant}
+              </Button>
+              <Button variant={variant} loading>
                 {variant}
               </Button>
             </div>
@@ -319,7 +321,7 @@ export default function Gallery() {
           <Tag>streamable-http</Tag>
           <Mono>6f1b8f4e-6d2a-4d1e-9a1e-2b8f4e6d2a4d</Mono>
           <Avatar name="alice@example.com" />
-          <Avatar name="Platform On-call" color="var(--color-chart-2)" />
+          <Avatar name="Platform On-call" />
         </div>
       </Section>
 
@@ -335,9 +337,6 @@ export default function Gallery() {
               <Skeleton className="h-4 w-1/2" />
               <Skeleton className="h-4 w-2/3" />
             </div>
-          </State>
-          <State label="progress, a third">
-            <Progress value={33} />
           </State>
         </Grid>
       </Section>
