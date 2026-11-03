@@ -39,6 +39,12 @@ describe("runFinding", () => {
     expect(runFinding({ ...RUN, status: "failed" }, trace)).toBe("Failed at step 2.");
   });
 
+  it("says a failed run never reached a step", () => {
+    expect(runFinding({ ...RUN, status: "failed" }, groupTrace([]))).toBe(
+      "Failed before its first step.",
+    );
+  });
+
   it("takes the stream's own ending over a row not yet refreshed", () => {
     const trace = groupTrace([...step(1, 10), e("finished", { status: "failed", error: "x" })]);
     expect(runFinding({ ...RUN, status: "running" }, trace)).toBe("Failed at step 1.");
@@ -49,12 +55,11 @@ describe("runFinding", () => {
     expect(runFinding(RUN, trace)).toBe("Step 2 spent 62% of the tokens.");
   });
 
-  it("says nothing a one-step run, a running run or a failure with no steps would not show", () => {
+  it("says nothing a one-step run, or a running run would not show", () => {
     expect(runFinding(RUN, groupTrace(step(1, 100)))).toBeNull();
     expect(
       runFinding({ ...RUN, status: "running" }, groupTrace([...step(1, 9), ...step(2, 1)])),
     ).toBeNull();
-    expect(runFinding({ ...RUN, status: "failed" }, groupTrace([]))).toBeNull();
     expect(runFinding(RUN, groupTrace([...step(1, 0), ...step(2, 0)]))).toBeNull();
   });
 });

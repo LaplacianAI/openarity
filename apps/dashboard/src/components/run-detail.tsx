@@ -87,7 +87,9 @@ export function runFinding(run: Run, trace: Trace): string | null {
       const call = steps[at]?.calls.find((c) => c.result?.error);
       return `Failed at step ${numberOf(at)}, in ${call?.name}.`;
     }
-    return steps.length > 0 ? `Failed at step ${numberOf(steps.length - 1)}.` : null;
+    return steps.length > 0
+      ? `Failed at step ${numberOf(steps.length - 1)}.`
+      : "Failed before its first step.";
   }
   if (status !== "succeeded" || steps.length < 2) return null;
 
