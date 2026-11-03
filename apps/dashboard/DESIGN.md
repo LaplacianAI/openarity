@@ -263,7 +263,7 @@ Quiet, compact, one filled button at most per view.
 - **Shape:** gently rounded (8px).
 - **Primary:** Teal fill, Paper text, 14px 500, 36px high (32px small).
 - **Outline:** Paper fill with the border hairline; the everyday secondary action (Cancel a running run, Load more).
-- **Ghost:** no fill; hover lays the accent wash. Used in the frame (Sign out, theme toggle, menu) and for in-flow toggles ("Show the whole answer").
+- **Ghost:** no fill; hover lays a 6% Graphite wash (a neutral one: teal stays on the action, the selection and the run). Used in the frame (Sign out, theme toggle, menu) and for in-flow toggles ("Show the whole answer").
 - **Focus:** the teal ring at 50%, 3px.
 - **Destructive:** Brick fill for a destructive confirmation.
 
