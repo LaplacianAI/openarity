@@ -38,6 +38,8 @@ signin.png
 # and empty; the handler serves a page saying so when index.html is missing.
 apps/dashboard/node_modules/
 apps/dashboard/dist/
+# Screenshots from scripts/capture.mjs: evidence for review, never committed.
+apps/dashboard/.captures/
 apps/brain/internal/api/ui/dist/*
 !apps/brain/internal/api/ui/dist/.gitkeep
 

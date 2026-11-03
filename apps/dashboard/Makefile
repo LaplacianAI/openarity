@@ -77,6 +77,18 @@ build:
 # nowhere else.
 check: fmt-check lint typecheck cover build audit
 
+## capture-login: sign in once in Chrome and keep the session for capture
+#
+# CAPTURE_BASE_URL is the dashboard's origin. It comes from your shell and is
+# never written here: these targets are run against staging.
+capture-login:
+	node scripts/capture.mjs --login
+
+## capture: screenshot every screen, light and dark, at 1440, 768 and 390 — make capture label=before
+capture:
+	@test -n "$(label)" || { echo "name it: make capture label=before" >&2; exit 2; }
+	node scripts/capture.mjs $(label)
+
 ## clean: remove the build output and the installed dependencies
 clean:
 	rm -rf dist node_modules
