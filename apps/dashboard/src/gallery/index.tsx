@@ -7,9 +7,13 @@
 import { type ReactNode, useId, useState } from "react";
 
 import type { Run, RunEvent } from "@/api/types";
+import { CodeBlock, JsonView } from "@/components/code";
+import { CopyId, KeyValue, KeyValues, Time } from "@/components/facts";
 import { Markdown } from "@/components/markdown";
 import { Field, ReadOnlyNote, Tag, TextArea } from "@/components/registry-bits";
 import { RunView } from "@/components/run-detail";
+import { ErrorState, ForbiddenState } from "@/components/states";
+import { Count, LiveBadge, StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,13 +24,43 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox, SwitchField } from "@/components/ui/switch";
+import {
+  RowActions,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Avatar, EmptyState, LoadMore, Mono, PageHeader, StatusDot } from "@/components/ui-bits";
 import { useTheme } from "@/lib/theme";
 
-const VARIANTS = ["default", "destructive", "outline", "secondary", "ghost", "link"] as const;
-const SIZES = ["xs", "sm", "default", "lg"] as const;
+const VARIANTS = ["default", "outline", "ghost", "destructive"] as const;
+const SIZES = ["sm", "default"] as const;
+
+const RUN_STATES = ["queued", "running", "succeeded", "failed", "cancelled"];
+
+const MINUTES_AGO = new Date(Date.now() - 4 * 60_000).toISOString();
+
+const JSON_SAMPLE = JSON.stringify({
+  agent: "ops-lead",
+  input: "Nightly export job has failed three nights running.",
+  grants: { tools: ["web_search", "web_fetch", "graph"], skills: ["incident-postmortem"] },
+  budget: { tokens: 1_000_000, steps: 5 },
+  delegates: ["log-reader", "runbook-writer"],
+});
 
 const LONG =
   "A description long enough to wrap twice at a phone's width, because the states that break a layout are the long ones: a team named by a committee, an agent whose instructions were pasted whole, an error the brain explained at length.";
@@ -159,7 +193,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function State({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
       {children}
     </div>
   );
@@ -167,6 +201,86 @@ function State({ label, children }: { label: string; children: ReactNode }) {
 
 function Grid({ children }: { children: ReactNode }) {
   return <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{children}</div>;
+}
+
+const AGENTS = [
+  { name: "ops-lead", pattern: "react", runs: 1_204, tokens: 3_733_120 },
+  { name: "log-reader", pattern: "react", runs: 86, tokens: 412_880 },
+  { name: "runbook-writer", pattern: "plan", runs: 9, tokens: 61_002 },
+];
+
+function TableDemo() {
+  const [opened, setOpened] = useState<string | null>(null);
+  return (
+    <div className="space-y-2">
+      <Table>
+        <TableHeader>
+          <tr>
+            <TableHead>Agent</TableHead>
+            <TableHead>Pattern</TableHead>
+            <TableHead numeric>Runs</TableHead>
+            <TableHead numeric>Tokens</TableHead>
+            <TableHead>
+              <span className="sr-only">Actions</span>
+            </TableHead>
+          </tr>
+        </TableHeader>
+        <TableBody>
+          {AGENTS.map((a) => (
+            <TableRow key={a.name} onOpen={() => setOpened(a.name)}>
+              <TableCell className="font-medium">{a.name}</TableCell>
+              <TableCell label="Pattern">
+                <Tag>{a.pattern}</Tag>
+              </TableCell>
+              <TableCell label="Runs" numeric>
+                {a.runs.toLocaleString("en-US")}
+              </TableCell>
+              <TableCell label="Tokens" numeric>
+                {a.tokens.toLocaleString("en-US")}
+              </TableCell>
+              <TableCell>
+                <RowActions>
+                  <Button variant="ghost" size="sm">
+                    Edit
+                  </Button>
+                </RowActions>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <p className="text-xs text-muted-foreground" role="status">
+        {opened
+          ? `Opened ${opened}`
+          : "Click a row, or Tab to the table and use the arrows and Enter."}
+      </p>
+    </div>
+  );
+}
+
+function SheetDemo() {
+  return (
+    <Sheet>
+      <SheetTrigger asChild>
+        <Button variant="outline" size="sm">
+          Open the sheet
+        </Button>
+      </SheetTrigger>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Edit log-reader</SheetTitle>
+          <SheetDescription>Changes apply to the next run.</SheetDescription>
+        </SheetHeader>
+        <Field label="Model" htmlFor="g-sheet-model" hint="As the model gateway names it.">
+          <Input id="g-sheet-model" defaultValue="gemini-3.8-flash" />
+        </Field>
+        <SwitchField label="Web" description="Search the web and fetch pages." defaultChecked />
+        <SheetFooter>
+          <Button>Save</Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  );
 }
 
 function DialogDemo() {
@@ -222,6 +336,9 @@ export default function Gallery() {
               <Button variant={variant} disabled>
                 {variant}
               </Button>
+              <Button variant={variant} loading>
+                {variant}
+              </Button>
             </div>
           ))}
           <div className="flex flex-wrap items-center gap-2">
@@ -247,8 +364,21 @@ export default function Gallery() {
             </Field>
           </State>
           <State label="invalid">
-            <Field label="Name" htmlFor="g-invalid" hint="A team with that name already exists.">
-              <Input id="g-invalid" defaultValue="platform" aria-invalid />
+            <Field
+              label="Name"
+              htmlFor="g-invalid"
+              hint="Lowercase, as people will type it."
+              error="A team with that name already exists. Pick another name."
+            >
+              <Input id="g-invalid" defaultValue="platform" />
+            </Field>
+          </State>
+          <State label="with a limit">
+            <Field label="Description" htmlFor="g-limit" limit="58 of 280">
+              <Input
+                id="g-limit"
+                defaultValue="Reads stack traces and log excerpts, names the cause."
+              />
             </Field>
           </State>
           <State label="disabled">
@@ -277,7 +407,7 @@ export default function Gallery() {
         </State>
       </Section>
 
-      <Section title="Empty state">
+      <Section title="Block states">
         <Grid>
           <State label="body only">
             <EmptyState
@@ -292,6 +422,19 @@ export default function Gallery() {
               action={<Button size="sm">Define agent</Button>}
               hint="Only members with agent:write can define one."
             />
+          </State>
+          <State label="failed to load">
+            <ErrorState
+              what="the agents"
+              error={new Error("The brain took too long to answer.")}
+              onRetry={() => {}}
+            />
+          </State>
+          <State label="failed, retrying">
+            <ErrorState what="the agents" error={null} onRetry={() => {}} retrying />
+          </State>
+          <State label="forbidden">
+            <ForbiddenState what="this team's sessions" permission="session:read" />
           </State>
         </Grid>
       </Section>
@@ -319,8 +462,109 @@ export default function Gallery() {
           <Tag>streamable-http</Tag>
           <Mono>6f1b8f4e-6d2a-4d1e-9a1e-2b8f4e6d2a4d</Mono>
           <Avatar name="alice@example.com" />
-          <Avatar name="Platform On-call" color="var(--color-chart-2)" />
+          <Avatar name="Platform On-call" />
         </div>
+      </Section>
+
+      <Section title="Status">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-4">
+            {RUN_STATES.map((s) => (
+              <StatusPill key={s} status={s} />
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {RUN_STATES.map((s) => (
+              <StatusPill key={s} status={s} pill />
+            ))}
+            <LiveBadge />
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            {["open", "idle", "closed", "pending", "archived"].map((s) => (
+              <StatusPill key={s} status={s} />
+            ))}
+            <span className="inline-flex items-center gap-2 text-sm">
+              Approvals <Count n="5" />
+            </span>
+            <span className="inline-flex items-center gap-2 text-sm">
+              Approvals <Count n="50+" />
+            </span>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Facts">
+        <Grid>
+          <State label="a run's facts">
+            <KeyValues>
+              <KeyValue label="Model">gemini-3.8-flash</KeyValue>
+              <KeyValue label="Tokens">2,722</KeyValue>
+              <KeyValue label="Run">
+                <CopyId value="6f1b8f4e-6d2a-4d1e-9a1e-2b8f4e6d2a4d" label="run id" />
+              </KeyValue>
+              <KeyValue label="Started">
+                <Time iso={MINUTES_AGO} />
+              </KeyValue>
+            </KeyValues>
+          </State>
+          <State label="a long value">
+            <KeyValues>
+              <KeyValue label="Description">{LONG}</KeyValue>
+            </KeyValues>
+          </State>
+        </Grid>
+      </Section>
+
+      <Section title="Code">
+        <Grid>
+          <State label="short">
+            <CodeBlock code="make check db=openarity_test" label="the command" />
+          </State>
+          <State label="JSON, folded past a dozen lines">
+            <JsonView value={JSON_SAMPLE} label="the request" />
+          </State>
+          <State label="does not parse">
+            <JsonView value="{ truncated" label="output" />
+          </State>
+        </Grid>
+      </Section>
+
+      <Section title="Switches">
+        <Grid>
+          <State label="on">
+            <SwitchField label="Web" description="Search the web and fetch pages." defaultChecked />
+          </State>
+          <State label="off">
+            <SwitchField label="Graph" description="Read and write the team's graph." />
+          </State>
+          <State label="disabled">
+            <SwitchField label="Delegate" description="Hand work to other agents." disabled />
+          </State>
+          <State label="checkboxes">
+            <div className="flex items-center gap-4 text-sm">
+              <span className="flex items-center gap-2">
+                <Checkbox id="g-cb-web_search" defaultChecked />
+                <label htmlFor="g-cb-web_search">web_search</label>
+              </span>
+              <span className="flex items-center gap-2">
+                <Checkbox id="g-cb-web_fetch" />
+                <label htmlFor="g-cb-web_fetch">web_fetch</label>
+              </span>
+              <span className="flex items-center gap-2 opacity-50">
+                <Checkbox id="g-cb-graph" disabled />
+                <label htmlFor="g-cb-graph">graph</label>
+              </span>
+            </div>
+          </State>
+        </Grid>
+      </Section>
+
+      <Section title="Table">
+        <TableDemo />
+      </Section>
+
+      <Section title="Sheet">
+        <SheetDemo />
       </Section>
 
       <Section title="Read-only note">
@@ -335,9 +579,6 @@ export default function Gallery() {
               <Skeleton className="h-4 w-1/2" />
               <Skeleton className="h-4 w-2/3" />
             </div>
-          </State>
-          <State label="progress, a third">
-            <Progress value={33} />
           </State>
         </Grid>
       </Section>

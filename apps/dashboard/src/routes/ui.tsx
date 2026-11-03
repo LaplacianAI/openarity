@@ -33,6 +33,7 @@ import {
 } from "@/components/command-palette";
 import { Mark } from "@/components/mark";
 import { SignIn } from "@/components/sign-in";
+import { Count } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -49,7 +50,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMediaQuery } from "@/lib/media";
 import { isActive } from "@/lib/nav";
 import { useTheme } from "@/lib/theme";
@@ -256,61 +257,49 @@ function Shell({ pathname }: { pathname: string }) {
   }
 
   return (
-    <TooltipProvider delayDuration={300}>
-      <div
-        className={cn(
-          "grid min-h-dvh grid-rows-[3rem_minmax(0,1fr)] bg-frame font-sans text-foreground",
-          layout === "full"
-            ? "grid-cols-[14.25rem_minmax(0,1fr)]"
-            : "grid-cols-[3.5rem_minmax(0,1fr)]",
-        )}
-      >
-        <aside className="row-span-2 flex min-h-0 flex-col">
-          <div
-            className={cn(
-              "flex h-12 shrink-0 items-center",
-              layout === "full" ? "px-4" : "justify-center",
-            )}
-          >
-            {layout === "full" ? (
-              <span className="flex items-center gap-2">
-                <Mark className="size-5" />
-                <span className="text-sm font-semibold tracking-tight">openarity</span>
-              </span>
-            ) : (
+    <div
+      className={cn(
+        "grid min-h-dvh grid-rows-[3rem_minmax(0,1fr)] bg-frame font-sans text-foreground",
+        layout === "full"
+          ? "grid-cols-[14.25rem_minmax(0,1fr)]"
+          : "grid-cols-[3.5rem_minmax(0,1fr)]",
+      )}
+    >
+      <aside className="row-span-2 flex min-h-0 flex-col">
+        <div
+          className={cn(
+            "flex h-12 shrink-0 items-center",
+            layout === "full" ? "px-4" : "justify-center",
+          )}
+        >
+          {layout === "full" ? (
+            <span className="flex items-center gap-2">
               <Mark className="size-5" />
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto px-2 pt-1 pb-3">
-            <Nav groups={groups} pathname={pathname} waiting={waiting} rail={layout === "rail"} />
-          </div>
-          <div className="px-2 pb-3">
-            <Account rail={layout === "rail"} />
-          </div>
-        </aside>
-        <header className="col-start-2 grid h-12 min-w-0 grid-cols-[1fr_auto_1fr] items-center gap-2 pr-2">
-          <TeamSwitcher />
-          <SearchButton onOpen={find} />
-          <span />
-        </header>
-        <main className="col-start-2 mr-2 mb-2 min-w-0 rounded-2xl border border-sheet-edge bg-sheet">
-          <div className="px-6 py-6">
-            <Outlet />
-          </div>
-        </main>
-        {palette}
-      </div>
-    </TooltipProvider>
-  );
-}
-
-function Count({ n }: { n: string }) {
-  return (
-    <span className="rounded-full bg-waiting px-1.5 text-xs font-medium text-sheet tabular-nums">
-      <span className="sr-only">, </span>
-      {n}
-      <span className="sr-only"> waiting</span>
-    </span>
+              <span className="text-sm font-semibold tracking-tight">openarity</span>
+            </span>
+          ) : (
+            <Mark className="size-5" />
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto px-2 pt-1 pb-3">
+          <Nav groups={groups} pathname={pathname} waiting={waiting} rail={layout === "rail"} />
+        </div>
+        <div className="px-2 pb-3">
+          <Account rail={layout === "rail"} />
+        </div>
+      </aside>
+      <header className="col-start-2 grid h-12 min-w-0 grid-cols-[1fr_auto_1fr] items-center gap-2 pr-2">
+        <TeamSwitcher />
+        <SearchButton onOpen={find} />
+        <span />
+      </header>
+      <main className="col-start-2 mr-2 mb-2 min-w-0 rounded-2xl border border-sheet-edge bg-sheet">
+        <div className="px-6 py-6">
+          <Outlet />
+        </div>
+      </main>
+      {palette}
+    </div>
   );
 }
 

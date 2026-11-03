@@ -56,7 +56,7 @@ function About({ title, children }: { title: string; children: string }) {
           side="bottom"
           align="start"
           sideOffset={6}
-          className="z-50 max-w-80 rounded-lg bg-popover p-3 text-sm text-popover-foreground shadow-lg ring-1 ring-sheet-edge outline-none"
+          className="z-50 max-w-80 origin-(--radix-popover-content-transform-origin) rounded-lg bg-popover p-3 text-sm text-popover-foreground shadow-lg ring-1 ring-sheet-edge duration-150 ease-out outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
         >
           {children}
         </Popover.Content>
@@ -65,26 +65,7 @@ function About({ title, children }: { title: string; children: string }) {
   );
 }
 
-export function EmptyState({
-  title,
-  body,
-  action,
-  hint,
-}: {
-  title: string;
-  body: string;
-  action?: ReactNode;
-  hint?: string;
-}) {
-  return (
-    <div className="rounded-md border border-dashed border-border-strong bg-surface px-6 py-10 text-center">
-      <h2 className="text-sm font-semibold">{title}</h2>
-      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{body}</p>
-      {action ? <div className="mt-4 flex justify-center gap-2">{action}</div> : null}
-      {hint ? <p className="mt-3 text-xs text-muted-foreground">{hint}</p> : null}
-    </div>
-  );
-}
+export { EmptyState } from "@/components/states";
 
 export function LoadMore({
   hasMore,
@@ -143,7 +124,8 @@ export function BackLink({ to, children }: { to: string; children: ReactNode }) 
   );
 }
 
-export function Avatar({ name, color }: { name: string; color?: string | undefined }) {
+/** Initials on a quiet disc. Not teal: a person is not an action. */
+export function Avatar({ name }: { name: string }) {
   const letters = name
     .split(/[\s@._-]+/)
     .filter(Boolean)
@@ -152,8 +134,8 @@ export function Avatar({ name, color }: { name: string; color?: string | undefin
     .join("");
   return (
     <span
-      className="flex size-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-background"
-      style={{ backgroundColor: color ?? "var(--color-primary)" }}
+      aria-hidden
+      className="flex size-7 shrink-0 items-center justify-center rounded-full bg-card text-xs font-medium text-foreground shadow-[inset_0_0_0_1px_var(--color-sheet-edge)]"
     >
       {letters}
     </span>

@@ -3,6 +3,7 @@ import { createRootRoute, Outlet } from "@tanstack/react-router";
 
 import { useSessionRenewal } from "@/api/session";
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 
 // One client for the app's lifetime. Retries are off because every failure
@@ -24,9 +25,11 @@ function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <SessionRenewal />
-        <Outlet />
-        <Toaster position="bottom-right" />
+        <TooltipProvider>
+          <SessionRenewal />
+          <Outlet />
+          <Toaster />
+        </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );
