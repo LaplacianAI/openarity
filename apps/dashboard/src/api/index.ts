@@ -247,8 +247,9 @@ export async function followRunEvents(
   runId: string,
   onEvent: (event: RunEvent) => void,
   signal: AbortSignal,
+  from: number | null = null,
 ): Promise<void> {
-  let after: number | null = null;
+  let after: number | null = from;
   while (!signal.aborted) {
     const query: string = after === null ? "" : `?after=${after}`;
     const body: ReadableStream<Uint8Array> = await request(

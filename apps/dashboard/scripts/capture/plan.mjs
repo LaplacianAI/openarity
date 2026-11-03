@@ -29,6 +29,21 @@ export const SCREENS = [
     followName: "eng-support",
     tabs: ["Runs"],
   },
+  // The run states the reference screen must be judged in, from the showcase
+  // seed's sessions: a failed step, a spent budget, ordinary tool calls and a
+  // cancelled run. A team without them falls back to its first session.
+  ...[
+    ["session-failed", "ops-alerts:t-2005"],
+    ["session-budget", "ops-alerts:t-2003"],
+    ["session-tools", "ops-alerts:dm-u-ines"],
+    ["session-cancelled", "eng-support:t-1004"],
+  ].map(([name, followName]) => ({
+    name,
+    path: "/ui/sessions",
+    follow: "/ui/sessions/",
+    followName,
+    tabs: ["Runs"],
+  })),
   { name: "agents", path: "/ui/agents", open: "Define agent" },
   { name: "servers", path: "/ui/servers", open: "Register server" },
   { name: "skills", path: "/ui/skills" },
@@ -80,4 +95,17 @@ export function resolveBase(env) {
     throw new Error("CAPTURE_BASE_URL is the origin only; the /ui paths are added for you");
   }
   return url.origin;
+}
+
+/**
+ * The screens to shoot: every one, or those `names` lists (comma-separated),
+ * kept in the plan's order. A name the plan does not have is refused rather
+ * than matching nothing and reporting success.
+ */
+export function only(screens, names) {
+  if (!names) return screens;
+  const wanted = names.split(",").map((n) => n.trim());
+  const unknown = wanted.filter((n) => !screens.some((s) => s.name === n));
+  if (unknown.length > 0) throw new Error(`no such screen: ${unknown.join(", ")}`);
+  return screens.filter((s) => wanted.includes(s.name));
 }

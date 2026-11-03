@@ -14,6 +14,7 @@ import {
   getRun,
   getSession,
   listAttachments,
+  listMembers,
   listMessages,
   listSessionRuns,
 } from "@/api";
@@ -27,6 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, LoadMore, Mono, StatusDot } from "@/components/ui-bits";
 import { absoluteTime, fileSize, relativeTime, sessionTone } from "@/lib/format";
+import { useMediaQuery } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
 type Tab = "messages" | "runs";
@@ -98,10 +100,21 @@ function SessionPage() {
   const s = session.data ?? null;
   const title = s?.provider_ref ?? sessionId;
   const loadedRuns = runs.data?.pages.reduce((n, p) => n + p.items.length, 0) ?? 0;
+  // Wide enough for both: the conversation beside the run it started.
+  const sideBySide = useMediaQuery("(min-width: 80rem)");
+  const runsPanel = teamId ? (
+    <Runs
+      teamId={teamId}
+      sessionId={sessionId}
+      runs={runs}
+      selected={search.run ?? null}
+      onChanged={() => runs.refetch()}
+    />
+  ) : null;
 
   return (
-    <div className="space-y-5">
-      <header className="space-y-2 border-b border-border pb-4">
+    <div className="space-y-6">
+      <header className="space-y-2">
         <nav aria-label="Breadcrumb">
           <ol className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
             <li>
@@ -120,9 +133,9 @@ function SessionPage() {
             </li>
           </ol>
         </nav>
-        <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
+        <h1 className="truncate text-xl font-semibold tracking-tight">{title}</h1>
         {s ? (
-          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <StatusDot tone={sessionTone(s.status)} />
               <span className="text-foreground">{s.status}</span>
@@ -150,6 +163,26 @@ function SessionPage() {
 
       {!teamId ? (
         <EmptyState title="No team" body="Join or create a team to see its sessions." />
+      ) : sideBySide ? (
+        <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] items-start gap-8">
+          <section aria-labelledby="conversation" className="space-y-3">
+            <h2 id="conversation" className="text-base font-medium">
+              Conversation
+            </h2>
+            <Messages teamId={teamId} sessionId={sessionId} />
+          </section>
+          <section aria-labelledby="runs" className="space-y-3">
+            <h2 id="runs" className="flex items-center gap-2 text-base font-medium">
+              Runs
+              {runs.isSuccess ? (
+                <span className="text-sm font-normal text-muted-foreground tabular-nums">
+                  {loadedRuns}
+                </span>
+              ) : null}
+            </h2>
+            {runsPanel}
+          </section>
+        </div>
       ) : (
         <Tabs
           value={tab}
@@ -160,7 +193,7 @@ function SessionPage() {
         >
           <TabsList
             variant="line"
-            className="h-9 border-b border-border w-full justify-start rounded-none"
+            className="h-10 w-full justify-start rounded-none border-b border-rule"
           >
             <TabsTrigger value="messages" className="flex-none px-3">
               Messages
@@ -168,7 +201,7 @@ function SessionPage() {
             <TabsTrigger value="runs" className="flex-none px-3">
               Runs
               {runs.isSuccess ? (
-                <span className="rounded-full bg-muted px-1.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+                <span className="rounded-full bg-card px-1.5 text-xs font-medium tabular-nums text-muted-foreground">
                   {loadedRuns}
                 </span>
               ) : null}
@@ -177,15 +210,7 @@ function SessionPage() {
           <TabsContent value="messages">
             <Messages teamId={teamId} sessionId={sessionId} />
           </TabsContent>
-          <TabsContent value="runs">
-            <Runs
-              teamId={teamId}
-              sessionId={sessionId}
-              runs={runs}
-              selected={search.run ?? null}
-              onChanged={() => runs.refetch()}
-            />
-          </TabsContent>
+          <TabsContent value="runs">{runsPanel}</TabsContent>
         </Tabs>
       )}
     </div>
@@ -229,6 +254,17 @@ function Messages({ teamId, sessionId }: { teamId: string; sessionId: string }) 
     getNextPageParam: nextCursorOf,
   });
 
+  // Who a message's sender was bound to, by the team's members.
+  const members = useQuery({
+    queryKey: ["members", teamId],
+    queryFn: () => listMembers(teamId),
+    retry: false,
+  });
+  const nameOf = (userId: string) => {
+    const m = members.data?.items.find((x) => x.user_id === userId);
+    return m ? m.email || m.subject : null;
+  };
+
   const [failed, setFailed] = useState<string | null>(null);
   const download = async (f: Attachment) => {
     setFailed(null);
@@ -243,7 +279,7 @@ function Messages({ teamId, sessionId }: { teamId: string; sessionId: string }) 
   const files = attachments.data?.pages.flatMap((p) => p.items) ?? [];
 
   return (
-    <section aria-label="Messages" className="max-w-3xl space-y-4">
+    <section aria-label="Messages" className="space-y-4">
       {messages.isPending ? (
         <div className="space-y-3" role="status" aria-label="Loading messages">
           <Skeleton className="h-14 w-full" />
@@ -265,23 +301,31 @@ function Messages({ teamId, sessionId }: { teamId: string; sessionId: string }) 
               loadedLabel={`${said.length} message${said.length === 1 ? "" : "s"} loaded`}
             />
           ) : null}
-          <ol className="space-y-3">
-            {said.map((m) => (
-              <li
-                key={m.id}
-                data-message
-                className="rounded-md border border-border bg-card px-4 py-3"
-              >
-                <div className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
-                  <Mono>{m.user_id}</Mono>
-                  <time dateTime={m.received_at}>{absoluteTime(m.received_at)}</time>
-                </div>
-                {/* A person typed this: it is shown as text, never parsed. */}
-                <p data-text className="mt-1.5 whitespace-pre-wrap break-words text-sm">
-                  {m.text}
-                </p>
-              </li>
-            ))}
+          <ol className="space-y-2">
+            {said.map((m) => {
+              const name = nameOf(m.user_id);
+              return (
+                <li key={m.id} data-message className="rounded-lg bg-card px-4 py-3">
+                  <div className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
+                    {name ? (
+                      <span className="truncate text-sm font-medium text-foreground">{name}</span>
+                    ) : (
+                      <Mono className="truncate">{m.user_id}</Mono>
+                    )}
+                    <time dateTime={m.received_at} className="shrink-0">
+                      {absoluteTime(m.received_at)}
+                    </time>
+                  </div>
+                  {/* A person typed this: it is shown as text, never parsed. */}
+                  <p
+                    data-text
+                    className="mt-1 max-w-[75ch] whitespace-pre-wrap break-words text-sm"
+                  >
+                    {m.text}
+                  </p>
+                </li>
+              );
+            })}
           </ol>
         </>
       )}
@@ -292,11 +336,9 @@ function Messages({ teamId, sessionId }: { teamId: string; sessionId: string }) 
             {attachments.error.message}
           </p>
         ) : files.length > 0 ? (
-          <section aria-label="Attachments" className="space-y-2 border-t border-border pt-4">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Attachments
-            </h2>
-            <ul className="divide-y divide-border rounded-md border border-border bg-card text-sm">
+          <section aria-label="Attachments" className="space-y-2 pt-2">
+            <h3 className="text-sm font-medium">Attachments</h3>
+            <ul className="divide-y divide-rule rounded-lg bg-card text-sm">
               {files.map((f) => (
                 <li key={f.id} className="flex items-center justify-between gap-3 px-3 py-2">
                   <button
@@ -381,15 +423,10 @@ function Runs({
 
   if (runs.isPending) {
     return (
-      <div
-        className="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]"
-        role="status"
-        aria-label="Loading runs"
-      >
-        <div className="space-y-2">
-          <Skeleton className="h-14 w-full" />
-          <Skeleton className="h-14 w-full" />
-          <Skeleton className="h-14 w-full" />
+      <div className="space-y-4" role="status" aria-label="Loading runs">
+        <div className="space-y-1">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
         </div>
         <Skeleton className="h-64 w-full" />
       </div>
@@ -412,32 +449,28 @@ function Runs({
   }
 
   return (
-    <div className="grid gap-4 lg:h-[calc(100dvh-15rem)] lg:min-h-[28rem] lg:grid-cols-[18rem_minmax(0,1fr)]">
-      <nav
-        aria-label="Runs"
-        className="flex flex-col rounded-md border border-border bg-card lg:min-h-0 lg:overflow-y-auto"
-      >
-        <ul className="divide-y divide-border">
+    <div className="space-y-6">
+      <nav aria-label="Runs" className="rounded-lg bg-card">
+        <ul className="max-h-64 divide-y divide-rule overflow-y-auto rounded-lg">
           {rows.map((r) => (
             <li key={r.id}>
               <RunLink sessionId={sessionId} run={r} current={r.id === chosenId} />
             </li>
           ))}
         </ul>
-        <div className="mt-auto border-t border-border px-3 pb-3">
-          <LoadMore
-            hasMore={Boolean(runs.hasNextPage)}
-            loading={runs.isFetchingNextPage}
-            onClick={() => runs.fetchNextPage()}
-            loadedLabel={`${rows.length} run${rows.length === 1 ? "" : "s"} loaded`}
-          />
-        </div>
+        {runs.hasNextPage ? (
+          <div className="border-t border-rule px-3 pb-3">
+            <LoadMore
+              hasMore
+              loading={runs.isFetchingNextPage}
+              onClick={() => runs.fetchNextPage()}
+              loadedLabel={`${rows.length} run${rows.length === 1 ? "" : "s"} loaded`}
+            />
+          </div>
+        ) : null}
       </nav>
 
-      <div
-        data-testid="run-pane"
-        className="rounded-md border border-border bg-card p-5 lg:min-h-0 lg:overflow-y-auto"
-      >
+      <div data-testid="run-pane">
         {chosen && chosen.session_id === sessionId ? (
           <RunDetail teamId={teamId} run={chosen} canCancel={canCancel} onChanged={changed} />
         ) : chosen ? (
@@ -467,25 +500,20 @@ function RunLink({ sessionId, run, current }: { sessionId: string; run: Run; cur
       aria-current={current ? "page" : undefined}
       data-run={run.id}
       className={cn(
-        "block space-y-1 border-l-2 px-3 py-2.5 transition-colors focus-visible:bg-secondary focus-visible:outline-none",
-        current ? "border-l-primary bg-accent/60" : "border-l-transparent hover:bg-secondary/60",
+        "flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px]",
+        current ? "bg-sheet shadow-[inset_0_0_0_1px_var(--color-primary)]" : "hover:bg-sheet/60",
       )}
     >
-      <div className="flex items-baseline justify-between gap-2">
-        <span data-agent className="truncate text-sm font-medium">
-          {run.agent}
-        </span>
-        <time
-          dateTime={run.created_at}
-          className="shrink-0 text-xs text-muted-foreground tabular-nums"
-        >
+      <span data-agent className="min-w-0 flex-1 truncate text-sm font-medium">
+        {run.agent}
+      </span>
+      <RunStatus status={run.status} />
+      <span className="flex basis-full gap-3 text-xs text-muted-foreground tabular-nums sm:basis-auto">
+        <span className="sm:w-24 sm:text-right">{total.toLocaleString("en-US")} tokens</span>
+        <time dateTime={run.created_at} className="sm:w-16 sm:text-right">
           {relativeTime(run.created_at)}
         </time>
-      </div>
-      <div className="flex items-center justify-between gap-2 text-muted-foreground">
-        <RunStatus status={run.status} />
-        <span className="text-xs tabular-nums">{total.toLocaleString("en-US")} tokens</span>
-      </div>
+      </span>
     </Link>
   );
 }

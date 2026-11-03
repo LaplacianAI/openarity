@@ -40,6 +40,8 @@ apps/dashboard/node_modules/
 apps/dashboard/dist/
 # Screenshots from scripts/capture.mjs: evidence for review, never committed.
 apps/dashboard/.captures/
+apps/dashboard/.impeccable/
+apps/dashboard/.taste-skill/
 apps/brain/internal/api/ui/dist/*
 !apps/brain/internal/api/ui/dist/.gitkeep
 

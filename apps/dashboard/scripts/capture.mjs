@@ -23,6 +23,7 @@ import { chromium } from "playwright-core";
 import {
   checkLabel,
   fileFor,
+  only,
   resolveBase,
   SCREENS,
   shotsOf,
@@ -147,7 +148,19 @@ async function captureScreen(page, base, label, screen, theme, width, report) {
   for (const shot of shotsOf(screen)) {
     const file = fileFor(label, screen.name, shot.variant, theme, width);
     if (shot.tab) {
-      await page.getByRole("tab", { name: new RegExp(`^${shot.tab}`) }).click();
+      // A wide screen may show what a narrow one puts behind a tab.
+      const tab = page.getByRole("tab", { name: new RegExp(`^${shot.tab}`) });
+      if ((await tab.count()) === 0) {
+        report.skipped.push({
+          screen: screen.name,
+          variant: shot.variant,
+          theme,
+          width,
+          why: "no such tab at this width",
+        });
+        continue;
+      }
+      await tab.click();
       await settle(page);
     }
     if (shot.open) {
@@ -176,15 +189,15 @@ async function captureScreen(page, base, label, screen, theme, width, report) {
  * rotates refresh tokens refuses the old one once a page has renewed it, so
  * every page hands back what it holds before it closes.
  */
-async function capture(base, label) {
+async function capture(base, label, screens) {
   let session = readSession();
-  const report = { label, taken: [], skipped: [], failed: [] };
+  const report = { label, taken: [], skipped: [], failed: [], console: [] };
   const browser = await chromium.launch({ channel: "chrome", headless: true });
 
   try {
     for (const theme of THEMES) {
       for (const width of WIDTHS) {
-        for (const screen of SCREENS) {
+        for (const screen of screens) {
           const raw = screen.signedOut ? null : session;
           const context = await browser.newContext({
             viewport: { width, height: HEIGHT },
@@ -202,6 +215,22 @@ async function capture(base, label) {
           );
           const page = await context.newPage();
           track(page);
+          // What went wrong on the page, kept with the shots as evidence.
+          const noted = (what) =>
+            report.console.push({
+              screen: screen.name,
+              theme,
+              width,
+              what: String(what).split("\n")[0].replaceAll(base, "<base>").slice(0, 300),
+            });
+          page.on("console", (msg) => {
+            if (msg.type() === "error") noted(msg.text());
+          });
+          page.on("pageerror", (err) => noted(err.message));
+          page.on("requestfailed", (req) => {
+            const why = req.failure()?.errorText ?? "failed";
+            if (why !== "net::ERR_ABORTED") noted(`${req.method()} ${req.url()} ${why}`);
+          });
           try {
             await captureScreen(page, base, label, screen, theme, width, report);
           } catch (err) {
@@ -246,11 +275,12 @@ async function capture(base, label) {
 }
 
 async function main() {
-  const [arg] = process.argv.slice(2);
+  const [arg, flag, names] = process.argv.slice(2);
   const base = resolveBase(process.env);
   if (arg === "--login") return login(base);
   if (!arg) throw new Error("name the capture, such as before, or run --login first");
-  return capture(base, checkLabel(arg));
+  if (flag !== undefined && flag !== "--only") throw new Error(`unknown option: ${flag}`);
+  return capture(base, checkLabel(arg), only(SCREENS, names));
 }
 
 main().catch((err) => {

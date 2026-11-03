@@ -2,7 +2,16 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { checkLabel, fileFor, resolveBase, SCREENS, shotsOf, THEMES, WIDTHS } from "./plan.mjs";
+import {
+  checkLabel,
+  fileFor,
+  only,
+  resolveBase,
+  SCREENS,
+  shotsOf,
+  THEMES,
+  WIDTHS,
+} from "./plan.mjs";
 
 // The runner starts in apps/dashboard; import.meta.url is not a file: URL under jsdom.
 const ROUTES = join(process.cwd(), "src/routes");
@@ -108,5 +117,20 @@ describe("the base address", () => {
     expect(() => resolveBase({ CAPTURE_BASE_URL: "https://secret.example/ui" })).toThrow(
       expect.objectContaining({ message: expect.not.stringContaining("secret.example") }),
     );
+  });
+});
+
+describe("only", () => {
+  it("keeps every screen when none is named", () => {
+    expect(only(SCREENS, undefined)).toBe(SCREENS);
+  });
+
+  it("keeps the named screens, in the plan's order", () => {
+    expect(only(SCREENS, "session,overview").map((s) => s.name)).toEqual(["overview", "session"]);
+  });
+
+  // A misspelt name would otherwise capture nothing and report success.
+  it("refuses a screen the plan does not have", () => {
+    expect(() => only(SCREENS, "sesion")).toThrow(/sesion/);
   });
 });

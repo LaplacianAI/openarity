@@ -23,6 +23,7 @@ describe("the states gallery", () => {
       "Loading",
       "Markdown",
       "Dialog",
+      "Run",
     ]) {
       expect(screen.getByRole("heading", { level: 2, name })).toBeInTheDocument();
     }
@@ -45,6 +46,22 @@ describe("the states gallery", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open the dialog" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  // The run's states that no seeded team holds at will: still running, with
+  // a call answered and folded, one failed and open, and one waiting.
+  it("shows a running run with each state of a call", () => {
+    show(Gallery);
+
+    const run = screen.getByRole("region", { name: "Run" });
+    expect(within(run).getByText("Live")).toBeInTheDocument();
+    expect(
+      within(run).getByRole("button", { name: "Cancel the run of ops-lead" }),
+    ).toBeInTheDocument();
+    const calls = Array.from(run.querySelectorAll<HTMLElement>("[data-call]"));
+    expect(calls.map((c) => c.dataset.state)).toEqual(["done", "failed", "pending"]);
+    expect(calls[0]?.querySelector("details")).not.toHaveAttribute("open");
+    expect(calls[1]?.querySelector("details")).toHaveAttribute("open");
   });
 
   it("needs no brain", () => {
