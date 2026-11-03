@@ -12,21 +12,27 @@ import (
 	"github.com/google/uuid"
 )
 
-const approveSender = `-- name: ApproveSender :exec
+const approveSender = `-- name: ApproveSender :one
 WITH linked AS (
     INSERT INTO channel_senders (channel_id, sender_ref, user_id)
     VALUES ($1, $2, $3)
     ON CONFLICT (channel_id, sender_ref) DO UPDATE SET user_id = EXCLUDED.user_id
+    WHERE channel_senders.user_id IS NOT DISTINCT FROM $4::uuid
+    RETURNING 1
+), dequeued AS (
+    DELETE FROM pending_senders
+    WHERE pending_senders.channel_id = $1
+      AND pending_senders.sender_ref = $2
+      AND EXISTS (SELECT 1 FROM linked)
 )
-DELETE FROM pending_senders
-WHERE pending_senders.channel_id = $1
-  AND pending_senders.sender_ref = $2
+SELECT count(*) FROM linked
 `
 
 type ApproveSenderParams struct {
-	ChannelID uuid.UUID
-	SenderRef string
-	UserID    uuid.UUID
+	ChannelID      uuid.UUID
+	SenderRef      string
+	UserID         uuid.UUID
+	ExpectedHolder *uuid.UUID
 }
 
 // ApproveSender links a sender to a user and takes them out of the queue.
@@ -40,9 +46,24 @@ type ApproveSenderParams struct {
 // can be merely idempotent, since the provider sends again; an admin approves
 // once. A link left with its pending row in place shows the next admin work
 // that is already done, and they approve the same person twice.
-func (q *Queries) ApproveSender(ctx context.Context, arg ApproveSenderParams) error {
-	_, err := q.db.Exec(ctx, approveSender, arg.ChannelID, arg.SenderRef, arg.UserID)
-	return err
+//
+// The binding is written only while it is still held by expected_holder, or
+// still unbound when that is null: the handler checked the caller may take
+// the ref from whoever held it, and a binding that changed since was never
+// checked. ON CONFLICT re-reads the row it locked, so a holder changed by a
+// transaction that committed first is seen, and the WHERE refuses the update.
+// The dequeue runs only when the link did, so a refusal changes nothing.
+// Returns how many bindings were written: 0 is a 409, never a success.
+func (q *Queries) ApproveSender(ctx context.Context, arg ApproveSenderParams) (int64, error) {
+	row := q.db.QueryRow(ctx, approveSender,
+		arg.ChannelID,
+		arg.SenderRef,
+		arg.UserID,
+		arg.ExpectedHolder,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const countPendingSenders = `-- name: CountPendingSenders :one
@@ -246,20 +267,26 @@ func (q *Queries) RecordPendingSender(ctx context.Context, arg RecordPendingSend
 	return result.RowsAffected(), nil
 }
 
-const removeSender = `-- name: RemoveSender :exec
+const removeSender = `-- name: RemoveSender :one
 WITH unlinked AS (
     DELETE FROM channel_senders
-    WHERE channel_senders.channel_id = $1
-      AND channel_senders.sender_ref = $2
+    WHERE channel_senders.channel_id = $2
+      AND channel_senders.sender_ref = $3
+      AND channel_senders.user_id = $1::uuid
+    RETURNING 1
+), dequeued AS (
+    DELETE FROM pending_senders
+    WHERE pending_senders.channel_id = $2
+      AND pending_senders.sender_ref = $3
+      AND ($1::uuid IS NULL OR EXISTS (SELECT 1 FROM unlinked))
 )
-DELETE FROM pending_senders
-WHERE pending_senders.channel_id = $1
-  AND pending_senders.sender_ref = $2
+SELECT COALESCE($1::uuid IS NULL OR EXISTS (SELECT 1 FROM unlinked), false)::bool AS removed
 `
 
 type RemoveSenderParams struct {
-	ChannelID uuid.UUID
-	SenderRef string
+	ExpectedHolder *uuid.UUID
+	ChannelID      uuid.UUID
+	SenderRef      string
 }
 
 // RemoveSender is both "this person should not speak here any more" and "this
@@ -270,9 +297,17 @@ type RemoveSenderParams struct {
 // It is not a block. Their next message queues them again, which is what makes
 // a mistaken removal recoverable — and a removal of somebody persistent
 // ineffective on its own.
-func (q *Queries) RemoveSender(ctx context.Context, arg RemoveSenderParams) error {
-	_, err := q.db.Exec(ctx, removeSender, arg.ChannelID, arg.SenderRef)
-	return err
+//
+// The binding is deleted only while it is still held by expected_holder, the
+// holder the handler checked. Null means it was unbound when read: then there
+// is no binding to delete, and one written since was never checked, so it
+// stays. A binding moved since is left, and so is the pending row, so a
+// refusal changes nothing. Returns false only for that refusal.
+func (q *Queries) RemoveSender(ctx context.Context, arg RemoveSenderParams) (bool, error) {
+	row := q.db.QueryRow(ctx, removeSender, arg.ExpectedHolder, arg.ChannelID, arg.SenderRef)
+	var removed bool
+	err := row.Scan(&removed)
+	return removed, err
 }
 
 const unlinkChannelSender = `-- name: UnlinkChannelSender :exec

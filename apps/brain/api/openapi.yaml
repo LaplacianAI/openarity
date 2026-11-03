@@ -704,6 +704,13 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The sender's binding changed between the check and the write
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the sender's binding changed while this was being decided; look again and retry"]
     delete:
       operationId: removeChannelSender
       tags: [channels]
@@ -748,6 +755,13 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The sender's binding changed between the check and the write
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the sender's binding changed while this was being decided; look again and retry"]
 
   /teams/{id}/channels/{channelID}/sessions:
     parameters:

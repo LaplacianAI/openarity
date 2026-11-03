@@ -38,8 +38,8 @@ type Store interface {
 	FindTeamMember(ctx context.Context, arg db.FindTeamMemberParams) (string, error)
 	FindChannelSender(ctx context.Context, arg db.FindChannelSenderParams) (uuid.UUID, error)
 	ListRolePermissions(ctx context.Context, role string) ([]string, error)
-	ApproveSender(ctx context.Context, arg db.ApproveSenderParams) error
-	RemoveSender(ctx context.Context, arg db.RemoveSenderParams) error
+	ApproveSender(ctx context.Context, arg db.ApproveSenderParams) (int64, error)
+	RemoveSender(ctx context.Context, arg db.RemoveSenderParams) (bool, error)
 }
 
 type Secrets interface {

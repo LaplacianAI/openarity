@@ -36,15 +36,19 @@ type senderState struct {
 	approvedErr error
 	memberErr   error
 	boundErr    error
-	rolesErr    error
-	approveErr  error
-	removeErr   error
+	// moved makes the conditional write match nothing, as it does when the
+	// binding changed between the handler's check and its write.
+	moved      bool
+	rolesErr   error
+	approveErr error
+	removeErr  error
 }
 
 type approval struct {
 	channelID uuid.UUID
 	senderRef string
 	userID    uuid.UUID
+	expected  *uuid.UUID
 }
 
 func (f *fakeStore) ListPendingSenders(_ context.Context, arg db.ListPendingSendersParams) ([]db.PendingSender, error) {
@@ -117,16 +121,29 @@ func (f *fakeStore) ListRolePermissions(_ context.Context, role string) ([]strin
 	return shippedRoles[role], nil
 }
 
-func (f *fakeStore) ApproveSender(_ context.Context, arg db.ApproveSenderParams) error {
-	f.senders.approvals = append(f.senders.approvals,
-		approval{channelID: arg.ChannelID, senderRef: arg.SenderRef, userID: arg.UserID})
-	return f.senders.approveErr
+func (f *fakeStore) ApproveSender(_ context.Context, arg db.ApproveSenderParams) (int64, error) {
+	if f.senders.approveErr != nil {
+		return 0, f.senders.approveErr
+	}
+	if f.senders.moved {
+		return 0, nil
+	}
+	f.senders.approvals = append(f.senders.approvals, approval{
+		channelID: arg.ChannelID, senderRef: arg.SenderRef, userID: arg.UserID, expected: arg.ExpectedHolder,
+	})
+	return 1, nil
 }
 
-func (f *fakeStore) RemoveSender(_ context.Context, arg db.RemoveSenderParams) error {
+func (f *fakeStore) RemoveSender(_ context.Context, arg db.RemoveSenderParams) (bool, error) {
+	if f.senders.removeErr != nil {
+		return false, f.senders.removeErr
+	}
+	if f.senders.moved {
+		return false, nil
+	}
 	f.senders.removals = append(f.senders.removals,
-		approval{channelID: arg.ChannelID, senderRef: arg.SenderRef})
-	return f.senders.removeErr
+		approval{channelID: arg.ChannelID, senderRef: arg.SenderRef, expected: arg.ExpectedHolder})
+	return true, nil
 }
 
 // --- the harness ---
@@ -992,6 +1009,69 @@ func TestAFailedCoverCheckIsAnErrorAndChangesNothing(t *testing.T) {
 			}
 			if len(f.store.senders.approvals)+len(f.store.senders.removals) != 0 {
 				t.Error("a binding changed after a failed check")
+			}
+		})
+	}
+}
+
+// The check and the write are two statements, so the write names the holder
+// the check read: nil for a ref read as unbound, the holder otherwise. A write
+// that finds the binding moved since answers 409, so nobody is told a change
+// happened that did not.
+func TestTheWriteNamesTheHolderTheCheckRead(t *testing.T) {
+	t.Parallel()
+
+	t.Run("an unbound ref", func(t *testing.T) {
+		t.Parallel()
+		f := newSenderFixture(t)
+		member, _, _ := f.asRole("approver")
+		if rec := f.approveUser(t, "U01ABC", member); rec.Code != http.StatusNoContent {
+			t.Fatalf("status = %d (%s)", rec.Code, rec.Body)
+		}
+		if got := f.store.senders.approvals[0].expected; got != nil {
+			t.Errorf("expected holder = %s, want none", got)
+		}
+	})
+
+	for name, remove := range map[string]bool{"approving": false, "removing": true} {
+		t.Run(name+" a bound ref", func(t *testing.T) {
+			t.Parallel()
+			f := newSenderFixture(t)
+			member, approver, _ := f.asRole("approver")
+			f.store.senders.bound = map[string]uuid.UUID{"U01ABC": approver}
+
+			var rec *httptest.ResponseRecorder
+			var got []approval
+			if remove {
+				rec = f.do(t, http.MethodDelete, f.base()+"?ref=U01ABC", "")
+				got = f.store.senders.removals
+			} else {
+				rec = f.approveUser(t, "U01ABC", member)
+				got = f.store.senders.approvals
+			}
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("status = %d (%s)", rec.Code, rec.Body)
+			}
+			if len(got) != 1 || got[0].expected == nil || *got[0].expected != approver {
+				t.Errorf("the write named %+v, want the holder that was checked, %s", got, approver)
+			}
+		})
+
+		t.Run(name+" a binding that moved", func(t *testing.T) {
+			t.Parallel()
+			f := newSenderFixture(t)
+			member, _, _ := f.asRole("approver")
+			f.store.senders.bound = map[string]uuid.UUID{"U01ABC": member}
+			f.store.senders.moved = true
+
+			var rec *httptest.ResponseRecorder
+			if remove {
+				rec = f.do(t, http.MethodDelete, f.base()+"?ref=U01ABC", "")
+			} else {
+				rec = f.approveUser(t, "U01ABC", member)
+			}
+			if rec.Code != http.StatusConflict {
+				t.Errorf("status = %d, want 409 (%s)", rec.Code, rec.Body)
 			}
 		})
 	}
