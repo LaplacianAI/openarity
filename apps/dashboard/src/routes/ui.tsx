@@ -33,6 +33,7 @@ import {
 } from "@/components/command-palette";
 import { Mark } from "@/components/mark";
 import { SignIn } from "@/components/sign-in";
+import { Count } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -49,7 +50,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMediaQuery } from "@/lib/media";
 import { isActive } from "@/lib/nav";
 import { useTheme } from "@/lib/theme";
@@ -256,7 +257,7 @@ function Shell({ pathname }: { pathname: string }) {
   }
 
   return (
-    <TooltipProvider>
+    <>
       <div
         className={cn(
           "grid min-h-dvh grid-rows-[3rem_minmax(0,1fr)] bg-frame font-sans text-foreground",
@@ -300,17 +301,7 @@ function Shell({ pathname }: { pathname: string }) {
         </main>
         {palette}
       </div>
-    </TooltipProvider>
-  );
-}
-
-function Count({ n }: { n: string }) {
-  return (
-    <span className="rounded-full bg-waiting px-1.5 text-xs font-medium text-sheet tabular-nums">
-      <span className="sr-only">, </span>
-      {n}
-      <span className="sr-only"> waiting</span>
-    </span>
+    </>
   );
 }
 
