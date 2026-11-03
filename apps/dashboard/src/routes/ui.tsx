@@ -256,7 +256,7 @@ function Shell({ pathname }: { pathname: string }) {
   }
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider>
       <div
         className={cn(
           "grid min-h-dvh grid-rows-[3rem_minmax(0,1fr)] bg-frame font-sans text-foreground",

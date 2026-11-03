@@ -92,6 +92,12 @@
 @theme inline {
   --font-sans: "IBM Plex Sans", "Plex Sans Fallback", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", "Plex Mono Fallback", ui-monospace, SFMono-Regular, monospace;
+  /* Motion: a strong ease-out for anything entering or answering a press,
+     and a drawer curve for sheets. The built-in curves are too weak to feel
+     intended. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   /* Five sizes and no others: 12, 14, 16, 18 and 20 px, a 1.125 step. */
   --text-xs: 0.75rem;
   --text-xs--line-height: 1rem;
@@ -103,8 +109,8 @@
   --text-lg--line-height: 1.625rem;
   --text-xl: 1.25rem;
   --text-xl--line-height: 1.75rem;
-  --radius-sm: calc(var(--radius) - 3px);
-  --radius-md: calc(var(--radius) - 1px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: var(--radius);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   --radius-2xl: calc(var(--radius) + 8px);
