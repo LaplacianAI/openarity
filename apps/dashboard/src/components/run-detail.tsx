@@ -330,7 +330,7 @@ function Answer({ text }: { text: string }) {
           "rounded-lg bg-card px-4 py-3",
           // Fades out at the fold, so the cut reads as more to come.
           folded &&
-            "max-h-80 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]",
+            "max-h-80 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]", // taste-skill-ignore: a mask fade on a fold, not a fill
         )}
       >
         <Markdown>{text}</Markdown>
