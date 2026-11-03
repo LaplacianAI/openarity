@@ -191,14 +191,9 @@ function SessionPage() {
           }
           className="gap-4"
         >
-          <TabsList
-            variant="line"
-            className="h-10 w-full justify-start rounded-none border-b border-rule"
-          >
-            <TabsTrigger value="messages" className="flex-none px-3">
-              Messages
-            </TabsTrigger>
-            <TabsTrigger value="runs" className="flex-none px-3">
+          <TabsList>
+            <TabsTrigger value="messages">Messages</TabsTrigger>
+            <TabsTrigger value="runs">
               Runs
               {runs.isSuccess ? (
                 <span className="rounded-full bg-card px-1.5 text-xs font-medium tabular-nums text-muted-foreground">

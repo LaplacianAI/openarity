@@ -29,14 +29,20 @@ describe("the states gallery", () => {
     }
   });
 
-  it("shows each button variant enabled and disabled", () => {
+  // Four variants and no more; each shown enabled, disabled and busy.
+  it("shows each button variant enabled, disabled and loading", () => {
     show(Gallery);
 
     const buttons = screen.getByRole("region", { name: "Buttons" });
-    for (const variant of ["default", "destructive", "outline", "secondary", "ghost", "link"]) {
-      const pair = within(buttons).getAllByRole("button", { name: variant });
-      expect(pair).toHaveLength(2);
-      expect(pair[1]).toBeDisabled();
+    for (const variant of ["default", "outline", "ghost", "destructive"]) {
+      const [enabled, disabled, loading] = within(buttons).getAllByRole("button", {
+        name: variant,
+      });
+      expect(enabled).toBeEnabled();
+      expect(disabled).toBeDisabled();
+      // Busy keeps its name for a screen reader, and takes no second press.
+      expect(loading).toHaveAttribute("aria-busy", "true");
+      expect(loading).toBeDisabled();
     }
   });
 

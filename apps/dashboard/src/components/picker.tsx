@@ -170,7 +170,7 @@ export function Picker({
               e.preventDefault();
               trigger.current?.focus();
             }}
-            className="z-50 w-72 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+            className="z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-lg bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-sheet-edge duration-150 ease-out data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
           >
             <input
               role="combobox"
@@ -223,7 +223,7 @@ export function Picker({
                 </div>
               ))}
             </div>
-            <p role="status" className="px-2 py-1 text-[11px] text-muted-foreground">
+            <p role="status" className="px-2 py-1 text-xs text-muted-foreground">
               {results.isError
                 ? results.error.message
                 : results.isPending
