@@ -344,7 +344,7 @@ function CreatedDialog({
                     <Button
                       type="button"
                       size="sm"
-                      variant="secondary"
+                      variant="outline"
                       onClick={() => {
                         void navigator.clipboard
                           ?.writeText(channel.signing_secret ?? "")

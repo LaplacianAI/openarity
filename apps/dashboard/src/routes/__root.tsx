@@ -26,7 +26,7 @@ function RootLayout() {
       <ThemeProvider>
         <SessionRenewal />
         <Outlet />
-        <Toaster position="bottom-right" />
+        <Toaster />
       </ThemeProvider>
     </QueryClientProvider>
   );

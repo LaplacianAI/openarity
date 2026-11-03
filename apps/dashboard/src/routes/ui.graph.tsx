@@ -241,7 +241,7 @@ function Graph() {
                   <Button
                     key={mode}
                     size="sm"
-                    variant={layout === mode ? "secondary" : "ghost"}
+                    variant={layout === mode ? "outline" : "ghost"}
                     className="text-xs capitalize"
                     role="radio"
                     aria-checked={layout === mode}
