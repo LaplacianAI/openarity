@@ -17,6 +17,7 @@ import { type ComponentType, Fragment, StrictMode, Suspense } from "react";
 import { vi } from "vitest";
 
 import { setToken } from "@/api/token";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 export const TEAM = "6f1b8f4e-6d2a-4d1e-9a1e-2b8f4e6d2a4d";
 
@@ -154,9 +155,11 @@ export function show(Page: ComponentType) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <Suspense fallback={null}>
-        <Page />
-      </Suspense>
+      <TooltipProvider>
+        <Suspense fallback={null}>
+          <Page />
+        </Suspense>
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }
@@ -196,7 +199,9 @@ export function showAt(at: string, routes: [path: string, route: AnyRoute][], st
   render(
     <Wrap>
       <QueryClientProvider client={client}>
-        <RouterProvider router={router} />
+        <TooltipProvider>
+          <RouterProvider router={router} />
+        </TooltipProvider>
       </QueryClientProvider>
     </Wrap>,
   );

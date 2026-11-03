@@ -11,13 +11,11 @@ import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
   ArrowUpLeft,
-  Ban,
   CheckCircle2,
   ChevronRight,
   Circle,
-  CircleDashed,
   CircleDot,
-  Clock,
+  type Clock,
   Loader2,
   Users,
   Wrench,
@@ -28,6 +26,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { cancelRun, followRunEvents, getRun } from "@/api";
 import type { Run, RunEvent } from "@/api/types";
 import { Markdown } from "@/components/markdown";
+import { isLive, LiveBadge, StatusPill as RunStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -52,35 +51,7 @@ import { cn } from "@/lib/utils";
 
 /* ----------------------------------------------------------------- status */
 
-const STATUS: Record<string, { icon: typeof Clock; tone: string; spin?: boolean }> = {
-  queued: { icon: Clock, tone: "text-waiting" },
-  running: { icon: Loader2, tone: "text-running", spin: true },
-  succeeded: { icon: CheckCircle2, tone: "text-succeeded" },
-  failed: { icon: XCircle, tone: "text-failed" },
-  cancelled: { icon: Ban, tone: "text-cancelled" },
-};
-
-export function isLive(status: string): boolean {
-  return status === "queued" || status === "running";
-}
-
-/** A status as an icon and its word: the colour is never the only signal. */
-export function RunStatus({ status, pill = false }: { status: string; pill?: boolean }) {
-  const s = STATUS[status] ?? { icon: CircleDashed, tone: "text-muted-foreground" };
-  const Icon = s.icon;
-  return (
-    <span
-      data-status={status}
-      className={cn(
-        "inline-flex items-center gap-1 text-xs",
-        pill && "rounded-full border border-sheet-edge px-2 py-0.5 font-medium",
-      )}
-    >
-      <Icon aria-hidden className={cn("size-3.5 shrink-0", s.tone, s.spin && "animate-spin")} />
-      <span>{status}</span>
-    </span>
-  );
-}
+export { isLive, StatusPill as RunStatus } from "@/components/status";
 
 /* ------------------------------------------------------------------ format */
 
@@ -414,15 +385,6 @@ function Meta({ label, children }: { label: string; children: ReactNode }) {
       <dt>{label}</dt>
       <dd className="font-medium text-foreground tabular-nums">{children}</dd>
     </div>
-  );
-}
-
-function LiveBadge() {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-running/10 px-2 py-0.5 text-xs font-medium text-running">
-      <span aria-hidden className="size-1.5 rounded-full bg-running" />
-      Live
-    </span>
   );
 }
 
