@@ -160,7 +160,7 @@ export function CommandPalette({
               aria-controls={listId}
               aria-activedescendant={found.length > 0 ? `${listId}-${current}` : undefined}
               aria-label="Go to a screen, an agent, a skill or a session"
-              placeholder="Go to a screen, an agent, a skill or a session"
+              placeholder="Screens, agents, skills, sessions"
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
