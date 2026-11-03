@@ -306,7 +306,7 @@ function Shell({ pathname }: { pathname: string }) {
 
 function Count({ n }: { n: string }) {
   return (
-    <span className="rounded-full bg-primary px-1.5 text-xs font-medium text-primary-foreground tabular-nums">
+    <span className="rounded-full bg-waiting px-1.5 text-xs font-medium text-sheet tabular-nums">
       <span className="sr-only">, </span>
       {n}
       <span className="sr-only"> waiting</span>
@@ -346,7 +346,7 @@ function NavLink({
       <Icon className={cn("size-4 shrink-0", current && "text-primary")} aria-hidden />
       {rail ? (
         count ? (
-          <span aria-hidden className="absolute top-1.5 right-2 size-2 rounded-full bg-primary" />
+          <span aria-hidden className="absolute top-1.5 right-2 size-2 rounded-full bg-waiting" />
         ) : null
       ) : (
         <>
@@ -431,7 +431,7 @@ function TeamSwitcher() {
   return (
     <Select value={teamId ?? undefined} onValueChange={choose}>
       <SelectTrigger
-        className="h-8 w-auto max-w-64 min-w-0 gap-2 border-transparent bg-transparent text-sm font-medium shadow-none hover:bg-sheet/60 dark:bg-transparent dark:hover:bg-sheet/60"
+        className="h-8 w-auto max-w-64 min-w-0 justify-start gap-2 justify-self-start border-transparent bg-transparent text-sm font-medium shadow-none hover:bg-sheet/60 dark:bg-transparent dark:hover:bg-sheet/60"
         aria-label="Current team"
       >
         <SelectValue placeholder="Choose a team" />
@@ -547,7 +547,7 @@ function QuickBar({
               {count ? (
                 <span
                   aria-hidden
-                  className="absolute -top-1 -right-1.5 size-2 rounded-full bg-primary"
+                  className="absolute -top-1 -right-1.5 size-2 rounded-full bg-waiting"
                 />
               ) : null}
             </span>
