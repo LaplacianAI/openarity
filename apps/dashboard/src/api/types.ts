@@ -329,6 +329,21 @@ export type MCPTool = {
 export type GraphLabel = "Team" | "Agent" | "Toolkit" | "Tool" | "Skill";
 export type GraphEdgeType = "OWNS" | "GRANTED" | "CONTAINS" | "HAS_SKILL";
 
+/**
+ * GET /teams/{id}/summary — the team at a glance. Each count obeys its list's
+ * rule, and all four are read at once, so they agree with each other.
+ */
+export type TeamSummary = {
+  /** Top-level runs of the last 24 hours, by status; every status present. */
+  runs_24h: Record<RunStatus, number>;
+  /** The sessions the caller can see. */
+  sessions: number;
+  /** Senders waiting to be let in; null without channel:read. */
+  waiting_senders: number | null;
+  /** MCP servers whose last discovery failed. */
+  servers_failing: number;
+};
+
 /** GET /teams/{id}/graph — the index as it is, which may lag Postgres. */
 export type GraphNode = {
   id: string;

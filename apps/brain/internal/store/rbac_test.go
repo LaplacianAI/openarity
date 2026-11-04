@@ -567,6 +567,9 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// the team: neither shows anything the member routes do not already.
 		"GET /teams/{id}/permissions": "member",
 		"GET /teams/{id}/graph":       "member",
+		// The summary counts only what the caller could list, each count by
+		// its list's rule, so being in the team is enough to read it.
+		"GET /teams/{id}/summary": "member",
 		// Discovery dials an address the team chose and rewrites what its
 		// agents can call, so it is a write, not a read.
 		"POST /teams/{id}/mcp-servers/{serverID}/discover": "team tool:write",

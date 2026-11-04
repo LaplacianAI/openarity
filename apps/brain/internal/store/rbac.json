@@ -211,6 +211,11 @@
     },
     {
       "method": "GET",
+      "path": "/teams/{id}/summary",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
       "path": "/teams/{id}/settings",
       "scope": "member"
     },

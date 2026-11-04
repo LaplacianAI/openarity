@@ -36,6 +36,7 @@ import type {
   TeamPermissions,
   TeamSettings,
   TeamSettingsRequest,
+  TeamSummary,
   User,
 } from "./types";
 
@@ -441,6 +442,10 @@ export function discoverMCPServer(teamId: string, serverId: string): Promise<{ i
 
 export function getGraph(teamId: string, limit: number, signal?: AbortSignal): Promise<TeamGraph> {
   return request<TeamGraph>(`/teams/${teamId}/graph?limit=${limit}`, signal ? { signal } : {});
+}
+
+export function getTeamSummary(teamId: string): Promise<TeamSummary> {
+  return request<TeamSummary>(`/teams/${teamId}/summary`);
 }
 
 export function getTeamSettings(teamId: string): Promise<TeamSettings> {
