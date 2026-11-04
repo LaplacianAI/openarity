@@ -781,7 +781,9 @@ paths:
         Hidden means absent, not redacted: nothing here says how many
         conversations were left out.
 
-        Most recently spoken in first.
+        Most recently spoken in first. Each item carries `channel_name`,
+        `participant`, `last_message` and `latest_run_status`, as on the
+        team's list, so the two never disagree about a row.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -815,10 +817,40 @@ paths:
         participant's own, plus everything if the caller holds
         `session:read_all`.
 
-        Most recently spoken in first.
+        Most recently spoken in first. Each item carries `channel_name`,
+        `participant`, `last_message` and `latest_run_status`, so a list can
+        be read without opening each session.
+
+        A value outside a filter's set is a 400, not an ignored filter. A
+        cursor is only meaningful with the filters it was issued under.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: channel_id
+          in: query
+          description: |
+            Only sessions that arrived on this channel. A channel of another
+            team matches nothing.
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Only sessions in one of these states. Repeat it for more than one.
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/SessionStatus"
+        - name: run_status
+          in: query
+          description: |
+            Only sessions whose newest top-level run is in one of these
+            states. Repeat it for more than one. A session with no run
+            matches none, so it is left out whenever this is given.
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/RunStatus"
       responses:
         "200":
           description: A page of sessions
@@ -1671,6 +1703,59 @@ paths:
   /teams/{id}/runs:
     parameters:
       - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listTeamRuns
+      tags: [runs]
+      summary: List the team's runs
+      description: |
+        The team's run history, newest first. Only top-level runs are
+        listed: a delegate's run belongs to the run that started it.
+
+        A run is listed where its session is visible: every run in a `group`
+        or `thread` session, and a `direct` session's runs only for its
+        participant or a caller holding `session:read_all`. Hidden means
+        absent; nothing says how many were left out.
+
+        Each item is the run as `GET /teams/{id}/runs/{runID}` returns it.
+        A value outside a filter's set is a 400, not an ignored filter. A
+        cursor is only meaningful with the filters it was issued under.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          description: Only runs in one of these states. Repeat it for more than one.
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/RunStatus"
+        - name: since
+          in: query
+          description: Only runs created at or after this time, in RFC 3339.
+          schema:
+            type: string
+            format: date-time
+            examples: ["2026-11-04T09:30:00Z"]
+        - name: hub
+          in: query
+          description: |
+            `true` for only the hub's runs, `false` for only those started
+            for a named agent; absent for both.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: A page of runs, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
     post:
       operationId: startRun
       tags: [runs]
@@ -3015,8 +3100,7 @@ components:
             It decides who may read the session: a `group` or `thread` is the
             team's, a `direct` is one person's.
         status:
-          type: string
-          enum: [open, closed]
+          $ref: "#/components/schemas/SessionStatus"
           description: |
             Always `open` today; nothing closes a session yet. It exists
             because a provider gives you identity and never episode — a thread
@@ -3029,6 +3113,38 @@ components:
           type: string
           format: date-time
           description: The order these are listed in
+        channel_name:
+          type: string
+          nullable: true
+          description: |
+            The channel's name, and null with no channel. Sent by the two
+            lists, null or not; absent from a single session's read.
+        participant:
+          type: string
+          nullable: true
+          description: |
+            Who the session is with, as an email, else as the provider's
+            subject: for a `direct` session its participant, for a group or a
+            thread whoever sent the newest message. Null with no messages.
+            Sent by the lists only.
+        last_message:
+          type: string
+          nullable: true
+          description: |
+            The newest message's text, cut to 140 characters where a
+            character starts and ended with `…` when it was cut. Null with no
+            messages. It is a stranger's text, and is rendered as text. Sent by
+            the lists only.
+        latest_run_status:
+          $ref: "#/components/schemas/RunStatus"
+          description: |
+            How the newest top-level run in this session stands, and null
+            with no run. A delegate's run is part of its parent's, so it never
+            counts here. Sent by the lists only.
+
+    SessionStatus:
+      type: string
+      enum: [open, closed]
 
     SessionPage:
       type: object
@@ -3848,6 +3964,13 @@ components:
             The conversation the run belongs to. Leave it out and the run gets
             a direct session of its own.
 
+    RunStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled]
+      description: |
+        Where a run stands. `queued` and `running` are live; the other three
+        are final.
+
     Run:
       type: object
       required:
@@ -3887,8 +4010,7 @@ components:
           type: string
           description: The agent's name when the run started, kept if it is later renamed or deleted
         status:
-          type: string
-          enum: [queued, running, succeeded, failed, cancelled]
+          $ref: "#/components/schemas/RunStatus"
         input:
           type: string
         output:

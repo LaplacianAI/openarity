@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -42,6 +44,7 @@ type Store interface {
 	RequestRunCancel(ctx context.Context, id uuid.UUID) (db.Run, error)
 	ListRunEvents(ctx context.Context, arg db.ListRunEventsParams) ([]db.RunEvent, error)
 	ListRunsBySession(ctx context.Context, arg db.ListRunsBySessionParams) ([]db.Run, error)
+	ListRunsByTeam(ctx context.Context, arg db.ListRunsByTeamParams) ([]db.Run, error)
 	StartRun(ctx context.Context, arg StartArgs) (db.Run, error)
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 }
@@ -62,6 +65,7 @@ func New(logger *slog.Logger, s Store, a api.Authorizer, starter Starter) *api.R
 
 	r := api.NewRouter("/teams")
 	r.Post("/{id}/runs", h.start)
+	r.Get("/{id}/runs", h.listByTeam)
 	r.Get("/{id}/runs/{runID}", h.get)
 	r.Get("/{id}/runs/{runID}/events", h.events)
 	r.Get("/{id}/sessions/{sessionID}/runs", h.listBySession)
@@ -240,7 +244,74 @@ func (h *handler) listBySession(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to list runs", err)
 		return
 	}
+	h.writeRuns(w, u, rows, limit)
+}
 
+// listByTeam is the team's run history. Filters narrow it and the cursor pages
+// it; a cursor is only meaningful with the filters it was issued under.
+func (h *handler) listByTeam(w http.ResponseWriter, r *http.Request) {
+	u := api.Caller(r)
+
+	teamID, ok := api.RequireTeam(w, r, h.logger)
+	if !ok {
+		return
+	}
+
+	limit, ok := api.Limit(w, r)
+	if !ok {
+		return
+	}
+
+	statuses, ok := api.OneOf(w, r, "status", api.RunStatuses)
+	if !ok {
+		return
+	}
+
+	params := db.ListRunsByTeamParams{
+		TeamID:    teamID,
+		Moderator: h.moderates(r, u, teamID),
+		Viewer:    u.ID,
+		Statuses:  statuses,
+		PageSize:  limit + 1,
+	}
+
+	if raw := r.URL.Query().Get("since"); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			http.Error(w, "since must be an RFC 3339 time, such as 2026-11-04T09:30:00Z", http.StatusBadRequest)
+			return
+		}
+		params.Since = &t
+	}
+
+	if raw := r.URL.Query().Get("hub"); raw != "" {
+		hub, err := strconv.ParseBool(raw)
+		if err != nil {
+			http.Error(w, "hub must be true or false", http.StatusBadRequest)
+			return
+		}
+		params.FilterHub, params.Hub = true, hub
+	}
+
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		var c runCursor
+		if !api.DecodeCursor(w, raw, &c) {
+			return
+		}
+		params.UseCursor = true
+		params.AfterCreatedAt = c.CreatedAt
+		params.AfterID = c.ID
+	}
+
+	rows, err := h.store.ListRunsByTeam(r.Context(), params)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to list runs", err)
+		return
+	}
+	h.writeRuns(w, u, rows, limit)
+}
+
+func (h *handler) writeRuns(w http.ResponseWriter, u *auth.User, rows []db.Run, limit int32) {
 	page, err := api.MapPage(rows, limit,
 		func(row db.Run) any { return runCursor{CreatedAt: row.CreatedAt, ID: row.ID} },
 		view,

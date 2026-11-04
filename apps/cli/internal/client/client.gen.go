@@ -975,11 +975,11 @@ type Run struct {
 
 	// StartedAt When a worker first took it, null while queued
 	StartedAt *time.Time `json:"started_at,omitempty" yaml:"started_at,omitempty"`
-	Status    RunStatus  `json:"status" yaml:"status"`
-}
 
-// RunStatus defines model for Run.Status.
-type RunStatus string
+	// Status Where a run stands. `queued` and `running` are live; the other three
+	// are final.
+	Status RunStatus `json:"status" yaml:"status"`
+}
 
 // RunPage defines model for RunPage.
 type RunPage struct {
@@ -1005,6 +1005,10 @@ type RunRequest struct {
 	// a direct session of its own.
 	SessionID *openapi_types.UUID `json:"session_id,omitempty" yaml:"session_id,omitempty"`
 }
+
+// RunStatus Where a run stands. `queued` and `running` are live; the other three
+// are final.
+type RunStatus string
 
 // SearchProvider `searxng` and `firecrawl-oss` are self-hosted and take a `url`;
 // `brave`, `tavily` and `firecrawl-cloud` take a key and no url.
@@ -1051,7 +1055,11 @@ type Session struct {
 	// a session started from the dashboard or the API has no webhook
 	// behind it.
 	ChannelID *openapi_types.UUID `json:"channel_id,omitempty" yaml:"channel_id,omitempty"`
-	ID        openapi_types.UUID  `json:"id" yaml:"id"`
+
+	// ChannelName The channel's name, and null with no channel. Sent by the two
+	// lists, null or not; absent from a single session's read.
+	ChannelName *string            `json:"channel_name,omitempty" yaml:"channel_name,omitempty"`
+	ID          openapi_types.UUID `json:"id" yaml:"id"`
 
 	// Kind How many people can speak, not what the provider calls the room.
 	// Slack's `mpim` looks like a direct message and is a group.
@@ -1060,8 +1068,25 @@ type Session struct {
 	// team's, a `direct` is one person's.
 	Kind SessionKind `json:"kind" yaml:"kind"`
 
+	// LastMessage The newest message's text, cut to 140 characters where a
+	// character starts and ended with `…` when it was cut. Null with no
+	// messages. It is a stranger's text, and is rendered as text. Sent by
+	// the lists only.
+	LastMessage *string `json:"last_message,omitempty" yaml:"last_message,omitempty"`
+
 	// LastMessageAt The order these are listed in
 	LastMessageAt time.Time `json:"last_message_at" yaml:"last_message_at"`
+
+	// LatestRunStatus How the newest top-level run in this session stands, and null
+	// with no run. A delegate's run is part of its parent's, so it never
+	// counts here. Sent by the lists only.
+	LatestRunStatus *RunStatus `json:"latest_run_status,omitempty" yaml:"latest_run_status,omitempty"`
+
+	// Participant Who the session is with, as an email, else as the provider's
+	// subject: for a `direct` session its participant, for a group or a
+	// thread whoever sent the newest message. Null with no messages.
+	// Sent by the lists only.
+	Participant *string `json:"participant,omitempty" yaml:"participant,omitempty"`
 
 	// ProviderRef The adapter's answer to "which conversation is this", and the whole
 	// of session identity. What goes in it differs by platform and is the
@@ -1094,12 +1119,6 @@ type Session struct {
 // team's, a `direct` is one person's.
 type SessionKind string
 
-// SessionStatus Always `open` today; nothing closes a session yet. It exists
-// because a provider gives you identity and never episode — a thread
-// ends on its own, a direct message never does — so an idle rule is
-// the only thing that can say where a conversation stopped.
-type SessionStatus string
-
 // SessionPage defines model for SessionPage.
 type SessionPage struct {
 	Items []Session `json:"items" yaml:"items"`
@@ -1107,6 +1126,9 @@ type SessionPage struct {
 	// NextCursor Absent on the last page
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
+
+// SessionStatus defines model for SessionStatus.
+type SessionStatus string
 
 // Skill defines model for Skill.
 type Skill struct {
@@ -1523,6 +1545,28 @@ type ListTeamMembersParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
 }
 
+// ListTeamRunsParams defines parameters for ListTeamRuns.
+type ListTeamRunsParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Status Only runs in one of these states. Repeat it for more than one.
+	Status *[]RunStatus `form:"status,omitempty" json:"status,omitempty" yaml:"status,omitempty"`
+
+	// Since Only runs created at or after this time, in RFC 3339.
+	Since *time.Time `form:"since,omitempty" json:"since,omitempty" yaml:"since,omitempty"`
+
+	// Hub `true` for only the hub's runs, `false` for only those started
+	// for a named agent; absent for both.
+	Hub *bool `form:"hub,omitempty" json:"hub,omitempty" yaml:"hub,omitempty"`
+}
+
 // StreamRunEventsParams defines parameters for StreamRunEvents.
 type StreamRunEventsParams struct {
 	// After Resume after this sequence number, for a client that cannot set a header.
@@ -1542,6 +1586,18 @@ type ListSessionsParams struct {
 	// previous page. It is not constructible by a client, and one that has
 	// been altered is a 400 rather than a silent restart.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// ChannelID Only sessions that arrived on this channel. A channel of another
+	// team matches nothing.
+	ChannelID *openapi_types.UUID `form:"channel_id,omitempty" json:"channel_id,omitempty" yaml:"channel_id,omitempty"`
+
+	// Status Only sessions in one of these states. Repeat it for more than one.
+	Status *[]SessionStatus `form:"status,omitempty" json:"status,omitempty" yaml:"status,omitempty"`
+
+	// RunStatus Only sessions whose newest top-level run is in one of these
+	// states. Repeat it for more than one. A session with no run
+	// matches none, so it is left out whenever this is given.
+	RunStatus *[]RunStatus `form:"run_status,omitempty" json:"run_status,omitempty" yaml:"run_status,omitempty"`
 }
 
 // ListSessionAttachmentsParams defines parameters for ListSessionAttachments.
@@ -2077,7 +2133,9 @@ type ClientInterface interface {
 	// Hidden means absent, not redacted: nothing here says how many
 	// conversations were left out.
 	//
-	// Most recently spoken in first.
+	// Most recently spoken in first. Each item carries `channel_name`,
+	// `participant`, `last_message` and `latest_run_status`, as on the
+	// team's list, so the two never disagree about a row.
 	//
 	// Corresponds with GET /teams/{id}/channels/{channelID}/sessions (the `ListChannelSessions` operationId).
 	ListChannelSessions(ctx context.Context, id TeamID, channelID ChannelID, params *ListChannelSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2297,6 +2355,23 @@ type ClientInterface interface {
 	// Corresponds with POST /teams/{id}/restore (the `RestoreTeam` operationId).
 	RestoreTeam(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListTeamRuns List the team's runs
+	//
+	// The team's run history, newest first. Only top-level runs are
+	// listed: a delegate's run belongs to the run that started it.
+	//
+	// A run is listed where its session is visible: every run in a `group`
+	// or `thread` session, and a `direct` session's runs only for its
+	// participant or a caller holding `session:read_all`. Hidden means
+	// absent; nothing says how many were left out.
+	//
+	// Each item is the run as `GET /teams/{id}/runs/{runID}` returns it.
+	// A value outside a filter's set is a 400, not an ignored filter. A
+	// cursor is only meaningful with the filters it was issued under.
+	//
+	// Corresponds with GET /teams/{id}/runs (the `ListTeamRuns` operationId).
+	ListTeamRuns(ctx context.Context, id TeamID, params *ListTeamRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// StartRunWithBody Start a run of an agent, or ask the team's hub
 	//
 	// Requires `run:write` in this team. The run is recorded and queued
@@ -2389,7 +2464,12 @@ type ClientInterface interface {
 	// participant's own, plus everything if the caller holds
 	// `session:read_all`.
 	//
-	// Most recently spoken in first.
+	// Most recently spoken in first. Each item carries `channel_name`,
+	// `participant`, `last_message` and `latest_run_status`, so a list can
+	// be read without opening each session.
+	//
+	// A value outside a filter's set is a 400, not an ignored filter. A
+	// cursor is only meaningful with the filters it was issued under.
 	//
 	// Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
 	ListSessions(ctx context.Context, id TeamID, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3293,7 +3373,9 @@ func (c *Client) ListPendingSenders(ctx context.Context, id TeamID, channelID Ch
 // Hidden means absent, not redacted: nothing here says how many
 // conversations were left out.
 //
-// Most recently spoken in first.
+// Most recently spoken in first. Each item carries `channel_name`,
+// `participant`, `last_message` and `latest_run_status`, as on the
+// team's list, so the two never disagree about a row.
 //
 // Corresponds with GET /teams/{id}/channels/{channelID}/sessions (the `ListChannelSessions` operationId).
 func (c *Client) ListChannelSessions(ctx context.Context, id TeamID, channelID ChannelID, params *ListChannelSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3693,6 +3775,33 @@ func (c *Client) RestoreTeam(ctx context.Context, id TeamID, reqEditors ...Reque
 	return c.Client.Do(req)
 }
 
+// ListTeamRuns List the team's runs
+//
+// The team's run history, newest first. Only top-level runs are
+// listed: a delegate's run belongs to the run that started it.
+//
+// A run is listed where its session is visible: every run in a `group`
+// or `thread` session, and a `direct` session's runs only for its
+// participant or a caller holding `session:read_all`. Hidden means
+// absent; nothing says how many were left out.
+//
+// Each item is the run as `GET /teams/{id}/runs/{runID}` returns it.
+// A value outside a filter's set is a 400, not an ignored filter. A
+// cursor is only meaningful with the filters it was issued under.
+//
+// Corresponds with GET /teams/{id}/runs (the `ListTeamRuns` operationId).
+func (c *Client) ListTeamRuns(ctx context.Context, id TeamID, params *ListTeamRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListTeamRunsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // StartRunWithBody Start a run of an agent, or ask the team's hub
 //
 // Requires `run:write` in this team. The run is recorded and queued
@@ -3835,7 +3944,12 @@ func (c *Client) StreamRunEvents(ctx context.Context, id TeamID, runID RunID, pa
 // participant's own, plus everything if the caller holds
 // `session:read_all`.
 //
-// Most recently spoken in first.
+// Most recently spoken in first. Each item carries `channel_name`,
+// `participant`, `last_message` and `latest_run_status`, so a list can
+// be read without opening each session.
+//
+// A value outside a filter's set is a 400, not an ignored filter. A
+// cursor is only meaningful with the filters it was issued under.
 //
 // Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
 func (c *Client) ListSessions(ctx context.Context, id TeamID, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6076,6 +6190,115 @@ func NewRestoreTeamRequest(server string, id TeamID) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListTeamRunsRequest constructs an http.Request for the ListTeamRuns method
+func NewListTeamRunsRequest(server string, id TeamID, params *ListTeamRunsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/runs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Since != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Hub != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "hub", *params.Hub, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewStartRunRequest calls the generic StartRun builder with application/json body
 func NewStartRunRequest(server string, id TeamID, body StartRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -6338,6 +6561,42 @@ func NewListSessionsRequest(server string, id TeamID, params *ListSessionsParams
 		if params.Cursor != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ChannelID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "channel_id", *params.ChannelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "uuid"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.RunStatus != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "run_status", *params.RunStatus, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -7680,7 +7939,9 @@ type ClientWithResponsesInterface interface {
 	// Hidden means absent, not redacted: nothing here says how many
 	// conversations were left out.
 	//
-	// Most recently spoken in first.
+	// Most recently spoken in first. Each item carries `channel_name`,
+	// `participant`, `last_message` and `latest_run_status`, as on the
+	// team's list, so the two never disagree about a row.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7924,6 +8185,25 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /teams/{id}/restore (the `RestoreTeam` operationId).
 	RestoreTeamWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*RestoreTeamResponse, error)
 
+	// ListTeamRunsWithResponse List the team's runs
+	//
+	// The team's run history, newest first. Only top-level runs are
+	// listed: a delegate's run belongs to the run that started it.
+	//
+	// A run is listed where its session is visible: every run in a `group`
+	// or `thread` session, and a `direct` session's runs only for its
+	// participant or a caller holding `session:read_all`. Hidden means
+	// absent; nothing says how many were left out.
+	//
+	// Each item is the run as `GET /teams/{id}/runs/{runID}` returns it.
+	// A value outside a filter's set is a 400, not an ignored filter. A
+	// cursor is only meaningful with the filters it was issued under.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/runs (the `ListTeamRuns` operationId).
+	ListTeamRunsWithResponse(ctx context.Context, id TeamID, params *ListTeamRunsParams, reqEditors ...RequestEditorFn) (*ListTeamRunsResponse, error)
+
 	// StartRunWithBodyWithResponse Start a run of an agent, or ask the team's hub
 	//
 	// Requires `run:write` in this team. The run is recorded and queued
@@ -8022,7 +8302,12 @@ type ClientWithResponsesInterface interface {
 	// participant's own, plus everything if the caller holds
 	// `session:read_all`.
 	//
-	// Most recently spoken in first.
+	// Most recently spoken in first. Each item carries `channel_name`,
+	// `participant`, `last_message` and `latest_run_status`, so a list can
+	// be read without opening each session.
+	//
+	// A value outside a filter's set is a 400, not an ignored filter. A
+	// cursor is only meaningful with the filters it was issued under.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -9905,6 +10190,54 @@ func (r RestoreTeamResponse) ContentType() string {
 	return ""
 }
 
+// ListTeamRunsResponse401Headers the declared response headers of an HTTP 401 response for ListTeamRuns
+type ListTeamRunsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListTeamRunsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RunPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListTeamRunsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListTeamRunsResponse) GetJSON200() *RunPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListTeamRunsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListTeamRunsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListTeamRunsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListTeamRunsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // StartRunResponse401Headers the declared response headers of an HTTP 401 response for StartRun
 type StartRunResponse401Headers struct {
 	WWWAuthenticate *string
@@ -11473,7 +11806,9 @@ func (c *ClientWithResponses) ListPendingSendersWithResponse(ctx context.Context
 // Hidden means absent, not redacted: nothing here says how many
 // conversations were left out.
 //
-// Most recently spoken in first.
+// Most recently spoken in first. Each item carries `channel_name`,
+// `participant`, `last_message` and `latest_run_status`, as on the
+// team's list, so the two never disagree about a row.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -11825,6 +12160,31 @@ func (c *ClientWithResponses) RestoreTeamWithResponse(ctx context.Context, id Te
 	return ParseRestoreTeamResponse(rsp)
 }
 
+// ListTeamRunsWithResponse List the team's runs
+//
+// The team's run history, newest first. Only top-level runs are
+// listed: a delegate's run belongs to the run that started it.
+//
+// A run is listed where its session is visible: every run in a `group`
+// or `thread` session, and a `direct` session's runs only for its
+// participant or a caller holding `session:read_all`. Hidden means
+// absent; nothing says how many were left out.
+//
+// Each item is the run as `GET /teams/{id}/runs/{runID}` returns it.
+// A value outside a filter's set is a 400, not an ignored filter. A
+// cursor is only meaningful with the filters it was issued under.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/runs (the `ListTeamRuns` operationId).
+func (c *ClientWithResponses) ListTeamRunsWithResponse(ctx context.Context, id TeamID, params *ListTeamRunsParams, reqEditors ...RequestEditorFn) (*ListTeamRunsResponse, error) {
+	rsp, err := c.ListTeamRuns(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListTeamRunsResponse(rsp)
+}
+
 // StartRunWithBodyWithResponse Start a run of an agent, or ask the team's hub
 //
 // Requires `run:write` in this team. The run is recorded and queued
@@ -11953,7 +12313,12 @@ func (c *ClientWithResponses) StreamRunEventsWithResponse(ctx context.Context, i
 // participant's own, plus everything if the caller holds
 // `session:read_all`.
 //
-// Most recently spoken in first.
+// Most recently spoken in first. Each item carries `channel_name`,
+// `participant`, `last_message` and `latest_run_status`, so a list can
+// be read without opening each session.
+//
+// A value outside a filter's set is a 400, not an ignored filter. A
+// cursor is only meaningful with the filters it was issued under.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -13588,6 +13953,45 @@ func ParseRestoreTeamResponse(rsp *http.Response) (*RestoreTeamResponse, error) 
 	switch {
 	case rsp.StatusCode == 401:
 		var headers RestoreTeamResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListTeamRunsResponse parses an HTTP response from a ListTeamRunsWithResponse call
+func ParseListTeamRunsResponse(rsp *http.Response) (*ListTeamRunsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListTeamRunsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RunPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListTeamRunsResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

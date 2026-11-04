@@ -17,6 +17,15 @@ type session struct {
 	LastMessageAt time.Time `json:"last_message_at"`
 }
 
+type listedSession struct {
+	session
+
+	ChannelName     *string `json:"channel_name"`
+	Participant     *string `json:"participant"`
+	LastMessage     *string `json:"last_message"`
+	LatestRunStatus *string `json:"latest_run_status"`
+}
+
 type message struct {
 	ID         uuid.UUID `json:"id"`
 	ExternalID string    `json:"external_id"`

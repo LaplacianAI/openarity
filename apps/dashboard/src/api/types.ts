@@ -97,15 +97,29 @@ export type ApprovedSender = {
   created_at: string;
 };
 
-/** GET /teams/{id}/sessions */
+/** GET /teams/{id}/sessions/{sessionID} */
 export type Session = {
   id: string;
   channel_id: string | null;
   provider_ref: string;
   kind: string;
-  status: string;
+  status: SessionStatus;
   started_at: string;
   last_message_at: string;
+};
+
+export type SessionStatus = "open" | "closed";
+
+/** GET /teams/{id}/sessions, and a channel's: a session with what a list row needs. */
+export type ListedSession = Session & {
+  /** Null with no channel. */
+  channel_name: string | null;
+  /** An email, else the provider's subject: who a direct session is with, or who spoke last. */
+  participant: string | null;
+  /** The newest message, cut by the brain to 140 characters. A stranger's text: render it as text. */
+  last_message: string | null;
+  /** The newest top-level run's status; null with no run. */
+  latest_run_status: RunStatus | null;
 };
 
 /** GET /teams/{id}/sessions/{sessionID}/messages */
@@ -130,7 +144,7 @@ export type Attachment = {
 
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
-/** GET /teams/{id}/sessions/{sessionID}/runs, newest first. */
+/** GET /teams/{id}/runs and GET /teams/{id}/sessions/{sessionID}/runs, newest first. */
 export type Run = {
   id: string;
   session_id: string;

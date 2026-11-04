@@ -726,3 +726,182 @@ func TestASessionsRunsPageWithoutRepeatsOrGaps(t *testing.T) {
 		t.Errorf("paged %v, want each of %v once, by id descending", seen, made)
 	}
 }
+
+// --- a team's run history ---
+
+func listTeamRuns(t *testing.T, s *Store, p db.ListRunsByTeamParams) []uuid.UUID {
+	t.Helper()
+
+	if p.PageSize == 0 {
+		p.PageSize = 50
+	}
+	rows, err := s.ListRunsByTeam(t.Context(), p)
+	if err != nil {
+		t.Fatalf("ListRunsByTeam: %v", err)
+	}
+	ids := make([]uuid.UUID, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
+// inState gives a run what its status requires: a worker and a heartbeat
+// while it runs, a finish time once it has ended, and an error when it failed.
+func inState(r run, status string) run {
+	r.status = status
+	switch status {
+	case "running":
+		r.worker, r.heartbeat = ptr("worker-1"), true
+	case "succeeded", "cancelled":
+		r.finished = true
+	case "failed":
+		r.finished, r.err = true, ptr("it broke")
+	}
+	return r
+}
+
+// rootAt inserts a root run in the fixture's session, created seconds ago on
+// the database's clock, so order never rests on two inserts' microseconds.
+func rootAt(t *testing.T, s *Store, f runFixture, status string, secondsAgo int) uuid.UUID {
+	t.Helper()
+
+	id := mustInsertRun(t, s, inState(f.root(), status))
+	age(t, s, id, "created_at", secondsAgo)
+	return id
+}
+
+// A delegate's run is in its parent's trace, not the history, and another
+// team's runs are not in this one's at all.
+func TestTheTeamsRunsAreItsRootRunsNewestFirst(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	other := newRunFixture(t, s, "elsewhere")
+
+	older := rootAt(t, s, f, "succeeded", 60)
+	newer := rootAt(t, s, f, "running", 10)
+	mustInsertRun(t, s, inState(f.child(newer, "call-1"), "running"))
+	rootAt(t, s, other, "succeeded", 5)
+
+	got := listTeamRuns(t, s, db.ListRunsByTeamParams{TeamID: f.team, Moderator: true})
+	if !slices.Equal(got, []uuid.UUID{newer, older}) {
+		t.Errorf("listed %v, want [newer older] = [%s %s]", got, newer, older)
+	}
+}
+
+// The history follows the session rule: a direct session's runs are its
+// participant's and a moderator's, and nobody else's.
+func TestAnotherPersonsDirectRunIsNotInTheHistory(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	asha := insertUser(t, s, "dev", "asha")
+	bala := insertUser(t, s, "dev", "bala")
+
+	direct, err := s.CreateDirectSession(t.Context(), db.CreateDirectSessionParams{TeamID: f.team, UserID: asha})
+	if err != nil {
+		t.Fatalf("CreateDirectSession: %v", err)
+	}
+	private := f.root()
+	private.session = direct.ID
+	privateID := mustInsertRun(t, s, private)
+	shared := rootAt(t, s, f, "queued", 30)
+
+	for name, tc := range map[string]struct {
+		viewer    uuid.UUID
+		moderator bool
+		want      []uuid.UUID
+	}{
+		"its participant":  {asha, false, []uuid.UUID{privateID, shared}},
+		"another member":   {bala, false, []uuid.UUID{shared}},
+		"a moderator":      {bala, true, []uuid.UUID{privateID, shared}},
+		"no viewer at all": {uuid.Nil, false, []uuid.UUID{shared}},
+	} {
+		got := listTeamRuns(t, s, db.ListRunsByTeamParams{TeamID: f.team, Viewer: tc.viewer, Moderator: tc.moderator})
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: listed %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestTheRunHistoryFilters(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+
+	failedOld := rootAt(t, s, f, "failed", 3600)
+	succeeded := rootAt(t, s, f, "succeeded", 120)
+	failedNew := rootAt(t, s, f, "failed", 60)
+	hub := rootAt(t, s, f, "running", 30)
+	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET hub = true WHERE id = $1`, hub); err != nil {
+		t.Fatalf("mark hub: %v", err)
+	}
+
+	var since time.Time
+	if err := s.pool.QueryRow(t.Context(), `SELECT now() - interval '10 minutes'`).Scan(&since); err != nil {
+		t.Fatalf("since: %v", err)
+	}
+
+	all := []uuid.UUID{hub, failedNew, succeeded, failedOld}
+	for name, tc := range map[string]struct {
+		p    db.ListRunsByTeamParams
+		want []uuid.UUID
+	}{
+		// pgx sends a nil slice as NULL, not as an empty array. The query
+		// must read both as no filter, or every unfiltered list is empty.
+		"a nil statuses":              {db.ListRunsByTeamParams{Statuses: nil}, all},
+		"an empty statuses":           {db.ListRunsByTeamParams{Statuses: []string{}}, all},
+		"one status":                  {db.ListRunsByTeamParams{Statuses: []string{"failed"}}, []uuid.UUID{failedNew, failedOld}},
+		"two statuses":                {db.ListRunsByTeamParams{Statuses: []string{"failed", "succeeded"}}, []uuid.UUID{failedNew, succeeded, failedOld}},
+		"a status none have":          {db.ListRunsByTeamParams{Statuses: []string{"cancelled"}}, []uuid.UUID{}},
+		"since":                       {db.ListRunsByTeamParams{Since: &since}, []uuid.UUID{hub, failedNew, succeeded}},
+		"the hub's":                   {db.ListRunsByTeamParams{FilterHub: true, Hub: true}, []uuid.UUID{hub}},
+		"not the hub's":               {db.ListRunsByTeamParams{FilterHub: true, Hub: false}, []uuid.UUID{failedNew, succeeded, failedOld}},
+		"hub unset ignores the value": {db.ListRunsByTeamParams{FilterHub: false, Hub: true}, all},
+		"all at once": {
+			db.ListRunsByTeamParams{Statuses: []string{"failed"}, Since: &since, FilterHub: true, Hub: false},
+			[]uuid.UUID{failedNew},
+		},
+	} {
+		tc.p.TeamID, tc.p.Moderator = f.team, true
+		got := listTeamRuns(t, s, tc.p)
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: listed %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+// A page ends where the next begins, with nothing skipped or repeated, even
+// when two runs share a created_at.
+func TestTheRunHistoryPagesWithoutGapsOrRepeats(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+
+	want := make([]uuid.UUID, 0, 5)
+	for range 5 {
+		want = append(want, mustInsertRun(t, s, f.root()))
+	}
+	if _, err := s.pool.Exec(t.Context(),
+		`UPDATE runs SET created_at = date_trunc('second', now()) WHERE team_id = $1`, f.team); err != nil {
+		t.Fatalf("tie: %v", err)
+	}
+	slices.SortFunc(want, func(a, b uuid.UUID) int { return -slices.Compare(a[:], b[:]) })
+
+	var got []uuid.UUID
+	p := db.ListRunsByTeamParams{TeamID: f.team, Moderator: true, PageSize: 2}
+	for page := 0; page < 5; page++ {
+		rows, err := s.ListRunsByTeam(t.Context(), p)
+		if err != nil {
+			t.Fatalf("ListRunsByTeam: %v", err)
+		}
+		for _, r := range rows {
+			got = append(got, r.ID)
+		}
+		if len(rows) < 2 {
+			break
+		}
+		last := rows[len(rows)-1]
+		p.UseCursor, p.AfterCreatedAt, p.AfterID = true, last.CreatedAt, last.ID
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("paged %v, want %v", got, want)
+	}
+}

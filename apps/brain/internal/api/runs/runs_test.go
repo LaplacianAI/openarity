@@ -49,6 +49,7 @@ type fakeStore struct {
 	sessionErr error
 	listErr    error
 	listed     []db.ListRunsBySessionParams
+	teamListed []db.ListRunsByTeamParams
 	started    []StartArgs
 	cancelled  []uuid.UUID
 	visible    []db.GetRunVisibleParams
@@ -148,6 +149,41 @@ func (s *fakeStore) ListRunEvents(_ context.Context, arg db.ListRunEventsParams)
 		if e.Seq > arg.After && int32(len(out)) < arg.PageSize {
 			out = append(out, e)
 		}
+	}
+	return out, nil
+}
+
+// ListRunsByTeam records what the handler asked for and returns the team's
+// root runs, newest first, a page at a time. Which runs each filter keeps is
+// the query's, and is tested against Postgres; here the question is what the
+// handler sent.
+func (s *fakeStore) ListRunsByTeam(_ context.Context, arg db.ListRunsByTeamParams) ([]db.Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	s.teamListed = append(s.teamListed, arg)
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	var out []db.Run
+	for _, r := range s.runs {
+		if r.TeamID == arg.TeamID && r.ID == r.RootRunID {
+			out = append(out, r)
+		}
+	}
+	newer := func(a, b db.Run) bool {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.After(b.CreatedAt)
+		}
+		return a.ID.String() > b.ID.String()
+	}
+	sort.Slice(out, func(i, j int) bool { return newer(out[i], out[j]) })
+	if arg.UseCursor {
+		after := db.Run{CreatedAt: arg.AfterCreatedAt, ID: arg.AfterID}
+		out = slices.DeleteFunc(out, func(r db.Run) bool { return !newer(after, r) })
+	}
+	if int32(len(out)) > arg.PageSize {
+		out = out[:arg.PageSize]
 	}
 	return out, nil
 }
@@ -270,6 +306,7 @@ func runRoutes(t *testing.T) authz.Routes {
 		permission          *string
 	}{
 		{"POST", "/teams/{id}/runs", "team", &write},
+		{"GET", "/teams/{id}/runs", "member", nil},
 		{"GET", "/teams/{id}/sessions/{sessionID}/runs", "member", nil},
 		{"GET", "/teams/{id}/runs/{runID}", "member", nil},
 		{"GET", "/teams/{id}/runs/{runID}/events", "member", nil},
@@ -1133,3 +1170,172 @@ func TestARefusedHubBodyNeverReachesTheStore(t *testing.T) {
 type liveTeams struct{}
 
 func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }
+
+// --- the team's run history ---
+
+// root is a top-level run, created at a given time, as the store holds it.
+func (w *world) root(session uuid.UUID, status string, at time.Time) db.Run {
+	r := w.run(session, status)
+	r.RootRunID, r.CreatedAt = r.ID, at
+	w.store.runs[r.ID] = r
+	return r
+}
+
+func TestTheTeamsRunsAreListedNewestFirst(t *testing.T) {
+	w := newWorld(t)
+	now := time.Now()
+	old := w.root(w.session("group", nil), "succeeded", now.Add(-time.Hour))
+	recent := w.root(w.session("thread", nil), "running", now)
+
+	rec := w.call(t, w.me, http.MethodGet, w.runs(), nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d (%s), want 200", rec.Code, rec.Body)
+	}
+	page := decodeRuns(t, rec)
+	if len(page.Items) != 2 || page.Items[0].ID != recent.ID || page.Items[1].ID != old.ID || page.NextCursor != nil {
+		t.Fatalf("page = %+v, want both runs, newest first, and no next page", page)
+	}
+	if got := page.Items[1]; got.Status != "succeeded" || got.Agent != "triage" || got.FinishedAt == nil {
+		t.Errorf("listed %+v, want the run as GET /runs/{runID} shows it", got)
+	}
+
+	// No filter given is no filter sent, and the caller is who sees.
+	p := w.store.teamListed[0]
+	if p.TeamID != w.team || p.Viewer != w.me.ID || p.Moderator || len(p.Statuses) != 0 ||
+		p.Since != nil || p.FilterHub || p.UseCursor || p.PageSize != api.DefaultLimit+1 {
+		t.Errorf("listed with %+v", p)
+	}
+}
+
+// Whether a direct conversation's runs are in the history is session:read_all,
+// asked of the authorizer and passed to the query.
+func TestAModeratorsRunHistoryIncludesEveryConversation(t *testing.T) {
+	w := newWorld(t)
+	w.authz.grants = moderator().grants
+
+	if rec := w.call(t, w.me, http.MethodGet, w.runs(), nil); rec.Code != http.StatusOK {
+		t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+	}
+	if p := w.store.teamListed[0]; !p.Moderator || p.Viewer != w.me.ID {
+		t.Errorf("listed with %+v, want a moderator", p)
+	}
+}
+
+func TestTheRunHistoryPassesEachFilterAsAsked(t *testing.T) {
+	at := time.Date(2026, 11, 4, 9, 30, 0, 0, time.UTC)
+
+	for name, tc := range map[string]struct {
+		query string
+		check func(db.ListRunsByTeamParams) bool
+	}{
+		"one status": {"?status=failed", func(p db.ListRunsByTeamParams) bool {
+			return slices.Equal(p.Statuses, []string{"failed"})
+		}},
+		"repeated statuses": {"?status=failed&status=running", func(p db.ListRunsByTeamParams) bool {
+			return slices.Equal(p.Statuses, []string{"failed", "running"})
+		}},
+		"since in UTC": {"?since=2026-11-04T09:30:00Z", func(p db.ListRunsByTeamParams) bool {
+			return p.Since != nil && p.Since.Equal(at)
+		}},
+		"since with an offset": {"?since=2026-11-04T15:00:00%2B05:30", func(p db.ListRunsByTeamParams) bool {
+			return p.Since != nil && p.Since.Equal(at)
+		}},
+		"the hub's":     {"?hub=true", func(p db.ListRunsByTeamParams) bool { return p.FilterHub && p.Hub }},
+		"not the hub's": {"?hub=false", func(p db.ListRunsByTeamParams) bool { return p.FilterHub && !p.Hub }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			if rec := w.call(t, w.me, http.MethodGet, w.runs()+tc.query, nil); rec.Code != http.StatusOK {
+				t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+			}
+			if p := w.store.teamListed[0]; !tc.check(p) {
+				t.Errorf("%s listed with %+v", tc.query, p)
+			}
+		})
+	}
+}
+
+// A filter that cannot be read is the caller's mistake, said plainly, and
+// nothing is listed: an ignored filter would answer a different question.
+func TestABadRunHistoryFilterIsRefused(t *testing.T) {
+	for name, tc := range map[string]struct{ query, says string }{
+		"an unknown status":    {"?status=done", "status must be one of queued, running, succeeded, failed, cancelled"},
+		"a status in capitals": {"?status=FAILED", "status must be one of"},
+		"one bad among good":   {"?status=failed&status=nope", "status must be one of"},
+		"a date with no time":  {"?since=2026-11-04", "since must be an RFC 3339 time"},
+		"a word for a time":    {"?since=yesterday", "since must be an RFC 3339 time"},
+		"a word for hub":       {"?hub=maybe", "hub must be true or false"},
+		"a bad limit":          {"?limit=0", "limit must be a positive integer"},
+		"a bad cursor":         {"?cursor=%21%21", "cursor"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			rec := w.call(t, w.me, http.MethodGet, w.runs()+tc.query, nil)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tc.says) {
+				t.Errorf("status %d %q, want 400 saying %q", rec.Code, rec.Body, tc.says)
+			}
+			if len(w.store.teamListed) != 0 {
+				t.Error("runs were listed after the refusal")
+			}
+		})
+	}
+}
+
+func TestTheRunHistoryPagesThroughTheCursor(t *testing.T) {
+	w := newWorld(t)
+	at := time.Now()
+	for range 3 {
+		w.root(w.session("group", nil), "succeeded", at)
+	}
+
+	var seen []uuid.UUID
+	next := w.runs() + "?limit=2&status=succeeded"
+	for range 3 {
+		rec := w.call(t, w.me, http.MethodGet, next, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+		}
+		page := decodeRuns(t, rec)
+		for _, r := range page.Items {
+			seen = append(seen, r.ID)
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		next = w.runs() + "?limit=2&status=succeeded&cursor=" + *page.NextCursor
+	}
+
+	if len(seen) != 3 || seen[0] == seen[1] || seen[1] == seen[2] || seen[0] == seen[2] {
+		t.Errorf("paged %v, want each of the 3 runs once", seen)
+	}
+	if p := w.store.teamListed[1]; !p.UseCursor || !p.AfterCreatedAt.Equal(at) || p.AfterID != seen[1] ||
+		!slices.Equal(p.Statuses, []string{"succeeded"}) {
+		t.Errorf("second page asked with %+v, want after the last run of the first, filter kept", p)
+	}
+}
+
+// Somebody outside the team is not told it exists, and nothing is read.
+func TestAnotherTeamsRunHistoryIsNotFound(t *testing.T) {
+	w := newWorld(t)
+	stranger := &auth.User{ID: uuid.New(), Issuer: "dev", Subject: "stranger"}
+
+	if rec := w.call(t, stranger, http.MethodGet, w.runs(), nil); rec.Code != http.StatusNotFound {
+		t.Errorf("status %d, want 404", rec.Code)
+	}
+	if len(w.store.teamListed) != 0 {
+		t.Error("a stranger's request listed the team's runs")
+	}
+}
+
+func TestAFailedRunHistoryIsA500ThatLeaksNothing(t *testing.T) {
+	w := newWorld(t)
+	w.store.listErr = errAny
+
+	rec := w.call(t, w.me, http.MethodGet, w.runs(), nil)
+
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "reset by peer") ||
+		strings.Contains(rec.Body.String(), "items") {
+		t.Errorf("status %d %q, want a 500 that says nothing", rec.Code, rec.Body)
+	}
+}
