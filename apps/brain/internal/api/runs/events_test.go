@@ -58,7 +58,7 @@ func ids(fs []frame) []string {
 func (w *world) events(id uuid.UUID, kinds ...string) {
 	for i, k := range kinds {
 		w.store.events[id] = append(w.store.events[id], db.RunEvent{
-			RunID: id, Seq: int32(i + 1), Kind: k, Payload: []byte(fmt.Sprintf(`{"n": %d}`, i+1)),
+			RunID: id, Seq: int32(i + 1), Kind: k, Payload: fmt.Appendf(nil, `{"n": %d}`, i+1),
 		})
 	}
 }
@@ -230,7 +230,8 @@ func TestAnEventStreamOutlivesTheServersWriteTimeout(t *testing.T) {
 	var body strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
-		body.WriteString(scanner.Text() + "\n")
+		body.WriteString(scanner.Text())
+		body.WriteString("\n")
 	}
 	if !strings.Contains(body.String(), "event: end") {
 		t.Errorf("the stream ended without its end (%v) after:\n%s", scanner.Err(), body.String())
