@@ -981,6 +981,17 @@ type Run struct {
 	Status RunStatus `json:"status" yaml:"status"`
 }
 
+// RunCounts Top-level runs created in the last 24 hours, on the brain's clock, by
+// status. A delegate's run is part of its parent's and is not counted.
+// Every status is present, zero included.
+type RunCounts struct {
+	Cancelled int64 `json:"cancelled" yaml:"cancelled"`
+	Failed    int64 `json:"failed" yaml:"failed"`
+	Queued    int64 `json:"queued" yaml:"queued"`
+	Running   int64 `json:"running" yaml:"running"`
+	Succeeded int64 `json:"succeeded" yaml:"succeeded"`
+}
+
 // RunPage defines model for RunPage.
 type RunPage struct {
 	Items []Run `json:"items" yaml:"items"`
@@ -1338,6 +1349,25 @@ type TeamSettingsRequest struct {
 	// Model Null or absent for no model, which stops the built-in agents running.
 	Model  *ModelRef             `json:"model,omitempty" yaml:"model,omitempty"`
 	Search SearchSettingsRequest `json:"search" yaml:"search"`
+}
+
+// TeamSummary defines model for TeamSummary.
+type TeamSummary struct {
+	// Runs24H Top-level runs created in the last 24 hours, on the brain's clock, by
+	// status. A delegate's run is part of its parent's and is not counted.
+	// Every status is present, zero included.
+	Runs24H RunCounts `json:"runs_24h" yaml:"runs_24h"`
+
+	// ServersFailing The MCP servers whose last discovery failed
+	ServersFailing int64 `json:"servers_failing" yaml:"servers_failing"`
+
+	// Sessions The sessions the caller can see, open or closed
+	Sessions int64 `json:"sessions" yaml:"sessions"`
+
+	// WaitingSenders The senders waiting to be let in, across every channel of the
+	// team. Null without `channel:read`: a caller who cannot list the
+	// queue is not told its length. Always sent.
+	WaitingSenders int64 `json:"waiting_senders" yaml:"waiting_senders"`
 }
 
 // User defines model for User.
@@ -2748,6 +2778,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /teams/{id}/skills/{skillID}/sync (the `SyncSkill` operationId).
 	SyncSkill(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTeamSummary The team at a glance
+	//
+	// Counts for a team's home: the last day's runs by status, the
+	// conversations, the senders waiting to be let in, and the MCP servers
+	// whose last discovery failed.
+	//
+	// Each count obeys the rule of the list it summarises, so it never
+	// counts what the caller could not list. Runs and sessions follow the
+	// session rule: a `direct` session, and its runs, count only for its
+	// participant or a caller holding `session:read_all`.
+	// `waiting_senders` is null without `channel:read`.
+	//
+	// The counts are read in one statement, so they agree with each other.
+	// Lists carry no totals; this is where totals come from.
+	//
+	// Corresponds with GET /teams/{id}/summary (the `GetTeamSummary` operationId).
+	GetTeamSummary(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListUsers Find a user
 	//
@@ -4399,6 +4447,34 @@ func (c *Client) GetSkillFile(ctx context.Context, id TeamID, skillID SkillID, p
 // Corresponds with POST /teams/{id}/skills/{skillID}/sync (the `SyncSkill` operationId).
 func (c *Client) SyncSkill(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSyncSkillRequest(c.Server, id, skillID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetTeamSummary The team at a glance
+//
+// Counts for a team's home: the last day's runs by status, the
+// conversations, the senders waiting to be let in, and the MCP servers
+// whose last discovery failed.
+//
+// Each count obeys the rule of the list it summarises, so it never
+// counts what the caller could not list. Runs and sessions follow the
+// session rule: a `direct` session, and its runs, count only for its
+// participant or a caller holding `session:read_all`.
+// `waiting_senders` is null without `channel:read`.
+//
+// The counts are read in one statement, so they agree with each other.
+// Lists carry no totals; this is where totals come from.
+//
+// Corresponds with GET /teams/{id}/summary (the `GetTeamSummary` operationId).
+func (c *Client) GetTeamSummary(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTeamSummaryRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -7412,6 +7488,40 @@ func NewSyncSkillRequest(server string, id TeamID, skillID SkillID) (*http.Reque
 	return req, nil
 }
 
+// NewGetTeamSummaryRequest constructs an http.Request for the GetTeamSummary method
+func NewGetTeamSummaryRequest(server string, id TeamID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/summary", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListUsersRequest constructs an http.Request for the ListUsers method
 func NewListUsersRequest(server string, params *ListUsersParams) (*http.Request, error) {
 	var err error
@@ -8610,6 +8720,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /teams/{id}/skills/{skillID}/sync (the `SyncSkill` operationId).
 	SyncSkillWithResponse(ctx context.Context, id TeamID, skillID SkillID, reqEditors ...RequestEditorFn) (*SyncSkillResponse, error)
+
+	// GetTeamSummaryWithResponse The team at a glance
+	//
+	// Counts for a team's home: the last day's runs by status, the
+	// conversations, the senders waiting to be let in, and the MCP servers
+	// whose last discovery failed.
+	//
+	// Each count obeys the rule of the list it summarises, so it never
+	// counts what the caller could not list. Runs and sessions follow the
+	// session rule: a `direct` session, and its runs, count only for its
+	// participant or a caller holding `session:read_all`.
+	// `waiting_senders` is null without `channel:read`.
+	//
+	// The counts are read in one statement, so they agree with each other.
+	// Lists carry no totals; this is where totals come from.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/summary (the `GetTeamSummary` operationId).
+	GetTeamSummaryWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamSummaryResponse, error)
 
 	// ListUsersWithResponse Find a user
 	//
@@ -11188,6 +11318,54 @@ func (r SyncSkillResponse) ContentType() string {
 	return ""
 }
 
+// GetTeamSummaryResponse401Headers the declared response headers of an HTTP 401 response for GetTeamSummary
+type GetTeamSummaryResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetTeamSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TeamSummary
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetTeamSummaryResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTeamSummaryResponse) GetJSON200() *TeamSummary {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTeamSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTeamSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTeamSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTeamSummaryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListUsersResponse401Headers the declared response headers of an HTTP 401 response for ListUsers
 type ListUsersResponse401Headers struct {
 	WWWAuthenticate *string
@@ -12728,6 +12906,32 @@ func (c *ClientWithResponses) SyncSkillWithResponse(ctx context.Context, id Team
 		return nil, err
 	}
 	return ParseSyncSkillResponse(rsp)
+}
+
+// GetTeamSummaryWithResponse The team at a glance
+//
+// Counts for a team's home: the last day's runs by status, the
+// conversations, the senders waiting to be let in, and the MCP servers
+// whose last discovery failed.
+//
+// Each count obeys the rule of the list it summarises, so it never
+// counts what the caller could not list. Runs and sessions follow the
+// session rule: a `direct` session, and its runs, count only for its
+// participant or a caller holding `session:read_all`.
+// `waiting_senders` is null without `channel:read`.
+//
+// The counts are read in one statement, so they agree with each other.
+// Lists carry no totals; this is where totals come from.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/summary (the `GetTeamSummary` operationId).
+func (c *ClientWithResponses) GetTeamSummaryWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamSummaryResponse, error) {
+	rsp, err := c.GetTeamSummary(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTeamSummaryResponse(rsp)
 }
 
 // ListUsersWithResponse Find a user
@@ -14780,6 +14984,45 @@ func ParseSyncSkillResponse(rsp *http.Response) (*SyncSkillResponse, error) {
 	switch {
 	case rsp.StatusCode == 401:
 		var headers SyncSkillResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetTeamSummaryResponse parses an HTTP response from a GetTeamSummaryWithResponse call
+func ParseGetTeamSummaryResponse(rsp *http.Response) (*GetTeamSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTeamSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TeamSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetTeamSummaryResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

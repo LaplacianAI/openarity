@@ -19,6 +19,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamgraph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teams"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamsettings"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamsummary"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/ui"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/users"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/whoami"
@@ -56,6 +57,7 @@ func newRouters(
 		loops.New(logger, runtime.Loops()),
 		runs.New(logger, runStore{dbStore}, authorizer, starter),
 		teamgraph.New(logger, graphs),
+		teamsummary.New(logger, dbStore, authorizer),
 		teamsettings.New(logger, dbStore, secretWriter, reachable(cfg.MCPPrivateNetworks)),
 		users.New(logger, dbStore),
 		sessions.New(logger, dbStore, authorizer, attachments),

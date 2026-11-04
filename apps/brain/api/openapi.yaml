@@ -2312,6 +2312,38 @@ paths:
                 type: string
                 examples: ["the server did not answer in time"]
 
+  /teams/{id}/summary:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: getTeamSummary
+      tags: [teams]
+      summary: The team at a glance
+      description: |
+        Counts for a team's home: the last day's runs by status, the
+        conversations, the senders waiting to be let in, and the MCP servers
+        whose last discovery failed.
+
+        Each count obeys the rule of the list it summarises, so it never
+        counts what the caller could not list. Runs and sessions follow the
+        session rule: a `direct` session, and its runs, count only for its
+        participant or a caller holding `session:read_all`.
+        `waiting_senders` is null without `channel:read`.
+
+        The counts are read in one statement, so they agree with each other.
+        Lists carry no totals; this is where totals come from.
+      responses:
+        "200":
+          description: The team's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamSummary"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/graph:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -2605,6 +2637,53 @@ components:
         super_admin:
           type: boolean
           description: Holds every permission in every team, whatever the role
+
+    TeamSummary:
+      type: object
+      required: [runs_24h, sessions, waiting_senders, servers_failing]
+      properties:
+        runs_24h:
+          $ref: "#/components/schemas/RunCounts"
+        sessions:
+          type: integer
+          format: int64
+          description: The sessions the caller can see, open or closed
+        waiting_senders:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            The senders waiting to be let in, across every channel of the
+            team. Null without `channel:read`: a caller who cannot list the
+            queue is not told its length. Always sent.
+        servers_failing:
+          type: integer
+          format: int64
+          description: The MCP servers whose last discovery failed
+
+    RunCounts:
+      type: object
+      required: [queued, running, succeeded, failed, cancelled]
+      description: |
+        Top-level runs created in the last 24 hours, on the brain's clock, by
+        status. A delegate's run is part of its parent's and is not counted.
+        Every status is present, zero included.
+      properties:
+        queued:
+          type: integer
+          format: int64
+        running:
+          type: integer
+          format: int64
+        succeeded:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+        cancelled:
+          type: integer
+          format: int64
 
     TeamGraph:
       type: object
