@@ -146,6 +146,8 @@ export function useOffersDeletedTeams(): boolean {
  * Null until known, and a trailing + when a channel has more than one page.
  */
 function useWaiting(teamId: string | null): string | null {
+  // The queue is channel:read; without it every read would be refused, once a minute.
+  const canRead = usePermissions(teamId).can("channel:read");
   const waiting = useQuery({
     queryKey: ["pending", teamId, "count"],
     queryFn: async () => {
@@ -156,7 +158,7 @@ function useWaiting(teamId: string | null): string | null {
       const n = pages.reduce((sum, p) => sum + p.items.length, 0);
       return { n, more: pages.some((p) => Boolean(p.next_cursor)) };
     },
-    enabled: Boolean(teamId),
+    enabled: Boolean(teamId) && canRead,
     staleTime: 60_000,
     refetchInterval: 60_000,
   });
