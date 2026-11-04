@@ -426,6 +426,24 @@ func TestAdminHoldsEveryPermissionTheFileDefines(t *testing.T) {
 	}
 }
 
+// The waiting queue is a stranger's text, shown only to an audience that can
+// act on it. A shipped role that could read the queue and not approve anyone
+// would be shown names it can do nothing about, which is the exposure the
+// permission exists to avoid.
+func TestEveryRoleThatReadsTheQueueCanActOnIt(t *testing.T) {
+	t.Parallel()
+
+	f, err := parseRBAC(rbacJSON)
+	if err != nil {
+		t.Fatalf("rbac.json: %v", err)
+	}
+	for _, r := range f.Roles {
+		if slices.Contains(r.Permissions, "channel:read") && !slices.Contains(r.Permissions, "sender:approve") {
+			t.Errorf("%s may read the waiting senders and may not approve one", r.Name)
+		}
+	}
+}
+
 // The mapping itself, pinned. Every other test here checks that the file is
 // internally consistent and that the loader applies it faithfully — none of
 // them would notice a route being given the wrong scope, which is the change
@@ -457,17 +475,19 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"POST /teams/{id}/channels":               "team channel:write",
 		"DELETE /teams/{id}/channels/{channelID}": "team channel:write",
 
-		// Senders are all channel:write, including the reads. Approving a
-		// stranger grants them the right to instruct an agent as a named
-		// user, which is the same kind of act as connecting the channel —
-		// and the pending queue is only actionable by whoever can approve.
-		// It is also attacker-controlled text: anyone who finds the hook URL
-		// can put fifty display names of their choosing in front of whoever
-		// reads it, so it goes to the smallest audience that can act on it.
-		"GET /teams/{id}/channels/{channelID}/senders/pending": "team channel:write",
-		"GET /teams/{id}/channels/{channelID}/senders":         "team channel:write",
-		"POST /teams/{id}/channels/{channelID}/senders":        "team channel:write",
-		"DELETE /teams/{id}/channels/{channelID}/senders":      "team channel:write",
+		// Senders have permissions of their own, apart from channel:write.
+		// Approving a stranger lets them instruct an agent as a named user,
+		// which an approver may do without being trusted to rewire the
+		// channel and its signing secret. The reads are channel:read rather
+		// than member-wide: the pending queue is attacker-controlled text —
+		// anyone who finds the hook URL can put fifty display names of their
+		// choosing in front of whoever reads it — so it goes to the smallest
+		// audience that can act on it. Every shipped role with channel:read
+		// also holds sender:approve; rbac_test asserts the pairing.
+		"GET /teams/{id}/channels/{channelID}/senders/pending": "team channel:read",
+		"GET /teams/{id}/channels/{channelID}/senders":         "team channel:read",
+		"POST /teams/{id}/channels/{channelID}/senders":        "team sender:approve",
+		"DELETE /teams/{id}/channels/{channelID}/senders":      "team sender:approve",
 
 		// Reading is `member`, unlike the sender routes above. A session is
 		// the conversation the team is already having in the provider — the

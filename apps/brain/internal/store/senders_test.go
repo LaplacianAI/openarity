@@ -1,8 +1,10 @@
 package store
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -418,7 +420,7 @@ func TestApprovingASenderTakesThemOutOfTheQueue(t *testing.T) {
 
 	record(t, s, ch.ID, "u-1", "Asha")
 
-	if err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
+	if _, err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
 		ChannelID: ch.ID, SenderRef: "u-1", UserID: userID,
 	}); err != nil {
 		t.Fatalf("ApproveSender: %v", err)
@@ -450,7 +452,7 @@ func TestAFailedApprovalLeavesTheQueueAlone(t *testing.T) {
 	record(t, s, ch.ID, "u-1", "Asha")
 
 	// A user id nothing references: the foreign key refuses the insert.
-	err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
+	_, err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
 		ChannelID: ch.ID, SenderRef: "u-1", UserID: uuid.New(),
 	})
 	wantPGCode(t, err, foreignKeyViolation, "an approval naming a user that does not exist")
@@ -474,12 +476,14 @@ func TestApprovingTwiceMovesTheSender(t *testing.T) {
 	first := insertUser(t, s, "dev", "asha")
 	second := insertUser(t, s, "dev", "bala")
 
+	var holder *uuid.UUID
 	for _, userID := range []uuid.UUID{first, second} {
-		if err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
-			ChannelID: ch.ID, SenderRef: "u-1", UserID: userID,
+		if _, err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
+			ChannelID: ch.ID, SenderRef: "u-1", UserID: userID, ExpectedHolder: holder,
 		}); err != nil {
 			t.Fatalf("ApproveSender: %v", err)
 		}
+		holder = &userID
 	}
 
 	got := scalar[uuid.UUID](t, s,
@@ -500,13 +504,13 @@ func TestRemovingClearsBothSides(t *testing.T) {
 	userID := insertUser(t, s, "dev", "asha")
 
 	t.Run("an approved sender", func(t *testing.T) {
-		if err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
+		if _, err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
 			ChannelID: ch.ID, SenderRef: "approved", UserID: userID,
 		}); err != nil {
 			t.Fatalf("ApproveSender: %v", err)
 		}
-		if err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
-			ChannelID: ch.ID, SenderRef: "approved",
+		if _, err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
+			ChannelID: ch.ID, SenderRef: "approved", ExpectedHolder: &userID,
 		}); err != nil {
 			t.Fatalf("RemoveSender: %v", err)
 		}
@@ -519,7 +523,7 @@ func TestRemovingClearsBothSides(t *testing.T) {
 
 	t.Run("a pending row", func(t *testing.T) {
 		record(t, s, ch.ID, "spam", "Free Money")
-		if err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
+		if _, err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
 			ChannelID: ch.ID, SenderRef: "spam",
 		}); err != nil {
 			t.Fatalf("RemoveSender: %v", err)
@@ -541,7 +545,7 @@ func TestRemovingSomebodyWhoIsNotThereIsNotAnError(t *testing.T) {
 	team := mustCreate(t, s, "platform")
 	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
 
-	if err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
+	if _, err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
 		ChannelID: ch.ID, SenderRef: "never-seen",
 	}); err != nil {
 		t.Errorf("RemoveSender for an unknown ref: %v", err)
@@ -559,13 +563,13 @@ func TestARemovedSenderCanQueueAgain(t *testing.T) {
 	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
 	userID := insertUser(t, s, "dev", "asha")
 
-	if err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
+	if _, err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
 		ChannelID: ch.ID, SenderRef: "u-1", UserID: userID,
 	}); err != nil {
 		t.Fatalf("ApproveSender: %v", err)
 	}
-	if err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
-		ChannelID: ch.ID, SenderRef: "u-1",
+	if _, err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
+		ChannelID: ch.ID, SenderRef: "u-1", ExpectedHolder: &userID,
 	}); err != nil {
 		t.Fatalf("RemoveSender: %v", err)
 	}
@@ -587,4 +591,176 @@ func TestAPendingSenderNeedsAChannel(t *testing.T) {
 		ChannelID: uuid.New(), SenderRef: "u-1", SenderName: "Asha", Cap: testCap,
 	})
 	wantPGCode(t, err, foreignKeyViolation, "a pending sender in a channel that does not exist")
+}
+
+// --- writes that name the holder they checked ---
+
+// approveAs writes a binding and returns how many the statement wrote.
+func approveAs(t *testing.T, s *Store, ch, user uuid.UUID, ref string, expected *uuid.UUID) int64 {
+	t.Helper()
+
+	n, err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
+		ChannelID: ch, SenderRef: ref, UserID: user, ExpectedHolder: expected,
+	})
+	if err != nil {
+		t.Fatalf("ApproveSender: %v", err)
+	}
+	return n
+}
+
+func holderOf(t *testing.T, s *Store, ch uuid.UUID, ref string) uuid.UUID {
+	t.Helper()
+	return scalar[uuid.UUID](t, s,
+		`SELECT user_id FROM channel_senders WHERE channel_id = $1 AND sender_ref = $2`, ch, ref)
+}
+
+// The handler checks who holds a ref, then writes. A write naming a holder
+// that is not the one there now changes nothing — neither the binding nor the
+// queue — and says so, so the caller can be told rather than succeed.
+func TestAWriteNamingAnotherHolderChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+	admin := insertUser(t, s, "dev", "admin")
+	other := insertUser(t, s, "dev", "other")
+	approver := insertUser(t, s, "dev", "approver")
+
+	approveAs(t, s, ch.ID, admin, "u-1", nil)
+	record(t, s, ch.ID, "u-1", "Asha")
+
+	t.Run("approving, having read it unbound", func(t *testing.T) {
+		if n := approveAs(t, s, ch.ID, approver, "u-1", nil); n != 0 {
+			t.Errorf("wrote %d bindings over a holder nobody checked", n)
+		}
+	})
+	t.Run("approving, having read another holder", func(t *testing.T) {
+		if n := approveAs(t, s, ch.ID, approver, "u-1", &other); n != 0 {
+			t.Errorf("wrote %d bindings over a holder nobody checked", n)
+		}
+	})
+	t.Run("removing, having read another holder", func(t *testing.T) {
+		removed, err := s.RemoveSender(t.Context(), db.RemoveSenderParams{
+			ChannelID: ch.ID, SenderRef: "u-1", ExpectedHolder: &other,
+		})
+		if err != nil {
+			t.Fatalf("RemoveSender: %v", err)
+		}
+		if removed {
+			t.Error("a removal naming the wrong holder reported success")
+		}
+	})
+
+	if got := holderOf(t, s, ch.ID, "u-1"); got != admin {
+		t.Errorf("the binding moved to %s; the admin's should stand", got)
+	}
+	if rows := pending(t, s, ch.ID); len(rows) != 1 {
+		t.Errorf("%d pending rows; a refused write must leave the queue alone", len(rows))
+	}
+}
+
+// A ref read as unbound and bound since was never checked, so a removal
+// leaves it, and still clears what was pending: that is all it was asked.
+func TestRemovingARefReadAsUnboundLeavesALaterBinding(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+	admin := insertUser(t, s, "dev", "admin")
+
+	approveAs(t, s, ch.ID, admin, "u-1", nil)
+
+	removed, err := s.RemoveSender(t.Context(), db.RemoveSenderParams{ChannelID: ch.ID, SenderRef: "u-1"})
+	if err != nil {
+		t.Fatalf("RemoveSender: %v", err)
+	}
+	if !removed {
+		t.Error("a removal of a ref read as unbound refused")
+	}
+	if got := holderOf(t, s, ch.ID, "u-1"); got != admin {
+		t.Errorf("the binding is %s; one nobody checked must stand", got)
+	}
+}
+
+// The race the holder check exists for: the binding moves while the write is
+// waiting on its row. Another transaction holds the row, moved, uncommitted;
+// the write blocks on it, and once that commits it must see the new holder and
+// refuse — not overwrite or delete the binding of somebody nobody checked.
+//
+// Deterministic rather than raced: the test holds the lock itself and asserts
+// the write is still blocked before letting go.
+func TestABindingMovedWhileTheWriteWaitsIsRefused(t *testing.T) {
+	// One store for both: its schema is named after the test, and a
+	// subtest's name has a slash in it.
+	s := queryStore(t)
+
+	for name, write := range map[string]func(s *Store, ch, approver, checked uuid.UUID) (bool, error){
+		"approving": func(s *Store, ch, approver, checked uuid.UUID) (bool, error) {
+			n, err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
+				ChannelID: ch, SenderRef: "u-1", UserID: approver, ExpectedHolder: &checked,
+			})
+			return n > 0, err
+		},
+		"removing": func(s *Store, ch, _, checked uuid.UUID) (bool, error) {
+			return s.RemoveSender(t.Context(), db.RemoveSenderParams{
+				ChannelID: ch, SenderRef: "u-1", ExpectedHolder: &checked,
+			})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			team := mustCreate(t, s, "platform-"+name)
+			ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+			member := insertUser(t, s, "dev", "member-"+name)
+			admin := insertUser(t, s, "dev", "admin-"+name)
+			approver := insertUser(t, s, "dev", "approver-"+name)
+
+			// The handler checked the member; the binding is the member's.
+			approveAs(t, s, ch.ID, member, "u-1", nil)
+
+			// An admin moves it to themselves, and has not committed yet.
+			tx, err := s.Pool().Begin(t.Context())
+			if err != nil {
+				t.Fatalf("Begin: %v", err)
+			}
+			t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) })
+			if _, err := tx.Exec(t.Context(),
+				`UPDATE channel_senders SET user_id = $1 WHERE channel_id = $2 AND sender_ref = 'u-1'`,
+				admin, ch.ID); err != nil {
+				t.Fatalf("moving the binding: %v", err)
+			}
+
+			type result struct {
+				wrote bool
+				err   error
+			}
+			done := make(chan result, 1)
+			go func() {
+				wrote, err := write(s, ch.ID, approver, member)
+				done <- result{wrote, err}
+			}()
+
+			select {
+			case r := <-done:
+				t.Fatalf("the write finished while the row was held: %+v", r)
+			case <-time.After(500 * time.Millisecond):
+				// Correct: it is waiting on the admin's transaction.
+			}
+
+			if err := tx.Commit(t.Context()); err != nil {
+				t.Fatalf("Commit: %v", err)
+			}
+			r := <-done
+			if r.err != nil {
+				t.Fatalf("write: %v", r.err)
+			}
+			if r.wrote {
+				t.Error("the write went through against a holder that moved while it waited")
+			}
+			if got := holderOf(t, s, ch.ID, "u-1"); got != admin {
+				t.Errorf("the binding is %s; the admin's, made while the write waited, should stand", got)
+			}
+		})
+	}
 }

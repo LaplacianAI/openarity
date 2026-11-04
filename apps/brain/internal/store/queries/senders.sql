@@ -66,15 +66,28 @@ DELETE FROM pending_senders WHERE channel_id = $1 AND sender_ref = $2;
 -- can be merely idempotent, since the provider sends again; an admin approves
 -- once. A link left with its pending row in place shows the next admin work
 -- that is already done, and they approve the same person twice.
--- name: ApproveSender :exec
+--
+-- The binding is written only while it is still held by expected_holder, or
+-- still unbound when that is null: the handler checked the caller may take
+-- the ref from whoever held it, and a binding that changed since was never
+-- checked. ON CONFLICT re-reads the row it locked, so a holder changed by a
+-- transaction that committed first is seen, and the WHERE refuses the update.
+-- The dequeue runs only when the link did, so a refusal changes nothing.
+-- Returns how many bindings were written: 0 is a 409, never a success.
+-- name: ApproveSender :one
 WITH linked AS (
     INSERT INTO channel_senders (channel_id, sender_ref, user_id)
     VALUES (sqlc.arg('channel_id'), sqlc.arg('sender_ref'), sqlc.arg('user_id'))
     ON CONFLICT (channel_id, sender_ref) DO UPDATE SET user_id = EXCLUDED.user_id
+    WHERE channel_senders.user_id IS NOT DISTINCT FROM sqlc.narg('expected_holder')::uuid
+    RETURNING 1
+), dequeued AS (
+    DELETE FROM pending_senders
+    WHERE pending_senders.channel_id = sqlc.arg('channel_id')
+      AND pending_senders.sender_ref = sqlc.arg('sender_ref')
+      AND EXISTS (SELECT 1 FROM linked)
 )
-DELETE FROM pending_senders
-WHERE pending_senders.channel_id = sqlc.arg('channel_id')
-  AND pending_senders.sender_ref = sqlc.arg('sender_ref');
+SELECT count(*) FROM linked;
 
 -- RemoveSender is both "this person should not speak here any more" and "this
 -- pending row is spam". One statement covers both, because the caller cannot
@@ -84,12 +97,23 @@ WHERE pending_senders.channel_id = sqlc.arg('channel_id')
 -- It is not a block. Their next message queues them again, which is what makes
 -- a mistaken removal recoverable — and a removal of somebody persistent
 -- ineffective on its own.
--- name: RemoveSender :exec
+--
+-- The binding is deleted only while it is still held by expected_holder, the
+-- holder the handler checked. Null means it was unbound when read: then there
+-- is no binding to delete, and one written since was never checked, so it
+-- stays. A binding moved since is left, and so is the pending row, so a
+-- refusal changes nothing. Returns false only for that refusal.
+-- name: RemoveSender :one
 WITH unlinked AS (
     DELETE FROM channel_senders
     WHERE channel_senders.channel_id = sqlc.arg('channel_id')
       AND channel_senders.sender_ref = sqlc.arg('sender_ref')
+      AND channel_senders.user_id = sqlc.narg('expected_holder')::uuid
+    RETURNING 1
+), dequeued AS (
+    DELETE FROM pending_senders
+    WHERE pending_senders.channel_id = sqlc.arg('channel_id')
+      AND pending_senders.sender_ref = sqlc.arg('sender_ref')
+      AND (sqlc.narg('expected_holder')::uuid IS NULL OR EXISTS (SELECT 1 FROM unlinked))
 )
-DELETE FROM pending_senders
-WHERE pending_senders.channel_id = sqlc.arg('channel_id')
-  AND pending_senders.sender_ref = sqlc.arg('sender_ref');
+SELECT COALESCE(sqlc.narg('expected_holder')::uuid IS NULL OR EXISTS (SELECT 1 FROM unlinked), false)::bool AS removed;

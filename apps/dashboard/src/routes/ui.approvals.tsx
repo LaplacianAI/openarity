@@ -3,10 +3,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { approveSender, listChannels, listPendingSenders, listUsers } from "@/api";
+import { approveSender, listChannels, listMembers, listPendingSenders } from "@/api";
 import { nextCursorOf } from "@/api/client";
+import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type { PendingSender } from "@/api/types";
+import { ForbiddenState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -22,9 +24,16 @@ export const Route = createFileRoute("/ui/approvals")({
   component: Approvals,
 });
 
+// Seeing the queue and acting on it are separate grants. The shipped roles
+// hold both or neither; an operator's own role may hold the first alone.
+const READ = "channel:read";
+const APPROVE = "sender:approve";
+
 function Approvals() {
   const { teamId } = useCurrentTeam();
   const [channelId, setChannelId] = useState<string | null>(null);
+  const perms = usePermissions(teamId);
+  const canRead = perms.can(READ);
 
   const channels = useQuery({
     queryKey: ["channels", teamId],
@@ -63,6 +72,8 @@ function Approvals() {
 
       {!teamId ? (
         <EmptyState title="No team" body="Join or create a team before reviewing senders." />
+      ) : perms.isPending ? null : !canRead ? (
+        <ForbiddenState what="who is waiting" permission={READ} />
       ) : channels.isPending ? (
         <p className="text-sm text-muted-foreground">Loading channels…</p>
       ) : options.length === 0 ? (
@@ -71,13 +82,21 @@ function Approvals() {
           body="Senders arrive through a channel — an inbox, a Slack workspace, a webhook. Until one exists there is nothing that could be waiting."
         />
       ) : selected ? (
-        <Queue teamId={teamId} channelId={selected} />
+        <Queue teamId={teamId} channelId={selected} canApprove={perms.can(APPROVE)} />
       ) : null}
     </div>
   );
 }
 
-function Queue({ teamId, channelId }: { teamId: string; channelId: string }) {
+function Queue({
+  teamId,
+  channelId,
+  canApprove,
+}: {
+  teamId: string;
+  channelId: string;
+  canApprove: boolean;
+}) {
   const qc = useQueryClient();
 
   const queue = useInfiniteQuery({
@@ -87,10 +106,14 @@ function Queue({ teamId, channelId }: { teamId: string; channelId: string }) {
     getNextPageParam: nextCursorOf,
   });
 
-  // Approving binds a sender to a user, so the directory has to be loaded
-  // before any row can be acted on — the brain will not accept an approval
-  // that does not say whose messages these are.
-  const users = useQuery({ queryKey: ["users"], queryFn: () => listUsers() });
+  // Approving binds a sender to a member of this team: the brain accepts no
+  // one else. The team's members are readable by every member, where the
+  // directory needs user:read, which an approver does not hold.
+  const members = useQuery({
+    queryKey: ["members", teamId],
+    queryFn: () => listMembers(teamId),
+    enabled: canApprove,
+  });
 
   const rows: PendingSender[] = queue.data?.pages.flatMap((p) => p.items) ?? [];
 
@@ -145,11 +168,13 @@ function Queue({ teamId, channelId }: { teamId: string; channelId: string }) {
                 </p>
               </td>
               <td className="py-2 pr-3 pl-3">
-                <BindTo
-                  disabled={approve.isPending || users.isPending}
-                  users={users.data?.items ?? []}
-                  onApprove={(userId) => approve.mutate({ ref: row.sender_ref, userId })}
-                />
+                {canApprove ? (
+                  <BindTo
+                    disabled={approve.isPending || members.isPending}
+                    members={members.data?.items ?? []}
+                    onApprove={(userId) => approve.mutate({ ref: row.sender_ref, userId })}
+                  />
+                ) : null}
               </td>
             </tr>
           ))}
@@ -170,11 +195,11 @@ function Queue({ teamId, channelId }: { teamId: string; channelId: string }) {
 }
 
 function BindTo({
-  users,
+  members,
   disabled,
   onApprove,
 }: {
-  users: Array<{ id: string; subject: string; email?: string }>;
+  members: Array<{ user_id: string; subject: string; email?: string }>;
   disabled: boolean;
   onApprove: (userId: string) => void;
 }) {
@@ -187,9 +212,9 @@ function BindTo({
           <SelectValue placeholder="Bind to user…" />
         </SelectTrigger>
         <SelectContent>
-          {users.map((u) => (
-            <SelectItem key={u.id} value={u.id}>
-              {u.email ?? u.subject}
+          {members.map((m) => (
+            <SelectItem key={m.user_id} value={m.user_id}>
+              {m.email ?? m.subject}
             </SelectItem>
           ))}
         </SelectContent>

@@ -33,8 +33,16 @@
       "description": "Create and change skills"
     },
     {
+      "name": "channel:read",
+      "description": "See who is waiting to be approved on a team's channels"
+    },
+    {
       "name": "channel:write",
       "description": "Connect and configure channels"
+    },
+    {
+      "name": "sender:approve",
+      "description": "Let a waiting sender in, or remove one"
     },
     {
       "name": "session:read_all",
@@ -65,12 +73,26 @@
         "agent:write",
         "tool:write",
         "skill:write",
+        "channel:read",
         "channel:write",
+        "sender:approve",
         "session:read_all",
         "membership:write",
         "user:read",
         "run:write",
         "team:settings"
+      ]
+    },
+    {
+      "name": "approver",
+      "description": "Everything a member can do, and letting in the senders waiting on the team's channels",
+      "permissions": [
+        "agent:write",
+        "skill:write",
+        "tool:write",
+        "run:write",
+        "channel:read",
+        "sender:approve"
       ]
     },
     {
@@ -214,25 +236,25 @@
       "method": "GET",
       "path": "/teams/{id}/channels/{channelID}/senders/pending",
       "scope": "team",
-      "permission": "channel:write"
+      "permission": "channel:read"
     },
     {
       "method": "GET",
       "path": "/teams/{id}/channels/{channelID}/senders",
       "scope": "team",
-      "permission": "channel:write"
+      "permission": "channel:read"
     },
     {
       "method": "POST",
       "path": "/teams/{id}/channels/{channelID}/senders",
       "scope": "team",
-      "permission": "channel:write"
+      "permission": "sender:approve"
     },
     {
       "method": "DELETE",
       "path": "/teams/{id}/channels/{channelID}/senders",
       "scope": "team",
-      "permission": "channel:write"
+      "permission": "sender:approve"
     },
     {
       "method": "GET",

@@ -206,6 +206,7 @@ function Members({ teamId }: { teamId: string }) {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="member">member</SelectItem>
+              <SelectItem value="approver">approver</SelectItem>
               <SelectItem value="admin">admin</SelectItem>
             </SelectContent>
           </Select>

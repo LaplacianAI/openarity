@@ -36,8 +36,10 @@ type Store interface {
 	ListPendingSenders(ctx context.Context, arg db.ListPendingSendersParams) ([]db.PendingSender, error)
 	ListChannelSenders(ctx context.Context, arg db.ListChannelSendersParams) ([]db.ChannelSender, error)
 	FindTeamMember(ctx context.Context, arg db.FindTeamMemberParams) (string, error)
-	ApproveSender(ctx context.Context, arg db.ApproveSenderParams) error
-	RemoveSender(ctx context.Context, arg db.RemoveSenderParams) error
+	FindChannelSender(ctx context.Context, arg db.FindChannelSenderParams) (uuid.UUID, error)
+	ListRolePermissions(ctx context.Context, role string) ([]string, error)
+	ApproveSender(ctx context.Context, arg db.ApproveSenderParams) (int64, error)
+	RemoveSender(ctx context.Context, arg db.RemoveSenderParams) (bool, error)
 }
 
 type Secrets interface {
@@ -52,13 +54,17 @@ type Providers interface {
 type handler struct {
 	logger    *slog.Logger
 	store     Store
+	authz     api.Authorizer
 	secrets   Secrets
 	providers Providers
 	hookBase  string
 }
 
-func New(logger *slog.Logger, s Store, sec Secrets, p Providers, hookBase string) *api.Router {
-	h := &handler{logger: logger, store: s, secrets: sec, providers: p, hookBase: strings.TrimSuffix(hookBase, "/")}
+func New(logger *slog.Logger, s Store, a api.Authorizer, sec Secrets, p Providers, hookBase string) *api.Router {
+	h := &handler{
+		logger: logger, store: s, authz: a, secrets: sec, providers: p,
+		hookBase: strings.TrimSuffix(hookBase, "/"),
+	}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/channels", h.list)

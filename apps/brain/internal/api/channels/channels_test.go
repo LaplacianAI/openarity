@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -136,13 +137,28 @@ type fakeAuthz struct {
 	allowed bool
 	err     error
 	asked   []authz.Action
+
+	// holds, when set, answers Can from the caller's role as the shipped
+	// rbac.json grants it, instead of allowed. The guard and the handler
+	// share this fake, so both ask the same question of the same role.
+	holds []string
+	// failFrom, when set, makes err apply from that call on (1-based), so a
+	// test can let the guard through and fail the handler's own question.
+	failFrom int
 }
 
 func (f *fakeAuthz) IsSuperAdmin(*auth.User) bool { return f.super }
 
 func (f *fakeAuthz) Can(_ context.Context, _ *auth.User, a authz.Action, _ authz.Resource) (bool, error) {
 	f.asked = append(f.asked, a)
-	return f.allowed, f.err
+	err := f.err
+	if f.failFrom > 0 && len(f.asked) < f.failFrom {
+		err = nil
+	}
+	if f.holds != nil {
+		return slices.Contains(f.holds, string(a)), err
+	}
+	return f.allowed, err
 }
 
 // No route in this package is any_team, so reaching the strictly weaker check
@@ -170,11 +186,12 @@ func channelRoutes(t *testing.T) authz.Routes {
 	add("POST", "/teams/{id}/channels", "team", &write)
 	add("DELETE", "/teams/{id}/channels/{channelID}", "team", &write)
 
+	read, approve := "channel:read", "sender:approve"
 	senders := "/teams/{id}/channels/{channelID}/senders"
-	add("GET", senders+"/pending", "team", &write)
-	add("GET", senders, "team", &write)
-	add("POST", senders, "team", &write)
-	add("DELETE", senders, "team", &write)
+	add("GET", senders+"/pending", "team", &read)
+	add("GET", senders, "team", &read)
+	add("POST", senders, "team", &approve)
+	add("DELETE", senders, "team", &approve)
 	return rs
 }
 
@@ -203,7 +220,7 @@ func callWith(
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), s, sec, p, hookBase).
+	New(discardLogger(), s, a, sec, p, hookBase).
 		Register(mux, api.NewGuard(channelRoutes(t), a, liveTeams{}, discardLogger()))
 
 	var reader io.Reader

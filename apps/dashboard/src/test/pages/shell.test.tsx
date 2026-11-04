@@ -24,9 +24,9 @@ afterEach(() => {
 
 const PENDING = "GET /teams/{id}/channels/{cid}/senders/pending";
 
-function shell(pending: Record<string, number> = {}) {
-  brain({
-    ...team(["agent:write"]),
+function shell(pending: Record<string, number> = {}, actions = ["agent:write", "channel:read"]) {
+  const seen = brain({
+    ...team(actions),
     "GET /whoami": { body: { subject: "ann", email: "ann@example.com" } },
     "GET /teams/{id}/channels": {
       body: { items: Object.keys(pending).map((id) => ({ id, name: id, provider: "custom" })) },
@@ -44,7 +44,8 @@ function shell(pending: Record<string, number> = {}) {
       };
     },
   });
-  return showAt("/ui", [["/ui", UiRoute]]);
+  showAt("/ui", [["/ui", UiRoute]]);
+  return seen;
 }
 
 describe("the navigation on a wide screen", () => {
@@ -76,6 +77,17 @@ describe("the navigation on a wide screen", () => {
     shell({ c1: 2, c2: 1 });
     const approvals = await screen.findByRole("link", { name: /Approvals/ });
     await waitFor(() => expect(approvals).toHaveTextContent("Approvals, 3 waiting"));
+  });
+
+  // The queue is behind channel:read, so someone without it is shown no count
+  // and the shell does not ask a route that would refuse them every minute.
+  it("asks for no count without channel:read", async () => {
+    widths(true, true);
+    const seen = shell({ c1: 2 }, ["agent:write"]);
+    const approvals = await screen.findByRole("link", { name: /Approvals/ });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(approvals).toHaveTextContent(/^Approvals$/);
+    expect(seen.some((s) => s.path.includes("/senders/pending"))).toBe(false);
   });
 
   it("shows no count when nobody is waiting", async () => {

@@ -25,9 +25,9 @@ func newSendersCmd(opts *cli.Options) *cobra.Command {
 			"Nothing they send is stored until somebody here says which user they\n" +
 			"are: until then only their provider-side id and the name they chose\n" +
 			"are recorded, and their messages are dropped.\n\n" +
-			"All four need channel:write in the team — approving somebody lets them\n" +
-			"instruct an agent as a named user, which is the same kind of act as\n" +
-			"connecting the channel.",
+			"Listing needs channel:read in the team; approving and removing need\n" +
+			"sender:approve, because approving somebody lets them instruct an agent\n" +
+			"as a named user. Neither lets you change the channel itself.",
 	}
 
 	cmd.AddCommand(

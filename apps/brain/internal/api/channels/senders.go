@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -172,7 +174,7 @@ func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := h.store.FindTeamMember(r.Context(), db.FindTeamMemberParams{
+	role, err := h.store.FindTeamMember(r.Context(), db.FindTeamMemberParams{
 		TeamID: channel.TeamID, UserID: req.UserID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -183,11 +185,27 @@ func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to check team membership", err)
 		return
 	}
+	if !h.covers(w, r, u, channel.TeamID, role) {
+		return
+	}
+	// Approving a ref already bound to somebody else takes it from them, so
+	// the caller must cover whoever holds it now as well.
+	holder, ok := h.coversHolder(w, r, u, channel, ref, req.UserID)
+	if !ok {
+		return
+	}
 
-	if err := h.store.ApproveSender(r.Context(), db.ApproveSenderParams{
-		ChannelID: channel.ID, SenderRef: ref, UserID: req.UserID,
-	}); err != nil {
+	// The write names the holder that was checked, so a binding moved since
+	// is refused rather than taken from somebody nobody checked.
+	written, err := h.store.ApproveSender(r.Context(), db.ApproveSenderParams{
+		ChannelID: channel.ID, SenderRef: ref, UserID: req.UserID, ExpectedHolder: holder,
+	})
+	if err != nil {
 		api.Fail(w, h.logger, u, "failed to approve sender", err)
+		return
+	}
+	if written == 0 {
+		http.Error(w, errMoved, http.StatusConflict)
 		return
 	}
 
@@ -195,6 +213,77 @@ func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 		"subject", u.Subject, "channel_id", channel.ID, "sender_ref", ref, "user_id", req.UserID)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// covers answers whether the caller holds every permission role grants in the
+// team, and writes the refusal when they do not. sender:approve is apart from
+// membership:write, so without this an approver could make a stranger speak
+// as an admin. Asking Can, rather than comparing two roles, keeps a super
+// admin and an operator's own roles right.
+//
+// A failed read is a 500, never a refusal: answering "you may not" for a
+// database blip sends somebody to audit roles that were never wrong.
+func (h *handler) covers(w http.ResponseWriter, r *http.Request, u *auth.User, team uuid.UUID, role string) bool {
+	perms, err := h.store.ListRolePermissions(r.Context(), role)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read the user's role", err)
+		return false
+	}
+	for _, p := range perms {
+		ok, err := h.authz.Can(r.Context(), u, authz.Action(p), authz.Resource{TeamID: team})
+		if err != nil {
+			api.Fail(w, h.logger, u, "failed to check the caller's permissions", err)
+			return false
+		}
+		if !ok {
+			http.Error(w, "you may not let someone speak as a user with more access than yours",
+				http.StatusForbidden)
+			return false
+		}
+	}
+	return true
+}
+
+// errMoved is the 409 for a binding that changed between the check and the
+// write: what was checked is no longer what would be changed.
+const errMoved = "the sender's binding changed while this was being decided; look again and retry"
+
+// coversHolder applies covers to whoever the ref is bound to now, unless that
+// is keep: removing a binding, or moving it to somebody else, takes it from
+// them. A ref bound to nobody, or to somebody no longer in the team, holds
+// nothing to protect.
+//
+// It returns the holder it read, nil for none, for the write to name: the
+// check and the write are separate statements, and the write must refuse a
+// binding that moved between them.
+func (h *handler) coversHolder(
+	w http.ResponseWriter, r *http.Request, u *auth.User, channel db.Channel, ref string, keep uuid.UUID,
+) (*uuid.UUID, bool) {
+	holder, err := h.store.FindChannelSender(r.Context(), db.FindChannelSenderParams{
+		ChannelID: channel.ID, SenderRef: ref,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, true
+	}
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read the sender's binding", err)
+		return nil, false
+	}
+	if holder == keep {
+		return &holder, true
+	}
+
+	role, err := h.store.FindTeamMember(r.Context(), db.FindTeamMemberParams{
+		TeamID: channel.TeamID, UserID: holder,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return &holder, true
+	}
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to check team membership", err)
+		return nil, false
+	}
+	return &holder, h.covers(w, r, u, channel.TeamID, role)
 }
 
 func (h *handler) removeSender(w http.ResponseWriter, r *http.Request) {
@@ -210,10 +299,20 @@ func (h *handler) removeSender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.RemoveSender(r.Context(), db.RemoveSenderParams{
-		ChannelID: channel.ID, SenderRef: ref,
-	}); err != nil {
+	holder, ok := h.coversHolder(w, r, u, channel, ref, uuid.Nil)
+	if !ok {
+		return
+	}
+
+	removed, err := h.store.RemoveSender(r.Context(), db.RemoveSenderParams{
+		ChannelID: channel.ID, SenderRef: ref, ExpectedHolder: holder,
+	})
+	if err != nil {
 		api.Fail(w, h.logger, u, "failed to remove sender", err)
+		return
+	}
+	if !removed {
+		http.Error(w, errMoved, http.StatusConflict)
 		return
 	}
 
