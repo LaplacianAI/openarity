@@ -52,6 +52,22 @@ WHERE channel_id = sqlc.arg('channel_id')
 ORDER BY first_seen DESC, sender_ref DESC
 LIMIT sqlc.arg('page_size');
 
+-- ListTeamPendingSenders is every channel's queue as one, oldest first: the
+-- sender who has waited longest is the one an approver should see. The
+-- cursor carries all three sort keys, because sender_ref is unique only
+-- within a channel and two senders can be first seen in the same instant.
+-- Each channel holds at most 50, so the sort needs no index of its own.
+-- name: ListTeamPendingSenders :many
+SELECT sqlc.embed(p), c.name AS channel_name, c.provider AS channel_provider
+FROM pending_senders p
+JOIN channels c ON c.id = p.channel_id
+WHERE c.team_id = sqlc.arg('team_id')
+  AND (NOT sqlc.arg('use_cursor')::bool
+   OR (p.first_seen, p.channel_id, p.sender_ref)
+      > (sqlc.arg('after_first_seen')::timestamptz, sqlc.arg('after_channel_id')::uuid, sqlc.arg('after_ref')::text))
+ORDER BY p.first_seen, p.channel_id, p.sender_ref
+LIMIT sqlc.arg('page_size');
+
 -- name: DeletePendingSender :exec
 DELETE FROM pending_senders WHERE channel_id = $1 AND sender_ref = $2;
 

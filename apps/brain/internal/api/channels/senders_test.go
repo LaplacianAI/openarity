@@ -31,6 +31,8 @@ type senderState struct {
 
 	approvals []approval
 	removals  []approval
+	// teamAsked is every question put to the team's queue, cursor and all.
+	teamAsked []db.ListTeamPendingSendersParams
 
 	pendingErr  error
 	approvedErr error
@@ -59,6 +61,32 @@ func (f *fakeStore) ListPendingSenders(_ context.Context, arg db.ListPendingSend
 	for _, p := range f.senders.pending {
 		if p.ChannelID == arg.ChannelID {
 			out = append(out, p)
+		}
+	}
+	if n := int(arg.PageSize); n < len(out) {
+		out = out[:n]
+	}
+	return out, nil
+}
+
+// ListTeamPendingSenders answers with every pending sender on one of the
+// team's channels, in the order the test wrote them: the order is the
+// query's, and the store tests hold it to that.
+func (f *fakeStore) ListTeamPendingSenders(
+	_ context.Context, arg db.ListTeamPendingSendersParams,
+) ([]db.ListTeamPendingSendersRow, error) {
+	f.senders.teamAsked = append(f.senders.teamAsked, arg)
+	if f.senders.pendingErr != nil {
+		return nil, f.senders.pendingErr
+	}
+	var out []db.ListTeamPendingSendersRow
+	for _, p := range f.senders.pending {
+		for _, c := range f.channels {
+			if c.ID == p.ChannelID && c.TeamID == arg.TeamID {
+				out = append(out, db.ListTeamPendingSendersRow{
+					PendingSender: p, ChannelName: c.Name, ChannelProvider: c.Provider,
+				})
+			}
 		}
 	}
 	if n := int(arg.PageSize); n < len(out) {
@@ -1074,5 +1102,122 @@ func TestTheWriteNamesTheHolderTheCheckRead(t *testing.T) {
 				t.Errorf("status = %d, want 409 (%s)", rec.Code, rec.Body)
 			}
 		})
+	}
+}
+
+// --- the team's queue ---
+
+func (f *senderFixture) teamQueue(t *testing.T, query string) *httptest.ResponseRecorder {
+	t.Helper()
+	return f.do(t, http.MethodGet, "/teams/"+f.teamID.String()+"/senders/pending"+query, "")
+}
+
+// Each item is the channel's pending sender as the channel's own queue
+// draws it, with the channel it waits on, since approving is done there.
+func TestTheTeamQueueNamesEachSendersChannel(t *testing.T) {
+	t.Parallel()
+
+	f := newSenderFixture(t)
+	rec := f.teamQueue(t, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+
+	want := `{"items":[{"sender_ref":"U01ABC","sender_name":"Asha Menon","seen_count":3,` +
+		`"first_seen":"2025-08-17T06:32:25Z","last_seen":"2025-08-17T06:43:19Z",` +
+		`"channel_id":"` + f.channelID.String() + `","channel_name":"support","channel_provider":"custom"}]}`
+	if got := strings.TrimSpace(rec.Body.String()); got != want {
+		t.Errorf("body =\n %s\nwant\n %s", got, want)
+	}
+	if len(f.store.senders.teamAsked) != 1 || f.store.senders.teamAsked[0].TeamID != f.teamID {
+		t.Errorf("the queue was asked %+v, want once, for team %s", f.store.senders.teamAsked, f.teamID)
+	}
+}
+
+// The next page starts after the last row's time, channel and ref, all
+// three: the ref alone is unique only within its channel.
+func TestTheTeamQueuePagesFromTheLastRowsThreeKeys(t *testing.T) {
+	t.Parallel()
+
+	f := newSenderFixture(t)
+	other := uuid.New()
+	f.store.channels = append(f.store.channels, db.Channel{ID: other, TeamID: f.teamID, Provider: "slack", Name: "sales"})
+	first := f.store.senders.pending[0]
+	f.store.senders.pending = append(f.store.senders.pending, db.PendingSender{
+		ChannelID: other, SenderRef: "U01ABC", SenderName: "Someone else",
+		FirstSeen: first.FirstSeen, LastSeen: first.LastSeen, SeenCount: 1,
+	})
+
+	page := pendingPage(t, f.teamQueue(t, "?limit=1"))
+	if page.NextCursor == nil {
+		t.Fatal("one of two senders came back with no cursor to the other")
+	}
+	if rec := f.teamQueue(t, "?limit=1&cursor="+url.QueryEscape(*page.NextCursor)); rec.Code != http.StatusOK {
+		t.Fatalf("the next page = %d: %s", rec.Code, rec.Body)
+	}
+
+	asked := f.store.senders.teamAsked
+	if len(asked) != 2 {
+		t.Fatalf("the queue was asked %d times, want 2", len(asked))
+	}
+	if asked[0].UseCursor || asked[0].PageSize != 2 {
+		t.Errorf("the first page asked %+v, want no cursor and one row past the limit", asked[0])
+	}
+	next := asked[1]
+	if !next.UseCursor || !next.AfterFirstSeen.Equal(first.FirstSeen) ||
+		next.AfterChannelID != first.ChannelID || next.AfterRef != first.SenderRef {
+		t.Errorf("the next page asked after %v / %s / %q, want %v / %s / %q",
+			next.AfterFirstSeen, next.AfterChannelID, next.AfterRef,
+			first.FirstSeen, first.ChannelID, first.SenderRef)
+	}
+}
+
+func TestTheTeamQueueRefusesACursorItDidNotIssue(t *testing.T) {
+	t.Parallel()
+
+	f := newSenderFixture(t)
+	if rec := f.teamQueue(t, "?cursor=not-a-cursor"); rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+	if len(f.store.senders.teamAsked) != 0 {
+		t.Error("the queue was read with a cursor that would not decode")
+	}
+}
+
+// Strangers' names go only to those who may read a channel's queue.
+func TestTheTeamQueueNeedsChannelRead(t *testing.T) {
+	t.Parallel()
+
+	f := newSenderFixture(t)
+	f.authz.allowed = false
+	if rec := f.teamQueue(t, ""); rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rec.Code)
+	}
+	if len(f.authz.asked) == 0 || f.authz.asked[0] != "channel:read" {
+		t.Errorf("the guard was asked %v, want channel:read first", f.authz.asked)
+	}
+	if len(f.store.senders.teamAsked) != 0 {
+		t.Error("the queue was read for a caller refused it")
+	}
+}
+
+func TestAnEmptyTeamQueueIsAnEmptyArray(t *testing.T) {
+	t.Parallel()
+
+	f := newSenderFixture(t)
+	f.store.senders.pending = nil
+	if body := f.teamQueue(t, "").Body.String(); !strings.Contains(body, `"items":[]`) {
+		t.Errorf("body = %s, want an empty items array", body)
+	}
+}
+
+func TestAFailedTeamQueueIsA500ThatLeaksNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newSenderFixture(t)
+	f.store.senders.pendingErr = errAny
+	rec := f.teamQueue(t, "")
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "reset by peer") {
+		t.Errorf("status %d %q, want a 500 that says nothing", rec.Code, rec.Body)
 	}
 }

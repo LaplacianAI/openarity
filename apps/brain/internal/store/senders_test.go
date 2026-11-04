@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -762,5 +763,147 @@ func TestABindingMovedWhileTheWriteWaitsIsRefused(t *testing.T) {
 				t.Errorf("the binding is %s; the admin's, made while the write waited, should stand", got)
 			}
 		})
+	}
+}
+
+// --- the team's queue ---
+
+// seenAt sets when a sender was first seen to an exact instant, so two can
+// tie and the order between them is the cursor's to decide.
+func seenAt(t *testing.T, s *Store, channelID uuid.UUID, ref string, at time.Time) {
+	t.Helper()
+
+	if _, err := s.pool.Exec(t.Context(),
+		`UPDATE pending_senders SET first_seen = $3 WHERE channel_id = $1 AND sender_ref = $2`,
+		channelID, ref, at); err != nil {
+		t.Fatalf("seenAt %s: %v", ref, err)
+	}
+}
+
+func teamQueue(t *testing.T, s *Store, p db.ListTeamPendingSendersParams) []db.ListTeamPendingSendersRow {
+	t.Helper()
+
+	if p.PageSize == 0 {
+		p.PageSize = 1000
+	}
+	rows, err := s.ListTeamPendingSenders(t.Context(), p)
+	if err != nil {
+		t.Fatalf("ListTeamPendingSenders: %v", err)
+	}
+	return rows
+}
+
+func refsOf(rows []db.ListTeamPendingSendersRow) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.PendingSender.SenderRef
+	}
+	return out
+}
+
+// Whoever has waited longest comes first, whichever channel they wrote in
+// on, with the channel named; another team's strangers are not this team's.
+func TestTheTeamQueueIsOldestFirstAcrossChannels(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	support := mustCreateChannel(t, s, team.ID, "custom", "support")
+	sales := mustCreateChannel(t, s, team.ID, "slack", "sales")
+	theirs := mustCreateChannel(t, s, mustCreate(t, s, "elsewhere").ID, "custom", "support")
+
+	base := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	for _, w := range []struct {
+		channel uuid.UUID
+		ref     string
+		minutes int
+	}{
+		{support.ID, "newest", 30},
+		{sales.ID, "oldest", 10},
+		{support.ID, "middle", 20},
+		{theirs.ID, "theirs", 0},
+	} {
+		record(t, s, w.channel, w.ref, w.ref)
+		seenAt(t, s, w.channel, w.ref, base.Add(time.Duration(w.minutes)*time.Minute))
+	}
+
+	rows := teamQueue(t, s, db.ListTeamPendingSendersParams{TeamID: team.ID})
+	if got, want := strings.Join(refsOf(rows), ","), "oldest,middle,newest"; got != want {
+		t.Fatalf("the queue reads %s, want %s", got, want)
+	}
+	if r := rows[0]; r.ChannelName != "sales" || r.ChannelProvider != "slack" || r.PendingSender.ChannelID != sales.ID {
+		t.Errorf("the oldest is named as %q on %q (%s), want sales on slack (%s)",
+			r.ChannelName, r.ChannelProvider, r.PendingSender.ChannelID, sales.ID)
+	}
+}
+
+// Senders first seen in the same instant are ordered by channel, then by
+// ref, and paging one at a time through the tie returns each exactly once:
+// a cursor of the time and the ref alone would skip or repeat across it,
+// because a ref is unique only within its channel.
+func TestPagingThroughATieReturnsEverySenderOnce(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	a := mustCreateChannel(t, s, team.ID, "custom", "a")
+	b := mustCreateChannel(t, s, team.ID, "custom", "b")
+	if bytes.Compare(a.ID[:], b.ID[:]) > 0 {
+		a, b = b, a
+	}
+
+	same := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	for _, w := range []struct {
+		channel uuid.UUID
+		ref     string
+	}{{b.ID, "U1"}, {a.ID, "U2"}, {a.ID, "U1"}, {b.ID, "U0"}} {
+		record(t, s, w.channel, w.ref, w.ref)
+		seenAt(t, s, w.channel, w.ref, same)
+	}
+	// One sender a moment later, so the tie is not the whole queue.
+	record(t, s, a.ID, "later", "later")
+	seenAt(t, s, a.ID, "later", same.Add(time.Second))
+
+	want := "a/U1,a/U2,b/U0,b/U1,a/later"
+	name := map[uuid.UUID]string{a.ID: "a", b.ID: "b"}
+	label := func(r db.ListTeamPendingSendersRow) string {
+		return name[r.PendingSender.ChannelID] + "/" + r.PendingSender.SenderRef
+	}
+
+	var whole []string
+	for _, r := range teamQueue(t, s, db.ListTeamPendingSendersParams{TeamID: team.ID}) {
+		whole = append(whole, label(r))
+	}
+	if got := strings.Join(whole, ","); got != want {
+		t.Fatalf("the queue reads %s, want %s", got, want)
+	}
+
+	var paged []string
+	p := db.ListTeamPendingSendersParams{TeamID: team.ID, PageSize: 1}
+	for range 10 {
+		rows := teamQueue(t, s, p)
+		if len(rows) == 0 {
+			break
+		}
+		last := rows[0].PendingSender
+		paged = append(paged, label(rows[0]))
+		p.UseCursor = true
+		p.AfterFirstSeen, p.AfterChannelID, p.AfterRef = last.FirstSeen, last.ChannelID, last.SenderRef
+	}
+	if got := strings.Join(paged, ","); got != want {
+		t.Errorf("paged one at a time, the queue reads %s, want %s", got, want)
+	}
+}
+
+// An approved sender has left every channel's queue, so the team's too.
+func TestAnApprovedSenderLeavesTheTeamQueue(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "custom", "support")
+	user := insertUser(t, s, "dev", "asha")
+	addMember(t, s, team.ID, user, "member")
+
+	record(t, s, ch.ID, "U1", "Asha")
+	record(t, s, ch.ID, "U2", "Bala")
+	approveAs(t, s, ch.ID, user, "U1", nil)
+
+	if got := strings.Join(refsOf(teamQueue(t, s, db.ListTeamPendingSendersParams{TeamID: team.ID})), ","); got != "U2" {
+		t.Errorf("the queue reads %s after U1 was approved, want U2", got)
 	}
 }

@@ -223,6 +223,74 @@ func (q *Queries) ListPendingSenders(ctx context.Context, arg ListPendingSenders
 	return items, nil
 }
 
+const listTeamPendingSenders = `-- name: ListTeamPendingSenders :many
+SELECT p.channel_id, p.sender_ref, p.sender_name, p.first_seen, p.last_seen, p.seen_count, c.name AS channel_name, c.provider AS channel_provider
+FROM pending_senders p
+JOIN channels c ON c.id = p.channel_id
+WHERE c.team_id = $1
+  AND (NOT $2::bool
+   OR (p.first_seen, p.channel_id, p.sender_ref)
+      > ($3::timestamptz, $4::uuid, $5::text))
+ORDER BY p.first_seen, p.channel_id, p.sender_ref
+LIMIT $6
+`
+
+type ListTeamPendingSendersParams struct {
+	TeamID         uuid.UUID
+	UseCursor      bool
+	AfterFirstSeen time.Time
+	AfterChannelID uuid.UUID
+	AfterRef       string
+	PageSize       int32
+}
+
+type ListTeamPendingSendersRow struct {
+	PendingSender   PendingSender
+	ChannelName     string
+	ChannelProvider string
+}
+
+// ListTeamPendingSenders is every channel's queue as one, oldest first: the
+// sender who has waited longest is the one an approver should see. The
+// cursor carries all three sort keys, because sender_ref is unique only
+// within a channel and two senders can be first seen in the same instant.
+// Each channel holds at most 50, so the sort needs no index of its own.
+func (q *Queries) ListTeamPendingSenders(ctx context.Context, arg ListTeamPendingSendersParams) ([]ListTeamPendingSendersRow, error) {
+	rows, err := q.db.Query(ctx, listTeamPendingSenders,
+		arg.TeamID,
+		arg.UseCursor,
+		arg.AfterFirstSeen,
+		arg.AfterChannelID,
+		arg.AfterRef,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamPendingSendersRow
+	for rows.Next() {
+		var i ListTeamPendingSendersRow
+		if err := rows.Scan(
+			&i.PendingSender.ChannelID,
+			&i.PendingSender.SenderRef,
+			&i.PendingSender.SenderName,
+			&i.PendingSender.FirstSeen,
+			&i.PendingSender.LastSeen,
+			&i.PendingSender.SeenCount,
+			&i.ChannelName,
+			&i.ChannelProvider,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordPendingSender = `-- name: RecordPendingSender :execrows
 INSERT INTO pending_senders (channel_id, sender_ref, sender_name)
 SELECT $1::uuid, $2::text, $3::text
