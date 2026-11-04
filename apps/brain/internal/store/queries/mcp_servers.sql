@@ -16,7 +16,8 @@ ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('page_size');
 
 -- A server pointed somewhere else has not been discovered there, so a changed
--- transport clears discovered_at. The tools stay until the next discovery
+-- transport clears discovered_at, and the last attempt with it: an error from
+-- the old address says nothing about the new one. The tools stay until the next discovery
 -- replaces them: an agent granted this server keeps what it had rather than
 -- losing every tool to an edit.
 -- name: UpdateMCPServer :one
@@ -32,6 +33,16 @@ UPDATE mcp_servers SET
          AND command IS NOT DISTINCT FROM sqlc.narg('command')::text[]
         THEN discovered_at
     END,
+    last_discovery_error = CASE
+        WHEN url IS NOT DISTINCT FROM sqlc.narg('url')
+         AND command IS NOT DISTINCT FROM sqlc.narg('command')::text[]
+        THEN last_discovery_error
+    END,
+    last_discovery_at = CASE
+        WHEN url IS NOT DISTINCT FROM sqlc.narg('url')
+         AND command IS NOT DISTINCT FROM sqlc.narg('command')::text[]
+        THEN last_discovery_at
+    END,
     updated_at      = now()
 WHERE id = sqlc.arg('id')
 RETURNING *;
@@ -43,5 +54,12 @@ DELETE FROM mcp_servers WHERE id = $1;
 -- while discovery ran matches no row, and the caller rolls its tools back.
 -- The row lock this takes makes a concurrent edit wait for the commit.
 -- name: MarkMCPServerDiscovered :execrows
-UPDATE mcp_servers SET discovered_at = now()
+UPDATE mcp_servers SET discovered_at = now(), last_discovery_at = now(), last_discovery_error = NULL
+WHERE id = sqlc.arg('id') AND updated_at = sqlc.arg('updated_at');
+
+-- The error is the sentence the caller was answered with, never more. Guarded
+-- as a success is: a server edited while it was being discovered matches no
+-- row, and the error, which belongs to the old address, is not kept.
+-- name: RecordMCPServerDiscoveryFailure :execrows
+UPDATE mcp_servers SET last_discovery_error = sqlc.arg('error')::text, last_discovery_at = now()
 WHERE id = sqlc.arg('id') AND updated_at = sqlc.arg('updated_at');

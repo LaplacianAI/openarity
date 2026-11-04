@@ -719,6 +719,17 @@ type MCPServer struct {
 	Env map[string]string  `json:"env" yaml:"env"`
 	ID  openapi_types.UUID `json:"id" yaml:"id"`
 
+	// LastDiscoveryAt When discovery was last tried, whether or not it worked, and null
+	// until then. Always sent; optional here for the reason
+	// `discovered_at` is.
+	LastDiscoveryAt *time.Time `json:"last_discovery_at,omitempty" yaml:"last_discovery_at,omitempty"`
+
+	// LastDiscoveryError Why the last discovery failed, in the words the caller was
+	// answered with; null when it succeeded or none has run. A server
+	// has failed when this is set. A failure that was the brain's own,
+	// such as the secret store being down, is not recorded. Always sent.
+	LastDiscoveryError *string `json:"last_discovery_error,omitempty" yaml:"last_discovery_error,omitempty"`
+
 	// Name Unique within the team, case-insensitively. Each tool reaches the
 	// model as `<name>__<tool>`.
 	//
@@ -2155,7 +2166,8 @@ type ClientInterface interface {
 	//
 	// Requires `tool:write` in this team. Every field is replaced, so a
 	// field left out is cleared. Pointing the server somewhere else — a
-	// different url or command — clears `discovered_at`; the tools already
+	// different url or command — clears `discovered_at` and the last
+	// attempt, `last_discovery_error` and `last_discovery_at`; the tools already
 	// listed stay until the next discovery replaces them, so an agent
 	// granted this server keeps what it had rather than losing every tool
 	// to an edit.
@@ -2169,7 +2181,8 @@ type ClientInterface interface {
 	//
 	// Requires `tool:write` in this team. Every field is replaced, so a
 	// field left out is cleared. Pointing the server somewhere else — a
-	// different url or command — clears `discovered_at`; the tools already
+	// different url or command — clears `discovered_at` and the last
+	// attempt, `last_discovery_error` and `last_discovery_at`; the tools already
 	// listed stay until the next discovery replaces them, so an agent
 	// granted this server keeps what it had rather than losing every tool
 	// to an edit.
@@ -2187,6 +2200,11 @@ type ClientInterface interface {
 	// step: new tools are added, changed ones rewritten, and ones the server
 	// no longer offers removed. Any failure leaves the previous list as it
 	// was, so an agent granted the server keeps what it had.
+	//
+	// Every attempt sets the server's `last_discovery_at`. A success clears
+	// `last_discovery_error`; a failure stores the sentence it was answered
+	// with, unless the server was edited meanwhile or the failure was the
+	// brain's own.
 	//
 	// The brain reaches public addresses only, plus the private ranges its
 	// operator lists in `OPENARITY_MCP_PRIVATE_NETWORKS`. Link-local
@@ -3444,7 +3462,8 @@ func (c *Client) GetMCPServer(ctx context.Context, id TeamID, serverID ServerID,
 //
 // Requires `tool:write` in this team. Every field is replaced, so a
 // field left out is cleared. Pointing the server somewhere else — a
-// different url or command — clears `discovered_at`; the tools already
+// different url or command — clears `discovered_at` and the last
+// attempt, `last_discovery_error` and `last_discovery_at`; the tools already
 // listed stay until the next discovery replaces them, so an agent
 // granted this server keeps what it had rather than losing every tool
 // to an edit.
@@ -3468,7 +3487,8 @@ func (c *Client) UpdateMCPServerWithBody(ctx context.Context, id TeamID, serverI
 //
 // Requires `tool:write` in this team. Every field is replaced, so a
 // field left out is cleared. Pointing the server somewhere else — a
-// different url or command — clears `discovered_at`; the tools already
+// different url or command — clears `discovered_at` and the last
+// attempt, `last_discovery_error` and `last_discovery_at`; the tools already
 // listed stay until the next discovery replaces them, so an agent
 // granted this server keeps what it had rather than losing every tool
 // to an edit.
@@ -3496,6 +3516,11 @@ func (c *Client) UpdateMCPServer(ctx context.Context, id TeamID, serverID Server
 // step: new tools are added, changed ones rewritten, and ones the server
 // no longer offers removed. Any failure leaves the previous list as it
 // was, so an agent granted the server keeps what it had.
+//
+// Every attempt sets the server's `last_discovery_at`. A success clears
+// `last_discovery_error`; a failure stores the sentence it was answered
+// with, unless the server was edited meanwhile or the failure was the
+// brain's own.
 //
 // The brain reaches public addresses only, plus the private ranges its
 // operator lists in `OPENARITY_MCP_PRIVATE_NETWORKS`. Link-local
@@ -7756,7 +7781,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Requires `tool:write` in this team. Every field is replaced, so a
 	// field left out is cleared. Pointing the server somewhere else — a
-	// different url or command — clears `discovered_at`; the tools already
+	// different url or command — clears `discovered_at` and the last
+	// attempt, `last_discovery_error` and `last_discovery_at`; the tools already
 	// listed stay until the next discovery replaces them, so an agent
 	// granted this server keeps what it had rather than losing every tool
 	// to an edit.
@@ -7770,7 +7796,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Requires `tool:write` in this team. Every field is replaced, so a
 	// field left out is cleared. Pointing the server somewhere else — a
-	// different url or command — clears `discovered_at`; the tools already
+	// different url or command — clears `discovered_at` and the last
+	// attempt, `last_discovery_error` and `last_discovery_at`; the tools already
 	// listed stay until the next discovery replaces them, so an agent
 	// granted this server keeps what it had rather than losing every tool
 	// to an edit.
@@ -7788,6 +7815,11 @@ type ClientWithResponsesInterface interface {
 	// step: new tools are added, changed ones rewritten, and ones the server
 	// no longer offers removed. Any failure leaves the previous list as it
 	// was, so an agent granted the server keeps what it had.
+	//
+	// Every attempt sets the server's `last_discovery_at`. A success clears
+	// `last_discovery_error`; a failure stores the sentence it was answered
+	// with, unless the server was edited meanwhile or the failure was the
+	// brain's own.
 	//
 	// The brain reaches public addresses only, plus the private ranges its
 	// operator lists in `OPENARITY_MCP_PRIVATE_NETWORKS`. Link-local
@@ -11590,7 +11622,8 @@ func (c *ClientWithResponses) GetMCPServerWithResponse(ctx context.Context, id T
 //
 // Requires `tool:write` in this team. Every field is replaced, so a
 // field left out is cleared. Pointing the server somewhere else — a
-// different url or command — clears `discovered_at`; the tools already
+// different url or command — clears `discovered_at` and the last
+// attempt, `last_discovery_error` and `last_discovery_at`; the tools already
 // listed stay until the next discovery replaces them, so an agent
 // granted this server keeps what it had rather than losing every tool
 // to an edit.
@@ -11610,7 +11643,8 @@ func (c *ClientWithResponses) UpdateMCPServerWithBodyWithResponse(ctx context.Co
 //
 // Requires `tool:write` in this team. Every field is replaced, so a
 // field left out is cleared. Pointing the server somewhere else — a
-// different url or command — clears `discovered_at`; the tools already
+// different url or command — clears `discovered_at` and the last
+// attempt, `last_discovery_error` and `last_discovery_at`; the tools already
 // listed stay until the next discovery replaces them, so an agent
 // granted this server keeps what it had rather than losing every tool
 // to an edit.
@@ -11634,6 +11668,11 @@ func (c *ClientWithResponses) UpdateMCPServerWithResponse(ctx context.Context, i
 // step: new tools are added, changed ones rewritten, and ones the server
 // no longer offers removed. Any failure leaves the previous list as it
 // was, so an agent granted the server keeps what it had.
+//
+// Every attempt sets the server's `last_discovery_at`. A success clears
+// `last_discovery_error`; a failure stores the sentence it was answered
+// with, unless the server was edited meanwhile or the failure was the
+// brain's own.
 //
 // The brain reaches public addresses only, plus the private ranges its
 // operator lists in `OPENARITY_MCP_PRIVATE_NETWORKS`. Link-local

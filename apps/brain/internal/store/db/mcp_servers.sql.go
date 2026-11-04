@@ -15,7 +15,7 @@ import (
 const createMCPServer = `-- name: CreateMCPServer :one
 INSERT INTO mcp_servers (team_id, name, url, command, env, auth_secret_ref, bare)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at
+RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at
 `
 
 type CreateMCPServerParams struct {
@@ -51,6 +51,8 @@ func (q *Queries) CreateMCPServer(ctx context.Context, arg CreateMCPServerParams
 		&i.DiscoveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LastDiscoveryError,
+		&i.LastDiscoveryAt,
 	)
 	return i, err
 }
@@ -65,7 +67,7 @@ func (q *Queries) DeleteMCPServer(ctx context.Context, id uuid.UUID) error {
 }
 
 const getMCPServer = `-- name: GetMCPServer :one
-SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at FROM mcp_servers WHERE id = $1
+SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at FROM mcp_servers WHERE id = $1
 `
 
 func (q *Queries) GetMCPServer(ctx context.Context, id uuid.UUID) (McpServer, error) {
@@ -83,12 +85,14 @@ func (q *Queries) GetMCPServer(ctx context.Context, id uuid.UUID) (McpServer, er
 		&i.DiscoveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LastDiscoveryError,
+		&i.LastDiscoveryAt,
 	)
 	return i, err
 }
 
 const listMCPServersByTeam = `-- name: ListMCPServersByTeam :many
-SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at FROM mcp_servers
+SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at FROM mcp_servers
 WHERE team_id = $1
   AND strpos(lower(name), lower($2::text)) > 0
   AND (NOT $3::bool
@@ -134,6 +138,8 @@ func (q *Queries) ListMCPServersByTeam(ctx context.Context, arg ListMCPServersBy
 			&i.DiscoveredAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.LastDiscoveryError,
+			&i.LastDiscoveryAt,
 		); err != nil {
 			return nil, err
 		}
@@ -146,7 +152,7 @@ func (q *Queries) ListMCPServersByTeam(ctx context.Context, arg ListMCPServersBy
 }
 
 const markMCPServerDiscovered = `-- name: MarkMCPServerDiscovered :execrows
-UPDATE mcp_servers SET discovered_at = now()
+UPDATE mcp_servers SET discovered_at = now(), last_discovery_at = now(), last_discovery_error = NULL
 WHERE id = $1 AND updated_at = $2
 `
 
@@ -166,6 +172,28 @@ func (q *Queries) MarkMCPServerDiscovered(ctx context.Context, arg MarkMCPServer
 	return result.RowsAffected(), nil
 }
 
+const recordMCPServerDiscoveryFailure = `-- name: RecordMCPServerDiscoveryFailure :execrows
+UPDATE mcp_servers SET last_discovery_error = $1::text, last_discovery_at = now()
+WHERE id = $2 AND updated_at = $3
+`
+
+type RecordMCPServerDiscoveryFailureParams struct {
+	Error     string
+	ID        uuid.UUID
+	UpdatedAt time.Time
+}
+
+// The error is the sentence the caller was answered with, never more. Guarded
+// as a success is: a server edited while it was being discovered matches no
+// row, and the error, which belongs to the old address, is not kept.
+func (q *Queries) RecordMCPServerDiscoveryFailure(ctx context.Context, arg RecordMCPServerDiscoveryFailureParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordMCPServerDiscoveryFailure, arg.Error, arg.ID, arg.UpdatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateMCPServer = `-- name: UpdateMCPServer :one
 UPDATE mcp_servers SET
     name            = $1,
@@ -179,9 +207,19 @@ UPDATE mcp_servers SET
          AND command IS NOT DISTINCT FROM $3::text[]
         THEN discovered_at
     END,
+    last_discovery_error = CASE
+        WHEN url IS NOT DISTINCT FROM $2
+         AND command IS NOT DISTINCT FROM $3::text[]
+        THEN last_discovery_error
+    END,
+    last_discovery_at = CASE
+        WHEN url IS NOT DISTINCT FROM $2
+         AND command IS NOT DISTINCT FROM $3::text[]
+        THEN last_discovery_at
+    END,
     updated_at      = now()
 WHERE id = $7
-RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at
+RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at
 `
 
 type UpdateMCPServerParams struct {
@@ -195,7 +233,8 @@ type UpdateMCPServerParams struct {
 }
 
 // A server pointed somewhere else has not been discovered there, so a changed
-// transport clears discovered_at. The tools stay until the next discovery
+// transport clears discovered_at, and the last attempt with it: an error from
+// the old address says nothing about the new one. The tools stay until the next discovery
 // replaces them: an agent granted this server keeps what it had rather than
 // losing every tool to an edit.
 func (q *Queries) UpdateMCPServer(ctx context.Context, arg UpdateMCPServerParams) (McpServer, error) {
@@ -221,6 +260,8 @@ func (q *Queries) UpdateMCPServer(ctx context.Context, arg UpdateMCPServerParams
 		&i.DiscoveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LastDiscoveryError,
+		&i.LastDiscoveryAt,
 	)
 	return i, err
 }

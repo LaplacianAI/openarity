@@ -44,11 +44,12 @@ type fakeStore struct {
 	tools   map[uuid.UUID][]db.McpTool
 
 	readErr, listErr, createErr, updateErr, deleteErr, toolsErr error
-	markErr, upsertErr, pruneErr                                error
+	markErr, upsertErr, pruneErr, failErr                       error
 
 	txOpen    bool
 	committed int
 	marked    []db.MarkMCPServerDiscoveredParams
+	failures  []db.RecordMCPServerDiscoveryFailureParams
 
 	reads      int
 	created    []db.CreateMCPServerParams
@@ -81,6 +82,26 @@ func (s *fakeStore) InTx(_ context.Context, fn func(Queries) error) error {
 	}
 	s.committed++
 	return nil
+}
+
+// RecordMCPServerDiscoveryFailure keeps the error only on the version that
+// was read, as the real query's guard does.
+func (s *fakeStore) RecordMCPServerDiscoveryFailure(_ context.Context, arg db.RecordMCPServerDiscoveryFailureParams) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failures = append(s.failures, arg)
+	if s.failErr != nil {
+		return 0, s.failErr
+	}
+
+	row, ok := s.servers[arg.ID]
+	if !ok || !row.UpdatedAt.Equal(arg.UpdatedAt) {
+		return 0, nil
+	}
+	now := time.Now()
+	row.LastDiscoveryError, row.LastDiscoveryAt = &arg.Error, &now
+	s.servers[arg.ID] = row
+	return 1, nil
 }
 
 type fakeTx struct {
@@ -595,7 +616,7 @@ func wantKeys(t *testing.T, what string, got map[string]bool, want ...string) {
 	}
 }
 
-var commonKeys = []string{"id", "team_id", "name", "env", "bare", "discovered_at", "created_at", "updated_at"}
+var commonKeys = []string{"id", "team_id", "name", "env", "bare", "discovered_at", "last_discovery_error", "last_discovery_at", "created_at", "updated_at"}
 
 // The wire shape is a contract. A server shows its own transport's fields and
 // never the other's, and discovered_at is present as null until discovery

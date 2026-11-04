@@ -1067,3 +1067,125 @@ func TestASearchPagesWithTheCursor(t *testing.T) {
 		t.Errorf("next page = %+v, %v; want invoice-a alone", rest, err)
 	}
 }
+
+func mustFail(t *testing.T, s *Store, srv db.McpServer, msg string) {
+	t.Helper()
+
+	n, err := s.RecordMCPServerDiscoveryFailure(t.Context(), db.RecordMCPServerDiscoveryFailureParams{
+		Error: msg, ID: srv.ID, UpdatedAt: srv.UpdatedAt,
+	})
+	if err != nil || n != 1 {
+		t.Fatalf("RecordMCPServerDiscoveryFailure: %d rows, %v", n, err)
+	}
+}
+
+func mustGetServer(t *testing.T, s *Store, id uuid.UUID) db.McpServer {
+	t.Helper()
+
+	got, err := s.GetMCPServer(t.Context(), id)
+	if err != nil {
+		t.Fatalf("GetMCPServer: %v", err)
+	}
+	return got
+}
+
+// A failure keeps what was found before it: the tools and discovered_at stay,
+// and the error and its time say the last attempt did not work.
+func TestAFailedDiscoveryIsRecordedBesideTheLastSuccess(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
+	mustMark(t, s, srv)
+	succeeded := mustGetServer(t, s, srv.ID)
+
+	mustFail(t, s, srv, "the server did not answer in time")
+
+	got := mustGetServer(t, s, srv.ID)
+	if got.LastDiscoveryError == nil || *got.LastDiscoveryError != "the server did not answer in time" {
+		t.Errorf("last_discovery_error = %v, want the sentence", got.LastDiscoveryError)
+	}
+	if got.LastDiscoveryAt == nil || got.LastDiscoveryAt.Before(*succeeded.LastDiscoveryAt) {
+		t.Errorf("last_discovery_at = %v, want at or after the success at %v", got.LastDiscoveryAt, succeeded.LastDiscoveryAt)
+	}
+	if got.DiscoveredAt == nil || !got.DiscoveredAt.Equal(*succeeded.DiscoveredAt) {
+		t.Errorf("discovered_at = %v, want the success's %v kept", got.DiscoveredAt, succeeded.DiscoveredAt)
+	}
+	if !got.UpdatedAt.Equal(srv.UpdatedAt) {
+		t.Error("recording a failure moved updated_at, so the next discovery's guard would refuse its own read")
+	}
+}
+
+func TestASuccessClearsTheLastError(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
+	mustFail(t, s, srv, "the server did not answer as an MCP server")
+
+	mustMark(t, s, srv)
+
+	got := mustGetServer(t, s, srv.ID)
+	if got.LastDiscoveryError != nil {
+		t.Errorf("last_discovery_error = %q after a success, want null", *got.LastDiscoveryError)
+	}
+	if got.LastDiscoveryAt == nil || got.DiscoveredAt == nil {
+		t.Errorf("last_discovery_at %v, discovered_at %v; want both set", got.LastDiscoveryAt, got.DiscoveredAt)
+	}
+}
+
+// The error belongs to the address that was asked. A server edited since it
+// was read keeps no error from the old one.
+func TestAFailureOnAServerEditedSinceItWasReadIsNotKept(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	read := mustCreateServer(t, s, urlServer(team.ID, "github"))
+	if _, err := s.UpdateMCPServer(t.Context(), db.UpdateMCPServerParams{
+		ID: read.ID, Name: read.Name, Url: read.Url, Env: []byte(`{}`), Bare: true,
+	}); err != nil {
+		t.Fatalf("UpdateMCPServer: %v", err)
+	}
+
+	n, err := s.RecordMCPServerDiscoveryFailure(t.Context(), db.RecordMCPServerDiscoveryFailureParams{
+		Error: "the server did not answer in time", ID: read.ID, UpdatedAt: read.UpdatedAt,
+	})
+	if err != nil || n != 0 {
+		t.Errorf("recording on a stale version: %d rows, %v; want 0 and no error", n, err)
+	}
+	got := mustGetServer(t, s, read.ID)
+	if got.LastDiscoveryError != nil || got.LastDiscoveryAt != nil {
+		t.Errorf("error %v at %v; want neither kept", got.LastDiscoveryError, got.LastDiscoveryAt)
+	}
+}
+
+// Pointing a server somewhere else forgets the last attempt with
+// discovered_at: an error from the old address says nothing about the new.
+// An edit that keeps the transport keeps it.
+func TestAnEditKeepsTheLastAttemptOnlyWhileTheTransportIsTheSame(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+
+	for name, tc := range map[string]struct {
+		url  string
+		kept bool
+	}{
+		"same-address":      {"https://mcp.example.com", true},
+		"different-address": {"https://elsewhere.example.com", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := mustCreateServer(t, s, urlServer(team.ID, name))
+			mustFail(t, s, srv, "the server did not answer in time")
+
+			got, err := s.UpdateMCPServer(t.Context(), db.UpdateMCPServerParams{
+				ID: srv.ID, Name: name + "-renamed", Url: &tc.url, Env: []byte(`{}`),
+			})
+			if err != nil {
+				t.Fatalf("UpdateMCPServer: %v", err)
+			}
+			if tc.kept && (got.LastDiscoveryError == nil || got.LastDiscoveryAt == nil) {
+				t.Errorf("error %v at %v; want both kept", got.LastDiscoveryError, got.LastDiscoveryAt)
+			}
+			if !tc.kept && (got.LastDiscoveryError != nil || got.LastDiscoveryAt != nil) {
+				t.Errorf("error %v at %v; want both cleared", got.LastDiscoveryError, got.LastDiscoveryAt)
+			}
+		})
+	}
+}

@@ -432,7 +432,7 @@ func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamPara
 }
 
 const listGrantedMCPServers = `-- name: ListGrantedMCPServers :many
-SELECT s.id, s.team_id, s.name, s.url, s.command, s.env, s.auth_secret_ref, s.bare, s.discovered_at, s.created_at, s.updated_at, g.allow
+SELECT s.id, s.team_id, s.name, s.url, s.command, s.env, s.auth_secret_ref, s.bare, s.discovered_at, s.created_at, s.updated_at, s.last_discovery_error, s.last_discovery_at, g.allow
 FROM agent_mcp_servers g
 JOIN mcp_servers s ON s.id = g.mcp_server_id
 WHERE g.agent_id = $1
@@ -467,6 +467,8 @@ func (q *Queries) ListGrantedMCPServers(ctx context.Context, agentID uuid.UUID) 
 			&i.McpServer.DiscoveredAt,
 			&i.McpServer.CreatedAt,
 			&i.McpServer.UpdatedAt,
+			&i.McpServer.LastDiscoveryError,
+			&i.McpServer.LastDiscoveryAt,
 			&i.Allow,
 		); err != nil {
 			return nil, err
