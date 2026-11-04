@@ -166,14 +166,32 @@ func (q *Queries) GetSessionVisible(ctx context.Context, arg GetSessionVisiblePa
 }
 
 const listSessionsByChannel = `-- name: ListSessionsByChannel :many
-SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id FROM sessions
-WHERE channel_id = $1
-  AND (kind <> 'direct'
+SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.started_at, s.last_message_at, s.user_id,
+       c.name     AS channel_name,
+       pu.email   AS participant_email,
+       pu.subject AS participant_subject,
+       m.text     AS last_message,
+       lr.status  AS latest_run_status
+FROM sessions s
+LEFT JOIN channels c ON c.id = s.channel_id
+LEFT JOIN messages m ON m.id = (
+    SELECT id FROM messages
+    WHERE session_id = s.id
+    ORDER BY received_at DESC, id DESC
+    LIMIT 1)
+LEFT JOIN runs lr ON lr.id = (
+    SELECT id FROM runs
+    WHERE session_id = s.id AND id = root_run_id
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1)
+LEFT JOIN users pu ON pu.id = CASE WHEN s.kind = 'direct' THEN s.user_id ELSE m.user_id END
+WHERE s.channel_id = $1
+  AND (s.kind <> 'direct'
    OR $2::bool
-   OR user_id = $3::uuid)
+   OR s.user_id = $3::uuid)
   AND (NOT $4::bool
-   OR (last_message_at, id) < ($5::timestamptz, $6::uuid))
-ORDER BY last_message_at DESC, id DESC
+   OR (s.last_message_at, s.id) < ($5::timestamptz, $6::uuid))
+ORDER BY s.last_message_at DESC, s.id DESC
 LIMIT $7
 `
 
@@ -187,6 +205,15 @@ type ListSessionsByChannelParams struct {
 	PageSize           int32
 }
 
+type ListSessionsByChannelRow struct {
+	Session            Session
+	ChannelName        *string
+	ParticipantEmail   *string
+	ParticipantSubject *string
+	LastMessage        *string
+	LatestRunStatus    *string
+}
+
 // A direct session is one person's conversation, and every member of the team
 // could read it until this filter existed. The rule:
 //
@@ -194,13 +221,13 @@ type ListSessionsByChannelParams struct {
 //	direct             the person it is with, plus a moderator
 //
 // `moderator` is passed in rather than decided here, because who may moderate
-// is whether the caller holds channel:write in the team, and that mapping is
-// data in rbac.json. A role name in this file would put it back in code.
+// is whether the caller holds session:read_all in the team, and that mapping
+// is data in rbac.json. A role name in this file would put it back in code.
 //
 // user_id = viewer is null when user_id is null, and null is not true, so a
 // direct session whose participant was deleted falls out of every non-
 // moderator's list. Invisible is the safe direction for a private message.
-func (q *Queries) ListSessionsByChannel(ctx context.Context, arg ListSessionsByChannelParams) ([]Session, error) {
+func (q *Queries) ListSessionsByChannel(ctx context.Context, arg ListSessionsByChannelParams) ([]ListSessionsByChannelRow, error) {
 	rows, err := q.db.Query(ctx, listSessionsByChannel,
 		arg.ChannelID,
 		arg.Moderator,
@@ -214,19 +241,24 @@ func (q *Queries) ListSessionsByChannel(ctx context.Context, arg ListSessionsByC
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Session
+	var items []ListSessionsByChannelRow
 	for rows.Next() {
-		var i Session
+		var i ListSessionsByChannelRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.TeamID,
-			&i.ChannelID,
-			&i.ProviderRef,
-			&i.Kind,
-			&i.Status,
-			&i.StartedAt,
-			&i.LastMessageAt,
-			&i.UserID,
+			&i.Session.ID,
+			&i.Session.TeamID,
+			&i.Session.ChannelID,
+			&i.Session.ProviderRef,
+			&i.Session.Kind,
+			&i.Session.Status,
+			&i.Session.StartedAt,
+			&i.Session.LastMessageAt,
+			&i.Session.UserID,
+			&i.ChannelName,
+			&i.ParticipantEmail,
+			&i.ParticipantSubject,
+			&i.LastMessage,
+			&i.LatestRunStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -239,34 +271,80 @@ func (q *Queries) ListSessionsByChannel(ctx context.Context, arg ListSessionsByC
 }
 
 const listSessionsByTeam = `-- name: ListSessionsByTeam :many
-SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id FROM sessions
-WHERE team_id = $1
-  AND (kind <> 'direct'
+SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.started_at, s.last_message_at, s.user_id,
+       c.name     AS channel_name,
+       pu.email   AS participant_email,
+       pu.subject AS participant_subject,
+       m.text     AS last_message,
+       lr.status  AS latest_run_status
+FROM sessions s
+LEFT JOIN channels c ON c.id = s.channel_id
+LEFT JOIN messages m ON m.id = (
+    SELECT id FROM messages
+    WHERE session_id = s.id
+    ORDER BY received_at DESC, id DESC
+    LIMIT 1)
+LEFT JOIN runs lr ON lr.id = (
+    SELECT id FROM runs
+    WHERE session_id = s.id AND id = root_run_id
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1)
+LEFT JOIN users pu ON pu.id = CASE WHEN s.kind = 'direct' THEN s.user_id ELSE m.user_id END
+WHERE s.team_id = $1
+  AND (s.kind <> 'direct'
    OR $2::bool
-   OR user_id = $3::uuid)
-  AND (NOT $4::bool
-   OR (last_message_at, id) < ($5::timestamptz, $6::uuid))
-ORDER BY last_message_at DESC, id DESC
-LIMIT $7
+   OR s.user_id = $3::uuid)
+  AND ($4::uuid IS NULL OR s.channel_id = $4::uuid)
+  AND (COALESCE(cardinality($5::text[]), 0) = 0
+   OR s.status = ANY($5::text[]))
+  AND (COALESCE(cardinality($6::text[]), 0) = 0
+   OR lr.status = ANY($6::text[]))
+  AND (NOT $7::bool
+   OR (s.last_message_at, s.id) < ($8::timestamptz, $9::uuid))
+ORDER BY s.last_message_at DESC, s.id DESC
+LIMIT $10
 `
 
 type ListSessionsByTeamParams struct {
 	TeamID             uuid.UUID
 	Moderator          bool
 	Viewer             uuid.UUID
+	ChannelID          *uuid.UUID
+	Statuses           []string
+	RunStatuses        []string
 	UseCursor          bool
 	AfterLastMessageAt time.Time
 	AfterID            uuid.UUID
 	PageSize           int32
 }
 
+type ListSessionsByTeamRow struct {
+	Session            Session
+	ChannelName        *string
+	ParticipantEmail   *string
+	ParticipantSubject *string
+	LastMessage        *string
+	LatestRunStatus    *string
+}
+
 // ListSessionsByTeam is what a session started from the dashboard appears in,
 // since it has no channel to be listed under. Same visibility rule.
-func (q *Queries) ListSessionsByTeam(ctx context.Context, arg ListSessionsByTeamParams) ([]Session, error) {
+//
+// Each row carries its channel's name, who it is with, the newest message
+// and the newest root run's status. The newest message and run are picked by
+// id in a subquery and joined as plain LEFT JOINs, not LATERAL: sqlc reads
+// a lateral's columns as never null, and a session with no messages would
+// then fail to scan. The run_statuses filter reads the newest run, so it
+// asks "is the latest run failed", not "did any run fail", and leaves out a
+// session with no run whenever it is set.
+func (q *Queries) ListSessionsByTeam(ctx context.Context, arg ListSessionsByTeamParams) ([]ListSessionsByTeamRow, error) {
 	rows, err := q.db.Query(ctx, listSessionsByTeam,
 		arg.TeamID,
 		arg.Moderator,
 		arg.Viewer,
+		arg.ChannelID,
+		arg.Statuses,
+		arg.RunStatuses,
 		arg.UseCursor,
 		arg.AfterLastMessageAt,
 		arg.AfterID,
@@ -276,19 +354,24 @@ func (q *Queries) ListSessionsByTeam(ctx context.Context, arg ListSessionsByTeam
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Session
+	var items []ListSessionsByTeamRow
 	for rows.Next() {
-		var i Session
+		var i ListSessionsByTeamRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.TeamID,
-			&i.ChannelID,
-			&i.ProviderRef,
-			&i.Kind,
-			&i.Status,
-			&i.StartedAt,
-			&i.LastMessageAt,
-			&i.UserID,
+			&i.Session.ID,
+			&i.Session.TeamID,
+			&i.Session.ChannelID,
+			&i.Session.ProviderRef,
+			&i.Session.Kind,
+			&i.Session.Status,
+			&i.Session.StartedAt,
+			&i.Session.LastMessageAt,
+			&i.Session.UserID,
+			&i.ChannelName,
+			&i.ParticipantEmail,
+			&i.ParticipantSubject,
+			&i.LastMessage,
+			&i.LatestRunStatus,
 		); err != nil {
 			return nil, err
 		}

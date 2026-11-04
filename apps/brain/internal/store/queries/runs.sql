@@ -129,6 +129,29 @@ WHERE session_id = sqlc.arg('session_id')
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('page_size');
 
+-- A team's run history: root runs only, in sessions the caller can see by the
+-- rule GetRunVisible uses. A delegate's run shows in its parent's trace.
+-- An empty statuses array is no filter. COALESCE because a nil Go slice
+-- arrives as NULL, and cardinality(NULL) is NULL, which would match nothing.
+-- name: ListRunsByTeam :many
+SELECT * FROM runs r
+WHERE r.team_id = sqlc.arg('team_id')
+  AND r.id = r.root_run_id
+  AND EXISTS (
+    SELECT 1 FROM sessions s
+    WHERE s.id = r.session_id
+      AND (s.kind <> 'direct'
+       OR sqlc.arg('moderator')::bool
+       OR s.user_id = sqlc.arg('viewer')::uuid))
+  AND (COALESCE(cardinality(sqlc.arg('statuses')::text[]), 0) = 0
+   OR r.status = ANY(sqlc.arg('statuses')::text[]))
+  AND (sqlc.narg('since')::timestamptz IS NULL OR r.created_at >= sqlc.narg('since')::timestamptz)
+  AND (NOT sqlc.arg('filter_hub')::bool OR r.hub = sqlc.arg('hub')::bool)
+  AND (NOT sqlc.arg('use_cursor')::bool
+   OR (r.created_at, r.id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT sqlc.arg('page_size');
+
 -- A child is born running and held by its parent's worker: never queued, so
 -- the sweep never starts it as a run of its own. Session, root and user come
 -- from the parent; the agent is selected within the team, so another team's

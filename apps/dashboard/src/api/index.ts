@@ -18,6 +18,7 @@ import type {
   Channel,
   CreateChannelRequest,
   CreatedChannel,
+  ListedSession,
   MCPServer,
   MCPServerRequest,
   MCPTool,
@@ -179,8 +180,8 @@ export function getSession(teamId: string, sessionId: string): Promise<Session> 
   return request(`/teams/${teamId}/sessions/${sessionId}`);
 }
 
-export function listSessions(teamId: string, cursor?: string | null): Promise<Page<Session>> {
-  return request<Page<Session>>(`/teams/${teamId}/sessions${pageQuery(cursor)}`);
+export function listSessions(teamId: string, cursor?: string | null): Promise<Page<ListedSession>> {
+  return request<Page<ListedSession>>(`/teams/${teamId}/sessions${pageQuery(cursor)}`);
 }
 
 export function listMessages(

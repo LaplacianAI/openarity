@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,10 @@ type fakeStore struct {
 
 	attachments   []db.Attachment
 	attachmentErr error
+
+	// extras is what the list queries join onto a session: its channel's
+	// name, who it is with, the newest message and the newest run's status.
+	extras map[uuid.UUID]db.ListSessionsByTeamRow
 
 	listArgs           []db.ListMessagesBySessionParams
 	channelListArgs    []db.ListSessionsByChannelParams
@@ -136,17 +141,25 @@ func (f *fakeStore) GetSession(_ context.Context, id uuid.UUID) (db.Session, err
 	return db.Session{}, pgx.ErrNoRows
 }
 
+// row is a session as the list queries return it, with whatever extras the
+// test gave it.
+func (f *fakeStore) row(s db.Session) db.ListSessionsByTeamRow {
+	r := f.extras[s.ID]
+	r.Session = s
+	return r
+}
+
 func (f *fakeStore) ListSessionsByChannel(
 	_ context.Context, arg db.ListSessionsByChannelParams,
-) ([]db.Session, error) {
+) ([]db.ListSessionsByChannelRow, error) {
 	f.channelListArgs = append(f.channelListArgs, arg)
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	var out []db.Session
+	var out []db.ListSessionsByChannelRow
 	for _, s := range f.sessions {
 		if s.ChannelID != nil && arg.ChannelID != nil && *s.ChannelID == *arg.ChannelID {
-			out = append(out, s)
+			out = append(out, db.ListSessionsByChannelRow(f.row(s)))
 		}
 	}
 	return trim(out, arg.PageSize), nil
@@ -154,15 +167,15 @@ func (f *fakeStore) ListSessionsByChannel(
 
 func (f *fakeStore) ListSessionsByTeam(
 	_ context.Context, arg db.ListSessionsByTeamParams,
-) ([]db.Session, error) {
+) ([]db.ListSessionsByTeamRow, error) {
 	f.teamListArgs = append(f.teamListArgs, arg)
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	var out []db.Session
+	var out []db.ListSessionsByTeamRow
 	for _, s := range f.sessions {
 		if s.TeamID == arg.TeamID {
-			out = append(out, s)
+			out = append(out, f.row(s))
 		}
 	}
 	return trim(out, arg.PageSize), nil
@@ -947,8 +960,9 @@ func TestTheListsPassTheCallerAndTheirModeration(t *testing.T) {
 
 // --- reading one session ---
 
-// One session read alone is the same JSON as that session in a list, so a
-// page linked to it and a list that led to it never disagree.
+// One session read alone carries the same fields as that session in a list,
+// so a page linked to it and a list that led to it never disagree. The list
+// adds four of its own, which the single read does not send as nulls.
 func TestASessionReadsAsItDoesInTheList(t *testing.T) {
 	t.Parallel()
 
@@ -964,6 +978,11 @@ func TestASessionReadsAsItDoesInTheList(t *testing.T) {
 	}
 	if got := strings.TrimSpace(rec.Body.String()); got != string(listed) {
 		t.Errorf("read alone:\n %s\nin the list:\n %s", got, listed)
+	}
+	for _, k := range []string{"channel_name", "participant", "last_message", "latest_run_status"} {
+		if strings.Contains(rec.Body.String(), `"`+k+`"`) {
+			t.Errorf("the single read sends the list's %s: %s", k, rec.Body)
+		}
 	}
 }
 
@@ -1029,3 +1048,168 @@ func TestAMalformedSessionIDIsRefusedWhenRead(t *testing.T) {
 type liveTeams struct{}
 
 func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }
+
+// --- what a list says about each session ---
+
+func listedPage(t *testing.T, rec *httptest.ResponseRecorder) api.Page[listedSession] {
+	t.Helper()
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	var got api.Page[listedSession]
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body is not a page of sessions: %v (%s)", err, rec.Body)
+	}
+	return got
+}
+
+func str(s string) *string { return &s }
+
+// Both lists show a session by its channel, who it is with, what was said
+// last and how its latest run went, so a row reads the same in either.
+func TestBothListsShowWhatASessionIsAbout(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	f.store.extras = map[uuid.UUID]db.ListSessionsByTeamRow{f.sessionID: {
+		ChannelName: str("support"), ParticipantEmail: str("asha@example.com"), ParticipantSubject: str("asha"),
+		LastMessage: str("what's our deploy status?"), LatestRunStatus: str("failed"),
+	}}
+
+	for _, path := range []string{f.teamSessions(), f.channelSessions()} {
+		items := listedPage(t, f.get(t, path)).Items
+		if len(items) != 1 {
+			t.Fatalf("%s: %d sessions, want 1", path, len(items))
+		}
+		got := items[0]
+		if got.ID != f.sessionID || deref(got.ChannelName) != "support" || deref(got.Participant) != "asha@example.com" ||
+			deref(got.LastMessage) != "what's our deploy status?" || deref(got.LatestRunStatus) != "failed" {
+			t.Errorf("%s: listed %+v", path, got)
+		}
+	}
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return *p
+}
+
+// Someone whose provider sent no email is named by their subject, not left
+// blank.
+func TestAParticipantWithNoEmailIsNamedBySubject(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	f.store.extras = map[uuid.UUID]db.ListSessionsByTeamRow{f.sessionID: {ParticipantSubject: str("U024BE7LH")}}
+
+	if got := listedPage(t, f.get(t, f.teamSessions())).Items[0]; deref(got.Participant) != "U024BE7LH" {
+		t.Errorf("participant = %s, want the subject", deref(got.Participant))
+	}
+}
+
+// A session with no channel, no messages and no run sends each as null, and
+// sends it: a client tells "nothing" from "not supported" by the key.
+func TestNothingToShowIsNullAndPresent(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+
+	for _, path := range []string{f.teamSessions(), f.channelSessions()} {
+		var raw struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(f.get(t, path).Body.Bytes(), &raw); err != nil || len(raw.Items) != 1 {
+			t.Fatalf("%s: %v, %d items", path, err, len(raw.Items))
+		}
+		for _, k := range []string{"channel_name", "participant", "last_message", "latest_run_status"} {
+			if v, ok := raw.Items[0][k]; !ok || v != nil {
+				t.Errorf("%s: %s = %v (present %v), want null and present", path, k, v, ok)
+			}
+		}
+	}
+}
+
+// A message is cut to 140 characters where a character starts, with an
+// ellipsis saying so. Bytes would cut an emoji in half and send broken UTF-8.
+func TestAPreviewIsCutAt140Characters(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("é", 100) + strings.Repeat("🚀", 100)
+	for name, tc := range map[string]struct {
+		in   *string
+		want *string
+	}{
+		"no message":            {nil, nil},
+		"short":                 {str("hello"), str("hello")},
+		"exactly 140":           {str(strings.Repeat("a", 140)), str(strings.Repeat("a", 140))},
+		"141 is cut":            {str(strings.Repeat("a", 141)), str(strings.Repeat("a", 140) + "…")},
+		"many bytes, few runes": {str(strings.Repeat("🚀", 140)), str(strings.Repeat("🚀", 140))},
+		"cut between emoji":     {&long, str(strings.Repeat("é", 100) + strings.Repeat("🚀", 40) + "…")},
+	} {
+		got := preview(tc.in)
+		if deref(got) != deref(tc.want) || (got == nil) != (tc.want == nil) {
+			t.Errorf("%s: got %q, want %q", name, deref(got), deref(tc.want))
+		}
+	}
+}
+
+func TestTheTeamListPassesItsFilters(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	channel := uuid.New()
+
+	if rec := f.get(t, f.teamSessions()); rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if p := f.store.teamListArgs[0]; len(p.Statuses) != 0 || len(p.RunStatuses) != 0 || p.ChannelID != nil {
+		t.Errorf("no filters listed with %+v, want none", p)
+	}
+
+	q := "?status=closed&run_status=failed&run_status=running&channel_id=" + channel.String()
+	if rec := f.get(t, f.teamSessions()+q); rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	p := f.store.teamListArgs[1]
+	if !slices.Equal(p.Statuses, []string{"closed"}) || !slices.Equal(p.RunStatuses, []string{"failed", "running"}) ||
+		p.ChannelID == nil || *p.ChannelID != channel {
+		t.Errorf("listed with %+v", p)
+	}
+}
+
+func TestABadSessionFilterIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct{ query, says string }{
+		"an unknown status":            {"?status=archived", "status must be one of open, closed"},
+		"an unknown run status":        {"?run_status=done", "run_status must be one of queued, running, succeeded, failed, cancelled"},
+		"a channel that is not a uuid": {"?channel_id=support", "channel_id must be a uuid"},
+	} {
+		f := newFixture(t)
+		rec := f.get(t, f.teamSessions()+tc.query)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tc.says) {
+			t.Errorf("%s: status %d %q, want 400 saying %q", name, rec.Code, rec.Body, tc.says)
+		}
+		if len(f.store.teamListArgs) != 0 {
+			t.Errorf("%s: sessions were listed after the refusal", name)
+		}
+	}
+}
+
+// The lists cut the message themselves; the query sends the whole of it.
+func TestBothListsCutALongMessage(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	f.store.extras = map[uuid.UUID]db.ListSessionsByTeamRow{f.sessionID: {LastMessage: str(strings.Repeat("x", 500))}}
+
+	for _, path := range []string{f.teamSessions(), f.channelSessions()} {
+		got := deref(listedPage(t, f.get(t, path)).Items[0].LastMessage)
+		if got != strings.Repeat("x", 140)+"…" {
+			t.Errorf("%s: last_message is %d bytes, want 140 characters and an ellipsis", path, len(got))
+		}
+	}
+}

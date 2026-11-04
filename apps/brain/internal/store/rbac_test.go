@@ -539,6 +539,7 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// rule to the row: someone else's direct run is a 404 to everyone but
 		// a moderator. Starting and cancelling one spend tokens, so they are
 		// run:write.
+		"GET /teams/{id}/runs":                 "member",
 		"POST /teams/{id}/runs":                "team run:write",
 		"GET /teams/{id}/runs/{runID}":         "member",
 		"GET /teams/{id}/runs/{runID}/events":  "member",

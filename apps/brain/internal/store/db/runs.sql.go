@@ -456,6 +456,101 @@ func (q *Queries) ListRunsBySession(ctx context.Context, arg ListRunsBySessionPa
 	return items, nil
 }
 
+const listRunsByTeam = `-- name: ListRunsByTeam :many
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub FROM runs r
+WHERE r.team_id = $1
+  AND r.id = r.root_run_id
+  AND EXISTS (
+    SELECT 1 FROM sessions s
+    WHERE s.id = r.session_id
+      AND (s.kind <> 'direct'
+       OR $2::bool
+       OR s.user_id = $3::uuid))
+  AND (COALESCE(cardinality($4::text[]), 0) = 0
+   OR r.status = ANY($4::text[]))
+  AND ($5::timestamptz IS NULL OR r.created_at >= $5::timestamptz)
+  AND (NOT $6::bool OR r.hub = $7::bool)
+  AND (NOT $8::bool
+   OR (r.created_at, r.id) < ($9::timestamptz, $10::uuid))
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT $11
+`
+
+type ListRunsByTeamParams struct {
+	TeamID         uuid.UUID
+	Moderator      bool
+	Viewer         uuid.UUID
+	Statuses       []string
+	Since          *time.Time
+	FilterHub      bool
+	Hub            bool
+	UseCursor      bool
+	AfterCreatedAt time.Time
+	AfterID        uuid.UUID
+	PageSize       int32
+}
+
+// A team's run history: root runs only, in sessions the caller can see by the
+// rule GetRunVisible uses. A delegate's run shows in its parent's trace.
+// An empty statuses array is no filter. COALESCE because a nil Go slice
+// arrives as NULL, and cardinality(NULL) is NULL, which would match nothing.
+func (q *Queries) ListRunsByTeam(ctx context.Context, arg ListRunsByTeamParams) ([]Run, error) {
+	rows, err := q.db.Query(ctx, listRunsByTeam,
+		arg.TeamID,
+		arg.Moderator,
+		arg.Viewer,
+		arg.Statuses,
+		arg.Since,
+		arg.FilterHub,
+		arg.Hub,
+		arg.UseCursor,
+		arg.AfterCreatedAt,
+		arg.AfterID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.SessionID,
+			&i.ParentRunID,
+			&i.RootRunID,
+			&i.ParentToolCall,
+			&i.Depth,
+			&i.AgentID,
+			&i.AgentName,
+			&i.UserID,
+			&i.Status,
+			&i.Input,
+			&i.Output,
+			&i.Error,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.Worker,
+			&i.HeartbeatAt,
+			&i.CancelRequestedAt,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.TokenBudget,
+			&i.Hub,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnstartedRuns = `-- name: ListUnstartedRuns :many
 SELECT id FROM runs
 WHERE status = 'queued'

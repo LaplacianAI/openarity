@@ -1,6 +1,8 @@
 package store
 
 import (
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -201,7 +203,7 @@ func TestSessionsComeBackMostRecentFirst(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("%d sessions, want 2", len(rows))
 	}
-	if rows[0].ID != busy.ID {
+	if rows[0].Session.ID != busy.ID {
 		t.Error("the quietest session is listed first")
 	}
 }
@@ -230,11 +232,11 @@ func TestASessionCanExistWithoutAChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSessionsByTeam: %v", err)
 	}
-	if len(rows) != 1 || rows[0].ID != id {
+	if len(rows) != 1 || rows[0].Session.ID != id {
 		t.Errorf("a channelless session is not listed under its team: %+v", rows)
 	}
-	if rows[0].ChannelID != nil {
-		t.Errorf("ChannelID = %v, want nil", *rows[0].ChannelID)
+	if rows[0].Session.ChannelID != nil || rows[0].ChannelName != nil {
+		t.Errorf("ChannelID = %v, channel_name = %v; want both nil", rows[0].Session.ChannelID, rows[0].ChannelName)
 	}
 }
 
@@ -286,7 +288,12 @@ func listForTeam(t *testing.T, s *Store, teamID, viewer uuid.UUID, moderator boo
 	if err != nil {
 		t.Fatalf("ListSessionsByTeam: %v", err)
 	}
-	return rows
+
+	out := make([]db.Session, len(rows))
+	for i, r := range rows {
+		out[i] = r.Session
+	}
+	return out
 }
 
 func has(rows []db.Session, id uuid.UUID) bool {
@@ -390,7 +397,12 @@ func TestTheChannelListHidesOtherPeoplesDirectSessions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListSessionsByChannel: %v", err)
 		}
-		return rows
+
+		out := make([]db.Session, len(rows))
+		for i, r := range rows {
+			out[i] = r.Session
+		}
+		return out
 	}
 
 	if !has(byChannel(asha, false), dm.ID) {
@@ -445,5 +457,197 @@ func TestEnsureSessionKeepsTheFirstParticipant(t *testing.T) {
 	}
 	if second.UserID == nil || *second.UserID != asha {
 		t.Errorf("UserID moved to %v, want it to stay with the first speaker", second.UserID)
+	}
+}
+
+// --- what a listed session shows ---
+
+func listRows(t *testing.T, s *Store, p db.ListSessionsByTeamParams) []db.ListSessionsByTeamRow {
+	t.Helper()
+
+	if p.PageSize == 0 {
+		p.PageSize = 50
+	}
+	rows, err := s.ListSessionsByTeam(t.Context(), p)
+	if err != nil {
+		t.Fatalf("ListSessionsByTeam: %v", err)
+	}
+	return rows
+}
+
+func rowFor(t *testing.T, rows []db.ListSessionsByTeamRow, id uuid.UUID) db.ListSessionsByTeamRow {
+	t.Helper()
+
+	for _, r := range rows {
+		if r.Session.ID == id {
+			return r
+		}
+	}
+	t.Fatalf("session %s is not listed", id)
+	return db.ListSessionsByTeamRow{}
+}
+
+// said inserts a message received seconds ago, on the database's clock.
+func said(t *testing.T, s *Store, ch db.Channel, session, user uuid.UUID, text string, secondsAgo int) {
+	t.Helper()
+
+	id := insertMessage(t, s, message(ch, db.Session{ID: session}, user, uuid.NewString(), text))
+	if _, err := s.pool.Exec(t.Context(),
+		`UPDATE messages SET received_at = now() - make_interval(secs => $2) WHERE id = $1`,
+		id, secondsAgo); err != nil {
+		t.Fatalf("backdate message: %v", err)
+	}
+}
+
+// ranIn inserts a root run in a session, created seconds ago.
+func ranIn(t *testing.T, s *Store, teamID, session, agent uuid.UUID, status string, secondsAgo int) uuid.UUID {
+	t.Helper()
+
+	id := mustInsertRun(t, s, inState(run{id: uuid.New(), team: teamID, session: session, agent: &agent}, status))
+	age(t, s, id, "created_at", secondsAgo)
+	return id
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return *p
+}
+
+// A group session is shown by its channel, whoever spoke last, what they
+// said, and how the newest run the team started in it went. A delegate's run
+// is part of its parent's, so a newer child does not count.
+func TestAListedSessionShowsItsChannelNewestMessageAndLatestRun(t *testing.T) {
+	s := queryStore(t)
+	ch, teamID := sessionFixture(t, s, "support")
+	agent := insertAgent(t, s, teamID, "triage")
+	asha := insertUser(t, s, "dev", "asha")
+	bala := insertUser(t, s, "dev", "bala")
+
+	room := mustEnsureSession(t, s, teamID, ch.ID, "C-ROOM", "group")
+	said(t, s, ch, room.ID, asha, "first", 60)
+	said(t, s, ch, room.ID, bala, "second", 5)
+	ranIn(t, s, teamID, room.ID, agent, "failed", 120)
+	newer := ranIn(t, s, teamID, room.ID, agent, "succeeded", 30)
+	child := run{
+		id: uuid.New(), team: teamID, session: room.ID, agent: &agent,
+		root: newer, parent: &newer, toolCall: ptr("call-1"), depth: 1,
+	}
+	mustInsertRun(t, s, inState(child, "failed"))
+
+	got := rowFor(t, listRows(t, s, db.ListSessionsByTeamParams{TeamID: teamID, Moderator: true}), room.ID)
+	if deref(got.ChannelName) != ch.Name || deref(got.ParticipantEmail) != "bala@example.com" ||
+		deref(got.LastMessage) != "second" || deref(got.LatestRunStatus) != "succeeded" {
+		t.Errorf("channel %s, participant %s, last %s, run %s; want %s, bala@example.com, second, succeeded",
+			deref(got.ChannelName), deref(got.ParticipantEmail), deref(got.LastMessage), deref(got.LatestRunStatus), ch.Name)
+	}
+
+	// The channel's list must not disagree with the team's about a row.
+	byChannel, err := s.ListSessionsByChannel(t.Context(), db.ListSessionsByChannelParams{
+		ChannelID: &ch.ID, PageSize: 10, Moderator: true,
+	})
+	if err != nil || len(byChannel) != 1 {
+		t.Fatalf("ListSessionsByChannel: %d rows, %v", len(byChannel), err)
+	}
+	if !reflect.DeepEqual(db.ListSessionsByTeamRow(byChannel[0]), got) {
+		t.Errorf("the channel list shows %+v, the team list %+v", byChannel[0], got)
+	}
+}
+
+// A direct session is with one person, whoever spoke last in it.
+func TestADirectSessionsParticipantIsWhoItIsWith(t *testing.T) {
+	s := queryStore(t)
+	ch, teamID := sessionFixture(t, s, "support")
+	asha := insertUser(t, s, "dev", "asha")
+	bala := insertUser(t, s, "dev", "bala")
+
+	dm := directSession(t, s, teamID, ch.ID, "D-ASHA", &asha)
+	said(t, s, ch, dm.ID, bala, "speaking in asha's thread", 1)
+
+	got := rowFor(t, listRows(t, s, db.ListSessionsByTeamParams{TeamID: teamID, Moderator: true}), dm.ID)
+	if deref(got.ParticipantEmail) != "asha@example.com" {
+		t.Errorf("participant = %s, want asha@example.com", deref(got.ParticipantEmail))
+	}
+}
+
+// A session with no channel, no messages and no run lists every extra as
+// null. This is the row that fails to scan if a column is generated as a
+// plain string, which a LATERAL join would have done.
+func TestASessionWithNothingInItListsNulls(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	carol := mustCreateUser(t, s, "carol")
+
+	empty := insertSession(t, s, team.ID)
+	direct, err := s.CreateDirectSession(t.Context(), db.CreateDirectSessionParams{TeamID: team.ID, UserID: carol})
+	if err != nil {
+		t.Fatalf("CreateDirectSession: %v", err)
+	}
+
+	rows := listRows(t, s, db.ListSessionsByTeamParams{TeamID: team.ID, Moderator: true})
+	got := rowFor(t, rows, empty)
+	if got.ChannelName != nil || got.ParticipantEmail != nil || got.ParticipantSubject != nil ||
+		got.LastMessage != nil || got.LatestRunStatus != nil {
+		t.Errorf("an empty session lists %+v, want every extra null", got)
+	}
+
+	// A person with no email is still named, by their subject.
+	dm := rowFor(t, rows, direct.ID)
+	if dm.ParticipantEmail != nil || deref(dm.ParticipantSubject) != "carol" {
+		t.Errorf("email %s, subject %s; want none and carol", deref(dm.ParticipantEmail), deref(dm.ParticipantSubject))
+	}
+}
+
+func TestTheSessionListFilters(t *testing.T) {
+	s := queryStore(t)
+	ch, teamID := sessionFixture(t, s, "support")
+	other := mustCreateChannel(t, s, teamID, "custom", "sales")
+	elsewhere, _ := sessionFixture(t, s, "elsewhere")
+	agent := insertAgent(t, s, teamID, "triage")
+
+	failing := mustEnsureSession(t, s, teamID, ch.ID, "failing", "group")
+	ranIn(t, s, teamID, failing.ID, agent, "failed", 10)
+	recovered := mustEnsureSession(t, s, teamID, ch.ID, "recovered", "group")
+	ranIn(t, s, teamID, recovered.ID, agent, "failed", 60)
+	ranIn(t, s, teamID, recovered.ID, agent, "succeeded", 10)
+	quiet := mustEnsureSession(t, s, teamID, ch.ID, "quiet", "group")
+	closed := mustEnsureSession(t, s, teamID, ch.ID, "closed", "group")
+	if _, err := s.pool.Exec(t.Context(), `UPDATE sessions SET status = 'closed' WHERE id = $1`, closed.ID); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	sales := mustEnsureSession(t, s, teamID, other.ID, "sales", "group")
+
+	all := []uuid.UUID{failing.ID, recovered.ID, quiet.ID, closed.ID, sales.ID}
+	for name, tc := range map[string]struct {
+		p    db.ListSessionsByTeamParams
+		want []uuid.UUID
+	}{
+		"nil filters":   {db.ListSessionsByTeamParams{}, all},
+		"empty filters": {db.ListSessionsByTeamParams{Statuses: []string{}, RunStatuses: []string{}}, all},
+		// The newest run is what is asked about: a session that failed and
+		// then succeeded is not failing, and one with no run matches no status.
+		"a failing latest run": {db.ListSessionsByTeamParams{RunStatuses: []string{"failed"}}, []uuid.UUID{failing.ID}},
+		"either status": {
+			db.ListSessionsByTeamParams{RunStatuses: []string{"failed", "succeeded"}},
+			[]uuid.UUID{failing.ID, recovered.ID},
+		},
+		"closed":                 {db.ListSessionsByTeamParams{Statuses: []string{"closed"}}, []uuid.UUID{closed.ID}},
+		"open":                   {db.ListSessionsByTeamParams{Statuses: []string{"open"}}, []uuid.UUID{failing.ID, recovered.ID, quiet.ID, sales.ID}},
+		"one channel":            {db.ListSessionsByTeamParams{ChannelID: &other.ID}, []uuid.UUID{sales.ID}},
+		"another team's channel": {db.ListSessionsByTeamParams{ChannelID: &elsewhere.ID}, []uuid.UUID{}},
+	} {
+		tc.p.TeamID, tc.p.Moderator = teamID, true
+		rows := listRows(t, s, tc.p)
+		got := make([]uuid.UUID, len(rows))
+		for i, r := range rows {
+			got[i] = r.Session.ID
+		}
+		slices.SortFunc(got, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })
+		want := slices.Clone(tc.want)
+		slices.SortFunc(want, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: listed %v, want %v", name, got, want)
+		}
 	}
 }

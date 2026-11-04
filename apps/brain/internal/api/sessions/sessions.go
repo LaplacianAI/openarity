@@ -18,14 +18,25 @@ import (
 type Store interface {
 	GetChannel(ctx context.Context, id uuid.UUID) (db.Channel, error)
 	GetSession(ctx context.Context, id uuid.UUID) (db.Session, error)
-	ListSessionsByChannel(ctx context.Context, arg db.ListSessionsByChannelParams) ([]db.Session, error)
-	ListSessionsByTeam(ctx context.Context, arg db.ListSessionsByTeamParams) ([]db.Session, error)
+	ListSessionsByChannel(ctx context.Context, arg db.ListSessionsByChannelParams) ([]db.ListSessionsByChannelRow, error)
+	ListSessionsByTeam(ctx context.Context, arg db.ListSessionsByTeamParams) ([]db.ListSessionsByTeamRow, error)
 	ListMessagesBySession(ctx context.Context, arg db.ListMessagesBySessionParams) ([]db.Message, error)
 	ListAttachmentsBySession(ctx context.Context, arg db.ListAttachmentsBySessionParams) ([]db.Attachment, error)
 	GetAttachmentInSession(ctx context.Context, arg db.GetAttachmentInSessionParams) (db.Attachment, error)
 }
 
 const readEveryConversation = authz.Action("session:read_all")
+
+type listed struct {
+	Session            db.Session
+	ChannelName        *string
+	ParticipantEmail   *string
+	ParticipantSubject *string
+	LastMessage        *string
+	LatestRunStatus    *string
+}
+
+const previewRunes = 140
 
 type handler struct {
 	logger  *slog.Logger
@@ -88,7 +99,12 @@ func (h *handler) listByChannel(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to list sessions", err)
 		return
 	}
-	h.writeSessions(w, u, rows, limit)
+
+	out := make([]listed, len(rows))
+	for i, row := range rows {
+		out[i] = listed(row)
+	}
+	h.writeSessions(w, u, out, limit)
 }
 
 func (h *handler) listByTeam(w http.ResponseWriter, r *http.Request) {
@@ -104,12 +120,33 @@ func (h *handler) listByTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := db.ListSessionsByTeamParams{
-		TeamID:    teamID,
-		PageSize:  limit + 1,
-		Moderator: h.moderates(r, u, teamID),
-		Viewer:    u.ID,
+	statuses, ok := api.OneOf(w, r, "status", api.SessionStatuses)
+	if !ok {
+		return
 	}
+	runStatuses, ok := api.OneOf(w, r, "run_status", api.RunStatuses)
+	if !ok {
+		return
+	}
+
+	params := db.ListSessionsByTeamParams{
+		TeamID:      teamID,
+		PageSize:    limit + 1,
+		Moderator:   h.moderates(r, u, teamID),
+		Viewer:      u.ID,
+		Statuses:    statuses,
+		RunStatuses: runStatuses,
+	}
+
+	if raw := r.URL.Query().Get("channel_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			http.Error(w, "channel_id must be a uuid", http.StatusBadRequest)
+			return
+		}
+		params.ChannelID = &id
+	}
+
 	if c, ok := h.cursor(w, r); !ok {
 		return
 	} else if c != nil {
@@ -123,7 +160,12 @@ func (h *handler) listByTeam(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to list sessions", err)
 		return
 	}
-	h.writeSessions(w, u, rows, limit)
+
+	out := make([]listed, len(rows))
+	for i, row := range rows {
+		out[i] = listed(row)
+	}
+	h.writeSessions(w, u, out, limit)
 }
 
 func (h *handler) get(w http.ResponseWriter, r *http.Request) {
@@ -235,12 +277,12 @@ func (h *handler) cursor(w http.ResponseWriter, r *http.Request) (*sessionCursor
 	return &c, true
 }
 
-func (h *handler) writeSessions(w http.ResponseWriter, u *auth.User, rows []db.Session, limit int32) {
+func (h *handler) writeSessions(w http.ResponseWriter, u *auth.User, rows []listed, limit int32) {
 	page, err := api.MapPage(rows, limit,
-		func(row db.Session) any {
-			return sessionCursor{LastMessageAt: row.LastMessageAt, ID: row.ID}
+		func(row listed) any {
+			return sessionCursor{LastMessageAt: row.Session.LastMessageAt, ID: row.Session.ID}
 		},
-		sessionView,
+		listedView,
 	)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to page sessions", err)
@@ -259,6 +301,35 @@ func sessionView(row db.Session) session {
 		out.ProviderRef = *row.ProviderRef
 	}
 	return out
+}
+
+func listedView(row listed) listedSession {
+	participant := row.ParticipantEmail
+	if participant == nil {
+		participant = row.ParticipantSubject
+	}
+
+	return listedSession{
+		session:         sessionView(row.Session),
+		ChannelName:     row.ChannelName,
+		Participant:     participant,
+		LastMessage:     preview(row.LastMessage),
+		LatestRunStatus: row.LatestRunStatus,
+	}
+}
+
+func preview(text *string) *string {
+	if text == nil {
+		return nil
+	}
+
+	runes := []rune(*text)
+	if len(runes) <= previewRunes {
+		return text
+	}
+
+	cut := string(runes[:previewRunes]) + "…"
+	return &cut
 }
 
 func (h *handler) visible(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) (db.Session, bool) {
