@@ -123,17 +123,19 @@ type GraphOutbox struct {
 }
 
 type McpServer struct {
-	ID            uuid.UUID
-	TeamID        uuid.UUID
-	Name          string
-	Url           *string
-	Command       []string
-	Env           []byte
-	AuthSecretRef *string
-	Bare          bool
-	DiscoveredAt  *time.Time
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                 uuid.UUID
+	TeamID             uuid.UUID
+	Name               string
+	Url                *string
+	Command            []string
+	Env                []byte
+	AuthSecretRef      *string
+	Bare               bool
+	DiscoveredAt       *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	LastDiscoveryError *string
+	LastDiscoveryAt    *time.Time
 }
 
 type McpTool struct {

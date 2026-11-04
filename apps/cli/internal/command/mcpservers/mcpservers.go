@@ -391,6 +391,9 @@ func printServer(opts *cli.Options, s *client.MCPServer, did string) error {
 				table.Row("env", cli.Safe(k), cli.Safe(v))
 			}
 			table.Row("discovered", discovered(*s), "")
+			if s.LastDiscoveryError != nil && s.LastDiscoveryAt != nil {
+				table.Row("failed", cli.Safe(*s.LastDiscoveryError), s.LastDiscoveryAt.UTC().Format("2006-01-02 15:04"))
+			}
 		},
 	})
 }

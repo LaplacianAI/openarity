@@ -39,7 +39,7 @@ func (h *handler) discover(w http.ResponseWriter, r *http.Request) {
 
 	tools, err := h.discoverer.Discover(r.Context(), row)
 	if err != nil {
-		h.discoveryFailed(w, u, row, err)
+		h.discoveryFailed(w, r, u, row, err)
 		return
 	}
 
@@ -85,24 +85,36 @@ func record(ctx context.Context, q Queries, row db.McpServer, tools []discovery.
 	return q.DeleteMCPToolsNotIn(ctx, db.DeleteMCPToolsNotInParams{McpServerID: row.ID, Names: names})
 }
 
-func (h *handler) discoveryFailed(w http.ResponseWriter, u *auth.User, row db.McpServer, err error) {
+func (h *handler) discoveryFailed(w http.ResponseWriter, r *http.Request, u *auth.User, row db.McpServer, err error) {
 	switch {
 	case errors.Is(err, discovery.ErrCommandServer):
-		http.Error(w, discovery.ErrCommandServer.Error(), http.StatusConflict)
+		h.failed(w, r, row, discovery.ErrCommandServer.Error(), http.StatusConflict)
 	case errors.Is(err, context.DeadlineExceeded):
-		http.Error(w, "the server did not answer in time", http.StatusGatewayTimeout)
+		h.failed(w, r, row, "the server did not answer in time", http.StatusGatewayTimeout)
 	case errors.Is(err, discovery.ErrRefused):
 		h.logger.Warn("MCP discovery refused", "server", row.ID, "error", err)
-		http.Error(w, "the brain may not reach that server: its address is private or link-local, "+
+		h.failed(w, r, row, "the brain may not reach that server: its address is private or link-local, "+
 			"it redirected, or it needs a token over plain http", http.StatusUnprocessableEntity)
 	case errors.Is(err, discovery.ErrUnusable):
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		h.failed(w, r, row, err.Error(), http.StatusUnprocessableEntity)
 	case errors.Is(err, secrets.ErrNotFound):
-		http.Error(w, "auth_secret_ref names a secret that is not in the secret store, or is empty", http.StatusUnprocessableEntity)
+		h.failed(w, r, row, "auth_secret_ref names a secret that is not in the secret store, or is empty", http.StatusUnprocessableEntity)
 	case errors.Is(err, secrets.ErrUnavailable):
+		// The brain's failure, not the server's, so nothing is recorded.
 		api.Fail(w, h.logger, u, "failed to read the MCP server's token", err)
 	default:
 		h.logger.Warn("MCP discovery failed", "server", row.ID, "error", err)
-		http.Error(w, "the server did not answer as an MCP server", http.StatusBadGateway)
+		h.failed(w, r, row, "the server did not answer as an MCP server", http.StatusBadGateway)
 	}
+}
+
+func (h *handler) failed(w http.ResponseWriter, r *http.Request, row db.McpServer, msg string, status int) {
+	_, err := h.store.RecordMCPServerDiscoveryFailure(r.Context(), db.RecordMCPServerDiscoveryFailureParams{
+		Error: msg, ID: row.ID, UpdatedAt: row.UpdatedAt,
+	})
+	if err != nil {
+		h.logger.Error("failed to record the MCP discovery error", "server", row.ID, "error", err)
+	}
+
+	http.Error(w, msg, status)
 }

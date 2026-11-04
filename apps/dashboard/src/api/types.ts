@@ -288,6 +288,10 @@ export type MCPServer = {
   auth_secret_ref?: string;
   bare: boolean;
   discovered_at?: string | null;
+  /** Why the last discovery failed, as the caller was told; null once one works. */
+  last_discovery_error?: string | null;
+  /** When discovery was last tried, whether or not it worked. */
+  last_discovery_at?: string | null;
   created_at: string;
   updated_at: string;
 };

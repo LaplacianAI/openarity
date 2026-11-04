@@ -28,6 +28,7 @@ type Store interface {
 	UpdateMCPServer(ctx context.Context, arg db.UpdateMCPServerParams) (db.McpServer, error)
 	DeleteMCPServer(ctx context.Context, id uuid.UUID) error
 	ListMCPToolsByServer(ctx context.Context, mcpServerID uuid.UUID) ([]db.McpTool, error)
+	RecordMCPServerDiscoveryFailure(ctx context.Context, arg db.RecordMCPServerDiscoveryFailureParams) (int64, error)
 	InTx(ctx context.Context, fn func(Queries) error) error
 }
 
@@ -313,6 +314,7 @@ func view(row db.McpServer) (server, error) {
 	return server{
 		ID: row.ID, TeamID: row.TeamID, Name: row.Name, URL: row.Url, Command: row.Command, Env: env,
 		AuthSecretRef: row.AuthSecretRef, Bare: row.Bare, DiscoveredAt: row.DiscoveredAt,
+		LastDiscoveryError: row.LastDiscoveryError, LastDiscoveryAt: row.LastDiscoveryAt,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}, nil
 }

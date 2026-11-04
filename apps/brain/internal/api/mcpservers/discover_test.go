@@ -188,14 +188,34 @@ func TestEachDiscoveryFailureHasItsStatus(t *testing.T) {
 			t.Parallel()
 
 			row := aURLServer(uuid.New(), "github")
-			code, body := discoverWith(t, newFakeStore(row), &fakeDiscoverer{err: tc.err}, row)
+			s := newFakeStore(row)
+			code, body := discoverWith(t, s, &fakeDiscoverer{err: tc.err}, row)
 			if code != tc.code || !strings.Contains(body, tc.says) {
 				t.Errorf("status %d, body %q; want %d saying %q", code, body, tc.code, tc.says)
 			}
+			stored := s.servers[row.ID].LastDiscoveryError
 			for _, leak := range []string{"10.2.0.7", "vault.corp", "broken pipe", "secret not found", "unavailable"} {
 				if strings.Contains(body, leak) {
 					t.Errorf("the reply leaks %q: %s", leak, body)
 				}
+				if stored != nil && strings.Contains(*stored, leak) {
+					t.Errorf("the stored error leaks %q: %s", leak, *stored)
+				}
+			}
+
+			// The brain's own failure is not the server's, so it is not
+			// recorded; every other is, as the sentence the caller was given.
+			if code == http.StatusInternalServerError {
+				if len(s.failures) != 0 || stored != nil {
+					t.Errorf("recorded %+v for the brain's own failure, want nothing", s.failures)
+				}
+				return
+			}
+			if stored == nil || *stored != strings.TrimSpace(body) {
+				t.Errorf("stored %v, want the reply %q", stored, strings.TrimSpace(body))
+			}
+			if len(s.failures) != 1 || !s.failures[0].UpdatedAt.Equal(row.UpdatedAt) {
+				t.Errorf("recorded %+v, want one write naming the version that was read", s.failures)
 			}
 		})
 	}
@@ -325,5 +345,84 @@ func TestDiscoverTakesNoBody(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d (%s)", rec.Code, rec.Body)
+	}
+}
+
+// Recording the failure is bookkeeping. When it cannot be written the caller
+// still hears what the server did, and the operator hears what the store did.
+func TestAFailureThatCannotBeRecordedIsStillAnswered(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+
+	row := aURLServer(uuid.New(), "github")
+	s := newFakeStore(row)
+	s.failErr = errors.New("connection reset")
+	d := &fakeDiscoverer{store: s, err: fmt.Errorf("listing tools: %w", context.DeadlineExceeded)}
+	rec := callWith(t, s, d, logger, &fakeAuthz{allowed: true}, memberOf(row.TeamID), http.MethodPost, discoverOf(row.TeamID, row.ID), nil)
+
+	if rec.Code != http.StatusGatewayTimeout || !strings.Contains(rec.Body.String(), "in time") {
+		t.Errorf("status %d, body %q; want the 504 the server earned", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(logs.String(), "connection reset") || !strings.Contains(logs.String(), row.ID.String()) {
+		t.Errorf("log = %s, want the store's error and the server", logs.String())
+	}
+}
+
+// A server edited while discovery talked to the old address keeps no error
+// from it: the write names the version that was read, and matches nothing.
+func TestAFailureOnAServerEditedDuringDiscoveryIsNotKept(t *testing.T) {
+	t.Parallel()
+
+	row := aURLServer(uuid.New(), "github")
+	s := newFakeStore(row)
+	d := &fakeDiscoverer{err: errors.New("connecting: broken pipe"), during: func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		edited := s.servers[row.ID]
+		elsewhere := "https://elsewhere.example.com"
+		edited.Url, edited.UpdatedAt = &elsewhere, edited.UpdatedAt.Add(time.Millisecond)
+		s.servers[row.ID] = edited
+	}}
+
+	code, _ := discoverWith(t, s, d, row)
+	if code != http.StatusBadGateway {
+		t.Errorf("status %d, want 502: the caller still hears what the old address did", code)
+	}
+	if len(s.failures) != 1 || !s.failures[0].UpdatedAt.Equal(row.UpdatedAt) {
+		t.Errorf("recorded %+v, want one write naming the version that was read", s.failures)
+	}
+	if got := s.servers[row.ID].LastDiscoveryError; got != nil {
+		t.Errorf("the edited server carries %q from its old address", *got)
+	}
+}
+
+// The last attempt is on the wire, null until there has been one.
+func TestAServerShowsItsLastDiscoveryAttempt(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	failed := aURLServer(teamID, "github")
+	msg, at := "the server did not answer in time", time.Date(2026, 11, 4, 9, 30, 0, 0, time.UTC)
+	failed.LastDiscoveryError, failed.LastDiscoveryAt = &msg, &at
+	never := aURLServer(teamID, "linear")
+	s := newFakeStore(failed, never)
+
+	rec := call(t, s, &fakeAuthz{}, memberOf(teamID), http.MethodGet, one(teamID, failed.ID), nil)
+	got := decodeServer(t, rec)
+	if got.LastDiscoveryError == nil || *got.LastDiscoveryError != msg || got.LastDiscoveryAt == nil || !got.LastDiscoveryAt.Equal(at) {
+		t.Errorf("error %v at %v; want %q at %v", got.LastDiscoveryError, got.LastDiscoveryAt, msg, at)
+	}
+
+	rec = call(t, s, &fakeAuthz{}, memberOf(teamID), http.MethodGet, one(teamID, never.ID), nil)
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	for _, k := range []string{"last_discovery_error", "last_discovery_at"} {
+		if v, ok := raw[k]; !ok || v != nil {
+			t.Errorf("%s = %v (present %v), want null and present", k, v, ok)
+		}
 	}
 }

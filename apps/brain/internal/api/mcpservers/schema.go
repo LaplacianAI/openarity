@@ -8,17 +8,19 @@ import (
 )
 
 type server struct {
-	ID            uuid.UUID         `json:"id"`
-	TeamID        uuid.UUID         `json:"team_id"`
-	Name          string            `json:"name"`
-	URL           *string           `json:"url,omitempty"`
-	Command       []string          `json:"command,omitempty"`
-	Env           map[string]string `json:"env"`
-	AuthSecretRef *string           `json:"auth_secret_ref,omitempty"`
-	Bare          bool              `json:"bare"`
-	DiscoveredAt  *time.Time        `json:"discovered_at"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	ID                 uuid.UUID         `json:"id"`
+	TeamID             uuid.UUID         `json:"team_id"`
+	Name               string            `json:"name"`
+	URL                *string           `json:"url,omitempty"`
+	Command            []string          `json:"command,omitempty"`
+	Env                map[string]string `json:"env"`
+	AuthSecretRef      *string           `json:"auth_secret_ref,omitempty"`
+	Bare               bool              `json:"bare"`
+	DiscoveredAt       *time.Time        `json:"discovered_at"`
+	LastDiscoveryError *string           `json:"last_discovery_error"`
+	LastDiscoveryAt    *time.Time        `json:"last_discovery_at"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
 type serverRequest struct {

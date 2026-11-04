@@ -246,3 +246,37 @@ func TestATeamMembersEscapeSequencesDoNotReachTheTerminal(t *testing.T) {
 		}
 	}
 }
+
+// A server whose last discovery failed says so, with the sentence and when,
+// quoted because the sentence can carry what the server said.
+func TestGetShowsTheLastFailedDiscovery(t *testing.T) {
+	failed := strings.Replace(github, `"discovered_at"`,
+		`"last_discovery_error":"search is offered twice\u001b[2J","last_discovery_at":"2026-11-04T09:30:00Z","discovered_at"`, 1)
+	clitest.Routes(t, routes(map[string]clitest.Reply{
+		"GET /teams/{id}/mcp-servers/{serverID}": {Status: http.StatusOK, Body: failed},
+	}))
+
+	out, err := clitest.Execute(t, commands, "mcp-servers", "get", "platform", "github")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"failed", "search is offered twice", "2026-11-04 09:30"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("printed a raw escape:\n%q", out)
+	}
+}
+
+func TestGetSaysNothingOfFailureWhenTheLastDiscoveryWorked(t *testing.T) {
+	clitest.Routes(t, routes(map[string]clitest.Reply{
+		"GET /teams/{id}/mcp-servers/{serverID}": {Status: http.StatusOK, Body: github},
+	}))
+
+	out, err := clitest.Execute(t, commands, "mcp-servers", "get", "platform", "github")
+	if err != nil || strings.Contains(out, "failed") {
+		t.Errorf("get: %v\n%s", err, out)
+	}
+}

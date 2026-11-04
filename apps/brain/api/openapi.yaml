@@ -2046,7 +2046,8 @@ paths:
       description: |
         Requires `tool:write` in this team. Every field is replaced, so a
         field left out is cleared. Pointing the server somewhere else — a
-        different url or command — clears `discovered_at`; the tools already
+        different url or command — clears `discovered_at` and the last
+        attempt, `last_discovery_error` and `last_discovery_at`; the tools already
         listed stay until the next discovery replaces them, so an agent
         granted this server keeps what it had rather than losing every tool
         to an edit.
@@ -2160,6 +2161,11 @@ paths:
         step: new tools are added, changed ones rewritten, and ones the server
         no longer offers removed. Any failure leaves the previous list as it
         was, so an agent granted the server keeps what it had.
+
+        Every attempt sets the server's `last_discovery_at`. A success clears
+        `last_discovery_error`; a failure stores the sentence it was answered
+        with, unless the server was edited meanwhile or the failure was the
+        brain's own.
 
         The brain reaches public addresses only, plus the private ranges its
         operator lists in `OPENARITY_MCP_PRIVATE_NETWORKS`. Link-local
@@ -3333,6 +3339,22 @@ components:
             When its tools were last listed, and null until then. Always sent;
             optional here only so a generated client decodes null as absent
             rather than as the zero time.
+        last_discovery_error:
+          type: string
+          nullable: true
+          description: |
+            Why the last discovery failed, in the words the caller was
+            answered with; null when it succeeded or none has run. A server
+            has failed when this is set. A failure that was the brain's own,
+            such as the secret store being down, is not recorded. Always sent.
+        last_discovery_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            When discovery was last tried, whether or not it worked, and null
+            until then. Always sent; optional here for the reason
+            `discovered_at` is.
         created_at:
           type: string
           format: date-time
