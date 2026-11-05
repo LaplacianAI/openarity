@@ -44,3 +44,17 @@ export function sessionTone(status: string): "active" | "idle" | "closed" {
   if (status === "idle" || status === "waiting") return "idle";
   return "closed";
 }
+
+/**
+ * How long since `iso`, as a span a person says: "4 minutes", "3 hours",
+ * "2 days". For a wait, where "3h ago" would read as when, not how long.
+ */
+export function waitedFor(iso: string, now: number = Date.now()): string {
+  const mins = Math.floor((now - Date.parse(iso)) / 60_000);
+  const span = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+  if (mins < 1) return "under a minute";
+  if (mins < 60) return span(mins, "minute");
+  const hours = Math.floor(mins / 60);
+  if (hours < 48) return span(hours, "hour");
+  return span(Math.floor(hours / 24), "day");
+}

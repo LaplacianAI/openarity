@@ -1,6 +1,6 @@
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import { brain, chunks, feed, pageOf, type Seen, STAMP, showAt, TEAM, team } from "@/test/brain";
@@ -29,6 +29,15 @@ const session = {
   last_message_at: STAMP,
 };
 
+/** The session as the list returns it: with what a row needs to be read. */
+const listedSession = {
+  ...session,
+  channel_name: "support",
+  participant: "asha@team.test",
+  last_message: "Can someone look at the <b>billing</b> export?",
+  latest_run_status: "failed",
+};
+
 function at(path: string, strict = false) {
   return showAt(
     path,
@@ -54,7 +63,18 @@ const EVENTS = `GET /teams/{id}/runs/{rid}/events`;
 function listed(extra: Parameters<typeof brain>[0]) {
   return brain({
     ...team([]),
-    "GET /teams/{id}/sessions": { body: { items: [session] } },
+    "GET /teams/{id}/sessions": { body: { items: [listedSession] } },
+    "GET /teams/{id}/channels": {
+      body: { items: [{ id: "c1", name: "support", provider: "slack" }] },
+    },
+    "GET /teams/{id}/summary": {
+      body: {
+        runs_24h: { queued: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 },
+        sessions: 128,
+        waiting_senders: 0,
+        servers_failing: 0,
+      },
+    },
     [SESSION]: { body: session },
     [MESSAGES]: { body: { items: [] } },
     [ATTACHMENTS]: { body: { items: [] } },
@@ -84,37 +104,96 @@ function said(): string[] {
 /* --------------------------------------------------------------- the list */
 
 describe("the sessions list", () => {
-  it("links each session to its own page", async () => {
+  it("reads each session at a glance and links it to its own page", async () => {
     listed({});
     const router = at("/ui/sessions");
 
-    const link = await screen.findByRole("link", { name: /ticket-42/ });
+    const link = await screen.findByRole("link", { name: "ticket-42" });
     expect(link).toHaveAttribute("href", PAGE);
-    expect(link).toHaveTextContent("group · started");
+    const row = link.closest("tr") as HTMLElement;
+    expect(within(row).getByText("support")).toBeInTheDocument();
+    expect(within(row).getByText("asha@team.test")).toBeInTheDocument();
+    expect(within(row).getByText("failed")).toBeInTheDocument();
+    // The total is the brain's, not what loaded.
+    expect(await screen.findByText("128 sessions in all.")).toBeInTheDocument();
 
     await userEvent.click(link);
     expect(await screen.findByRole("heading", { level: 1, name: "ticket-42" })).toBeVisible();
     expect(router.state.location.pathname).toBe(PAGE);
   });
 
+  // A stranger wrote it: text, never markup.
+  it("shows the last message as text", async () => {
+    listed({});
+    at("/ui/sessions");
+    expect(
+      await screen.findByText("Can someone look at the <b>billing</b> export?"),
+    ).toBeInTheDocument();
+    expect(document.querySelector("tbody b")).toBeNull();
+  });
+
+  // Rows are one stop on the keyboard: past the filters, Tab lands on the
+  // first row, and Enter opens it.
   it("is reached and followed from the keyboard", async () => {
     listed({});
     const router = at("/ui/sessions");
-    await screen.findByRole("link", { name: /ticket-42/ });
+    await screen.findByRole("link", { name: "ticket-42" });
 
-    // What the screen is for, beside its title, comes first.
     await userEvent.tab();
     expect(screen.getByRole("button", { name: "What is Sessions?" })).toHaveFocus();
     await userEvent.tab();
-    expect(screen.getByRole("link", { name: /ticket-42/ })).toHaveFocus();
+    expect(screen.getByRole("combobox", { name: "Channel" })).toHaveFocus();
+    await userEvent.tab();
+    expect(screen.getByRole("combobox", { name: "Latest run" })).toHaveFocus();
+    await userEvent.tab();
+    const row = screen.getByRole("link", { name: "ticket-42" }).closest("tr");
+    expect(row).toHaveFocus();
     await userEvent.keyboard("{Enter}");
     await waitFor(() => expect(router.state.location.pathname).toBe(PAGE));
   });
 
-  it("says so when there are no sessions, and why one could not be listed", async () => {
+  // Filters live in the URL, so a filtered list can be linked to, and the
+  // brain does the filtering: a page of what loaded is never narrowed here.
+  it("asks the brain for the sessions a linked filter names", async () => {
+    const seen = listed({});
+    at("/ui/sessions?channel=c1&run=failed");
+    await screen.findByRole("link", { name: "ticket-42" });
+    const asked = seen.filter((s) => s.path.startsWith(`/teams/${TEAM}/sessions`));
+    expect(asked.at(-1)?.path).toBe(`/teams/${TEAM}/sessions?channel_id=c1&run_status=failed`);
+  });
+
+  it("filters by a channel chosen from the list, and keeps it in the URL", async () => {
+    stubScroll();
+    const seen = listed({});
+    const router = at("/ui/sessions");
+    (await screen.findByRole("combobox", { name: "Channel" })).focus();
+    await userEvent.keyboard("{ArrowDown}");
+    await userEvent.click(await screen.findByRole("option", { name: "support" }));
+
+    await waitFor(() => expect(seen.at(-1)?.path).toBe(`/teams/${TEAM}/sessions?channel_id=c1`));
+    expect(router.state.location.search).toEqual({ channel: "c1" });
+  });
+
+  it("ignores a filter it does not know rather than sending it on", async () => {
+    const seen = listed({});
+    at("/ui/sessions?run=exploded");
+    await screen.findByRole("link", { name: "ticket-42" });
+    expect(seen.some((s) => s.path.includes("run_status"))).toBe(false);
+  });
+
+  it("says so when there are no sessions", async () => {
     listed({ "GET /teams/{id}/sessions": { body: { items: [] } } });
     at("/ui/sessions");
     expect(await screen.findByText("No sessions yet")).toBeInTheDocument();
+  });
+
+  it("says when nothing fits the filters, and clears them", async () => {
+    const seen = listed({ "GET /teams/{id}/sessions": { body: { items: [] } } });
+    const router = at("/ui/sessions?run=failed");
+    expect(await screen.findByText("No sessions match")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Clear the filters" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+    await waitFor(() => expect(seen.at(-1)?.path).toBe(`/teams/${TEAM}/sessions`));
   });
 
   it("shows the brain's reason when the sessions cannot be listed", async () => {
@@ -123,6 +202,14 @@ describe("the sessions list", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("the store is down");
   });
 });
+
+/** A Radix select scrolls its highlighted option into view, which jsdom lacks. */
+function stubScroll() {
+  Element.prototype.scrollIntoView = vi.fn();
+  onTestFinished(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+}
 
 /* --------------------------------------------------------------- the page */
 

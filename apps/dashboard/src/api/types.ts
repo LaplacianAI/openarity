@@ -91,6 +91,13 @@ export type PendingSender = {
 };
 
 /** GET /teams/{id}/channels/{channelID}/senders */
+/** GET /teams/{id}/senders/pending: a channel's pending sender, with the channel it waits on. */
+export type TeamPendingSender = PendingSender & {
+  channel_id: string;
+  channel_name: string;
+  channel_provider: string;
+};
+
 export type ApprovedSender = {
   sender_ref: string;
   user_id: string;

@@ -75,10 +75,11 @@ function useSession(teamId: string | null, sessionId: string) {
         throw err;
       }
     },
+    // Whichever filtered list the reader came from already holds the row.
     placeholderData: () =>
       qc
-        .getQueryData<{ pages: Page<Session>[] }>(["sessions", teamId, "paged"])
-        ?.pages.flatMap((p) => p.items)
+        .getQueriesData<{ pages: Page<Session>[] }>({ queryKey: ["sessions", teamId, "paged"] })
+        .flatMap(([, data]) => data?.pages.flatMap((p) => p.items) ?? [])
         .find((s) => s.id === sessionId),
     enabled: Boolean(teamId),
   });
