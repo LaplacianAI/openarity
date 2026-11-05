@@ -23,3 +23,12 @@ if (!globalThis.crypto?.subtle) {
 // jsdom does not implement scrolling, and the router scrolls to the top on
 // every navigation; without this each one logs "Not implemented".
 window.scrollTo = () => {};
+
+// jsdom has no layout, so no ResizeObserver either. Radix measures a
+// switch's thumb with one; a size that never changes is what jsdom would
+// report anyway.
+globalThis.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};

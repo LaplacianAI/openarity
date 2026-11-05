@@ -45,7 +45,10 @@ export const SCREENS = [
     followName,
     tabs: ["Runs"],
   })),
-  { name: "agents", path: "/ui/agents", open: "Define agent" },
+  { name: "agents", path: "/ui/agents" },
+  { name: "agent-new", path: "/ui/agents/new" },
+  // By name: "Define agent" links under the same path and comes first.
+  { name: "agent", path: "/ui/agents", follow: "/ui/agents/", followName: "log-reader" },
   { name: "servers", path: "/ui/servers", open: "Register server" },
   { name: "skills", path: "/ui/skills" },
   { name: "graph", path: "/ui/graph" },

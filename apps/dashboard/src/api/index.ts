@@ -11,13 +11,13 @@ import { readFrames } from "./sse";
 import type {
   Agent,
   AgentRequest,
-  AgentSummary,
   ApprovedSender,
   Attachment,
   AuthConfig,
   Channel,
   CreateChannelRequest,
   CreatedChannel,
+  ListedAgent,
   ListedSession,
   MCPServer,
   MCPServerRequest,
@@ -420,8 +420,8 @@ export function listAgents(
   teamId: string,
   cursor?: string | null,
   search?: Search,
-): Promise<Page<AgentSummary>> {
-  return request<Page<AgentSummary>>(
+): Promise<Page<ListedAgent>> {
+  return request<Page<ListedAgent>>(
     `/teams/${teamId}/agents${pageQuery(cursor, search?.limit, search?.q)}`,
   );
 }

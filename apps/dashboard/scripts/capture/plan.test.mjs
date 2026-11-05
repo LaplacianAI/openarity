@@ -65,8 +65,8 @@ describe("the capture plan", () => {
     const session = SCREENS.find((s) => s.name === "session");
     expect(shotsOf(session).map((s) => s.variant)).toEqual([null, "runs"]);
 
-    const agents = SCREENS.find((s) => s.name === "agents");
-    expect(shotsOf(agents).map((s) => s.variant)).toEqual([null, "dialog"]);
+    const channels = SCREENS.find((s) => s.name === "channels");
+    expect(shotsOf(channels).map((s) => s.variant)).toEqual([null, "dialog"]);
 
     const teams = SCREENS.find((s) => s.name === "teams");
     expect(shotsOf(teams).map((s) => s.variant)).toEqual([null]);

@@ -23,7 +23,12 @@ function open() {
     "GET /whoami": { body: { subject: "ann" } },
     "GET /teams/{id}/channels": { body: { items: [] } },
     "GET /teams/{id}/agents": {
-      body: { items: [{ name: "log-reader", description: "Reads logs" }, { name: "ops-lead" }] },
+      body: {
+        items: [
+          { id: "a-1", name: "log-reader", description: "Reads logs" },
+          { id: "a-2", name: "ops-lead" },
+        ],
+      },
     },
     "GET /teams/{id}/skills": { body: { items: [{ name: "incident-postmortem" }] } },
     "GET /teams/{id}/sessions": {
@@ -34,7 +39,7 @@ function open() {
 }
 
 describe("the command palette", () => {
-  it("opens on ⌘K and finds a screen or an agent by name", async () => {
+  it("opens on ⌘K and finds a screen or an agent by name, opening the agent's own page", async () => {
     const router = open();
     await screen.findByRole("navigation", { name: "Main" });
 
@@ -47,7 +52,7 @@ describe("the command palette", () => {
     expect(options[0]).toHaveAttribute("aria-selected", "true");
 
     await userEvent.keyboard("{Enter}");
-    await waitFor(() => expect(router.state.location.pathname).toBe("/ui/agents"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/ui/agents/a-1"));
     expect(screen.queryByRole("dialog", { name: "Go to" })).toBeNull();
   });
 

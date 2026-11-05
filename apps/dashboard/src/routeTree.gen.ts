@@ -18,6 +18,8 @@ import { Route as UiCallbackRouteImport } from './routes/ui.callback'
 import { Route as UiGraphRouteImport } from './routes/ui.graph'
 import { Route as UiSettingsRouteImport } from './routes/ui.settings'
 import { Route as UiAgentsIndexRouteImport } from './routes/ui.agents.index'
+import { Route as UiAgentsAgentIdRouteImport } from './routes/ui.agents.$agentId'
+import { Route as UiAgentsNewRouteImport } from './routes/ui.agents.new'
 import { Route as UiChannelsIndexRouteImport } from './routes/ui.channels.index'
 import { Route as UiRunsIndexRouteImport } from './routes/ui.runs.index'
 import { Route as UiServersIndexRouteImport } from './routes/ui.servers.index'
@@ -72,6 +74,16 @@ const UiAgentsIndexRoute = UiAgentsIndexRouteImport.update({
   path: '/agents/',
   getParentRoute: () => UiRoute,
 } as any)
+const UiAgentsAgentIdRoute = UiAgentsAgentIdRouteImport.update({
+  id: '/agents/$agentId',
+  path: '/agents/$agentId',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiAgentsNewRoute = UiAgentsNewRouteImport.update({
+  id: '/agents/new',
+  path: '/agents/new',
+  getParentRoute: () => UiRoute,
+} as any)
 const UiChannelsIndexRoute = UiChannelsIndexRouteImport.update({
   id: '/channels/',
   path: '/channels/',
@@ -122,6 +134,8 @@ export interface FileRoutesByFullPath {
   '/ui/graph': typeof UiGraphRoute
   '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
+  '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
+  '/ui/agents/new': typeof UiAgentsNewRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
   '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
@@ -140,6 +154,8 @@ export interface FileRoutesByTo {
   '/ui/graph': typeof UiGraphRoute
   '/ui/settings': typeof UiSettingsRoute
   '/ui': typeof UiIndexRoute
+  '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
+  '/ui/agents/new': typeof UiAgentsNewRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
   '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents': typeof UiAgentsIndexRoute
@@ -160,6 +176,8 @@ export interface FileRoutesById {
   '/ui/graph': typeof UiGraphRoute
   '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
+  '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
+  '/ui/agents/new': typeof UiAgentsNewRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
   '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
@@ -181,6 +199,8 @@ export interface FileRouteTypes {
     | '/ui/graph'
     | '/ui/settings'
     | '/ui/'
+    | '/ui/agents/$agentId'
+    | '/ui/agents/new'
     | '/ui/sessions/$sessionId'
     | '/ui/teams/deleted'
     | '/ui/agents/'
@@ -199,6 +219,8 @@ export interface FileRouteTypes {
     | '/ui/graph'
     | '/ui/settings'
     | '/ui'
+    | '/ui/agents/$agentId'
+    | '/ui/agents/new'
     | '/ui/sessions/$sessionId'
     | '/ui/teams/deleted'
     | '/ui/agents'
@@ -218,6 +240,8 @@ export interface FileRouteTypes {
     | '/ui/graph'
     | '/ui/settings'
     | '/ui/'
+    | '/ui/agents/$agentId'
+    | '/ui/agents/new'
     | '/ui/sessions/$sessionId'
     | '/ui/teams/deleted'
     | '/ui/agents/'
@@ -299,6 +323,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiAgentsIndexRouteImport
       parentRoute: typeof UiRoute
     }
+    '/ui/agents/$agentId': {
+      id: '/ui/agents/$agentId'
+      path: '/agents/$agentId'
+      fullPath: '/ui/agents/$agentId'
+      preLoaderRoute: typeof UiAgentsAgentIdRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/agents/new': {
+      id: '/ui/agents/new'
+      path: '/agents/new'
+      fullPath: '/ui/agents/new'
+      preLoaderRoute: typeof UiAgentsNewRouteImport
+      parentRoute: typeof UiRoute
+    }
     '/ui/channels/': {
       id: '/ui/channels/'
       path: '/channels'
@@ -365,6 +403,8 @@ interface UiRouteChildren {
   UiGraphRoute: typeof UiGraphRoute
   UiSettingsRoute: typeof UiSettingsRoute
   UiIndexRoute: typeof UiIndexRoute
+  UiAgentsAgentIdRoute: typeof UiAgentsAgentIdRoute
+  UiAgentsNewRoute: typeof UiAgentsNewRoute
   UiSessionsSessionIdRoute: typeof UiSessionsSessionIdRoute
   UiTeamsDeletedRoute: typeof UiTeamsDeletedRoute
   UiAgentsIndexRoute: typeof UiAgentsIndexRoute
@@ -383,6 +423,8 @@ const UiRouteChildren: UiRouteChildren = {
   UiGraphRoute: UiGraphRoute,
   UiSettingsRoute: UiSettingsRoute,
   UiIndexRoute: UiIndexRoute,
+  UiAgentsAgentIdRoute: UiAgentsAgentIdRoute,
+  UiAgentsNewRoute: UiAgentsNewRoute,
   UiSessionsSessionIdRoute: UiSessionsSessionIdRoute,
   UiTeamsDeletedRoute: UiTeamsDeletedRoute,
   UiAgentsIndexRoute: UiAgentsIndexRoute,
