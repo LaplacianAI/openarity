@@ -14,8 +14,12 @@ import {
 import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
+import { useTeamSummary } from "@/api/summary";
 import type { MCPServer, MCPServerRequest } from "@/api/types";
+import { Time } from "@/components/facts";
 import { Field, ReadOnlyNote, Tag, TextArea } from "@/components/registry-bits";
+import { ErrorState } from "@/components/states";
+import { StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,8 +30,33 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SwitchField } from "@/components/ui/switch";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { EmptyState, LoadMore, Mono, PageHeader } from "@/components/ui-bits";
-import { relativeTime } from "@/lib/format";
+import { count } from "@/lib/runs";
+import {
+  discoveryOf,
+  draftOf,
+  EMPTY_SERVER,
+  editRequest,
+  type ServerDraft,
+  serverRequest,
+} from "@/lib/server-draft";
 
 export const Route = createFileRoute("/ui/servers/")({
   component: Servers,
@@ -35,110 +64,9 @@ export const Route = createFileRoute("/ui/servers/")({
 
 const WRITE = "tool:write";
 
-type Draft = {
-  name: string;
-  transport: "url" | "command";
-  url: string;
-  authRef: string;
-  command: string;
-  env: string;
-  bare: boolean;
-};
-
-const EMPTY: Draft = {
-  name: "",
-  transport: "url",
-  url: "",
-  authRef: "",
-  command: "",
-  env: "",
-  bare: false,
-};
-
-/**
- * The form as the API takes it. A command is one argument per line, because
- * splitting a line on spaces breaks every argument that has one; env is one
- * NAME=reference per line. What the brain refuses, it explains.
- */
-export function serverRequest(d: Draft): MCPServerRequest | string {
-  const name = d.name.trim();
-  if (!name) return "A server needs a name.";
-  const body: MCPServerRequest = { name };
-  if (d.bare) body.bare = true;
-
-  if (d.transport === "url") {
-    if (!d.url.trim()) return "A url server needs its URL.";
-    body.url = d.url.trim();
-    if (d.authRef.trim()) body.auth_secret_ref = d.authRef.trim();
-    return body;
-  }
-
-  const argv = d.command
-    .split("\n")
-    .map((a) => a.trim())
-    .filter(Boolean);
-  if (argv.length === 0) return "A command server needs its command, one argument per line.";
-  body.command = argv;
-
-  const env: Record<string, string> = {};
-  for (const line of d.env
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)) {
-    const at = line.indexOf("=");
-    if (at <= 0) return `"${line}" is not NAME=reference.`;
-    env[line.slice(0, at).trim()] = line.slice(at + 1).trim();
-  }
-  body.env = env;
-  return body;
-}
-
-/** A server as the form shows it. */
-export function draftOf(s: MCPServer): Draft {
-  return {
-    name: s.name,
-    transport: s.command ? "command" : "url",
-    url: s.url ?? "",
-    authRef: s.auth_secret_ref ?? "",
-    command: (s.command ?? []).join("\n"),
-    env: Object.entries(s.env ?? {})
-      .map(([k, v]) => `${k}=${v}`)
-      .join("\n"),
-    bare: s.bare,
-  };
-}
-
-/**
- * The whole definition a PUT replaces the server with: the server as it
- * stands, with the form laid over it. The form owns the name, bare and its
- * transport's fields; a field it does not show (env on a url server, a token
- * on a command one) is kept, unless the transport itself changed, when the
- * old transport's fields go with it.
- */
-export function editRequest(current: MCPServer, d: Draft): MCPServerRequest | string {
-  const form = serverRequest(d);
-  if (typeof form === "string") return form;
-
-  const body: MCPServerRequest = { name: form.name, bare: Boolean(form.bare) };
-  const sameTransport = (current.command ? "command" : "url") === d.transport;
-  if (sameTransport) {
-    if (current.url !== undefined) body.url = current.url;
-    if (current.auth_secret_ref !== undefined) body.auth_secret_ref = current.auth_secret_ref;
-    if (current.command !== undefined) body.command = current.command;
-    body.env = current.env;
-  }
-
-  if (d.transport === "url") {
-    delete body.command;
-    body.url = form.url;
-    if (form.auth_secret_ref) body.auth_secret_ref = form.auth_secret_ref;
-    else delete body.auth_secret_ref;
-  } else {
-    delete body.url;
-    body.command = form.command;
-    body.env = form.env;
-  }
-  return body;
+/** What a server is reached at: its URL, or its command as it would be typed. */
+function addressOf(s: MCPServer): string {
+  return s.url ?? s.command?.join(" ") ?? "";
 }
 
 function Servers() {
@@ -146,7 +74,8 @@ function Servers() {
   const { teamId } = useCurrentTeam();
   const perms = usePermissions(teamId);
   const canWrite = perms.can(WRITE);
-  const [open, setOpen] = useState<string | null>(null);
+  const summary = useTeamSummary(teamId);
+  const [shown, setShown] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<MCPServer | null>(null);
 
@@ -158,13 +87,23 @@ function Servers() {
     enabled: Boolean(teamId),
   });
 
-  const changed = () => qc.invalidateQueries({ queryKey: ["servers", teamId] });
+  const changed = () => {
+    void qc.invalidateQueries({ queryKey: ["servers", teamId] });
+    void qc.invalidateQueries({ queryKey: ["summary", teamId] });
+  };
   const rows = servers.data?.pages.flatMap((p) => p.items) ?? [];
+  const failing = summary.data?.servers_failing ?? 0;
+  const open = rows.find((s) => s.id === shown) ?? null;
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="MCP servers"
+        finding={
+          failing > 0
+            ? `${count(failing, "server")} failed ${failing === 1 ? "its" : "their"} last discovery.`
+            : null
+        }
         description="The tool servers a team's agents can be granted. Credentials are references into the secret store, never the secret."
         actions={
           canWrite ? (
@@ -182,37 +121,72 @@ function Servers() {
       {!teamId ? (
         <EmptyState title="No team" body="Join or create a team to see its MCP servers." />
       ) : servers.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading servers…</p>
+        <div className="space-y-1" role="status" aria-label="Loading servers">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : servers.isError ? (
+        <ErrorState
+          what="the MCP servers"
+          error={servers.error}
+          onRetry={() => servers.refetch()}
+          retrying={servers.isRefetching}
+        />
       ) : rows.length === 0 ? (
         <EmptyState
           title="No MCP servers yet"
           body="A server is a URL spoken to over streamable HTTP, or a command started over stdio. Its tools are found by discovering it."
-          hint="oa mcp-servers create <team> github --url https://…"
         />
       ) : (
-        <>
-          <ul className="divide-y divide-border overflow-hidden rounded-md border border-border bg-card">
-            {rows.map((s) => (
-              <ServerRow
-                key={s.id}
-                server={s}
-                teamId={teamId}
-                canWrite={canWrite}
-                open={open === s.id}
-                onToggle={() => setOpen(open === s.id ? null : s.id)}
-                onEdit={() => setEditing(s)}
-                onChanged={changed}
-              />
-            ))}
-          </ul>
+        <div>
+          <Table aria-label="MCP servers in this team">
+            <TableHeader>
+              <tr>
+                <TableHead>Server</TableHead>
+                <TableHead>Discovery</TableHead>
+                <TableHead>Last tried</TableHead>
+                {canWrite ? (
+                  <TableHead>
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                ) : null}
+              </tr>
+            </TableHeader>
+            <TableBody>
+              {rows.map((s) => (
+                <ServerRow
+                  key={s.id}
+                  server={s}
+                  teamId={teamId}
+                  canWrite={canWrite}
+                  onOpen={() => setShown(s.id)}
+                  onChanged={changed}
+                />
+              ))}
+            </TableBody>
+          </Table>
           <LoadMore
             hasMore={Boolean(servers.hasNextPage)}
             loading={servers.isFetchingNextPage}
             onClick={() => servers.fetchNextPage()}
             loadedLabel={`${rows.length} server${rows.length === 1 ? "" : "s"} loaded`}
           />
-        </>
+        </div>
       )}
+
+      {teamId ? (
+        <ServerSheet
+          teamId={teamId}
+          server={open}
+          canWrite={canWrite}
+          onClose={() => setShown(null)}
+          onEdit={(s) => {
+            setShown(null);
+            setEditing(s);
+          }}
+          onChanged={changed}
+        />
+      ) : null}
 
       {teamId && canWrite ? (
         <ServerDialog
@@ -221,7 +195,7 @@ function Servers() {
           onClose={() => setAdding(false)}
           onSaved={(s) => {
             changed();
-            setOpen(s.id);
+            setShown(s.id);
           }}
         />
       ) : null}
@@ -236,7 +210,7 @@ function Servers() {
           onSaved={(s) => {
             changed();
             // A changed transport is discovered again; its tools may be new.
-            qc.invalidateQueries({ queryKey: ["tools", teamId, s.id] });
+            void qc.invalidateQueries({ queryKey: ["tools", teamId, s.id] });
           }}
         />
       ) : null}
@@ -244,135 +218,317 @@ function Servers() {
   );
 }
 
+/** Asks the server for its tools now, and says what came back. */
+function useDiscover(teamId: string, server: MCPServer, onChanged: () => void) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => discoverMCPServer(teamId, server.id),
+    onSuccess: (tools) => {
+      onChanged();
+      qc.setQueryData(["tools", teamId, server.id], tools);
+      toast.success(`${server.name} answered with ${count(tools.items.length, "tool")}.`);
+    },
+    onError: (err: Error) => {
+      // The brain records the failure on the server, so the row says it too.
+      onChanged();
+      toast.error(`${server.name} did not answer: ${err.message}`);
+    },
+  });
+}
+
 function ServerRow({
   server,
   teamId,
   canWrite,
-  open,
-  onToggle,
-  onEdit,
+  onOpen,
   onChanged,
 }: {
   server: MCPServer;
   teamId: string;
   canWrite: boolean;
-  open: boolean;
-  onToggle: () => void;
-  onEdit: () => void;
+  onOpen: () => void;
   onChanged: () => void;
 }) {
-  const qc = useQueryClient();
-  const discover = useMutation({
-    mutationFn: () => discoverMCPServer(teamId, server.id),
-    onSuccess: (tools) => {
-      onChanged();
-      qc.setQueryData(["tools", teamId, server.id], tools);
-      toast.success(
-        `${server.name}: ${tools.items.length} tool${tools.items.length === 1 ? "" : "s"}`,
-      );
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-  const remove = useMutation({
-    mutationFn: () => deleteMCPServer(teamId, server.id),
-    onSuccess: () => {
-      onChanged();
-      toast.success(`Deleted ${server.name}`);
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
+  const discover = useDiscover(teamId, server, onChanged);
+  const tried = server.last_discovery_at ?? server.discovered_at;
 
   return (
-    <li>
-      <div className="flex items-center gap-3 px-3 py-2 hover:bg-secondary/60">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          className="min-w-0 flex-1 text-left"
-        >
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">{server.name}</span>
-            <Tag>{server.command ? "command" : "url"}</Tag>
-          </div>
-          <Mono className="block truncate">{server.url ?? server.command?.join(" ")}</Mono>
-        </button>
-        <span className="hidden text-xs text-muted-foreground sm:inline">
-          {server.discovered_at
-            ? `discovered ${relativeTime(server.discovered_at)}`
-            : "never discovered"}
-        </span>
-        {canWrite ? (
-          <>
-            {server.url ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-xs"
-                disabled={discover.isPending}
-                onClick={() => discover.mutate()}
-              >
-                {discover.isPending ? "Discovering…" : "Discover"}
-              </Button>
-            ) : null}
-            <Button variant="ghost" size="sm" className="text-xs" onClick={onEdit}>
-              Edit
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs"
-              disabled={remove.isPending}
-              onClick={() => remove.mutate()}
+    <TableRow onOpen={onOpen}>
+      <TableCell className="sm:w-full sm:max-w-0">
+        <div className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-baseline gap-2">
+            <button
+              type="button"
+              tabIndex={-1}
+              onClick={onOpen}
+              className="truncate text-left font-medium hover:underline"
             >
-              Delete
+              {server.name}
+            </button>
+            <Tag>{server.command ? "command" : "url"}</Tag>
+          </span>
+          <Mono className="block min-w-0 truncate">{addressOf(server)}</Mono>
+        </div>
+      </TableCell>
+      <TableCell label="Discovery">
+        <StatusPill status={discoveryOf(server)} />
+      </TableCell>
+      <TableCell label="Last tried" className="whitespace-nowrap text-muted-foreground">
+        {tried ? <Time iso={tried} /> : "Never"}
+      </TableCell>
+      {canWrite ? (
+        <TableCell className="text-right">
+          {/* The brain reaches a URL to ask; it does not start a command to. */}
+          {server.url ? (
+            <Button
+              variant="outline"
+              size="sm"
+              loading={discover.isPending}
+              onClick={() => discover.mutate()}
+            >
+              Discover
             </Button>
-          </>
-        ) : null}
-      </div>
-      {open ? <Tools teamId={teamId} server={server} /> : null}
-    </li>
+          ) : null}
+        </TableCell>
+      ) : null}
+    </TableRow>
   );
 }
 
-function Tools({ teamId, server }: { teamId: string; server: MCPServer }) {
+/**
+ * One server read whole, beside the list: where it is, what it answered last,
+ * the references it is given, and the tools it offers.
+ */
+function ServerSheet({
+  teamId,
+  server,
+  canWrite,
+  onClose,
+  onEdit,
+  onChanged,
+}: {
+  teamId: string;
+  server: MCPServer | null;
+  canWrite: boolean;
+  onClose: () => void;
+  onEdit: (s: MCPServer) => void;
+  onChanged: () => void;
+}) {
+  return (
+    <Sheet open={server !== null} onOpenChange={(o) => (o ? null : onClose())}>
+      <SheetContent>
+        {server ? (
+          <ServerDetail
+            teamId={teamId}
+            server={server}
+            canWrite={canWrite}
+            onEdit={() => onEdit(server)}
+            onDeleted={() => {
+              onChanged();
+              onClose();
+            }}
+            onChanged={onChanged}
+          />
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function ServerDetail({
+  teamId,
+  server,
+  canWrite,
+  onEdit,
+  onDeleted,
+  onChanged,
+}: {
+  teamId: string;
+  server: MCPServer;
+  canWrite: boolean;
+  onEdit: () => void;
+  onDeleted: () => void;
+  onChanged: () => void;
+}) {
+  const discover = useDiscover(teamId, server, onChanged);
   const tools = useQuery({
     queryKey: ["tools", teamId, server.id],
     queryFn: () => listMCPTools(teamId, server.id),
   });
+  const tried = server.last_discovery_at ?? server.discovered_at;
+  const env = Object.entries(server.env ?? {});
 
   return (
-    <div className="space-y-2 border-t border-border bg-surface px-3 py-3 text-xs">
-      {server.auth_secret_ref ? (
-        <p className="text-muted-foreground">
-          Bearer token from <Mono>{server.auth_secret_ref}</Mono>
+    <>
+      <SheetHeader>
+        <SheetTitle className="flex items-center gap-2">
+          {server.name}
+          <Tag>{server.command ? "command" : "url"}</Tag>
+        </SheetTitle>
+        <SheetDescription asChild>
+          <Mono className="block break-all">{addressOf(server)}</Mono>
+        </SheetDescription>
+      </SheetHeader>
+
+      <section aria-labelledby="server-discovery" className="space-y-2">
+        <h3 id="server-discovery" className="text-sm font-medium">
+          Discovery
+        </h3>
+        <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+          <StatusPill status={discoveryOf(server)} className="text-sm text-foreground" />
+          {tried ? (
+            <span>
+              last tried <Time iso={tried} />
+            </span>
+          ) : (
+            <span>Never tried.</span>
+          )}
         </p>
+        {server.last_discovery_error ? (
+          // The brain's words, as the caller was told them.
+          <p className="rounded-lg bg-failed/8 px-3 py-2 font-mono text-xs text-failed">
+            {server.last_discovery_error}
+          </p>
+        ) : null}
+        {server.bare ? (
+          <p className="text-xs text-muted-foreground">
+            Bare: its tools reach the model without the server's name in front.
+          </p>
+        ) : null}
+      </section>
+
+      {server.auth_secret_ref || env.length > 0 ? (
+        <section aria-labelledby="server-secrets" className="space-y-2">
+          <h3 id="server-secrets" className="text-sm font-medium">
+            Credentials
+          </h3>
+          <ul className="space-y-1 text-xs text-muted-foreground">
+            {server.auth_secret_ref ? (
+              <li>
+                Bearer token from <Mono className="text-foreground">{server.auth_secret_ref}</Mono>
+              </li>
+            ) : null}
+            {env.map(([k, v]) => (
+              <li key={k}>
+                <Mono className="text-foreground">{k}</Mono> from <Mono>{v}</Mono>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
-      {Object.entries(server.env).map(([k, v]) => (
-        <p key={k} className="text-muted-foreground">
-          <Mono className="text-foreground">{k}</Mono> from <Mono>{v}</Mono>
-        </p>
-      ))}
-      {tools.isPending ? (
-        <p className="text-muted-foreground">Loading tools…</p>
-      ) : tools.isError ? (
-        <p className="text-destructive">{tools.error.message}</p>
-      ) : tools.data.items.length === 0 ? (
-        <p className="text-muted-foreground">
-          No tools recorded. Discovering the server lists them.
-        </p>
-      ) : (
-        <ul className="divide-y divide-border rounded-md border border-border bg-card">
-          {tools.data.items.map((t) => (
-            <li key={t.name} className="px-3 py-1.5">
-              {/* The server's own words, rendered as text and nothing else. */}
-              <Mono className="text-foreground">{t.name}</Mono>
-              <p className="line-clamp-2 text-muted-foreground">{t.description}</p>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+
+      <section aria-labelledby="server-tools" className="space-y-2">
+        <h3 id="server-tools" className="text-sm font-medium">
+          Tools
+          {tools.data ? (
+            <span className="ml-1.5 font-normal text-muted-foreground">
+              {tools.data.items.length}
+            </span>
+          ) : null}
+        </h3>
+        {tools.isPending ? (
+          <Skeleton className="h-16 w-full" />
+        ) : tools.isError ? (
+          <ErrorState what="its tools" error={tools.error} onRetry={() => tools.refetch()} />
+        ) : tools.data.items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No tools recorded yet. Discovering the server lists them.
+          </p>
+        ) : (
+          <ul className="divide-y divide-rule rounded-lg bg-card">
+            {tools.data.items.map((t) => (
+              <li key={t.name} className="space-y-0.5 px-3 py-2">
+                {/* The server's own words, shown as text and nothing else. */}
+                <Mono className="text-foreground">{t.name}</Mono>
+                {t.description ? (
+                  <p className="line-clamp-2 text-xs text-muted-foreground">{t.description}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {canWrite ? (
+        <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-rule pt-4">
+          {server.url ? (
+            <Button
+              variant="outline"
+              loading={discover.isPending}
+              onClick={() => discover.mutate()}
+            >
+              Discover
+            </Button>
+          ) : null}
+          <Button variant="outline" onClick={onEdit}>
+            Edit
+          </Button>
+          <DeleteServer teamId={teamId} server={server} onDeleted={onDeleted} />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function DeleteServer({
+  teamId,
+  server,
+  onDeleted,
+}: {
+  teamId: string;
+  server: MCPServer;
+  onDeleted: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const remove = useMutation({
+    mutationFn: () => deleteMCPServer(teamId, server.id),
+    onSuccess: () => {
+      setOpen(false);
+      toast.success(`Deleted ${server.name}`);
+      onDeleted();
+    },
+  });
+
+  return (
+    <>
+      <Button variant="outline" className="ml-auto text-destructive" onClick={() => setOpen(true)}>
+        Delete
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) remove.reset();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete {server.name}?</DialogTitle>
+            <DialogDescription>
+              A server an agent is granted cannot be deleted; take it from the agent first.
+            </DialogDescription>
+          </DialogHeader>
+          {remove.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {remove.error.message}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Keep it
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              loading={remove.isPending}
+              onClick={() => remove.mutate()}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -390,15 +546,15 @@ function ServerDialog({
   onClose: () => void;
   onSaved: (s: MCPServer) => void;
 }) {
-  const [draft, setDraft] = useState<Draft>(() => (server ? draftOf(server) : EMPTY));
+  const [draft, setDraft] = useState<ServerDraft>(() => (server ? draftOf(server) : EMPTY_SERVER));
   const [problem, setProblem] = useState<string | null>(null);
-  const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
+  const set = (patch: Partial<ServerDraft>) => setDraft((d) => ({ ...d, ...patch }));
 
   const save = useMutation({
     mutationFn: (body: MCPServerRequest) =>
       server ? replaceMCPServer(teamId, server.id, body) : createMCPServer(teamId, body),
     onSuccess: (s) => {
-      setDraft(EMPTY);
+      setDraft(EMPTY_SERVER);
       onSaved(s);
       onClose();
       toast.success(server ? `Saved ${s.name}` : `Registered ${s.name}`);
@@ -417,7 +573,7 @@ function ServerDialog({
           </DialogDescription>
         </DialogHeader>
         <form
-          className="space-y-3"
+          className="space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
             const body = server ? editRequest(server, draft) : serverRequest(draft);
@@ -437,22 +593,27 @@ function ServerDialog({
             <Input
               id="server-name"
               value={draft.name}
+              autoComplete="off"
               onChange={(e) => set({ name: e.target.value })}
             />
           </Field>
-          <div className="flex gap-4 text-xs">
-            {(["url", "command"] as const).map((t) => (
-              <label key={t} className="flex items-center gap-1.5">
-                <input
-                  type="radio"
-                  name="transport"
-                  checked={draft.transport === t}
-                  onChange={() => set({ transport: t })}
-                />
-                {t === "url" ? "URL" : "Command"}
-              </label>
-            ))}
-          </div>
+          <fieldset className="space-y-1.5">
+            <legend className="text-sm font-medium">Reached at</legend>
+            <div className="flex gap-5 text-sm">
+              {(["url", "command"] as const).map((t) => (
+                <label key={t} className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="radio"
+                    name="transport"
+                    checked={draft.transport === t}
+                    onChange={() => set({ transport: t })}
+                    className="size-4 accent-primary"
+                  />
+                  {t === "url" ? "A URL" : "A command"}
+                </label>
+              ))}
+            </div>
+          </fieldset>
           {draft.transport === "url" ? (
             <>
               <Field label="URL" htmlFor="server-url">
@@ -460,6 +621,7 @@ function ServerDialog({
                   id="server-url"
                   value={draft.url}
                   placeholder="https://mcp.example.com/v1"
+                  spellCheck={false}
                   onChange={(e) => set({ url: e.target.value })}
                 />
               </Field>
@@ -467,6 +629,7 @@ function ServerDialog({
                 <Input
                   id="server-auth"
                   value={draft.authRef}
+                  spellCheck={false}
                   onChange={(e) => set({ authRef: e.target.value })}
                 />
               </Field>
@@ -477,6 +640,7 @@ function ServerDialog({
                 <TextArea
                   id="server-command"
                   value={draft.command}
+                  spellCheck={false}
                   onChange={(e) => set({ command: e.target.value })}
                 />
               </Field>
@@ -484,21 +648,20 @@ function ServerDialog({
                 <TextArea
                   id="server-env"
                   value={draft.env}
+                  spellCheck={false}
                   onChange={(e) => set({ env: e.target.value })}
                 />
               </Field>
             </>
           )}
-          <label className="flex items-center gap-1.5 text-xs">
-            <input
-              type="checkbox"
-              checked={draft.bare}
-              onChange={(e) => set({ bare: e.target.checked })}
-            />
-            Bare: tools reach the model without the server's name in front
-          </label>
+          <SwitchField
+            label="Bare"
+            description="Its tools reach the model without the server's name in front."
+            checked={draft.bare}
+            onCheckedChange={(bare) => set({ bare })}
+          />
           {problem ? (
-            <p role="alert" className="text-xs text-destructive">
+            <p role="alert" className="text-sm text-destructive">
               {problem}
             </p>
           ) : null}
@@ -506,14 +669,8 @@ function ServerDialog({
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={save.isPending}>
-              {server
-                ? save.isPending
-                  ? "Saving…"
-                  : "Save"
-                : save.isPending
-                  ? "Registering…"
-                  : "Register"}
+            <Button type="submit" loading={save.isPending}>
+              {server ? "Save" : "Register"}
             </Button>
           </DialogFooter>
         </form>

@@ -212,6 +212,9 @@ export type SkillSummary = {
   updated_at: string;
 };
 
+/** A row of GET /teams/{id}/skills: the summary, and how many agents hold it. */
+export type ListedSkill = SkillSummary & { agent_count: number };
+
 export type SkillFile = {
   path: string;
   size: number;

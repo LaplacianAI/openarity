@@ -16,8 +16,10 @@ import {
 import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
-import type { SkillSummary } from "@/api/types";
-import { ReadOnlyNote, Tag } from "@/components/registry-bits";
+import type { ListedSkill } from "@/api/types";
+import { Time } from "@/components/facts";
+import { Field, ReadOnlyNote } from "@/components/registry-bits";
+import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,8 +30,26 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { EmptyState, LoadMore, Mono, PageHeader } from "@/components/ui-bits";
-import { fileSize, relativeTime } from "@/lib/format";
+import { fileSize } from "@/lib/format";
+import { count } from "@/lib/runs";
+import { folderUpload, heldBy, sourceWords } from "@/lib/skills";
 
 export const Route = createFileRoute("/ui/skills/")({
   component: Skills,
@@ -37,17 +57,158 @@ export const Route = createFileRoute("/ui/skills/")({
 
 const WRITE = "skill:write";
 
-/**
- * What a folder picker hands back, turned into what the brain reads: each
- * file under the path it sits at. A .git directory is left out — a cloned
- * skill carries hundreds of objects, and the brain would refuse the upload
- * for having more files than a skill may.
- */
-export function folderUpload(files: FileList | File[]): SkillUpload {
-  const picked = Array.from(files)
-    .map((file) => ({ path: file.webkitRelativePath || file.name, file }))
-    .filter(({ path }) => !path.split("/").includes(".git"));
-  return { files: picked };
+function Skills() {
+  const qc = useQueryClient();
+  const { teamId } = useCurrentTeam();
+  const perms = usePermissions(teamId);
+  const canWrite = perms.can(WRITE);
+  const [shown, setShown] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  const skills = useInfiniteQuery({
+    queryKey: ["skills", teamId, "paged"],
+    queryFn: ({ pageParam }) => listSkills(teamId as string, pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: nextCursorOf,
+    enabled: Boolean(teamId),
+  });
+
+  const changed = () => qc.invalidateQueries({ queryKey: ["skills", teamId] });
+  const rows = skills.data?.pages.flatMap((p) => p.items) ?? [];
+  const open = rows.find((s) => s.id === shown) ?? null;
+  // Only a whole list can say how many no agent holds: a page is not a total.
+  const unheld =
+    skills.data && !skills.hasNextPage ? rows.filter((s) => s.agent_count === 0).length : 0;
+
+  return (
+    <div className="space-y-5">
+      <PageHeader
+        title="Skills"
+        finding={unheld > 0 ? `${count(unheld, "skill")} no agent holds.` : null}
+        description="Instructions and files an agent can load when a task needs them. The description is what the model reads when deciding."
+        actions={
+          canWrite ? (
+            <Button size="sm" onClick={() => setAdding(true)}>
+              Add skill
+            </Button>
+          ) : null
+        }
+      />
+
+      {teamId && !perms.isPending && !canWrite ? (
+        <ReadOnlyNote permission={WRITE} what="skills" />
+      ) : null}
+
+      {!teamId ? (
+        <EmptyState title="No team" body="Join or create a team to see its skills." />
+      ) : skills.isPending ? (
+        <div className="space-y-1" role="status" aria-label="Loading skills">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : skills.isError ? (
+        <ErrorState
+          what="the skills"
+          error={skills.error}
+          onRetry={() => skills.refetch()}
+          retrying={skills.isRefetching}
+        />
+      ) : rows.length === 0 ? (
+        <EmptyState
+          title="No skills yet"
+          body="A skill is a folder with SKILL.md at the top. Upload one, or import it from GitHub or a zip at a link."
+        />
+      ) : (
+        <div>
+          <Table aria-label="Skills in this team">
+            <TableHeader>
+              <tr>
+                <TableHead>Skill</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Held by</TableHead>
+                <TableHead>Updated</TableHead>
+              </tr>
+            </TableHeader>
+            <TableBody>
+              {rows.map((s) => (
+                <TableRow key={s.id} onOpen={() => setShown(s.id)}>
+                  <TableCell className="sm:w-full sm:max-w-0">
+                    <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onClick={() => setShown(s.id)}
+                        className="block max-w-full truncate text-left font-medium hover:underline"
+                      >
+                        {s.name}
+                      </button>
+                      <span className="block min-w-0 truncate text-xs text-muted-foreground">
+                        {s.description}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell label="Source" className="whitespace-nowrap">
+                    {sourceWords(s.source)}
+                  </TableCell>
+                  <TableCell
+                    label="Held by"
+                    className={
+                      s.agent_count === 0
+                        ? "whitespace-nowrap text-muted-foreground"
+                        : "whitespace-nowrap"
+                    }
+                  >
+                    {heldBy(s)}
+                  </TableCell>
+                  <TableCell label="Updated" className="whitespace-nowrap text-muted-foreground">
+                    <Time iso={s.updated_at} />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <LoadMore
+            hasMore={Boolean(skills.hasNextPage)}
+            loading={skills.isFetchingNextPage}
+            onClick={() => skills.fetchNextPage()}
+            loadedLabel={`${rows.length} skill${rows.length === 1 ? "" : "s"} loaded`}
+          />
+        </div>
+      )}
+
+      {teamId ? (
+        <Sheet open={open !== null} onOpenChange={(o) => (o ? null : setShown(null))}>
+          <SheetContent>
+            {open ? (
+              <SkillDetail
+                teamId={teamId}
+                skill={open}
+                canWrite={canWrite}
+                onChanged={changed}
+                onDeleted={() => {
+                  setShown(null);
+                  void changed();
+                }}
+              />
+            ) : null}
+          </SheetContent>
+        </Sheet>
+      ) : null}
+
+      {teamId && canWrite ? (
+        <AddSkill
+          teamId={teamId}
+          open={adding}
+          onClose={() => setAdding(false)}
+          onAdded={(id) => {
+            void changed();
+            setAdding(false);
+            setShown(id);
+          }}
+        />
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -84,20 +245,10 @@ function SkillPicker({
 
   return (
     <>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={disabled}
-        onClick={() => folderInput.current?.click()}
-      >
+      <Button variant="outline" disabled={disabled} onClick={() => folderInput.current?.click()}>
         {folderButton}
       </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={disabled}
-        onClick={() => zipInput.current?.click()}
-      >
+      <Button variant="outline" disabled={disabled} onClick={() => zipInput.current?.click()}>
         {zipButton}
       </Button>
       {/* webkitdirectory is not in React's types, and every browser supports it. */}
@@ -122,144 +273,132 @@ function SkillPicker({
   );
 }
 
-function Skills() {
-  const qc = useQueryClient();
-  const { teamId } = useCurrentTeam();
-  const perms = usePermissions(teamId);
-  const canWrite = perms.can(WRITE);
-  const [open, setOpen] = useState<string | null>(null);
+/**
+ * Adding a skill, in a sheet beside the list: imported from where it lives,
+ * or uploaded from this machine. The brain's refusal is shown here, as it is.
+ */
+function AddSkill({
+  teamId,
+  open,
+  onClose,
+  onAdded,
+}: {
+  teamId: string;
+  open: boolean;
+  onClose: () => void;
+  onAdded: (id: string) => void;
+}) {
   const [source, setSource] = useState("");
-
-  const skills = useInfiniteQuery({
-    queryKey: ["skills", teamId, "paged"],
-    queryFn: ({ pageParam }) => listSkills(teamId as string, pageParam),
-    initialPageParam: null as string | null,
-    getNextPageParam: nextCursorOf,
-    enabled: Boolean(teamId),
-  });
-
-  const changed = () => qc.invalidateQueries({ queryKey: ["skills", teamId] });
-
-  const upload = useMutation({
-    mutationFn: (body: SkillUpload) => uploadSkill(teamId as string, body),
-    onSuccess: (skill) => {
-      changed();
-      setOpen(skill.id);
-      toast.success(`Uploaded ${skill.name}`);
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
   const imported = useMutation({
-    mutationFn: () => importSkill(teamId as string, source.trim()),
+    mutationFn: () => importSkill(teamId, source.trim()),
     onSuccess: (skill) => {
       setSource("");
-      changed();
-      setOpen(skill.id);
       toast.success(`Imported ${skill.name}`);
+      onAdded(skill.id);
     },
-    onError: (err: Error) => toast.error(err.message),
   });
-
-  const rows = skills.data?.pages.flatMap((p) => p.items) ?? [];
-  const busy = upload.isPending || imported.isPending;
+  const upload = useMutation({
+    mutationFn: (body: SkillUpload) => uploadSkill(teamId, body),
+    onSuccess: (skill) => {
+      toast.success(`Uploaded ${skill.name}`);
+      onAdded(skill.id);
+    },
+  });
+  const busy = imported.isPending || upload.isPending;
+  const failed = imported.error ?? upload.error;
 
   return (
-    <div className="space-y-5">
-      <PageHeader
-        title="Skills"
-        description="Instructions and files an agent can load when a task needs them. The description is what the model reads when deciding."
-        actions={
-          canWrite ? (
+    <Sheet
+      open={open}
+      onOpenChange={(o) => {
+        if (o) return;
+        imported.reset();
+        upload.reset();
+        onClose();
+      }}
+    >
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Add a skill</SheetTitle>
+          <SheetDescription>
+            A folder with SKILL.md at the top. Its name and description come from that file.
+          </SheetDescription>
+        </SheetHeader>
+
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            upload.reset();
+            if (source.trim()) imported.mutate();
+          }}
+        >
+          <Field
+            label="Import from"
+            htmlFor="skill-source"
+            hint="A GitHub folder, as github:owner/repo/path@ref, or the https address of a zip from a host this brain allows."
+          >
+            <Input
+              id="skill-source"
+              value={source}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(e) => setSource(e.target.value)}
+            />
+          </Field>
+          <Button type="submit" disabled={!source.trim() || busy} loading={imported.isPending}>
+            Import
+          </Button>
+        </form>
+
+        <section aria-labelledby="skill-upload" className="space-y-2 border-t border-rule pt-4">
+          <h3 id="skill-upload" className="text-sm font-medium">
+            Or upload it from this machine
+          </h3>
+          <div className="flex flex-wrap gap-2">
             <SkillPicker
               disabled={busy}
-              onPick={(body) => upload.mutate(body)}
+              onPick={(body) => {
+                imported.reset();
+                upload.mutate(body);
+              }}
               folderButton="Upload folder"
               zipButton="Upload zip"
               folderLabel="Skill folder"
               zipLabel="Skill zip"
             />
-          ) : null
-        }
-      />
+          </div>
+        </section>
 
-      {teamId && !perms.isPending && !canWrite ? (
-        <ReadOnlyNote permission={WRITE} what="skills" />
-      ) : null}
-
-      {canWrite ? (
-        <form
-          className="flex flex-wrap items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (source.trim()) imported.mutate();
-          }}
-        >
-          <Input
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            placeholder="github:owner/repo/path@ref, or https://… .zip"
-            aria-label="Import from"
-            className="h-8 max-w-md flex-1 text-xs"
-          />
-          <Button type="submit" size="sm" disabled={!source.trim() || busy}>
-            {imported.isPending ? "Importing…" : "Import"}
-          </Button>
-        </form>
-      ) : null}
-
-      {!teamId ? (
-        <EmptyState title="No team" body="Join or create a team to see its skills." />
-      ) : skills.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading skills…</p>
-      ) : rows.length === 0 ? (
-        <EmptyState
-          title="No skills yet"
-          body="A skill is a folder with SKILL.md at the top. Upload one, or import it from GitHub."
-          hint="oa skills upload <team> ./my-skill"
-        />
-      ) : (
-        <>
-          <ul className="divide-y divide-border overflow-hidden rounded-md border border-border bg-card">
-            {rows.map((s) => (
-              <SkillRow
-                key={s.id}
-                skill={s}
-                teamId={teamId}
-                canWrite={canWrite}
-                open={open === s.id}
-                onToggle={() => setOpen(open === s.id ? null : s.id)}
-                onChanged={changed}
-              />
-            ))}
-          </ul>
-          <LoadMore
-            hasMore={Boolean(skills.hasNextPage)}
-            loading={skills.isFetchingNextPage}
-            onClick={() => skills.fetchNextPage()}
-            loadedLabel={`${rows.length} skill${rows.length === 1 ? "" : "s"} loaded`}
-          />
-        </>
-      )}
-    </div>
+        {failed ? (
+          <p role="alert" className="text-sm text-destructive">
+            {failed.message}
+          </p>
+        ) : null}
+      </SheetContent>
+    </Sheet>
   );
 }
 
-function SkillRow({
-  skill,
+/** One skill read whole, beside the list, with what may be done to it. */
+function SkillDetail({
   teamId,
+  skill,
   canWrite,
-  open,
-  onToggle,
   onChanged,
+  onDeleted,
 }: {
-  skill: SkillSummary;
   teamId: string;
+  skill: ListedSkill;
   canWrite: boolean;
-  open: boolean;
-  onToggle: () => void;
   onChanged: () => void;
+  onDeleted: () => void;
 }) {
+  const [replacing, setReplacing] = useState(false);
+  const detail = useQuery({
+    queryKey: ["skills", teamId, skill.id],
+    queryFn: () => getSkill(teamId, skill.id),
+  });
   const sync = useMutation({
     mutationFn: () => syncSkill(teamId, skill.id),
     onSuccess: () => {
@@ -268,68 +407,90 @@ function SkillRow({
     },
     onError: (err: Error) => toast.error(err.message),
   });
-  const [replacing, setReplacing] = useState(false);
-  const remove = useMutation({
-    mutationFn: () => deleteSkill(teamId, skill.id),
-    onSuccess: () => {
-      onChanged();
-      toast.success(`Deleted ${skill.name}`);
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
 
+  const s = detail.data;
   return (
-    <li>
-      <div className="flex items-center gap-3 px-3 py-2 hover:bg-secondary/60">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          className="min-w-0 flex-1 text-left"
-        >
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">{skill.name}</span>
-            <Tag>{skill.source}</Tag>
-          </div>
-          <p className="truncate text-xs text-muted-foreground">{skill.description}</p>
-        </button>
-        <span className="hidden text-xs text-muted-foreground sm:inline">
-          {relativeTime(skill.updated_at)}
+    <>
+      <SheetHeader>
+        <SheetTitle>{skill.name}</SheetTitle>
+        <SheetDescription>{skill.description}</SheetDescription>
+      </SheetHeader>
+
+      <p className="flex flex-wrap gap-x-2 text-sm text-muted-foreground">
+        <span>{sourceWords(skill.source)}</span>
+        <span aria-hidden>·</span>
+        <span className={skill.agent_count === 0 ? undefined : "text-foreground"}>
+          {skill.agent_count === 0 ? "No agent holds it" : `Held by ${heldBy(skill)}`}
         </span>
-        {canWrite ? (
-          <>
-            {skill.source !== "upload" ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-xs"
-                disabled={sync.isPending}
-                onClick={() => sync.mutate()}
-              >
-                Sync
-              </Button>
-            ) : null}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs"
-              onClick={() => setReplacing(true)}
-            >
-              Upload new version
+        <span aria-hidden>·</span>
+        <span>
+          updated <Time iso={skill.updated_at} />
+        </span>
+      </p>
+      {s?.source_ref ? (
+        <p className="text-xs text-muted-foreground">
+          From <Mono className="break-all text-foreground">{s.source_ref}</Mono>
+          {s.source_sha ? (
+            <>
+              {" "}
+              at <Mono>{s.source_sha.slice(0, 12)}</Mono>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+
+      {detail.isPending ? (
+        <Skeleton className="h-40 w-full" />
+      ) : detail.isError ? (
+        <ErrorState what="this skill" error={detail.error} onRetry={() => detail.refetch()} />
+      ) : s ? (
+        <>
+          <section aria-labelledby="skill-body" className="space-y-2">
+            <h3 id="skill-body" className="text-sm font-medium">
+              SKILL.md
+            </h3>
+            {/* The team's markdown, shown as text: rendering it as HTML would
+                run whatever an imported skill's author put there. */}
+            <pre className="max-h-80 overflow-auto rounded-lg bg-card p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+              {s.body}
+            </pre>
+          </section>
+          <section aria-labelledby="skill-files" className="space-y-2">
+            <h3 id="skill-files" className="text-sm font-medium">
+              Files
+              <span className="ml-1.5 font-normal text-muted-foreground">{s.files.length + 1}</span>
+            </h3>
+            <ul className="divide-y divide-rule rounded-lg bg-card text-xs">
+              <li className="px-3 py-1.5">
+                <Mono className="text-foreground">SKILL.md</Mono>
+              </li>
+              {s.files.map((f) => (
+                <li key={f.path} className="flex justify-between gap-3 px-3 py-1.5">
+                  <Mono className="truncate text-foreground">{f.path}</Mono>
+                  <span className="shrink-0 text-muted-foreground tabular-nums">
+                    {fileSize(f.size)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </>
+      ) : null}
+
+      {canWrite ? (
+        <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-rule pt-4">
+          {skill.source !== "upload" ? (
+            <Button variant="outline" loading={sync.isPending} onClick={() => sync.mutate()}>
+              Sync
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs"
-              disabled={remove.isPending}
-              onClick={() => remove.mutate()}
-            >
-              Delete
-            </Button>
-          </>
-        ) : null}
-      </div>
-      {open ? <SkillDetail teamId={teamId} skillId={skill.id} /> : null}
+          ) : null}
+          <Button variant="outline" onClick={() => setReplacing(true)}>
+            Upload new version
+          </Button>
+          <DeleteSkill teamId={teamId} skill={skill} onDeleted={onDeleted} />
+        </div>
+      ) : null}
+
       {canWrite ? (
         <ReplaceDialog
           teamId={teamId}
@@ -339,7 +500,79 @@ function SkillRow({
           onChanged={onChanged}
         />
       ) : null}
-    </li>
+    </>
+  );
+}
+
+/**
+ * The brain refuses to delete a skill an agent holds, so a held skill says
+ * so where Delete would be, rather than offering what will be refused.
+ */
+function DeleteSkill({
+  teamId,
+  skill,
+  onDeleted,
+}: {
+  teamId: string;
+  skill: ListedSkill;
+  onDeleted: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const remove = useMutation({
+    mutationFn: () => deleteSkill(teamId, skill.id),
+    onSuccess: () => {
+      setOpen(false);
+      toast.success(`Deleted ${skill.name}`);
+      onDeleted();
+    },
+  });
+
+  if (skill.agent_count > 0) {
+    return (
+      <p className="ml-auto max-w-56 text-right text-xs text-muted-foreground">
+        Held by {heldBy(skill)}: take it from them before deleting it.
+      </p>
+    );
+  }
+
+  return (
+    <>
+      <Button variant="outline" className="ml-auto text-destructive" onClick={() => setOpen(true)}>
+        Delete
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) remove.reset();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete {skill.name}?</DialogTitle>
+            <DialogDescription>Its files go with it. It cannot be restored.</DialogDescription>
+          </DialogHeader>
+          {remove.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {remove.error.message}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Keep it
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              loading={remove.isPending}
+              onClick={() => remove.mutate()}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -356,7 +589,7 @@ function ReplaceDialog({
   onChanged,
 }: {
   teamId: string;
-  skill: SkillSummary;
+  skill: ListedSkill;
   open: boolean;
   onClose: () => void;
   onChanged: () => void;
@@ -407,55 +640,5 @@ function ReplaceDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function SkillDetail({ teamId, skillId }: { teamId: string; skillId: string }) {
-  const detail = useQuery({
-    queryKey: ["skills", teamId, skillId],
-    queryFn: () => getSkill(teamId, skillId),
-  });
-
-  if (detail.isPending) return <p className="px-3 pb-3 text-xs text-muted-foreground">Loading…</p>;
-  if (detail.isError)
-    return <p className="px-3 pb-3 text-xs text-destructive">{detail.error.message}</p>;
-
-  const s = detail.data;
-  return (
-    <div className="grid gap-4 border-t border-border bg-surface px-3 py-3 md:grid-cols-[minmax(0,1fr)_16rem]">
-      <div className="min-w-0 space-y-2">
-        <p className="text-sm">{s.description}</p>
-        {s.source_ref ? (
-          <p className="text-xs text-muted-foreground">
-            From <Mono>{s.source_ref}</Mono>
-            {s.source_sha ? (
-              <>
-                {" "}
-                at <Mono>{s.source_sha.slice(0, 12)}</Mono>
-              </>
-            ) : null}
-          </p>
-        ) : null}
-        {/* The body is the team's markdown, shown as text: rendering it as
-            HTML would run whatever an imported skill's author put there. */}
-        <pre className="max-h-80 overflow-auto rounded-md border border-border bg-card p-3 text-xs whitespace-pre-wrap">
-          {s.body}
-        </pre>
-      </div>
-      <div>
-        <h3 className="mb-1 text-xs font-medium">Files</h3>
-        <ul className="space-y-0.5 text-xs">
-          <li className="flex justify-between gap-2">
-            <Mono className="text-foreground">SKILL.md</Mono>
-          </li>
-          {s.files.map((f) => (
-            <li key={f.path} className="flex justify-between gap-2">
-              <Mono className="truncate text-foreground">{f.path}</Mono>
-              <span className="shrink-0 text-muted-foreground">{fileSize(f.size)}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
   );
 }
