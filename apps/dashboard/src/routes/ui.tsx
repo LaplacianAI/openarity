@@ -225,9 +225,49 @@ function Shell({ pathname }: { pathname: string }) {
     />
   );
 
-  if (layout === "phone") {
-    return (
-      <div className="flex min-h-dvh flex-col bg-sheet font-sans text-foreground">
+  const phone = layout === "phone";
+
+  // One tree for every layout, with the frame's parts switched in place:
+  // the page sits at the same depth in the same elements whatever the width,
+  // so turning a tablet or resizing a window never rebuilds it, and never
+  // loses what was typed into it and not yet saved.
+  return (
+    <div
+      className={cn(
+        "font-sans text-foreground",
+        phone
+          ? "flex min-h-dvh flex-col bg-sheet"
+          : "grid min-h-dvh grid-rows-[3rem_minmax(0,1fr)] bg-frame",
+        layout === "full" && "grid-cols-[14.25rem_minmax(0,1fr)]",
+        layout === "rail" && "grid-cols-[3.5rem_minmax(0,1fr)]",
+      )}
+    >
+      {phone ? null : (
+        <aside className="row-span-2 flex min-h-0 flex-col">
+          <div
+            className={cn(
+              "flex h-12 shrink-0 items-center",
+              layout === "full" ? "px-4" : "justify-center",
+            )}
+          >
+            {layout === "full" ? (
+              <span className="flex items-center gap-2">
+                <Mark className="size-5" />
+                <span className="text-sm font-semibold tracking-tight">openarity</span>
+              </span>
+            ) : (
+              <Mark className="size-5" />
+            )}
+          </div>
+          <div className="flex-1 overflow-y-auto px-2 pt-1 pb-3">
+            <Nav groups={groups} pathname={pathname} waiting={waiting} rail={layout === "rail"} />
+          </div>
+          <div className="px-2 pb-3">
+            <Account rail={layout === "rail"} />
+          </div>
+        </aside>
+      )}
+      {phone ? (
         <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-2 bg-frame px-4">
           <Mark className="size-5 shrink-0" />
           <TeamSwitcher />
@@ -235,57 +275,25 @@ function Shell({ pathname }: { pathname: string }) {
             <SearchButton onOpen={find} compact />
           </span>
         </header>
-        <main className="min-w-0 flex-1 px-4 pt-5 pb-24">
-          <Outlet />
-        </main>
-        <QuickBar groups={groups} pathname={pathname} waiting={waiting} />
-        {palette}
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className={cn(
-        "grid min-h-dvh grid-rows-[3rem_minmax(0,1fr)] bg-frame font-sans text-foreground",
-        layout === "full"
-          ? "grid-cols-[14.25rem_minmax(0,1fr)]"
-          : "grid-cols-[3.5rem_minmax(0,1fr)]",
+      ) : (
+        <header className="col-start-2 grid h-12 min-w-0 grid-cols-[1fr_auto_1fr] items-center gap-2 pr-2">
+          <TeamSwitcher />
+          <SearchButton onOpen={find} />
+          <span />
+        </header>
       )}
-    >
-      <aside className="row-span-2 flex min-h-0 flex-col">
-        <div
-          className={cn(
-            "flex h-12 shrink-0 items-center",
-            layout === "full" ? "px-4" : "justify-center",
-          )}
-        >
-          {layout === "full" ? (
-            <span className="flex items-center gap-2">
-              <Mark className="size-5" />
-              <span className="text-sm font-semibold tracking-tight">openarity</span>
-            </span>
-          ) : (
-            <Mark className="size-5" />
-          )}
-        </div>
-        <div className="flex-1 overflow-y-auto px-2 pt-1 pb-3">
-          <Nav groups={groups} pathname={pathname} waiting={waiting} rail={layout === "rail"} />
-        </div>
-        <div className="px-2 pb-3">
-          <Account rail={layout === "rail"} />
-        </div>
-      </aside>
-      <header className="col-start-2 grid h-12 min-w-0 grid-cols-[1fr_auto_1fr] items-center gap-2 pr-2">
-        <TeamSwitcher />
-        <SearchButton onOpen={find} />
-        <span />
-      </header>
-      <main className="col-start-2 mr-2 mb-2 min-w-0 rounded-2xl border border-sheet-edge bg-sheet">
-        <div className="px-6 py-6">
+      <main
+        className={
+          phone
+            ? "min-w-0 flex-1"
+            : "col-start-2 mr-2 mb-2 min-w-0 rounded-2xl border border-sheet-edge bg-sheet"
+        }
+      >
+        <div className={phone ? "px-4 pt-5 pb-24" : "px-6 py-6"}>
           <Outlet />
         </div>
       </main>
+      {phone ? <QuickBar groups={groups} pathname={pathname} waiting={waiting} /> : null}
       {palette}
     </div>
   );
