@@ -295,14 +295,14 @@ func (s *fakeStore) DeleteAgent(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (s *fakeStore) ListAgentsByTeam(_ context.Context, p db.ListAgentsByTeamParams) ([]db.Agent, error) {
+func (s *fakeStore) ListAgentsByTeam(_ context.Context, p db.ListAgentsByTeamParams) ([]db.ListAgentsByTeamRow, error) {
 	s.listArgs = append(s.listArgs, p)
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var rows []db.Agent
+	var rows []db.ListAgentsByTeamRow
 	for _, a := range s.agents {
 		if a.TeamID != p.TeamID {
 			continue
@@ -310,13 +310,18 @@ func (s *fakeStore) ListAgentsByTeam(_ context.Context, p db.ListAgentsByTeamPar
 		if p.UseCursor && !before(a, p.AfterCreatedAt, p.AfterID) {
 			continue
 		}
-		rows = append(rows, a)
+		rows = append(rows, db.ListAgentsByTeamRow{
+			Agent:         a,
+			ServerCount:   int64(len(s.servers[a.ID])),
+			SkillCount:    int64(len(s.skills[a.ID])),
+			DelegateCount: int64(len(s.delegates[a.ID])),
+		})
 	}
-	slices.SortFunc(rows, func(a, b db.Agent) int {
-		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+	slices.SortFunc(rows, func(a, b db.ListAgentsByTeamRow) int {
+		if c := b.Agent.CreatedAt.Compare(a.Agent.CreatedAt); c != 0 {
 			return c
 		}
-		return bytes.Compare(b.ID[:], a.ID[:])
+		return bytes.Compare(b.Agent.ID[:], a.Agent.ID[:])
 	})
 	return rows[:min(len(rows), int(p.PageSize))], nil
 }
@@ -596,9 +601,12 @@ func TestOnlyContractedFieldsAreSerialised(t *testing.T) {
 	if err := json.Unmarshal(call(t, s, &fakeAuthz{}, memberOf(team), http.MethodGet, collection(team), nil).Body.Bytes(), &page); err != nil || len(page.Items) != 2 {
 		t.Fatalf("page: %v", err)
 	}
+	// A row of the list carries counts of the grants, never the grants.
+	listedKeys := slices.Sorted(slices.Values(append(slices.Clone(summaryKeys),
+		"delegation", "web", "mcp_server_count", "skill_count", "delegate_count")))
 	for _, item := range page.Items {
-		if got := keysOf(t, item); !slices.Equal(got, summaryKeys) {
-			t.Errorf("list item keys = %v, want %v", got, summaryKeys)
+		if got := keysOf(t, item); !slices.Equal(got, listedKeys) {
+			t.Errorf("list item keys = %v, want %v", got, listedKeys)
 		}
 	}
 }
@@ -1116,6 +1124,48 @@ func TestTheCursorWalksEveryAgentOnceEvenOnTies(t *testing.T) {
 	for n, c := range seen {
 		if c != 1 {
 			t.Errorf("%s seen %d times", n, c)
+		}
+	}
+}
+
+// A row of the list says what the agent may reach, as counts, and how it
+// works with the web and with other agents, so the list can say so without
+// reading every agent. The counts are the agent's own, never a neighbour's.
+func TestAListedAgentSaysWhatItReachesAndHow(t *testing.T) {
+	t.Parallel()
+
+	team := uuid.New()
+	billing := anAgent(team, "billing")
+	billing.Delegation, billing.Web = "listed", true
+	clerk := anAgent(team, "clerk")
+	clerk.Delegation = "none"
+	clerk.CreatedAt = billing.CreatedAt.Add(-time.Second)
+	s := newFakeStore(billing, clerk)
+	s.servers[billing.ID] = []db.AgentMcpServer{{AgentID: billing.ID}, {AgentID: billing.ID}}
+	s.skills[billing.ID] = []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	s.delegates[billing.ID] = []uuid.UUID{clerk.ID}
+
+	rec := call(t, s, &fakeAuthz{}, memberOf(team), http.MethodGet, collection(team), nil)
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("page: %v (%s)", err, rec.Body)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("listed %d agents: %s", len(page.Items), rec.Body)
+	}
+	for _, tc := range []struct {
+		row  map[string]any
+		want map[string]any
+	}{
+		{page.Items[0], map[string]any{"name": "billing", "delegation": "listed", "web": true, "mcp_server_count": 2.0, "skill_count": 3.0, "delegate_count": 1.0}},
+		{page.Items[1], map[string]any{"name": "clerk", "delegation": "none", "web": false, "mcp_server_count": 0.0, "skill_count": 0.0, "delegate_count": 0.0}},
+	} {
+		for k, v := range tc.want {
+			if got, ok := tc.row[k]; !ok || got != v {
+				t.Errorf("%s: %s = %v (present %v), want %v", tc.want["name"], k, got, ok, v)
+			}
 		}
 	}
 }

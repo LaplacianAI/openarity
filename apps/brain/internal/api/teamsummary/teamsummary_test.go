@@ -85,7 +85,7 @@ func of(team uuid.UUID) string { return "/teams/" + team.String() + "/summary" }
 
 var counts = db.TeamSummaryRow{
 	RunsQueued: 1, RunsRunning: 2, RunsSucceeded: 12, RunsFailed: 3, RunsCancelled: 0,
-	Sessions: 128, WaitingSenders: 4, ServersFailing: 1,
+	Sessions: 128, WaitingSenders: 4, ServersFailing: 1, Agents: 7,
 }
 
 // The response is the shape the spec draws: every status present, zero
@@ -101,7 +101,7 @@ func TestTheSummaryIsServedAsTheSpecDescribesIt(t *testing.T) {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 	}
 	want := `{"runs_24h":{"queued":1,"running":2,"succeeded":12,"failed":3,"cancelled":0},` +
-		`"sessions":128,"waiting_senders":4,"servers_failing":1}`
+		`"sessions":128,"waiting_senders":4,"servers_failing":1,"agents":7}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body =\n %s\nwant\n %s", got, want)
 	}

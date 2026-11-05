@@ -40,7 +40,9 @@ SELECT
      WHERE c.team_id = $1) AS waiting_senders,
     (SELECT count(*) FROM mcp_servers m
      WHERE m.team_id = $1
-       AND m.last_discovery_error IS NOT NULL) AS servers_failing
+       AND m.last_discovery_error IS NOT NULL) AS servers_failing,
+    (SELECT count(*) FROM agents a
+     WHERE a.team_id = $1) AS agents
 FROM visible_runs
 `
 
@@ -59,10 +61,11 @@ type TeamSummaryRow struct {
 	Sessions       int64
 	WaitingSenders int64
 	ServersFailing int64
+	Agents         int64
 }
 
 // The team at a glance, for the dashboard's home. One statement, so every
-// count is read from one snapshot and the four agree with each other: four
+// count is read from one snapshot and they agree with each other: separate
 // statements, even in one transaction, would each see the database as it was
 // when that statement started.
 //
@@ -70,7 +73,8 @@ type TeamSummaryRow struct {
 // rule, so nobody is told how many conversations they cannot open. Runs are
 // the last 24 hours on the database's clock, top-level only, as the run
 // history lists them. An aggregate with no GROUP BY returns its one row even
-// when there are no runs, so a new team reads as zeros, not as no row.
+// when there are no runs, so a new team reads as zeros, not as no row. The
+// agent count is the agents list's, which every member reads.
 func (q *Queries) TeamSummary(ctx context.Context, arg TeamSummaryParams) (TeamSummaryRow, error) {
 	row := q.db.QueryRow(ctx, teamSummary, arg.TeamID, arg.Moderator, arg.Viewer)
 	var i TeamSummaryRow
@@ -83,6 +87,7 @@ func (q *Queries) TeamSummary(ctx context.Context, arg TeamSummaryParams) (TeamS
 		&i.Sessions,
 		&i.WaitingSenders,
 		&i.ServersFailing,
+		&i.Agents,
 	)
 	return i, err
 }
