@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 
 import { getTeamSettings, listAgents, saveTeamSettings } from "@/api";
 import { usePermissions } from "@/api/permissions";
@@ -9,15 +9,22 @@ import type { SearchProvider, TeamSettings, TeamSettingsRequest } from "@/api/ty
 import { DeleteTeamDialog } from "@/components/delete-team-dialog";
 import { type Picked, Picker } from "@/components/picker";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
+import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SwitchField } from "@/components/ui/switch";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
+import { LeaveGuard } from "@/components/unsaved";
 
 export const Route = createFileRoute("/ui/settings")({
   component: Settings,
 });
 
 const WRITE = "team:settings";
+
+/** The finding when the team has no model: nothing answers its messages. */
+export const NO_MODEL = "The hub can't run until a model is set.";
 
 const PROVIDERS: { value: SearchProvider; label: string }[] = [
   { value: "none", label: "Off" },
@@ -54,6 +61,7 @@ function Settings() {
     <div className="space-y-5">
       <PageHeader
         title={teamName ? `Team settings — ${teamName}` : "Team settings"}
+        finding={settings.data && settings.data.model === null ? NO_MODEL : null}
         description="For this team only: the model its built-in agents run on, how they search the web, and what they learn. Each team has its own."
       />
 
@@ -64,20 +72,21 @@ function Settings() {
       {!teamId ? (
         <EmptyState title="No team" body="Join or create a team to see its settings." />
       ) : settings.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading settings…</p>
+        <div className="space-y-2" role="status" aria-label="Loading settings">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
       ) : settings.isError ? (
-        <p role="alert" className="text-sm text-destructive">
-          {settings.error.message}
-        </p>
-      ) : (
-        // Keyed on the save time, so a save resets the form to what the brain
-        // now holds — the typed key included.
-        <SettingsForm
-          key={settings.data.updated_at ?? "never"}
-          teamId={teamId}
-          stored={settings.data}
-          canWrite={canWrite}
+        <ErrorState
+          what="the settings"
+          error={settings.error}
+          onRetry={() => settings.refetch()}
+          retrying={settings.isRefetching}
         />
+      ) : (
+        // Keyed on the team: another team's settings start a fresh form. A
+        // save does not remount it, so another group's unsaved edits stay.
+        <SettingsForm key={teamId} teamId={teamId} stored={settings.data} canWrite={canWrite} />
       )}
 
       {teamId && teamName && perms.superAdmin ? (
@@ -138,6 +147,51 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     compaction: String(s.compaction_messages),
     hub: s.hub,
   };
+}
+
+/** The groups of the page, each saved on its own. */
+export type Group = "model" | "hub" | "search" | "learning";
+
+/** Which of the draft's fields each group owns. */
+const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
+  model: ["modelOn", "modelName", "maxTokens", "temperature"],
+  hub: ["hub", "compaction"],
+  search: ["provider", "url", "key", "dropKey"],
+  learning: ["learning"],
+};
+
+function same(a: SettingsDraft[keyof SettingsDraft], b: SettingsDraft[keyof SettingsDraft]) {
+  // The hub is an object: two picks of the same agent are the same choice.
+  if (a !== null && typeof a === "object" && b !== null && typeof b === "object") {
+    return a.name === b.name;
+  }
+  return a === b;
+}
+
+/** Whether a group's fields differ from what the brain holds. */
+export function isDirty(group: Group, d: SettingsDraft, stored: TeamSettings): boolean {
+  const base = draftOf(stored);
+  return FIELDS[group].some((f) => !same(d[f], base[f]));
+}
+
+/** What the brain holds, with one group's fields taken from the draft. */
+function withGroup(group: Group, d: SettingsDraft, stored: TeamSettings): SettingsDraft {
+  const merged = draftOf(stored);
+  for (const f of FIELDS[group]) (merged as Record<string, unknown>)[f] = d[f];
+  return merged;
+}
+
+/**
+ * The request one group's Save sends. The brain takes the settings whole, so
+ * every other group is sent as the brain holds it, and its unsaved edits are
+ * neither sent nor lost.
+ */
+export function groupRequest(
+  group: Group,
+  d: SettingsDraft,
+  stored: TeamSettings,
+): TeamSettingsRequest | string {
+  return settingsRequest(withGroup(group, d, stored), stored);
 }
 
 function wholeNumber(raw: string): number | null {
@@ -213,14 +267,81 @@ export function settingsRequest(
   };
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+/** One group: what it decides, its fields, and its own Save. */
+function Section({
+  title,
+  about,
+  canWrite,
+  dirty,
+  saved,
+  problem,
+  pending,
+  busy,
+  onSave,
+  children,
+}: {
+  title: string;
+  about: ReactNode;
+  canWrite: boolean;
+  dirty: boolean;
+  /** Saved since it last changed: said beside the button until the next edit. */
+  saved: boolean;
+  problem: string | null;
+  pending: boolean;
+  /** Another group is saving; the settings are sent whole, so one at a time. */
+  busy: boolean;
+  onSave: () => void;
+  children: ReactNode;
+}) {
+  const id = useId();
   return (
-    <section className="space-y-3 rounded-md border border-border bg-card p-4">
-      <h2 className="text-sm font-medium">{title}</h2>
-      {children}
+    <section
+      aria-labelledby={id}
+      className="grid gap-x-8 gap-y-3 border-t border-rule py-6 first:border-t-0 first:pt-0 lg:grid-cols-[13rem_minmax(0,1fr)]"
+    >
+      <div className="space-y-1">
+        <h2 id={id} className="text-base font-medium">
+          {title}
+        </h2>
+        <p className="text-xs text-muted-foreground">{about}</p>
+      </div>
+      <form
+        className="min-w-0 max-w-2xl space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSave();
+        }}
+      >
+        <fieldset disabled={!canWrite} className="space-y-4">
+          {children}
+        </fieldset>
+        {canWrite ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {/* Offered only for a change: a row of greyed buttons says nothing. */}
+            {dirty || pending ? (
+              <Button type="submit" size="sm" disabled={busy} loading={pending}>
+                Save
+              </Button>
+            ) : null}
+            {problem ? (
+              <p role="alert" className="text-sm text-destructive">
+                {problem}
+              </p>
+            ) : dirty ? (
+              <p className="text-sm text-muted-foreground">Unsaved changes</p>
+            ) : saved ? (
+              <p role="status" className="text-sm text-succeeded">
+                Saved
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </form>
     </section>
   );
 }
+
+const GROUPS: Group[] = ["model", "hub", "search", "learning"];
 
 function SettingsForm({
   teamId,
@@ -233,219 +354,225 @@ function SettingsForm({
 }) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<SettingsDraft>(() => draftOf(stored));
-  const [problem, setProblem] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const set = (patch: Partial<SettingsDraft>) => setDraft((d) => ({ ...d, ...patch }));
+  const [problem, setProblem] = useState<{ group: Group; text: string } | null>(null);
+  const [pending, setPending] = useState<Group | null>(null);
+  const [saved, setSaved] = useState<Group | null>(null);
 
+  const set = (group: Group, patch: Partial<SettingsDraft>) => {
+    setDraft((d) => ({ ...d, ...patch }));
+    if (problem?.group === group) setProblem(null);
+    if (saved === group) setSaved(null);
+  };
+
+  const dirty = (g: Group) => isDirty(g, draft, stored);
   const selfHosted = SELF_HOSTED.includes(draft.provider);
   const takesKey = KEY_REQUIRED.includes(draft.provider) || draft.provider === "firecrawl-oss";
   const keyKept = stored.search.key_set && stored.search.provider === draft.provider;
 
   // A plain call rather than useMutation: a mutation keeps its variables in
   // the query client's cache, and they can hold the key.
-  const submit = async (body: TeamSettingsRequest) => {
-    setPending(true);
+  const save = async (group: Group) => {
+    const body = groupRequest(group, draft, stored);
+    if (typeof body === "string") {
+      setProblem({ group, text: body });
+      return;
+    }
+    setPending(group);
     setProblem(null);
     try {
-      const saved = await saveTeamSettings(teamId, body);
-      qc.setQueryData(["settings", teamId], saved);
+      const next = await saveTeamSettings(teamId, body);
+      qc.setQueryData(["settings", teamId], next);
+      // This group now reads what the brain holds, the typed key gone; the
+      // others keep what was typed in them.
+      const fresh = draftOf(next);
+      setDraft((d) => {
+        const out = { ...d };
+        for (const f of FIELDS[group]) (out as Record<string, unknown>)[f] = fresh[f];
+        return out;
+      });
+      setSaved(group);
     } catch (err) {
-      setProblem(err instanceof Error ? err.message : String(err));
+      setProblem({ group, text: err instanceof Error ? err.message : String(err) });
     } finally {
-      setPending(false);
+      setPending(null);
     }
   };
 
+  const props = (group: Group) => ({
+    canWrite,
+    dirty: dirty(group),
+    saved: saved === group,
+    problem: problem?.group === group ? problem.text : null,
+    pending: pending === group,
+    busy: pending !== null && pending !== group,
+    onSave: () => void save(group),
+  });
+
   return (
-    <form
-      className="space-y-4"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const body = settingsRequest(draft, stored);
-        if (typeof body === "string") {
-          setProblem(body);
-          return;
-        }
-        void submit(body);
-      }}
-    >
-      <fieldset disabled={!canWrite} className="space-y-4">
-        <Section title="Model">
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={draft.modelOn}
-              onChange={(e) => set({ modelOn: e.target.checked })}
-            />
-            Use a model
-          </label>
-          {draft.modelOn ? (
-            <div className="grid gap-3 sm:grid-cols-3">
-              <Field label="Model" htmlFor="settings-model" hint="As the model gateway names it.">
-                <Input
-                  id="settings-model"
-                  value={draft.modelName}
-                  placeholder="anthropic/claude-opus-5-5"
-                  onChange={(e) => set({ modelName: e.target.value })}
-                />
-              </Field>
-              <Field label="Max tokens" htmlFor="settings-max-tokens">
-                <Input
-                  id="settings-max-tokens"
-                  inputMode="numeric"
-                  value={draft.maxTokens}
-                  onChange={(e) => set({ maxTokens: e.target.value })}
-                />
-              </Field>
-              <Field
-                label="Temperature"
-                htmlFor="settings-temperature"
-                hint="0 to 2; empty for the model's own."
-              >
-                <Input
-                  id="settings-temperature"
-                  inputMode="decimal"
-                  value={draft.temperature}
-                  onChange={(e) => set({ temperature: e.target.value })}
-                />
-              </Field>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              No model — the built-in agents do not run, and messages are stored unanswered.
-            </p>
-          )}
-        </Section>
+    <div>
+      <LeaveGuard dirty={() => GROUPS.some(dirty)} what="the team settings" />
 
-        <Section title="Hub">
-          <p className="text-xs text-muted-foreground">
-            Every message reaches the hub first. Leave empty for the built-in orchestrator.
+      <Section
+        title="Model"
+        about="The model the hub and the team's built-in agents run on."
+        {...props("model")}
+      >
+        <SwitchField
+          label="Use a model"
+          checked={draft.modelOn}
+          onCheckedChange={(modelOn) => set("model", { modelOn })}
+        />
+        {draft.modelOn ? (
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="Model" htmlFor="settings-model" hint="As the model gateway names it.">
+              <Input
+                id="settings-model"
+                value={draft.modelName}
+                onChange={(e) => set("model", { modelName: e.target.value })}
+              />
+            </Field>
+            <Field label="Max tokens" htmlFor="settings-max-tokens">
+              <Input
+                id="settings-max-tokens"
+                inputMode="numeric"
+                value={draft.maxTokens}
+                onChange={(e) => set("model", { maxTokens: e.target.value })}
+              />
+            </Field>
+            <Field
+              label="Temperature"
+              htmlFor="settings-temperature"
+              hint="0 to 2; empty for the model's own."
+            >
+              <Input
+                id="settings-temperature"
+                inputMode="decimal"
+                value={draft.temperature}
+                onChange={(e) => set("model", { temperature: e.target.value })}
+              />
+            </Field>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No model — the built-in agents do not run, and messages are stored unanswered.
           </p>
-          {draft.hub === null ? <p className="text-sm">The built-in orchestrator</p> : null}
-          <Picker
-            label="Hub"
-            noun="agent"
-            max={1}
-            value={draft.hub ? [draft.hub] : []}
-            onChange={(next) => set({ hub: next[0] ?? null })}
-            search={(q) =>
-              listAgents(teamId, null, { q, limit: PICK_PAGE }).then((page) => ({
-                items: page.items.map((a) => ({ id: a.id, name: a.name })),
-                more: Boolean(page.next_cursor),
-              }))
-            }
-            searchKey={["agents", teamId]}
+        )}
+      </Section>
+
+      <Section
+        title="The hub"
+        about="Every message reaches the hub first. Leave empty for the built-in orchestrator."
+        {...props("hub")}
+      >
+        {draft.hub === null ? <p className="text-sm">The built-in orchestrator</p> : null}
+        <Picker
+          label="Hub"
+          noun="agent"
+          max={1}
+          value={draft.hub ? [draft.hub] : []}
+          onChange={(next) => set("hub", { hub: next[0] ?? null })}
+          search={(q) =>
+            listAgents(teamId, null, { q, limit: PICK_PAGE }).then((page) => ({
+              items: page.items.map((a) => ({ id: a.id, name: a.name })),
+              more: Boolean(page.next_cursor),
+            }))
+          }
+          searchKey={["agents", teamId]}
+        />
+        <Field
+          label="Messages before a transcript compacts"
+          htmlFor="settings-compaction"
+          hint={`${MIN_COMPACTION} to ${MAX_COMPACTION}. Stored now; compaction uses it from a later release.`}
+        >
+          <Input
+            id="settings-compaction"
+            inputMode="numeric"
+            className="max-w-40"
+            value={draft.compaction}
+            onChange={(e) => set("hub", { compaction: e.target.value })}
           />
-        </Section>
+        </Field>
+      </Section>
 
-        <Section title="Web search">
-          <Field label="Provider" htmlFor="settings-provider">
-            <select
-              id="settings-provider"
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              value={draft.provider}
-              onChange={(e) =>
-                set({ provider: e.target.value as SearchProvider, key: "", dropKey: false })
-              }
-            >
-              {PROVIDERS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          {selfHosted ? (
-            <Field
-              label="Address"
-              htmlFor="settings-url"
-              hint="Where the brain reaches it, such as http://searxng:8080."
-            >
-              <Input
-                id="settings-url"
-                value={draft.url}
-                onChange={(e) => set({ url: e.target.value })}
-              />
-            </Field>
-          ) : null}
-          {takesKey ? (
-            <Field
-              label="API key"
-              htmlFor="settings-key"
-              hint={
-                keyKept
-                  ? "A key is set. Leave this empty to keep it."
-                  : draft.provider === "firecrawl-oss"
-                    ? "Only if the instance requires one."
-                    : "Kept in the secret store and never shown again."
-              }
-            >
-              {/* new-password, not off: browsers ignore off on a password field
-                  and would offer the sign-in password saved for this site. */}
-              <Input
-                id="settings-key"
-                type="password"
-                autoComplete="new-password"
-                spellCheck={false}
-                value={draft.key}
-                onChange={(e) => set({ key: e.target.value, dropKey: false })}
-              />
-            </Field>
-          ) : null}
-          {draft.provider === "firecrawl-oss" && keyKept ? (
-            <label className="flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                checked={draft.dropKey}
-                onChange={(e) => set({ dropKey: e.target.checked, key: "" })}
-              />
-              Run without a key
-            </label>
-          ) : null}
-        </Section>
-
-        <Section title="Learning">
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={draft.learning}
-              onChange={(e) => set({ learning: e.target.checked })}
-            />
-            Learn from each run
-          </label>
-          <p className="text-xs text-muted-foreground">
-            After a run, the learner writes what it taught. Nothing it writes is used until someone
-            with learning:approve approves it.
-          </p>
-        </Section>
-
-        <Section title="Compaction">
+      <Section
+        title="Web search"
+        about="Where the team's agents search the web, when they are given it."
+        {...props("search")}
+      >
+        <Field label="Provider" htmlFor="settings-provider">
+          <select
+            id="settings-provider"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={draft.provider}
+            onChange={(e) =>
+              set("search", { provider: e.target.value as SearchProvider, key: "", dropKey: false })
+            }
+          >
+            {PROVIDERS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {selfHosted ? (
           <Field
-            label="Messages before a transcript compacts"
-            htmlFor="settings-compaction"
-            hint={`${MIN_COMPACTION} to ${MAX_COMPACTION}. Stored now; compaction uses it from a later release.`}
+            label="Address"
+            htmlFor="settings-url"
+            hint="Where the brain reaches it, such as http://searxng:8080."
           >
             <Input
-              id="settings-compaction"
-              inputMode="numeric"
-              value={draft.compaction}
-              onChange={(e) => set({ compaction: e.target.value })}
+              id="settings-url"
+              value={draft.url}
+              onChange={(e) => set("search", { url: e.target.value })}
             />
           </Field>
-        </Section>
-      </fieldset>
+        ) : null}
+        {takesKey ? (
+          <Field
+            label="API key"
+            htmlFor="settings-key"
+            hint={
+              keyKept
+                ? "A key is set. Leave this empty to keep it."
+                : draft.provider === "firecrawl-oss"
+                  ? "Only if the instance requires one."
+                  : "Kept in the secret store and never shown again."
+            }
+          >
+            {/* new-password, not off: browsers ignore off on a password field
+                and would offer the sign-in password saved for this site. */}
+            <Input
+              id="settings-key"
+              type="password"
+              autoComplete="new-password"
+              spellCheck={false}
+              value={draft.key}
+              onChange={(e) => set("search", { key: e.target.value, dropKey: false })}
+            />
+          </Field>
+        ) : null}
+        {draft.provider === "firecrawl-oss" && keyKept ? (
+          <SwitchField
+            label="Run without a key"
+            checked={draft.dropKey}
+            onCheckedChange={(dropKey) => set("search", { dropKey, key: "" })}
+          />
+        ) : null}
+      </Section>
 
-      {problem ? (
-        <p role="alert" className="text-xs text-destructive">
-          {problem}
-        </p>
-      ) : null}
-
-      {canWrite ? (
-        <Button type="submit" disabled={pending}>
-          {pending ? "Saving…" : "Save"}
-        </Button>
-      ) : null}
-    </form>
+      <Section
+        title="Learning"
+        about="What the team's agents take away from their runs."
+        {...props("learning")}
+      >
+        <SwitchField
+          label="Learn from each run"
+          description="After a run, the learner writes what it taught. Nothing it writes is used until someone who may approve learning approves it."
+          checked={draft.learning}
+          onCheckedChange={(learning) => set("learning", { learning })}
+        />
+      </Section>
+    </div>
   );
 }
