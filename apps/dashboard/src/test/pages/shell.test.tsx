@@ -1,5 +1,7 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { createRoute } from "@tanstack/react-router";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { brain, showAt, TEAM, team } from "@/test/brain";
@@ -144,6 +146,66 @@ describe("the navigation on a phone", () => {
     expect(within(sheet).getByRole("link", { name: "Agents" })).toBeInTheDocument();
     expect(within(sheet).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
   });
+});
+
+/**
+ * Widths that change while the page is open, as a window resized or a tablet
+ * turned: each change tells the queries' listeners, as a browser would.
+ */
+function resizable() {
+  let min768 = false;
+  let min1280 = false;
+  const heard = new Set<() => void>();
+  window.matchMedia = ((query: string) => ({
+    get matches() {
+      return query.includes("80rem") ? min1280 : query.includes("48rem") ? min768 : false;
+    },
+    media: query,
+    addEventListener: (_: string, f: () => void) => heard.add(f),
+    removeEventListener: (_: string, f: () => void) => heard.delete(f),
+  })) as unknown as typeof window.matchMedia;
+  return (wide768: boolean, wide1280: boolean) =>
+    act(() => {
+      min768 = wide768;
+      min1280 = wide1280;
+      for (const f of heard) f();
+    });
+}
+
+/** A page under the shell holding a draft in its own state, as an editor does. */
+function DraftPage() {
+  const [text, setText] = useState("");
+  return <input aria-label="Draft" value={text} onChange={(e) => setText(e.target.value)} />;
+}
+UiRoute.addChildren([
+  createRoute({ getParentRoute: () => UiRoute, path: "draft", component: DraftPage }),
+]);
+
+// Each width lays the shell out differently. The page inside it must be the
+// same page throughout: rebuilt, it loses whatever was typed and not saved,
+// and the editors' leave question never fires for a resize.
+it("keeps the page, and what was typed in it, as the width crosses each layout", async () => {
+  const resize = resizable();
+  brain({
+    ...team([]),
+    "GET /whoami": { body: { subject: "ann", email: "ann@example.com" } },
+  });
+  showAt("/ui/draft", [["/ui", UiRoute]]);
+
+  const draft = await screen.findByRole("textbox", { name: "Draft" });
+  await userEvent.type(draft, "half a thought");
+
+  for (const [min768, min1280, nav] of [
+    [true, false, "Main"],
+    [true, true, "Main"],
+    [false, false, "Quick"],
+    [true, false, "Main"],
+  ] as const) {
+    await resize(min768, min1280);
+    expect(await screen.findByRole("navigation", { name: nav })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Draft" })).toBe(draft);
+    expect(draft).toHaveValue("half a thought");
+  }
 });
 
 // The fake brain answers the team route with this team.
