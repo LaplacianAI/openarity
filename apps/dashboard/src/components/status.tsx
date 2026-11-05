@@ -30,6 +30,8 @@ const LOOKS: Record<string, Look> = {
   // Someone or something waiting on a person.
   waiting: { tone: "text-waiting", icon: Clock },
   pending: { tone: "text-waiting", icon: Clock },
+  // An MCP server's last discovery. Never asked is the unknown look.
+  answered: { tone: "text-succeeded", icon: CheckCircle2 },
   // A session's states.
   open: { tone: "text-succeeded" },
   active: { tone: "text-succeeded" },
