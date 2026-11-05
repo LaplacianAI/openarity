@@ -63,7 +63,7 @@ func TestTheSummaryCountsTheLastDaysRootRunsByStatus(t *testing.T) {
 	got := summarise(t, s, db.TeamSummaryParams{TeamID: f.team, Moderator: true})
 	want := db.TeamSummaryRow{
 		RunsQueued: 1, RunsRunning: 2, RunsSucceeded: 3, RunsFailed: 4, RunsCancelled: 0,
-		Sessions: 1,
+		Sessions: 1, Agents: 1,
 	}
 	if got != want {
 		t.Errorf("summarised %+v, want %+v", got, want)
@@ -138,5 +138,21 @@ func TestTheSummaryCountsServersWhoseLastDiscoveryFailed(t *testing.T) {
 
 	if got := summarise(t, s, db.TeamSummaryParams{TeamID: team.ID}).ServersFailing; got != 1 {
 		t.Errorf("servers failing = %d, want 1", got)
+	}
+}
+
+// Agents are counted as the list lists them: every one of this team's, and
+// no other team's.
+func TestTheSummaryCountsTheTeamsAgents(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	other := mustCreate(t, s, "elsewhere")
+
+	mustCreateAgent(t, s, team.ID, "triage")
+	mustCreateAgent(t, s, team.ID, "billing")
+	mustCreateAgent(t, s, other.ID, "theirs")
+
+	if got := summarise(t, s, db.TeamSummaryParams{TeamID: team.ID}).Agents; got != 2 {
+		t.Errorf("agents = %d, want 2", got)
 	}
 }

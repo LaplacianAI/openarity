@@ -358,7 +358,7 @@ type Agent struct {
 
 // AgentPage defines model for AgentPage.
 type AgentPage struct {
-	Items []AgentSummary `json:"items" yaml:"items"`
+	Items []ListedAgent `json:"items" yaml:"items"`
 
 	// NextCursor Absent on the last page
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
@@ -677,6 +677,43 @@ type HubRef struct {
 
 	// Name Examples: triage
 	Name string `json:"name" yaml:"name"`
+}
+
+// ListedAgent A row of the agents list: the summary, how the agent works with the
+// web and with other agents, and what it is granted, as counts. The
+// grants themselves are read from the agent.
+type ListedAgent struct {
+	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
+
+	// DelegateCount The agents it lists as delegates; read only when delegation is listed
+	DelegateCount int64 `json:"delegate_count" yaml:"delegate_count"`
+
+	// Delegation Whom the agent may hand work to with the delegate tool: any other
+	// agent in its team, only its delegates, or no one. An agent set to
+	// none is not given the tool. Left out of a request, it is none: the
+	// agent works alone, and a PUT replaces the whole agent.
+	Delegation  Delegation         `json:"delegation" yaml:"delegation"`
+	Description string             `json:"description" yaml:"description"`
+	ID          openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Kind custom for agents a team defines; the brain's own agents carry other kinds
+	//
+	// Examples: custom
+	Kind string `json:"kind" yaml:"kind"`
+
+	// McpServerCount The MCP servers it is granted
+	McpServerCount int64    `json:"mcp_server_count" yaml:"mcp_server_count"`
+	Model          ModelRef `json:"model" yaml:"model"`
+	Name           string   `json:"name" yaml:"name"`
+	Pattern        string   `json:"pattern" yaml:"pattern"`
+
+	// SkillCount The skills it is granted
+	SkillCount int64              `json:"skill_count" yaml:"skill_count"`
+	TeamID     openapi_types.UUID `json:"team_id" yaml:"team_id"`
+	UpdatedAt  time.Time          `json:"updated_at" yaml:"updated_at"`
+
+	// Web Whether it has web_search and web_fetch by its own grant
+	Web bool `json:"web" yaml:"web"`
 }
 
 // Loop defines model for Loop.
@@ -1387,6 +1424,9 @@ type TeamSettingsRequest struct {
 
 // TeamSummary defines model for TeamSummary.
 type TeamSummary struct {
+	// Agents The team's agents, as the agents list lists them
+	Agents int64 `json:"agents" yaml:"agents"`
+
 	// Runs24H Top-level runs created in the last 24 hours, on the brain's clock, by
 	// status. A delegate's run is part of its parent's and is not counted.
 	// Every status is present, zero included.

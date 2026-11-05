@@ -363,12 +363,16 @@ func (q *Queries) ListAgentSkills(ctx context.Context, agentID uuid.UUID) ([]uui
 }
 
 const listAgentsByTeam = `-- name: ListAgentsByTeam :many
-SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web FROM agents
-WHERE team_id = $1
-  AND strpos(lower(name), lower($2::text)) > 0
+SELECT a.id, a.team_id, a.name, a.description, a.kind, a.instructions, a.model_name, a.max_tokens, a.temperature, a.pattern, a.max_steps, a.steer_continuations, a.output_schema, a.parser, a.parser_model_name, a.parser_max_tokens, a.parser_temperature, a.created_at, a.updated_at, a.token_budget, a.delegation, a.web,
+    (SELECT count(*) FROM agent_mcp_servers g WHERE g.agent_id = a.id) AS server_count,
+    (SELECT count(*) FROM agent_skills k WHERE k.agent_id = a.id)      AS skill_count,
+    (SELECT count(*) FROM agent_delegates d WHERE d.agent_id = a.id)   AS delegate_count
+FROM agents a
+WHERE a.team_id = $1
+  AND strpos(lower(a.name), lower($2::text)) > 0
   AND (NOT $3::bool
-   OR (created_at, id) < ($4::timestamptz, $5::uuid))
-ORDER BY created_at DESC, id DESC
+   OR (a.created_at, a.id) < ($4::timestamptz, $5::uuid))
+ORDER BY a.created_at DESC, a.id DESC
 LIMIT $6
 `
 
@@ -381,7 +385,14 @@ type ListAgentsByTeamParams struct {
 	PageSize       int32
 }
 
-func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamParams) ([]Agent, error) {
+type ListAgentsByTeamRow struct {
+	Agent         Agent
+	ServerCount   int64
+	SkillCount    int64
+	DelegateCount int64
+}
+
+func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamParams) ([]ListAgentsByTeamRow, error) {
 	rows, err := q.db.Query(ctx, listAgentsByTeam,
 		arg.TeamID,
 		arg.Q,
@@ -394,32 +405,35 @@ func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamPara
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Agent
+	var items []ListAgentsByTeamRow
 	for rows.Next() {
-		var i Agent
+		var i ListAgentsByTeamRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.TeamID,
-			&i.Name,
-			&i.Description,
-			&i.Kind,
-			&i.Instructions,
-			&i.ModelName,
-			&i.MaxTokens,
-			&i.Temperature,
-			&i.Pattern,
-			&i.MaxSteps,
-			&i.SteerContinuations,
-			&i.OutputSchema,
-			&i.Parser,
-			&i.ParserModelName,
-			&i.ParserMaxTokens,
-			&i.ParserTemperature,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.TokenBudget,
-			&i.Delegation,
-			&i.Web,
+			&i.Agent.ID,
+			&i.Agent.TeamID,
+			&i.Agent.Name,
+			&i.Agent.Description,
+			&i.Agent.Kind,
+			&i.Agent.Instructions,
+			&i.Agent.ModelName,
+			&i.Agent.MaxTokens,
+			&i.Agent.Temperature,
+			&i.Agent.Pattern,
+			&i.Agent.MaxSteps,
+			&i.Agent.SteerContinuations,
+			&i.Agent.OutputSchema,
+			&i.Agent.Parser,
+			&i.Agent.ParserModelName,
+			&i.Agent.ParserMaxTokens,
+			&i.Agent.ParserTemperature,
+			&i.Agent.CreatedAt,
+			&i.Agent.UpdatedAt,
+			&i.Agent.TokenBudget,
+			&i.Agent.Delegation,
+			&i.Agent.Web,
+			&i.ServerCount,
+			&i.SkillCount,
+			&i.DelegateCount,
 		); err != nil {
 			return nil, err
 		}

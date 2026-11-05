@@ -41,6 +41,7 @@ type summary struct {
 	Sessions       int64     `json:"sessions"`
 	WaitingSenders *int64    `json:"waiting_senders"`
 	ServersFailing int64     `json:"servers_failing"`
+	Agents         int64     `json:"agents"`
 }
 
 func New(logger *slog.Logger, s Store, a api.Authorizer) *api.Router {
@@ -75,6 +76,7 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 			Failed: row.RunsFailed, Cancelled: row.RunsCancelled,
 		},
 		Sessions:       row.Sessions,
+		Agents:         row.Agents,
 		ServersFailing: row.ServersFailing,
 	}
 	if h.can(r, u, teamID, readTheQueue) {

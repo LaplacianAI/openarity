@@ -2675,7 +2675,7 @@ components:
 
     TeamSummary:
       type: object
-      required: [runs_24h, sessions, waiting_senders, servers_failing]
+      required: [runs_24h, sessions, waiting_senders, servers_failing, agents]
       properties:
         runs_24h:
           $ref: "#/components/schemas/RunCounts"
@@ -2695,6 +2695,10 @@ components:
           type: integer
           format: int64
           description: The MCP servers whose last discovery failed
+        agents:
+          type: integer
+          format: int64
+          description: The team's agents, as the agents list lists them
 
     RunCounts:
       type: object
@@ -3938,6 +3942,34 @@ components:
         none is not given the tool. Left out of a request, it is none: the
         agent works alone, and a PUT replaces the whole agent.
 
+    ListedAgent:
+      description: |
+        A row of the agents list: the summary, how the agent works with the
+        web and with other agents, and what it is granted, as counts. The
+        grants themselves are read from the agent.
+      allOf:
+        - $ref: "#/components/schemas/AgentSummary"
+        - type: object
+          required: [delegation, web, mcp_server_count, skill_count, delegate_count]
+          properties:
+            delegation:
+              $ref: "#/components/schemas/Delegation"
+            web:
+              type: boolean
+              description: Whether it has web_search and web_fetch by its own grant
+            mcp_server_count:
+              type: integer
+              format: int64
+              description: The MCP servers it is granted
+            skill_count:
+              type: integer
+              format: int64
+              description: The skills it is granted
+            delegate_count:
+              type: integer
+              format: int64
+              description: The agents it lists as delegates; read only when delegation is listed
+
     AgentPage:
       type: object
       required: [items]
@@ -3945,7 +3977,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/AgentSummary"
+            $ref: "#/components/schemas/ListedAgent"
         next_cursor:
           type: string
           description: Absent on the last page
