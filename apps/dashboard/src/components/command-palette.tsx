@@ -107,7 +107,8 @@ export function CommandPalette({
         label: a.name,
         kind: "Agent",
         icon: Bot,
-        to: "/ui/agents",
+        to: "/ui/agents/$agentId",
+        params: { agentId: a.id },
       })),
       ...(skills.data?.items ?? []).map((s) => ({
         label: s.name,
@@ -198,7 +199,7 @@ export function CommandPalette({
                 return (
                   // biome-ignore lint/a11y/useKeyWithClickEvents: the input above handles the keys
                   <div
-                    key={`${d.kind}-${d.label}-${d.params?.sessionId ?? ""}`}
+                    key={`${d.kind}-${d.label}-${Object.values(d.params ?? {}).join("")}`}
                     id={`${listId}-${i}`}
                     role="option"
                     tabIndex={-1}

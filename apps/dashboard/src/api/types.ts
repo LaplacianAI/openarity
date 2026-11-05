@@ -248,6 +248,17 @@ export type AgentSummary = {
   updated_at: string;
 };
 
+/** A row of GET /teams/{id}/agents: the summary, and what it reaches, as counts. */
+export type ListedAgent = AgentSummary & {
+  delegation: Delegation;
+  /** web_search and web_fetch by its own grant. */
+  web: boolean;
+  mcp_server_count: number;
+  skill_count: number;
+  /** Read only when delegation is listed. */
+  delegate_count: number;
+};
+
 /** GET /teams/{id}/agents/{agentID} */
 export type Agent = AgentSummary & {
   instructions: string;
@@ -349,6 +360,8 @@ export type TeamSummary = {
   waiting_senders: number | null;
   /** MCP servers whose last discovery failed. */
   servers_failing: number;
+  /** The team's agents, as the agents list lists them. */
+  agents: number;
 };
 
 /** GET /teams/{id}/graph — the index as it is, which may lag Postgres. */
