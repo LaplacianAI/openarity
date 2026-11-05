@@ -28,11 +28,14 @@ import type {
   PendingSender,
   Run,
   RunEvent,
+  RunStatus,
   Session,
+  SessionStatus,
   Skill,
   SkillSummary,
   Team,
   TeamGraph,
+  TeamPendingSender,
   TeamPermissions,
   TeamSettings,
   TeamSettingsRequest,
@@ -155,6 +158,17 @@ export function listApprovedSenders(
  * a sender that is never approved never reaches an agent, so refusing is what
  * happens by not acting.
  */
+/** Every channel's waiting senders as one queue, the longest waiting first. */
+export function listTeamPendingSenders(
+  teamId: string,
+  cursor?: string | null,
+  limit?: number,
+): Promise<Page<TeamPendingSender>> {
+  return request<Page<TeamPendingSender>>(
+    `/teams/${teamId}/senders/pending${pageQuery(cursor, limit)}`,
+  );
+}
+
 export function approveSender(
   teamId: string,
   channelId: string,
@@ -174,6 +188,11 @@ export function removeSender(teamId: string, channelId: string, senderRef: strin
   );
 }
 
+function queryOf(q: URLSearchParams): string {
+  const text = q.toString();
+  return text ? `?${text}` : "";
+}
+
 /* --------------------------------------------------------------- sessions */
 
 /** One session, as the lists return it. Somebody else's direct one is a 404. */
@@ -181,8 +200,24 @@ export function getSession(teamId: string, sessionId: string): Promise<Session> 
   return request(`/teams/${teamId}/sessions/${sessionId}`);
 }
 
-export function listSessions(teamId: string, cursor?: string | null): Promise<Page<ListedSession>> {
-  return request<Page<ListedSession>>(`/teams/${teamId}/sessions${pageQuery(cursor)}`);
+/** What a list of sessions may be narrowed to. Each array is "any of these". */
+export type SessionFilter = {
+  channelId?: string | null;
+  status?: SessionStatus[];
+  /** The status of each session's newest run; a session with no run matches none. */
+  runStatus?: RunStatus[];
+};
+
+export function listSessions(
+  teamId: string,
+  cursor?: string | null,
+  filter: SessionFilter = {},
+): Promise<Page<ListedSession>> {
+  const q = new URLSearchParams(pageQuery(cursor));
+  if (filter.channelId) q.set("channel_id", filter.channelId);
+  for (const s of filter.status ?? []) q.append("status", s);
+  for (const s of filter.runStatus ?? []) q.append("run_status", s);
+  return request<Page<ListedSession>>(`/teams/${teamId}/sessions${queryOf(q)}`);
 }
 
 export function listMessages(
@@ -224,6 +259,29 @@ export function listSessionRuns(
   cursor?: string | null,
 ): Promise<Page<Run>> {
   return request<Page<Run>>(`/teams/${teamId}/sessions/${sessionId}/runs${pageQuery(cursor)}`);
+}
+
+/** What the team's runs may be narrowed to. */
+export type RunFilter = {
+  status?: RunStatus[];
+  /** Only runs created at or after this instant. */
+  since?: Date | null;
+  /** true for the hub's runs only, false for a named agent's only. */
+  hub?: boolean | null;
+  limit?: number;
+};
+
+/** The team's top-level runs, newest first, wherever each was started. */
+export function listTeamRuns(
+  teamId: string,
+  cursor?: string | null,
+  filter: RunFilter = {},
+): Promise<Page<Run>> {
+  const q = new URLSearchParams(pageQuery(cursor, filter.limit));
+  for (const s of filter.status ?? []) q.append("status", s);
+  if (filter.since) q.set("since", filter.since.toISOString());
+  if (filter.hub != null) q.set("hub", String(filter.hub));
+  return request<Page<Run>>(`/teams/${teamId}/runs${queryOf(q)}`);
 }
 
 /** One run, wherever it was started — what a link to a run's trace reads. */

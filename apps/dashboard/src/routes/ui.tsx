@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
+  Activity,
   ArchiveRestore,
   BookOpen,
   Bot,
@@ -21,9 +22,10 @@ import {
 } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useCallback, useState } from "react";
-import { fetchWhoami, listChannels, listDeletedTeams, listPendingSenders } from "@/api";
+import { fetchWhoami, listDeletedTeams } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam, useToken } from "@/api/session";
+import { useTeamSummary } from "@/api/summary";
 import { setToken } from "@/api/token";
 import {
   CommandPalette,
@@ -68,6 +70,7 @@ type NavItem = {
 };
 
 const HOME: NavItem = { to: "/ui", label: "Home", icon: Home, exact: true };
+const RUNS: NavItem = { to: "/ui/runs", label: "Runs", icon: Activity, exact: false };
 const SESSIONS: NavItem = {
   to: "/ui/sessions",
   label: "Sessions",
@@ -87,12 +90,11 @@ type NavGroup = { label: string; items: readonly NavItem[] };
 
 /**
  * The navigation, grouped by the job a screen is for rather than the noun it
- * lists. Runs joins Work once the brain can list a team's runs. Deleted teams
- * sits under Teams, for super admins only.
+ * lists. Deleted teams sits under Teams, for super admins only.
  */
 export function navGroups(superAdmin: boolean): readonly NavGroup[] {
   return [
-    { label: "Work", items: [HOME, SESSIONS, APPROVALS] },
+    { label: "Work", items: [HOME, RUNS, SESSIONS, APPROVALS] },
     {
       label: "Build",
       items: [
@@ -141,29 +143,13 @@ export function useOffersDeletedTeams(): boolean {
 }
 
 /**
- * Senders waiting across every channel. The brain counts per channel, so this
- * costs a request for each; it is read once a minute rather than per page.
- * Null until known, and a trailing + when a channel has more than one page.
+ * Senders waiting across every channel, from the team's summary. Null when
+ * nobody is, and when the reader may not see the queue: the brain leaves the
+ * count out for them rather than saying zero.
  */
 function useWaiting(teamId: string | null): string | null {
-  // The queue is channel:read; without it every read would be refused, once a minute.
-  const canRead = usePermissions(teamId).can("channel:read");
-  const waiting = useQuery({
-    queryKey: ["pending", teamId, "count"],
-    queryFn: async () => {
-      const channels = await listChannels(teamId as string);
-      const pages = await Promise.all(
-        channels.items.map((c) => listPendingSenders(teamId as string, c.id)),
-      );
-      const n = pages.reduce((sum, p) => sum + p.items.length, 0);
-      return { n, more: pages.some((p) => Boolean(p.next_cursor)) };
-    },
-    enabled: Boolean(teamId) && canRead,
-    staleTime: 60_000,
-    refetchInterval: 60_000,
-  });
-  if (!waiting.data || waiting.data.n === 0) return null;
-  return `${waiting.data.n}${waiting.data.more ? "+" : ""}`;
+  const n = useTeamSummary(teamId).data?.waiting_senders;
+  return n ? String(n) : null;
 }
 
 /** The entry a path belongs to: the longest that matches, so a nested page lights only itself. */
@@ -493,7 +479,7 @@ function Account({ rail }: { rail: boolean }) {
 }
 
 /**
- * A phone's navigation: Home, the runs and Approvals in a bar at the bottom,
+ * A phone's navigation: Home, Runs and Approvals in a bar at the bottom,
  * within a thumb's reach, and everything else under More.
  */
 function QuickBar({
@@ -506,7 +492,7 @@ function QuickBar({
   waiting: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const quick = [HOME, SESSIONS, APPROVALS];
+  const quick = [HOME, RUNS, APPROVALS];
   const active = activeOf(
     groups.flatMap((g) => g.items),
     pathname,

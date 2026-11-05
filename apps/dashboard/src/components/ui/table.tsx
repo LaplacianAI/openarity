@@ -119,7 +119,8 @@ function TableRow({
         }
       }}
       className={cn(
-        "group/row border-b border-rule last:border-b-0 max-sm:grid max-sm:gap-1 max-sm:py-3",
+        // One column no wider than the screen: an auto column grows to its longest value.
+        "group/row border-b border-rule last:border-b-0 max-sm:grid max-sm:grid-cols-[minmax(0,1fr)] max-sm:gap-1 max-sm:py-3",
         openable &&
           "cursor-pointer outline-none hover:bg-foreground/3 focus-visible:bg-accent focus-visible:shadow-[inset_3px_0_0_0_var(--color-primary)]",
         className,
@@ -165,9 +166,9 @@ function TableCell({
       className={cn(
         "px-3 py-2.5 align-middle",
         numeric && "text-right tabular-nums",
-        "max-sm:flex max-sm:items-baseline max-sm:justify-between max-sm:gap-3 max-sm:px-0 max-sm:py-0 max-sm:text-left",
+        "max-sm:flex max-sm:min-w-0 max-sm:items-baseline max-sm:justify-between max-sm:gap-3 max-sm:px-0 max-sm:py-0 max-sm:text-left",
         label &&
-          "max-sm:before:text-xs max-sm:before:text-muted-foreground max-sm:before:content-[attr(data-label)]",
+          "max-sm:before:shrink-0 max-sm:before:text-xs max-sm:before:whitespace-nowrap max-sm:before:text-muted-foreground max-sm:before:content-[attr(data-label)]",
         className,
       )}
       {...props}

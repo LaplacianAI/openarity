@@ -22,30 +22,30 @@ afterEach(() => {
   window.matchMedia = real;
 });
 
-const PENDING = "GET /teams/{id}/channels/{cid}/senders/pending";
-
-function shell(pending: Record<string, number> = {}, actions = ["agent:write", "channel:read"]) {
+/**
+ * The shell over a team whose summary says `waiting` people are waiting:
+ * null, as the brain answers a reader without channel:read.
+ */
+function shell(waiting: number | null = 0, actions = ["agent:write", "channel:read"]) {
   const seen = brain({
     ...team(actions),
     "GET /whoami": { body: { subject: "ann", email: "ann@example.com" } },
-    "GET /teams/{id}/channels": {
-      body: { items: Object.keys(pending).map((id) => ({ id, name: id, provider: "custom" })) },
-    },
-    [PENDING]: (s) => {
-      const id = s.path.split("/channels/")[1]?.split("/")[0] ?? "";
-      const n = pending[id] ?? 0;
-      return {
-        body: {
-          items: Array.from({ length: n }, (_, i) => ({
-            external_id: `${id}-${i}`,
-            channel_id: id,
-          })),
-        },
-      };
+    "GET /teams/{id}/summary": {
+      body: {
+        runs_24h: { queued: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 },
+        sessions: 0,
+        waiting_senders: waiting,
+        servers_failing: 0,
+      },
     },
   });
   showAt("/ui", [["/ui", UiRoute]]);
   return seen;
+}
+
+/** Whether the shell read any queue itself, rather than the summary's count. */
+function readAQueue(seen: { path: string }[]): boolean {
+  return seen.some((s) => s.path.includes("/senders") || s.path.includes("/channels"));
 }
 
 describe("the navigation on a wide screen", () => {
@@ -63,38 +63,38 @@ describe("the navigation on a wide screen", () => {
           .map((a) => a.textContent),
       ]);
     expect(groups).toEqual([
-      ["Work", ["Home", "Sessions", "Approvals"]],
+      ["Work", ["Home", "Runs", "Sessions", "Approvals"]],
       ["Build", ["Agents", "Skills", "MCP servers", "Channels"]],
       ["Understand", ["Graph"]],
       ["Team", ["Team settings", "Teams"]],
     ]);
   });
 
-  // A count on every page costs a request per channel, so it is read once a
-  // minute, and shown only when someone is waiting.
-  it("counts the senders waiting across every channel, and shows nothing when none are", async () => {
+  // The count is the summary's, one read for the whole team, refreshed once a
+  // minute; the shell reads no channel's queue for it.
+  it("counts the senders waiting across every channel from the team's summary", async () => {
     widths(true, true);
-    shell({ c1: 2, c2: 1 });
+    const seen = shell(3);
     const approvals = await screen.findByRole("link", { name: /Approvals/ });
     await waitFor(() => expect(approvals).toHaveTextContent("Approvals, 3 waiting"));
+    expect(readAQueue(seen)).toBe(false);
   });
 
-  // The queue is behind channel:read, so someone without it is shown no count
-  // and the shell does not ask a route that would refuse them every minute.
-  it("asks for no count without channel:read", async () => {
+  // Without channel:read the brain leaves the count out, and so does the shell.
+  it("shows no count to someone who may not see the queue", async () => {
     widths(true, true);
-    const seen = shell({ c1: 2 }, ["agent:write"]);
+    const seen = shell(null, ["agent:write"]);
     const approvals = await screen.findByRole("link", { name: /Approvals/ });
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => expect(seen.some((s) => s.path.endsWith("/summary"))).toBe(true));
     expect(approvals).toHaveTextContent(/^Approvals$/);
-    expect(seen.some((s) => s.path.includes("/senders/pending"))).toBe(false);
+    expect(readAQueue(seen)).toBe(false);
   });
 
   it("shows no count when nobody is waiting", async () => {
     widths(true, true);
-    shell({ c1: 0 });
+    const seen = shell(0);
     const approvals = await screen.findByRole("link", { name: /Approvals/ });
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => expect(seen.some((s) => s.path.endsWith("/summary"))).toBe(true));
     expect(approvals).toHaveTextContent(/^Approvals$/);
   });
 
@@ -124,14 +124,14 @@ describe("the navigation on a tablet", () => {
 describe("the navigation on a phone", () => {
   it("puts Home, the runs, Approvals and More in a bar at the bottom", async () => {
     widths(false, false);
-    shell({ c1: 1 });
+    shell(1);
 
     const bar = await screen.findByRole("navigation", { name: "Quick" });
     expect(
       within(bar)
         .getAllByRole("link")
         .map((a) => a.textContent),
-    ).toEqual(["Home", "Sessions", expect.stringMatching(/^Approvals/)]);
+    ).toEqual(["Home", "Runs", expect.stringMatching(/^Approvals/)]);
     expect(within(bar).getByRole("button", { name: "More" })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Main" })).toBeNull();
   });
