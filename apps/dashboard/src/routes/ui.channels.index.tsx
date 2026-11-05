@@ -1,13 +1,16 @@
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { toast } from "sonner";
 
-import { createChannel, listChannels } from "@/api";
+import { createChannel, deleteChannel, listChannels } from "@/api";
 import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
-import type { CreateChannelRequest, CreatedChannel } from "@/api/types";
+import type { CreateChannelRequest, CreatedChannel, ListedChannel } from "@/api/types";
+import { KeyValue, KeyValues, Time } from "@/components/facts";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
+import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,13 +21,33 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SwitchField } from "@/components/ui/switch";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { EmptyState, LoadMore, Mono, PageHeader } from "@/components/ui-bits";
+import { count } from "@/lib/runs";
 
 export const Route = createFileRoute("/ui/channels/")({
   component: Channels,
 });
 
 const WRITE = "channel:write";
+const READ_ALL = "session:read_all";
 
 /** The adapters this build ships. Others are typed; the brain refuses an unknown one by name. */
 const KNOWN_PROVIDERS = ["custom"];
@@ -37,6 +60,7 @@ function Channels() {
   const { teamId } = useCurrentTeam();
   const perms = usePermissions(teamId);
   const canWrite = perms.can(WRITE);
+  const [shown, setShown] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [created, setCreated] = useState<CreatedChannel | null>(null);
 
@@ -48,17 +72,25 @@ function Channels() {
     enabled: Boolean(teamId),
   });
 
+  const changed = () => qc.invalidateQueries({ queryKey: ["channels", teamId] });
   const rows = channels.data?.pages.flatMap((p) => p.items) ?? [];
+  const open = rows.find((c) => c.id === shown) ?? null;
+  // The list counts only the sessions this person may open, so only someone
+  // who reads every conversation can call a channel quiet; and only a whole
+  // list can say how many are.
+  const quiet =
+    channels.data && !channels.hasNextPage && perms.can(READ_ALL) ? rows.filter(isQuiet).length : 0;
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Channels"
+        finding={quiet > 0 ? `${count(quiet, "channel")} had no message in the last day.` : null}
         description="Where messages arrive from. Each belongs to one team and one provider."
         actions={
           canWrite ? (
             <Button size="sm" onClick={() => setAdding(true)}>
-              New channel
+              Connect channel
             </Button>
           ) : null
         }
@@ -71,7 +103,17 @@ function Channels() {
       {!teamId ? (
         <EmptyState title="No team" body="Join or create a team to see its channels." />
       ) : channels.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading channels…</p>
+        <div className="space-y-1" role="status" aria-label="Loading channels">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : channels.isError ? (
+        <ErrorState
+          what="the channels"
+          error={channels.error}
+          onRetry={() => channels.refetch()}
+          retrying={channels.isRefetching}
+        />
       ) : rows.length === 0 ? (
         <EmptyState
           title="No channels yet"
@@ -79,37 +121,87 @@ function Channels() {
           hint="oa channels create <team> support --provider custom"
         />
       ) : (
-        <>
-          <table className="w-full overflow-hidden rounded-md border border-border bg-card text-left">
-            <caption className="sr-only">Channels in this team</caption>
-            <tbody className="divide-y divide-border">
+        <div>
+          <Table aria-label="Channels in this team">
+            <TableHeader>
+              <tr>
+                <TableHead>Channel</TableHead>
+                <TableHead>Last message</TableHead>
+                <TableHead>Last 24 hours</TableHead>
+              </tr>
+            </TableHeader>
+            <TableBody>
               {rows.map((c) => (
-                <tr key={c.id} className="hover:bg-secondary/60">
-                  <td className="py-2 pl-3 text-sm font-medium">{c.name}</td>
-                  <td className="py-2 text-xs text-muted-foreground">{c.provider}</td>
-                  <td className="py-2 pr-3 text-right">
-                    <Mono className="break-all">{c.hook_url ?? c.id}</Mono>
-                  </td>
-                </tr>
+                <TableRow key={c.id} onOpen={() => setShown(c.id)}>
+                  <TableCell className="sm:w-full sm:max-w-0">
+                    <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onClick={() => setShown(c.id)}
+                        className="block max-w-full truncate text-left font-medium hover:underline"
+                      >
+                        {c.name}
+                      </button>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {c.provider}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell
+                    label="Last message"
+                    className="whitespace-nowrap text-muted-foreground"
+                  >
+                    {c.last_message_at ? <Time iso={c.last_message_at} /> : "Never"}
+                  </TableCell>
+                  <TableCell
+                    label="Last 24 hours"
+                    className={
+                      c.sessions_24h === 0
+                        ? "whitespace-nowrap text-muted-foreground tabular-nums"
+                        : "whitespace-nowrap tabular-nums"
+                    }
+                  >
+                    {count(c.sessions_24h, "session")}
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
           <LoadMore
             hasMore={Boolean(channels.hasNextPage)}
             loading={channels.isFetchingNextPage}
             onClick={() => channels.fetchNextPage()}
             loadedLabel={`${rows.length} channel${rows.length === 1 ? "" : "s"} loaded`}
           />
-        </>
+        </div>
       )}
 
+      {teamId ? (
+        <Sheet open={open !== null} onOpenChange={(o) => (o ? null : setShown(null))}>
+          <SheetContent>
+            {open ? (
+              <ChannelDetail
+                teamId={teamId}
+                channel={open}
+                canWrite={canWrite}
+                onDeleted={() => {
+                  setShown(null);
+                  void changed();
+                }}
+              />
+            ) : null}
+          </SheetContent>
+        </Sheet>
+      ) : null}
+
       {teamId && canWrite ? (
-        <CreateDialog
+        <ConnectSheet
           teamId={teamId}
           open={adding}
           onClose={() => setAdding(false)}
           onCreated={(c) => {
-            qc.invalidateQueries({ queryKey: ["channels", teamId] });
+            void changed();
             setAdding(false);
             setCreated(c);
           }}
@@ -118,6 +210,124 @@ function Channels() {
 
       <CreatedDialog channel={created} onDone={() => setCreated(null)} />
     </div>
+  );
+}
+
+/**
+ * Used before, and silent for the last day. A channel never used is not
+ * quiet: nothing has been sent to it yet.
+ */
+export function isQuiet(c: ListedChannel): boolean {
+  return c.last_message_at !== null && c.sessions_24h === 0;
+}
+
+/** One channel beside the list: where its webhooks go, and what it has carried. */
+function ChannelDetail({
+  teamId,
+  channel,
+  canWrite,
+  onDeleted,
+}: {
+  teamId: string;
+  channel: ListedChannel;
+  canWrite: boolean;
+  onDeleted: () => void;
+}) {
+  return (
+    <>
+      <SheetHeader>
+        <SheetTitle>{channel.name}</SheetTitle>
+        <SheetDescription>{channel.provider}</SheetDescription>
+      </SheetHeader>
+
+      <KeyValues>
+        <KeyValue label="Last message">
+          {channel.last_message_at ? <Time iso={channel.last_message_at} /> : "Never"}
+        </KeyValue>
+        <KeyValue label="Last 24 hours">{count(channel.sessions_24h, "session")}</KeyValue>
+        <KeyValue label={channel.hook_url ? "Webhook URL" : "Webhook path"}>
+          <Mono className="break-all text-foreground">POST {hookAddress(channel)}</Mono>
+        </KeyValue>
+        <KeyValue label="Signing secret">
+          In the secret store. It was shown once, when the channel was connected.
+        </KeyValue>
+      </KeyValues>
+
+      <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-rule pt-4">
+        <Button variant="outline" asChild>
+          <Link to="/ui/sessions" search={{ channel: channel.id }}>
+            Open its sessions
+          </Link>
+        </Button>
+        {canWrite ? (
+          <DeleteChannel teamId={teamId} channel={channel} onDeleted={onDeleted} />
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+/** Disconnecting asks first: the signing secret goes with the channel. */
+function DeleteChannel({
+  teamId,
+  channel,
+  onDeleted,
+}: {
+  teamId: string;
+  channel: ListedChannel;
+  onDeleted: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const remove = useMutation({
+    mutationFn: () => deleteChannel(teamId, channel.id),
+    onSuccess: () => {
+      setOpen(false);
+      toast.success(`Disconnected ${channel.name}`);
+      onDeleted();
+    },
+  });
+
+  return (
+    <>
+      <Button variant="outline" className="ml-auto text-destructive" onClick={() => setOpen(true)}>
+        Disconnect
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) remove.reset();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Disconnect {channel.name}?</DialogTitle>
+            <DialogDescription>
+              Its signing secret is deleted with it, and the provider's webhooks stop being
+              accepted. Connecting it again means a new address and a new secret.
+            </DialogDescription>
+          </DialogHeader>
+          {remove.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {remove.error.message}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Keep it
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              loading={remove.isPending}
+              onClick={() => remove.mutate()}
+            >
+              Disconnect
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -161,7 +371,8 @@ export function hookAddress(c: { provider: string; id: string; hook_url?: string
   return c.hook_url ?? hookPath(c);
 }
 
-function CreateDialog({
+/** Connecting a channel, in a sheet beside the list. */
+function ConnectSheet({
   teamId,
   open,
   onClose,
@@ -202,14 +413,14 @@ function CreateDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => (o ? null : close())}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Connect a channel</DialogTitle>
-          <DialogDescription>
+    <Sheet open={open} onOpenChange={(o) => (o ? null : close())}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Connect a channel</SheetTitle>
+          <SheetDescription>
             The brain keeps the signing secret in its secret store and never shows it again.
-          </DialogDescription>
-        </DialogHeader>
+          </SheetDescription>
+        </SheetHeader>
         <form
           className="space-y-3"
           onSubmit={(e) => {
@@ -248,14 +459,11 @@ function CreateDialog({
               ))}
             </datalist>
           </Field>
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={draft.ownSecret}
-              onChange={(e) => set({ ownSecret: e.target.checked, secret: "" })}
-            />
-            The provider gave me a signing secret
-          </label>
+          <SwitchField
+            label="The provider gave me a signing secret"
+            checked={draft.ownSecret}
+            onCheckedChange={(on) => set({ ownSecret: on, secret: "" })}
+          />
           {draft.ownSecret ? (
             <Field
               label="Signing secret"
@@ -279,17 +487,17 @@ function CreateDialog({
               {problem}
             </p>
           ) : null}
-          <DialogFooter>
+          <SheetFooter>
             <Button type="button" variant="ghost" onClick={close}>
               Cancel
             </Button>
-            <Button type="submit" disabled={pending}>
-              {pending ? "Connecting…" : "Connect"}
+            <Button type="submit" loading={pending}>
+              Connect
             </Button>
-          </DialogFooter>
+          </SheetFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }
 

@@ -1,11 +1,13 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
-import { brain, pageOf, show, TEAM, team } from "@/test/brain";
+import { brain, pageOf, STAMP, show, showAt, TEAM, team } from "@/test/brain";
 
-const { Route, channelRequest, hookAddress, hookPath } = await import("@/routes/ui.channels.index");
+const { Route, channelRequest, hookAddress, hookPath, isQuiet } = await import(
+  "@/routes/ui.channels.index"
+);
 const Channels = await pageOf(Route);
 
 afterEach(() => {
@@ -14,11 +16,29 @@ afterEach(() => {
   setToken(null);
 });
 
-const support = { id: "c1", team_id: TEAM, provider: "custom", name: "support" };
+const support = {
+  id: "c1",
+  team_id: TEAM,
+  provider: "custom",
+  name: "support",
+  last_message_at: STAMP,
+  sessions_24h: 3,
+};
 const GENERATED = "oawh_generated-in-the-brain";
 const PASTED = " pasted secret ";
 // Not what the page would build from its own origin: the listener is another host.
 const HOOK_URL = "https://hooks.example.com/hooks/custom/c1";
+
+/** The row a channel's name sits in. */
+function rowOf(name: string): HTMLElement {
+  return screen.getByRole("button", { name }).closest("tr") as HTMLElement;
+}
+
+/** Opens a channel's sheet from its row. */
+async function opened(name: string): Promise<HTMLElement> {
+  await userEvent.click(await screen.findByRole("button", { name }));
+  return screen.findByRole("dialog", { name });
+}
 
 function posted(seen: { method: string; body: BodyInit | null | undefined }[]) {
   const post = seen.find((s) => s.method === "POST");
@@ -74,7 +94,7 @@ it("offers no write action without channel:write", async () => {
 
   await screen.findByText("support");
   expect(await screen.findByText("channel:write")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /new channel/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /connect channel/i })).not.toBeInTheDocument();
 });
 
 it("shows a generated secret once, and forgets it when told it is stored", async () => {
@@ -88,7 +108,7 @@ it("shows a generated secret once, and forgets it when told it is stored", async
   });
   show(Channels);
 
-  await userEvent.click(await screen.findByRole("button", { name: /new channel/i }));
+  await userEvent.click(await screen.findByRole("button", { name: /connect channel/i }));
   await userEvent.type(screen.getByLabelText(/^name$/i), "support");
   await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
 
@@ -102,7 +122,7 @@ it("shows a generated secret once, and forgets it when told it is stored", async
   // The list was asked again, and nothing the brain lists carries a secret:
   // the dialog was the only place it ever lived.
   expect(seen.filter((s) => s.method === "GET" && s.path.includes("/channels")).length).toBe(2);
-  await userEvent.click(screen.getByRole("button", { name: /new channel/i }));
+  await userEvent.click(screen.getByRole("button", { name: /connect channel/i }));
   expect(screen.queryByText(GENERATED)).not.toBeInTheDocument();
 });
 
@@ -114,7 +134,7 @@ it("sends a pasted secret, and never shows it back", async () => {
   });
   show(Channels);
 
-  await userEvent.click(await screen.findByRole("button", { name: /new channel/i }));
+  await userEvent.click(await screen.findByRole("button", { name: /connect channel/i }));
   await userEvent.type(screen.getByLabelText(/^name$/i), "support");
   await userEvent.click(screen.getByLabelText(/gave me a signing secret/i));
   const field = screen.getByLabelText(/^signing secret$/i);
@@ -139,7 +159,7 @@ it("keeps the form open with the brain's reason when it refuses", async () => {
   });
   show(Channels);
 
-  await userEvent.click(await screen.findByRole("button", { name: /new channel/i }));
+  await userEvent.click(await screen.findByRole("button", { name: /connect channel/i }));
   await userEvent.type(screen.getByLabelText(/^name$/i), "support");
   await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
 
@@ -153,12 +173,12 @@ it("forgets a typed secret when the form is cancelled", async () => {
   brain({ ...team(["channel:write"]), "GET /teams/{id}/channels": { body: { items: [] } } });
   show(Channels);
 
-  await userEvent.click(await screen.findByRole("button", { name: /new channel/i }));
+  await userEvent.click(await screen.findByRole("button", { name: /connect channel/i }));
   await userEvent.click(screen.getByLabelText(/gave me a signing secret/i));
   await userEvent.type(screen.getByLabelText(/^signing secret$/i), "half typed");
   await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
 
-  await userEvent.click(await screen.findByRole("button", { name: /new channel/i }));
+  await userEvent.click(await screen.findByRole("button", { name: /connect channel/i }));
   expect(screen.queryByLabelText(/^signing secret$/i)).not.toBeInTheDocument();
   expect(screen.getByLabelText(/gave me a signing secret/i)).not.toBeChecked();
 });
@@ -174,7 +194,7 @@ it("hands over the full URL when the brain knows its public address", async () =
   });
   show(Channels);
 
-  await userEvent.click(await screen.findByRole("button", { name: /new channel/i }));
+  await userEvent.click(await screen.findByRole("button", { name: /connect channel/i }));
   await userEvent.type(screen.getByLabelText(/^name$/i), "support");
   await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
 
@@ -183,15 +203,158 @@ it("hands over the full URL when the brain knows its public address", async () =
   expect(screen.queryByText("Webhook path")).not.toBeInTheDocument();
 });
 
-it("lists each channel's URL, so it can be found again after the dialog closes", async () => {
-  const other = { id: "c2", team_id: TEAM, provider: "custom", name: "other" };
-  brain({
-    ...team([]),
-    "GET /teams/{id}/channels": { body: { items: [{ ...support, hook_url: HOOK_URL }, other] } },
-  });
-  show(Channels);
+describe("the list", () => {
+  it("says when each channel last carried a message, and how much in a day", async () => {
+    const fresh = { ...support, id: "c2", name: "fresh", last_message_at: null, sessions_24h: 0 };
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [support, fresh] } } });
+    show(Channels);
 
-  expect(await screen.findByText(HOOK_URL)).toBeInTheDocument();
-  // One the brain gave no URL for keeps its id, rather than a guess.
-  expect(screen.getByText("c2")).toBeInTheDocument();
+    await screen.findByRole("button", { name: "support" });
+    expect(within(rowOf("support")).getByText("custom")).toBeInTheDocument();
+    expect(within(rowOf("support")).getByText("3 sessions")).toBeInTheDocument();
+    expect(rowOf("support").querySelector("time")).toHaveAttribute("datetime", STAMP);
+    expect(within(rowOf("fresh")).getByText("Never")).toBeInTheDocument();
+    expect(within(rowOf("fresh")).getByText("0 sessions")).toBeInTheDocument();
+  });
+
+  it("shows the brain's error with a way to try again", async () => {
+    brain({ ...team([]), "GET /teams/{id}/channels": { status: 500, text: "the store is down" } });
+    show(Channels);
+
+    expect(await screen.findByText(/the store is down/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
+  });
+});
+
+// Quiet means it was used and then went silent; never used is not quiet.
+describe("a quiet channel", () => {
+  it.each([
+    [{ last_message_at: STAMP, sessions_24h: 0 }, true],
+    [{ last_message_at: STAMP, sessions_24h: 2 }, false],
+    [{ last_message_at: null, sessions_24h: 0 }, false],
+  ])("%o is quiet: %s", (patch, said) => {
+    expect(isQuiet({ ...support, ...patch })).toBe(said);
+  });
+
+  const lists = (items: unknown[], next?: string) => ({
+    "GET /teams/{id}/channels": { body: { items, ...(next ? { next_cursor: next } : {}) } },
+  });
+  const silent = { ...support, id: "c2", name: "silent", sessions_24h: 0 };
+
+  it("is counted for someone who reads every conversation", async () => {
+    brain({ ...team(["session:read_all"]), ...lists([support, silent]) });
+    show(Channels);
+
+    expect(
+      await screen.findByText("1 channel had no message in the last day."),
+    ).toBeInTheDocument();
+  });
+
+  // The list counts only the sessions this person may open: their own
+  // quiet is not the channel's.
+  it("is not counted for someone who sees only their own conversations", async () => {
+    brain({ ...team([]), ...lists([support, silent]) });
+    show(Channels);
+
+    await screen.findByRole("button", { name: "silent" });
+    expect(screen.queryByText(/no message in the last day/)).not.toBeInTheDocument();
+  });
+
+  it("is not counted from a page of the list", async () => {
+    brain({ ...team(["session:read_all"]), ...lists([support, silent], "more") });
+    show(Channels);
+
+    await screen.findByRole("button", { name: "silent" });
+    expect(screen.queryByText(/no message in the last day/)).not.toBeInTheDocument();
+  });
+});
+
+describe("a channel's sheet", () => {
+  // Under a real router: the sheet links to the channel's sessions.
+  const at = () => showAt("/ui/channels/", [["/ui/channels/", Route]]);
+
+  it("gives the brain's URL, and the secret only as where it is kept", async () => {
+    brain({
+      ...team([]),
+      "GET /teams/{id}/channels": { body: { items: [{ ...support, hook_url: HOOK_URL }] } },
+    });
+    at();
+
+    const sheet = await opened("support");
+    expect(within(sheet).getByText("Webhook URL")).toBeInTheDocument();
+    expect(within(sheet).getByText(`POST ${HOOK_URL}`)).toBeInTheDocument();
+    expect(within(sheet).getByText(/in the secret store/i)).toBeInTheDocument();
+  });
+
+  // One the brain gave no URL for keeps its path, rather than a guess.
+  it("gives the path when the brain has no public address", async () => {
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [support] } } });
+    at();
+
+    const sheet = await opened("support");
+    expect(within(sheet).getByText("Webhook path")).toBeInTheDocument();
+    expect(within(sheet).getByText("POST /hooks/custom/c1")).toBeInTheDocument();
+  });
+
+  it("opens the channel's sessions", async () => {
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [support] } } });
+    at();
+
+    const sheet = await opened("support");
+    expect(within(sheet).getByRole("link", { name: /open its sessions/i })).toHaveAttribute(
+      "href",
+      "/ui/sessions?channel=c1",
+    );
+  });
+
+  it("opens from the keyboard", async () => {
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [support] } } });
+    at();
+
+    await screen.findByRole("button", { name: "support" });
+    rowOf("support").focus();
+    await userEvent.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: "support" })).toBeInTheDocument();
+  });
+
+  it("offers no disconnect without channel:write", async () => {
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [support] } } });
+    at();
+
+    const sheet = await opened("support");
+    expect(within(sheet).queryByRole("button", { name: /disconnect/i })).not.toBeInTheDocument();
+  });
+
+  it("disconnects once it is confirmed, and shows the brain's refusal", async () => {
+    let refused = true;
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [support] } },
+      "DELETE /teams/{id}/channels/{channelID}": () =>
+        refused ? { status: 500, text: "the secret store is sealed" } : { status: 204 },
+    });
+    at();
+
+    const sheet = await opened("support");
+    await userEvent.click(within(sheet).getByRole("button", { name: /^disconnect$/i }));
+    expect(seen.some((s) => s.method === "DELETE")).toBe(false);
+
+    const confirm = await screen.findByRole("dialog", { name: "Disconnect support?" });
+    await userEvent.click(within(confirm).getByRole("button", { name: /^disconnect$/i }));
+    expect(await within(confirm).findByRole("alert")).toHaveTextContent(
+      "the secret store is sealed",
+    );
+
+    refused = false;
+    await userEvent.click(within(confirm).getByRole("button", { name: /^disconnect$/i }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Disconnect support?" })).not.toBeInTheDocument(),
+    );
+    expect(seen.filter((s) => s.method === "DELETE").map((s) => s.path)).toEqual([
+      `/teams/${TEAM}/channels/c1`,
+      `/teams/${TEAM}/channels/c1`,
+    ]);
+    // The list is read again, so the channel leaves it.
+    expect(seen.filter((s) => s.method === "GET" && s.path.includes("/channels")).length).toBe(2);
+  });
 });
