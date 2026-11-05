@@ -64,12 +64,12 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 				return err
 			}
 
-			return cli.PrintPage(opts, cli.Page[client.Channel]{
+			return cli.PrintPage(opts, cli.Page[client.ListedChannel]{
 				Items:      page.Items,
 				NextCursor: page.NextCursor,
 				Empty:      "no channels",
 				More:       "oa channels list " + args[0],
-				Row: func(table *printer.Table, ch client.Channel) {
+				Row: func(table *printer.Table, ch client.ListedChannel) {
 					table.Row(opts.Styles.Value.Render(ch.Name), ch.Provider,
 						opts.Styles.Muted.Render(ch.ID.String()))
 				},

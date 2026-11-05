@@ -46,6 +46,8 @@ type routeStore struct {
 
 	readErr, filesErr, deleteErr error
 	vanishOnRead                 bool
+	// holders is how many agents hold each skill, as the list counts them.
+	holders map[uuid.UUID]int64
 
 	reads    int
 	deleted  []uuid.UUID
@@ -114,6 +116,7 @@ func (s *routeStore) ListSkillsByTeam(_ context.Context, arg db.ListSkillsByTeam
 		out = append(out, db.ListSkillsByTeamRow{
 			ID: row.ID, TeamID: row.TeamID, Name: row.Name, Description: row.Description,
 			Source: row.Source, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+			AgentCount: s.holders[row.ID],
 		})
 	}
 	return out, nil
@@ -511,8 +514,9 @@ func TestOnlyContractedFieldsAreSerialised(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || len(page.Items) == 0 {
 		t.Fatalf("list body is not a page with items: %v (%s)", err, rec.Body)
 	}
+	// A row of the list counts the agents that hold it; the skill itself does not.
 	for _, item := range page.Items {
-		wantKeys(t, "list item", keysOf(t, item), summaryKeys...)
+		wantKeys(t, "list item", keysOf(t, item), append(slices.Clone(summaryKeys), "agent_count")...)
 	}
 }
 
@@ -1084,6 +1088,33 @@ func TestAMangledCursorIsABadRequest(t *testing.T) {
 }
 
 // An empty team lists as [] rather than null: "we looked, there are none".
+// A row says how many agents hold the skill, its own count, zero included.
+func TestAListItemCountsTheAgentsThatHoldIt(t *testing.T) {
+	t.Parallel()
+
+	team := uuid.New()
+	held, idle := aSkill(team, "pdf"), aSkill(team, "docx")
+	idle.CreatedAt = held.CreatedAt.Add(-time.Second)
+	s := newRouteStore(held, idle)
+	s.holders = map[uuid.UUID]int64{held.ID: 3}
+
+	rec := call(t, s, nil, &fakeAuthz{}, memberOf(team), http.MethodGet, collection(team), nothing)
+	var page struct {
+		Items []struct {
+			Name       string `json:"name"`
+			AgentCount *int64 `json:"agent_count"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || len(page.Items) != 2 {
+		t.Fatalf("page: %v (%s)", err, rec.Body)
+	}
+	for i, want := range map[int]int64{0: 3, 1: 0} {
+		if got := page.Items[i].AgentCount; got == nil || *got != want {
+			t.Errorf("%s: agent_count = %v, want %d", page.Items[i].Name, got, want)
+		}
+	}
+}
+
 func TestAnEmptyListIsAnEmptyArray(t *testing.T) {
 	t.Parallel()
 

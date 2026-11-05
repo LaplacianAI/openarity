@@ -3072,6 +3072,26 @@ components:
             Omit it to have the server generate a strong one and return it
             once.
 
+    ListedChannel:
+      description: |
+        A row of the channels list, with how recently it was used. Both facts
+        count only the sessions the caller may open: their own direct
+        sessions, and everyone's with `session:read_all`.
+      allOf:
+        - $ref: "#/components/schemas/Channel"
+        - type: object
+          required: [last_message_at, sessions_24h]
+          properties:
+            last_message_at:
+              type: string
+              format: date-time
+              nullable: true
+              description: The last message of its newest session; null for a channel never used
+            sessions_24h:
+              type: integer
+              format: int64
+              description: Its sessions with a message in the last 24 hours, on the brain's clock
+
     ChannelPage:
       type: object
       required: [items]
@@ -3079,7 +3099,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/Channel"
+            $ref: "#/components/schemas/ListedChannel"
         next_cursor:
           type: string
           description: Absent on the last page
@@ -3538,6 +3558,18 @@ components:
             - "github:anthropics/skills/skills/pdf@main"
             - "https://hub.example.com/skills/pdf.zip"
 
+    ListedSkill:
+      description: A row of the skills list, with how many agents hold the skill.
+      allOf:
+        - $ref: "#/components/schemas/SkillSummary"
+        - type: object
+          required: [agent_count]
+          properties:
+            agent_count:
+              type: integer
+              format: int64
+              description: The team's agents granted this skill; zero when none is
+
     SkillPage:
       type: object
       required: [items]
@@ -3545,7 +3577,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/SkillSummary"
+            $ref: "#/components/schemas/ListedSkill"
         next_cursor:
           type: string
           description: Absent on the last page

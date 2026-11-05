@@ -114,6 +114,27 @@ func (e GraphNodeLabel) Valid() bool {
 	}
 }
 
+// Defines values for ListedSkillSource.
+const (
+	ListedSkillSourceGithub ListedSkillSource = "github"
+	ListedSkillSourceURL    ListedSkillSource = "url"
+	ListedSkillSourceUpload ListedSkillSource = "upload"
+)
+
+// Valid indicates whether the value is a known member of the ListedSkillSource enum.
+func (e ListedSkillSource) Valid() bool {
+	switch e {
+	case ListedSkillSourceGithub:
+		return true
+	case ListedSkillSourceURL:
+		return true
+	case ListedSkillSourceUpload:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RunStatus.
 const (
 	Cancelled RunStatus = "cancelled"
@@ -543,7 +564,7 @@ type Channel struct {
 
 // ChannelPage defines model for ChannelPage.
 type ChannelPage struct {
-	Items []Channel `json:"items" yaml:"items"`
+	Items []ListedChannel `json:"items" yaml:"items"`
 
 	// NextCursor Absent on the last page
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
@@ -715,6 +736,73 @@ type ListedAgent struct {
 	// Web Whether it has web_search and web_fetch by its own grant
 	Web bool `json:"web" yaml:"web"`
 }
+
+// ListedChannel A row of the channels list, with how recently it was used. Both facts
+// count only the sessions the caller may open: their own direct
+// sessions, and everyone's with `session:read_all`.
+type ListedChannel struct {
+	// HookURL The full address to give the provider: the brain's public
+	// webhook address, then `/hooks/<provider>/<id>` and the
+	// provider's route. Absent when the brain has no
+	// `WEBHOOK_PUBLIC_URL`, or no adapter for `provider` — never a
+	// guess at an address the provider might not reach.
+	//
+	//
+	// Examples: https://hooks.example.com/hooks/custom/0192f5c4-7d1e-7c3a-9b2e-4f6a8d0c1e23
+	HookURL *string `json:"hook_url,omitempty" yaml:"hook_url,omitempty"`
+
+	// ID The routing key in this channel's hook URL. Not a secret — what
+	// authenticates a webhook is its signature, never knowledge of the
+	// URL.
+	ID openapi_types.UUID `json:"id" yaml:"id"`
+
+	// LastMessageAt The last message of its newest session; null for a channel never used
+	LastMessageAt time.Time `json:"last_message_at" yaml:"last_message_at"`
+
+	// Name Unique within the team, case-insensitively
+	//
+	// Examples: support-tickets
+	Name string `json:"name" yaml:"name"`
+
+	// Provider The adapter that parses this channel's webhooks, lower case and
+	// matched exactly.
+	//
+	//
+	// Examples: custom
+	Provider string `json:"provider" yaml:"provider"`
+
+	// Sessions24H Its sessions with a message in the last 24 hours, on the brain's clock
+	Sessions24H int64              `json:"sessions_24h" yaml:"sessions_24h"`
+	TeamID      openapi_types.UUID `json:"team_id" yaml:"team_id"`
+}
+
+// ListedSkill A row of the skills list, with how many agents hold the skill.
+type ListedSkill struct {
+	// AgentCount The team's agents granted this skill; zero when none is
+	AgentCount int64     `json:"agent_count" yaml:"agent_count"`
+	CreatedAt  time.Time `json:"created_at" yaml:"created_at"`
+
+	// Description What the model reads when deciding whether to load it
+	//
+	// Examples: Extract PDF text, fill forms, merge files. Use when handling PDFs.
+	Description string             `json:"description" yaml:"description"`
+	ID          openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Name The frontmatter's name: 1-64 lower-case letters, digits and single
+	// hyphens. Unique within the team.
+	//
+	//
+	// Examples: pdf-processing
+	Name string `json:"name" yaml:"name"`
+
+	// Source Where the directory came from
+	Source    ListedSkillSource  `json:"source" yaml:"source"`
+	TeamID    openapi_types.UUID `json:"team_id" yaml:"team_id"`
+	UpdatedAt time.Time          `json:"updated_at" yaml:"updated_at"`
+}
+
+// ListedSkillSource Where the directory came from
+type ListedSkillSource string
 
 // Loop defines model for Loop.
 type Loop struct {
@@ -1256,7 +1344,7 @@ type SkillImportRequest struct {
 
 // SkillPage defines model for SkillPage.
 type SkillPage struct {
-	Items []SkillSummary `json:"items" yaml:"items"`
+	Items []ListedSkill `json:"items" yaml:"items"`
 
 	// NextCursor Absent on the last page
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`

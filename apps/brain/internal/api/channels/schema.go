@@ -14,6 +14,14 @@ type channel struct {
 	HookURL  string    `json:"hook_url,omitempty"`
 }
 
+// listedChannel is a row of the channels list: the channel, and how recently
+// it was used, counted by the session rule.
+type listedChannel struct {
+	channel
+	LastMessageAt *time.Time `json:"last_message_at"`
+	Sessions24h   int64      `json:"sessions_24h"`
+}
+
 type createRequest struct {
 	Provider string `json:"provider"`
 	Name     string `json:"name"`
