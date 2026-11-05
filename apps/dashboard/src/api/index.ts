@@ -14,10 +14,10 @@ import type {
   ApprovedSender,
   Attachment,
   AuthConfig,
-  Channel,
   CreateChannelRequest,
   CreatedChannel,
   ListedAgent,
+  ListedChannel,
   ListedSession,
   ListedSkill,
   MCPServer,
@@ -115,8 +115,8 @@ export function listUsers(cursor?: string | null): Promise<Page<User>> {
 
 /* --------------------------------------------------------------- channels */
 
-export function listChannels(teamId: string, cursor?: string | null): Promise<Page<Channel>> {
-  return request<Page<Channel>>(`/teams/${teamId}/channels${pageQuery(cursor)}`);
+export function listChannels(teamId: string, cursor?: string | null): Promise<Page<ListedChannel>> {
+  return request<Page<ListedChannel>>(`/teams/${teamId}/channels${pageQuery(cursor)}`);
 }
 
 export function createChannel(

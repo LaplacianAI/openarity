@@ -76,6 +76,17 @@ export type CreateChannelRequest = {
 export type CreatedChannel = Channel & { signing_secret?: string };
 
 /**
+ * A row of GET /teams/{id}/channels. Both facts count only the sessions the
+ * caller may open: their own direct ones, and everyone's with session:read_all.
+ */
+export type ListedChannel = Channel & {
+  /** The last message of its newest session; null for a channel never used. */
+  last_message_at: string | null;
+  /** Its sessions with a message in the last 24 hours, on the brain's clock. */
+  sessions_24h: number;
+};
+
+/**
  * GET /teams/{id}/channels/{channelID}/senders/pending
  *
  * Identified by `sender_ref` rather than an id: an unapproved sender is not a
