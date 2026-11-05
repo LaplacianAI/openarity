@@ -7,9 +7,21 @@ import { getGraph } from "@/api";
 import { ApiError } from "@/api/client";
 import { useCurrentTeam } from "@/api/session";
 import type { GraphEdge, GraphLabel, GraphNode as Node, TeamGraph } from "@/api/types";
+import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, Mono, PageHeader } from "@/components/ui-bits";
 import { type DrawState, drawLink, drawNode, paintLinkArea, paintNodeArea } from "@/lib/graph-draw";
+import { useMediaQuery } from "@/lib/media";
+import { count } from "@/lib/runs";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -84,9 +96,8 @@ export function safeLabels(el: FalkorDBCanvas): void {
   graph?.linkLabel((l) => textLabel(String(l.relationship ?? "")));
 }
 
-/** Where a node is managed, so a click in the graph leads somewhere. */
+/** Where a node is managed, so a click in the graph leads somewhere. An agent has its own page. */
 const PAGE: Partial<Record<GraphLabel, string>> = {
-  Agent: "/ui/agents",
   Skill: "/ui/skills",
   Toolkit: "/ui/servers",
   Tool: "/ui/servers",
@@ -150,6 +161,44 @@ export function toCanvas(graph: TeamGraph, hidden: Set<GraphLabel>, theme: "ligh
   return { nodes, links } as Data;
 }
 
+/**
+ * The MCP servers and skills no agent is granted: in the team, and of no use
+ * to it. A graph cut short cannot say, since the grant may be past the cut.
+ */
+export function unreached(graph: TeamGraph): Node[] {
+  if (graph.truncated) return [];
+  const agents = new Set(graph.nodes.filter((n) => n.label === "Agent").map((n) => n.id));
+  const held = new Set(
+    graph.edges
+      .filter((e) => (e.type === "GRANTED" || e.type === "HAS_SKILL") && agents.has(e.from))
+      .map((e) => e.to),
+  );
+  return graph.nodes.filter(
+    (n) => (n.label === "Toolkit" || n.label === "Skill") && !held.has(n.id),
+  );
+}
+
+/** "1 MCP server and 2 skills no agent is granted.", or nothing. */
+export function unreachedFinding(nodes: Node[]): string | null {
+  const servers = nodes.filter((n) => n.label === "Toolkit").length;
+  const skills = nodes.filter((n) => n.label === "Skill").length;
+  const parts = [
+    servers ? count(servers, "MCP server") : null,
+    skills ? count(skills, "skill") : null,
+  ].filter(Boolean);
+  return parts.length ? `${parts.join(" and ")} no agent is granted.` : null;
+}
+
+/** The shown nodes whose name holds the query, ignoring case; none for an empty one. */
+export function matching(graph: TeamGraph, hidden: Set<GraphLabel>, query: string): Node[] {
+  const q = query.trim().toLowerCase();
+  if (q === "") return [];
+  return graph.nodes.filter((n) => !hidden.has(n.label) && nameOf(n).toLowerCase().includes(q));
+}
+
+/** How many matches the search offers at once. */
+const MATCHES = 8;
+
 function Graph() {
   const { teamId } = useCurrentTeam();
   // The team owns everything, so shown it is a hub whose spokes say nothing.
@@ -158,6 +207,13 @@ function Graph() {
   const [layout, setLayout] = useState<LayoutMode>("force");
   const [selected, setSelected] = useState<string | null>(null);
   const [asList, setAsList] = useState(false);
+  const [query, setQuery] = useState("");
+  // Written as max-width so that where nothing matches (jsdom) the canvas and
+  // the side panel are what is drawn.
+  const phone = useMediaQuery("(max-width: 39.99rem)");
+  const narrow = useMediaQuery("(max-width: 63.99rem)");
+  // A phone gets the list: a canvas of hundreds of nodes is not read with a thumb.
+  const listed = asList || phone;
 
   const graph = useQuery({
     queryKey: ["graph", teamId],
@@ -181,17 +237,22 @@ function Graph() {
     });
 
   const unavailable = graph.error instanceof ApiError && graph.error.status === 503;
+  const finding = graph.data ? unreachedFinding(unreached(graph.data)) : null;
+  const found = graph.data ? matching(graph.data, hidden, query) : [];
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="Graph"
+        finding={finding}
         description="The team's agents, MCP servers, tools and skills as the graph index holds them. It catches up with changes within about a minute."
         actions={
           <>
-            <Button size="sm" variant="outline" onClick={() => setAsList(!asList)}>
-              {asList ? "Show as graph" : "Show as list"}
-            </Button>
+            {phone ? null : (
+              <Button size="sm" variant="outline" onClick={() => setAsList(!asList)}>
+                {asList ? "Show as graph" : "Show as list"}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="outline"
@@ -207,7 +268,7 @@ function Graph() {
       {!teamId ? (
         <EmptyState title="No team" body="Join or create a team to see its graph." />
       ) : graph.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading the graph…</p>
+        <Skeleton className="h-[440px] w-full" role="status" aria-label="Loading the graph" />
       ) : unavailable ? (
         <EmptyState
           title="The graph is not enabled"
@@ -215,7 +276,12 @@ function Graph() {
           hint="Ask whoever runs this brain to connect an embedding model."
         />
       ) : graph.isError ? (
-        <EmptyState title="The graph could not be read" body={graph.error.message} />
+        <ErrorState
+          what="the graph"
+          error={graph.error}
+          onRetry={() => graph.refetch()}
+          retrying={graph.isRefetching}
+        />
       ) : graph.data.nodes.length <= 1 ? (
         <EmptyState
           title="Nothing in the graph yet"
@@ -223,6 +289,8 @@ function Graph() {
         />
       ) : (
         <>
+          <Search query={query} onQuery={setQuery} found={found} onPick={setSelected} />
+
           <div className="flex flex-wrap items-center justify-between gap-3">
             <fieldset className="flex flex-wrap items-center gap-1.5" aria-label="Show">
               {LABELS.filter((l) => counts[l]).map((label) => (
@@ -235,7 +303,7 @@ function Graph() {
                 />
               ))}
             </fieldset>
-            {!asList ? (
+            {!listed ? (
               <div className="flex items-center gap-1" role="radiogroup" aria-label="Layout">
                 {(["force", "tree", "radial"] as const).map((mode) => (
                   <Button
@@ -260,10 +328,10 @@ function Graph() {
             </p>
           ) : null}
 
-          {asList ? (
-            <GraphList graph={graph.data} hidden={hidden} />
-          ) : (
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
+            {listed ? (
+              <GraphList graph={graph.data} hidden={hidden} onPick={setSelected} />
+            ) : (
               <Canvas
                 graph={graph.data}
                 hidden={hidden}
@@ -271,9 +339,22 @@ function Graph() {
                 selected={selected}
                 onSelect={setSelected}
               />
-              <Selection graph={graph.data} selected={selected} />
-            </div>
-          )}
+            )}
+            {narrow ? null : (
+              <aside className="h-fit rounded-md border border-border bg-card p-3 text-xs">
+                <Selection graph={graph.data} selected={selected} />
+              </aside>
+            )}
+          </div>
+
+          {/* Narrower than a desktop, a node is read in a sheet over the graph. */}
+          {narrow ? (
+            <Sheet open={selected !== null} onOpenChange={(o) => (o ? null : setSelected(null))}>
+              <SheetContent>
+                <Selection graph={graph.data} selected={selected} inSheet />
+              </SheetContent>
+            </Sheet>
+          ) : null}
         </>
       )}
     </div>
@@ -486,15 +567,74 @@ function nameOf(n: Node | undefined): string {
   return n.name ?? (n.label === "Team" ? "this team" : n.id.slice(0, 8));
 }
 
-function Selection({ graph, selected }: { graph: TeamGraph; selected: string | null }) {
+/** Finding a node by name: the matches, each one a click from its detail. */
+function Search({
+  query,
+  onQuery,
+  found,
+  onPick,
+}: {
+  query: string;
+  onQuery: (q: string) => void;
+  found: Node[];
+  onPick: (id: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Input
+        type="search"
+        aria-label="Find in the graph"
+        placeholder="Find an agent, server, tool or skill"
+        value={query}
+        className="max-w-md"
+        onChange={(e) => onQuery(e.target.value)}
+      />
+      {query.trim() !== "" ? (
+        found.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Nothing shown is named like that.</p>
+        ) : (
+          <ul aria-label="Matches" className="flex flex-wrap gap-1.5">
+            {found.slice(0, MATCHES).map((n) => (
+              <li key={n.id}>
+                <Button size="sm" variant="outline" onClick={() => onPick(n.id)}>
+                  {nameOf(n)}
+                  <span className="text-muted-foreground">
+                    {STYLE[n.label].plural.replace(/s$/, "")}
+                  </span>
+                </Button>
+              </li>
+            ))}
+            {found.length > MATCHES ? (
+              <li className="self-center text-xs text-muted-foreground">
+                and {found.length - MATCHES} more
+              </li>
+            ) : null}
+          </ul>
+        )
+      ) : null}
+    </div>
+  );
+}
+
+function Selection({
+  graph,
+  selected,
+  inSheet = false,
+}: {
+  graph: TeamGraph;
+  selected: string | null;
+  /** In a sheet the name is the sheet's title, so the dialog is named by it. */
+  inSheet?: boolean;
+}) {
   const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
   const node = selected ? byId.get(selected) : undefined;
 
   if (!node) {
     return (
-      <aside className="rounded-md border border-border bg-card p-3 text-xs text-muted-foreground">
-        Click a node to see what it is joined to. Drag to move one; scroll to zoom.
-      </aside>
+      <p className="text-muted-foreground">
+        Click a node, or find one by name, to see what it is joined to. Drag to move one; scroll to
+        zoom.
+      </p>
     );
   }
 
@@ -502,13 +642,23 @@ function Selection({ graph, selected }: { graph: TeamGraph; selected: string | n
   const into = graph.edges.filter((e) => e.to === node.id);
   const page = PAGE[node.label];
 
+  const kind = STYLE[node.label].plural.replace(/s$/, "");
   return (
-    <aside className="space-y-3 rounded-md border border-border bg-card p-3 text-xs">
-      <div>
-        <p className="text-muted-foreground">{STYLE[node.label].plural.replace(/s$/, "")}</p>
-        <h2 className="text-sm font-semibold">{nameOf(node)}</h2>
-        {node.description ? <p className="mt-1 text-muted-foreground">{node.description}</p> : null}
-      </div>
+    <div className="space-y-3 text-xs">
+      {inSheet ? (
+        <SheetHeader>
+          <SheetTitle>{nameOf(node)}</SheetTitle>
+          <SheetDescription>{node.description ?? kind}</SheetDescription>
+        </SheetHeader>
+      ) : (
+        <div>
+          <p className="text-muted-foreground">{kind}</p>
+          <h2 className="text-sm font-semibold">{nameOf(node)}</h2>
+          {node.description ? (
+            <p className="mt-1 text-muted-foreground">{node.description}</p>
+          ) : null}
+        </div>
+      )}
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         {node.kind ? (
           <>
@@ -541,17 +691,33 @@ function Selection({ graph, selected }: { graph: TeamGraph; selected: string | n
           ))}
         </ul>
       ) : null}
-      {page ? (
+      {node.label === "Agent" ? (
+        <Link
+          to="/ui/agents/$agentId"
+          params={{ agentId: node.id }}
+          className="inline-block text-primary underline-offset-4 hover:underline"
+        >
+          Manage on its page
+        </Link>
+      ) : page ? (
         <Link to={page} className="inline-block text-primary underline-offset-4 hover:underline">
           Manage on its page
         </Link>
       ) : null}
-    </aside>
+    </div>
   );
 }
 
 /** The same graph as text: what a screen reader, or a crowded graph, needs. */
-function GraphList({ graph, hidden }: { graph: TeamGraph; hidden: Set<GraphLabel> }) {
+function GraphList({
+  graph,
+  hidden,
+  onPick,
+}: {
+  graph: TeamGraph;
+  hidden: Set<GraphLabel>;
+  onPick: (id: string) => void;
+}) {
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const shown = graph.edges.filter((e) => {
     const a = byId.get(e.from);
@@ -560,7 +726,7 @@ function GraphList({ graph, hidden }: { graph: TeamGraph; hidden: Set<GraphLabel
   });
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className="grid content-start gap-4 xl:grid-cols-2">
       <table className="w-full rounded-md border border-border bg-card text-left text-xs">
         <caption className="px-3 py-2 text-left font-medium">Nodes</caption>
         <tbody className="divide-y divide-border">
@@ -569,7 +735,15 @@ function GraphList({ graph, hidden }: { graph: TeamGraph; hidden: Set<GraphLabel
             .map((n) => (
               <tr key={n.id}>
                 <td className="px-3 py-1.5 text-muted-foreground">{n.label}</td>
-                <td className="py-1.5 font-medium">{nameOf(n)}</td>
+                <td className="py-1.5 font-medium">
+                  <button
+                    type="button"
+                    className="text-left hover:underline"
+                    onClick={() => onPick(n.id)}
+                  >
+                    {nameOf(n)}
+                  </button>
+                </td>
                 <td className="px-3 py-1.5 text-right">
                   {n.model ? <Mono>{n.model}</Mono> : null}
                 </td>

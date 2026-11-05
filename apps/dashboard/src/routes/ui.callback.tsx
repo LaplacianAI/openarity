@@ -4,10 +4,50 @@ import { useEffect, useRef, useState } from "react";
 import { completeLogin } from "@/api/oidc";
 import { useAuthConfig } from "@/api/session";
 import { setSession, setToken } from "@/api/token";
+import { SignInFrame } from "@/components/sign-in";
+import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/ui/callback")({
   component: Callback,
 });
+
+/** Why a sign-in failed, in words, and what to do next. */
+export type Refusal = { title: string; advice: string };
+
+/**
+ * What a failed sign-in means for the person who tried. The provider says
+ * it refused in the query it sends back; everything else is this tab's own
+ * check or the code's exchange, and the error's own words are kept beside
+ * this for whoever has to look further.
+ */
+export function whatToTry(query: URLSearchParams, message: string): Refusal {
+  const error = query.get("error");
+  if (error === "access_denied") {
+    return {
+      title: "The identity provider refused the sign-in",
+      advice:
+        "You may have declined, or your account may not be allowed into this app. If you should have access, ask whoever runs the identity provider.",
+    };
+  }
+  if (error) {
+    return {
+      title: "The identity provider could not sign you in",
+      advice: "Start again. If it fails the same way, ask whoever runs this brain.",
+    };
+  }
+  if (/not started in this tab|state this tab did not send/.test(message)) {
+    return {
+      title: "This sign-in was started somewhere else",
+      advice:
+        "It began in another tab, or this page was reloaded or reached from a bookmark. Start again from here.",
+    };
+  }
+  return {
+    title: "Sign-in did not complete",
+    advice:
+      "The answer from the identity provider could not be used, often because it was too old. Start again.",
+  };
+}
 
 /**
  * Where the identity provider sends the browser back.
@@ -20,7 +60,7 @@ export const Route = createFileRoute("/ui/callback")({
 function Callback() {
   const config = useAuthConfig();
   const navigate = useNavigate();
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; refusal: Refusal } | null>(null);
   const ran = useRef(false);
 
   useEffect(() => {
@@ -33,37 +73,43 @@ function Callback() {
     if (!oidc) return;
     ran.current = true;
 
-    completeLogin(oidc.issuer, oidc.client_id, new URLSearchParams(window.location.search))
+    const query = new URLSearchParams(window.location.search);
+    completeLogin(oidc.issuer, oidc.client_id, query)
       .then(({ session, returnTo }) => {
         setSession(session);
         window.history.replaceState(null, "", returnTo);
         void navigate({ to: "/ui", replace: true });
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        setError({ message, refusal: whatToTry(query, message) });
       });
   }, [config.data, navigate]);
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6">
+    <SignInFrame>
       {error ? (
-        <div role="alert" className="rounded-md border border-destructive/40 bg-surface px-4 py-3">
-          <h1 className="text-sm font-semibold">Sign-in did not complete</h1>
-          <p className="mt-2 font-mono text-xs break-all text-muted-foreground">{error}</p>
-          <button
-            type="button"
-            className="mt-3 text-xs underline underline-offset-4"
+        <div role="alert" className="space-y-3">
+          <div className="space-y-1">
+            <h2 className="text-sm font-semibold">{error.refusal.title}</h2>
+            <p className="text-sm text-muted-foreground">{error.refusal.advice}</p>
+          </div>
+          <Button
+            className="w-full"
             onClick={() => {
               setToken(null);
               void navigate({ to: "/ui", replace: true });
             }}
           >
             Start again
-          </button>
+          </Button>
+          <p className="font-mono text-xs break-all text-muted-foreground">{error.message}</p>
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">Completing sign-in…</p>
+        <p role="status" className="text-sm text-muted-foreground">
+          Completing sign-in…
+        </p>
       )}
-    </div>
+    </SignInFrame>
   );
 }

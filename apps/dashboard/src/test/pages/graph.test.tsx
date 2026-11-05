@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -54,15 +54,36 @@ vi.mock("@falkordb/canvas", () => {
 
 vi.mock("@tanstack/react-router", async (original) => ({
   ...(await original<typeof import("@tanstack/react-router")>()),
-  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
-    <a href={to}>{children}</a>
-  ),
+  Link: ({
+    children,
+    to,
+    params,
+  }: {
+    children: React.ReactNode;
+    to: string;
+    params?: Record<string, string>;
+  }) => <a href={to.replace(/\$(\w+)/g, (_, k: string) => params?.[k] ?? "")}>{children}</a>,
 }));
 
-const { Route, toCanvas } = await import("@/routes/ui.graph");
+const { Route, matching, toCanvas, unreached, unreachedFinding } = await import(
+  "@/routes/ui.graph"
+);
 const Graph = await pageOf(Route);
 
+const realMedia = window.matchMedia;
+
+/** The width the page is drawn at: a phone, a tablet, or (jsdom's) a desktop. */
+function width(at: "phone" | "tablet") {
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes("39.99rem") ? at === "phone" : query.includes("63.99rem"),
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia;
+}
+
 afterEach(() => {
+  window.matchMedia = realMedia;
   vi.unstubAllGlobals();
   window.sessionStorage.clear();
   setToken(null);
@@ -256,7 +277,7 @@ it("describes the node clicked in the canvas", async () => {
   expect(screen.getByText(/only search_code/)).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /manage on its page/i })).toHaveAttribute(
     "href",
-    "/ui/agents",
+    "/ui/agents/a1",
   );
 });
 
@@ -364,4 +385,111 @@ it("fits the view when the layout settles, and not after every drag", async () =
   await waitFor(() => expect(handed.layouts).toEqual(["tree"]));
   (handed.config.at(-1) as typeof config).eventHandlers.onEngineStop();
   expect(handed.fitted).toBe(2);
+});
+
+describe("what no agent is granted", () => {
+  const unheld = { id: "s2", label: "Skill" as const, name: "xlsx" };
+  const idle = { id: "k2", label: "Toolkit" as const, name: "linear" };
+
+  it("is nothing when every server and skill is granted", () => {
+    expect(unreached(graph)).toEqual([]);
+    expect(unreachedFinding([])).toBeNull();
+  });
+
+  it("names a skill and a server no agent holds", () => {
+    const g = { ...graph, nodes: [...graph.nodes, unheld, idle] };
+    expect(unreached(g).map((n) => n.id)).toEqual(["s2", "k2"]);
+    expect(unreachedFinding(unreached(g))).toBe("1 MCP server and 1 skill no agent is granted.");
+  });
+
+  // The grant may be past the cut.
+  it("is not claimed of a graph cut short", () => {
+    expect(unreached({ ...graph, truncated: true, nodes: [...graph.nodes, unheld] })).toEqual([]);
+  });
+
+  // The team owns everything; owning is not a grant.
+  it("does not count the team's ownership as a grant", () => {
+    const g = {
+      ...graph,
+      nodes: [...graph.nodes, unheld],
+      edges: [...graph.edges, { type: "OWNS" as const, from: TEAM, to: "s2" }],
+    };
+    expect(unreachedFinding(unreached(g))).toBe("1 skill no agent is granted.");
+  });
+
+  it("is said at the top of the page", async () => {
+    brain({
+      ...team([]),
+      "GET /teams/{id}/graph": { body: { ...graph, nodes: [...graph.nodes, unheld, idle] } },
+    });
+    show(Graph);
+
+    expect(
+      await screen.findByText("1 MCP server and 1 skill no agent is granted."),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("finding a node", () => {
+  it("matches the shown nodes by name, ignoring case", () => {
+    expect(matching(graph, new Set(), "SEARCH").map((n) => n.id)).toEqual(["t1"]);
+    expect(matching(graph, new Set(["Tool"]), "search")).toEqual([]);
+    expect(matching(graph, new Set(), "  ")).toEqual([]);
+  });
+
+  it("opens the node picked from the matches", async () => {
+    brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
+    show(Graph);
+
+    await userEvent.type(
+      await screen.findByRole("searchbox", { name: /find in the graph/i }),
+      "tri",
+    );
+    const matches = screen.getByRole("list", { name: "Matches" });
+    await userEvent.click(within(matches).getByRole("button", { name: /triage/ }));
+
+    expect(await screen.findByRole("heading", { name: "triage" })).toBeInTheDocument();
+    // The canvas lights it, as a click on it would.
+    await waitFor(() => expect(handed.refreshed).toBeGreaterThan(1));
+  });
+
+  it("says when nothing shown is named like that", async () => {
+    brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
+    show(Graph);
+
+    await userEvent.type(
+      await screen.findByRole("searchbox", { name: /find in the graph/i }),
+      "zzz",
+    );
+    expect(screen.getByText(/nothing shown is named like that/i)).toBeInTheDocument();
+  });
+});
+
+describe("narrower screens", () => {
+  it("gives a phone the list, never the canvas, and opens a node in a sheet", async () => {
+    width("phone");
+    brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
+    show(Graph);
+
+    const nodes = await screen.findByRole("table", { name: /nodes/i });
+    expect(screen.queryByTestId("graph-canvas")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /show as/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "Layout" })).not.toBeInTheDocument();
+
+    await userEvent.click(within(nodes).getByRole("button", { name: "github" }));
+    const sheet = await screen.findByRole("dialog", { name: "github" });
+    expect(within(sheet).getByText(/granted to/)).toHaveTextContent("granted to triage");
+  });
+
+  it("reads a node clicked on a tablet's canvas in a sheet", async () => {
+    width("tablet");
+    brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
+    show(Graph);
+
+    await waitFor(() => expect(handed.config.length).toBeGreaterThan(0));
+    const config = handed.config.at(-1) as { eventHandlers: { onNodeClick: (n: unknown) => void } };
+    config.eventHandlers.onNodeClick({ data: { uuid: "s1" } });
+
+    expect(await screen.findByRole("dialog", { name: "pdf" })).toBeInTheDocument();
+  });
 });

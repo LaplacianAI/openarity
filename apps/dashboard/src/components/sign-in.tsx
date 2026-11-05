@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { beginLogin, pkceAvailable } from "@/api/oidc";
 import { useAuthConfig } from "@/api/session";
@@ -19,12 +19,7 @@ export function SignIn() {
   const config = useAuthConfig();
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6">
-      <div className="flex items-center gap-2.5 pb-6">
-        <Mark className="size-8" />
-        <span className="text-lg font-semibold tracking-tight">openarity</span>
-      </div>
-
+    <SignInFrame>
       {config.isPending ? (
         <p className="text-sm text-muted-foreground">Asking the brain how to sign in…</p>
       ) : config.isError ? (
@@ -36,14 +31,39 @@ export function SignIn() {
       ) : (
         <NoWayIn />
       )}
-    </div>
+    </SignInFrame>
+  );
+}
+
+/**
+ * The product's name, what it is in one sentence, and room for the one thing
+ * to do. Shared with the callback, so a failed sign-in looks like where it
+ * started.
+ */
+export function SignInFrame({ children }: { children: ReactNode }) {
+  return (
+    <main className="mx-auto flex min-h-dvh w-full max-w-sm flex-col justify-center gap-6 px-4 py-10">
+      <div className="space-y-4">
+        <div className="flex items-center gap-2.5">
+          <Mark className="size-8" />
+          <span className="text-lg font-semibold tracking-tight">openarity</span>
+        </div>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
+          <p className="text-sm text-muted-foreground">
+            Your team's agents, what they are doing, and how they are set up.
+          </p>
+        </div>
+      </div>
+      {children}
+    </main>
   );
 }
 
 function Unreachable({ message }: { message: string }) {
   return (
     <div role="alert" className="rounded-md border border-destructive/40 bg-surface px-4 py-3">
-      <h1 className="text-sm font-semibold">The brain did not answer</h1>
+      <h2 className="text-sm font-semibold">The brain did not answer</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         This page is served by the brain, so if it loaded but the API did not respond, the server is
         starting or something in front of it is not passing requests through.
@@ -76,7 +96,7 @@ function DevToken() {
           placeholder="Paste the development token"
         />
       </div>
-      <Button type="submit" size="sm" disabled={!value.trim()}>
+      <Button type="submit" className="w-full" disabled={!value.trim()}>
         Sign in
       </Button>
       <p className="text-xs text-muted-foreground">
@@ -97,7 +117,7 @@ function Oidc({ issuer, clientId }: { issuer: string; clientId: string }) {
   if (!pkceAvailable()) {
     return (
       <div role="alert" className="rounded-md border border-border-strong bg-surface px-4 py-4">
-        <h1 className="text-sm font-semibold">This page cannot sign you in</h1>
+        <h2 className="text-sm font-semibold">This page cannot sign you in</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Signing in needs Web Crypto, which browsers only provide in a secure context. This page
           was loaded over plain HTTP from <span className="font-mono">{window.location.host}</span>,
@@ -113,12 +133,8 @@ function Oidc({ issuer, clientId }: { issuer: string; clientId: string }) {
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">
-        This brain authenticates against an identity provider.
-      </p>
-      <p className="font-mono text-xs break-all text-muted-foreground">{issuer}</p>
       <Button
-        size="sm"
+        className="w-full"
         disabled={going}
         onClick={() => {
           setGoing(true);
@@ -133,6 +149,10 @@ function Oidc({ issuer, clientId }: { issuer: string; clientId: string }) {
       >
         {going ? "Redirecting…" : "Sign in"}
       </Button>
+      <p className="text-xs text-muted-foreground">
+        Through this brain's identity provider,{" "}
+        <span className="font-mono break-all">{issuer}</span>
+      </p>
       {error ? (
         <p role="alert" className="font-mono text-xs break-all text-destructive">
           {error}
@@ -145,7 +165,7 @@ function Oidc({ issuer, clientId }: { issuer: string; clientId: string }) {
 function NoWayIn() {
   return (
     <div role="alert" className="rounded-md border border-border-strong bg-surface px-4 py-4">
-      <h1 className="text-sm font-semibold">This brain accepts no logins</h1>
+      <h2 className="text-sm font-semibold">This brain accepts no logins</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         It has no identity provider connected and no development sign-in, so there is no way to sign
         in. Ask whoever runs it to connect an identity provider.
