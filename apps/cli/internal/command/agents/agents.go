@@ -68,12 +68,12 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 				return err
 			}
 
-			return cli.PrintPage(opts, cli.Page[client.AgentSummary]{
+			return cli.PrintPage(opts, cli.Page[client.ListedAgent]{
 				Items:      page.Items,
 				NextCursor: page.NextCursor,
 				Empty:      "no agents",
 				More:       "oa agents list " + args[0],
-				Row: func(table *printer.Table, a client.AgentSummary) {
+				Row: func(table *printer.Table, a client.ListedAgent) {
 					table.Row(opts.Styles.Value.Render(cli.Safe(a.Name)), cli.Safe(a.Model.Name), cli.Safe(a.Pattern),
 						opts.Styles.Muted.Render(a.ID.String()))
 				},

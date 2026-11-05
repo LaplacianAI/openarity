@@ -15,12 +15,16 @@ INSERT INTO agents (
 SELECT * FROM agents WHERE id = $1;
 
 -- name: ListAgentsByTeam :many
-SELECT * FROM agents
-WHERE team_id = sqlc.arg('team_id')
-  AND strpos(lower(name), lower(sqlc.arg('q')::text)) > 0
+SELECT sqlc.embed(a),
+    (SELECT count(*) FROM agent_mcp_servers g WHERE g.agent_id = a.id) AS server_count,
+    (SELECT count(*) FROM agent_skills k WHERE k.agent_id = a.id)      AS skill_count,
+    (SELECT count(*) FROM agent_delegates d WHERE d.agent_id = a.id)   AS delegate_count
+FROM agents a
+WHERE a.team_id = sqlc.arg('team_id')
+  AND strpos(lower(a.name), lower(sqlc.arg('q')::text)) > 0
   AND (NOT sqlc.arg('use_cursor')::bool
-   OR (created_at, id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
-ORDER BY created_at DESC, id DESC
+   OR (a.created_at, a.id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
+ORDER BY a.created_at DESC, a.id DESC
 LIMIT sqlc.arg('page_size');
 
 -- kind and team_id are absent on purpose: a replace can change neither.

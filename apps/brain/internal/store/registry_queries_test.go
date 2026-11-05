@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"testing"
@@ -260,19 +261,19 @@ func TestListAgentsPagesThroughASharedTimestampWithoutRepeats(t *testing.T) {
 			t.Fatalf("ListAgentsByTeam: %v", err)
 		}
 		for _, r := range rows {
-			if seen[r.ID] {
-				t.Fatalf("%q appeared on two pages", r.Name)
+			if seen[r.Agent.ID] {
+				t.Fatalf("%q appeared on two pages", r.Agent.Name)
 			}
-			if !want[r.ID] {
-				t.Fatalf("%q is not this team's", r.Name)
+			if !want[r.Agent.ID] {
+				t.Fatalf("%q is not this team's", r.Agent.Name)
 			}
-			seen[r.ID] = true
+			seen[r.Agent.ID] = true
 		}
 		if len(rows) < 2 {
 			break
 		}
 		last := rows[len(rows)-1]
-		params.UseCursor, params.AfterCreatedAt, params.AfterID = true, last.CreatedAt, last.ID
+		params.UseCursor, params.AfterCreatedAt, params.AfterID = true, last.Agent.CreatedAt, last.Agent.ID
 	}
 
 	if len(seen) != len(want) {
@@ -1004,7 +1005,7 @@ func TestListingSearchesByNameAnywhereInIt(t *testing.T) {
 				}
 				out := []string{}
 				for _, r := range rows {
-					out = append(out, r.Name)
+					out = append(out, r.Agent.Name)
 				}
 				return out
 			},
@@ -1187,5 +1188,51 @@ func TestAnEditKeepsTheLastAttemptOnlyWhileTheTransportIsTheSame(t *testing.T) {
 				t.Errorf("error %v at %v; want both cleared", got.LastDiscoveryError, got.LastDiscoveryAt)
 			}
 		})
+	}
+}
+
+// A row of the list counts its own agent's grants and no one else's, and
+// counting them adds no rows: three counts joined rather than asked for
+// would list an agent once per grant, and count its neighbour's.
+func TestTheAgentsListCountsEachAgentsOwnGrants(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	lead := mustCreateAgent(t, s, team.ID, "lead")
+	alone := mustCreateAgent(t, s, team.ID, "alone")
+	clerk := mustCreateAgent(t, s, team.ID, "clerk")
+
+	for _, name := range []string{"github", "linear"} {
+		server := mustCreateServer(t, s, urlServer(team.ID, name))
+		if err := s.AddAgentMCPServer(t.Context(), db.AddAgentMCPServerParams{AgentID: lead.ID, McpServerID: server.ID, TeamID: team.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	skills := []uuid.UUID{
+		mustCreateSkill(t, s, team.ID, "pdf").ID,
+		mustCreateSkill(t, s, team.ID, "docx").ID,
+		mustCreateSkill(t, s, team.ID, "xlsx").ID,
+	}
+	if err := s.AddAgentSkills(t.Context(), db.AddAgentSkillsParams{AgentID: lead.ID, SkillIds: skills, TeamID: team.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddAgentDelegates(t.Context(), db.AddAgentDelegatesParams{AgentID: lead.ID, DelegateIds: []uuid.UUID{clerk.ID}, TeamID: team.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := s.ListAgentsByTeam(t.Context(), db.ListAgentsByTeamParams{TeamID: team.ID, PageSize: 50})
+	if err != nil {
+		t.Fatalf("ListAgentsByTeam: %v", err)
+	}
+	type counts struct{ servers, skills, delegates int64 }
+	got := map[string]counts{}
+	for _, r := range rows {
+		if _, twice := got[r.Agent.Name]; twice {
+			t.Fatalf("%q listed twice", r.Agent.Name)
+		}
+		got[r.Agent.Name] = counts{r.ServerCount, r.SkillCount, r.DelegateCount}
+	}
+	want := map[string]counts{lead.Name: {2, 3, 1}, alone.Name: {}, clerk.Name: {}}
+	if !maps.Equal(got, want) {
+		t.Errorf("counted %+v, want %+v", got, want)
 	}
 }

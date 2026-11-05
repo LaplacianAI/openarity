@@ -47,6 +47,17 @@ type summary struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// listed is a row of the agents list: the summary, and what the agent may
+// reach, as counts. The grants themselves are the detail's.
+type listed struct {
+	summary
+	Delegation    string `json:"delegation"`
+	Web           bool   `json:"web"`
+	ServerCount   int64  `json:"mcp_server_count"`
+	SkillCount    int64  `json:"skill_count"`
+	DelegateCount int64  `json:"delegate_count"`
+}
+
 type detail struct {
 	summary
 	Instructions       string        `json:"instructions"`

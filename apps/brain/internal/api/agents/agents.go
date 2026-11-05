@@ -24,7 +24,7 @@ var grantConstraints = []string{"agent_mcp_servers_server_in_team", "agent_skill
 
 type Store interface {
 	GetAgent(ctx context.Context, id uuid.UUID) (db.Agent, error)
-	ListAgentsByTeam(ctx context.Context, arg db.ListAgentsByTeamParams) ([]db.Agent, error)
+	ListAgentsByTeam(ctx context.Context, arg db.ListAgentsByTeamParams) ([]db.ListAgentsByTeamRow, error)
 	ListAgentMCPServers(ctx context.Context, agentID uuid.UUID) ([]db.AgentMcpServer, error)
 	ListAgentSkills(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error)
 	ListAgentDelegates(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error)
@@ -241,8 +241,10 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := api.MapPage(rows, limit,
-		func(row db.Agent) any { return agentCursor{CreatedAt: row.CreatedAt, ID: row.ID} },
-		viewSummary,
+		func(row db.ListAgentsByTeamRow) any {
+			return agentCursor{CreatedAt: row.Agent.CreatedAt, ID: row.Agent.ID}
+		},
+		viewListed,
 	)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to page agents", err)
@@ -462,5 +464,13 @@ func viewSummary(row db.Agent) summary {
 		Model:     modelRef{Name: row.ModelName, MaxTokens: row.MaxTokens, Temperature: row.Temperature},
 		Pattern:   row.Pattern,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
+}
+
+func viewListed(row db.ListAgentsByTeamRow) listed {
+	return listed{
+		summary:    viewSummary(row.Agent),
+		Delegation: row.Agent.Delegation, Web: row.Agent.Web,
+		ServerCount: row.ServerCount, SkillCount: row.SkillCount, DelegateCount: row.DelegateCount,
 	}
 }

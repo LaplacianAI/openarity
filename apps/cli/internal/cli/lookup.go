@@ -252,7 +252,7 @@ func ResolveAgent(
 	ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, ref string,
 ) (uuid.UUID, error) {
 	return byName(ctx, ref, "agent", "oa agents list",
-		func(ctx context.Context, limit int32, cursor *string) ([]client.AgentSummary, *string, error) {
+		func(ctx context.Context, limit int32, cursor *string) ([]client.ListedAgent, *string, error) {
 			page, err := Result(api.ListAgentsWithResponse(ctx, team,
 				&client.ListAgentsParams{Limit: &limit, Cursor: cursor}))
 			if err != nil {
@@ -260,8 +260,8 @@ func ResolveAgent(
 			}
 			return page.Items, page.NextCursor, nil
 		},
-		func(a client.AgentSummary) string { return a.Name },
-		func(a client.AgentSummary) uuid.UUID { return a.ID })
+		func(a client.ListedAgent) string { return a.Name },
+		func(a client.ListedAgent) uuid.UUID { return a.ID })
 }
 
 func ResolveMCPServer(
