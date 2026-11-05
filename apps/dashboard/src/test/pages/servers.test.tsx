@@ -3,9 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
-import { brain, pageOf, STAMP, show, TEAM, team } from "@/test/brain";
+import type { MCPServer } from "@/api/types";
+import { discoveryOf, serverRequest } from "@/lib/server-draft";
+import { brain, pageOf, type Seen, STAMP, show, TEAM, team } from "@/test/brain";
 
-const { Route, serverRequest } = await import("@/routes/ui.servers.index");
+const { Route } = await import("@/routes/ui.servers.index");
 const Servers = await pageOf(Route);
 
 afterEach(() => {
@@ -23,11 +25,24 @@ const github = {
   env: {},
   bare: false,
   discovered_at: STAMP,
+  last_discovery_at: STAMP,
+  last_discovery_error: null,
   created_at: STAMP,
   updated_at: STAMP,
 };
 
-const servers = { "GET /teams/{id}/mcp-servers": { body: { items: [github] } } };
+const summary = {
+  runs_24h: { queued: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 },
+  sessions: 0,
+  waiting_senders: 0,
+  servers_failing: 0,
+  agents: 0,
+};
+
+const servers = {
+  "GET /teams/{id}/mcp-servers": { body: { items: [github] } },
+  "GET /teams/{id}/summary": { body: summary },
+};
 
 const base = {
   name: "github",
@@ -38,6 +53,17 @@ const base = {
   env: "",
   bare: false,
 };
+
+/** The row a server's name sits in. */
+function rowOf(name: string): HTMLElement {
+  return screen.getByRole("button", { name }).closest("tr") as HTMLElement;
+}
+
+/** Opens a server's sheet from its row. */
+async function opened(name: string): Promise<HTMLElement> {
+  await userEvent.click(await screen.findByRole("button", { name }));
+  return screen.findByRole("dialog", { name: new RegExp(name) });
+}
 
 describe("the register form", () => {
   it("sends a url server's URL and reference, and nothing else", () => {
@@ -90,101 +116,288 @@ describe("the register form", () => {
   });
 });
 
-it("offers no write action without tool:write", async () => {
-  brain({ ...team(["skill:write", "agent:write"]), ...servers });
-  show(Servers);
-
-  await screen.findByText("github");
-  expect(await screen.findByText("tool:write")).toBeInTheDocument();
-  for (const name of [/register server/i, /^discover$/i, /^edit$/i, /^delete$/i]) {
-    expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
-  }
+// A failure stays until a discovery works; a server never asked is neither.
+describe("where a server's discovery stands", () => {
+  it.each([
+    [{}, "answered"],
+    [{ last_discovery_error: "timed out" }, "failed"],
+    [{ last_discovery_error: "timed out", discovered_at: null }, "failed"],
+    [{ discovered_at: null, last_discovery_at: null }, "not discovered"],
+  ])("%o is %s", (patch, said) => {
+    expect(discoveryOf({ ...github, ...patch } as MCPServer)).toBe(said);
+  });
 });
 
-it("offers register, discover, edit and delete with tool:write", async () => {
-  brain({ ...team(["tool:write"]), ...servers });
-  show(Servers);
-
-  for (const name of [/register server/i, /^discover$/i, /^edit$/i, /^delete$/i]) {
-    expect(await screen.findByRole("button", { name })).toBeInTheDocument();
-  }
-});
-
-// Discovery reaches a URL; the brain does not start a command to ask it.
-it("offers discovery only for a url server", async () => {
-  brain({
-    ...team(["tool:write"]),
-    "GET /teams/{id}/mcp-servers": {
-      body: {
-        items: [{ ...github, id: "m2", name: "files", url: undefined, command: ["npx", "srv"] }],
+describe("the servers list", () => {
+  it("says how each server last answered, and when it was asked", async () => {
+    brain({
+      ...team([]),
+      ...servers,
+      "GET /teams/{id}/mcp-servers": {
+        body: {
+          items: [
+            github,
+            {
+              ...github,
+              id: "m2",
+              name: "linear",
+              last_discovery_error: "the server did not answer in time",
+            },
+            {
+              ...github,
+              id: "m3",
+              name: "files",
+              discovered_at: null,
+              last_discovery_at: null,
+            },
+          ],
+        },
       },
-    },
-  });
-  show(Servers);
+    });
+    show(Servers);
 
-  await screen.findByText("files");
-  expect(screen.queryByRole("button", { name: /^discover$/i })).not.toBeInTheDocument();
+    await screen.findByRole("button", { name: "github" });
+    expect(within(rowOf("github")).getByText("answered")).toBeInTheDocument();
+    expect(within(rowOf("linear")).getByText("failed")).toBeInTheDocument();
+    expect(within(rowOf("files")).getByText("not discovered")).toBeInTheDocument();
+    expect(within(rowOf("files")).getByText("Never")).toBeInTheDocument();
+  });
+
+  it("says under its title how many failed their last discovery", async () => {
+    brain({
+      ...team([]),
+      ...servers,
+      "GET /teams/{id}/summary": { body: { ...summary, servers_failing: 2 } },
+    });
+    show(Servers);
+    expect(await screen.findByText("2 servers failed their last discovery.")).toBeInTheDocument();
+  });
+
+  it("says why the servers could not be listed", async () => {
+    brain({
+      ...team([]),
+      ...servers,
+      "GET /teams/{id}/mcp-servers": { status: 500, text: "the store is down" },
+    });
+    show(Servers);
+    expect(await screen.findByRole("alert")).toHaveTextContent("the store is down");
+  });
 });
 
-// A tool's name and description are the server's words. They are shown as
-// text, so markup in them is inert.
-it("shows a server's tools as text", async () => {
-  brain({
-    ...team([]),
-    ...servers,
-    "GET /teams/{id}/mcp-servers/{serverID}/tools": {
-      body: {
-        items: [
-          { name: "search_code", description: '<img src=x onerror="alert(1)">', input_schema: {} },
-        ],
+describe("what may be done", () => {
+  it("offers no write action without tool:write, and says what it takes", async () => {
+    brain({ ...team(["skill:write", "agent:write"]), ...servers });
+    show(Servers);
+
+    await screen.findByRole("button", { name: "github" });
+    expect(await screen.findByText("tool:write")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /register server/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^discover$/i })).toBeNull();
+
+    const sheet = await opened("github");
+    for (const name of [/^discover$/i, /^edit$/i, /^delete$/i]) {
+      expect(within(sheet).queryByRole("button", { name })).toBeNull();
+    }
+  });
+
+  it("offers register and discover on the list, and edit and delete on the server", async () => {
+    brain({ ...team(["tool:write"]), ...servers });
+    show(Servers);
+
+    expect(await screen.findByRole("button", { name: /register server/i })).toBeInTheDocument();
+    expect(
+      within(rowOf("github")).getByRole("button", { name: /^discover$/i }),
+    ).toBeInTheDocument();
+    const sheet = await opened("github");
+    for (const name of [/^discover$/i, /^edit$/i, /^delete$/i]) {
+      expect(within(sheet).getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  // Discovery reaches a URL; the brain does not start a command to ask it.
+  it("offers discovery only for a url server", async () => {
+    brain({
+      ...team(["tool:write"]),
+      ...servers,
+      "GET /teams/{id}/mcp-servers": {
+        body: {
+          items: [{ ...github, id: "m2", name: "files", url: undefined, command: ["npx", "srv"] }],
+        },
       },
-    },
-  });
-  const { container } = show(Servers);
+    });
+    show(Servers);
 
-  await userEvent.click(await screen.findByRole("button", { name: /github/ }));
-  expect(await screen.findByText("search_code")).toBeInTheDocument();
-  expect(screen.getByText('<img src=x onerror="alert(1)">')).toBeInTheDocument();
-  expect(container.querySelector("img")).toBeNull();
-  expect(screen.getByText(`teams/${TEAM}/mcp/github#token`)).toBeInTheDocument();
+    await screen.findByRole("button", { name: "files" });
+    expect(screen.queryByRole("button", { name: /^discover$/i })).toBeNull();
+  });
 });
 
-it("registers what the form describes, and shows the brain's refusal", async () => {
-  const seen = brain({
-    ...team(["tool:write"]),
-    ...servers,
-    "POST /teams/{id}/mcp-servers": {
-      status: 400,
-      text: "a url server's address may not carry a password",
-    },
+describe("discovering a server from its row", () => {
+  function lists(seen: Seen[]) {
+    return seen.filter((s) => s.method === "GET" && s.path.endsWith("/mcp-servers")).length;
+  }
+
+  it("asks that server, then reads the list again", async () => {
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...servers,
+      "POST /teams/{id}/mcp-servers/{sid}/discover": {
+        body: { items: [{ name: "search_code", description: "", input_schema: {} }] },
+      },
+    });
+    show(Servers);
+
+    await screen.findByRole("button", { name: "github" });
+    const before = lists(seen);
+    await userEvent.click(within(rowOf("github")).getByRole("button", { name: /^discover$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+    expect(seen.find((s) => s.method === "POST")?.path).toBe(
+      `/teams/${TEAM}/mcp-servers/m1/discover`,
+    );
+    await waitFor(() => expect(lists(seen)).toBeGreaterThan(before));
   });
-  show(Servers);
 
-  await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
-  await userEvent.type(screen.getByLabelText(/^name$/i), "linear");
-  await userEvent.type(screen.getByRole("textbox", { name: /^url$/i }), "https://mcp.linear.app");
-  await userEvent.click(screen.getByRole("button", { name: /^register$/i }));
+  // The brain records a failed discovery on the server, so the row must be
+  // read again to say it failed.
+  it("reads the list again when the server does not answer", async () => {
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...servers,
+      "POST /teams/{id}/mcp-servers/{sid}/discover": {
+        status: 502,
+        text: "the server did not answer in time",
+      },
+    });
+    show(Servers);
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("may not carry a password");
-  const post = seen.find((s) => s.method === "POST");
-  expect(JSON.parse(String(post?.body))).toEqual({ name: "linear", url: "https://mcp.linear.app" });
+    await screen.findByRole("button", { name: "github" });
+    const before = lists(seen);
+    await userEvent.click(within(rowOf("github")).getByRole("button", { name: /^discover$/i }));
+    await waitFor(() => expect(lists(seen)).toBeGreaterThan(before));
+  });
 });
 
-it("refuses an incomplete form without a request", async () => {
-  const seen = brain({ ...team(["tool:write"]), ...servers });
-  show(Servers);
+describe("a server's sheet", () => {
+  // A tool's name and description are the server's words, and so is its
+  // refusal. They are shown as text, so markup in them is inert.
+  it("shows the server's tools, references and last error as text", async () => {
+    brain({
+      ...team([]),
+      ...servers,
+      "GET /teams/{id}/mcp-servers": {
+        body: { items: [{ ...github, last_discovery_error: "<b>refused</b>" }] },
+      },
+      "GET /teams/{id}/mcp-servers/{serverID}/tools": {
+        body: {
+          items: [
+            {
+              name: "search_code",
+              description: '<img src=x onerror="alert(1)">',
+              input_schema: {},
+            },
+          ],
+        },
+      },
+    });
+    show(Servers);
 
-  await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
-  await userEvent.type(screen.getByLabelText(/^name$/i), "linear");
-  await userEvent.click(screen.getByRole("button", { name: /^register$/i }));
+    const sheet = await opened("github");
+    expect(await within(sheet).findByText("search_code")).toBeInTheDocument();
+    expect(within(sheet).getByText('<img src=x onerror="alert(1)">')).toBeInTheDocument();
+    expect(within(sheet).getByText("<b>refused</b>")).toBeInTheDocument();
+    expect(sheet.querySelector("img, b")).toBeNull();
+    expect(within(sheet).getByText(`teams/${TEAM}/mcp/github#token`)).toBeInTheDocument();
+  });
 
-  expect(await screen.findByRole("alert")).toHaveTextContent(/needs its URL/);
-  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(false));
+  it("opens from the keyboard", async () => {
+    brain({ ...team([]), ...servers });
+    show(Servers);
+
+    await screen.findByRole("button", { name: "github" });
+    rowOf("github").focus();
+    await userEvent.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: /github/ })).toBeInTheDocument();
+  });
+
+  it("deletes the server once it is confirmed, and shows the brain's refusal", async () => {
+    let held = true;
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...servers,
+      "DELETE /teams/{id}/mcp-servers/{serverID}": () =>
+        held ? { status: 409, text: "the MCP server is granted to an agent" } : { status: 204 },
+    });
+    show(Servers);
+
+    const sheet = await opened("github");
+    await userEvent.click(within(sheet).getByRole("button", { name: /^delete$/i }));
+    expect(seen.some((s) => s.method === "DELETE")).toBe(false);
+
+    const confirm = await screen.findByRole("dialog", { name: "Delete github?" });
+    await userEvent.click(within(confirm).getByRole("button", { name: /^delete$/i }));
+    expect(await within(confirm).findByRole("alert")).toHaveTextContent("granted to an agent");
+
+    held = false;
+    await userEvent.click(within(confirm).getByRole("button", { name: /^delete$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(seen.filter((s) => s.method === "DELETE").map((s) => s.path)).toEqual([
+      `/teams/${TEAM}/mcp-servers/m1`,
+      `/teams/${TEAM}/mcp-servers/m1`,
+    ]);
+  });
+});
+
+describe("registering a server", () => {
+  it("sends what the form describes, and shows the brain's refusal", async () => {
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...servers,
+      "POST /teams/{id}/mcp-servers": {
+        status: 400,
+        text: "a url server's address may not carry a password",
+      },
+    });
+    show(Servers);
+
+    await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "linear");
+    await userEvent.type(screen.getByRole("textbox", { name: /^url$/i }), "https://mcp.linear.app");
+    await userEvent.click(screen.getByRole("button", { name: /^register$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("may not carry a password");
+    const post = seen.find((s) => s.method === "POST");
+    expect(JSON.parse(String(post?.body))).toEqual({
+      name: "linear",
+      url: "https://mcp.linear.app",
+    });
+  });
+
+  it("refuses an incomplete form without a request", async () => {
+    const seen = brain({ ...team(["tool:write"]), ...servers });
+    show(Servers);
+
+    await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "linear");
+    await userEvent.click(screen.getByRole("button", { name: /^register$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/needs its URL/);
+    await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(false));
+  });
 });
 
 describe("editing a server", () => {
   // What a PUT carries: the server as it stands, without what the brain owns.
-  const { id, team_id, discovered_at, created_at, updated_at, ...definition } = github;
+  const {
+    id,
+    team_id,
+    discovered_at,
+    last_discovery_at,
+    last_discovery_error,
+    created_at,
+    updated_at,
+    ...definition
+  } = github;
 
   const files = {
     ...github,
@@ -198,8 +411,8 @@ describe("editing a server", () => {
   };
 
   async function editing(name: string) {
-    const row = (await screen.findByText(name)).closest("li") as HTMLElement;
-    await userEvent.click(within(row).getByRole("button", { name: /^edit$/i }));
+    const sheet = await opened(name);
+    await userEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
     return screen.findByRole("dialog", { name: /edit server/i });
   }
 
@@ -216,13 +429,14 @@ describe("editing a server", () => {
     expect(within(dialog).getByLabelText(/bearer token reference/i)).toHaveValue(
       `teams/${TEAM}/mcp/github#token`,
     );
-    expect(within(dialog).getByRole("checkbox", { name: /bare/i })).not.toBeChecked();
+    expect(within(dialog).getByRole("switch", { name: /bare/i })).not.toBeChecked();
     expect(within(dialog).getByRole("button", { name: /^save$/i })).toBeInTheDocument();
   });
 
   it("opens a command server's form filled with its command and references", async () => {
     brain({
       ...team(["tool:write"]),
+      ...servers,
       "GET /teams/{id}/mcp-servers": { body: { items: [files] } },
     });
     show(Servers);
@@ -235,7 +449,7 @@ describe("editing a server", () => {
     expect(within(dialog).getByLabelText(/^environment$/i)).toHaveValue(
       `TOKEN=teams/${TEAM}/mcp/files#token`,
     );
-    expect(within(dialog).getByRole("checkbox", { name: /bare/i })).toBeChecked();
+    expect(within(dialog).getByRole("switch", { name: /bare/i })).toBeChecked();
   });
 
   it("saves an untouched server as exactly what it was", async () => {
@@ -258,6 +472,7 @@ describe("editing a server", () => {
   it("saves an untouched command server as exactly what it was", async () => {
     const seen = brain({
       ...team(["tool:write"]),
+      ...servers,
       "GET /teams/{id}/mcp-servers": { body: { items: [files] } },
       "PUT /teams/{id}/mcp-servers/{serverID}": { body: files },
     });
@@ -267,8 +482,7 @@ describe("editing a server", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
-    const put = seen.find((s) => s.method === "PUT");
-    expect(JSON.parse(String(put?.body))).toEqual({
+    expect(JSON.parse(String(seen.find((s) => s.method === "PUT")?.body))).toEqual({
       name: "files",
       command: ["npx", "-y", "/srv/My Files"],
       env: { TOKEN: `teams/${TEAM}/mcp/files#token` },
@@ -298,8 +512,7 @@ describe("editing a server", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: /edit server/i })).not.toBeInTheDocument(),
     );
-    const put = seen.find((s) => s.method === "PUT");
-    expect(JSON.parse(String(put?.body))).toEqual({
+    expect(JSON.parse(String(seen.find((s) => s.method === "PUT")?.body))).toEqual({
       ...definition,
       url: "https://mcp2.example.com",
     });

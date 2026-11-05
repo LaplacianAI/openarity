@@ -19,6 +19,7 @@ import type {
   CreatedChannel,
   ListedAgent,
   ListedSession,
+  ListedSkill,
   MCPServer,
   MCPServerRequest,
   MCPTool,
@@ -32,7 +33,6 @@ import type {
   Session,
   SessionStatus,
   Skill,
-  SkillSummary,
   Team,
   TeamGraph,
   TeamPendingSender,
@@ -365,8 +365,8 @@ export function listSkills(
   teamId: string,
   cursor?: string | null,
   search?: Search,
-): Promise<Page<SkillSummary>> {
-  return request<Page<SkillSummary>>(
+): Promise<Page<ListedSkill>> {
+  return request<Page<ListedSkill>>(
     `/teams/${teamId}/skills${pageQuery(cursor, search?.limit, search?.q)}`,
   );
 }
