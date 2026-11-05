@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -30,7 +32,7 @@ const (
 type Store interface {
 	CreateChannel(ctx context.Context, arg db.CreateChannelParams) (db.Channel, error)
 	GetChannel(ctx context.Context, id uuid.UUID) (db.Channel, error)
-	ListChannelsByTeam(ctx context.Context, arg db.ListChannelsByTeamParams) ([]db.Channel, error)
+	ListChannelsByTeam(ctx context.Context, arg db.ListChannelsByTeamParams) ([]db.ListChannelsByTeamRow, error)
 	DeleteChannel(ctx context.Context, id uuid.UUID) error
 
 	ListPendingSenders(ctx context.Context, arg db.ListPendingSendersParams) ([]db.PendingSender, error)
@@ -188,6 +190,8 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	params.Moderator = h.readsEveryConversation(r, u, teamID)
+	params.Viewer = u.ID
 
 	rows, err := h.store.ListChannelsByTeam(r.Context(), params)
 	if err != nil {
@@ -196,8 +200,10 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page, err := api.MapPage(rows, limit,
-		func(row db.Channel) any { return channelCursor{CreatedAt: row.CreatedAt, ID: row.ID} },
-		h.view,
+		func(row db.ListChannelsByTeamRow) any {
+			return channelCursor{CreatedAt: row.Channel.CreatedAt, ID: row.Channel.ID}
+		},
+		h.viewListed,
 	)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to page channels", err)
@@ -275,4 +281,21 @@ func (h *handler) view(row db.Channel) channel {
 	}
 	c.HookURL = h.hookBase + "/hooks/" + row.Provider + "/" + row.ID.String() + p.Routes()[0].Suffix
 	return c
+}
+
+func (h *handler) viewListed(row db.ListChannelsByTeamRow) listedChannel {
+	return listedChannel{
+		channel: h.view(row.Channel), LastMessageAt: row.LastMessageAt, Sessions24h: row.Sessions24h,
+	}
+}
+
+// readsEveryConversation is whether the caller counts direct sessions they are
+// not in. A failed check counts less and says so in the log, as the summary does.
+func (h *handler) readsEveryConversation(r *http.Request, u *auth.User, teamID uuid.UUID) bool {
+	ok, err := h.authz.Can(r.Context(), u, authz.Action("session:read_all"), authz.Resource{TeamID: teamID})
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "failed to check session:read_all", "error", err, "team_id", teamID)
+		return false
+	}
+	return ok
 }

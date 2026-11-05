@@ -79,12 +79,12 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 				return err
 			}
 
-			return cli.PrintPage(opts, cli.Page[client.SkillSummary]{
+			return cli.PrintPage(opts, cli.Page[client.ListedSkill]{
 				Items:      page.Items,
 				NextCursor: page.NextCursor,
 				Empty:      "no skills",
 				More:       "oa skills list " + args[0],
-				Row: func(table *printer.Table, s client.SkillSummary) {
+				Row: func(table *printer.Table, s client.ListedSkill) {
 					table.Row(opts.Styles.Value.Render(cli.Safe(s.Name)), cli.Safe(string(s.Source)),
 						opts.Styles.Muted.Render(s.ID.String()))
 				},

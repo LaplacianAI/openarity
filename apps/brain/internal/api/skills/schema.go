@@ -17,6 +17,12 @@ type summary struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// listed is a row of the skills list: the summary, and how many agents hold it.
+type listed struct {
+	summary
+	AgentCount int64 `json:"agent_count"`
+}
+
 type file struct {
 	Path      string `json:"path"`
 	Size      int64  `json:"size"`

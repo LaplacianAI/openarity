@@ -236,7 +236,7 @@ func ResolveSkill(
 	ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, ref string,
 ) (uuid.UUID, error) {
 	return byName(ctx, ref, "skill", "oa skills list",
-		func(ctx context.Context, limit int32, cursor *string) ([]client.SkillSummary, *string, error) {
+		func(ctx context.Context, limit int32, cursor *string) ([]client.ListedSkill, *string, error) {
 			page, err := Result(api.ListSkillsWithResponse(ctx, team,
 				&client.ListSkillsParams{Limit: &limit, Cursor: cursor}))
 			if err != nil {
@@ -244,8 +244,8 @@ func ResolveSkill(
 			}
 			return page.Items, page.NextCursor, nil
 		},
-		func(s client.SkillSummary) string { return s.Name },
-		func(s client.SkillSummary) uuid.UUID { return s.ID })
+		func(s client.ListedSkill) string { return s.Name },
+		func(s client.ListedSkill) uuid.UUID { return s.ID })
 }
 
 func ResolveAgent(

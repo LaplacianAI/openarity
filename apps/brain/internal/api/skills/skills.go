@@ -203,7 +203,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 
 	out, err := api.MapPage(rows, limit,
 		func(row db.ListSkillsByTeamRow) any { return skillCursor{CreatedAt: row.CreatedAt, ID: row.ID} },
-		viewSummary,
+		viewListed,
 	)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to page skills", err)
@@ -343,6 +343,10 @@ func viewSummary(row db.ListSkillsByTeamRow) summary {
 		ID: row.ID, TeamID: row.TeamID, Name: row.Name, Description: row.Description,
 		Source: row.Source, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
+}
+
+func viewListed(row db.ListSkillsByTeamRow) listed {
+	return listed{summary: viewSummary(row), AgentCount: row.AgentCount}
 }
 
 func written(files []skill.File) []file {

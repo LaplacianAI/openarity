@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -33,6 +34,8 @@ func discardLogger() *slog.Logger {
 
 type fakeStore struct {
 	channels  []db.Channel
+	lastUsed  map[uuid.UUID]time.Time
+	recent    map[uuid.UUID]int64
 	err       error
 	deleteErr error
 
@@ -69,17 +72,22 @@ func (f *fakeStore) GetChannel(_ context.Context, id uuid.UUID) (db.Channel, err
 	return db.Channel{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) ListChannelsByTeam(_ context.Context, arg db.ListChannelsByTeamParams) ([]db.Channel, error) {
+func (f *fakeStore) ListChannelsByTeam(_ context.Context, arg db.ListChannelsByTeamParams) ([]db.ListChannelsByTeamRow, error) {
 	f.listArgs = append(f.listArgs, arg)
 	if f.err != nil {
 		return nil, f.err
 	}
 
-	var out []db.Channel
+	var out []db.ListChannelsByTeamRow
 	for _, c := range f.channels {
-		if c.TeamID == arg.TeamID {
-			out = append(out, c)
+		if c.TeamID != arg.TeamID {
+			continue
 		}
+		row := db.ListChannelsByTeamRow{Channel: c, Sessions24h: f.recent[c.ID]}
+		if at, ok := f.lastUsed[c.ID]; ok {
+			row.LastMessageAt = &at
+		}
+		out = append(out, row)
 	}
 	if n := int(arg.PageSize); n < len(out) {
 		out = out[:n]
@@ -363,6 +371,71 @@ func TestListAsksOnlyForTheTeamInThePath(t *testing.T) {
 	}
 	if s.listArgs[0].TeamID != teamID {
 		t.Errorf("listed team %s, want %s", s.listArgs[0].TeamID, teamID)
+	}
+}
+
+// A row says when the channel was last used and how many of its sessions
+// moved in the last day; a channel never used says null, and is still sent.
+func TestAListedChannelSaysWhenItWasLastUsed(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	used, quiet := uuid.New(), uuid.New()
+	at := time.Date(2026, 11, 5, 9, 30, 0, 0, time.UTC)
+	s := &fakeStore{
+		channels: []db.Channel{
+			{ID: used, TeamID: teamID, Provider: "custom", Name: "support"},
+			{ID: quiet, TeamID: teamID, Provider: "custom", Name: "quiet"},
+		},
+		lastUsed: map[uuid.UUID]time.Time{used: at},
+		recent:   map[uuid.UUID]int64{used: 3},
+	}
+
+	rec := call(t, s, newFakeSecrets(), &fakeAuthz{}, memberOf(teamID, "member"),
+		http.MethodGet, "/teams/"+teamID.String()+"/channels", "")
+
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || len(page.Items) != 2 {
+		t.Fatalf("page: %v (%s)", err, rec.Body)
+	}
+	if got := page.Items[0]; got["last_message_at"] != "2026-11-05T09:30:00Z" || got["sessions_24h"] != 3.0 {
+		t.Errorf("support = %v, want last used 09:30 and 3 sessions", got)
+	}
+	got, ok := page.Items[1]["last_message_at"]
+	if !ok || got != nil || page.Items[1]["sessions_24h"] != 0.0 {
+		t.Errorf("quiet = %v, want last_message_at null and present, and 0 sessions", page.Items[1])
+	}
+}
+
+// The store counts what the caller may open: their own direct sessions, and
+// everyone's only with session:read_all. The handler says which.
+func TestTheListCountsByTheCallersOwnView(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		a         *fakeAuthz
+		moderator bool
+	}{
+		"a member":                   {&fakeAuthz{allowed: false}, false},
+		"someone with read_all":      {&fakeAuthz{holds: []string{"session:read_all"}}, true},
+		"a check that fails, closed": {&fakeAuthz{allowed: true, err: errAny}, false},
+	} {
+		teamID := uuid.New()
+		u := memberOf(teamID, "member")
+		s := &fakeStore{}
+		rec := call(t, s, newFakeSecrets(), tc.a, u, http.MethodGet, "/teams/"+teamID.String()+"/channels", "")
+
+		if rec.Code != http.StatusOK || len(s.listArgs) != 1 {
+			t.Fatalf("%s: %d, asked %d times", name, rec.Code, len(s.listArgs))
+		}
+		if got := s.listArgs[0]; got.Moderator != tc.moderator || got.Viewer != u.ID {
+			t.Errorf("%s: asked as moderator %v, viewer %s; want %v and the caller", name, got.Moderator, got.Viewer, tc.moderator)
+		}
+		if !slices.Contains(tc.a.asked, "session:read_all") {
+			t.Errorf("%s: asked %v, never session:read_all", name, tc.a.asked)
+		}
 	}
 }
 

@@ -193,8 +193,8 @@ func TestListChannelsByTeamShowsOnlyThatTeam(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %d channels, want only the one in platform: %+v", len(got), got)
 	}
-	if got[0].ID != mine.ID {
-		t.Errorf("got channel %s, want %s", got[0].ID, mine.ID)
+	if got[0].Channel.ID != mine.ID {
+		t.Errorf("got channel %s, want %s", got[0].Channel.ID, mine.ID)
 	}
 }
 
@@ -227,7 +227,7 @@ func TestListChannelsByTeamReturnsNewestFirst(t *testing.T) {
 		t.Fatalf("got %d channels, want %d", len(got), len(want))
 	}
 	for i := range want {
-		if got[i].Name != want[i] {
+		if got[i].Channel.Name != want[i] {
 			t.Fatalf("order = %v, want %v", channelNames(got), want)
 		}
 	}
@@ -263,8 +263,8 @@ func TestListChannelsByTeamPagesFromACursor(t *testing.T) {
 		TeamID:         team.ID,
 		PageSize:       2,
 		UseCursor:      true,
-		AfterCreatedAt: last.CreatedAt,
-		AfterID:        last.ID,
+		AfterCreatedAt: last.Channel.CreatedAt,
+		AfterID:        last.Channel.ID,
 	})
 	if err != nil {
 		t.Fatalf("second page: %v", err)
@@ -274,10 +274,111 @@ func TestListChannelsByTeamPagesFromACursor(t *testing.T) {
 	}
 }
 
-func channelNames(channels []db.Channel) []string {
-	names := make([]string, len(channels))
-	for i, ch := range channels {
-		names[i] = ch.Name
+func channelNames(rows []db.ListChannelsByTeamRow) []string {
+	names := make([]string, len(rows))
+	for i, r := range rows {
+		names[i] = r.Channel.Name
 	}
 	return names
+}
+
+// sessionOn opens a session on a channel whose last message was minutesAgo,
+// on the database's clock. A direct session belongs to user.
+func sessionOn(t *testing.T, s *Store, teamID, channelID uuid.UUID, ref, kind string, user *uuid.UUID, minutesAgo int) {
+	t.Helper()
+
+	row, err := s.EnsureSession(t.Context(), db.EnsureSessionParams{
+		TeamID: teamID, ChannelID: channelID, ProviderRef: ref, Kind: kind, UserID: user,
+	})
+	if err != nil {
+		t.Fatalf("EnsureSession %s: %v", ref, err)
+	}
+	if _, err := s.pool.Exec(t.Context(),
+		`UPDATE sessions SET last_message_at = now() - make_interval(mins => $2) WHERE id = $1`,
+		row.ID, minutesAgo); err != nil {
+		t.Fatalf("age %s: %v", ref, err)
+	}
+}
+
+// activityOf lists the team's channels as the caller would, by name.
+func activityOf(t *testing.T, s *Store, p db.ListChannelsByTeamParams) map[string]db.ListChannelsByTeamRow {
+	t.Helper()
+
+	p.PageSize = 1000
+	rows, err := s.ListChannelsByTeam(t.Context(), p)
+	if err != nil {
+		t.Fatalf("ListChannelsByTeam: %v", err)
+	}
+	out := map[string]db.ListChannelsByTeamRow{}
+	for _, r := range rows {
+		out[r.Channel.Name] = r
+	}
+	return out
+}
+
+// A channel says when it was last used, its newest session's last message,
+// and how many of its sessions moved in the last day. A quiet channel says
+// neither, and another channel's sessions are not this one's.
+func TestAListedChannelSaysWhenItWasLastUsed(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	support := mustCreateChannel(t, s, team.ID, "custom", "support")
+	sales := mustCreateChannel(t, s, team.ID, "custom", "sales")
+	mustCreateChannel(t, s, team.ID, "custom", "quiet")
+
+	sessionOn(t, s, team.ID, support.ID, "t-1", "thread", nil, 5)
+	sessionOn(t, s, team.ID, support.ID, "t-2", "thread", nil, 90)
+	sessionOn(t, s, team.ID, support.ID, "t-3", "thread", nil, 25*60)
+	sessionOn(t, s, team.ID, sales.ID, "t-4", "thread", nil, 2)
+
+	got := activityOf(t, s, db.ListChannelsByTeamParams{TeamID: team.ID, Moderator: true})
+
+	if n := got["support"].Sessions24h; n != 2 {
+		t.Errorf("support: %d sessions in the last day, want 2 (the third is 25 hours old)", n)
+	}
+	if at := got["support"].LastMessageAt; at == nil || time.Since(*at) < 4*time.Minute || time.Since(*at) > 6*time.Minute {
+		t.Errorf("support last used %v, want about five minutes ago: its newest session, not sales'", at)
+	}
+	if q := got["quiet"]; q.LastMessageAt != nil || q.Sessions24h != 0 {
+		t.Errorf("quiet = last used %v, %d sessions; want never, none", q.LastMessageAt, q.Sessions24h)
+	}
+}
+
+// Both facts follow the session rule, so a member who cannot open a direct
+// session is not told when it last moved, nor that it did.
+func TestAListedChannelCountsOnlyWhatTheCallerMayOpen(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	dms := mustCreateChannel(t, s, team.ID, "custom", "dms")
+	asha := insertUser(t, s, "dev", "asha")
+	bala := insertUser(t, s, "dev", "bala")
+
+	sessionOn(t, s, team.ID, dms.ID, "dm-asha", "direct", &asha, 3)
+	sessionOn(t, s, team.ID, dms.ID, "group", "group", nil, 60)
+
+	for name, tc := range map[string]struct {
+		viewer    uuid.UUID
+		moderator bool
+		sessions  int64
+		minutes   float64
+	}{
+		"its participant": {asha, false, 2, 3},
+		"a moderator":     {bala, true, 2, 3},
+		"another member":  {bala, false, 1, 60},
+	} {
+		row := activityOf(t, s, db.ListChannelsByTeamParams{TeamID: team.ID, Viewer: tc.viewer, Moderator: tc.moderator})["dms"]
+		if row.Sessions24h != tc.sessions {
+			t.Errorf("%s: %d sessions, want %d", name, row.Sessions24h, tc.sessions)
+		}
+		if row.LastMessageAt == nil {
+			t.Fatalf("%s: never used, want %v minutes ago", name, tc.minutes)
+		}
+		if got := time.Since(*row.LastMessageAt).Minutes(); got < tc.minutes-1 || got > tc.minutes+1 {
+			t.Errorf("%s: last used %.0f minutes ago, want %v", name, got, tc.minutes)
+		}
+	}
 }

@@ -69,15 +69,34 @@ func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (Channel, error)
 }
 
 const listChannelsByTeam = `-- name: ListChannelsByTeam :many
-SELECT id, team_id, provider, name, created_at, updated_at FROM channels
-WHERE team_id = $1
-  AND (NOT $2::bool
-   OR (created_at, id) < ($3::timestamptz, $4::uuid))
-ORDER BY created_at DESC, id DESC
-LIMIT $5
+SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at,
+    latest.last_message_at,
+    (SELECT count(*) FROM sessions s
+     WHERE s.channel_id = c.id
+       AND s.last_message_at >= now() - interval '24 hours'
+       AND (s.kind <> 'direct'
+        OR $1::bool
+        OR s.user_id = $2::uuid)) AS sessions_24h
+FROM channels c
+LEFT JOIN sessions latest ON latest.id = (
+    SELECT s.id FROM sessions s
+    WHERE s.channel_id = c.id
+      AND (s.kind <> 'direct'
+       OR $1::bool
+       OR s.user_id = $2::uuid)
+    ORDER BY s.last_message_at DESC, s.id DESC
+    LIMIT 1
+)
+WHERE c.team_id = $3
+  AND (NOT $4::bool
+   OR (c.created_at, c.id) < ($5::timestamptz, $6::uuid))
+ORDER BY c.created_at DESC, c.id DESC
+LIMIT $7
 `
 
 type ListChannelsByTeamParams struct {
+	Moderator      bool
+	Viewer         uuid.UUID
 	TeamID         uuid.UUID
 	UseCursor      bool
 	AfterCreatedAt time.Time
@@ -85,8 +104,21 @@ type ListChannelsByTeamParams struct {
 	PageSize       int32
 }
 
-func (q *Queries) ListChannelsByTeam(ctx context.Context, arg ListChannelsByTeamParams) ([]Channel, error) {
+type ListChannelsByTeamRow struct {
+	Channel       Channel
+	LastMessageAt *time.Time
+	Sessions24h   int64
+}
+
+// Each channel with when it was last used and how many of its sessions were
+// active in the last day, by the session rule: a member who cannot open a
+// direct session is not told when it last moved. last_message_at comes
+// through a LEFT JOIN on the newest session's id, so a quiet channel reads
+// as NULL; sessions_channel_recent_idx serves both reads.
+func (q *Queries) ListChannelsByTeam(ctx context.Context, arg ListChannelsByTeamParams) ([]ListChannelsByTeamRow, error) {
 	rows, err := q.db.Query(ctx, listChannelsByTeam,
+		arg.Moderator,
+		arg.Viewer,
 		arg.TeamID,
 		arg.UseCursor,
 		arg.AfterCreatedAt,
@@ -97,16 +129,18 @@ func (q *Queries) ListChannelsByTeam(ctx context.Context, arg ListChannelsByTeam
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Channel
+	var items []ListChannelsByTeamRow
 	for rows.Next() {
-		var i Channel
+		var i ListChannelsByTeamRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.TeamID,
-			&i.Provider,
-			&i.Name,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.Channel.ID,
+			&i.Channel.TeamID,
+			&i.Channel.Provider,
+			&i.Channel.Name,
+			&i.Channel.CreatedAt,
+			&i.Channel.UpdatedAt,
+			&i.LastMessageAt,
+			&i.Sessions24h,
 		); err != nil {
 			return nil, err
 		}

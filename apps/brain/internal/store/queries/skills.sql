@@ -14,12 +14,14 @@ SELECT * FROM skills WHERE id = $1;
 -- between, not fifty documents nobody asked to read. The origin stays in, so a
 -- list shows at a glance which skills are the team's own.
 -- name: ListSkillsByTeam :many
-SELECT id, team_id, name, description, source, created_at, updated_at FROM skills
-WHERE team_id = sqlc.arg('team_id')
-  AND strpos(lower(name), lower(sqlc.arg('q')::text)) > 0
+SELECT k.id, k.team_id, k.name, k.description, k.source, k.created_at, k.updated_at,
+    (SELECT count(*) FROM agent_skills g WHERE g.skill_id = k.id) AS agent_count
+FROM skills k
+WHERE k.team_id = sqlc.arg('team_id')
+  AND strpos(lower(k.name), lower(sqlc.arg('q')::text)) > 0
   AND (NOT sqlc.arg('use_cursor')::bool
-   OR (created_at, id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
-ORDER BY created_at DESC, id DESC
+   OR (k.created_at, k.id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
+ORDER BY k.created_at DESC, k.id DESC
 LIMIT sqlc.arg('page_size');
 
 -- A replace is whole, the origin included: an upload over an imported skill

@@ -106,12 +106,14 @@ func (q *Queries) GetSkill(ctx context.Context, id uuid.UUID) (Skill, error) {
 }
 
 const listSkillsByTeam = `-- name: ListSkillsByTeam :many
-SELECT id, team_id, name, description, source, created_at, updated_at FROM skills
-WHERE team_id = $1
-  AND strpos(lower(name), lower($2::text)) > 0
+SELECT k.id, k.team_id, k.name, k.description, k.source, k.created_at, k.updated_at,
+    (SELECT count(*) FROM agent_skills g WHERE g.skill_id = k.id) AS agent_count
+FROM skills k
+WHERE k.team_id = $1
+  AND strpos(lower(k.name), lower($2::text)) > 0
   AND (NOT $3::bool
-   OR (created_at, id) < ($4::timestamptz, $5::uuid))
-ORDER BY created_at DESC, id DESC
+   OR (k.created_at, k.id) < ($4::timestamptz, $5::uuid))
+ORDER BY k.created_at DESC, k.id DESC
 LIMIT $6
 `
 
@@ -132,6 +134,7 @@ type ListSkillsByTeamRow struct {
 	Source      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	AgentCount  int64
 }
 
 // The body is left out: a page of fifty skills is fifty descriptions to choose
@@ -161,6 +164,7 @@ func (q *Queries) ListSkillsByTeam(ctx context.Context, arg ListSkillsByTeamPara
 			&i.Source,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AgentCount,
 		); err != nil {
 			return nil, err
 		}

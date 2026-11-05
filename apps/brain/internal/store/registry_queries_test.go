@@ -1236,3 +1236,32 @@ func TestTheAgentsListCountsEachAgentsOwnGrants(t *testing.T) {
 		t.Errorf("counted %+v, want %+v", got, want)
 	}
 }
+
+// A skill says how many agents hold it, its own and no other skill's. A
+// skill nobody holds reads zero, which is what the dashboard calls out.
+func TestTheSkillsListCountsTheAgentsThatHoldEach(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	pdf := mustCreateSkill(t, s, team.ID, "pdf")
+	mustCreateSkill(t, s, team.ID, "docx")
+
+	for _, name := range []string{"triage", "billing"} {
+		a := mustCreateAgent(t, s, team.ID, name)
+		if err := s.AddAgentSkills(t.Context(), db.AddAgentSkillsParams{AgentID: a.ID, SkillIds: []uuid.UUID{pdf.ID}, TeamID: team.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustCreateAgent(t, s, team.ID, "alone")
+
+	rows, err := s.ListSkillsByTeam(t.Context(), db.ListSkillsByTeamParams{TeamID: team.ID, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListSkillsByTeam: %v", err)
+	}
+	got := map[string]int64{}
+	for _, r := range rows {
+		got[r.Name] = r.AgentCount
+	}
+	if want := map[string]int64{"pdf": 2, "docx": 0}; !maps.Equal(got, want) {
+		t.Errorf("counted %v, want %v", got, want)
+	}
+}
