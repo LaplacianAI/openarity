@@ -192,6 +192,7 @@ func channelRoutes(t *testing.T) authz.Routes {
 	add("GET", senders, "team", &read)
 	add("POST", senders, "team", &approve)
 	add("DELETE", senders, "team", &approve)
+	add("GET", "/teams/{id}/senders/pending", "team", &read)
 	return rs
 }
 

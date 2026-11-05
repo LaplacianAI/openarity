@@ -101,6 +101,66 @@ func (h *handler) listPending(w http.ResponseWriter, r *http.Request) {
 	api.WriteJSON(w, h.logger, http.StatusOK, page)
 }
 
+func (h *handler) listTeamPending(w http.ResponseWriter, r *http.Request) {
+	u := api.Caller(r)
+
+	teamID, ok := api.RequireTeam(w, r, h.logger)
+	if !ok {
+		return
+	}
+
+	limit, ok := api.Limit(w, r)
+	if !ok {
+		return
+	}
+
+	params := db.ListTeamPendingSendersParams{TeamID: teamID, PageSize: limit + 1}
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		var c teamPendingCursor
+		if !api.DecodeCursor(w, raw, &c) {
+			return
+		}
+		params.UseCursor = true
+		params.AfterFirstSeen = c.FirstSeen
+		params.AfterChannelID = c.Channel
+		params.AfterRef = c.Ref
+	}
+
+	rows, err := h.store.ListTeamPendingSenders(r.Context(), params)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to list the team's pending senders", err)
+		return
+	}
+
+	page, err := api.MapPage(rows, limit,
+		func(row db.ListTeamPendingSendersRow) any {
+			p := row.PendingSender
+			return teamPendingCursor{FirstSeen: p.FirstSeen, Channel: p.ChannelID, Ref: p.SenderRef}
+		},
+		func(row db.ListTeamPendingSendersRow) teamPendingSender {
+			p := row.PendingSender
+			return teamPendingSender{
+				pendingSender: pendingSender{
+					SenderRef:  p.SenderRef,
+					SenderName: p.SenderName,
+					SeenCount:  p.SeenCount,
+					FirstSeen:  p.FirstSeen,
+					LastSeen:   p.LastSeen,
+				},
+				ChannelID:       p.ChannelID,
+				ChannelName:     row.ChannelName,
+				ChannelProvider: row.ChannelProvider,
+			}
+		},
+	)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to page the team's pending senders", err)
+		return
+	}
+
+	api.WriteJSON(w, h.logger, http.StatusOK, page)
+}
+
 func (h *handler) listSenders(w http.ResponseWriter, r *http.Request) {
 	u := api.Caller(r)
 

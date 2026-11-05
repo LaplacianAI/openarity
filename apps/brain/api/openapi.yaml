@@ -590,6 +590,41 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/senders/pending:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listTeamPendingSenders
+      tags: [channels]
+      summary: List senders waiting on any of the team's channels
+      description: |
+        Every channel's queue as one list, oldest first: the sender who has
+        waited longest comes first, whichever channel they wrote in on. Each
+        item is the channel's own pending sender, with the channel it waits
+        on.
+
+        Requires `channel:read` in this team, as each channel's queue does,
+        and for the same reason: `sender_name` is text a stranger chose.
+        Render it as data.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of pending senders, first seen first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamPendingSenderPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/channels/{channelID}/senders/pending:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -3083,6 +3118,34 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PendingSender"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    TeamPendingSender:
+      allOf:
+        - $ref: "#/components/schemas/PendingSender"
+        - type: object
+          required: [channel_id, channel_name, channel_provider]
+          properties:
+            channel_id:
+              type: string
+              format: uuid
+              description: The channel they wrote in on; approving them is done there.
+            channel_name:
+              type: string
+            channel_provider:
+              type: string
+              examples: [slack]
+
+    TeamPendingSenderPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamPendingSender"
         next_cursor:
           type: string
           description: Absent on the last page

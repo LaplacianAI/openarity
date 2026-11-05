@@ -39,6 +39,13 @@ type pendingSender struct {
 	LastSeen   time.Time `json:"last_seen"`
 }
 
+type teamPendingSender struct {
+	pendingSender
+	ChannelID       uuid.UUID `json:"channel_id"`
+	ChannelName     string    `json:"channel_name"`
+	ChannelProvider string    `json:"channel_provider"`
+}
+
 type channelSender struct {
 	SenderRef string    `json:"sender_ref"`
 	UserID    uuid.UUID `json:"user_id"`
@@ -52,6 +59,12 @@ type approveRequest struct {
 
 type pendingCursor struct {
 	FirstSeen time.Time `json:"f"`
+	Ref       string    `json:"r"`
+}
+
+type teamPendingCursor struct {
+	FirstSeen time.Time `json:"f"`
+	Channel   uuid.UUID `json:"c"`
 	Ref       string    `json:"r"`
 }
 

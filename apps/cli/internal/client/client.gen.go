@@ -1298,6 +1298,40 @@ type TeamPage struct {
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
+// TeamPendingSender defines model for TeamPendingSender.
+type TeamPendingSender struct {
+	// ChannelID The channel they wrote in on; approving them is done there.
+	ChannelID   openapi_types.UUID `json:"channel_id" yaml:"channel_id"`
+	ChannelName string             `json:"channel_name" yaml:"channel_name"`
+
+	// ChannelProvider Examples: slack
+	ChannelProvider string    `json:"channel_provider" yaml:"channel_provider"`
+	FirstSeen       time.Time `json:"first_seen" yaml:"first_seen"`
+	LastSeen        time.Time `json:"last_seen" yaml:"last_seen"`
+
+	// SeenCount How many messages they have sent that were dropped
+	SeenCount int32 `json:"seen_count" yaml:"seen_count"`
+
+	// SenderName What they call themselves, which they typed. Control characters
+	// are stripped and it is clipped on the way in, but two people may
+	// still share a name — that is the reason approval matches on
+	// `sender_ref` and shows this only as a hint.
+	SenderName string `json:"sender_name" yaml:"sender_name"`
+
+	// SenderRef The provider's own id for this person, unique within the channel
+	// rather than globally — Slack's ids repeat across workspaces, which
+	// is why approval is per channel.
+	SenderRef string `json:"sender_ref" yaml:"sender_ref"`
+}
+
+// TeamPendingSenderPage defines model for TeamPendingSenderPage.
+type TeamPendingSenderPage struct {
+	Items []TeamPendingSender `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
 // TeamPermissions defines model for TeamPermissions.
 type TeamPermissions struct {
 	// Actions The permissions the caller's role grants in this team, sorted.
@@ -1604,6 +1638,18 @@ type StreamRunEventsParams struct {
 
 	// LastEventID Resume after this sequence number. Wins over `after`.
 	LastEventID *int32 `json:"Last-Event-ID,omitempty" yaml:"Last-Event-ID,omitempty"`
+}
+
+// ListTeamPendingSendersParams defines parameters for ListTeamPendingSenders.
+type ListTeamPendingSendersParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
 }
 
 // ListSessionsParams defines parameters for ListSessions.
@@ -2483,6 +2529,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
 	StreamRunEvents(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListTeamPendingSenders List senders waiting on any of the team's channels
+	//
+	// Every channel's queue as one list, oldest first: the sender who has
+	// waited longest comes first, whichever channel they wrote in on. Each
+	// item is the channel's own pending sender, with the channel it waits
+	// on.
+	//
+	// Requires `channel:read` in this team, as each channel's queue does,
+	// and for the same reason: `sender_name` is text a stranger chose.
+	// Render it as data.
+	//
+	// Corresponds with GET /teams/{id}/senders/pending (the `ListTeamPendingSenders` operationId).
+	ListTeamPendingSenders(ctx context.Context, id TeamID, params *ListTeamPendingSendersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSessions List every conversation in a team
 	//
@@ -3972,6 +4032,30 @@ func (c *Client) CancelRun(ctx context.Context, id TeamID, runID RunID, reqEdito
 // Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
 func (c *Client) StreamRunEvents(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStreamRunEventsRequest(c.Server, id, runID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListTeamPendingSenders List senders waiting on any of the team's channels
+//
+// Every channel's queue as one list, oldest first: the sender who has
+// waited longest comes first, whichever channel they wrote in on. Each
+// item is the channel's own pending sender, with the channel it waits
+// on.
+//
+// Requires `channel:read` in this team, as each channel's queue does,
+// and for the same reason: `sender_name` is text a stranger chose.
+// Render it as data.
+//
+// Corresponds with GET /teams/{id}/senders/pending (the `ListTeamPendingSenders` operationId).
+func (c *Client) ListTeamPendingSenders(ctx context.Context, id TeamID, params *ListTeamPendingSendersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListTeamPendingSendersRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6587,6 +6671,79 @@ func NewStreamRunEventsRequest(server string, id TeamID, runID RunID, params *St
 	return req, nil
 }
 
+// NewListTeamPendingSendersRequest constructs an http.Request for the ListTeamPendingSenders method
+func NewListTeamPendingSendersRequest(server string, id TeamID, params *ListTeamPendingSendersParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/senders/pending", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSessionsRequest constructs an http.Request for the ListSessions method
 func NewListSessionsRequest(server string, id TeamID, params *ListSessionsParams) (*http.Request, error) {
 	var err error
@@ -8401,6 +8558,22 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
 	StreamRunEventsWithResponse(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*StreamRunEventsResponse, error)
+
+	// ListTeamPendingSendersWithResponse List senders waiting on any of the team's channels
+	//
+	// Every channel's queue as one list, oldest first: the sender who has
+	// waited longest comes first, whichever channel they wrote in on. Each
+	// item is the channel's own pending sender, with the channel it waits
+	// on.
+	//
+	// Requires `channel:read` in this team, as each channel's queue does,
+	// and for the same reason: `sender_name` is text a stranger chose.
+	// Render it as data.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/senders/pending (the `ListTeamPendingSenders` operationId).
+	ListTeamPendingSendersWithResponse(ctx context.Context, id TeamID, params *ListTeamPendingSendersParams, reqEditors ...RequestEditorFn) (*ListTeamPendingSendersResponse, error)
 
 	// ListSessionsWithResponse List every conversation in a team
 	//
@@ -10553,6 +10726,54 @@ func (r StreamRunEventsResponse) ContentType() string {
 	return ""
 }
 
+// ListTeamPendingSendersResponse401Headers the declared response headers of an HTTP 401 response for ListTeamPendingSenders
+type ListTeamPendingSendersResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListTeamPendingSendersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TeamPendingSenderPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListTeamPendingSendersResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListTeamPendingSendersResponse) GetJSON200() *TeamPendingSenderPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListTeamPendingSendersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListTeamPendingSendersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListTeamPendingSendersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListTeamPendingSendersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListSessionsResponse401Headers the declared response headers of an HTTP 401 response for ListSessions
 type ListSessionsResponse401Headers struct {
 	WWWAuthenticate *string
@@ -12481,6 +12702,28 @@ func (c *ClientWithResponses) StreamRunEventsWithResponse(ctx context.Context, i
 	return ParseStreamRunEventsResponse(rsp)
 }
 
+// ListTeamPendingSendersWithResponse List senders waiting on any of the team's channels
+//
+// Every channel's queue as one list, oldest first: the sender who has
+// waited longest comes first, whichever channel they wrote in on. Each
+// item is the channel's own pending sender, with the channel it waits
+// on.
+//
+// Requires `channel:read` in this team, as each channel's queue does,
+// and for the same reason: `sender_name` is text a stranger chose.
+// Render it as data.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/senders/pending (the `ListTeamPendingSenders` operationId).
+func (c *ClientWithResponses) ListTeamPendingSendersWithResponse(ctx context.Context, id TeamID, params *ListTeamPendingSendersParams, reqEditors ...RequestEditorFn) (*ListTeamPendingSendersResponse, error) {
+	rsp, err := c.ListTeamPendingSenders(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListTeamPendingSendersResponse(rsp)
+}
+
 // ListSessionsWithResponse List every conversation in a team
 //
 // Every session the team owns, whichever channel it arrived on — and
@@ -14342,6 +14585,45 @@ func ParseStreamRunEventsResponse(rsp *http.Response) (*StreamRunEventsResponse,
 	switch {
 	case rsp.StatusCode == 401:
 		var headers StreamRunEventsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListTeamPendingSendersResponse parses an HTTP response from a ListTeamPendingSendersWithResponse call
+func ParseListTeamPendingSendersResponse(rsp *http.Response) (*ListTeamPendingSendersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListTeamPendingSendersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TeamPendingSenderPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListTeamPendingSendersResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

@@ -488,6 +488,9 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"GET /teams/{id}/channels/{channelID}/senders":         "team channel:read",
 		"POST /teams/{id}/channels/{channelID}/senders":        "team sender:approve",
 		"DELETE /teams/{id}/channels/{channelID}/senders":      "team sender:approve",
+		// Every channel's queue as one: the same strangers' text, so the
+		// same audience as each channel's.
+		"GET /teams/{id}/senders/pending": "team channel:read",
 
 		// Reading is `member`, unlike the sender routes above. A session is
 		// the conversation the team is already having in the provider — the
