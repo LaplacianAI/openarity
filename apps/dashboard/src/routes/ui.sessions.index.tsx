@@ -154,7 +154,7 @@ function Sessions() {
 function SessionTable({ sessions }: { sessions: ListedSession[] }) {
   const navigate = useNavigate();
   return (
-    <Table aria-label="Sessions in this team">
+    <Table stack="md" aria-label="Sessions in this team">
       <TableHeader>
         <tr>
           <TableHead>Session</TableHead>
@@ -189,10 +189,13 @@ function SessionTable({ sessions }: { sessions: ListedSession[] }) {
             <TableCell label="Channel" className="text-muted-foreground">
               {s.channel_name ?? "None"}
             </TableCell>
-            <TableCell label="With" className="sm:max-w-[24ch]">
+            <TableCell label="With" className="sm:max-w-[24ch] stacked:max-w-none">
               <span className="block min-w-0 truncate">{s.participant ?? "—"}</span>
             </TableCell>
-            <TableCell label="Last message" className="text-muted-foreground sm:w-full sm:max-w-0">
+            <TableCell
+              label="Last message"
+              className="text-muted-foreground sm:w-full sm:max-w-0 stacked:w-auto stacked:max-w-none"
+            >
               {/* A stranger's words: text, cut to a line. */}
               <span className="block min-w-0 truncate">{s.last_message ?? "Nothing said yet"}</span>
             </TableCell>

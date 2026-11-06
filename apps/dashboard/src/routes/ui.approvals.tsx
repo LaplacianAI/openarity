@@ -122,7 +122,7 @@ function Approvals() {
         />
       ) : (
         <div>
-          <Table aria-label="Senders waiting to be let in, the longest waiting first">
+          <Table stack="lg" aria-label="Senders waiting to be let in, the longest waiting first">
             <TableHeader>
               <tr>
                 <TableHead>Sender</TableHead>
@@ -203,7 +203,7 @@ function BindTo({
   const [userId, setUserId] = useState<string>("");
 
   return (
-    <div className="flex items-center justify-end gap-1.5 max-sm:justify-start">
+    <div className="flex items-center justify-end gap-1.5 stacked:justify-start">
       <Select value={userId} onValueChange={setUserId}>
         <SelectTrigger className="h-8 w-48 text-xs" aria-label="Bind this sender to">
           <SelectValue placeholder="Bind to a member…" />

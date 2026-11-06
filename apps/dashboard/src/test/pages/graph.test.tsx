@@ -192,6 +192,15 @@ it("draws the team's graph and counts each kind", async () => {
   expect(last.nodes).toHaveLength(4);
 });
 
+// Beside the canvas on a desktop, named so it is told apart from the shell's own aside.
+it("names the panel that reads the selected node", async () => {
+  brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
+  show(Graph);
+
+  const panel = await screen.findByRole("complementary", { name: "Selected node" });
+  expect(panel).toHaveTextContent(/Click a node/);
+});
+
 it("asks for a bounded graph", async () => {
   const seen = brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
   show(Graph);

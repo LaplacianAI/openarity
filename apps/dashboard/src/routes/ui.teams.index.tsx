@@ -235,7 +235,7 @@ function TeamSection({
                   {m.role}
                 </TableCell>
                 {canManage ? (
-                  <TableCell className="text-right max-sm:justify-end">
+                  <TableCell className="text-right stacked:justify-end">
                     <Button
                       variant="ghost"
                       size="sm"

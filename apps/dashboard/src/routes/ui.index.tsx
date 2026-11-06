@@ -118,24 +118,23 @@ function DayCounts({ summary }: { summary: TeamSummary | undefined }) {
       <h2 id="day" className="sr-only">
         Runs in the last 24 hours
       </h2>
-      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-rule sm:grid-cols-5">
+      {/* Each count links to its runs, and a dl may not wrap its pairs in links. */}
+      <ul className="grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-rule sm:grid-cols-5">
         {RUN_STATUSES.map((status) => (
-          <div key={status} className="bg-card last:col-span-2 sm:last:col-span-1">
+          <li key={status} className="bg-card last:col-span-2 sm:last:col-span-1">
             <Link
               to="/ui/runs"
               search={{ status, day: true }}
               className="flex flex-col gap-1 px-4 py-3 transition-colors hover:bg-foreground/3 focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
             >
-              <dt>
-                <StatusPill status={status} />
-              </dt>
-              <dd className="text-xl font-semibold tabular-nums" data-count={status}>
+              <StatusPill status={status} />
+              <span className="text-xl font-semibold tabular-nums" data-count={status}>
                 {summary ? summary.runs_24h[status].toLocaleString("en-US") : "—"}
-              </dd>
+              </span>
             </Link>
-          </div>
+          </li>
         ))}
-      </dl>
+      </ul>
     </section>
   );
 }

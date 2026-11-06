@@ -104,6 +104,15 @@ it("lists everyone waiting on any channel, the longest waiting first", async () 
   expect(seen.some((s) => s.path.includes("/channels/"))).toBe(false);
 });
 
+// Six columns and a bind control do not fit a tablet: the rows stack below a desktop.
+it("stacks its rows below a desktop's width", async () => {
+  brain({ ...team(["channel:read", "sender:approve"]), ...queue });
+  show(Approvals);
+
+  await screen.findByText("Asha");
+  expect(screen.getByRole("table").closest("[data-stack]")).toHaveAttribute("data-stack", "lg");
+});
+
 it("says under its title how many are waiting, and for how long the longest has", async () => {
   brain({ ...team(["channel:read"]), ...queue });
   show(Approvals);

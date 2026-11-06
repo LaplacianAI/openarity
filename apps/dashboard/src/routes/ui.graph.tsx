@@ -341,7 +341,10 @@ function Graph() {
               />
             )}
             {narrow ? null : (
-              <aside className="h-fit rounded-md border border-border bg-card p-3 text-xs">
+              <aside
+                aria-label="Selected node"
+                className="h-fit rounded-md border border-border bg-card p-3 text-xs"
+              >
                 <Selection graph={graph.data} selected={selected} />
               </aside>
             )}

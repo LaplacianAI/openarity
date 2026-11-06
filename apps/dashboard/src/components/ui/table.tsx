@@ -1,7 +1,8 @@
 /**
  * A list of things with the same facts: rules between rows, no zebra and no
  * header band. Numbers are right-aligned and tabular so they compare down a
- * column. On a phone each row stacks into its facts, each cell labelled.
+ * column. On a phone each row stacks into its facts, each cell labelled; a
+ * table with more columns than a tablet holds stacks there too.
  *
  * Rows that open something take `onOpen`: they are reached with Tab once,
  * then moved between with the arrow keys, and opened with Enter, the way a
@@ -14,12 +15,22 @@ import { useLayoutEffect, useRef } from "react";
 
 const ROW = "[data-openable]";
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+/** Below which width the rows stack, as Tailwind's sm, md and lg. */
+type Stack = "sm" | "md" | "lg";
+
+function Table({
+  className,
+  stack = "sm",
+  ...props
+}: React.ComponentProps<"table"> & {
+  /** Stack wider than a phone when the columns need more room than a tablet has. */
+  stack?: Stack;
+}) {
   return (
-    <div className="relative w-full">
+    <div className="relative w-full" data-stack={stack}>
       <table
         data-slot="table"
-        className={cn("w-full border-collapse text-sm max-sm:block", className)}
+        className={cn("w-full border-collapse text-sm stacked:block", className)}
         {...props}
       />
     </div>
@@ -30,7 +41,7 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("sticky top-0 z-10 bg-sheet max-sm:sr-only", className)}
+      className={cn("sticky top-0 z-10 bg-sheet stacked:sr-only", className)}
       {...props}
     />
   );
@@ -52,7 +63,7 @@ function TableBody({ className, onKeyDown, onFocus, ...props }: React.ComponentP
     <tbody
       ref={ref}
       data-slot="table-body"
-      className={cn("max-sm:block", className)}
+      className={cn("stacked:block", className)}
       onFocus={(e) => {
         const row = (e.target as HTMLElement).closest<HTMLElement>(ROW);
         if (row && ref.current?.contains(row)) {
@@ -120,7 +131,7 @@ function TableRow({
       }}
       className={cn(
         // One column no wider than the screen: an auto column grows to its longest value.
-        "group/row border-b border-rule last:border-b-0 max-sm:grid max-sm:grid-cols-[minmax(0,1fr)] max-sm:gap-1 max-sm:py-3",
+        "group/row border-b border-rule last:border-b-0 stacked:grid stacked:grid-cols-[minmax(0,1fr)] stacked:gap-1 stacked:py-3",
         openable &&
           "cursor-pointer outline-none hover:bg-foreground/3 focus-visible:bg-accent focus-visible:shadow-[inset_3px_0_0_0_var(--color-primary)]",
         className,
@@ -166,9 +177,9 @@ function TableCell({
       className={cn(
         "px-3 py-2.5 align-middle",
         numeric && "text-right tabular-nums",
-        "max-sm:flex max-sm:min-w-0 max-sm:items-baseline max-sm:justify-between max-sm:gap-3 max-sm:px-0 max-sm:py-0 max-sm:text-left",
+        "stacked:flex stacked:min-w-0 stacked:items-baseline stacked:justify-between stacked:gap-3 stacked:px-0 stacked:py-0 stacked:text-left",
         label &&
-          "max-sm:before:shrink-0 max-sm:before:text-xs max-sm:before:whitespace-nowrap max-sm:before:text-muted-foreground max-sm:before:content-[attr(data-label)]",
+          "stacked:before:shrink-0 stacked:before:text-xs stacked:before:whitespace-nowrap stacked:before:text-muted-foreground stacked:before:content-[attr(data-label)]",
         className,
       )}
       {...props}

@@ -324,6 +324,15 @@ describe("a table", () => {
     );
   }
 
+  // Its rows stack on a phone unless the table asks for more room.
+  it("stacks below a phone's width unless told a wider one", () => {
+    const { unmount } = rows(() => {});
+    expect(screen.getByRole("table").parentElement).toHaveAttribute("data-stack", "sm");
+    unmount();
+    mount(<Table stack="lg" />);
+    expect(screen.getByRole("table").parentElement).toHaveAttribute("data-stack", "lg");
+  });
+
   it("is one tab stop, moved through with the arrows and opened with Enter", async () => {
     const user = userEvent.setup();
     const opened = vi.fn();
