@@ -225,8 +225,10 @@ function Approvals() {
 }
 
 /**
- * Who a sender is, then Approve. A member whose name fits is chosen already,
- * and Approve with no one chosen says so rather than sitting greyed out.
+ * Who a sender is, then Approve. A member whose name fits the sender's is
+ * listed first and marked, never chosen: the name is the stranger's to pick,
+ * and a pre-chosen match would let them steer whom they are bound to. Approve
+ * with no one chosen says so rather than sitting greyed out.
  */
 function BindTo({
   members,
@@ -241,7 +243,13 @@ function BindTo({
 }) {
   const [picked, setPicked] = useState<string>("");
   const [asked, setAsked] = useState(false);
-  const userId = picked || suggested || "";
+  const userId = picked;
+  const listed = suggested
+    ? [
+        ...members.filter((m) => m.user_id === suggested),
+        ...members.filter((m) => m.user_id !== suggested),
+      ]
+    : members;
   const noteId = useId();
 
   return (
@@ -255,7 +263,7 @@ function BindTo({
           <SelectValue placeholder="Bind to a member…" />
         </SelectTrigger>
         <SelectContent>
-          {members.map((m) => (
+          {listed.map((m) => (
             <SelectItem key={m.user_id} value={m.user_id}>
               {m.email ?? m.subject}
               {m.user_id === suggested ? " (matches their name)" : ""}

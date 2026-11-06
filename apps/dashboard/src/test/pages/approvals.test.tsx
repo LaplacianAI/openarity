@@ -174,27 +174,38 @@ it("approves a sender on their own channel, and reads the queue and the count ag
   });
 });
 
-// One tap on a phone: the member whose name fits the sender's is chosen already.
-it("chooses the member whose name fits the sender's, ready to approve", async () => {
+// The name is the stranger's to choose, so a match is a hint, never a choice:
+// otherwise a sender could name themselves after an admin to be bound to one.
+it("lists the member whose name fits first and marks them, but chooses no one", async () => {
+  stubScroll();
   const seen = brain({
     ...team(["channel:read", "sender:approve"]),
     ...queue,
-    "POST /teams/{id}/channels/{cid}/senders": { status: 201, body: {} },
+    // The match last, so being listed first is the hint's doing.
+    "GET /teams/{id}/members": {
+      body: {
+        items: [
+          { user_id: "u-chen", subject: "chen", role: "approver" },
+          { user_id: "u-bala", subject: "bala", email: "bala@team.test", role: "member" },
+        ],
+      },
+    },
   });
   at();
 
   await screen.findByText("Bala");
   const row = rowOf("Bala");
-  await waitFor(() =>
-    expect(within(row).getByRole("combobox", { name: "Bind this sender to" })).toHaveTextContent(
-      "bala@team.test",
-    ),
-  );
-  await userEvent.click(within(row).getByRole("button", { name: "Approve" }));
+  const bind = within(row).getByRole("combobox", { name: "Bind this sender to" });
+  bind.focus();
+  await userEvent.keyboard("{ArrowDown}");
+  const offered = (await screen.findAllByRole("option")).map((o) => o.textContent);
+  expect(offered).toEqual(["bala@team.test (matches their name)", "chen"]);
+  await userEvent.keyboard("{Escape}");
 
-  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
-  const post = seen.find((s) => s.method === "POST");
-  expect(JSON.parse(String(post?.body))).toEqual({ sender_ref: "U02DEF", user_id: "u-bala" });
+  expect(bind).toHaveTextContent("Bind to a member…");
+  await userEvent.click(within(row).getByRole("button", { name: "Approve" }));
+  expect(within(row).getByRole("alert")).toHaveTextContent("Choose which member they are first.");
+  expect(seen.some((s) => s.method === "POST")).toBe(false);
 });
 
 it("says to choose a member when Approve is pressed with none, and sends nothing", async () => {
