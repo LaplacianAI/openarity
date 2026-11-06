@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -279,10 +280,30 @@ func (b *Builder) connect(ctx context.Context, s db.McpServer) (*mcp.Session, er
 
 	live, err := mcp.Connect(ctx, mcp.Server{Name: s.Name, URL: *s.Url, HTTPClient: client, Bare: s.Bare})
 	if err != nil {
-		return nil, fmt.Errorf("the MCP server %q could not be reached: %w", s.Name, err)
+		return nil, &serverDown{name: s.Name, err: err}
 	}
 	return live, nil
 }
+
+// A serverDown is an MCP server a run could not open. It wraps a *url.Error
+// as an unreachable model does, so outcome reads it first and names the
+// server rather than blaming the model.
+type serverDown struct {
+	name string
+	err  error
+}
+
+func (s *serverDown) Error() string {
+	cause := s.err
+	var dial *url.Error
+	if errors.As(cause, &dial) {
+		// The address can carry a key, and the run's error is read by the whole session.
+		cause = dial.Err
+	}
+	return fmt.Sprintf("the MCP server %q could not be reached: %v", s.name, cause)
+}
+
+func (s *serverDown) Unwrap() error { return s.err }
 
 func allowed(s db.McpServer, allow []string, name string) bool {
 	if allow == nil {

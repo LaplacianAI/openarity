@@ -515,6 +515,10 @@ func TestAnUnreachableServerFailsTheBuildNamingIt(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `"search-engine" could not be reached`) {
 		t.Errorf("Build = %v, want the server named as unreachable", err)
 	}
+	var down *serverDown
+	if !errors.As(err, &down) {
+		t.Errorf("Build = %v, which a run's outcome would read as the model's", err)
+	}
 }
 
 // What discovery refuses — a link-local address, a missing token — the run
