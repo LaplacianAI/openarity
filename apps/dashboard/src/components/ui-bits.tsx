@@ -56,7 +56,7 @@ function About({ title, children }: { title: string; children: string }) {
           side="bottom"
           align="start"
           sideOffset={6}
-          className="z-50 max-w-80 origin-(--radix-popover-content-transform-origin) rounded-lg bg-popover p-3 text-sm text-popover-foreground shadow-lg ring-1 ring-sheet-edge duration-150 ease-out outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+          className="z-50 max-w-80 origin-(--radix-popover-content-transform-origin) rounded-lg bg-popover p-3 text-sm text-popover-foreground shadow-lg ring-1 ring-sheet-edge duration-150 ease-out outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-96 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-96"
         >
           {children}
         </Popover.Content>
