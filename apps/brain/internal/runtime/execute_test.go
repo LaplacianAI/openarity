@@ -541,6 +541,15 @@ func (s *writeSpy) FinishRun(ctx context.Context, arg db.FinishRunParams) (int64
 	return s.Store.FinishRun(ctx, arg)
 }
 
+// A finish writes its event in the same call, so it counts as both.
+func (s *writeSpy) FinishRunWithEvent(
+	ctx context.Context, finish db.FinishRunParams, event db.AppendRunEventParams,
+) (int64, error) {
+	s.finishes.Add(1)
+	s.appends.Add(1)
+	return s.Store.FinishRunWithEvent(ctx, finish, event)
+}
+
 func (s *writeSpy) AppendRunEvent(ctx context.Context, arg db.AppendRunEventParams) (int32, error) {
 	s.appends.Add(1)
 	return s.Store.AppendRunEvent(ctx, arg)
@@ -1483,6 +1492,81 @@ func TestAFinishWithANULIsRecorded(t *testing.T) {
 				t.Errorf("run is %s, output %q, error %q", r.Status, deref(r.Output), deref(r.Error))
 			}
 		})
+	}
+}
+
+// A follower ends its stream once the run reads as finished, after one last
+// read of the events. So the run must never read as finished before its
+// finished event is there to be read: a stream caught between the two ends
+// without it, and a failed run's reason with it. The event's write is held on
+// a lock, and the run is looked at from outside while it waits.
+func TestAFinishedRunIsNeverSeenWithoutItsFinishedEvent(t *testing.T) {
+	f := newExecFixture(t, newScripted())
+	f.mustExec(t, `UPDATE runs SET status = 'running', worker = $2, heartbeat_at = now(), started_at = now()
+		WHERE id = $1`, f.run, worker)
+
+	holder, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = holder.Rollback(context.WithoutCancel(t.Context())) }()
+	// SHARE lets the events be read and stops any being written.
+	if _, err := holder.Exec(t.Context(), `LOCK TABLE run_events IN SHARE MODE`); err != nil {
+		t.Fatalf("lock run_events: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- f.exec.finish(t.Context(), f.run, worker, "succeeded", "done", "") }()
+
+	// The finished event's write is waiting on the lock: this schema's
+	// run_events, by its oid, since other packages' schemas have one too.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting int
+		if err := f.raw.QueryRow(t.Context(), `
+			SELECT count(*) FROM pg_locks
+			WHERE relation = 'run_events'::regclass AND NOT granted`).Scan(&waiting); err != nil {
+			t.Fatalf("pg_locks: %v", err)
+		}
+		if waiting > 0 {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("finish returned (%v) without writing an event", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("finish never reached the finished event")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	var finished bool
+	if err := f.raw.QueryRow(t.Context(),
+		`SELECT finished_at IS NOT NULL FROM runs WHERE id = $1`, f.run).Scan(&finished); err != nil {
+		t.Fatalf("read the run: %v", err)
+	}
+	if finished {
+		t.Error("the run reads as finished while its finished event is unwritten; a follower ends its stream without it")
+	}
+
+	if err := holder.Rollback(t.Context()); err != nil {
+		t.Fatalf("release the lock: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("finish: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("finish never completed once the lock was released")
+	}
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	events := f.events(t)
+	if len(events) == 0 || events[len(events)-1].Kind != "finished" {
+		t.Errorf("events = %v, want finished last", kinds(events))
 	}
 }
 
