@@ -155,6 +155,19 @@ describe("what Home says first", () => {
     expect(day.querySelector("dt, dd")).toBeNull();
   });
 
+  it("says in a line that there were no runs, rather than five zeros", async () => {
+    home({ ...quiet, runs_24h: { queued: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 } });
+    const day = await screen.findByRole("region", { name: "Runs in the last 24 hours" });
+    expect(await within(day).findByText("None.")).toBeInTheDocument();
+    expect(within(day).queryByRole("list")).toBeNull();
+  });
+
+  it("names the period its counts cover where everyone can see it", async () => {
+    home(quiet);
+    const label = await screen.findByRole("heading", { name: "Runs in the last 24 hours" });
+    expect(label).not.toHaveClass("sr-only");
+  });
+
   it("says why the summary could not be read", async () => {
     home(quiet, { "GET /teams/{id}/summary": { status: 500, text: "the store is down" } });
     expect(await screen.findByRole("alert")).toHaveTextContent("the store is down");
@@ -174,11 +187,45 @@ describe("the runs on Home", () => {
     );
   });
 
-  it("asks for no failures when the summary says there were none", async () => {
+  // A team that runs a few times a week would otherwise never see a failure on Home.
+  it("shows the last failure, however old, on a day with none", async () => {
     const seen = home(quiet);
-    await screen.findByRole("region", { name: "Asked of the team" });
+    const block = await screen.findByRole("region", { name: "Last failure" });
+    expect(await within(block).findByRole("link", { name: "billing" })).toBeInTheDocument();
+    expect(within(block).getByRole("link", { name: "All failures" })).toHaveAttribute(
+      "href",
+      "/ui/runs?status=failed",
+    );
     expect(screen.queryByRole("region", { name: "Failed in the last 24 hours" })).toBeNull();
-    expect(asked(seen, "runs").some((u) => u.searchParams.has("status"))).toBe(false);
+
+    const q = asked(seen, "runs").filter((u) => u.searchParams.get("status") === "failed");
+    expect(q).toHaveLength(1);
+    expect(q[0]?.searchParams.get("limit")).toBe("1");
+    expect(q[0]?.searchParams.has("since")).toBe(false);
+  });
+
+  it("shows no last failure for a team that has never had one", async () => {
+    const seen = home(quiet, {
+      [RUNS]: (s) =>
+        s.path.includes("status=failed")
+          ? { body: { items: [] } }
+          : { body: { items: [run("h1", "orchestrator")] } },
+    });
+    // Wait for the question to be answered, or the absence proves nothing.
+    await waitFor(() =>
+      expect(asked(seen, "runs").some((u) => u.searchParams.get("status") === "failed")).toBe(true),
+    );
+    await expect(
+      screen.findByRole("region", { name: "Last failure" }, { timeout: 300 }),
+    ).rejects.toThrow();
+  });
+
+  it("asks only for the last day's failures when the summary counts some", async () => {
+    const seen = home({ ...quiet, runs_24h: { ...quiet.runs_24h, failed: 2 } });
+    await screen.findByRole("region", { name: "Failed in the last 24 hours" });
+    expect(screen.queryByRole("region", { name: "Last failure" })).toBeNull();
+    const q = asked(seen, "runs").filter((u) => u.searchParams.get("status") === "failed");
+    expect(q.every((u) => u.searchParams.has("since"))).toBe(true);
   });
 
   it("shows the hub's latest runs, with a way to all of them", async () => {

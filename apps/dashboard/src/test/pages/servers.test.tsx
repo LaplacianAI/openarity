@@ -7,7 +7,7 @@ import type { MCPServer } from "@/api/types";
 import { discoveryOf, serverRequest } from "@/lib/server-draft";
 import { brain, pageOf, type Seen, STAMP, show, TEAM, team } from "@/test/brain";
 
-const { Route } = await import("@/routes/ui.servers.index");
+const { Route, serversFinding } = await import("@/routes/ui.servers.index");
 const Servers = await pageOf(Route);
 
 afterEach(() => {
@@ -229,6 +229,36 @@ describe("what may be done", () => {
 
     await screen.findByRole("button", { name: "files" });
     expect(screen.queryByRole("button", { name: /^discover$/i })).toBeNull();
+    // The reason is said where the button would be, not left as a gap.
+    expect(within(rowOf("files")).getByText("Command servers can't be used yet")).toBeVisible();
+  });
+
+  it("says under its title which servers nobody has asked, when none failed", async () => {
+    const never = { ...github, discovered_at: null, last_discovery_at: null };
+    brain({
+      ...team([]),
+      ...servers,
+      "GET /teams/{id}/mcp-servers": {
+        body: {
+          items: [
+            github,
+            { ...never, id: "m2", name: "statuspage" },
+            { ...never, id: "m3", name: "files", url: undefined, command: ["npx", "srv"] },
+          ],
+        },
+      },
+    });
+    show(Servers);
+    expect(await screen.findByText("1 server has never been asked for its tools.")).toBeVisible();
+  });
+
+  it("puts a failed discovery before servers nobody has asked", () => {
+    const never = { ...github, discovered_at: null, last_discovery_at: null } as MCPServer;
+    expect(serversFinding(1, [never])).toBe("1 server failed its last discovery.");
+    expect(serversFinding(0, [never, never])).toBe(
+      "2 servers have never been asked for their tools.",
+    );
+    expect(serversFinding(0, [github as MCPServer])).toBeNull();
   });
 });
 

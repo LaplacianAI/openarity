@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { setToken } from "@/api/token";
 import { brain, chunks, feed, pageOf, type Seen, STAMP, showAt, TEAM, team } from "@/test/brain";
 
-const { Route: ListRoute } = await import("@/routes/ui.sessions.index");
+const { Route: ListRoute, sessionsFinding } = await import("@/routes/ui.sessions.index");
 const { Route: PageRoute } = await import("@/routes/ui.sessions.$sessionId");
 await pageOf(ListRoute);
 await pageOf(PageRoute);
@@ -115,7 +115,9 @@ describe("the sessions list", () => {
     expect(within(row).getByText("asha@team.test")).toBeInTheDocument();
     expect(within(row).getByText("failed")).toBeInTheDocument();
     // The total is the brain's, not what loaded.
-    expect(await screen.findByText("128 sessions in all.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("128 sessions in all, 1 whose latest run failed."),
+    ).toBeInTheDocument();
 
     await userEvent.click(link);
     expect(await screen.findByRole("heading", { level: 1, name: "ticket-42" })).toBeVisible();
@@ -168,7 +170,9 @@ describe("the sessions list", () => {
     at("/ui/sessions?channel=c1&run=failed");
     await screen.findByRole("link", { name: "ticket-42" });
     const asked = seen.filter((s) => s.path.startsWith(`/teams/${TEAM}/sessions`));
-    expect(asked.at(-1)?.path).toBe(`/teams/${TEAM}/sessions?channel_id=c1&run_status=failed`);
+    expect(asked.map((s) => s.path)).toContain(
+      `/teams/${TEAM}/sessions?channel_id=c1&run_status=failed`,
+    );
   });
 
   it("filters by a channel chosen from the list, and keeps it in the URL", async () => {
@@ -183,11 +187,36 @@ describe("the sessions list", () => {
     expect(router.state.location.search).toEqual({ channel: "c1" });
   });
 
+  it("says how many sessions' latest run failed, the ones to open first", async () => {
+    listed({
+      "GET /teams/{id}/sessions": (r) =>
+        r.path.includes("run_status=failed")
+          ? { body: { items: [listedSession, listedSession], next_cursor: null } }
+          : { body: { items: [listedSession] } },
+    });
+    at("/ui/sessions");
+    expect(
+      await screen.findByText("128 sessions in all, 2 whose latest run failed."),
+    ).toBeInTheDocument();
+  });
+
+  it("counts a page of failures with more after it as at least that many", () => {
+    expect(sessionsFinding(128, { n: 50, more: true })).toBe(
+      "128 sessions in all, 50 or more whose latest run failed.",
+    );
+    expect(sessionsFinding(1, { n: 0, more: false })).toBe("1 session in all.");
+    expect(sessionsFinding(3, null)).toBe("3 sessions in all.");
+  });
+
   it("ignores a filter it does not know rather than sending it on", async () => {
     const seen = listed({});
     at("/ui/sessions?run=exploded");
     await screen.findByRole("link", { name: "ticket-42" });
-    expect(seen.some((s) => s.path.includes("run_status"))).toBe(false);
+    expect(seen.some((s) => s.path.includes("exploded"))).toBe(false);
+    // Only the finding's own question names a run status.
+    expect(seen.filter((s) => s.path.includes("run_status")).map((s) => s.path)).toEqual([
+      `/teams/${TEAM}/sessions?run_status=failed`,
+    ]);
   });
 
   it("says so when there are no sessions", async () => {
@@ -259,6 +288,30 @@ describe("a session's page", () => {
     listed({ [SESSION]: { status: 500, text: "the database is down" } });
     at(PAGE);
     expect(await screen.findByText(/the database is down/)).toBeInTheDocument();
+  });
+
+  it("opens on the runs when the latest one failed or is still running", async () => {
+    for (const status of ["failed", "running"]) {
+      listed({ [RUNS]: { body: { items: [run("r1", "helper", status)] } } });
+      await open();
+      await waitFor(() =>
+        expect(screen.getByRole("tab", { name: /Runs/ })).toHaveAttribute("aria-selected", "true"),
+      );
+      cleanup();
+    }
+  });
+
+  it("keeps the messages when the latest run succeeded, or the reader chose them", async () => {
+    listed({ [RUNS]: { body: { items: [run("r1", "helper", "succeeded")] } } });
+    await open();
+    await screen.findByText(/^1$/, { selector: '[role="tab"] span' });
+    expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute("aria-selected", "true");
+    cleanup();
+
+    listed({ [RUNS]: { body: { items: [run("r1", "helper", "failed")] } } });
+    await open("?tab=messages");
+    await screen.findByText(/^1$/, { selector: '[role="tab"] span' });
+    expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("opens on the messages, and keeps the chosen tab in the URL", async () => {

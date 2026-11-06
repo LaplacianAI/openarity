@@ -38,6 +38,20 @@ export const Route = createFileRoute("/ui/sessions/")({
   component: Sessions,
 });
 
+/**
+ * The total, and how many sessions' latest run failed: the sessions to open
+ * first. A page of failures that has more after it is "N or more".
+ */
+export function sessionsFinding(
+  total: number,
+  failed: { n: number; more: boolean } | null,
+): string {
+  const all = `${count(total, "session")} in all`;
+  if (!failed || failed.n === 0) return `${all}.`;
+  const n = `${failed.n.toLocaleString("en-US")}${failed.more ? " or more" : ""}`;
+  return `${all}, ${n} whose latest run failed.`;
+}
+
 function Sessions() {
   const { teamId } = useCurrentTeam();
   const search = Route.useSearch();
@@ -48,6 +62,12 @@ function Sessions() {
   const channels = useQuery({
     queryKey: ["channels", teamId],
     queryFn: () => listChannels(teamId as string),
+    enabled: Boolean(teamId),
+  });
+
+  const failing = useQuery({
+    queryKey: ["sessions", teamId, "failing"],
+    queryFn: () => listSessions(teamId as string, null, { runStatus: ["failed"] }),
     enabled: Boolean(teamId),
   });
 
@@ -71,7 +91,16 @@ function Sessions() {
     <div className="space-y-5">
       <PageHeader
         title="Sessions"
-        finding={summary.data ? `${count(summary.data.sessions, "session")} in all.` : null}
+        finding={
+          summary.data
+            ? sessionsFinding(
+                summary.data.sessions,
+                failing.data
+                  ? { n: failing.data.items.length, more: Boolean(failing.data.next_cursor) }
+                  : null,
+              )
+            : null
+        }
         description="A conversation between someone on a channel and the team. Sessions you are not part of and may not read are left out."
       />
 

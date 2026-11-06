@@ -100,7 +100,11 @@ function SessionPage() {
     enabled: Boolean(teamId),
   });
 
-  const tab: Tab = search.tab ?? (search.run ? "runs" : "messages");
+  // A failed or running latest run is what the reader came for, so a phone
+  // opens on it; a tab the reader chose always wins.
+  const latest = runs.data?.pages[0]?.items[0];
+  const needsLook = latest?.status === "failed" || latest?.status === "running";
+  const tab: Tab = search.tab ?? (search.run || needsLook ? "runs" : "messages");
   const s = session.data ?? null;
   const title = s?.provider_ref ?? sessionId;
   const loadedRuns = runs.data?.pages.reduce((n, p) => n + p.items.length, 0) ?? 0;
