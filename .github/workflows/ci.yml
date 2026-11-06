@@ -35,12 +35,12 @@ jobs:
         id: filter
         with:
           filters: |
+            # Backend changes only. The dashboard is embedded in the brain
+            # binary, but the dashboard job proves its bundle embeds and is
+            # served, so a dashboard change does not need the brain's
+            # services, lint and full suite.
             brain:
               - 'apps/brain/**'
-              # The dashboard is embedded in the brain binary, so a change to
-              # it changes what the brain serves, and the brain job proves the
-              # bundle still builds and embeds.
-              - 'apps/dashboard/**'
               - 'go.work'
               - 'go.work.sum'
               - '.github/workflows/ci.yml'
@@ -296,6 +296,27 @@ jobs:
 
       - name: Build
         run: make build
+
+      # The brain binary serves this bundle. The brain job runs only for
+      # backend changes, so this job proves the bundle it just built still
+      # embeds, compiles into the binary and is served. The ui package's
+      # tests read the embedded files and need nothing running.
+      - name: Embed the dashboard in the brain
+        working-directory: apps/brain
+        run: make ui-embed
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/brain/go.mod
+          cache-dependency-path: apps/brain/go.sum
+
+      - name: Build the brain with the dashboard in it
+        working-directory: apps/brain
+        run: make build
+
+      - name: The brain serves the embedded dashboard
+        working-directory: apps/brain
+        run: go test ./internal/api/ui/
 
       # npm audit, dev dependencies included: the test runner and the bundler
       # run here and on every contributor's machine.
