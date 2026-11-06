@@ -461,7 +461,7 @@ function ToolLimit({
           align="start"
           sideOffset={4}
           aria-label={`Tools of ${server.name}`}
-          className="z-50 max-h-72 w-64 overflow-y-auto origin-(--radix-popover-content-transform-origin) rounded-lg bg-popover p-2 text-xs text-popover-foreground shadow-lg ring-1 ring-sheet-edge duration-150 ease-out data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+          className="z-50 max-h-72 w-64 overflow-y-auto origin-(--radix-popover-content-transform-origin) rounded-lg bg-popover p-2 text-xs text-popover-foreground shadow-lg ring-1 ring-sheet-edge duration-(--dur-pop) ease-out data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-96"
         >
           <label className="flex items-center gap-1.5 py-0.5 font-medium">
             <input

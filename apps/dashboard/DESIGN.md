@@ -174,8 +174,18 @@ The reference screen, the session and its run trace, carries the system's signat
 **Open, not decided.** The finish review shipped the reference screen with these left open; they are not rules to copy:
 - The token bar can read as a progress bar.
 - Section heads are body size (16px, and 14px inside a run), so the hierarchy leans on weight alone.
-- There is no authored motion yet (Phase 7). What moves today is library default: the running spinner, chevrons that rotate on open, colour transitions, and the phone menu's fade and slide. All of it stops under reduced motion.
 - The conversation is a card per message.
+
+## Motion
+
+Motion answers what the reader did, and nothing performs an entrance: no page-load stagger, no count-ups, no route transitions.
+
+- **Durations** (`styles.css`, `:root`): a press 160 ms (`--dur-press`), a popover 180 ms (`--dur-pop`), a dialog 200 ms (`--dur-dialog`), a sheet 280 ms in and 200 ms out (`--dur-sheet`, `--dur-sheet-out`). Tooltips are quicker, at 125 ms.
+- **Curves:** `--ease-out` for anything entering or answering a press, `--ease-drawer` for sheets.
+- **A press** scales a button to 0.97. **A popover or menu** grows from its trigger at 96%. **A dialog** grows from 97% and stays centred, and slides up from the bottom on a phone. **A sheet** slides in from the right on a desktop, and from the bottom on a phone.
+- **A live run** has a static Live badge whose dot breathes over 2 s. Nothing else on a screen loops except a spinner.
+- **⌘K, table keys and adjacent tooltips** do not animate.
+- **Reduced motion:** nothing travels, scales or spins; fades and colour changes stay.
 
 ## Colors
 
