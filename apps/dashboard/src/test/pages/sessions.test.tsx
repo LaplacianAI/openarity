@@ -384,9 +384,11 @@ describe("the messages", () => {
     });
 
     await open();
-    expect(await within(tabPanel("Messages")).findByRole("alert")).toHaveTextContent(
-      "you are not part of this conversation",
-    );
+    // A refusal is not a failure to retry: it says so, in the brain's words.
+    const panel = tabPanel("Messages");
+    expect(await within(panel).findByText("You can't see the messages.")).toBeInTheDocument();
+    expect(within(panel).getByText("You are not part of this conversation.")).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: /try again/i })).toBeNull();
   });
 
   // The token is not a cookie, so a bare link could not fetch the file. And a
@@ -674,7 +676,9 @@ describe("the runs", () => {
     });
 
     await open("?tab=runs&run=nope");
-    expect(await within(pane()).findByRole("alert")).toHaveTextContent("no such run");
+    expect(
+      await within(pane()).findByText("Couldn't find that run in this team."),
+    ).toBeInTheDocument();
   });
 
   it("will not show a run from another session", async () => {

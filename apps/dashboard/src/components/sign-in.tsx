@@ -141,10 +141,12 @@ function Oidc({ issuer, clientId }: { issuer: string; clientId: string }) {
           setError(null);
           // The path being left, so the provider returns to the screen that
           // was wanted rather than always to the overview.
-          beginLogin(issuer, clientId, window.location.pathname).catch((err: unknown) => {
-            setGoing(false);
-            setError(err instanceof Error ? err.message : String(err));
-          });
+          beginLogin(issuer, clientId, window.location.pathname + window.location.search).catch(
+            (err: unknown) => {
+              setGoing(false);
+              setError(err instanceof Error ? err.message : String(err));
+            },
+          );
         }}
       >
         {going ? "Redirecting…" : "Sign in"}

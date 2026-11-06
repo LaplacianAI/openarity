@@ -270,7 +270,12 @@ function Waiting({ teamId, waiting }: { teamId: string; waiting: number | null }
       ) : oldest.isPending ? (
         <Rows />
       ) : oldest.isError ? (
-        <ErrorState what="who is waiting" error={oldest.error} onRetry={() => oldest.refetch()} />
+        <ErrorState
+          what="who is waiting"
+          permission="channel:read"
+          error={oldest.error}
+          onRetry={() => oldest.refetch()}
+        />
       ) : (
         <ul className="divide-y divide-rule rounded-lg bg-card">
           {oldest.data.items.map((s) => (

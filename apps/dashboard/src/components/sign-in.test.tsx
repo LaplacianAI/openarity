@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
+import * as oidc from "@/api/oidc";
 import { getToken, setToken } from "@/api/token";
 import { SignIn } from "./sign-in";
 
@@ -23,6 +24,7 @@ function show() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   window.sessionStorage.clear();
   setToken(null);
@@ -102,4 +104,25 @@ it("reports an unreachable brain instead of waiting forever", async () => {
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent(/did not answer/i);
   expect(alert).toHaveTextContent(/upstream is down/i);
+});
+
+// The provider sends the browser back to where sign-in began: the query is
+// part of that place, such as the channel Sessions was filtered to.
+it("asks to come back to this page, its query included", async () => {
+  const begin = vi.spyOn(oidc, "beginLogin").mockResolvedValue(undefined);
+  window.history.replaceState(null, "", "/ui/sessions?channel=c1");
+  respond({
+    environment: "staging",
+    dev_token_accepted: false,
+    oidc: { issuer: "http://127.0.0.1:5556", client_id: "openarity" },
+  });
+  show();
+
+  await userEvent.click(await screen.findByRole("button", { name: /sign in/i }));
+  expect(begin).toHaveBeenCalledWith(
+    "http://127.0.0.1:5556",
+    "openarity",
+    "/ui/sessions?channel=c1",
+  );
+  window.history.replaceState(null, "", "/");
 });
