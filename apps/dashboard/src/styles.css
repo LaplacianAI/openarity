@@ -5,6 +5,28 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
+ * A table folds into labelled rows below its own breakpoint, set by Table's
+ * `stack`: a phone by default, wider for a table whose columns need the room.
+ */
+@custom-variant stacked {
+  @media (width < 40rem) {
+    &:where([data-stack="sm"], [data-stack="sm"] *) {
+      @slot;
+    }
+  }
+  @media (width < 48rem) {
+    &:where([data-stack="md"], [data-stack="md"] *) {
+      @slot;
+    }
+  }
+  @media (width < 64rem) {
+    &:where([data-stack="lg"], [data-stack="lg"] *) {
+      @slot;
+    }
+  }
+}
+
+/*
  * IBM Plex, served from this app (src/fonts, OFL; LICENSE.txt beside it).
  * Latin-1 subsets of the four weights the screens use. Each family falls
  * back to a local face sized to Plex's own metrics — measured against Arial

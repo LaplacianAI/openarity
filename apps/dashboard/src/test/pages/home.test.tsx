@@ -145,6 +145,16 @@ describe("what Home says first", () => {
     expect(failed).toHaveAttribute("href", "/ui/runs?status=failed&day=true");
   });
 
+  // A link may not wrap a dl's term and its value, so the counts are a list of links.
+  it("lists the counts as links, one to an item", async () => {
+    home(quiet);
+    const day = await screen.findByRole("region", { name: "Runs in the last 24 hours" });
+    const items = within(day).getAllByRole("listitem");
+    expect(items).toHaveLength(5);
+    for (const item of items) expect(within(item).getByRole("link")).toBeInTheDocument();
+    expect(day.querySelector("dt, dd")).toBeNull();
+  });
+
   it("says why the summary could not be read", async () => {
     home(quiet, { "GET /teams/{id}/summary": { status: 500, text: "the store is down" } });
     expect(await screen.findByRole("alert")).toHaveTextContent("the store is down");

@@ -122,6 +122,15 @@ describe("the sessions list", () => {
     expect(router.state.location.pathname).toBe(PAGE);
   });
 
+  // Six columns with a message among them are wider than a small tablet.
+  it("stacks its rows below a tablet's width", async () => {
+    listed({});
+    at("/ui/sessions");
+
+    await screen.findByRole("link", { name: "ticket-42" });
+    expect(screen.getByRole("table").closest("[data-stack]")).toHaveAttribute("data-stack", "md");
+  });
+
   // A stranger wrote it: text, never markup.
   it("shows the last message as text", async () => {
     listed({});
