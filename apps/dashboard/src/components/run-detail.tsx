@@ -30,6 +30,7 @@ import { Markdown } from "@/components/markdown";
 import { isLive, LiveBadge, StatusPill as RunStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { explainRunError } from "@/lib/run-error";
 import {
   argumentPairs,
   delegateReport,
@@ -332,7 +333,7 @@ export function RunView({
           className="flex gap-2 rounded-lg bg-destructive/8 px-3 py-2 text-sm text-destructive"
         >
           <XCircle aria-hidden className="mt-0.5 size-4 shrink-0" />
-          <p className="whitespace-pre-wrap break-words">{error}</p>
+          <RunErrorText raw={error} />
         </div>
       ) : null}
 
@@ -596,6 +597,24 @@ function TraceView({
         </Note>
       ) : null}
     </ol>
+  );
+}
+
+/** The failure in a sentence; the brain's own words behind a disclosure, when they differ. */
+function RunErrorText({ raw }: { raw: string }) {
+  const { said, details } = explainRunError(raw);
+  return (
+    <div className="min-w-0 space-y-1">
+      <p className="whitespace-pre-wrap break-words">{said}</p>
+      {details ? (
+        <details className="text-xs">
+          <summary className="cursor-pointer select-none underline-offset-4 hover:underline">
+            Show the details
+          </summary>
+          <p className="mt-1 whitespace-pre-wrap break-words text-foreground/80">{details}</p>
+        </details>
+      ) : null}
+    </div>
   );
 }
 

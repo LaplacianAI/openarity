@@ -679,6 +679,42 @@ describe("editing an agent", () => {
     );
   });
 
+  // The brain leaves a command server out of every run, so a grant of one
+  // grants nothing, and the editor says so where the grant is shown.
+  it("says a granted command server can't be used yet, and offers no tools to limit", async () => {
+    editing(
+      { ...current, mcp_servers: [{ id: "m1" }, { id: "m9" }] },
+      {
+        "GET /teams/{id}/mcp-servers": {
+          body: {
+            items: [
+              { id: "m1", team_id: TEAM, name: "github", url: "https://a.b", env: {}, bare: false },
+              {
+                id: "m9",
+                team_id: TEAM,
+                name: "runbooks-fs",
+                command: ["npx", "srv"],
+                env: {},
+                bare: false,
+              },
+            ],
+          },
+        },
+      },
+    );
+    await opened();
+
+    await waitFor(() => expect(chips("MCP servers")).toEqual(["github", "runbooks-fs"]));
+    expect(await screen.findByText("can't be used yet")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Tools of runbooks-fs" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Tools of github" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Command servers can't be used yet. A run of this agent starts without them.",
+      ),
+    ).toBeVisible();
+  });
+
   it("offers saving only once something has changed, and discarding puts it back", async () => {
     editing(current);
     await opened();

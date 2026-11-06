@@ -148,6 +148,9 @@ export function AgentForm({
     ...new Set([teamModel, ...names.agents.map((a) => a.model?.name)].filter(Boolean)),
   ] as string[];
   const modelsId = useId();
+  // A command server has no address to reach, and the brain does not start one
+  // yet, so granting it grants nothing. Known from the team's first page.
+  const commandServers = new Set(names.servers.filter((x) => x.command).map((x) => x.id));
   // Names learned from a pick, so a chip says what it is before any read.
   const [learned, setLearned] = useState<Map<string, string>>(new Map());
   const learn = (picked: Picked[]) =>
@@ -281,17 +284,27 @@ export function AgentForm({
             }}
             search={(q) => listMCPServers(teamId, null, { q, limit: PICK_PAGE }).then(searchResult)}
             searchKey={["mcp-servers", teamId]}
-            extra={(p) => (
-              <ToolLimit
-                teamId={teamId}
-                server={p}
-                grant={draft.servers.find((g) => g.id === p.id) ?? { id: p.id }}
-                onChange={(g) =>
-                  set({ servers: draft.servers.map((old) => (old.id === g.id ? g : old)) })
-                }
-              />
-            )}
+            extra={(p) =>
+              commandServers.has(p.id) ? (
+                // Granted, but a run starts without it: said on the chip itself.
+                <span className="px-1 text-warning">can't be used yet</span>
+              ) : (
+                <ToolLimit
+                  teamId={teamId}
+                  server={p}
+                  grant={draft.servers.find((g) => g.id === p.id) ?? { id: p.id }}
+                  onChange={(g) =>
+                    set({ servers: draft.servers.map((old) => (old.id === g.id ? g : old)) })
+                  }
+                />
+              )
+            }
           />
+          {servers.some((p) => commandServers.has(p.id)) ? (
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Command servers can't be used yet. A run of this agent starts without them.
+            </p>
+          ) : null}
         </div>
         <div>
           <p className="mb-1.5 text-sm font-medium">Skills</p>
