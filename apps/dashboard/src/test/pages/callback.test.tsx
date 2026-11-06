@@ -1,14 +1,17 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as oidc from "@/api/oidc";
 import { getToken, setToken } from "@/api/token";
 import { brain, showAt } from "@/test/brain";
 
 const { Route, whatToTry } = await import("@/routes/ui.callback");
+const { Route: SessionsRoute } = await import("@/routes/ui.sessions.index");
 await (Route.options.component as { preload?: () => Promise<void> }).preload?.();
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   window.sessionStorage.clear();
   window.history.replaceState(null, "", "/");
@@ -65,4 +68,52 @@ it("shows what to try, the provider's words, and a way to start again", async ()
   expect(alert).toHaveTextContent("User is not assigned to this app");
   await userEvent.click(screen.getByRole("button", { name: "Start again" }));
   expect(getToken()).toBeNull();
+});
+
+it("returns to where the sign-in started, its query included", async () => {
+  vi.spyOn(oidc, "completeLogin").mockResolvedValue({
+    session: { access: "fresh" } as never,
+    returnTo: "/ui/sessions?channel=c1",
+  });
+  brain({
+    "GET /auth/config": {
+      body: {
+        environment: "staging",
+        dev_token_accepted: false,
+        oidc: { issuer: "http://idp.test", client_id: "openarity" },
+      },
+    },
+  });
+  window.history.replaceState(null, "", "/ui/callback?code=c&state=s");
+  const router = showAt("/ui/callback", [
+    ["/ui/callback", Route],
+    ["/ui/sessions", SessionsRoute],
+  ]);
+
+  await waitFor(() => expect(router.state.location.href).toBe("/ui/sessions?channel=c1"));
+});
+
+// The return address sits in this tab's storage, but nothing outside the
+// dashboard is a place to send someone who has just signed in.
+it("returns to the dashboard rather than anywhere else", async () => {
+  vi.spyOn(oidc, "completeLogin").mockResolvedValue({
+    session: { access: "fresh" } as never,
+    returnTo: "//elsewhere.example/ui",
+  });
+  brain({
+    "GET /auth/config": {
+      body: {
+        environment: "staging",
+        dev_token_accepted: false,
+        oidc: { issuer: "http://idp.test", client_id: "openarity" },
+      },
+    },
+  });
+  window.history.replaceState(null, "", "/ui/callback?code=c&state=s");
+  const router = showAt("/ui/callback", [
+    ["/ui/callback", Route],
+    ["/ui", SessionsRoute],
+  ]);
+
+  await waitFor(() => expect(router.state.location.href).toBe("/ui"));
 });

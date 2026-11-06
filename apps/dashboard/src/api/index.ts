@@ -6,7 +6,7 @@
  * layer this replaces had five — setup state, model gateways, demo data and a
  * reset — and every one of them was a screen with nothing underneath.
  */
-import { pageQuery, request } from "./client";
+import { ApiError, pageQuery, request } from "./client";
 import { readFrames } from "./sse";
 import type {
   Agent,
@@ -296,11 +296,25 @@ export function cancelRun(teamId: string, runId: string): Promise<void> {
 /** How long to wait before following a stream again that closed early. */
 export const RESUME_AFTER_MS = 1000;
 
+/** The longest wait between two tries at a stream that keeps dropping. */
+const RESUME_AT_MOST_MS = 15_000;
+
+/**
+ * How many tries in a row may fail, with nothing read between them, before
+ * following gives up and says so.
+ */
+export const FOLLOW_ATTEMPTS = 5;
+
 /**
  * Follows a run's events until the brain sends `end` or `signal` aborts,
  * calling `onEvent` for each, `end` included. A stream that closes without
  * `end` was cut, not finished, so it is followed again from the last event
  * seen — the brain replays nothing twice.
+ *
+ * A connection that drops, or a brain that answers 5xx, is tried again the
+ * same way, waiting twice as long each time nothing was read in between, and
+ * given up on after FOLLOW_ATTEMPTS. A refusal (4xx) ends it at once: trying
+ * again cannot change it.
  */
 export async function followRunEvents(
   teamId: string,
@@ -310,19 +324,29 @@ export async function followRunEvents(
   from: number | null = null,
 ): Promise<void> {
   let after: number | null = from;
+  let failures = 0;
   while (!signal.aborted) {
     const query: string = after === null ? "" : `?after=${after}`;
-    const body: ReadableStream<Uint8Array> = await request(
-      `/teams/${teamId}/runs/${runId}/events${query}`,
-      { stream: true, signal },
-    );
-    for await (const frame of readFrames(body, signal)) {
-      const seq: number | null = frame.id === null ? null : Number(frame.id);
-      if (seq !== null && Number.isInteger(seq)) after = seq;
-      onEvent({ seq, kind: frame.event, data: parseData(frame.data) });
-      if (frame.event === "end") return;
+    try {
+      const body: ReadableStream<Uint8Array> = await request(
+        `/teams/${teamId}/runs/${runId}/events${query}`,
+        { stream: true, signal },
+      );
+      for await (const frame of readFrames(body, signal)) {
+        failures = 0;
+        const seq: number | null = frame.id === null ? null : Number(frame.id);
+        if (seq !== null && Number.isInteger(seq)) after = seq;
+        onEvent({ seq, kind: frame.event, data: parseData(frame.data) });
+        if (frame.event === "end") return;
+      }
+    } catch (err) {
+      if (signal.aborted) return;
+      if (err instanceof ApiError && err.status < 500) throw err;
+      failures += 1;
+      if (failures >= FOLLOW_ATTEMPTS) throw err;
     }
-    await pause(RESUME_AFTER_MS, signal);
+    const wait = RESUME_AFTER_MS * 2 ** Math.max(failures - 1, 0);
+    await pause(Math.min(wait, RESUME_AT_MOST_MS), signal);
   }
 }
 

@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { completeLogin } from "@/api/oidc";
@@ -60,6 +60,7 @@ export function whatToTry(query: URLSearchParams, message: string): Refusal {
 function Callback() {
   const config = useAuthConfig();
   const navigate = useNavigate();
+  const router = useRouter();
   const [error, setError] = useState<{ message: string; refusal: Refusal } | null>(null);
   const ran = useRef(false);
 
@@ -77,14 +78,16 @@ function Callback() {
     completeLogin(oidc.issuer, oidc.client_id, query)
       .then(({ session, returnTo }) => {
         setSession(session);
-        window.history.replaceState(null, "", returnTo);
-        void navigate({ to: "/ui", replace: true });
+        // Through the router's own history, so it moves with the address,
+        // query and all: a page that is not the dashboard's is not one to
+        // return to.
+        router.history.replace(returnTo.startsWith("/ui") ? returnTo : "/ui");
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
         setError({ message, refusal: whatToTry(query, message) });
       });
-  }, [config.data, navigate]);
+  }, [config.data, router]);
 
   return (
     <SignInFrame>

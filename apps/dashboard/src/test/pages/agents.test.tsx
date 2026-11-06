@@ -759,7 +759,9 @@ describe("editing an agent", () => {
 
   it("says why an agent could not be read", async () => {
     editing(current, { "GET /teams/{id}/agents/{agentID}": { status: 404, text: "not found" } });
-    expect(await screen.findByRole("alert")).toHaveTextContent("not found");
+    // A link to an agent of another team, or one since deleted.
+    expect(await screen.findByText("Couldn't find this agent in this team.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
     expect(screen.queryByLabelText(/^name$/i)).toBeNull();
   });
 

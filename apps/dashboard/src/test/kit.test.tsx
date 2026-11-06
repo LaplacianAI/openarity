@@ -2,7 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { ApiError } from "@/api/client";
 import { CodeBlock, JsonView } from "@/components/code";
 import { CopyId, KeyValue, KeyValues, Time } from "@/components/facts";
 import { EmptyState, ErrorState, ForbiddenState } from "@/components/states";
@@ -189,6 +189,59 @@ describe("the states a block can be in", () => {
     const button = screen.getByRole("button", { name: "Try again" });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute("aria-busy", "true");
+  });
+
+  // Trying again cannot change a refusal, so a 403 is the forbidden state,
+  // named by the permission when the screen knows it.
+  it("refused by the brain: says so instead of failing, and offers no retry", () => {
+    mount(
+      <ErrorState
+        what="this team's senders"
+        error={new ApiError(403, "forbidden")}
+        permission="channel:read"
+        onRetry={() => {}}
+      />,
+    );
+    expect(screen.getByText("You can't see this team's senders.")).toBeInTheDocument();
+    expect(screen.getByText("channel:read")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByText(/Couldn't load/)).toBeNull();
+  });
+
+  // The guard's bare "forbidden" says nothing; a handler's own refusal does.
+  it("refused for a reason of the brain's: shows that reason", () => {
+    mount(
+      <ErrorState
+        what="the messages"
+        error={new ApiError(403, "you are not part of this conversation")}
+      />,
+    );
+    expect(screen.getByText("You are not part of this conversation.")).toBeInTheDocument();
+    expect(screen.queryByText(/team admin/)).toBeNull();
+  });
+
+  it("refused, with no permission named: says whom to ask", () => {
+    mount(<ErrorState what="the agents" error={new ApiError(403, "forbidden")} />);
+    expect(screen.getByText("You can't see the agents.")).toBeInTheDocument();
+    expect(screen.getByText(/a team admin can give you access/i)).toBeInTheDocument();
+  });
+
+  // A 404 is a link from another team, or a thing since deleted; trying
+  // again finds nothing either.
+  it("not there: says it is not in this team, and offers no retry", () => {
+    mount(
+      <ErrorState what="this agent" error={new ApiError(404, "not found")} onRetry={() => {}} />,
+    );
+    expect(screen.getByText("Couldn't find this agent in this team.")).toBeInTheDocument();
+    expect(screen.getByText(/deleted, or the link is from another team/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  it("a server error still retries", () => {
+    mount(
+      <ErrorState what="the agents" error={new ApiError(503, "unavailable")} onRetry={() => {}} />,
+    );
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
   it("forbidden: names the permission, so the reader knows whom to ask", () => {
