@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -129,11 +131,31 @@ describe("what the canvas is handed", () => {
     const agent = data.nodes[1];
     expect(agent?.labels).toEqual(["Agent"]);
     expect(agent?.data).toMatchObject({ uuid: "a1", name: "triage", model: "nomic-embed-text" });
-    expect(agent?.color).toBe("#2a78d6");
-    // A server and its tools share a hue and differ in shape and size.
-    expect(data.nodes[2]?.color).toBe(data.nodes[3]?.color);
+    // Agents in the one teal; what they reach in its neutrals, told apart by shape.
+    expect(agent?.color).toBe("#0B6A5C");
     expect(data.nodes[2]?.shape).toBe("square");
     expect(data.nodes[3]?.shape).toBe("circle");
+    expect(data.nodes[4]?.data).toMatchObject({ hollow: true });
+  });
+
+  // BRAND's Spectral palette and nothing else; ok, warn and error are status.
+  it("colours every kind from the brand's palette, never a status colour", () => {
+    const brand = readFileSync(join(process.cwd(), "../../BRAND.md"), "utf8");
+    const roles = new Map(
+      [...brand.matchAll(/^\|`([a-z]+)`\|`(#[0-9A-F]{6})`\|`(#[0-9A-F]{6})`\|/gm)].flatMap(
+        ([, role = "", dark = "", light = ""]) => [
+          [light, role],
+          [dark, role],
+        ],
+      ),
+    );
+    for (const theme of ["light", "dark"] as const) {
+      for (const n of toCanvas(graph, new Set(), theme).nodes) {
+        const role = roles.get(n.color);
+        expect(role, `${n.labels[0]} in ${theme}: ${n.color}`).toBeDefined();
+        expect(["ok", "warn", "error"]).not.toContain(role);
+      }
+    }
   });
 
   it("steps every colour for the dark surface", () => {
@@ -187,9 +209,53 @@ it("draws the team's graph and counts each kind", async () => {
   expect(await screen.findByRole("button", { name: /agents\s*1/i })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /mcp servers\s*1/i })).toBeInTheDocument();
   await waitFor(() => expect(handed.data.length).toBeGreaterThan(0));
-  // The team starts hidden.
+  // The team is shown from the start: the hub answers for it.
   const last = handed.data.at(-1) as { nodes: unknown[] };
-  expect(last.nodes).toHaveLength(4);
+  expect(last.nodes).toHaveLength(5);
+});
+
+// The index holds no delegation, so the page adds it from the agents and the
+// team's settings: the claim the graph is for.
+it("draws the hub and who hands work to whom, from the agents and settings", async () => {
+  const delegated = {
+    ...graph,
+    nodes: [...graph.nodes, { id: "a2", label: "Agent" as const, name: "log-reader" }],
+  };
+  brain({
+    ...team([]),
+    "GET /teams/{id}/graph": { body: delegated },
+    "GET /teams/{id}/agents": {
+      body: {
+        items: [
+          { id: "a1", name: "triage", delegation: "listed" },
+          { id: "a2", name: "log-reader", delegation: "team" },
+        ],
+      },
+    },
+    "GET /teams/{id}/agents/{aid}": { body: { id: "a1", delegation: "listed", delegates: ["a2"] } },
+    "GET /teams/{id}/settings": { body: { hub: null } },
+  });
+  show(Graph);
+
+  await waitFor(() => {
+    const last = handed.data.at(-1) as {
+      nodes: { id: number; data: { uuid: string; hub?: boolean } }[];
+      links: {
+        relationship: string;
+        source: number;
+        target: number;
+        data: { delegation?: boolean };
+      }[];
+    };
+    const uuidOf = new Map(last.nodes.map((n) => [n.id, n.data.uuid]));
+    const said = last.links
+      .filter((l) => l.data.delegation)
+      .map((l) => `${uuidOf.get(l.source)} ${l.relationship} ${uuidOf.get(l.target)}`);
+    expect(said.sort()).toEqual(
+      [`a1 HANDS_TO a2`, `a2 HANDS_ANY ${TEAM}`, `hub:built-in ANSWERS ${TEAM}`].sort(),
+    );
+    expect(last.nodes.find((n) => n.data.hub)?.data.uuid).toBe("hub:built-in");
+  });
 });
 
 // Beside the canvas on a desktop, named so it is told apart from the shell's own aside.
@@ -316,21 +382,21 @@ it("puts a node's name in its tooltip as text, never as markup", async () => {
 });
 
 // The team owns everything; shown, its spokes bury the edges that matter.
-it("starts with the team hidden, and shows it on request", async () => {
+it("shows the team from the start, and hides it on request", async () => {
   brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
   show(Graph);
 
   const chip = await screen.findByRole("button", { name: /team\s*1/i });
-  expect(chip).toHaveAttribute("aria-pressed", "false");
+  expect(chip).toHaveAttribute("aria-pressed", "true");
   await waitFor(() => {
     const last = handed.data.at(-1) as { nodes: { labels: string[]; visible: boolean }[] };
-    expect(last.nodes.find((n) => n.labels[0] === "Team")).toBeUndefined();
+    expect(last.nodes.find((n) => n.labels[0] === "Team")).toBeDefined();
   });
 
   await userEvent.click(chip);
   await waitFor(() => {
     const last = handed.data.at(-1) as { nodes: { labels: string[]; visible: boolean }[] };
-    expect(last.nodes.find((n) => n.labels[0] === "Team")).toBeDefined();
+    expect(last.nodes.find((n) => n.labels[0] === "Team")).toBeUndefined();
   });
 });
 
@@ -501,4 +567,44 @@ describe("narrower screens", () => {
 
     expect(await screen.findByRole("dialog", { name: "pdf" })).toBeInTheDocument();
   });
+});
+
+// The built-in orchestrator has no page of its own; it is chosen in settings.
+it("reads the hub in the list and the panel, and leads to where it is chosen", async () => {
+  brain({
+    ...team([]),
+    "GET /teams/{id}/graph": { body: graph },
+    "GET /teams/{id}/settings": { body: { hub: null } },
+  });
+  show(Graph);
+
+  await userEvent.click(await screen.findByRole("button", { name: "Show as list" }));
+  const nodes = await screen.findByRole("table", { name: "Nodes" });
+  const row = (await within(nodes).findByRole("button", { name: "orchestrator" })).closest(
+    "tr",
+  ) as HTMLElement;
+  expect(within(row).getByText("Hub")).toBeInTheDocument();
+  // The index's word for a server is not the reader's.
+  expect(within(nodes).getByText("MCP server")).toBeInTheDocument();
+  expect(within(nodes).queryByText("Toolkit")).toBeNull();
+  expect(within(nodes).queryByText("nomic-embed-text")).toBeNull();
+
+  await userEvent.click(within(row).getByRole("button", { name: "orchestrator" }));
+  const panel = screen.getByRole("complementary", { name: "Selected node" });
+  expect(panel).toHaveTextContent("The team's hub: every message reaches it first");
+  expect(
+    within(panel).getByRole("link", { name: "Choose the hub in team settings" }),
+  ).toHaveAttribute("href", "/ui/settings");
+  expect(within(panel).queryByText("Id")).toBeNull();
+});
+
+it("keys a ring as a ring, so the legend matches the drawing", async () => {
+  brain({ ...team([]), "GET /teams/{id}/graph": { body: graph } });
+  show(Graph);
+  const dot = (name: RegExp) =>
+    screen.getByRole("button", { name }).querySelector("[aria-hidden]") as HTMLElement;
+  await screen.findByRole("button", { name: /team\s*1/i });
+  expect(dot(/team\s*1/i)).toHaveAttribute("data-hollow");
+  expect(dot(/skills\s*1/i)).toHaveAttribute("data-hollow");
+  expect(dot(/agents\s*1/i)).not.toHaveAttribute("data-hollow");
 });
