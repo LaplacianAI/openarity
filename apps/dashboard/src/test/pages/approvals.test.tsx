@@ -3,10 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 
 import { setToken } from "@/api/token";
-import { brain, pageOf, show, TEAM, team } from "@/test/brain";
+import { brain, pageOf, showAt, TEAM, team } from "@/test/brain";
 
 const { Route } = await import("@/routes/ui.approvals");
-const Approvals = await pageOf(Route);
+await pageOf(Route);
+
+/** The page under a router: which list it shows is in the URL. */
+function at(path = "/ui/approvals") {
+  return showAt(path, [["/ui/approvals", Route]]);
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -78,7 +83,7 @@ function rowOf(name: string): HTMLElement {
 // the brain for nothing it would refuse.
 it("says what it takes to see the queue, and does not ask for it", async () => {
   const seen = brain({ ...team(["agent:write"]), ...queue });
-  show(Approvals);
+  at();
 
   expect(await screen.findByText(/You can't see who is waiting/)).toBeInTheDocument();
   expect(screen.getByText("channel:read")).toBeInTheDocument();
@@ -89,7 +94,7 @@ it("says what it takes to see the queue, and does not ask for it", async () => {
 // waiting first, and each row says where they wrote in and for how long.
 it("lists everyone waiting on any channel, the longest waiting first", async () => {
   const seen = brain({ ...team(["channel:read"]), ...queue });
-  show(Approvals);
+  at();
 
   await screen.findByText("Asha");
   const names = screen.getAllByText(/^(Asha|Bala)$/).map((e) => e.textContent);
@@ -107,7 +112,7 @@ it("lists everyone waiting on any channel, the longest waiting first", async () 
 // Six columns and a bind control do not fit a tablet: the rows stack below a desktop.
 it("stacks its rows below a desktop's width", async () => {
   brain({ ...team(["channel:read", "sender:approve"]), ...queue });
-  show(Approvals);
+  at();
 
   await screen.findByText("Asha");
   expect(screen.getByRole("table").closest("[data-stack]")).toHaveAttribute("data-stack", "lg");
@@ -115,7 +120,7 @@ it("stacks its rows below a desktop's width", async () => {
 
 it("says under its title how many are waiting, and for how long the longest has", async () => {
   brain({ ...team(["channel:read"]), ...queue });
-  show(Approvals);
+  at();
   expect(
     await screen.findByText("2 people are waiting; the longest, for 2 days."),
   ).toBeInTheDocument();
@@ -127,7 +132,7 @@ it("says under its title how many are waiting, and for how long the longest has"
 it("offers the team's members to bind a sender to, without the directory", async () => {
   stubScroll();
   const seen = brain({ ...team(["channel:read", "sender:approve"]), ...queue });
-  show(Approvals);
+  at();
 
   await screen.findByText("Asha");
   within(rowOf("Asha")).getByRole("combobox", { name: "Bind this sender to" }).focus();
@@ -148,7 +153,7 @@ it("approves a sender on their own channel, and reads the queue and the count ag
     ...queue,
     "POST /teams/{id}/channels/{cid}/senders": { status: 201, body: {} },
   });
-  show(Approvals);
+  at();
 
   await screen.findByText("Bala");
   const row = rowOf("Bala");
@@ -169,11 +174,51 @@ it("approves a sender on their own channel, and reads the queue and the count ag
   });
 });
 
+// One tap on a phone: the member whose name fits the sender's is chosen already.
+it("chooses the member whose name fits the sender's, ready to approve", async () => {
+  const seen = brain({
+    ...team(["channel:read", "sender:approve"]),
+    ...queue,
+    "POST /teams/{id}/channels/{cid}/senders": { status: 201, body: {} },
+  });
+  at();
+
+  await screen.findByText("Bala");
+  const row = rowOf("Bala");
+  await waitFor(() =>
+    expect(within(row).getByRole("combobox", { name: "Bind this sender to" })).toHaveTextContent(
+      "bala@team.test",
+    ),
+  );
+  await userEvent.click(within(row).getByRole("button", { name: "Approve" }));
+
+  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+  const post = seen.find((s) => s.method === "POST");
+  expect(JSON.parse(String(post?.body))).toEqual({ sender_ref: "U02DEF", user_id: "u-bala" });
+});
+
+it("says to choose a member when Approve is pressed with none, and sends nothing", async () => {
+  const seen = brain({ ...team(["channel:read", "sender:approve"]), ...queue });
+  at();
+
+  await screen.findByText("Asha");
+  const row = rowOf("Asha");
+  const approve = within(row).getByRole("button", { name: "Approve" });
+  await waitFor(() => expect(approve).toBeEnabled());
+  await userEvent.click(approve);
+
+  expect(within(row).getByRole("alert")).toHaveTextContent("Choose which member they are first.");
+  expect(
+    within(row).getByRole("combobox", { name: "Bind this sender to" }),
+  ).toHaveAccessibleDescription("Choose which member they are first.");
+  expect(seen.some((s) => s.method === "POST")).toBe(false);
+});
+
 // A role may read the queue without approving: the shipped ones pair the two,
 // an operator's own need not. The queue is shown, the controls are not.
 it("shows the queue without the controls to someone who may not approve", async () => {
   const seen = brain({ ...team(["channel:read"]), ...queue });
-  show(Approvals);
+  at();
 
   expect(await screen.findByText("Asha")).toBeInTheDocument();
   await waitFor(() =>
@@ -190,14 +235,14 @@ it("shows a sender's name as text, never as markup", async () => {
     ...queue,
     [QUEUE]: { body: { items: [waiting("U9", "<img src=x onerror=alert(1)>", "sales", HOUR)] } },
   });
-  show(Approvals);
+  at();
   expect(await screen.findByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
   expect(document.querySelector("tbody img")).toBeNull();
 });
 
 it("says no one is waiting, in the queue's own frame", async () => {
   brain({ ...team(["channel:read"]), ...queue, [QUEUE]: { body: { items: [] } } });
-  show(Approvals);
+  at();
   expect(await screen.findByText("No one is waiting")).toBeInTheDocument();
 });
 
@@ -208,10 +253,112 @@ it("says why the queue could not be read, and reads it again on request", async 
     ...queue,
     [QUEUE]: () => (fail ? { status: 500, text: "the store is down" } : { body: { items: [] } }),
   });
-  show(Approvals);
+  at();
 
   expect(await screen.findByRole("alert")).toHaveTextContent("the store is down");
   fail = false;
   await userEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByText("No one is waiting")).toBeInTheDocument();
+});
+
+/* ---------------------------------------------------------------- let in */
+
+const letIn = {
+  "GET /teams/{id}/channels": {
+    body: {
+      items: [
+        { id: "id-sales", name: "sales", provider: "custom" },
+        { id: "id-ops", name: "ops", provider: "custom" },
+      ],
+    },
+  },
+  "GET /teams/{id}/channels/{cid}/senders": (r: { path: string }) =>
+    r.path.includes("id-sales")
+      ? {
+          body: {
+            items: [
+              { sender_ref: "U09XYZ", user_id: "u-bala", created_at: ago(2 * HOUR) },
+              { sender_ref: "U08OLD", user_id: "u-gone", created_at: ago(9 * HOUR) },
+            ],
+          },
+        }
+      : { body: { items: [] } },
+};
+
+it("opens on who is let in when the URL says so, channel by channel", async () => {
+  brain({ ...team(["channel:read", "sender:approve"]), ...queue, ...letIn });
+  at("/ui/approvals?show=let-in");
+
+  expect(await screen.findByRole("tab", { name: "Let in" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const sales = await screen.findByRole("region", { name: "sales" });
+  const bala = (await within(sales).findByText("U09XYZ")).closest("tr") as HTMLElement;
+  expect(await within(bala).findByText("bala@team.test")).toBeInTheDocument();
+  // Someone bound to a person since removed from the team says so.
+  const old = within(sales).getByText("U08OLD").closest("tr") as HTMLElement;
+  expect(within(old).getByText("Someone no longer in the team")).toBeInTheDocument();
+  const ops = screen.getByRole("region", { name: "ops" });
+  expect(
+    await within(ops).findByText("No one has been let in on this channel."),
+  ).toBeInTheDocument();
+});
+
+it("keeps the chosen list in the URL", async () => {
+  brain({ ...team(["channel:read", "sender:approve"]), ...queue, ...letIn });
+  const router = at();
+  await userEvent.click(await screen.findByRole("tab", { name: "Let in" }));
+  await waitFor(() => expect(router.state.location.search).toEqual({ show: "let-in" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Waiting" }));
+  await waitFor(() => expect(router.state.location.search).toEqual({}));
+});
+
+it("stops letting someone in once it is confirmed, on their own channel", async () => {
+  const seen = brain({
+    ...team(["channel:read", "sender:approve"]),
+    ...queue,
+    ...letIn,
+    "DELETE /teams/{id}/channels/{cid}/senders": { status: 204 },
+  });
+  at("/ui/approvals?show=let-in");
+
+  await userEvent.click(await screen.findByRole("button", { name: "Remove U09XYZ" }));
+  expect(seen.some((s) => s.method === "DELETE")).toBe(false);
+  const confirm = await screen.findByRole("dialog", {
+    name: "Stop letting U09XYZ in on sales?",
+  });
+  await userEvent.click(within(confirm).getByRole("button", { name: "Remove" }));
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(seen.filter((s) => s.method === "DELETE").map((s) => s.path)).toEqual([
+    `/teams/${TEAM}/channels/id-sales/senders?ref=U09XYZ`,
+  ]);
+});
+
+it("shows the brain's refusal in the confirm, and stays", async () => {
+  brain({
+    ...team(["channel:read", "sender:approve"]),
+    ...queue,
+    ...letIn,
+    "DELETE /teams/{id}/channels/{cid}/senders": {
+      status: 409,
+      text: "the sender was bound to someone else meanwhile",
+    },
+  });
+  at("/ui/approvals?show=let-in");
+
+  await userEvent.click(await screen.findByRole("button", { name: "Remove U09XYZ" }));
+  const confirm = await screen.findByRole("dialog");
+  await userEvent.click(within(confirm).getByRole("button", { name: "Remove" }));
+  expect(await within(confirm).findByRole("alert")).toHaveTextContent(
+    "the sender was bound to someone else meanwhile",
+  );
+});
+
+it("lists who is let in without Remove to someone who may not approve", async () => {
+  brain({ ...team(["channel:read"]), ...queue, ...letIn });
+  at("/ui/approvals?show=let-in");
+  await screen.findByText("U09XYZ");
+  expect(screen.queryByRole("button", { name: /^remove/i })).toBeNull();
 });

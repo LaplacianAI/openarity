@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { toast } from "sonner";
 
 import { approveSender, listMembers, listTeamPendingSenders } from "@/api";
@@ -10,6 +10,7 @@ import { useCurrentTeam } from "@/api/session";
 import { useTeamSummary } from "@/api/summary";
 import type { Member, TeamPendingSender } from "@/api/types";
 import { Time } from "@/components/facts";
+import { LetIn } from "@/components/let-in";
 import { ErrorState, ForbiddenState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,11 +29,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, EmptyState, LoadMore, Mono, PageHeader } from "@/components/ui-bits";
 import { waitedFor } from "@/lib/format";
 import { count } from "@/lib/runs";
+import { suggestMember } from "@/lib/senders";
+
+type Show = "waiting" | "let-in";
 
 export const Route = createFileRoute("/ui/approvals")({
+  // Which list, in the URL so a link can open on who is let in.
+  validateSearch: (search: Record<string, unknown>): { show?: Show | undefined } => ({
+    show: search.show === "let-in" ? "let-in" : undefined,
+  }),
   component: Approvals,
 });
 
@@ -53,6 +62,8 @@ function waitingFinding(total: number, oldest: TeamPendingSender | undefined): s
 
 function Approvals() {
   const { teamId } = useCurrentTeam();
+  const show: Show = Route.useSearch().show ?? "waiting";
+  const navigate = Route.useNavigate();
   const perms = usePermissions(teamId);
   const canRead = perms.can(READ);
   const summary = useTeamSummary(teamId);
@@ -103,115 +114,151 @@ function Approvals() {
         <EmptyState title="No team" body="Join or create a team before reviewing senders." />
       ) : perms.isPending ? null : !canRead ? (
         <ForbiddenState what="who is waiting" permission={READ} />
-      ) : queue.isPending ? (
-        <div className="space-y-1" role="status" aria-label="Loading who is waiting">
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-        </div>
-      ) : queue.isError ? (
-        <ErrorState
-          what="who is waiting"
-          error={queue.error}
-          onRetry={() => queue.refetch()}
-          retrying={queue.isRefetching}
-        />
-      ) : rows.length === 0 ? (
-        <EmptyState
-          title="No one is waiting"
-          body="Someone who writes in on one of the team's channels before being let in appears here, the longest waiting first."
-        />
       ) : (
-        <div>
-          <Table stack="lg" aria-label="Senders waiting to be let in, the longest waiting first">
-            <TableHeader>
-              <tr>
-                <TableHead>Sender</TableHead>
-                <TableHead>Channel</TableHead>
-                <TableHead>Waiting</TableHead>
-                <TableHead numeric>Messages</TableHead>
-                <TableHead>Last seen</TableHead>
-                {canApprove ? (
-                  <TableHead>
-                    <span className="sr-only">Let in</span>
-                  </TableHead>
-                ) : null}
-              </tr>
-            </TableHeader>
-            <TableBody>
-              {rows.map((row) => (
-                <TableRow key={`${row.channel_id}/${row.sender_ref}`} data-sender={row.sender_ref}>
-                  <TableCell>
-                    <span className="flex min-w-0 items-center gap-2.5">
-                      <Avatar name={row.sender_name || row.sender_ref} />
-                      <span className="min-w-0">
-                        {/* A name the stranger typed: text, never markup. */}
-                        <span className="block truncate font-medium">
-                          {row.sender_name || row.sender_ref}
-                        </span>
-                        {row.sender_name ? (
-                          <Mono className="block truncate">{row.sender_ref}</Mono>
-                        ) : null}
-                      </span>
-                    </span>
-                  </TableCell>
-                  <TableCell label="Channel" className="text-muted-foreground">
-                    {row.channel_name} · {row.channel_provider}
-                  </TableCell>
-                  <TableCell label="Waiting" className="whitespace-nowrap">
-                    {waitedFor(row.first_seen)}
-                  </TableCell>
-                  <TableCell label="Messages" numeric>
-                    {row.seen_count.toLocaleString("en-US")}
-                  </TableCell>
-                  <TableCell label="Last seen" className="whitespace-nowrap text-muted-foreground">
-                    <Time iso={row.last_seen} />
-                  </TableCell>
-                  {canApprove ? (
-                    <TableCell>
-                      <BindTo
-                        disabled={approve.isPending || members.isPending}
-                        members={members.data?.items ?? []}
-                        onApprove={(userId) => approve.mutate({ row, userId })}
-                      />
-                    </TableCell>
-                  ) : null}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <LoadMore
-            hasMore={Boolean(queue.hasNextPage)}
-            loading={queue.isFetchingNextPage}
-            onClick={() => queue.fetchNextPage()}
-            loadedLabel={`${rows.length} sender${rows.length === 1 ? "" : "s"} loaded`}
-          />
-        </div>
+        <Tabs
+          value={show}
+          onValueChange={(v) =>
+            navigate({ search: { show: v === "let-in" ? "let-in" : undefined }, replace: true })
+          }
+          className="gap-4"
+        >
+          <TabsList>
+            <TabsTrigger value="waiting">Waiting</TabsTrigger>
+            <TabsTrigger value="let-in">Let in</TabsTrigger>
+          </TabsList>
+          <TabsContent value="waiting">{waitingList()}</TabsContent>
+          <TabsContent value="let-in">
+            <LetIn teamId={teamId} canRemove={canApprove} />
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   );
+
+  function waitingList() {
+    return queue.isPending ? (
+      <div className="space-y-1" role="status" aria-label="Loading who is waiting">
+        <Skeleton className="h-12 w-full" />
+        <Skeleton className="h-12 w-full" />
+      </div>
+    ) : queue.isError ? (
+      <ErrorState
+        what="who is waiting"
+        error={queue.error}
+        onRetry={() => queue.refetch()}
+        retrying={queue.isRefetching}
+      />
+    ) : rows.length === 0 ? (
+      <EmptyState
+        title="No one is waiting"
+        body="Someone who writes in on one of the team's channels before being let in appears here, the longest waiting first."
+      />
+    ) : (
+      <div>
+        <Table stack="lg" aria-label="Senders waiting to be let in, the longest waiting first">
+          <TableHeader>
+            <tr>
+              <TableHead>Sender</TableHead>
+              <TableHead>Channel</TableHead>
+              <TableHead>Waiting</TableHead>
+              <TableHead numeric>Messages</TableHead>
+              <TableHead>Last seen</TableHead>
+              {canApprove ? (
+                <TableHead>
+                  <span className="sr-only">Let in</span>
+                </TableHead>
+              ) : null}
+            </tr>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow key={`${row.channel_id}/${row.sender_ref}`} data-sender={row.sender_ref}>
+                <TableCell>
+                  <span className="flex min-w-0 items-center gap-2.5">
+                    <Avatar name={row.sender_name || row.sender_ref} />
+                    <span className="min-w-0">
+                      {/* A name the stranger typed: text, never markup. */}
+                      <span className="block truncate font-medium">
+                        {row.sender_name || row.sender_ref}
+                      </span>
+                      {row.sender_name ? (
+                        <Mono className="block truncate">{row.sender_ref}</Mono>
+                      ) : null}
+                    </span>
+                  </span>
+                </TableCell>
+                <TableCell label="Channel" className="text-muted-foreground">
+                  {row.channel_name} · {row.channel_provider}
+                </TableCell>
+                <TableCell label="Waiting" className="whitespace-nowrap">
+                  {waitedFor(row.first_seen)}
+                </TableCell>
+                <TableCell label="Messages" numeric>
+                  {row.seen_count.toLocaleString("en-US")}
+                </TableCell>
+                <TableCell label="Last seen" className="whitespace-nowrap text-muted-foreground">
+                  <Time iso={row.last_seen} />
+                </TableCell>
+                {canApprove ? (
+                  <TableCell>
+                    <BindTo
+                      disabled={approve.isPending || members.isPending}
+                      members={members.data?.items ?? []}
+                      suggested={suggestMember(row.sender_name, members.data?.items ?? [])}
+                      onApprove={(userId) => approve.mutate({ row, userId })}
+                    />
+                  </TableCell>
+                ) : null}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        <LoadMore
+          hasMore={Boolean(queue.hasNextPage)}
+          loading={queue.isFetchingNextPage}
+          onClick={() => queue.fetchNextPage()}
+          loadedLabel={`${rows.length} sender${rows.length === 1 ? "" : "s"} loaded`}
+        />
+      </div>
+    );
+  }
 }
 
+/**
+ * Who a sender is, then Approve. A member whose name fits is chosen already,
+ * and Approve with no one chosen says so rather than sitting greyed out.
+ */
 function BindTo({
   members,
+  suggested,
   disabled,
   onApprove,
 }: {
   members: Member[];
+  suggested: string | null;
   disabled: boolean;
   onApprove: (userId: string) => void;
 }) {
-  const [userId, setUserId] = useState<string>("");
+  const [picked, setPicked] = useState<string>("");
+  const [asked, setAsked] = useState(false);
+  const userId = picked || suggested || "";
+  const noteId = useId();
 
   return (
-    <div className="flex items-center justify-end gap-1.5 stacked:justify-start">
-      <Select value={userId} onValueChange={setUserId}>
-        <SelectTrigger className="h-8 w-48 text-xs" aria-label="Bind this sender to">
+    <div className="flex flex-wrap items-center justify-end gap-1.5 stacked:justify-start">
+      <Select value={userId} onValueChange={setPicked}>
+        <SelectTrigger
+          className="h-8 w-48 text-xs stacked:h-10"
+          aria-label="Bind this sender to"
+          aria-describedby={asked && !userId ? noteId : undefined}
+        >
           <SelectValue placeholder="Bind to a member…" />
         </SelectTrigger>
         <SelectContent>
           {members.map((m) => (
             <SelectItem key={m.user_id} value={m.user_id}>
               {m.email ?? m.subject}
+              {m.user_id === suggested ? " (matches their name)" : ""}
             </SelectItem>
           ))}
         </SelectContent>
@@ -219,11 +266,21 @@ function BindTo({
       <Button
         variant="outline"
         size="sm"
-        disabled={disabled || !userId}
-        onClick={() => userId && onApprove(userId)}
+        className="stacked:h-10"
+        disabled={disabled}
+        onClick={() => (userId ? onApprove(userId) : setAsked(true))}
       >
         Approve
       </Button>
+      {asked && !userId ? (
+        <p
+          id={noteId}
+          role="alert"
+          className="basis-full text-right text-xs text-failed stacked:text-left"
+        >
+          Choose which member they are first.
+        </p>
+      ) : null}
     </div>
   );
 }

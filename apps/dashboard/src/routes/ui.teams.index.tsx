@@ -62,6 +62,15 @@ export function noAdmin(members: Page<Member> | undefined): boolean {
   return Boolean(members && !members.next_cursor && !members.items.some((m) => m.role === "admin"));
 }
 
+/**
+ * Whether a member is the team's only admin, so removing them would leave it
+ * with none. Like noAdmin, a page with more after it cannot say so.
+ */
+export function onlyAdmin(members: Page<Member> | undefined, m: Member): boolean {
+  if (!members || members.next_cursor || m.role !== "admin") return false;
+  return members.items.filter((x) => x.role === "admin").length === 1;
+}
+
 /** The sentence at the top: which teams no one can manage but a super admin. */
 export function adminFinding(teams: Team[]): string | null {
   if (teams.length === 0) return null;
@@ -236,14 +245,21 @@ function TeamSection({
                 </TableCell>
                 {canManage ? (
                   <TableCell className="text-right stacked:justify-end">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Remove ${m.email ?? m.subject}`}
-                      onClick={() => setRemoving(m)}
-                    >
-                      Remove
-                    </Button>
+                    {onlyAdmin(members.data, m) ? (
+                      // Said where the button would be: removing them leaves no one to manage the team.
+                      <span className="text-xs whitespace-nowrap text-muted-foreground">
+                        The only admin
+                      </span>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Remove ${m.email ?? m.subject}`}
+                        onClick={() => setRemoving(m)}
+                      >
+                        Remove
+                      </Button>
+                    )}
                   </TableCell>
                 ) : null}
               </TableRow>

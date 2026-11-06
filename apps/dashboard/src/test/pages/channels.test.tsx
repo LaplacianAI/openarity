@@ -126,6 +126,23 @@ it("shows a generated secret once, and forgets it when told it is stored", async
   expect(screen.queryByText(GENERATED)).not.toBeInTheDocument();
 });
 
+// A typed provider this build lacks could only be refused, so it is a choice.
+it("offers the providers this build has as a choice, by the name people know", async () => {
+  brain({ ...team(["channel:write"]), "GET /teams/{id}/channels": { body: { items: [] } } });
+  show(Channels);
+  await userEvent.click(await screen.findByRole("button", { name: /connect channel/i }));
+  const provider = screen.getByRole("combobox", { name: /^provider$/i });
+  expect(provider).toHaveTextContent("Custom webhook");
+  expect(screen.queryByRole("textbox", { name: /^provider$/i })).toBeNull();
+});
+
+it("points an empty team at the form, not at a command", async () => {
+  brain({ ...team(["channel:write"]), "GET /teams/{id}/channels": { body: { items: [] } } });
+  show(Channels);
+  expect(await screen.findByText("No channels yet")).toBeInTheDocument();
+  expect(screen.queryByText(/oa channels/)).toBeNull();
+});
+
 it("sends a pasted secret, and never shows it back", async () => {
   const seen = brain({
     ...team(["channel:write"]),

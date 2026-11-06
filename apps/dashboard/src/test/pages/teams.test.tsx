@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { setToken } from "@/api/token";
 import { brain, pageOf, type Seen, show, TEAM, team } from "@/test/brain";
 
-const { Route, adminFinding, noAdmin } = await import("@/routes/ui.teams.index");
+const { Route, adminFinding, noAdmin, onlyAdmin } = await import("@/routes/ui.teams.index");
 const Teams = await pageOf(Route);
 
 afterEach(() => {
@@ -15,8 +15,10 @@ afterEach(() => {
 });
 
 const alice = { user_id: "u1", subject: "alice", role: "admin" };
+// A second admin, so alice may be removed: the only admin may not.
+const carol = { user_id: "u3", subject: "carol", role: "admin" };
 const people = {
-  "GET /teams/{id}/members": { body: { items: [alice] } },
+  "GET /teams/{id}/members": { body: { items: [alice, carol] } },
   "GET /users": {
     body: {
       items: [
@@ -113,7 +115,7 @@ describe("the members", () => {
 
     const table = await screen.findByRole("table", { name: "Members of platform" });
     expect(within(table).getByText("alice")).toBeInTheDocument();
-    expect(within(table).getByText("admin")).toBeInTheDocument();
+    expect(within(table).getAllByText("admin")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: /^remove/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /add member/i })).not.toBeInTheDocument();
   });
@@ -124,6 +126,38 @@ describe("the members", () => {
 
     expect(await screen.findByRole("button", { name: "Remove alice" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add member/i })).toBeInTheDocument();
+  });
+
+  // Removing them would leave no one to manage the team but a super admin.
+  it("offers no Remove on the only admin, and says why", async () => {
+    brain({
+      ...team(["membership:write"]),
+      ...people,
+      "GET /teams/{id}/members": {
+        body: { items: [alice, { user_id: "u2", subject: "bala", role: "member" }] },
+      },
+    });
+    show(Teams);
+
+    expect(await screen.findByRole("button", { name: "Remove bala" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove alice" })).toBeNull();
+    const row = screen.getByText("alice").closest("tr") as HTMLElement;
+    expect(within(row).getByText("The only admin")).toBeVisible();
+  });
+
+  it.each([
+    ["one admin, read whole", [alice], undefined, true],
+    ["two admins", [alice, carol], undefined, false],
+    // Another admin may be on the next page.
+    ["one admin on a page with more", [alice], "more", false],
+  ])("judges %s", (_, items, next_cursor, said) => {
+    expect(onlyAdmin({ items, next_cursor } as never, alice as never)).toBe(said);
+  });
+
+  it("never calls a member the only admin", () => {
+    const bala = { user_id: "u2", subject: "bala", role: "member" };
+    expect(onlyAdmin({ items: [alice, bala] } as never, bala as never)).toBe(false);
+    expect(onlyAdmin(undefined, alice as never)).toBe(false);
   });
 
   it("shows the brain's error with a way to try again", async () => {

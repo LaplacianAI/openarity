@@ -7,6 +7,7 @@ import {
   getAgent,
   getMCPServer,
   getSkill,
+  getTeamSettings,
   listAgents,
   listLoops,
   listMCPServers,
@@ -136,6 +137,17 @@ export function AgentForm({
   self?: string;
 }) {
   const names = useNames(teamId);
+  const settings = useQuery({
+    queryKey: ["settings", teamId],
+    queryFn: () => getTeamSettings(teamId),
+  });
+  // Suggested, not imposed: the team's own model first, then those its agents
+  // run on. A name the gateway knows that nobody uses yet can still be typed.
+  const teamModel = settings.data?.model?.name ?? null;
+  const models = [
+    ...new Set([teamModel, ...names.agents.map((a) => a.model?.name)].filter(Boolean)),
+  ] as string[];
+  const modelsId = useId();
   // Names learned from a pick, so a chip says what it is before any read.
   const [learned, setLearned] = useState<Map<string, string>>(new Map());
   const learn = (picked: Picked[]) =>
@@ -210,15 +222,29 @@ export function AgentForm({
         about="The model it runs on, and how it works through a task."
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Model" htmlFor="agent-model" hint="As the model gateway names it.">
+          <Field
+            label="Model"
+            htmlFor="agent-model"
+            hint={
+              teamModel
+                ? `The team's model is ${teamModel}. The models its agents use are suggested.`
+                : "As the model gateway names it. The models the team's agents use are suggested."
+            }
+          >
             <Input
               id="agent-model"
+              list={modelsId}
               value={draft.model}
-              placeholder="anthropic/claude-sonnet-5-5"
+              placeholder={teamModel ?? undefined}
               autoComplete="off"
               spellCheck={false}
               onChange={(e) => set({ model: e.target.value })}
             />
+            <datalist id={modelsId}>
+              {models.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
           </Field>
           <Field label="Pattern" htmlFor="agent-pattern" hint="How it works through a task.">
             <select
