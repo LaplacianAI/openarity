@@ -15,6 +15,9 @@ describe("initials", () => {
 
   it("splits an email address and a handle into their parts", () => {
     expect(initials("tom.baker@example.com")).toBe("TB");
+    // The domain is everyone's, not a second name.
+    expect(initials("ines@halden.co")).toBe("I");
+    expect(initials("@ines")).toBe("I");
     expect(initials("alerts-bot")).toBe("AB");
     expect(initials("U0991")).toBe("U");
   });

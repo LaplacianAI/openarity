@@ -25,15 +25,6 @@ export function fileSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function initials(name: string): string {
-  return name
-    .split(/[\s@._-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? "")
-    .join("");
-}
-
 /**
  * A session's status in one of the three tones a status dot knows. The
  * brain's vocabulary is wider; anything unrecognised is drawn as closed

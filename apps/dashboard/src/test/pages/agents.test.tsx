@@ -406,6 +406,45 @@ describe("defining an agent", () => {
     return sent(seen, "POST");
   }
 
+  it("suggests the team's model and the models its agents use, and lets another be typed", async () => {
+    brain({
+      ...team(["agent:write"]),
+      ...registry,
+      "GET /teams/{id}/agents": {
+        body: {
+          items: [listed, { ...listed, id: "a5", model: { name: "local/qwen", max_tokens: 1 } }],
+        },
+      },
+      "GET /teams/{id}/settings": {
+        body: {
+          model: { name: "anthropic/claude-haiku-5", max_tokens: 1024 },
+          search: { provider: "none", url: null, key_set: false },
+          learning: false,
+          compaction_messages: 40,
+          hub: null,
+        },
+      },
+    });
+    at("/ui/agents/new");
+    const model = await screen.findByLabelText(/^model$/i);
+    await waitFor(() => expect(model).toHaveAttribute("placeholder", "anthropic/claude-haiku-5"));
+    const list = document.getElementById(model.getAttribute("list") ?? "");
+    await waitFor(() =>
+      expect(Array.from(list?.querySelectorAll("option") ?? []).map((o) => o.value)).toEqual([
+        "anthropic/claude-haiku-5",
+        "anthropic/claude-sonnet-5-5",
+        "local/qwen",
+      ]),
+    );
+    expect(screen.getByText(/The team's model is anthropic\/claude-haiku-5\./)).toBeVisible();
+  });
+
+  it("names no model it does not know of when the team has none", async () => {
+    defining();
+    const model = await screen.findByLabelText(/^model$/i);
+    expect(model).not.toHaveAttribute("placeholder");
+  });
+
   it("lays the agent out in the parts a person decides", async () => {
     defining();
     await screen.findByLabelText(/^name$/i);

@@ -127,10 +127,12 @@ export function BackLink({ to, children }: { to: string; children: ReactNode }) 
 /** Initials on a quiet disc. Not teal: a person is not an action. */
 /**
  * The first letter of a name's first two words, where anything that is not a
- * letter or digit separates words: "Priya (contractor)" is PC, not P(.
+ * letter or digit separates words: "Priya (contractor)" is PC, not P(. An
+ * address counts only before its @, so ines@halden.co is I, not IH.
  */
 export function initials(name: string): string {
-  return name
+  const at = name.indexOf("@");
+  return (at > 0 ? name.slice(0, at) : name)
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean)
     .slice(0, 2)

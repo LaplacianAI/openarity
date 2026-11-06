@@ -22,6 +22,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -49,8 +56,8 @@ export const Route = createFileRoute("/ui/channels/")({
 const WRITE = "channel:write";
 const READ_ALL = "session:read_all";
 
-/** The adapters this build ships. Others are typed; the brain refuses an unknown one by name. */
-const KNOWN_PROVIDERS = ["custom"];
+/** The adapters this build ships, each with the name a person knows it by. */
+const PROVIDERS: [value: string, word: string][] = [["custom", "Custom webhook"]];
 
 /** The brain's own limit on a channel's name. */
 const MAX_NAME = 200;
@@ -117,8 +124,7 @@ function Channels() {
       ) : rows.length === 0 ? (
         <EmptyState
           title="No channels yet"
-          body="A channel is a provider the brain listens to — an inbox, a support tool, a webhook. Each has a signing secret that proves a request really came from it."
-          hint="oa channels create <team> support --provider custom"
+          body="A channel is where messages reach the team: an inbox, a support tool, a webhook. Each has a signing secret that proves a request really came from it."
         />
       ) : (
         <div>
@@ -442,22 +448,20 @@ function ConnectSheet({
               onChange={(e) => set({ name: e.target.value })}
             />
           </Field>
-          <Field
-            label="Provider"
-            htmlFor="channel-provider"
-            hint={`The adapter that reads its webhooks. This build has: ${KNOWN_PROVIDERS.join(", ")}.`}
-          >
-            <Input
-              id="channel-provider"
-              list="channel-providers"
-              value={draft.provider}
-              onChange={(e) => set({ provider: e.target.value })}
-            />
-            <datalist id="channel-providers">
-              {KNOWN_PROVIDERS.map((p) => (
-                <option key={p} value={p} />
-              ))}
-            </datalist>
+          <Field label="Provider" htmlFor="channel-provider" hint="What sends its webhooks.">
+            {/* A choice, not a field: a provider this build lacks could only be refused. */}
+            <Select value={draft.provider} onValueChange={(provider) => set({ provider })}>
+              <SelectTrigger id="channel-provider" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PROVIDERS.map(([value, word]) => (
+                  <SelectItem key={value} value={value}>
+                    {word}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
           <SwitchField
             label="The provider gave me a signing secret"
