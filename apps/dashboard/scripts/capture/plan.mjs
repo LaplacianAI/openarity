@@ -19,7 +19,7 @@ export const SCREENS = [
   { name: "overview", path: "/ui/", open: "Search, ⌘K" },
   { name: "teams", path: "/ui/teams" },
   { name: "deleted-teams", path: "/ui/teams/deleted" },
-  { name: "channels", path: "/ui/channels", open: "New channel" },
+  { name: "channels", path: "/ui/channels", open: "Connect channel" },
   { name: "runs", path: "/ui/runs" },
   { name: "approvals", path: "/ui/approvals" },
   { name: "sessions", path: "/ui/sessions" },

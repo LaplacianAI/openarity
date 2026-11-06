@@ -62,6 +62,20 @@ export const Route = createFileRoute("/ui/servers/")({
   component: Servers,
 });
 
+/**
+ * What needs the reader: servers whose last discovery failed, else the URL
+ * servers nobody has asked, whose tools no one here has seen. A command
+ * server cannot be asked, so it is not counted.
+ */
+export function serversFinding(failing: number, rows: MCPServer[]): string | null {
+  if (failing > 0) {
+    return `${count(failing, "server")} failed ${failing === 1 ? "its" : "their"} last discovery.`;
+  }
+  const unasked = rows.filter((s) => s.url && discoveryOf(s) === "not discovered").length;
+  if (unasked === 0) return null;
+  return `${count(unasked, "server")} ${unasked === 1 ? "has" : "have"} never been asked for ${unasked === 1 ? "its" : "their"} tools.`;
+}
+
 const WRITE = "tool:write";
 
 /** What a server is reached at: its URL, or its command as it would be typed. */
@@ -99,11 +113,7 @@ function Servers() {
     <div className="space-y-5">
       <PageHeader
         title="MCP servers"
-        finding={
-          failing > 0
-            ? `${count(failing, "server")} failed ${failing === 1 ? "its" : "their"} last discovery.`
-            : null
-        }
+        finding={serversFinding(failing, rows)}
         description="The tool servers a team's agents can be granted. Credentials are references into the secret store, never the secret."
         actions={
           canWrite ? (
@@ -288,7 +298,11 @@ function ServerRow({
             >
               Discover
             </Button>
-          ) : null}
+          ) : (
+            <span className="text-xs whitespace-nowrap text-muted-foreground">
+              Command servers can't be used yet
+            </span>
+          )}
         </TableCell>
       ) : null}
     </TableRow>

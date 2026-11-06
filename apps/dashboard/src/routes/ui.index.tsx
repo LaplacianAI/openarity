@@ -97,7 +97,11 @@ function Home() {
 
       <div className="grid gap-8 min-[80rem]:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div className="min-w-0 space-y-8">
-          {summary.data && summary.data.runs_24h.failed > 0 ? <Failures teamId={teamId} /> : null}
+          {!summary.data ? null : summary.data.runs_24h.failed > 0 ? (
+            <Failures teamId={teamId} />
+          ) : (
+            <LastFailure teamId={teamId} />
+          )}
           <HubRuns teamId={teamId} />
         </div>
         <div className="min-w-0 space-y-8">
@@ -111,30 +115,38 @@ function Home() {
   );
 }
 
-/** The last day's runs by status, each a way into the runs it counts. */
+/**
+ * The last day's runs by status, each a way into the runs it counts. A day
+ * with none says so in a line, rather than as five zeros.
+ */
 function DayCounts({ summary }: { summary: TeamSummary | undefined }) {
+  const total = summary ? Object.values(summary.runs_24h).reduce((n, c) => n + c, 0) : null;
   return (
-    <section aria-labelledby="day">
-      <h2 id="day" className="sr-only">
+    <section aria-labelledby="day" className="space-y-2">
+      <h2 id="day" className="text-xs font-medium text-muted-foreground">
         Runs in the last 24 hours
       </h2>
-      {/* Each count links to its runs, and a dl may not wrap its pairs in links. */}
-      <ul className="grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-rule sm:grid-cols-5">
-        {RUN_STATUSES.map((status) => (
-          <li key={status} className="bg-card last:col-span-2 sm:last:col-span-1">
-            <Link
-              to="/ui/runs"
-              search={{ status, day: true }}
-              className="flex flex-col gap-1 px-4 py-3 transition-colors hover:bg-foreground/3 focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
-            >
-              <StatusPill status={status} />
-              <span className="text-xl font-semibold tabular-nums" data-count={status}>
-                {summary ? summary.runs_24h[status].toLocaleString("en-US") : "—"}
-              </span>
-            </Link>
-          </li>
-        ))}
-      </ul>
+      {total === 0 ? (
+        <p className="text-sm text-muted-foreground">None.</p>
+      ) : (
+        // Each count links to its runs, and a dl may not wrap its pairs in links.
+        <ul className="grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-rule sm:grid-cols-5">
+          {RUN_STATUSES.map((status) => (
+            <li key={status} className="bg-card last:col-span-2 sm:last:col-span-1">
+              <Link
+                to="/ui/runs"
+                search={{ status, day: true }}
+                className="flex flex-col gap-1 px-4 py-3 transition-colors hover:bg-foreground/3 focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
+              >
+                <StatusPill status={status} />
+                <span className="text-xl font-semibold tabular-nums" data-count={status}>
+                  {summary ? summary.runs_24h[status].toLocaleString("en-US") : "—"}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -201,6 +213,36 @@ function Failures({ teamId }: { teamId: string }) {
         <ErrorState what="the failed runs" error={failed.error} onRetry={() => failed.refetch()} />
       ) : (
         <RunTable runs={failed.data.items} label="Runs that failed in the last 24 hours" />
+      )}
+    </Block>
+  );
+}
+
+/**
+ * The most recent failure, however old, on a day with none: a team that runs
+ * a few times a week would otherwise never see one on Home.
+ */
+function LastFailure({ teamId }: { teamId: string }) {
+  const last = useQuery({
+    queryKey: ["runs", teamId, "home", "last-failed"],
+    queryFn: () => listTeamRuns(teamId, null, { status: ["failed"], limit: 1 }),
+  });
+  if (last.isPending || (last.isSuccess && last.data.items.length === 0)) return null;
+  return (
+    <Block
+      id="last-failed"
+      title="Last failure"
+      more={
+        <Link to="/ui/runs" search={{ status: "failed" }} className={viewAll}>
+          All failures
+          <ArrowRight aria-hidden className="size-3" />
+        </Link>
+      }
+    >
+      {last.isError ? (
+        <ErrorState what="the last failure" error={last.error} onRetry={() => last.refetch()} />
+      ) : (
+        <RunTable runs={last.data.items} label="The team's last failed run" />
       )}
     </Block>
   );
