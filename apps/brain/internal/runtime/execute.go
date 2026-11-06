@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -25,6 +26,7 @@ type Store interface {
 	ClaimRun(ctx context.Context, arg db.ClaimRunParams) (db.ClaimRunRow, error)
 	HeartbeatRun(ctx context.Context, arg db.HeartbeatRunParams) (*time.Time, error)
 	FinishRun(ctx context.Context, arg db.FinishRunParams) (int64, error)
+	FinishRunWithEvent(ctx context.Context, finish db.FinishRunParams, event db.AppendRunEventParams) (int64, error)
 	StartChildRun(ctx context.Context, arg db.StartChildRunParams) (db.Run, error)
 	ReapChildren(ctx context.Context, arg db.ReapChildrenParams) ([]uuid.UUID, error)
 	GetRun(ctx context.Context, id uuid.UUID) (db.Run, error)
@@ -345,7 +347,15 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 		p.Error = &failure
 	}
 
-	n, err := e.store.FinishRun(ctx, p)
+	said, _ := clip(failure)
+	raw, err := json.Marshal(finishedPayload{Status: status, Error: said})
+	if err != nil {
+		return fmt.Errorf("encoding the finished event: %w", err)
+	}
+
+	n, err := e.store.FinishRunWithEvent(ctx, p, db.AppendRunEventParams{
+		RunID: runID, Kind: "finished", Payload: raw, Worker: worker,
+	})
 	if err != nil {
 		return fmt.Errorf("finishing run %s as %s: %w", runID, status, err)
 	}
@@ -355,12 +365,6 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 
 	if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: runID, Reason: endedReason}); err != nil {
 		return fmt.Errorf("ending what run %s left running: %w", runID, err)
-	}
-
-	failure, _ = clip(failure)
-	err = appendEvent(ctx, e.store, runID, worker, "finished", finishedPayload{Status: status, Error: failure})
-	if err != nil && !errors.Is(err, ErrLostRun) {
-		return err
 	}
 	return nil
 }
