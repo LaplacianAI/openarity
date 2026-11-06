@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -621,7 +623,9 @@ func TestAnUnknownLoopFailsNamingTheKnownOnes(t *testing.T) {
 	}
 }
 
-func TestAnUnreachableModelFailsNamingTheSetting(t *testing.T) {
+// The run's error is read by everyone in its session, so it names the part
+// that failed and no setting: the setting is the operator's, in the logs.
+func TestAnUnreachableModelFailsNamingTheModel(t *testing.T) {
 	f := newExecFixture(t, newScripted())
 	gone := httptest.NewServer(http.NotFoundHandler())
 	gone.Close()
@@ -629,7 +633,31 @@ func TestAnUnreachableModelFailsNamingTheSetting(t *testing.T) {
 
 	f.mustExecute(t)
 
-	wantStatus(t, f.row(t), "failed", "OPENARITY_LLM_BASE_URL")
+	r := f.row(t)
+	wantStatus(t, r, "failed", "the model endpoint could not be reached")
+	if strings.Contains(deref(r.Error), "OPENARITY_") {
+		t.Errorf("error = %q, which names a setting", deref(r.Error))
+	}
+}
+
+// A server the run could not open wraps a *url.Error, as an unreachable model
+// does, and the run must name the server rather than blame the model.
+func TestAServerThatCannotBeReachedIsNotBlamedOnTheModel(t *testing.T) {
+	t.Parallel()
+
+	dial := &url.Error{
+		Op:  "Post",
+		URL: "https://statuspage.mcp.invalid/key-abc123/mcp",
+		Err: errors.New("dial tcp: lookup statuspage.mcp.invalid: no such host"),
+	}
+	runErr := fmt.Errorf("building incident-scribe: %w", &serverDown{name: "statuspage", err: dial})
+
+	status, failure := outcome(runErr, nil)
+
+	want := `the MCP server "statuspage" could not be reached: dial tcp: lookup statuspage.mcp.invalid: no such host`
+	if status != "failed" || failure != want {
+		t.Errorf("outcome = %s, %q; want failed, %q", status, failure, want)
+	}
 }
 
 func TestARunPastItsTokenBudgetFailsNamingIt(t *testing.T) {
@@ -723,7 +751,7 @@ func TestAnUnreachableModelsURLIsNotStored(t *testing.T) {
 	f.mustExecute(t)
 
 	r := f.row(t)
-	wantStatus(t, r, "failed", "OPENARITY_LLM_BASE_URL")
+	wantStatus(t, r, "failed", "the model endpoint could not be reached")
 	if strings.Contains(deref(r.Error), "key-abc123") {
 		t.Errorf("error = %q, which carries the endpoint's URL", deref(r.Error))
 	}
@@ -734,10 +762,10 @@ func TestAnUnreachableModelsURLIsNotStored(t *testing.T) {
 	}
 }
 
-// A model that answers with an error status fails the run naming the setting
-// to fix, with the status and the provider's code, and nothing of the URL or
-// the body: the SDK hands the brain a ModelError and nothing more.
-func TestAModelThatAnswersAnErrorFailsNamingTheSetting(t *testing.T) {
+// A model that answers with an error status fails the run with the status and
+// the provider's code, and nothing of the URL, the body or the setting: the SDK
+// hands the brain a ModelError and nothing more.
+func TestAModelThatAnswersAnErrorFailsWithItsStatus(t *testing.T) {
 	f := newExecFixture(t, newScripted())
 	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -750,7 +778,7 @@ func TestAModelThatAnswersAnErrorFailsNamingTheSetting(t *testing.T) {
 	f.mustExecute(t)
 
 	r := f.row(t)
-	want := "OPENARITY_LLM_BASE_URL: the model endpoint answered 401 Unauthorized (invalid_api_key)"
+	want := "the model endpoint answered 401 Unauthorized (invalid_api_key)"
 	if r.Status != "failed" || deref(r.Error) != want {
 		t.Errorf("run is %s, %q; want failed, %q", r.Status, deref(r.Error), want)
 	}
