@@ -24,7 +24,7 @@ function SheetContent({
         data-slot="sheet-content"
         className={cn(
           "fixed z-50 flex flex-col gap-4 overflow-y-auto bg-background shadow-lg ring-1 ring-sheet-edge outline-none",
-          "duration-300 ease-(--ease-drawer) data-[state=closed]:animate-out data-[state=closed]:duration-200 data-[state=open]:animate-in",
+          "duration-(--dur-sheet) ease-(--ease-drawer) data-[state=closed]:animate-out data-[state=closed]:duration-(--dur-sheet-out) data-[state=open]:animate-in",
           // A phone: from the bottom.
           "inset-x-0 bottom-0 max-h-[90dvh] rounded-t-2xl p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
           // A tablet up: from the right, inset like the sheet it sits on.

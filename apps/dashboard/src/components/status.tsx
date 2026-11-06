@@ -88,7 +88,7 @@ export function StatusPill({
 export function LiveBadge() {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-running/10 px-2 py-0.5 text-xs font-medium text-running">
-      <span aria-hidden className="size-1.5 rounded-full bg-running" />
+      <span aria-hidden className="size-1.5 rounded-full bg-running motion-safe:animate-breathe" />
       Live
     </span>
   );

@@ -98,6 +98,13 @@
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* A live run's dot: a slow breathe, only where motion is welcome. */
+  --animate-breathe: breathe 2s var(--ease-in-out) infinite;
+  @keyframes breathe {
+    50% {
+      opacity: 0.35;
+    }
+  }
   /* Five sizes and no others: 12, 14, 16, 18 and 20 px, a 1.125 step. */
   --text-xs: 0.75rem;
   --text-xs--line-height: 1rem;
@@ -167,6 +174,14 @@
 }
 
 :root {
+  /* How long each kind of motion takes: a press answers fastest, a popover
+     next, a dialog, and a sheet slowest, since it travels the furthest. A
+     sheet leaves faster than it came. */
+  --dur-press: 160ms;
+  --dur-pop: 180ms;
+  --dur-dialog: 200ms;
+  --dur-sheet: 280ms;
+  --dur-sheet-out: 200ms;
   /* Two radii: 8px on controls and cards, 16px on the sheet (rounded-2xl). */
   --radius: 0.5rem;
   /* BRAND.md, light column */
@@ -345,13 +360,26 @@
   }
 }
 
-/* Motion that conveys nothing a reader needs stops for anyone who asked. */
+/* For anyone who asked for less motion nothing travels, scales or spins: an
+   entrance is a fade, a press is its colour, a spinner stands still. Fades
+   and colour changes stay, since they carry state without movement. The
+   entrance and exit variables are tw-animate's; pinning them keeps its fade. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    --tw-enter-scale: 1 !important;
+    --tw-exit-scale: 1 !important;
+    --tw-enter-translate-x: 0 !important;
+    --tw-enter-translate-y: 0 !important;
+    --tw-exit-translate-x: 0 !important;
+    --tw-exit-translate-y: 0 !important;
+    --tw-enter-rotate: 0 !important;
+    --tw-exit-rotate: 0 !important;
+    scale: none !important;
+  }
+
+  .animate-spin {
+    animation: none !important;
   }
 }

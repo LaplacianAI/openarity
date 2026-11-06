@@ -170,7 +170,7 @@ export function Picker({
               e.preventDefault();
               trigger.current?.focus();
             }}
-            className="z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-lg bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-sheet-edge duration-150 ease-out data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+            className="z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-lg bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-sheet-edge duration-(--dur-pop) ease-out data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-96"
           >
             <input
               role="combobox"

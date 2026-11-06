@@ -556,8 +556,8 @@ function QuickBar({
           </button>
         </DialogPrimitive.Trigger>
         <DialogPrimitive.Portal>
-          <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
-          <DialogPrimitive.Content className="fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col rounded-t-2xl bg-frame pb-[env(safe-area-inset-bottom)] outline-none data-[state=open]:animate-in data-[state=open]:slide-in-from-bottom">
+          <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+          <DialogPrimitive.Content className="fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col rounded-t-2xl bg-frame pb-[env(safe-area-inset-bottom)] outline-none duration-(--dur-sheet) ease-(--ease-drawer) data-[state=closed]:animate-out data-[state=closed]:duration-(--dur-sheet-out) data-[state=closed]:slide-out-to-bottom data-[state=open]:animate-in data-[state=open]:slide-in-from-bottom">
             <div className="flex h-12 shrink-0 items-center justify-between px-4">
               <DialogPrimitive.Title className="text-sm font-medium">
                 Everything
