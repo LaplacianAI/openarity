@@ -495,7 +495,9 @@ func TestACommandServerIsReportedNotBound(t *testing.T) {
 
 	built := f.build(t)
 
-	want := []Unavailable{{Name: "filesystem", Reason: "a command server runs in the workspace, which slice 3 adds"}}
+	// Shown to everyone who reads the run, so it says what the reader can act
+	// on and nothing of the brain's own plans.
+	want := []Unavailable{{Name: "filesystem", Reason: "command servers can't be used yet"}}
 	if !reflect.DeepEqual(built.Unavailable, want) {
 		t.Errorf("unavailable = %+v, want %+v", built.Unavailable, want)
 	}

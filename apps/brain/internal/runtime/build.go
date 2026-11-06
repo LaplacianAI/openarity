@@ -222,7 +222,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 		s := g.McpServer
 		if s.Url == nil {
 			built.Unavailable = append(built.Unavailable, Unavailable{
-				Name: s.Name, Reason: "a command server runs in the workspace, which slice 3 adds",
+				Name: s.Name, Reason: "command servers can't be used yet",
 			})
 			continue
 		}
