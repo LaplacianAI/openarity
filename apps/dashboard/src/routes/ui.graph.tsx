@@ -1,12 +1,12 @@
 import type { Data, FalkorDBCanvas, GraphLink, GraphNode, LayoutMode } from "@falkordb/canvas";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { getGraph } from "@/api";
+import { getAgent, getGraph, getTeamSettings, listAgents } from "@/api";
 import { ApiError } from "@/api/client";
 import { useCurrentTeam } from "@/api/session";
-import type { GraphEdge, GraphLabel, GraphNode as Node, TeamGraph } from "@/api/types";
+import type { GraphLabel } from "@/api/types";
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,14 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, Mono, PageHeader } from "@/components/ui-bits";
+import {
+  BUILT_IN_HUB,
+  type DrawnEdgeType,
+  type DrawnGraph,
+  isDelegation,
+  type DrawnNode as Node,
+  withDelegation,
+} from "@/lib/graph-delegation";
 import { type DrawState, drawLink, drawNode, paintLinkArea, paintNodeArea } from "@/lib/graph-draw";
 import { useMediaQuery } from "@/lib/media";
 import { count } from "@/lib/runs";
@@ -32,38 +40,65 @@ export const Route = createFileRoute("/ui/graph")({
 const LIMIT = 500;
 
 /**
- * Five kinds of node and three hues. With every node on screen at once only
- * three hues stay apart for every reader, colour-blind included — checked
- * with the data-viz validator in both modes. So a server and its tools share
- * orange and differ in shape and size, the team is neutral, and every node
- * carries its own name: colour is never the only thing that tells two apart.
+ * Five kinds of node in BRAND's Spectral palette and nothing else: agents in
+ * the one teal, everything they reach in its neutrals. Kinds are told apart
+ * by shape and size as well as tone, a skill and the team as rings, and every
+ * node carries its own name: colour is never the only thing that tells two
+ * apart. ok, warn and error stay for status, which a node kind is not.
  */
 const STYLE: Record<
   GraphLabel,
-  { light: string; dark: string; size: number; shape: "circle" | "square"; plural: string }
+  {
+    light: string;
+    dark: string;
+    size: number;
+    shape: "circle" | "square";
+    hollow?: boolean;
+    plural: string;
+  }
 > = {
-  Agent: { light: "#2a78d6", dark: "#3987e5", size: 14, shape: "circle", plural: "Agents" },
-  Skill: { light: "#1baf7a", dark: "#199e70", size: 11, shape: "circle", plural: "Skills" },
-  Toolkit: { light: "#eb6834", dark: "#d95926", size: 13, shape: "square", plural: "MCP servers" },
-  Tool: { light: "#eb6834", dark: "#d95926", size: 8, shape: "circle", plural: "Tools" },
-  Team: { light: "#8a8986", dark: "#6f6e69", size: 15, shape: "circle", plural: "Team" },
+  Agent: { light: "#0B6A5C", dark: "#5FD3BC", size: 14, shape: "circle", plural: "Agents" },
+  Skill: {
+    light: "#5F6763",
+    dark: "#8A9391",
+    size: 10,
+    shape: "circle",
+    hollow: true,
+    plural: "Skills",
+  },
+  Toolkit: { light: "#2E3A3D", dark: "#D9D3C7", size: 13, shape: "square", plural: "MCP servers" },
+  Tool: { light: "#5F6763", dark: "#8A9391", size: 7, shape: "circle", plural: "Tools" },
+  Team: {
+    light: "#2E3A3D",
+    dark: "#D9D3C7",
+    size: 16,
+    shape: "circle",
+    hollow: true,
+    plural: "Team",
+  },
 };
 
 const LABELS: GraphLabel[] = ["Agent", "Skill", "Toolkit", "Tool", "Team"];
 
-const EDGE_WORDS: Record<GraphEdge["type"], string> = {
+const EDGE_WORDS: Record<DrawnEdgeType, string> = {
   OWNS: "owns",
   GRANTED: "is granted",
   CONTAINS: "contains",
   HAS_SKILL: "has the skill",
+  HANDS_TO: "hands work to",
+  HANDS_ANY: "hands work to any agent of",
+  ANSWERS: "answers first for",
 };
 
 /** The same edges read from their target: "a skill of triage". */
-const EDGE_WORDS_INTO: Record<GraphEdge["type"], string> = {
+const EDGE_WORDS_INTO: Record<DrawnEdgeType, string> = {
   OWNS: "owned by",
   GRANTED: "granted to",
   CONTAINS: "a tool of",
   HAS_SKILL: "a skill of",
+  HANDS_TO: "takes work from",
+  HANDS_ANY: "its agents take work from",
+  ANSWERS: "answered first by",
 };
 
 /**
@@ -112,7 +147,11 @@ const PAGE: Partial<Record<GraphLabel, string>> = {
  * team would still be the root everything else hangs from. Numbers come from
  * the whole graph, so a node keeps its number when a kind is toggled.
  */
-export function toCanvas(graph: TeamGraph, hidden: Set<GraphLabel>, theme: "light" | "dark"): Data {
+export function toCanvas(
+  graph: DrawnGraph,
+  hidden: Set<GraphLabel>,
+  theme: "light" | "dark",
+): Data {
   const numbers = new Map<string, number>();
   for (const [i, n] of graph.nodes.entries()) numbers.set(n.id, i + 1);
 
@@ -132,6 +171,8 @@ export function toCanvas(graph: TeamGraph, hidden: Set<GraphLabel>, theme: "ligh
         ...(n.description ? { description: n.description } : {}),
         ...(n.kind ? { kind: n.kind } : {}),
         ...(n.model ? { model: n.model } : {}),
+        ...(n.hub ? { hub: true } : {}),
+        ...(style.hollow ? { hollow: true } : {}),
       },
     };
     return [node];
@@ -153,7 +194,10 @@ export function toCanvas(graph: TeamGraph, hidden: Set<GraphLabel>, theme: "ligh
         source,
         target,
         visible: true,
-        data: e.only ? { only: e.only.join(", ") } : {},
+        data: {
+          ...(e.only ? { only: e.only.join(", ") } : {}),
+          ...(isDelegation(e.type) ? { delegation: true } : {}),
+        },
       },
     ];
   });
@@ -165,7 +209,7 @@ export function toCanvas(graph: TeamGraph, hidden: Set<GraphLabel>, theme: "ligh
  * The MCP servers and skills no agent is granted: in the team, and of no use
  * to it. A graph cut short cannot say, since the grant may be past the cut.
  */
-export function unreached(graph: TeamGraph): Node[] {
+export function unreached(graph: DrawnGraph): Node[] {
   if (graph.truncated) return [];
   const agents = new Set(graph.nodes.filter((n) => n.label === "Agent").map((n) => n.id));
   const held = new Set(
@@ -190,7 +234,7 @@ export function unreachedFinding(nodes: Node[]): string | null {
 }
 
 /** The shown nodes whose name holds the query, ignoring case; none for an empty one. */
-export function matching(graph: TeamGraph, hidden: Set<GraphLabel>, query: string): Node[] {
+export function matching(graph: DrawnGraph, hidden: Set<GraphLabel>, query: string): Node[] {
   const q = query.trim().toLowerCase();
   if (q === "") return [];
   return graph.nodes.filter((n) => !hidden.has(n.label) && nameOf(n).toLowerCase().includes(q));
@@ -201,9 +245,9 @@ const MATCHES = 8;
 
 function Graph() {
   const { teamId } = useCurrentTeam();
-  // The team owns everything, so shown it is a hub whose spokes say nothing.
-  // Off to start with; its legend entry brings it back.
-  const [hidden, setHidden] = useState<Set<GraphLabel>>(() => new Set(["Team"]));
+  // Shown from the start: the hub answers for the team, and an agent that may
+  // hand work to any agent points at it.
+  const [hidden, setHidden] = useState<Set<GraphLabel>>(() => new Set());
   const [layout, setLayout] = useState<LayoutMode>("force");
   const [selected, setSelected] = useState<string | null>(null);
   const [asList, setAsList] = useState(false);
@@ -222,11 +266,48 @@ function Graph() {
     retry: false,
   });
 
+  // Who hands work to whom is on the agents, not in the index: the hub from
+  // the team's settings, and the delegates of each agent that lists them.
+  const agents = useQuery({
+    queryKey: ["agents", teamId, "names"],
+    queryFn: () => listAgents(teamId as string),
+    enabled: Boolean(teamId),
+  });
+  const settings = useQuery({
+    queryKey: ["settings", teamId],
+    queryFn: () => getTeamSettings(teamId as string),
+    enabled: Boolean(teamId),
+    retry: false,
+  });
+  const listing = (agents.data?.items ?? []).filter((a) => a.delegation === "listed");
+  const delegates = useQueries({
+    queries: listing.map((a) => ({
+      queryKey: ["agents", teamId, a.id],
+      queryFn: () => getAgent(teamId as string, a.id),
+    })),
+  });
+  const delegatesOf = new Map(
+    delegates.flatMap((q) => (q.data ? [[q.data.id, q.data.delegates] as const] : [])),
+  );
+  const delegators = (agents.data?.items ?? []).map((a) => ({
+    id: a.id,
+    delegation: a.delegation,
+    delegates: delegatesOf.get(a.id) ?? [],
+  }));
+  const delegatorsKey = JSON.stringify(delegators);
+  const hub = settings.isSuccess ? (settings.data.hub ?? null) : undefined;
+  const hubKey = hub === undefined ? "?" : (hub?.id ?? "built-in");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the keys stand for the lists they are made from
+  const drawn = useMemo(
+    () => (graph.data ? withDelegation(graph.data, delegators, hub) : undefined),
+    [graph.data, delegatorsKey, hubKey],
+  );
+
   const counts = useMemo(() => {
     const c: Partial<Record<GraphLabel, number>> = {};
-    for (const n of graph.data?.nodes ?? []) c[n.label] = (c[n.label] ?? 0) + 1;
+    for (const n of drawn?.nodes ?? []) c[n.label] = (c[n.label] ?? 0) + 1;
     return c;
-  }, [graph.data]);
+  }, [drawn]);
 
   const toggle = (label: GraphLabel) =>
     setHidden((prev) => {
@@ -237,15 +318,15 @@ function Graph() {
     });
 
   const unavailable = graph.error instanceof ApiError && graph.error.status === 503;
-  const finding = graph.data ? unreachedFinding(unreached(graph.data)) : null;
-  const found = graph.data ? matching(graph.data, hidden, query) : [];
+  const finding = drawn ? unreachedFinding(unreached(drawn)) : null;
+  const found = drawn ? matching(drawn, hidden, query) : [];
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="Graph"
         finding={finding}
-        description="The team's agents, MCP servers, tools and skills as the graph index holds them. It catches up with changes within about a minute."
+        description="The team's hub, its agents and whom they hand work to, and the MCP servers, tools and skills they are granted. Changes show here within about a minute."
         actions={
           <>
             {phone ? null : (
@@ -282,7 +363,7 @@ function Graph() {
           onRetry={() => graph.refetch()}
           retrying={graph.isRefetching}
         />
-      ) : graph.data.nodes.length <= 1 ? (
+      ) : !drawn || graph.data.nodes.length <= 1 ? (
         <EmptyState
           title="Nothing in the graph yet"
           body="Define an agent, register an MCP server or upload a skill, and it appears here once it has been indexed."
@@ -322,7 +403,7 @@ function Graph() {
             ) : null}
           </div>
 
-          {graph.data.truncated ? (
+          {drawn.truncated ? (
             <p className="text-xs text-muted-foreground">
               Showing the first {graph.data.nodes.length} nodes; the team has more.
             </p>
@@ -330,10 +411,10 @@ function Graph() {
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
             {listed ? (
-              <GraphList graph={graph.data} hidden={hidden} onPick={setSelected} />
+              <GraphList graph={drawn} hidden={hidden} onPick={setSelected} />
             ) : (
               <Canvas
-                graph={graph.data}
+                graph={drawn}
                 hidden={hidden}
                 layout={layout}
                 selected={selected}
@@ -345,7 +426,7 @@ function Graph() {
                 aria-label="Selected node"
                 className="h-fit rounded-md border border-border bg-card p-3 text-xs"
               >
-                <Selection graph={graph.data} selected={selected} />
+                <Selection graph={drawn} selected={selected} />
               </aside>
             )}
           </div>
@@ -354,7 +435,7 @@ function Graph() {
           {narrow ? (
             <Sheet open={selected !== null} onOpenChange={(o) => (o ? null : setSelected(null))}>
               <SheetContent>
-                <Selection graph={graph.data} selected={selected} inSheet />
+                <Selection graph={drawn} selected={selected} inSheet />
               </SheetContent>
             </Sheet>
           ) : null}
@@ -390,8 +471,12 @@ function LegendChip({
       <span
         aria-hidden
         className={cn("inline-block", style.shape === "square" ? "rounded-[2px]" : "rounded-full")}
+        data-hollow={style.hollow ? "" : undefined}
         style={{
-          backgroundColor: style[theme],
+          // A ring for the kinds the canvas draws as rings, so the key matches.
+          ...(style.hollow
+            ? { border: `1.5px solid ${style[theme]}` }
+            : { backgroundColor: style[theme] }),
           width: style.size >= 9 ? 10 : 7,
           height: style.size >= 9 ? 10 : 7,
         }}
@@ -415,7 +500,7 @@ function Canvas({
   selected,
   onSelect,
 }: {
-  graph: TeamGraph;
+  graph: DrawnGraph;
   hidden: Set<GraphLabel>;
   layout: LayoutMode;
   selected: string | null;
@@ -436,6 +521,7 @@ function Canvas({
     palette: {
       surface: "#ffffff",
       ink: "#1a1a19",
+      accent: "#0B6A5C",
       edge: "#c9c8c2",
       edgeStrong: "#6f6e69",
       font: "sans-serif",
@@ -477,6 +563,8 @@ function Canvas({
     draw.current.palette = {
       surface,
       ink,
+      accent:
+        styles.getPropertyValue("--primary").trim() || (theme === "dark" ? "#5FD3BC" : "#0B6A5C"),
       edge: theme === "dark" ? "#4a4944" : "#d3d2cc",
       edgeStrong: theme === "dark" ? "#a9a8a2" : "#6f6e69",
       font: getComputedStyle(document.body).fontFamily || "sans-serif",
@@ -565,6 +653,11 @@ function Canvas({
   );
 }
 
+/** A node's kind in the words the legend uses: "MCP server", not the index's "Toolkit". */
+function kindOf(n: Node): string {
+  return STYLE[n.label].plural.replace(/s$/, "");
+}
+
 function nameOf(n: Node | undefined): string {
   if (!n) return "?";
   return n.name ?? (n.label === "Team" ? "this team" : n.id.slice(0, 8));
@@ -601,9 +694,7 @@ function Search({
               <li key={n.id}>
                 <Button size="sm" variant="outline" onClick={() => onPick(n.id)}>
                   {nameOf(n)}
-                  <span className="text-muted-foreground">
-                    {STYLE[n.label].plural.replace(/s$/, "")}
-                  </span>
+                  <span className="text-muted-foreground">{kindOf(n)}</span>
                 </Button>
               </li>
             ))}
@@ -624,7 +715,7 @@ function Selection({
   selected,
   inSheet = false,
 }: {
-  graph: TeamGraph;
+  graph: DrawnGraph;
   selected: string | null;
   /** In a sheet the name is the sheet's title, so the dialog is named by it. */
   inSheet?: boolean;
@@ -645,7 +736,7 @@ function Selection({
   const into = graph.edges.filter((e) => e.to === node.id);
   const page = PAGE[node.label];
 
-  const kind = STYLE[node.label].plural.replace(/s$/, "");
+  const kind = node.hub ? "Hub" : kindOf(node);
   return (
     <div className="space-y-3 text-xs">
       {inSheet ? (
@@ -662,6 +753,11 @@ function Selection({
           ) : null}
         </div>
       )}
+      {node.hub ? (
+        <p className="font-medium text-primary">
+          The team's hub: every message reaches it first, and it can hand work to any agent.
+        </p>
+      ) : null}
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         {node.kind ? (
           <>
@@ -669,12 +765,16 @@ function Selection({
             <dd>{node.kind}</dd>
           </>
         ) : null}
-        <dt className="text-muted-foreground">Embedded</dt>
-        <dd>{node.model ? <Mono>{node.model}</Mono> : "no vector"}</dd>
-        <dt className="text-muted-foreground">Id</dt>
-        <dd>
-          <Mono className="break-all">{node.id}</Mono>
-        </dd>
+        {node.id === BUILT_IN_HUB ? null : (
+          <>
+            <dt className="text-muted-foreground">Searchable by</dt>
+            <dd>{node.model ? <Mono>{node.model}</Mono> : "not yet indexed"}</dd>
+            <dt className="text-muted-foreground">Id</dt>
+            <dd>
+              <Mono className="break-all">{node.id}</Mono>
+            </dd>
+          </>
+        )}
       </dl>
       {out.length + into.length > 0 ? (
         <ul className="space-y-1">
@@ -694,7 +794,14 @@ function Selection({
           ))}
         </ul>
       ) : null}
-      {node.label === "Agent" ? (
+      {node.id === BUILT_IN_HUB ? (
+        <Link
+          to="/ui/settings"
+          className="inline-block text-primary underline-offset-4 hover:underline"
+        >
+          Choose the hub in team settings
+        </Link>
+      ) : node.label === "Agent" ? (
         <Link
           to="/ui/agents/$agentId"
           params={{ agentId: node.id }}
@@ -717,7 +824,7 @@ function GraphList({
   hidden,
   onPick,
 }: {
-  graph: TeamGraph;
+  graph: DrawnGraph;
   hidden: Set<GraphLabel>;
   onPick: (id: string) => void;
 }) {
@@ -737,7 +844,7 @@ function GraphList({
             .filter((n) => !hidden.has(n.label))
             .map((n) => (
               <tr key={n.id}>
-                <td className="px-3 py-1.5 text-muted-foreground">{n.label}</td>
+                <td className="px-3 py-1.5 text-muted-foreground">{n.hub ? "Hub" : kindOf(n)}</td>
                 <td className="py-1.5 font-medium">
                   <button
                     type="button"
@@ -746,9 +853,6 @@ function GraphList({
                   >
                     {nameOf(n)}
                   </button>
-                </td>
-                <td className="px-3 py-1.5 text-right">
-                  {n.model ? <Mono>{n.model}</Mono> : null}
                 </td>
               </tr>
             ))}

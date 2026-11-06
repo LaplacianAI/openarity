@@ -5,7 +5,14 @@ import { type DrawState, drawLink, drawNode, isLit, shortName } from "./graph-dr
 
 /** A canvas context that records what was drawn, and at what opacity. */
 function recorder() {
-  const calls: { op: string; args: unknown[]; alpha: number; font: string }[] = [];
+  const calls: {
+    op: string;
+    args: unknown[];
+    alpha: number;
+    font: string;
+    fill: string;
+    stroke: string;
+  }[] = [];
   const ctx = {
     globalAlpha: 1,
     font: "",
@@ -33,14 +40,28 @@ function recorder() {
     "strokeText",
   ]) {
     ctx[op] = (...args: unknown[]) =>
-      calls.push({ op, args, alpha: ctx.globalAlpha as number, font: ctx.font as string });
+      calls.push({
+        op,
+        args,
+        alpha: ctx.globalAlpha as number,
+        font: ctx.font as string,
+        fill: ctx.fillStyle as string,
+        stroke: ctx.strokeStyle as string,
+      });
   }
   return { ctx: ctx as unknown as CanvasRenderingContext2D, calls };
 }
 
 function state(zoom = 1, focus: string | null = null, near: string[] = []): DrawState {
   return {
-    palette: { surface: "#fff", ink: "#111", edge: "#ccc", edgeStrong: "#666", font: "Inter" },
+    palette: {
+      surface: "#fff",
+      ink: "#111",
+      accent: "#0B6A5C",
+      edge: "#ccc",
+      edgeStrong: "#666",
+      font: "Inter",
+    },
     zoom: () => zoom,
     focus,
     near: new Set(near),
@@ -53,7 +74,7 @@ function node(uuid: string, name: string, extra: Partial<GraphNode> = {}): Graph
     x: 0,
     y: 0,
     size: 10,
-    color: "#2a78d6",
+    color: "#2E3A3D",
     labels: ["Agent"],
     visible: true,
     data: { uuid, name },
@@ -101,6 +122,28 @@ describe("a node", () => {
     expect(calls.find((c) => c.op === "fill")?.alpha).toBeLessThan(0.5);
   });
 
+  it("wears the accent ring and says hub when it is the team's hub", () => {
+    const { ctx, calls } = recorder();
+    drawNode(
+      state(),
+      node("h", "ops-lead", { data: { uuid: "h", name: "ops-lead", hub: true } }),
+      ctx,
+    );
+    expect(calls.some((c) => c.op === "stroke" && c.stroke === "#0B6A5C")).toBe(true);
+    expect(calls.find((c) => c.op === "fillText")?.args[0]).toBe("ops-lead · hub");
+
+    const plain = recorder();
+    drawNode(state(), node("a", "triage"), plain.ctx);
+    expect(plain.calls.some((c) => c.stroke === "#0B6A5C")).toBe(false);
+  });
+
+  it("is a ring in its colour around the surface when its kind is hollow", () => {
+    const { ctx, calls } = recorder();
+    drawNode(state(), node("s", "pdf", { data: { uuid: "s", name: "pdf", hollow: true } }), ctx);
+    expect(calls.find((c) => c.op === "fill")?.fill).toBe("#fff");
+    expect(calls.find((c) => c.op === "stroke")?.stroke).toBe("#2E3A3D");
+  });
+
   it("is ringed when it is the one in focus", () => {
     const focused = recorder();
     drawNode(state(1, "a"), node("a", "triage"), focused.ctx);
@@ -137,6 +180,37 @@ describe("an edge", () => {
     const focused = recorder();
     drawLink(state(1, "a", ["b"]), link(a, b), focused.ctx, 1);
     expect(focused.calls.find((c) => c.op === "fillText")?.args[0]).toBe("granted · search");
+  });
+
+  // Who hands work to whom is the graph's point, so it is never quiet.
+  it("is drawn in the accent when it hands work on, and quiet otherwise", () => {
+    const a = node("a", "lead");
+    const b = node("b", "logs", { x: 100 });
+    const hands = recorder();
+    drawLink(
+      state(),
+      link(a, b, { relationship: "HANDS_TO", data: { delegation: true } }),
+      hands.ctx,
+      1,
+    );
+    expect(hands.calls.find((c) => c.op === "stroke")?.stroke).toBe("#0B6A5C");
+
+    const granted = recorder();
+    drawLink(state(), link(a, b), granted.ctx, 1);
+    expect(granted.calls.find((c) => c.op === "stroke")?.stroke).toBe("#ccc");
+  });
+
+  it("names a delegation in plain words when in focus", () => {
+    const a = node("a", "lead");
+    const b = node("b", "logs", { x: 100 });
+    const { ctx, calls } = recorder();
+    drawLink(
+      state(1, "a", ["b"]),
+      link(a, b, { relationship: "HANDS_TO", data: { delegation: true } }),
+      ctx,
+      1,
+    );
+    expect(calls.find((c) => c.op === "fillText")?.args[0]).toBe("hands work to");
   });
 
   it("fades when neither end is in focus", () => {

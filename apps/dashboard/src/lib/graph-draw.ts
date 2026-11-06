@@ -14,6 +14,8 @@ export type Palette = {
   surface: string;
   /** Text and a selected node's ring. */
   ink: string;
+  /** Who hands work to whom: the hub's ring and the delegation edges. */
+  accent: string;
   /** Edges at rest. */
   edge: string;
   /** Edges of the node in focus. */
@@ -36,6 +38,9 @@ export const EDGE_LABEL: Record<string, string> = {
   GRANTED: "granted",
   CONTAINS: "contains",
   HAS_SKILL: "has skill",
+  HANDS_TO: "hands work to",
+  HANDS_ANY: "hands work to any agent",
+  ANSWERS: "answers first",
 };
 
 const LABEL_PX = 12;
@@ -86,12 +91,21 @@ export function drawNode(state: DrawState, node: GraphNode, ctx: CanvasRendering
   ctx.globalAlpha = isLit(state, uuid) ? 1 : FADED;
 
   // A ring in the surface colour separates a node from the edges under it.
+  // A hollow kind is that ring's inside in the surface, edged in its colour.
   shape(ctx, node, r);
-  ctx.fillStyle = node.color;
+  ctx.fillStyle = node.data?.hollow ? state.palette.surface : node.color;
   ctx.fill();
   ctx.lineWidth = 2.5 / k;
-  ctx.strokeStyle = state.palette.surface;
+  ctx.strokeStyle = node.data?.hollow ? node.color : state.palette.surface;
   ctx.stroke();
+
+  // The hub wears a second ring in the accent, whatever else it is.
+  if (node.data?.hub) {
+    shape(ctx, node, r + 4.5 / k);
+    ctx.lineWidth = 2 / k;
+    ctx.strokeStyle = state.palette.accent;
+    ctx.stroke();
+  }
 
   if (selected) {
     shape(ctx, node, r + 4 / k);
@@ -100,7 +114,8 @@ export function drawNode(state: DrawState, node: GraphNode, ctx: CanvasRendering
     ctx.stroke();
   }
 
-  const name = shortName(String(node.data?.name ?? ""));
+  const named = shortName(String(node.data?.name ?? ""));
+  const name = node.data?.hub && named ? `${named} · hub` : named;
   if (name) {
     ctx.font = `${selected ? 600 : 500} ${LABEL_PX / k}px ${state.palette.font}`;
     ctx.textAlign = "center";
@@ -155,9 +170,16 @@ export function drawLink(
 
   ctx.save();
   ctx.globalAlpha = lit ? 1 : FADED;
-  ctx.strokeStyle = strong ? state.palette.edgeStrong : state.palette.edge;
+  // Who hands work to whom is what the graph is for, so it is drawn in the
+  // accent at every zoom; what is owned or granted stays quiet until in focus.
+  const delegation = Boolean(link.data?.delegation);
+  ctx.strokeStyle = delegation
+    ? state.palette.accent
+    : strong
+      ? state.palette.edgeStrong
+      : state.palette.edge;
   ctx.fillStyle = ctx.strokeStyle;
-  ctx.lineWidth = (strong ? 2 : 1.25) / k;
+  ctx.lineWidth = (strong ? 2 : delegation ? 1.75 : 1.25) / k;
 
   ctx.beginPath();
   ctx.moveTo(start.x, start.y);
