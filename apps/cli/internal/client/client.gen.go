@@ -1075,6 +1075,15 @@ type Run struct {
 	Agent     string    `json:"agent" yaml:"agent"`
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
 
+	// Delegates The agents a top-level run handed work to directly, by name, each
+	// once, in the order it first did; empty when it handed none.
+	// Always empty on a delegate's own run, whose delegates are in its
+	// parent's trace. A run that is still going may add more.
+	//
+	//
+	// Examples: ["log-reader","billing"]
+	Delegates []string `json:"delegates" yaml:"delegates"`
+
 	// Depth 0 for a run a person started, one more for each delegation beneath it
 	Depth int32 `json:"depth" yaml:"depth"`
 

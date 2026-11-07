@@ -152,6 +152,19 @@ WHERE r.team_id = sqlc.arg('team_id')
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT sqlc.arg('page_size');
 
+-- Whom each of these runs handed work to directly: the agents of its
+-- children, each once, in the order it first did. A grandchild belongs to
+-- the delegate that started it, not to these. Rides runs_root_idx: every
+-- child shares its root's root_run_id, and depth 1 keeps only the direct
+-- ones of a root.
+-- name: ListRunDelegates :many
+SELECT root_run_id, agent_name
+FROM runs
+WHERE root_run_id = ANY(sqlc.arg('run_ids')::uuid[])
+  AND depth = 1
+GROUP BY root_run_id, agent_name
+ORDER BY root_run_id, min(created_at), agent_name;
+
 -- A child is born running and held by its parent's worker: never queued, so
 -- the sweep never starts it as a run of its own. Session, root and user come
 -- from the parent; the agent is selected within the team, so another team's

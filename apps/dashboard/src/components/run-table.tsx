@@ -16,6 +16,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { handedTo } from "@/lib/runs";
+import { cn } from "@/lib/utils";
 
 /** Where a run is read: its session's page, on the runs, with this run chosen. */
 export function runLink(run: Run) {
@@ -35,6 +37,21 @@ export function HubTag() {
       className="rounded-full bg-card px-2 py-0.5 text-xs font-medium"
     >
       hub
+    </span>
+  );
+}
+
+/** Whom a run handed work to, under its agent's name; nothing when it handed none. */
+export function HandedTo({ run, className }: { run: Run; className?: string }) {
+  const line = handedTo(run);
+  if (!line) return null;
+  return (
+    <span
+      data-delegates
+      title={`Handed work to ${(run.delegates ?? []).join(", ")}`}
+      className={cn("block truncate text-xs text-muted-foreground", className)}
+    >
+      {line}
     </span>
   );
 }
@@ -67,6 +84,7 @@ export function RunTable({ runs, label }: { runs: Run[]; label: string }) {
                 </Link>
                 {run.hub ? <HubTag /> : null}
               </span>
+              <HandedTo run={run} className="mt-0.5" />
             </TableCell>
             <TableCell label="Status">
               <StatusPill status={run.status} />

@@ -183,6 +183,11 @@ export type Run = {
   depth: number;
   /** Started for the team rather than for an agent: its agent is the team's hub. */
   hub: boolean;
+  /**
+   * The agents a top-level run handed work to directly, each once, in the
+   * order it first did. Optional: a brain from before the field sends none.
+   */
+  delegates?: string[];
 };
 
 /** POST /teams/{id}/runs. No `agent` asks the team's hub; no `session_id` gives the run a session of its own. */

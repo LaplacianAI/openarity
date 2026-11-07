@@ -522,3 +522,69 @@ func TestCancellingARunningRunLeavesItsChildrenToIt(t *testing.T) {
 		t.Errorf("child is %s, want still running for its parent to end", r.Status)
 	}
 }
+
+// --- whom a run handed work to ---
+
+func delegatesByRoot(t *testing.T, s *Store, ids ...uuid.UUID) map[uuid.UUID][]string {
+	t.Helper()
+
+	rows, err := s.ListRunDelegates(t.Context(), ids)
+	if err != nil {
+		t.Fatalf("ListRunDelegates: %v", err)
+	}
+	by := map[uuid.UUID][]string{}
+	for _, r := range rows {
+		by[r.RootRunID] = append(by[r.RootRunID], r.AgentName)
+	}
+	return by
+}
+
+// Each agent once, in the order the run first handed it work; a grandchild
+// is its parent delegate's, and another root's children are its own.
+func TestARunsDelegatesAreItsChildrensAgentsInOrder(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	root := createRun(t, s, f)
+	other := createRun(t, s, f)
+	quiet := createRun(t, s, f)
+	billing := insertAgent(t, s, f.team, "billing")
+	clerk := insertAgent(t, s, f.team, "clerk")
+	auditor := insertAgent(t, s, f.team, "auditor")
+
+	// Clerk first, so the order is the run's and not the alphabet's.
+	mustStartChild(t, s, root, clerk, "c1")
+	second := mustStartChild(t, s, root, billing, "c2")
+	mustStartChild(t, s, root, clerk, "c3")
+	mustStartChild(t, s, second, auditor, "c4")
+	mustStartChild(t, s, other, auditor, "c5")
+
+	got := delegatesByRoot(t, s, root.ID, other.ID, quiet.ID)
+	if want := []string{"clerk", "billing"}; !slices.Equal(got[root.ID], want) {
+		t.Errorf("root handed work to %v, want %v", got[root.ID], want)
+	}
+	if want := []string{"auditor"}; !slices.Equal(got[other.ID], want) {
+		t.Errorf("other handed work to %v, want %v", got[other.ID], want)
+	}
+	if _, ok := got[quiet.ID]; ok {
+		t.Errorf("a run that handed none has %v", got[quiet.ID])
+	}
+}
+
+// Only the runs asked about are read: a page never pays for the team's history.
+func TestOnlyTheRunsAskedAboutAreRead(t *testing.T) {
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	asked := createRun(t, s, f)
+	unasked := createRun(t, s, f)
+	clerk := insertAgent(t, s, f.team, "clerk")
+	mustStartChild(t, s, asked, clerk, "c1")
+	mustStartChild(t, s, unasked, clerk, "c2")
+
+	got := delegatesByRoot(t, s, asked.ID)
+	if len(got) != 1 || !slices.Equal(got[asked.ID], []string{"clerk"}) {
+		t.Errorf("got %v, want only the asked run's clerk", got)
+	}
+	if len(delegatesByRoot(t, s)) != 0 {
+		t.Error("no runs asked about returned delegates")
+	}
+}

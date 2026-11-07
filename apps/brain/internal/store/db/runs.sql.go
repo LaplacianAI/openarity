@@ -386,6 +386,45 @@ func (q *Queries) HeartbeatRun(ctx context.Context, arg HeartbeatRunParams) (*ti
 	return cancel_requested_at, err
 }
 
+const listRunDelegates = `-- name: ListRunDelegates :many
+SELECT root_run_id, agent_name
+FROM runs
+WHERE root_run_id = ANY($1::uuid[])
+  AND depth = 1
+GROUP BY root_run_id, agent_name
+ORDER BY root_run_id, min(created_at), agent_name
+`
+
+type ListRunDelegatesRow struct {
+	RootRunID uuid.UUID
+	AgentName string
+}
+
+// Whom each of these runs handed work to directly: the agents of its
+// children, each once, in the order it first did. A grandchild belongs to
+// the delegate that started it, not to these. Rides runs_root_idx: every
+// child shares its root's root_run_id, and depth 1 keeps only the direct
+// ones of a root.
+func (q *Queries) ListRunDelegates(ctx context.Context, runIds []uuid.UUID) ([]ListRunDelegatesRow, error) {
+	rows, err := q.db.Query(ctx, listRunDelegates, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunDelegatesRow
+	for rows.Next() {
+		var i ListRunDelegatesRow
+		if err := rows.Scan(&i.RootRunID, &i.AgentName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunsBySession = `-- name: ListRunsBySession :many
 SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub FROM runs
 WHERE session_id = $1

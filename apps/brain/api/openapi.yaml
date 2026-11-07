@@ -4190,6 +4190,7 @@ components:
         - created_at
         - depth
         - hub
+        - delegates
       properties:
         parent_run_id:
           type: string
@@ -4206,6 +4207,16 @@ components:
             Whether the run was started for the team rather than for an
             agent. Its `agent` is the hub's name: the chosen agent's, or
             `orchestrator`.
+        delegates:
+          type: array
+          items:
+            type: string
+          description: |
+            The agents a top-level run handed work to directly, by name, each
+            once, in the order it first did; empty when it handed none.
+            Always empty on a delegate's own run, whose delegates are in its
+            parent's trace. A run that is still going may add more.
+          examples: [["log-reader", "billing"]]
         id:
           type: string
           format: uuid
