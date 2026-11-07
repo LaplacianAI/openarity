@@ -29,6 +29,7 @@ import type {
   PendingSender,
   Run,
   RunEvent,
+  RunRequest,
   RunStatus,
   Session,
   SessionStatus,
@@ -282,6 +283,15 @@ export function listTeamRuns(
   if (filter.since) q.set("since", filter.since.toISOString());
   if (filter.hub != null) q.set("hub", String(filter.hub));
   return request<Page<Run>>(`/teams/${teamId}/runs${queryOf(q)}`);
+}
+
+/**
+ * Queues a run and answers with it as it now is, before it has done
+ * anything; its events say what it does. With no agent, the team's hub
+ * answers.
+ */
+export function startRun(teamId: string, run: RunRequest): Promise<Run> {
+  return request<Run>(`/teams/${teamId}/runs`, { method: "POST", body: run });
 }
 
 /** One run, wherever it was started — what a link to a run's trace reads. */

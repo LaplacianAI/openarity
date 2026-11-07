@@ -70,9 +70,9 @@ above the others, so Home serves all four:
    is still going.
 2. **Change an agent.** Its instructions, model, pattern, and its grants of
    MCP servers and skills; then try it.
-3. **Ask the team something.** Start a run and watch it work. The brain
-   allows it (`POST /runs` with no agent goes to the hub); **the dashboard
-   cannot do it yet**, only `oa runs start`.
+3. **Ask the team something.** Start a run and watch it work. The question
+   goes to the hub (`POST /runs` with no agent), from the box on Home or from
+   ⌘K, and the asker lands on the run's live trace.
 4. **Let people in.** Approve senders waiting on a channel and bind each to a
    user, add members to a team, connect a channel.
 
@@ -111,8 +111,6 @@ Constraints:
 Undecided, for later gates:
 
 - Whether runs get a screen of their own apart from sessions.
-- The "ask the team" box: where it lives and how a run started from it is
-  followed.
 - Whether the agent editor becomes a page rather than a dialog.
 
 ## Brand Commitments
@@ -164,7 +162,7 @@ not measurements.
 
 | Screen | Magnitude | One question | The finding it surfaces | Most frequent job, one click away |
 | --- | --- | --- | --- | --- |
-| Home (now Overview) | — | Is the team working, and does anything need me? | Runs that failed in the last 24 h; senders waiting; a server whose discovery failed | Open the failed run; ask the team (once it exists) |
+| Home (now Overview) | — | Is the team working, and does anything need me? | Runs that failed in the last 24 h; senders waiting; a server whose discovery failed | Open the failed run; ask the team |
 | Sessions | tens to thousands | Which conversations are live or need attention? | Sessions with a running or failed run | Open a session |
 | Session detail and run trace | 1–50 runs, traces of 1–100 steps | What did the agent do, and did it work? | Where the run failed or spent its tokens; which delegate answered | Read the failing step; cancel a running run |
 | Approvals | 0–20 waiting | Who is waiting to be let in? | The oldest waiting sender, and how long they have waited | Bind the sender to a user |
