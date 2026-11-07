@@ -87,7 +87,8 @@ What the dashboard does today, and must keep doing through any redesign:
   restores or waits out a deleted team from Deleted teams.
 - **Channels:** connect (custom webhook and others), delete; approve or
   remove senders.
-- **Sessions:** list, read messages and attachments, read the session's runs,
+- **Sessions:** list, read the conversation (messages and each run's answer)
+  and attachments, read the session's runs,
   follow a run's event stream, cancel a run.
 - **Agents:** define, replace (a whole PUT), delete; grant MCP servers and
   skills from the same team.
