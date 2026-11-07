@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SwitchField } from "@/components/ui/switch";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
 import { LeaveGuard } from "@/components/unsaved";
+import { NO_MODEL } from "@/lib/ask";
 
 export const Route = createFileRoute("/ui/settings")({
   component: Settings,
@@ -24,7 +25,7 @@ export const Route = createFileRoute("/ui/settings")({
 const WRITE = "team:settings";
 
 /** The finding when the team has no model: nothing answers its messages. */
-export const NO_MODEL = "The hub can't run until a model is set.";
+export { NO_MODEL };
 
 const PROVIDERS: { value: SearchProvider; label: string }[] = [
   { value: "none", label: "Off" },

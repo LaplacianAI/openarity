@@ -8,6 +8,7 @@ import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import { useTeamSummary } from "@/api/summary";
 import type { TeamSummary } from "@/api/types";
+import { AskTeam, RUN_WRITE } from "@/components/ask-team";
 import { RunTable } from "@/components/run-table";
 import { ErrorState } from "@/components/states";
 import { StatusPill } from "@/components/status";
@@ -48,6 +49,7 @@ function homeFinding(s: TeamSummary): string {
 function Home() {
   const { teamId, teams, isPending } = useCurrentTeam();
   const summary = useTeamSummary(teamId);
+  const canAsk = usePermissions(teamId).can(RUN_WRITE);
 
   if (isPending) {
     return (
@@ -81,8 +83,10 @@ function Home() {
       <PageHeader
         title="Home"
         finding={summary.data ? homeFinding(summary.data) : null}
-        description="Whether the team is working, and what needs you: runs that failed, people waiting to be let in, and servers whose tools could not be read."
+        description="Whether the team is working, and what needs you: runs that failed, people waiting to be let in, and servers whose tools could not be read. Ask the team something here, too."
       />
+
+      {canAsk ? <AskTeam teamId={teamId} /> : null}
 
       {summary.isError ? (
         <ErrorState
@@ -274,7 +278,7 @@ function HubRuns({ teamId }: { teamId: string }) {
       ) : runs.data.items.length === 0 ? (
         <EmptyState
           title="Nobody has asked the team yet"
-          body="A question for the team goes to its hub, which answers or hands the work to the agent that fits."
+          body="A question for the team goes to its hub, which answers or hands the work to the agent that fits. Its runs are listed here."
         />
       ) : (
         <RunTable runs={runs.data.items} label="The hub's latest runs" />

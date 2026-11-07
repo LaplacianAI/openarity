@@ -1,5 +1,6 @@
 /**
- * ⌘K: every screen, and the team's agents, skills and sessions by name.
+ * ⌘K: every screen, and the team's agents, skills and sessions by name; and,
+ * for someone who may start runs, whatever was typed asked of the team.
  *
  * It opens and closes with no animation: a thing reached for many times a
  * day should never make anyone wait for it. The team's lists are read only
@@ -7,11 +8,21 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { BookOpen, Bot, CornerDownLeft, MessagesSquare, Search } from "lucide-react";
+import {
+  BookOpen,
+  Bot,
+  CornerDownLeft,
+  MessageSquareText,
+  MessagesSquare,
+  Search,
+} from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { type ComponentType, useEffect, useId, useMemo, useState } from "react";
 
 import { listAgents, listSessions, listSkills } from "@/api";
+import { usePermissions } from "@/api/permissions";
+import { isSend, Refusal, RUN_WRITE, useAsk } from "@/components/ask-team";
+import { askProblem, askRefusal } from "@/lib/ask";
 import { cn } from "@/lib/utils";
 
 export type Destination = {
@@ -127,18 +138,35 @@ export function CommandPalette({
     [screens, agents.data, skills.data, sessions.data],
   );
 
-  const q = query.trim().toLowerCase();
+  const canAsk = usePermissions(teamId).can(RUN_WRITE);
+  const ask = useAsk(teamId ?? "");
+  const question = query.trim();
+  // Last, so a name that matches is still what Enter opens.
+  const askable = canAsk && Boolean(teamId) && question !== "" && askProblem(question) === null;
+
+  const q = question.toLowerCase();
   const found = q === "" ? [...screens] : all.filter((d) => d.label.toLowerCase().includes(q));
-  const current = Math.min(at, Math.max(0, found.length - 1));
+  const choices = found.length + (askable ? 1 : 0);
+  const current = Math.min(at, Math.max(0, choices - 1));
+  const askAt = found.length;
 
   const close = (next: boolean) => {
     onOpenChange(next);
     if (!next) {
       setQuery("");
       setAt(0);
+      ask.reset();
     }
   };
-  const go = (d: Destination | undefined) => {
+  const send = () => {
+    if (!askable || ask.isPending) return;
+    // Open until the brain has queued it: a refusal is read here, with the
+    // question still typed.
+    ask.mutate(question, { onSuccess: () => close(false) });
+  };
+  const choose = (i: number) => {
+    if (askable && i === askAt) return send();
+    const d = found[i];
     if (!d) return;
     close(false);
     void navigate({ to: d.to, params: d.params } as never);
@@ -159,24 +187,37 @@ export function CommandPalette({
               role="combobox"
               aria-expanded
               aria-controls={listId}
-              aria-activedescendant={found.length > 0 ? `${listId}-${current}` : undefined}
-              aria-label="Go to a screen, an agent, a skill or a session"
-              placeholder="Screens, agents, skills, sessions"
+              aria-activedescendant={choices > 0 ? `${listId}-${current}` : undefined}
+              aria-label={
+                canAsk
+                  ? "Go to a screen, an agent, a skill or a session, or ask the team"
+                  : "Go to a screen, an agent, a skill or a session"
+              }
+              placeholder={
+                canAsk
+                  ? "Screens, agents, sessions, or ask the team"
+                  : "Screens, agents, skills, sessions"
+              }
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
                 setAt(0);
+                if (ask.isError) ask.reset();
               }}
               onKeyDown={(e) => {
                 if (e.key === "ArrowDown") {
                   e.preventDefault();
-                  setAt((current + 1) % Math.max(1, found.length));
+                  setAt((current + 1) % Math.max(1, choices));
                 } else if (e.key === "ArrowUp") {
                   e.preventDefault();
-                  setAt((current - 1 + found.length) % Math.max(1, found.length));
+                  setAt((current - 1 + choices) % Math.max(1, choices));
+                } else if (isSend(e)) {
+                  // Asks whatever is chosen: the question, not a name it matched.
+                  e.preventDefault();
+                  send();
                 } else if (e.key === "Enter") {
                   e.preventDefault();
-                  go(found[current]);
+                  choose(current);
                 }
               }}
               className="h-12 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground sm:text-sm"
@@ -188,7 +229,7 @@ export function CommandPalette({
             aria-label="Results"
             className="max-h-80 overflow-y-auto p-1.5"
           >
-            {found.length === 0 ? (
+            {choices === 0 ? (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nothing by that name.
               </p>
@@ -205,7 +246,7 @@ export function CommandPalette({
                     tabIndex={-1}
                     aria-selected={selected}
                     onMouseMove={() => setAt(i)}
-                    onClick={() => go(d)}
+                    onClick={() => choose(i)}
                     className={cn(
                       "flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-sm",
                       selected && "bg-card",
@@ -221,7 +262,41 @@ export function CommandPalette({
                 );
               })
             )}
+            {askable ? (
+              // biome-ignore lint/a11y/useKeyWithClickEvents: the input above handles the keys
+              <div
+                id={`${listId}-${askAt}`}
+                role="option"
+                tabIndex={-1}
+                aria-selected={current === askAt}
+                aria-busy={ask.isPending}
+                onMouseMove={() => setAt(askAt)}
+                onClick={send}
+                className={cn(
+                  "flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-sm",
+                  found.length > 0 && "mt-1.5 border-t border-rule",
+                  current === askAt && "bg-card",
+                )}
+              >
+                <MessageSquareText aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate">
+                  {/* What a person typed: shown as text. */}
+                  {question}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {ask.isPending ? "Asking…" : "Ask the team"}
+                </span>
+                {current === askAt ? (
+                  <CornerDownLeft aria-hidden className="size-3.5 text-muted-foreground" />
+                ) : null}
+              </div>
+            ) : null}
           </div>
+          {ask.isError ? (
+            <div className="border-t border-rule px-3 py-2.5">
+              <Refusal refusal={askRefusal(ask.error)} />
+            </div>
+          ) : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

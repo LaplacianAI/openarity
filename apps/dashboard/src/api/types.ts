@@ -185,6 +185,13 @@ export type Run = {
   hub: boolean;
 };
 
+/** POST /teams/{id}/runs. No `agent` asks the team's hub; no `session_id` gives the run a session of its own. */
+export type RunRequest = {
+  input: string;
+  agent?: string;
+  session_id?: string;
+};
+
 /**
  * One frame of GET /teams/{id}/runs/{runID}/events. `data` is the parsed
  * JSON as the run recorded it — tool arguments and outputs are whatever a
