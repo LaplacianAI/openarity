@@ -1914,3 +1914,49 @@ describe("a fetched page in the trace", () => {
     ).toBeInTheDocument();
   });
 });
+
+/* ------------------------------------------------------------ run errors */
+
+describe("a failed run's error", () => {
+  // Runs stored before the brain stopped naming its setting keep that wording;
+  // the reader gets a sentence, and the stored text stays a click away.
+  it("is said in a sentence, with the brain's own words behind a disclosure", async () => {
+    const stored =
+      "the model endpoint OPENARITY_LLM_BASE_URL could not be reached: dial tcp 127.0.0.1:53: refused";
+    listed({
+      [RUNS]: { body: { items: [run("r1", "helper", "failed", { error: stored })] } },
+      [EVENTS]: () => ({
+        stream: chunks(`${frame(1, "finished", { status: "failed", error: stored })}${END}`),
+      }),
+    });
+
+    await open("?tab=runs");
+    const alert = (await within(pane()).findAllByRole("alert"))[0] as HTMLElement;
+    expect(alert).toHaveTextContent("Couldn't reach the model.");
+    const disclosure = alert.querySelector("details") as HTMLDetailsElement;
+    expect(disclosure).not.toBeNull();
+    expect(disclosure.open).toBe(false);
+    expect(within(disclosure).getByText("Show the details")).toBeInTheDocument();
+    expect(disclosure).toHaveTextContent(stored);
+    // The sentence itself names no setting.
+    expect(alert.querySelector("p")).not.toHaveTextContent("OPENARITY_");
+  });
+
+  it("is shown as written, with nothing to open, when it is of no known kind", async () => {
+    listed({
+      [RUNS]: {
+        body: { items: [run("r1", "helper", "failed", { error: "the provider answered 529" })] },
+      },
+      [EVENTS]: () => ({
+        stream: chunks(
+          `${frame(1, "finished", { status: "failed", error: "the provider answered 529" })}${END}`,
+        ),
+      }),
+    });
+
+    await open("?tab=runs");
+    const alert = (await within(pane()).findAllByRole("alert"))[0] as HTMLElement;
+    expect(alert).toHaveTextContent("the provider answered 529");
+    expect(alert.querySelector("details")).toBeNull();
+  });
+});
