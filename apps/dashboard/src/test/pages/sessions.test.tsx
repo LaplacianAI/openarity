@@ -90,7 +90,7 @@ async function open(query = "") {
   return router;
 }
 
-function tabPanel(name: "Messages" | "Runs"): HTMLElement {
+function tabPanel(name: "Conversation" | "Runs"): HTMLElement {
   return screen.getByRole("tabpanel", { name: new RegExp(name) });
 }
 
@@ -305,19 +305,28 @@ describe("a session's page", () => {
     listed({ [RUNS]: { body: { items: [run("r1", "helper", "succeeded")] } } });
     await open();
     await screen.findByText(/^1$/, { selector: '[role="tab"] span' });
-    expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Conversation" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     cleanup();
 
     listed({ [RUNS]: { body: { items: [run("r1", "helper", "failed")] } } });
     await open("?tab=messages");
     await screen.findByText(/^1$/, { selector: '[role="tab"] span' });
-    expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Conversation" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("opens on the messages, and keeps the chosen tab in the URL", async () => {
     listed({});
     const router = await open();
-    expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Conversation" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
 
     await userEvent.click(screen.getByRole("tab", { name: /Runs/ }));
     await waitFor(() => expect(router.state.location.search).toEqual({ tab: "runs" }));
@@ -403,7 +412,9 @@ describe("the messages", () => {
     await screen.findByText("four");
     expect(said()).toEqual(["three", "four"]);
 
-    await userEvent.click(within(tabPanel("Messages")).getByRole("button", { name: /load more/i }));
+    await userEvent.click(
+      within(tabPanel("Conversation")).getByRole("button", { name: /load more/i }),
+    );
     await screen.findByText("one");
     expect(said()).toEqual(["one", "two", "three", "four"]);
     expect(
@@ -422,7 +433,7 @@ describe("the messages", () => {
 
     await open();
     expect(await screen.findByText("<b>hi</b>")).toBeInTheDocument();
-    expect(tabPanel("Messages").querySelector("b")).toBeNull();
+    expect(tabPanel("Conversation").querySelector("b")).toBeNull();
   });
 
   it("lists the session's attachments by name", async () => {
@@ -447,7 +458,7 @@ describe("the messages", () => {
 
     await open();
     // A refusal is not a failure to retry: it says so, in the brain's words.
-    const panel = tabPanel("Messages");
+    const panel = tabPanel("Conversation");
     expect(await within(panel).findByText("You can't see the messages.")).toBeInTheDocument();
     expect(within(panel).getByText("You are not part of this conversation.")).toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: /try again/i })).toBeNull();
@@ -706,8 +717,11 @@ describe("the runs", () => {
     });
 
     await open("?tab=bogus");
-    expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel", { name: "Messages" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Conversation" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tabpanel", { name: "Conversation" })).toBeVisible();
     cleanup();
 
     await open("?tab=bogus&run=7");
@@ -1958,5 +1972,187 @@ describe("a failed run's error", () => {
     const alert = (await within(pane()).findAllByRole("alert"))[0] as HTMLElement;
     expect(alert).toHaveTextContent("the provider answered 529");
     expect(alert.querySelector("details")).toBeNull();
+  });
+});
+
+describe("the conversation", () => {
+  const CONVERSATION = "?tab=messages";
+  const turns = () =>
+    Array.from(
+      document.querySelectorAll("[data-message] [data-text], [data-turn] [data-asked]"),
+    ).map((e) => e.textContent?.replace("Asked: ", "") ?? "");
+
+  it("puts each run between the messages it came between, with its answer and its trace", async () => {
+    listed({
+      [MESSAGES]: {
+        body: {
+          items: [
+            message("m2", "user-ann", "thanks", "2026-10-01T00:03:00Z"),
+            message("m1", "user-ann", "is billing down?", "2026-10-01T00:01:00Z"),
+          ],
+        },
+      },
+      [RUNS]: {
+        body: {
+          items: [
+            run("r1", "orchestrator", "succeeded", {
+              hub: true,
+              input: "is billing down?",
+              output: "Billing is **up**; the export job failed.",
+              created_at: "2026-10-01T00:02:00Z",
+            }),
+          ],
+        },
+      },
+    });
+    await open(CONVERSATION);
+    await screen.findByText("thanks");
+
+    expect(turns()).toEqual(["is billing down?", "is billing down?", "thanks"]);
+    const turn = document.querySelector('[data-turn="r1"]') as HTMLElement;
+    // The answer is the agent's markdown, drawn as such.
+    expect(within(turn).getByText("up").tagName).toBe("STRONG");
+    expect(within(turn).getByText("hub")).toBeInTheDocument();
+    expect(within(turn).getByRole("link", { name: /Open the run/ })).toHaveAttribute(
+      "href",
+      `${PAGE}?tab=runs&run=r1`,
+    );
+  });
+
+  it("says a failed run's error in the dashboard's words, and a working one that it is working", async () => {
+    listed({
+      [RUNS]: {
+        body: {
+          items: [
+            run("r2", "triage", "running", { created_at: "2026-10-01T00:02:00Z" }),
+            run("r1", "billing", "failed", {
+              error: "the run exceeded its token budget of 20000",
+              created_at: "2026-10-01T00:01:00Z",
+            }),
+          ],
+        },
+      },
+    });
+    await open(CONVERSATION);
+    const failed = await waitFor(() => document.querySelector('[data-turn="r1"]') as HTMLElement);
+    expect(within(failed).getByText("It ran out of its token budget.")).toBeInTheDocument();
+    expect(failed).not.toHaveTextContent("20000");
+    const working = document.querySelector('[data-turn="r2"]') as HTMLElement;
+    expect(within(working).getByText("Working on it…")).toBeInTheDocument();
+  });
+
+  it("reads a working run again until its answer lands, with no trace open", async () => {
+    let reads = 0;
+    listed({
+      [RUNS]: () => {
+        reads += 1;
+        return {
+          body: {
+            items: [
+              reads === 1
+                ? run("r1", "triage", "running")
+                : run("r1", "triage", "succeeded", { output: "All clear." }),
+            ],
+          },
+        };
+      },
+    });
+    await open(CONVERSATION);
+    expect(await screen.findByText("Working on it…")).toBeInTheDocument();
+    expect(await screen.findByText("All clear.", {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+
+  it("cuts a long answer and sends the reader to the run for the rest", async () => {
+    listed({
+      [RUNS]: {
+        body: { items: [run("r1", "triage", "succeeded", { output: "word ".repeat(400) })] },
+      },
+    });
+    await open(CONVERSATION);
+    expect(
+      await screen.findByRole("link", { name: /Read the whole answer in its run/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("holds back messages older than the runs read so far, and reads the runs further for them", async () => {
+    const seen = listed({
+      [MESSAGES]: {
+        body: {
+          items: [
+            message("m2", "user-ann", "newer", "2026-10-01T00:05:00Z"),
+            message("m1", "user-ann", "older", "2026-10-01T00:01:00Z"),
+          ],
+        },
+      },
+      [RUNS]: (s) =>
+        s.path.includes("cursor=earlier")
+          ? {
+              body: {
+                items: [
+                  run("r1", "triage", "succeeded", {
+                    input: "first ask",
+                    created_at: "2026-10-01T00:02:00Z",
+                  }),
+                ],
+              },
+            }
+          : {
+              body: {
+                items: [
+                  run("r2", "triage", "succeeded", {
+                    input: "second ask",
+                    created_at: "2026-10-01T00:04:00Z",
+                  }),
+                ],
+                next_cursor: "earlier",
+              },
+            },
+    });
+    await open(CONVERSATION);
+    await screen.findByText("newer");
+    expect(turns()).toEqual(["second ask", "newer"]);
+
+    await userEvent.click(
+      within(tabPanel("Conversation")).getByRole("button", { name: /load more/i }),
+    );
+    await screen.findByText("older");
+    expect(turns()).toEqual(["older", "first ask", "second ask", "newer"]);
+    // Only the list that stopped short was read further.
+    expect(seen.some((s) => s.path.includes("/messages?cursor="))).toBe(false);
+  });
+
+  // Drawn before the runs arrive, the messages would move under the reader
+  // as the runs landed between them.
+  it("waits for the runs before drawing anything", async () => {
+    listed({
+      [MESSAGES]: { body: { items: [message("m1", "user-ann", "hello", STAMP)] } },
+      [RUNS]: { body: { items: [run("r1", "triage", "succeeded", { output: "hi there" })] } },
+    });
+    const answer = globalThis.fetch;
+    let release = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/runs")) await held;
+      return answer(input, init);
+    });
+
+    await open(CONVERSATION);
+    expect(await screen.findByRole("status", { name: "Loading messages" })).toBeInTheDocument();
+    expect(screen.queryByText("hello")).toBeNull();
+
+    release();
+    expect(await screen.findByText("hi there")).toBeInTheDocument();
+    expect(screen.getByText("hello")).toBeInTheDocument();
+  });
+
+  it("still shows what people said when the runs can't be read", async () => {
+    listed({
+      [MESSAGES]: { body: { items: [message("m1", "user-ann", "hello", STAMP)] } },
+      [RUNS]: { status: 500, text: "boom" },
+    });
+    await open(CONVERSATION);
+    expect(await screen.findByText("hello")).toBeInTheDocument();
   });
 });

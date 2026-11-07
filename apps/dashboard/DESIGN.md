@@ -174,7 +174,7 @@ The reference screen, the session and its run trace, carries the system's signat
 **Open, not decided.** The finish review shipped the reference screen with these left open; they are not rules to copy:
 - The token bar can read as a progress bar.
 - Section heads are body size (16px, and 14px inside a run), so the hierarchy leans on weight alone.
-- The conversation is a card per message.
+- The conversation is a card per message, and an outlined card per run between them: its agent, what it was asked, its answer or why there is none, and the way into its trace.
 
 ## Motion
 
@@ -241,7 +241,7 @@ Warm graphite paper with a single cool teal: BRAND's Spectral palette, copied in
 
 **The frame.** From 768px the shell is a two-column, two-row grid: a 228px sidebar spanning both rows, a 48px top bar, and the sheet in the remaining cell, inset 8px from the window's right and bottom edges. The sidebar and the top bar share the frame's ground with no line between them. Inside the sheet, content is padded 24px; below 768px the sheet is the whole screen, padded 16px across and 20px down, and the top bar becomes a sticky 48px strip with the menu button, the mark and the team picker.
 
-**The reference screen.** A title row (breadcrumb, headline, a status line of state, kind and times joined by middle dots), then two halves. At 1280px and wider they sit side by side, conversation on the left (two fifths) and the run on the right (three fifths), 32px apart. Narrower, they stack behind a line of tabs (Messages, Runs) that the URL remembers.
+**The reference screen.** A title row (breadcrumb, headline, a status line of state, kind and times joined by middle dots), then two halves. At 1280px and wider they sit side by side, conversation on the left (two fifths) and the run on the right (three fifths), 32px apart. Narrower, they stack behind a line of tabs (Conversation, Runs) that the URL remembers.
 
 **The finding.** A finished run's title is followed by one line in full ink at 14px that answers the screen's question before the trace does: "Failed at step 2, in lookup.", "Failed before its first step." or "Step 2 spent 62% of the tokens." A running run, and a run of one step that succeeded, have no finding: the status and the trace already say it.
 

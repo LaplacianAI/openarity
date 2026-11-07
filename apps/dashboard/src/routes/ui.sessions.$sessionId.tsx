@@ -6,7 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ChevronRight, Paperclip } from "lucide-react";
+import { ArrowRight, ChevronRight, Paperclip } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -23,13 +23,16 @@ import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type { Attachment, Page, Run, Session } from "@/api/types";
 import { Time } from "@/components/facts";
-import { RunDetail, RunStatus } from "@/components/run-detail";
+import { Markdown } from "@/components/markdown";
+import { isLive, RunDetail, RunStatus } from "@/components/run-detail";
+import { HubTag } from "@/components/run-table";
 import { ErrorState } from "@/components/states";
 import { StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, LoadMore, Mono } from "@/components/ui-bits";
+import { conversation, noAnswer } from "@/lib/conversation";
 import { absoluteTime, fileSize } from "@/lib/format";
 import { useMediaQuery } from "@/lib/media";
 import { cn } from "@/lib/utils";
@@ -98,6 +101,12 @@ function SessionPage() {
     initialPageParam: null as string | null,
     getNextPageParam: nextCursorOf,
     enabled: Boolean(teamId),
+    // While the newest run works, its answer is read again until it lands:
+    // the conversation shows it whether or not its trace is open.
+    refetchInterval: (q) => {
+      const newest = q.state.data?.pages[0]?.items[0];
+      return newest && isLive(newest.status) ? LIVE_EVERY_MS : false;
+    },
   });
 
   // A failed or running latest run is what the reader came for, so a phone
@@ -176,7 +185,7 @@ function SessionPage() {
             <h2 id="conversation" className="text-base font-medium">
               Conversation
             </h2>
-            <Messages teamId={teamId} sessionId={sessionId} />
+            <Conversation teamId={teamId} sessionId={sessionId} runs={runs} />
           </section>
           <section aria-labelledby="runs" className="space-y-3">
             <h2 id="runs" className="flex items-center gap-2 text-base font-medium">
@@ -199,7 +208,7 @@ function SessionPage() {
           className="gap-4"
         >
           <TabsList>
-            <TabsTrigger value="messages">Messages</TabsTrigger>
+            <TabsTrigger value="messages">Conversation</TabsTrigger>
             <TabsTrigger value="runs">
               Runs
               {runs.isSuccess ? (
@@ -210,7 +219,7 @@ function SessionPage() {
             </TabsTrigger>
           </TabsList>
           <TabsContent value="messages">
-            <Messages teamId={teamId} sessionId={sessionId} />
+            <Conversation teamId={teamId} sessionId={sessionId} runs={runs} />
           </TabsContent>
           <TabsContent value="runs">{runsPanel}</TabsContent>
         </Tabs>
@@ -236,13 +245,23 @@ function save(bytes: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+/** How often a working run is read again for its answer. */
+const LIVE_EVERY_MS = 3000;
+
 /**
- * The conversation. The brain pages messages newest first, so every page it
- * hands over is older than the last: the whole list is reversed to read top
- * to bottom like a chat, and "Load more" sits above it because what it brings
- * back is earlier.
+ * The conversation: what people said, and each run with what it was asked
+ * and what it answered, oldest first like a chat. Both are paged newest
+ * first, so "Load more" sits above and brings back what was earlier.
  */
-function Messages({ teamId, sessionId }: { teamId: string; sessionId: string }) {
+function Conversation({
+  teamId,
+  sessionId,
+  runs,
+}: {
+  teamId: string;
+  sessionId: string;
+  runs: RunsQuery;
+}) {
   const messages = useInfiniteQuery({
     queryKey: ["sessions", teamId, sessionId, "messages"],
     queryFn: ({ pageParam }) => listMessages(teamId, sessionId, pageParam),
@@ -277,12 +296,21 @@ function Messages({ teamId, sessionId }: { teamId: string; sessionId: string }) 
     }
   };
 
-  const said = (messages.data?.pages.flatMap((p) => p.items) ?? []).slice().reverse();
+  const talk = conversation(
+    { items: messages.data?.pages.flatMap((p) => p.items) ?? [], more: messages.hasNextPage },
+    // A run list that failed to read has none, and the messages stand alone.
+    { items: runs.data?.pages.flatMap((p) => p.items) ?? [], more: runs.hasNextPage },
+  );
+  const saidCount = talk.turns.filter((t) => t.kind === "message").length;
+  const readFurther = () => {
+    if (talk.readFurther.messages) void messages.fetchNextPage();
+    if (talk.readFurther.runs) void runs.fetchNextPage();
+  };
   const files = attachments.data?.pages.flatMap((p) => p.items) ?? [];
 
   return (
     <section aria-label="Messages" className="space-y-4">
-      {messages.isPending ? (
+      {messages.isPending || runs.isPending ? (
         <div className="space-y-3" role="status" aria-label="Loading messages">
           <Skeleton className="h-14 w-full" />
           <Skeleton className="h-14 w-4/5" />
@@ -294,20 +322,24 @@ function Messages({ teamId, sessionId }: { teamId: string; sessionId: string }) 
           onRetry={() => messages.refetch()}
           retrying={messages.isRefetching}
         />
-      ) : said.length === 0 ? (
+      ) : talk.turns.length === 0 && !messages.hasNextPage && !runs.hasNextPage ? (
         <p className="text-sm text-muted-foreground">Nothing has been said here.</p>
       ) : (
         <>
-          {messages.hasNextPage ? (
+          {messages.hasNextPage || runs.hasNextPage ? (
             <LoadMore
               hasMore
-              loading={messages.isFetchingNextPage}
-              onClick={() => messages.fetchNextPage()}
-              loadedLabel={`${said.length} message${said.length === 1 ? "" : "s"} loaded`}
+              loading={messages.isFetchingNextPage || runs.isFetchingNextPage}
+              onClick={readFurther}
+              loadedLabel={`${saidCount} message${saidCount === 1 ? "" : "s"} loaded`}
             />
           ) : null}
           <ol className="space-y-2">
-            {said.map((m) => {
+            {talk.turns.map((t) => {
+              if (t.kind === "run") {
+                return <AgentTurn key={`run-${t.run.id}`} sessionId={sessionId} run={t.run} />;
+              }
+              const m = t.message;
               const name = nameOf(m.user_id);
               return (
                 <li key={m.id} data-message className="rounded-lg bg-card px-4 py-3">
@@ -383,6 +415,61 @@ function Messages({ teamId, sessionId }: { teamId: string; sessionId: string }) 
         ) : null
       ) : null}
     </section>
+  );
+}
+
+/** Longer than this, an answer in the conversation is cut, and read whole in its run. */
+const REPLY_FOLD = 1200;
+
+/**
+ * A run as the conversation reads it: which agent was asked what, and what
+ * came back (its answer, why there is none, or that it is still working)
+ * with the way into its trace.
+ */
+function AgentTurn({ sessionId, run }: { sessionId: string; run: Run }) {
+  const output = run.output?.trim() ?? "";
+  const folded = output.length > REPLY_FOLD;
+  return (
+    <li data-turn={run.id} className="rounded-lg border border-rule px-4 py-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <span className="min-w-0 truncate text-sm font-medium text-foreground">{run.agent}</span>
+        {run.hub ? <HubTag /> : null}
+        <RunStatus status={run.status} />
+        <time dateTime={run.created_at} className="ml-auto shrink-0">
+          {absoluteTime(run.created_at)}
+        </time>
+      </div>
+      {/* What it was asked, as typed: text, cut to a few lines. */}
+      <p data-asked className="mt-1 line-clamp-3 text-sm whitespace-pre-wrap text-muted-foreground">
+        <span className="sr-only">Asked: </span>
+        {run.input}
+      </p>
+      <div data-reply className="mt-2 max-w-[75ch] text-sm">
+        {output ? (
+          <div
+            className={cn(
+              folded &&
+                "max-h-60 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]", // taste-skill-ignore: a mask fade on a fold, not a fill
+            )}
+          >
+            <Markdown>{output}</Markdown>
+          </div>
+        ) : (
+          <p className={run.status === "failed" ? "text-failed" : "text-muted-foreground"}>
+            {noAnswer(run)}
+          </p>
+        )}
+      </div>
+      <Link
+        to="/ui/sessions/$sessionId"
+        params={{ sessionId }}
+        search={{ tab: "runs", run: run.id }}
+        className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+      >
+        {folded ? "Read the whole answer in its run" : "Open the run"}
+        <ArrowRight aria-hidden className="size-3" />
+      </Link>
+    </li>
   );
 }
 
