@@ -546,7 +546,7 @@ func (s *writeSpy) FinishRun(ctx context.Context, arg db.FinishRunParams) (int64
 // A finish writes its event in the same call, so it counts as both.
 func (s *writeSpy) FinishRunWithEvent(
 	ctx context.Context, finish db.FinishRunParams, event db.AppendRunEventParams,
-) (int64, error) {
+) (int64, uuid.UUID, error) {
 	s.finishes.Add(1)
 	s.appends.Add(1)
 	return s.Store.FinishRunWithEvent(ctx, finish, event)

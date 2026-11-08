@@ -624,3 +624,224 @@ func TestMemberMayAsksTheRoleTheyHoldNow(t *testing.T) {
 		t.Error("a removed member may still start runs")
 	}
 }
+
+// running puts a run in the hands of worker w-1, as ClaimRun would, so
+// FinishRunWithEvent has something to end.
+func running(t *testing.T, s *Store, id uuid.UUID) {
+	t.Helper()
+	if _, err := s.pool.Exec(t.Context(),
+		`UPDATE runs SET status = 'running', worker = 'w-1', heartbeat_at = now(), started_at = now() WHERE id = $1`, id); err != nil {
+		t.Fatalf("running %s: %v", id, err)
+	}
+}
+
+func endChannelRun(t *testing.T, s *Store, id uuid.UUID, status, output, failure string) uuid.UUID {
+	t.Helper()
+	p := db.FinishRunParams{ID: id, Worker: "w-1", Status: status}
+	if status == "succeeded" {
+		p.Output = &output
+	}
+	if failure != "" {
+		p.Error = &failure
+	}
+	n, followUp, err := s.FinishRunWithEvent(t.Context(), p, db.AppendRunEventParams{
+		RunID: id, Kind: "finished", Payload: []byte(`{"status":"` + status + `"}`), Worker: "w-1",
+	})
+	if err != nil || n != 1 {
+		t.Fatalf("FinishRunWithEvent(%s) = %d, %v; want 1 row", status, n, err)
+	}
+	return followUp
+}
+
+func repliesTo(t *testing.T, s *Store, run uuid.UUID) []db.Reply {
+	t.Helper()
+	rows, err := s.pool.Query(t.Context(), `SELECT kind, text FROM replies WHERE run_id = $1`, run)
+	if err != nil {
+		t.Fatalf("reading replies: %v", err)
+	}
+	defer rows.Close()
+	var out []db.Reply
+	for rows.Next() {
+		var r db.Reply
+		if err := rows.Scan(&r.Kind, &r.Text); err != nil {
+			t.Fatalf("scanning a reply: %v", err)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// A channel run that answers sends its answer back, written in the
+// transaction that finishes it: a finished run with no reply cannot exist.
+func TestAFinishedChannelRunSendsItsAnswer(t *testing.T) {
+	s := queryStore(t)
+	c := newConversation(t, s, "answers")
+	m := c.says(t, s, "m-1", "why did the export fail?")
+	r, err := c.startRun(t, s.Queries, &m, "why did the export fail?")
+	if err != nil {
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	running(t, s, r.ID)
+
+	if followUp := endChannelRun(t, s, r.ID, "succeeded", "It ran out of disk.", ""); followUp != uuid.Nil {
+		t.Errorf("a run with nothing left over started %s", followUp)
+	}
+	if got := repliesTo(t, s, r.ID); len(got) != 1 || got[0].Kind != "answer" || got[0].Text != "It ran out of disk." {
+		t.Errorf("replies = %+v, want the answer", got)
+	}
+}
+
+// A failed run tells the person it could not answer, and never why: the error
+// can name the brain's model endpoint, a server or a setting.
+func TestAFailedChannelRunApologisesWithoutTheError(t *testing.T) {
+	s := queryStore(t)
+	c := newConversation(t, s, "fails")
+	r, err := c.startRun(t, s.Queries, nil, "hello")
+	if err != nil {
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	running(t, s, r.ID)
+
+	endChannelRun(t, s, r.ID, "failed", "", "the model endpoint could not be reached: dial tcp 10.0.3.7:443")
+	got := repliesTo(t, s, r.ID)
+	if len(got) != 1 || got[0].Kind != "apology" || got[0].Text != Apology {
+		t.Errorf("replies = %+v, want the apology", got)
+	}
+}
+
+// An answer that is empty is no answer; the person gets the apology rather
+// than a blank message.
+func TestAnEmptyAnswerIsAnApology(t *testing.T) {
+	s := queryStore(t)
+	c := newConversation(t, s, "blank")
+	r, err := c.startRun(t, s.Queries, nil, "hello")
+	if err != nil {
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	running(t, s, r.ID)
+
+	endChannelRun(t, s, r.ID, "succeeded", " \n", "")
+	if got := repliesTo(t, s, r.ID); len(got) != 1 || got[0].Kind != "apology" {
+		t.Errorf("replies = %+v, want the apology", got)
+	}
+}
+
+// Someone stopped the run on purpose; nothing is sent, and nothing is started
+// for what came after.
+func TestACancelledChannelRunSendsNothing(t *testing.T) {
+	s := queryStore(t)
+	c := newConversation(t, s, "cancelled")
+	r, err := c.startRun(t, s.Queries, nil, "hello")
+	if err != nil {
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	running(t, s, r.ID)
+	if err := s.AddSteer(t.Context(), db.AddSteerParams{RunID: r.ID, Text: "Asha: and the other one"}); err != nil {
+		t.Fatalf("AddSteer: %v", err)
+	}
+
+	if followUp := endChannelRun(t, s, r.ID, "cancelled", "", ""); followUp != uuid.Nil {
+		t.Errorf("a cancelled run started %s", followUp)
+	}
+	if got := repliesTo(t, s, r.ID); len(got) != 0 {
+		t.Errorf("replies = %+v, want none", got)
+	}
+}
+
+// Messages that came after the run's last model request are answered by one
+// run started in the same transaction, whose input is those messages, oldest
+// first. They are taken, so no later finish answers them again.
+func TestSteersLeftOverStartOneRunToAnswerThem(t *testing.T) {
+	s := queryStore(t)
+	c := newConversation(t, s, "leftovers")
+	r, err := c.startRun(t, s.Queries, nil, "hello")
+	if err != nil {
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	running(t, s, r.ID)
+	for _, text := range []string{"Asha: one more thing", "Asha: and another"} {
+		if err := s.AddSteer(t.Context(), db.AddSteerParams{RunID: r.ID, Text: text}); err != nil {
+			t.Fatalf("AddSteer: %v", err)
+		}
+	}
+
+	followUp := endChannelRun(t, s, r.ID, "succeeded", "Done.", "")
+	if followUp == uuid.Nil {
+		t.Fatal("no run was started for the leftover steers")
+	}
+	next, err := s.GetRun(t.Context(), followUp)
+	if err != nil {
+		t.Fatalf("GetRun(%s): %v", followUp, err)
+	}
+	if !next.ReplyToChannel || !next.Hub || next.Status != "queued" || next.SessionID != c.session.ID ||
+		next.Input != "Asha: one more thing\nAsha: and another" || next.MessageID != nil {
+		t.Errorf("follow-up = %+v, want a queued hub run replying in the same session, with both messages", next)
+	}
+	if left, _ := s.TakeLeftoverSteers(t.Context(), r.ID); len(left) != 0 {
+		t.Errorf("leftovers still there: %q", left)
+	}
+	if got := repliesTo(t, s, r.ID); len(got) != 1 || got[0].Text != "Done." {
+		t.Errorf("replies = %+v, want the finished run's own answer as well", got)
+	}
+}
+
+// A run someone started from the dashboard finishes as it always did: no
+// reply, no lock it does not need.
+func TestARunFromTheDashboardFinishesAsBefore(t *testing.T) {
+	s := queryStore(t)
+	c := newConversation(t, s, "dashboard-finish")
+	agent := insertAgent(t, s, c.team, "triage")
+	id := ranIn(t, s, c.team, c.session.ID, agent, "running", 1)
+	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET worker = 'w-1' WHERE id = $1`, id); err != nil {
+		t.Fatalf("assigning the worker: %v", err)
+	}
+	// Nothing steers a dashboard run, but if a steer were there, the finish
+	// still must not take it as a channel's leftover and start a run for it.
+	if err := s.AddSteer(t.Context(), db.AddSteerParams{RunID: id, Text: "stray"}); err != nil {
+		t.Fatalf("AddSteer: %v", err)
+	}
+
+	if followUp := endChannelRun(t, s, id, "succeeded", "Done.", ""); followUp != uuid.Nil {
+		t.Errorf("a dashboard run started %s", followUp)
+	}
+	if got := repliesTo(t, s, id); len(got) != 0 {
+		t.Errorf("replies = %+v, want none", got)
+	}
+}
+
+// The finish itself takes the session's lock before it ends the run. Held
+// here by a delivery that has not committed, the finish waits for it, and then
+// takes the steer that delivery wrote.
+func TestTheFinishWaitsForADeliveryHoldingTheSession(t *testing.T) {
+	s := queryStore(t)
+	c := newConversation(t, s, "finish-waits")
+	r, err := c.startRun(t, s.Queries, nil, "hello")
+	if err != nil {
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	running(t, s, r.ID)
+
+	deliver, err := s.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	defer func() { _ = deliver.Rollback(t.Context()) }()
+	dq := db.New(deliver)
+	if _, err := dq.LockSession(t.Context(), c.session.ID); err != nil {
+		t.Fatalf("LockSession: %v", err)
+	}
+	if err := dq.AddSteer(t.Context(), db.AddSteerParams{RunID: r.ID, Text: "Asha: late"}); err != nil {
+		t.Fatalf("AddSteer: %v", err)
+	}
+
+	followUp := make(chan uuid.UUID, 1)
+	go func() { followUp <- endChannelRun(t, s, r.ID, "succeeded", "Done.", "") }()
+	waitForLock(t, s, "FROM sessions WHERE id")
+
+	if err := deliver.Commit(t.Context()); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if got := <-followUp; got == uuid.Nil {
+		t.Error("the finish did not take the steer written while it waited: it did not wait")
+	}
+}

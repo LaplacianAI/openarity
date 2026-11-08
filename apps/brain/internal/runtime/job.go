@@ -55,6 +55,7 @@ func (j *Job) Register(d dbos.Context) ([]dbos.ScheduleSpec, error) {
 	dbos.RegisterWorkflow(d, j.run, dbos.WithWorkflowName(RunWorkflow))
 	dbos.RegisterWorkflow(d, j.sweep, dbos.WithWorkflowName(sweepWorkflow))
 	j.dbos = d
+	j.executor.enqueue = func(id uuid.UUID) error { return enqueue(d, id) }
 
 	return []dbos.ScheduleSpec{j.schedule()}, nil
 }
