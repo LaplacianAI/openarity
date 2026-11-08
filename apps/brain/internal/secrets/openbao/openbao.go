@@ -251,18 +251,14 @@ func (s *store) Create(ctx context.Context, path, key, value string) error {
 		return err
 	}
 
-	switch status {
-	case http.StatusOK, http.StatusNoContent:
+	switch {
+	case status == http.StatusOK || status == http.StatusNoContent:
 		return nil
-	case http.StatusBadRequest:
-		if bytes.Contains(body, []byte("check-and-set parameter did not match")) {
-			return fmt.Errorf("%w: %s", secrets.ErrExists, path)
-		}
+	case status == http.StatusBadRequest && bytes.Contains(body, []byte("check-and-set parameter did not match")):
+		return fmt.Errorf("%w: %s", secrets.ErrExists, path)
 	default:
 		return fmt.Errorf("%w: create returned %d", secrets.ErrUnavailable, status)
 	}
-
-	return nil
 }
 
 func (s *store) Delete(ctx context.Context, path string) error {
