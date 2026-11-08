@@ -3,6 +3,7 @@ package static
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
@@ -47,6 +48,18 @@ func (s *store) Put(_ context.Context, path, key, value string) error {
 	defer s.mu.Unlock()
 
 	s.set(path, key, value)
+	return nil
+}
+
+// PutAll replaces the path, as OpenBao does: a key left out is gone.
+func (s *store) PutAll(_ context.Context, path string, values map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.values == nil {
+		s.values = map[string]map[string]string{}
+	}
+	s.values[path] = maps.Clone(values)
 	return nil
 }
 

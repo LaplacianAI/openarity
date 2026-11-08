@@ -528,12 +528,15 @@ paths:
           description: |
             The body is malformed, the name is empty or over 200 characters,
             `provider` names no adapter, `signing_secret` was supplied blank,
-            or `reply_url` is refused (see `updateChannel`).
+            `reply_url` is refused (see `updateChannel`), a credential the
+            provider asks for is missing or one it does not ask for is
+            given, or the provider refused the credentials (Telegram does
+            not know the bot token).
           content:
             text/plain:
               schema:
                 type: string
-                examples: ["unknown provider"]
+                examples: ["unknown provider", "the bot token is not one Telegram knows"]
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -545,6 +548,15 @@ paths:
               schema:
                 type: string
                 examples: ["a channel with that name already exists"]
+        "502":
+          description: |
+            The provider could not be reached to check the credentials, so
+            the channel was not created. Try again.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["could not reach telegram to check the credentials; try again"]
         "503":
           description: |
             The secret store is unreachable, so the channel was not created.
@@ -3053,7 +3065,7 @@ components:
 
     Channel:
       type: object
-      required: [id, team_id, provider, name, can_reply]
+      required: [id, team_id, provider, name, can_reply, takes_reply_url]
       properties:
         id:
           type: string
@@ -3069,7 +3081,7 @@ components:
           type: string
           description: |
             The adapter that parses this channel's webhooks, lower case and
-            matched exactly.
+            matched exactly: `custom` or `telegram`.
           examples: ["custom"]
         name:
           type: string
@@ -3088,8 +3100,14 @@ components:
         can_reply:
           type: boolean
           description: |
-            Whether this channel's provider sends replies at all. Offer
-            `reply_url` only when it is true; it is refused otherwise.
+            Whether this channel's provider sends replies at all.
+        takes_reply_url:
+          type: boolean
+          description: |
+            Whether replies go to an address the channel names. `custom`
+            posts to `reply_url`; `telegram` replies in the chat a message
+            came from and takes none. Offer `reply_url` only when this is
+            true; it is refused otherwise.
         reply_url:
           type: string
           format: uri
@@ -3137,9 +3155,23 @@ components:
           format: uri
           maxLength: 2048
           description: |
-            Where replies are posted, for a provider that sends them; see
-            `updateChannel` for what is accepted and what is sent.
+            Where replies are posted, for a provider that posts them to an
+            address (`takes_reply_url`); see `updateChannel` for what is
+            accepted and what is sent.
           examples: ["https://support.example.com/openarity/replies"]
+        credentials:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            What the provider asks a person for, and nothing else: for
+            `telegram`, `bot_token`, the token @BotFather gave. The brain
+            asks the provider about them before the channel exists, so a
+            token it does not know is refused (400) and a provider out of
+            reach is a 502. They go to the secret store with the signing
+            secret, as one secret, and are never returned. A provider that
+            asks for nothing refuses any.
+          examples: [{"bot_token": "<token from @BotFather>"}]
 
     UpdateChannelRequest:
       type: object

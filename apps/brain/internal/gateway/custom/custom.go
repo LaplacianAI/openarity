@@ -100,7 +100,7 @@ func (provider) Verify(req gateway.WebhookRequest, creds gateway.Credentials) er
 	return nil
 }
 
-func (provider) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
+func (provider) Parse(req gateway.WebhookRequest, _ gateway.Credentials) (gateway.Result, error) {
 	var b body
 	if err := json.Unmarshal(req.Body, &b); err != nil {
 		return gateway.Result{}, fmt.Errorf("custom: %w", err)
@@ -204,6 +204,9 @@ func (a attachment) ref(i int) string {
 	return "#" + strconv.Itoa(i)
 }
 
+// RepliesToURL marks custom as posting replies to the channel's reply URL.
+func (provider) RepliesToURL() {}
+
 // SignReply signs a reply the way Sign signs a message, under its own prefix:
 // a reply someone captured cannot be posted back to the webhook as a message
 // and pass Verify.
@@ -230,20 +233,20 @@ type replyBody struct {
 // answer was lost.
 func (provider) Reply(
 	ch gateway.Channel, out gateway.Outbound, creds gateway.Credentials, at time.Time,
-) (gateway.OutboundRequest, error) {
+) ([]gateway.OutboundRequest, error) {
 	secret := creds.Get(gateway.KeySigning)
 	switch {
 	case ch.ReplyURL == "":
-		return gateway.OutboundRequest{}, errors.New("custom: the channel has no reply URL")
+		return nil, errors.New("custom: the channel has no reply URL")
 	case secret == "":
-		return gateway.OutboundRequest{}, errors.New("custom: no signing secret")
+		return nil, errors.New("custom: no signing secret")
 	}
 
 	b := replyBody{ID: out.ID, InReplyTo: out.InReplyTo, Kind: out.Kind, Text: out.Text}
 	b.Session.Ref, b.Session.Kind = out.Session.Ref, string(out.Session.Kind)
 	raw, err := json.Marshal(b)
 	if err != nil {
-		return gateway.OutboundRequest{}, fmt.Errorf("custom: encoding the reply: %w", err)
+		return nil, fmt.Errorf("custom: encoding the reply: %w", err)
 	}
 
 	ts := strconv.FormatInt(at.Unix(), 10)
@@ -251,5 +254,5 @@ func (provider) Reply(
 	h.Set("Content-Type", "application/json")
 	h.Set(HeaderTimestamp, ts)
 	h.Set(HeaderSignature, SignReply(secret, ts, raw))
-	return gateway.OutboundRequest{URL: ch.ReplyURL, Header: h, Body: raw}, nil
+	return []gateway.OutboundRequest{{URL: ch.ReplyURL, Header: h, Body: raw}}, nil
 }

@@ -1,13 +1,18 @@
 package channels
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/netip"
+	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -28,6 +33,8 @@ const (
 
 	secretBytes  = 32
 	secretPrefix = "oawh_"
+
+	setupReadLimit = 64 << 10
 )
 
 type Store interface {
@@ -48,13 +55,15 @@ type Store interface {
 }
 
 type Secrets interface {
-	Put(ctx context.Context, path, key, value string) error
+	PutAll(ctx context.Context, path string, values map[string]string) error
 	Delete(ctx context.Context, path string) error
 }
 
 type Providers interface {
 	Get(name string) (gateway.Provider, bool)
 	Replier(name string) (gateway.Replier, bool)
+	Setup(name string) (gateway.Setup, bool)
+	TakesReplyURL(name string) bool
 }
 
 type handler struct {
@@ -67,15 +76,18 @@ type handler struct {
 	// allow is which addresses a reply URL may name; the sender's dialer
 	// asks the same at send time.
 	allow func(netip.Addr) bool
+	// setup asks a provider about the credentials a channel is connected
+	// with. It refuses what a team may not reach and follows no redirect.
+	setup *http.Client
 }
 
 func New(
 	logger *slog.Logger, s Store, a api.Authorizer, sec Secrets, p Providers, hookBase string,
-	allow func(netip.Addr) bool,
+	allow func(netip.Addr) bool, setup *http.Client,
 ) *api.Router {
 	h := &handler{
 		logger: logger, store: s, authz: a, secrets: sec, providers: p,
-		hookBase: strings.TrimSuffix(hookBase, "/"), allow: allow,
+		hookBase: strings.TrimSuffix(hookBase, "/"), allow: allow, setup: setup,
 	}
 
 	r := api.NewRouter("/teams")
@@ -130,6 +142,11 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	creds, ok := h.credentials(w, r, req)
+	if !ok {
+		return
+	}
+	creds[gateway.KeySigning] = secret
 
 	row, err := h.store.CreateChannel(r.Context(), db.CreateChannelParams{
 		TeamID: teamID, Provider: req.Provider, Name: name, ReplyUrl: replyURL,
@@ -144,9 +161,10 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.secrets.Put(r.Context(),
-		secrets.Path(teamID, secrets.KindChannel, row.ID),
-		gateway.KeySigning, secret); err != nil {
+	// One write: a store that keeps a path as one secret would keep only the
+	// last of several.
+	if err := h.secrets.PutAll(r.Context(),
+		secrets.Path(teamID, secrets.KindChannel, row.ID), creds); err != nil {
 
 		if err := h.store.DeleteChannel(r.Context(), row.ID); err != nil {
 			h.logger.Error("channel row left behind with no secret",
@@ -181,6 +199,91 @@ func (h *handler) signingSecret(w http.ResponseWriter, req createRequest) (strin
 		return "", false, false
 	}
 	return supplied, false, true
+}
+
+// credentials is what a channel is connected with besides its signing secret:
+// the keys its provider asks a person for, completed from the provider's own
+// API, Telegram's bot from getMe. A provider that asks for nothing takes
+// nothing, so a key it would never read is not stored.
+func (h *handler) credentials(w http.ResponseWriter, r *http.Request, req createRequest) (map[string]string, bool) {
+	s, asks := h.providers.Setup(req.Provider)
+	if !asks {
+		if len(req.Credentials) > 0 {
+			http.Error(w, "the "+req.Provider+" provider takes no credentials", http.StatusBadRequest)
+			return nil, false
+		}
+		return map[string]string{}, true
+	}
+
+	supplied := gateway.Credentials{}
+	for k := range req.Credentials {
+		if !slices.Contains(s.Supplied(), k) {
+			http.Error(w, "credentials."+k+" is not something a "+req.Provider+" channel takes", http.StatusBadRequest)
+			return nil, false
+		}
+	}
+	for _, k := range s.Supplied() {
+		v := strings.TrimSpace(req.Credentials[k])
+		if v == "" {
+			http.Error(w, "credentials."+k+" is required for a "+req.Provider+" channel", http.StatusBadRequest)
+			return nil, false
+		}
+		supplied[k] = v
+	}
+
+	out, err := s.SetupRequest(supplied)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return nil, false
+	}
+	status, body, err := h.ask(r.Context(), out)
+	if err != nil {
+		h.logger.WarnContext(r.Context(), "could not reach a provider to set up a channel",
+			"provider", req.Provider, "error", err)
+		http.Error(w, "could not reach "+req.Provider+" to check the credentials; try again", http.StatusBadGateway)
+		return nil, false
+	}
+	completed, err := s.Complete(status, body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return nil, false
+	}
+
+	// Only keys the provider declares, and never the signing secret: what a
+	// provider's answer says cannot widen what the channel holds.
+	p, _ := h.providers.Get(req.Provider)
+	creds := map[string]string{}
+	for k, v := range completed {
+		if k != gateway.KeySigning && slices.Contains(p.Keys(), k) {
+			creds[k] = v
+		}
+	}
+	maps.Copy(creds, supplied)
+	return creds, true
+}
+
+// ask sends a provider's setup request. The URL can hold a credential, as a
+// bot token does, so an error never quotes it.
+func (h *handler) ask(ctx context.Context, out gateway.OutboundRequest) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, out.URL, bytes.NewReader(out.Body))
+	if err != nil {
+		return 0, nil, errors.New("the provider's setup request is malformed")
+	}
+	req.Header = out.Header.Clone()
+	resp, err := h.setup.Do(req) //nolint:gosec // G704: the client's dialer refuses what the team may not reach
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return 0, nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, setupReadLimit))
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, body, nil
 }
 
 func newSecret() (string, error) {
@@ -295,6 +398,11 @@ func (h *handler) replyURLOK(w http.ResponseWriter, provider, raw string) bool {
 		http.Error(w, "the "+provider+" provider sends no replies, so it takes no reply_url", http.StatusBadRequest)
 		return false
 	}
+	if !h.providers.TakesReplyURL(provider) {
+		http.Error(w, "the "+provider+" provider replies in the conversation itself, so it takes no reply_url",
+			http.StatusBadRequest)
+		return false
+	}
 	if err := checkReplyURL(raw, h.allow); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return false
@@ -345,6 +453,7 @@ func (h *handler) view(row db.Channel) channel {
 		c.ReplyURL = *row.ReplyUrl
 	}
 	_, c.CanReply = h.providers.Replier(row.Provider)
+	c.TakesReplyURL = h.providers.TakesReplyURL(row.Provider)
 	if h.hookBase == "" {
 		return c
 	}

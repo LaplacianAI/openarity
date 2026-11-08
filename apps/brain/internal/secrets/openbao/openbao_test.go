@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -680,5 +681,37 @@ func TestOpenBaoCreateAsksForCheckAndSet(t *testing.T) {
 	got := stub.last(t)
 	if !strings.Contains(got.body, `"cas":0`) {
 		t.Errorf("Create body = %s, want options.cas = 0", got.body)
+	}
+}
+
+// A channel with several keys is one secret written once: KV v2 replaces the
+// whole secret on every write, so a write per key would keep only the last.
+func TestOpenBaoPutAllWritesEveryKeyInOneWrite(t *testing.T) {
+	t.Parallel()
+
+	stub := newStub(t, answering(http.StatusOK, `{}`))
+	values := map[string]string{"signing_secret": "s3cr3t", "bot_token": "1:abc", "bot_id": "1", "bot_username": "x_bot"}
+	if err := asWriter(t, newTestBao(t, stub)).PutAll(t.Context(), "teams/a/channels/b", values); err != nil {
+		t.Fatalf("PutAll: %v", err)
+	}
+
+	calls, _, _ := stub.snapshot()
+	writes := 0
+	for _, c := range calls {
+		if c.path == "/v1/secret/data/teams/a/channels/b" {
+			writes++
+		}
+	}
+	if writes != 1 {
+		t.Fatalf("%d writes to the path, want one", writes)
+	}
+	var body struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stub.last(t).body), &body); err != nil {
+		t.Fatalf("unmarshal %q: %v", stub.last(t).body, err)
+	}
+	if !maps.Equal(body.Data, values) {
+		t.Errorf("wrote %v, want every key under data", body.Data)
 	}
 }

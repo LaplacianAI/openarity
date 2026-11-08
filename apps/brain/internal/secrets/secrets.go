@@ -34,7 +34,13 @@ type Store interface {
 }
 
 type Writer interface {
+	// Put writes one key. A path is one secret, written whole: in OpenBao a
+	// write replaces every other key at the path, so a path with several
+	// keys is written with PutAll, never with one Put per key.
 	Put(ctx context.Context, path, key, value string) error
+	// PutAll writes several keys as one secret: afterwards the path holds
+	// exactly these keys, all of them or, on failure, none of them new.
+	PutAll(ctx context.Context, path string, values map[string]string) error
 	Delete(ctx context.Context, path string) error
 }
 

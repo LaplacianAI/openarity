@@ -64,7 +64,7 @@ WITH claimed AS (
         FOR UPDATE SKIP LOCKED)
     RETURNING r.*
 )
-SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts,
+SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent,
        ch.provider, ch.reply_url,
        s.provider_ref AS session_ref, s.kind AS session_kind,
        m.external_id AS in_reply_to
@@ -73,6 +73,12 @@ JOIN channels ch ON ch.id = c.channel_id
 JOIN sessions s ON s.id = c.session_id
 LEFT JOIN messages m ON m.id = c.in_reply_to
 ORDER BY c.id;
+
+-- A part went out. Matched on attempts like every mark, so a sender whose
+-- lease ran out cannot move another's progress.
+-- name: ReplyPartSent :execrows
+UPDATE replies SET parts_sent = sqlc.arg('parts_sent')
+WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attempts');
 
 -- name: ReplySent :execrows
 UPDATE replies SET status = 'sent', sent_at = now(), last_error = NULL

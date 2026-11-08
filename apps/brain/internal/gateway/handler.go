@@ -89,7 +89,7 @@ func (h *handler) hook(p Provider, rt Route) http.HandlerFunc {
 			return
 		}
 
-		result, err := p.Parse(req)
+		result, err := p.Parse(req, creds)
 		if err != nil {
 			h.logger.Warn("gateway: parse failed",
 				"channel_id", channel.ID, "provider", p.Name(), "error", err)

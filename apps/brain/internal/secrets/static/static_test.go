@@ -253,3 +253,35 @@ func TestOnlyOneConcurrentCreateWins(t *testing.T) {
 		t.Errorf("Get = %q, want one of the values written", got)
 	}
 }
+
+// PutAll behaves as OpenBao's write does, replacing the path: a key it leaves
+// out is gone, so a test against this store cannot pass where OpenBao fails.
+func TestPutAllReplacesThePathAsOpenBaoDoes(t *testing.T) {
+	t.Parallel()
+
+	s := &store{}
+	ctx := t.Context()
+	if err := s.Put(ctx, "p", "old", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutAll(ctx, "p", map[string]string{"a": "x", "b": "y"}); err != nil {
+		t.Fatalf("PutAll: %v", err)
+	}
+	for k, want := range map[string]string{"a": "x", "b": "y"} {
+		if got, err := s.Get(ctx, "p", k); err != nil || got != want {
+			t.Errorf("Get(%s) = %q, %v; want %q", k, got, err, want)
+		}
+	}
+	if _, err := s.Get(ctx, "p", "old"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Errorf("a key PutAll left out is still there: %v", err)
+	}
+
+	values := map[string]string{"a": "x"}
+	if err := s.PutAll(ctx, "q", values); err != nil {
+		t.Fatal(err)
+	}
+	values["a"] = "changed"
+	if got, _ := s.Get(ctx, "q", "a"); got != "x" {
+		t.Error("the store kept the caller's map rather than a copy")
+	}
+}

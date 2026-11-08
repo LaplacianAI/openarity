@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -129,6 +130,7 @@ func (f *fakeStore) DeleteChannel(_ context.Context, id uuid.UUID) error {
 // path.
 type fakeSecrets struct {
 	put     map[string]map[string]string
+	writes  int
 	deleted []string
 	putErr  error
 	delErr  error
@@ -146,6 +148,16 @@ func (f *fakeSecrets) Put(_ context.Context, path, key, value string) error {
 		f.put[path] = map[string]string{}
 	}
 	f.put[path][key] = value
+	return nil
+}
+
+// PutAll replaces the path, as the real stores do.
+func (f *fakeSecrets) PutAll(_ context.Context, path string, values map[string]string) error {
+	f.writes++
+	if f.putErr != nil {
+		return f.putErr
+	}
+	f.put[path] = maps.Clone(values)
 	return nil
 }
 
@@ -219,6 +231,19 @@ func channelRoutes(t *testing.T) authz.Routes {
 	return rs
 }
 
+// offline is a setup client that fails the test if anything is sent.
+func offline(t *testing.T) *http.Client {
+	t.Helper()
+	return &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("a setup request went to %s", r.URL.Host)
+		return nil, errAny
+	})}
+}
+
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 // publicOnly is the brain with no private networks named.
 func publicOnly(a netip.Addr) bool { return !a.IsPrivate() && !a.IsLoopback() && !a.IsUnspecified() }
 
@@ -247,7 +272,7 @@ func callWith(
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), s, a, sec, p, hookBase, publicOnly).
+	New(discardLogger(), s, a, sec, p, hookBase, publicOnly, offline(t)).
 		Register(mux, api.NewGuard(channelRoutes(t), a, liveTeams{}, discardLogger()))
 
 	var reader io.Reader
@@ -854,6 +879,16 @@ func (p providers) Get(name string) (gateway.Provider, bool) {
 func (p providers) Replier(name string) (gateway.Replier, bool) {
 	rp, ok := p[name].(gateway.Replier)
 	return rp, ok
+}
+
+func (p providers) Setup(name string) (gateway.Setup, bool) {
+	s, ok := p[name].(gateway.Setup)
+	return s, ok
+}
+
+func (p providers) TakesReplyURL(name string) bool {
+	_, ok := p[name].(gateway.URLReplier)
+	return ok
 }
 
 func TestAChannelCarriesTheURLItsProviderPostsTo(t *testing.T) {

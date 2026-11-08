@@ -16,6 +16,9 @@ type channel struct {
 	// CanReply is whether the channel's provider sends replies at all, so a
 	// client offers reply_url only where it means something.
 	CanReply bool `json:"can_reply"`
+	// TakesReplyURL is whether replies go to an address the channel names.
+	// Telegram replies in the chat itself, so it can reply and takes none.
+	TakesReplyURL bool `json:"takes_reply_url"`
 }
 
 // listedChannel is a row of the channels list: the channel, and how recently
@@ -32,6 +35,9 @@ type createRequest struct {
 
 	SigningSecret *string `json:"signing_secret,omitempty"`
 	ReplyURL      *string `json:"reply_url,omitempty"`
+	// Credentials are the keys the provider asks a person for, such as a
+	// Telegram bot_token. They go to the secret store and are never shown.
+	Credentials map[string]string `json:"credentials,omitempty"`
 }
 
 type updateRequest struct {

@@ -64,6 +64,11 @@ export type Channel = {
    * from before the field sends none, and is read as one that does not.
    */
   can_reply?: boolean;
+  /**
+   * Whether replies go to an address the channel names (`reply_url`). False
+   * for Telegram, which replies in the chat; the brain refuses a reply URL.
+   */
+  takes_reply_url: boolean;
 };
 
 /** PATCH /teams/{id}/channels/{channelID}. Null stops replies. */
@@ -78,6 +83,8 @@ export type CreateChannelRequest = {
   name: string;
   signing_secret?: string;
   reply_url?: string;
+  /** What the provider asks a person for: Telegram needs `bot_token`. */
+  credentials?: Record<string, string>;
 };
 
 /**

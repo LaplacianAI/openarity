@@ -83,7 +83,7 @@ apps/cli/
     context/           oa context list|use|create|rename|delete
     teams/             oa teams list|create|delete|restore, oa teams members list|add|remove,
                        oa teams settings show|set
-    channels/          oa channels list|create|update|delete, oa channels senders …
+    channels/          oa channels list|create|update|delete (create takes --secret-stdin or --credential-stdin NAME), oa channels senders …
     sessions/          oa sessions list|get|read — the conversations, and their messages
     runs/              oa runs start|list|get|events|cancel — events is an SSE stream
     users/             oa users list — who has logged in, and their id

@@ -27,7 +27,8 @@ internal/gateway/
   job.go            the reply queue, the kick a finished run sends, the sweep
   providertest/     the conformance suite every adapter runs
   custom/           the generic adapter, and the reference implementation
-  <provider>/       one package per platform; only custom ships today
+  telegram/         a Telegram bot: secret_token in, rich messages out, getMe at setup
+  <provider>/       one package per platform
 ```
 
 Imports run one way. `custom` imports `gateway`; `gateway` never imports
@@ -73,8 +74,10 @@ The general form: **pass the data, not the thing that can obtain the data.**
 
 ## Parse is pure and offline
 
-No network, no clock, no randomness, no database. This is not a style
-preference — it is the property that lets `providertest` throw hostile bytes at
+No network, no clock, no randomness, no database. It is handed the channel's
+`Credentials` as values, as `Verify` is: Telegram needs its bot's id and
+username to tell a group message addressed to it from one to another bot.
+This is not a style preference — it is the property that lets `providertest` throw hostile bytes at
 an adapter and assert it never dials out.
 
 Go cannot express it in a type, so the suite enforces it by calling `Parse`
@@ -201,9 +204,12 @@ indistinguishable from success. `NewRegistry` records which providers have it;
 callers ask `reg.Replier(name)`. **A method belongs on `Provider` only when
 every implementation must have it and their implementations genuinely differ.**
 
-`Reply` is pure, like `Parse`: it builds an `OutboundRequest` from values (the
-channel, the reply, the credentials, the time) and never sends it. The sender
-posts it with the one client that refuses private addresses at dial time and
+`Reply` is pure, like `Parse`: it builds the `OutboundRequest`s from values
+(the channel, the reply, the credentials, the time) and never sends them. A
+reply too long for one message is several requests, sent in order; the same
+inputs must split the same way, and `replies.parts_sent` records each part as
+it goes, so a retry resumes at the first part not sent rather than sending
+one twice. The sender posts each with the one client that refuses private addresses at dial time and
 follows no redirect. So an adapter still holds no HTTP client, and:
 
 - **An error from `Reply` is final.** The same inputs give the same answer, so
@@ -222,6 +228,18 @@ follows no redirect. So an adapter still holds no HTTP client, and:
 - **A finished channel run kicks the queue**, so a reply goes out at once; the
   sweep every minute is for retries and lost kicks.
 
+A channel takes a `reply_url` only when its provider is a `URLReplier`, which
+posts to an address the channel names. `custom` is; `telegram` replies into
+the chat itself, so it can reply and takes no URL.
+
+**`Setup` completes credentials when a channel is connected.** A provider that
+needs more than a person can type (Telegram's bot id and username, from
+`getMe`) declares `Supplied()` keys, builds the request and reads the answer;
+the channels API sends it with the reply client. Like `Reply`, it holds no
+client. Every key a channel holds is written as one secret with `PutAll`:
+OpenBao's KV write replaces the whole secret, so a `Put` per key keeps only the
+last.
+
 `custom` signs a reply under `reply:v1:` rather than the `v1:` of an incoming
 message, so a captured reply posted to the webhook does not verify as a
 message — the team would be answering itself.
@@ -229,4 +247,4 @@ message — the team would be answering itself.
 ## Decisions
 
 The decisions worth not relitigating, each with its reason, are in [DECISIONS.md](DECISIONS.md). Read it before changing a design, a boundary, or anything a convention above protects.
-Topics: the result of a delivery (`Result{}`), `Validate` on `Inbound`, sessions and messages, attachments fetched later, who may read a direct session, why a reply is built here and sent there.
+Topics: the result of a delivery (`Result{}`), `Validate` on `Inbound`, sessions and messages, attachments fetched later, who may read a direct session, why a reply is built here and sent there, Telegram.

@@ -190,6 +190,7 @@ type Reply struct {
 	NextAttemptAt time.Time
 	CreatedAt     time.Time
 	SentAt        *time.Time
+	PartsSent     int32
 }
 
 type Role struct {

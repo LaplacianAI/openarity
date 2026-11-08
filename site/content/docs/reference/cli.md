@@ -33,7 +33,7 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa teams settings show <team>` | Show a team's model, web search, learning, compaction and hub |
 | `oa teams settings set <team>` | Change only the settings named by flags              |
 | `oa channels list <team>`      | List a team's channels                                   |
-| `oa channels create <team> <name>` | Connect a channel                                    |
+| `oa channels create <team> <name>` | Connect a channel (`--provider`; `--secret-stdin` or `--credential-stdin NAME` pipe a secret in) |
 | `oa channels update <team> <channel>` | Set where a channel's replies go (`--reply-url`), or stop them (`--no-reply-url`) |
 | `oa channels delete <team> <channel>` | Disconnect a channel                              |
 | `oa channels senders pending <team> <channel>` | List senders waiting to be approved      |

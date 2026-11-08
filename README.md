@@ -422,6 +422,25 @@ printf %s "$SLACK_SIGNING_SECRET" |
     oa channels create platform slack --provider slack --secret-stdin
 ```
 
+A channel's provider is `custom` or `telegram`. A Telegram channel takes the
+bot token from `@BotFather`, checks it with Telegram, and keeps it in the secret
+store. Its replies go back into the chat itself, so it takes no reply URL. The
+token is a credential, so it arrives on stdin and never as a flag:
+
+```sh
+printf %s "$BOT_TOKEN" |
+    oa channels create platform bot --provider telegram --credential-stdin bot_token
+```
+
+Telegram does not yet know about the channel. Point the bot at it, with the hook
+URL and signing secret that `create` printed and your own bot token in place of
+`<bot token>`:
+
+```sh
+curl https://api.telegram.org/bot<bot token>/setWebhook \
+  -d url=<hook url> -d secret_token=<signing secret> -d 'allowed_updates=["message"]'
+```
+
 Who may speak through a channel is a separate decision from connecting it, and
 a separate permission: an `approver` may let senders in without being able to
 change the channel. A sender nobody has approved gets their provider-side id

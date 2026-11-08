@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +26,8 @@ import (
 type relay struct {
 	fetchProvider
 	err error
+	// parts splits the text into this many requests; 0 is one, -1 is none.
+	parts int
 
 	mu   sync.Mutex
 	outs []Outbound
@@ -32,16 +36,28 @@ type relay struct {
 
 func (*relay) Name() string { return "relay" }
 
-func (r *relay) Reply(ch Channel, out Outbound, creds Credentials, _ time.Time) (OutboundRequest, error) {
+func (r *relay) Reply(ch Channel, out Outbound, creds Credentials, _ time.Time) ([]OutboundRequest, error) {
 	r.mu.Lock()
 	r.outs, r.chs = append(r.outs, out), append(r.chs, ch)
 	r.mu.Unlock()
 	if r.err != nil {
-		return OutboundRequest{}, r.err
+		return nil, r.err
 	}
 	h := http.Header{}
 	h.Set("X-Secret", creds.Get(KeySigning))
-	return OutboundRequest{URL: ch.ReplyURL, Header: h, Body: []byte(out.Text)}, nil
+	n := max(r.parts, 1)
+	if r.parts < 0 {
+		n = 0
+	}
+	reqs := make([]OutboundRequest, n)
+	for i := range reqs {
+		body := out.Text
+		if n > 1 {
+			body = fmt.Sprintf("%s #%d", out.Text, i+1)
+		}
+		reqs[i] = OutboundRequest{URL: ch.ReplyURL, Header: h, Body: []byte(body)}
+	}
+	return reqs, nil
 }
 
 // outbox hands out its due rows a batch at a time and records every mark.
@@ -49,8 +65,11 @@ type outbox struct {
 	due      []db.ClaimDueRepliesRow
 	claimErr error
 	markErr  error
+	// partLost is a lease another sender took: a part's mark matches nothing.
+	partLost bool
 
 	claims  []db.ClaimDueRepliesParams
+	parts   []db.ReplyPartSentParams
 	sent    []db.ReplySentParams
 	retried []db.RetryReplyParams
 	gaveUp  []db.GiveUpReplyParams
@@ -65,6 +84,14 @@ func (o *outbox) ClaimDueReplies(_ context.Context, arg db.ClaimDueRepliesParams
 	rows := o.due[:n]
 	o.due = o.due[n:]
 	return rows, nil
+}
+
+func (o *outbox) ReplyPartSent(_ context.Context, arg db.ReplyPartSentParams) (int64, error) {
+	o.parts = append(o.parts, arg)
+	if o.partLost {
+		return 0, o.markErr
+	}
+	return 1, o.markErr
 }
 
 func (o *outbox) ReplySent(_ context.Context, arg db.ReplySentParams) (int64, error) {
@@ -88,6 +115,8 @@ type receiver struct {
 	mu     sync.Mutex
 	bodies []string
 	heads  []http.Header
+	// answers overrides the status for the nth request, in order.
+	answers []int
 }
 
 func newReceiver(t *testing.T, status int) *receiver {
@@ -96,9 +125,13 @@ func newReceiver(t *testing.T, status int) *receiver {
 	r.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		body, _ := io.ReadAll(req.Body)
 		r.mu.Lock()
+		code := status
+		if i := len(r.bodies); i < len(r.answers) {
+			code = r.answers[i]
+		}
 		r.bodies, r.heads = append(r.bodies, string(body)), append(r.heads, req.Header.Clone())
 		r.mu.Unlock()
-		w.WriteHeader(status)
+		w.WriteHeader(code)
 	}))
 	t.Cleanup(r.Close)
 	return r
@@ -368,5 +401,120 @@ func TestADrainClaimsUntilABatchComesBackShort(t *testing.T) {
 	}
 	if c := s.store.claims[0]; c.BatchSize != replyBatch || c.LeaseSeconds != replyLease.Seconds() {
 		t.Errorf("claim %+v, want the batch and the lease", c)
+	}
+}
+
+// A long reply is several requests: each is posted in order and recorded as
+// it goes, and the reply is sent once the last one is.
+func TestALongReplyIsSentPartByPart(t *testing.T) {
+	t.Parallel()
+
+	s := newSending(t)
+	s.relay.parts = 3
+	rcv := newReceiver(t, http.StatusOK)
+	row := due(rcv.URL, 1)
+	s.store.due = []db.ClaimDueRepliesRow{row}
+
+	if n, err := s.sender.Drain(t.Context()); err != nil || n != 1 {
+		t.Fatalf("Drain = %d, %v; want 1 sent", n, err)
+	}
+	want := []string{row.Text + " #1", row.Text + " #2", row.Text + " #3"}
+	if !slices.Equal(rcv.bodies, want) {
+		t.Errorf("the receiver got %q, want %q", rcv.bodies, want)
+	}
+	for i, p := range s.store.parts {
+		if p != (db.ReplyPartSentParams{ID: row.ID, Attempts: 1, PartsSent: int32(i + 1)}) {
+			t.Errorf("part mark %d = %+v", i, p)
+		}
+	}
+	if len(s.store.parts) != 3 || len(s.store.sent) != 1 {
+		t.Errorf("marked %d parts and %d sent, want 3 and 1", len(s.store.parts), len(s.store.sent))
+	}
+}
+
+// A retry starts at the first part not sent: the receiver never sees one twice.
+func TestARetryResumesAtThePartNotSent(t *testing.T) {
+	t.Parallel()
+
+	s := newSending(t)
+	s.relay.parts = 3
+	rcv := newReceiver(t, http.StatusOK)
+	row := due(rcv.URL, 2)
+	row.PartsSent = 1
+	s.store.due = []db.ClaimDueRepliesRow{row}
+
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if want := []string{row.Text + " #2", row.Text + " #3"}; !slices.Equal(rcv.bodies, want) {
+		t.Errorf("the receiver got %q, want only %q", rcv.bodies, want)
+	}
+	if len(s.store.parts) != 2 || s.store.parts[0].PartsSent != 2 || s.store.parts[1].PartsSent != 3 {
+		t.Errorf("part marks %+v, want 2 then 3", s.store.parts)
+	}
+}
+
+// A part refused halfway keeps the ones before it, and the reply waits for a
+// retry rather than being marked sent or given up.
+func TestAPartRefusedKeepsTheEarlierParts(t *testing.T) {
+	t.Parallel()
+
+	s := newSending(t)
+	s.relay.parts = 3
+	rcv := newReceiver(t, http.StatusOK)
+	rcv.answers = []int{http.StatusOK, http.StatusTooManyRequests}
+	s.store.due = []db.ClaimDueRepliesRow{due(rcv.URL, 1)}
+
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if rcv.got() != 2 {
+		t.Errorf("the receiver got %d requests, want 2: the third waits", rcv.got())
+	}
+	if len(s.store.parts) != 1 || s.store.parts[0].PartsSent != 1 {
+		t.Errorf("part marks %+v, want only the first", s.store.parts)
+	}
+	if len(s.store.retried) != 1 || len(s.store.sent)+len(s.store.gaveUp) != 0 {
+		t.Errorf("retried %d, sent %d, gave up %d; want one retry", len(s.store.retried), len(s.store.sent), len(s.store.gaveUp))
+	}
+}
+
+// A sender whose claim another took stops: the next part is that sender's to
+// post, and so is every mark.
+func TestASenderThatLostItsLeaseStops(t *testing.T) {
+	t.Parallel()
+
+	s := newSending(t)
+	s.relay.parts = 3
+	s.store.partLost = true
+	rcv := newReceiver(t, http.StatusOK)
+	s.store.due = []db.ClaimDueRepliesRow{due(rcv.URL, 1)}
+
+	if n, err := s.sender.Drain(t.Context()); err != nil || n != 0 {
+		t.Fatalf("Drain = %d, %v; want nothing counted sent", n, err)
+	}
+	if rcv.got() != 1 {
+		t.Errorf("the receiver got %d requests, want 1: the rest are another sender's", rcv.got())
+	}
+	if len(s.store.sent)+len(s.store.retried)+len(s.store.gaveUp) != 0 {
+		t.Error("a sender that lost its lease marked the reply")
+	}
+}
+
+// A provider that builds nothing has sent nothing: marking that sent is the
+// stub that reads as success.
+func TestAReplyBuiltAsNothingIsGivenUp(t *testing.T) {
+	t.Parallel()
+
+	s := newSending(t)
+	s.relay.parts = -1
+	rcv := newReceiver(t, http.StatusOK)
+	s.store.due = []db.ClaimDueRepliesRow{due(rcv.URL, 1)}
+
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if rcv.got() != 0 || len(s.store.sent) != 0 || len(s.store.gaveUp) != 1 {
+		t.Errorf("posted %d, sent %d, gave up %d; want it given up unposted", rcv.got(), len(s.store.sent), len(s.store.gaveUp))
 	}
 }

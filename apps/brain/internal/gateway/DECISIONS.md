@@ -209,6 +209,37 @@ tombstone sweep's rule — no ordering, because deletes commute — does not hol
 for replies, and a `NOT EXISTS` over the session's older pending replies gives
 the order without a partition scheme to run.
 
+## Telegram: a shared secret, rich messages, and getMe
+
+Telegram proves a delivery with the `secret_token` given to `setWebhook`,
+echoed in `X-Telegram-Bot-Api-Secret-Token`. It signs neither the body nor a
+timestamp, so `providertest` is told so (`SignsNoBody`, and no
+`EnforcesFreshness`) rather than weakened for everyone; a repeated update is
+dropped by its `ExternalID`, `chat:message_id`, since a message id is unique
+only inside its chat. The generated signing secret is the `secret_token`: its
+`oawh_` + base64url form is within Telegram's `A-Z a-z 0-9 _ -`.
+
+Replies go out with `sendRichMessage` and `rich_message.markdown`, Bot API
+10.1, so an agent's Markdown (headings, lists, tables, code) is sent as
+written, up to 32768 characters and 500 blocks a message. Considered:
+`sendMessage` with MarkdownV2 or HTML, which needs a converter and fails the
+whole message on one unescaped character. Two rewrites run first, outside
+code only: an image becomes a link, because Telegram fetches an image's URL to
+show it and an injected `![](https://x/?data)` would leak without a click; and
+raw HTML is escaped, because an unknown tag refuses the message and no retry
+fixes it.
+
+A long answer is split between blocks, never inside a code block unless one
+block is itself too big, and then the fence is closed and reopened around each
+cut. Considered: one request a reply, cut at the limit. Refused because the
+user wants the whole answer; the cost is `parts_sent` and resuming.
+
+`Parse` receives the credentials, because "addressed to us" in a group needs
+the bot's id and username. Considered: answering only private chats. Refused
+because groups are where a team's bot is most used. The username comes from
+`getMe` when the channel is connected (`Setup`), not from a person, so a typo
+cannot silently mute the bot in every group.
+
 ## Settled: who may read a direct session
 
 **Its participant, plus anyone holding `session:read_all` in the team.** A

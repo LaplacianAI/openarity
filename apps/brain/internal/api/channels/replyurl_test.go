@@ -49,7 +49,7 @@ func TestAChannelWithNoReplyURLShowsNone(t *testing.T) {
 	teamID := uuid.New()
 	rec := call(t, &fakeStore{}, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
 		http.MethodPost, "/teams/"+teamID.String()+"/channels", `{"provider":"custom","name":"support"}`)
-	if strings.Contains(rec.Body.String(), "reply_url") {
+	if strings.Contains(rec.Body.String(), `"reply_url"`) {
 		t.Errorf("response %s names a reply_url the channel does not have", rec.Body)
 	}
 }
@@ -136,7 +136,7 @@ func TestUpdatingAChannelSetsAndClearsItsReplyURL(t *testing.T) {
 		s.channels[0].ReplyUrl = &url
 		rec = call(t, s, newFakeSecrets(), a, memberOf(teamID, "admin"),
 			http.MethodPatch, channelPath(teamID, ch.ID), clear)
-		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "reply_url") {
+		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"reply_url"`) {
 			t.Fatalf("PATCH %s = %d %s, want 200 with no URL", clear, rec.Code, rec.Body)
 		}
 		if s.channels[0].ReplyUrl != nil {
