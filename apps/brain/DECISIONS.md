@@ -484,8 +484,9 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   eleven tables under `dbos` and migrates them itself, with no lock: `serve`
   and a worker starting together on a fresh database failed with `duplicate
   key value violates unique constraint "pg_type_typname_nsp_index"`. The
-  migrate Job runs before anything rolls, so both find the tables current,
-  which DBOS checks without writing. Both still run that check, so a database
+  migrate init container runs before a pod's server does, and takes a lock of
+  its own around DBOS's step, so both find the tables current, which DBOS
+  checks without writing. Both still run that check, so a database
   that skipped `migrate up` works too, with the race back. That is the price
   of a library instead of a cluster, and worth knowing before debugging a
   schema diff.
@@ -721,8 +722,22 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
 - **Migrations are embedded and applied by the binary.** `brain migrate up`,
   never the `goose` CLI against a real database — the CLI reads files from
   disk while the binary carries its own copy, and the two drift silently. In
-  Kubernetes it is a Job that completes before the Deployment rolls: never an
-  `initContainer` on every pod, and never inside `run`.
+  Kubernetes it is an `initContainer` on the brain Deployment's pods
+  (`deployment/k8s/deployment.yaml`), never a step inside `run`. Every replica
+  runs it, and that is safe only because every step of it serialises on a
+  Postgres advisory lock: goose's (`migrationLockID`, a session lock goose
+  polls every 5 s for up to 5 minutes, so a second pod waits and then finds
+  nothing to apply; a migration longer than that fails the waiting pods'
+  init containers, which Kubernetes restarts), the RBAC catalogue
+  load's (`rbacLockID`, held for its transaction) and DBOS's
+  (`dbosMigrationLockID`, retried every 250 ms). A Job would have run it once,
+  but it is a second object to order against the rollout, and an init
+  container gives the property that matters for free: a pod cannot start
+  serving against a schema it has not applied. The price is that a pod
+  can wait on the lock, and that old pods keep serving the previous schema while
+  a new one migrates, so a migration must be expand-then-contract. The
+  worker (`deployment/k8s/worker.yaml`) has no init container on purpose: the
+  schema has one owner.
 - **The migration advisory lock is project-specific.** goose's `DefaultLockID`
   is crc32 of the string `"goose"` and is therefore shared by every goose user;
   Postgres advisory locks are scoped per database, not per schema. Ours is
