@@ -37,15 +37,19 @@ type fakeStore struct {
 	sessions []db.Session
 	messages []db.Message
 
-	channelErr error
-	sessionErr error
-	listErr    error
+	channelErr    error
+	sessionErr    error
+	listErr       error
+	firstAskedErr error
+	firstAsked    []uuid.UUID // the sessions GetSessionFirstAsked was asked about
 
 	attachments   []db.Attachment
 	attachmentErr error
 
 	// extras is what the list queries join onto a session: its channel's
-	// name, who it is with, the newest message and the newest run's status.
+	// name, who it is with, the newest message, the newest run's status and
+	// what was first asked. GetSessionFirstAsked reads the last from here too,
+	// so a session reads alone as it does in a list.
 	extras map[uuid.UUID]db.ListSessionsByTeamRow
 
 	listArgs           []db.ListMessagesBySessionParams
@@ -139,6 +143,17 @@ func (f *fakeStore) GetSession(_ context.Context, id uuid.UUID) (db.Session, err
 		}
 	}
 	return db.Session{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetSessionFirstAsked(_ context.Context, id uuid.UUID) (string, error) {
+	f.firstAsked = append(f.firstAsked, id)
+	if f.firstAskedErr != nil {
+		return "", f.firstAskedErr
+	}
+	if asked := f.extras[id].FirstAsked; asked != nil {
+		return *asked, nil
+	}
+	return "", pgx.ErrNoRows
 }
 
 // row is a session as the list queries return it, with whatever extras the
@@ -967,6 +982,9 @@ func TestASessionReadsAsItDoesInTheList(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t)
+	f.store.extras = map[uuid.UUID]db.ListSessionsByTeamRow{f.sessionID: {
+		FirstAsked: str(strings.Repeat("why ", 50)),
+	}}
 
 	rec := f.get(t, f.session())
 	if rec.Code != http.StatusOK {
@@ -1124,11 +1142,93 @@ func TestNothingToShowIsNullAndPresent(t *testing.T) {
 		if err := json.Unmarshal(f.get(t, path).Body.Bytes(), &raw); err != nil || len(raw.Items) != 1 {
 			t.Fatalf("%s: %v, %d items", path, err, len(raw.Items))
 		}
-		for _, k := range []string{"channel_name", "participant", "last_message", "latest_run_status"} {
+		for _, k := range []string{"channel_name", "participant", "last_message", "latest_run_status", "first_asked"} {
 			if v, ok := raw.Items[0][k]; !ok || v != nil {
 				t.Errorf("%s: %s = %v (present %v), want null and present", path, k, v, ok)
 			}
 		}
+	}
+}
+
+// A direct session has no reference, so what was first asked in it is its
+// name: in both lists and read alone, cut as a message preview is.
+func TestASessionSaysWhatWasFirstAskedInIt(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	asked := "Why did the nightly export fail? " + strings.Repeat("ö", 140)
+	f.store.extras = map[uuid.UUID]db.ListSessionsByTeamRow{f.sessionID: {FirstAsked: &asked}}
+	want := deref(preview(&asked))
+	if !strings.HasSuffix(want, "…") {
+		t.Fatalf("the question is not long enough to be cut: %q", want)
+	}
+
+	for _, path := range []string{f.teamSessions(), f.channelSessions()} {
+		if got := listedPage(t, f.get(t, path)).Items[0].FirstAsked; deref(got) != want {
+			t.Errorf("%s: first_asked = %q, want %q", path, deref(got), want)
+		}
+	}
+
+	rec := f.get(t, f.session())
+	var got session
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("status %d, %v: %s", rec.Code, err, rec.Body)
+	}
+	if deref(got.FirstAsked) != want {
+		t.Errorf("read alone: first_asked = %q, want %q", deref(got.FirstAsked), want)
+	}
+}
+
+// A session nobody has started a run in sends first_asked as null, and sends
+// it, read alone as in the lists.
+func TestASessionWithNoRunWasAskedNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	rec := f.get(t, f.session())
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("status %d, %v: %s", rec.Code, err, rec.Body)
+	}
+	if v, ok := raw["first_asked"]; !ok || v != nil {
+		t.Errorf("first_asked = %v (present %v), want null and present", v, ok)
+	}
+}
+
+// Failing to read the first question is the server's fault, not a missing
+// session, and the answer names neither the session nor the cause.
+func TestAFailedFirstAskedReadIsA500ThatLeaksNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	f.store.firstAskedErr = errAny
+	rec := f.get(t, f.session())
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	for _, leak := range []string{f.sessionID.String(), errAny.Error()} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Errorf("the 500 says %q: %s", leak, rec.Body)
+		}
+	}
+}
+
+// A session the caller may not see is refused before anything about it is
+// read: the first question of someone else's conversation is never asked for.
+func TestAHiddenSessionIsNeverAskedWhatItWasAsked(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	stranger := uuid.New()
+	f.store.sessions[0].UserID = &stranger
+	f.store.extras = map[uuid.UUID]db.ListSessionsByTeamRow{f.sessionID: {FirstAsked: str("private")}}
+
+	rec := f.get(t, f.session())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if len(f.store.firstAsked) != 0 || strings.Contains(rec.Body.String(), "private") {
+		t.Errorf("asked about %v; body %s", f.store.firstAsked, rec.Body)
 	}
 }
 

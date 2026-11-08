@@ -15,6 +15,10 @@ type session struct {
 
 	StartedAt     time.Time `json:"started_at"`
 	LastMessageAt time.Time `json:"last_message_at"`
+
+	// FirstAsked is the input of the session's oldest root run, cut as a
+	// preview is: what names a direct session, which has no reference.
+	FirstAsked *string `json:"first_asked"`
 }
 
 type listedSession struct {

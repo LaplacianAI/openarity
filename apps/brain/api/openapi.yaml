@@ -3279,6 +3279,16 @@ components:
           type: string
           format: date-time
           description: The order these are listed in
+        first_asked:
+          type: string
+          nullable: true
+          description: |
+            The input of the oldest top-level run started in this session, cut
+            to 140 characters as `last_message` is, and null when no run was
+            started in it. A direct session started from the dashboard or the
+            API has no `provider_ref`, so this is what names it. A delegate's
+            run is work handed on, not a question asked, so it never counts.
+            Sent by the lists and by a single session's read.
         channel_name:
           type: string
           nullable: true

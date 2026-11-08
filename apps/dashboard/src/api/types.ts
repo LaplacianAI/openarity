@@ -124,6 +124,12 @@ export type Session = {
   status: SessionStatus;
   started_at: string;
   last_message_at: string;
+  /**
+   * The oldest top-level run's input, cut by the brain to 140 characters;
+   * null when no run was started in it. Absent from a brain before the field.
+   * Read through sessionName, never on its own.
+   */
+  first_asked?: string | null;
 };
 
 export type SessionStatus = "open" | "closed";

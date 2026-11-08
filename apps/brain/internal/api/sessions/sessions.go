@@ -18,6 +18,7 @@ import (
 type Store interface {
 	GetChannel(ctx context.Context, id uuid.UUID) (db.Channel, error)
 	GetSession(ctx context.Context, id uuid.UUID) (db.Session, error)
+	GetSessionFirstAsked(ctx context.Context, sessionID uuid.UUID) (string, error)
 	ListSessionsByChannel(ctx context.Context, arg db.ListSessionsByChannelParams) ([]db.ListSessionsByChannelRow, error)
 	ListSessionsByTeam(ctx context.Context, arg db.ListSessionsByTeamParams) ([]db.ListSessionsByTeamRow, error)
 	ListMessagesBySession(ctx context.Context, arg db.ListMessagesBySessionParams) ([]db.Message, error)
@@ -34,6 +35,7 @@ type listed struct {
 	ParticipantSubject *string
 	LastMessage        *string
 	LatestRunStatus    *string
+	FirstAsked         *string
 }
 
 const previewRunes = 140
@@ -179,7 +181,16 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	api.WriteJSON(w, h.logger, http.StatusOK, sessionView(row))
+	out := sessionView(row)
+	asked, err := h.store.GetSessionFirstAsked(r.Context(), row.ID)
+	switch {
+	case err == nil:
+		out.FirstAsked = preview(&asked)
+	case !errors.Is(err, pgx.ErrNoRows):
+		api.Fail(w, h.logger, api.Caller(r), "failed to read what the session was first asked", err)
+		return
+	}
+	api.WriteJSON(w, h.logger, http.StatusOK, out)
 }
 
 func (h *handler) listMessages(w http.ResponseWriter, r *http.Request) {
@@ -309,8 +320,10 @@ func listedView(row listed) listedSession {
 		participant = row.ParticipantSubject
 	}
 
+	s := sessionView(row.Session)
+	s.FirstAsked = preview(row.FirstAsked)
 	return listedSession{
-		session:         sessionView(row.Session),
+		session:         s,
 		ChannelName:     row.ChannelName,
 		Participant:     participant,
 		LastMessage:     preview(row.LastMessage),
