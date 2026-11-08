@@ -32,6 +32,20 @@ type run struct {
 	Depth       int32      `json:"depth"`
 	Hub         bool       `json:"hub"`
 	Delegates   []string   `json:"delegates"`
+	// Reply is what became of the run's answer to its channel; null for a run
+	// that answers none.
+	Reply *reply `json:"reply"`
+}
+
+type reply struct {
+	Kind      string     `json:"kind"`
+	Status    string     `json:"status"`
+	Attempts  int32      `json:"attempts"`
+	LastError *string    `json:"last_error"`
+	SentAt    *time.Time `json:"sent_at"`
+	// NextAttemptAt is when a pending reply is tried next; null once it is
+	// sent or given up.
+	NextAttemptAt *time.Time `json:"next_attempt_at"`
 }
 
 type runCursor struct {

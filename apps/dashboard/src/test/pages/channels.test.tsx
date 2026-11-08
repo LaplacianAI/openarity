@@ -375,3 +375,116 @@ describe("a channel's sheet", () => {
     expect(seen.filter((s) => s.method === "GET" && s.path.includes("/channels")).length).toBe(2);
   });
 });
+
+describe("where a channel's replies go", () => {
+  const at = () => showAt("/ui/channels/", [["/ui/channels/", Route]]);
+  const replying = { ...support, can_reply: true };
+  const URL_ = "https://support.example.com/replies";
+
+  function patched(seen: { method: string; path?: string; body: BodyInit | null | undefined }[]) {
+    const patch = seen.find((s) => s.method === "PATCH");
+    return patch ? JSON.parse(String(patch.body)) : undefined;
+  }
+
+  it("says where they go, or that they are not sent", async () => {
+    brain({
+      ...team([]),
+      "GET /teams/{id}/channels": { body: { items: [{ ...replying, reply_url: URL_ }] } },
+    });
+    at();
+    const sheet = await opened("support");
+    expect(within(sheet).getByText("Replies to")).toBeInTheDocument();
+    expect(within(sheet).getByText(URL_)).toBeInTheDocument();
+  });
+
+  it("says a channel with no reply URL sends no replies", async () => {
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [replying] } } });
+    at();
+    const sheet = await opened("support");
+    expect(
+      within(sheet).getByText(/not set, so the team's replies are not sent/i),
+    ).toBeInTheDocument();
+  });
+
+  // A provider that cannot reply has nothing to set, and a brain from before
+  // the field is read as one that cannot.
+  it("is not offered where the provider cannot reply", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [support] } },
+    });
+    at();
+    const sheet = await opened("support");
+    expect(within(sheet).queryByText("Replies to")).toBeNull();
+    expect(within(sheet).queryByRole("button", { name: /where replies go/i })).toBeNull();
+  });
+
+  it("offers no edit without channel:write", async () => {
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [replying] } } });
+    at();
+    const sheet = await opened("support");
+    expect(within(sheet).queryByRole("button", { name: /where replies go/i })).toBeNull();
+  });
+
+  // The spaces are dropped by the url input itself; as a text input it would
+  // send them, and the brain would refuse the URL.
+  it("saves a reply URL, without the spaces around it, and shows it", async () => {
+    let saved = false;
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": () => ({
+        body: { items: [saved ? { ...replying, reply_url: URL_ } : replying] },
+      }),
+      "PATCH /teams/{id}/channels/{cid}": () => {
+        saved = true;
+        return { body: { ...replying, reply_url: URL_ } };
+      },
+    });
+    at();
+    const sheet = await opened("support");
+    await userEvent.click(within(sheet).getByRole("button", { name: "Set where replies go" }));
+    const dialog = await screen.findByRole("dialog", { name: "Replies from support" });
+    await userEvent.type(within(dialog).getByLabelText("Reply URL"), `  ${URL_} `);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(patched(seen)).toEqual({ reply_url: URL_ }));
+    expect(await screen.findByText(URL_)).toBeInTheDocument();
+  });
+
+  it("stops replies with null, and only once there is something to stop", async () => {
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [{ ...replying, reply_url: URL_ }] } },
+      "PATCH /teams/{id}/channels/{cid}": { body: replying },
+    });
+    at();
+    const sheet = await opened("support");
+    await userEvent.click(within(sheet).getByRole("button", { name: "Change where replies go" }));
+    const dialog = await screen.findByRole("dialog", { name: "Replies from support" });
+    expect(within(dialog).getByText(/gives up any reply still waiting/i)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Stop replies" }));
+
+    await waitFor(() => expect(patched(seen)).toEqual({ reply_url: null }));
+  });
+
+  // The brain's reason is the useful thing: it names what to change.
+  it("shows why the brain refused a URL, and keeps the dialog open", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [replying] } },
+      "PATCH /teams/{id}/channels/{cid}": {
+        status: 400,
+        text: "reply_url must not have a query or a fragment; the signature is what authenticates a reply",
+      },
+    });
+    at();
+    const sheet = await opened("support");
+    await userEvent.click(within(sheet).getByRole("button", { name: "Set where replies go" }));
+    const dialog = await screen.findByRole("dialog", { name: "Replies from support" });
+    await userEvent.type(within(dialog).getByLabelText("Reply URL"), `${URL_}?token=1`);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("must not have a query");
+    expect(screen.getByRole("dialog", { name: "Replies from support" })).toBeInTheDocument();
+  });
+});

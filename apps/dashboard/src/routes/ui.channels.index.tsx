@@ -3,7 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { createChannel, deleteChannel, listChannels } from "@/api";
+import { createChannel, deleteChannel, listChannels, updateChannel } from "@/api";
 import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
@@ -191,6 +191,7 @@ function Channels() {
                 teamId={teamId}
                 channel={open}
                 canWrite={canWrite}
+                onChanged={() => void changed()}
                 onDeleted={() => {
                   setShown(null);
                   void changed();
@@ -232,11 +233,13 @@ function ChannelDetail({
   teamId,
   channel,
   canWrite,
+  onChanged,
   onDeleted,
 }: {
   teamId: string;
   channel: ListedChannel;
   canWrite: boolean;
+  onChanged: () => void;
   onDeleted: () => void;
 }) {
   return (
@@ -257,6 +260,18 @@ function ChannelDetail({
         <KeyValue label="Signing secret">
           In the secret store. It was shown once, when the channel was connected.
         </KeyValue>
+        {channel.can_reply ? (
+          <KeyValue label="Replies to">
+            {channel.reply_url ? (
+              <Mono className="break-all text-foreground">{channel.reply_url}</Mono>
+            ) : (
+              "Not set, so the team's replies are not sent."
+            )}
+            {canWrite ? (
+              <EditReplyURL teamId={teamId} channel={channel} onChanged={onChanged} />
+            ) : null}
+          </KeyValue>
+        ) : null}
       </KeyValues>
 
       <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-rule pt-4">
@@ -269,6 +284,118 @@ function ChannelDetail({
           <DeleteChannel teamId={teamId} channel={channel} onDeleted={onDeleted} />
         ) : null}
       </div>
+    </>
+  );
+}
+
+/**
+ * Where the channel's replies go, set or stopped. Stopping gives up any reply
+ * still waiting, so it says so before it is done.
+ */
+function EditReplyURL({
+  teamId,
+  channel,
+  onChanged,
+}: {
+  teamId: string;
+  channel: ListedChannel;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [url, setURL] = useState(channel.reply_url ?? "");
+  const save = useMutation({
+    mutationFn: (replyURL: string | null) =>
+      updateChannel(teamId, channel.id, { reply_url: replyURL }),
+    onSuccess: (c) => {
+      setOpen(false);
+      toast.success(
+        c.reply_url
+          ? `Replies from ${channel.name} go to ${c.reply_url}`
+          : `Replies from ${channel.name} stopped`,
+      );
+      onChanged();
+    },
+  });
+  // A url input drops the whitespace around what is typed or pasted, so the
+  // value is already what the brain is sent.
+  const typed = url;
+
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        className="mt-2 block"
+        onClick={() => {
+          setURL(channel.reply_url ?? "");
+          save.reset();
+          setOpen(true);
+        }}
+      >
+        {channel.reply_url ? "Change where replies go" : "Set where replies go"}
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Replies from {channel.name}</DialogTitle>
+            <DialogDescription>
+              The team's answers are posted here, signed with the channel's secret. An address with
+              a query, a fragment or credentials in it is refused: everyone in the team can read it,
+              and the signature is what proves a reply is real. Stopping replies gives up any reply
+              still waiting to be sent.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (typed) save.mutate(typed);
+            }}
+            className="space-y-3"
+          >
+            <Field label="Reply URL" htmlFor="reply-url" hint="http or https.">
+              <Input
+                id="reply-url"
+                type="url"
+                value={url}
+                placeholder="https://support.example.com/openarity/replies"
+                onChange={(e) => setURL(e.target.value)}
+              />
+            </Field>
+            {save.isError ? (
+              <p role="alert" className="text-sm text-destructive">
+                {save.error.message}
+              </p>
+            ) : null}
+            <DialogFooter className="gap-2 sm:justify-between">
+              {channel.reply_url ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="text-destructive"
+                  loading={save.isPending && save.variables === null}
+                  onClick={() => save.mutate(null)}
+                >
+                  Stop replies
+                </Button>
+              ) : (
+                <span />
+              )}
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={!typed}
+                  loading={save.isPending && save.variables !== null}
+                >
+                  Save
+                </Button>
+              </div>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

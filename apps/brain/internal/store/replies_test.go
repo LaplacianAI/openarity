@@ -3,6 +3,8 @@ package store
 import (
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -232,5 +234,57 @@ func TestARetryIsDueAfterItsWait(t *testing.T) {
 	}
 	if wait < 290 || wait > 300 {
 		t.Errorf("due in %.0fs, want about 300", wait)
+	}
+}
+
+// A deleted team takes no more messages, and sends no more replies: the ones
+// waiting stay where they are until the purge deletes them with the team.
+// Another team's conversation is not held back by it.
+func TestADeletedTeamsRepliesAreNotSent(t *testing.T) {
+	s := queryStore(t)
+	doomed := newConversation(t, s, "doomed")
+	kept := newConversation(t, s, "kept")
+	doomed.answered(t, s, "m-1", "first")
+	k := kept.answered(t, s, "m-2", "other")
+
+	if n, err := s.SoftDeleteTeam(t.Context(), doomed.team); err != nil || n != 1 {
+		t.Fatalf("SoftDeleteTeam = %d, %v", n, err)
+	}
+
+	if got := ids(claimReplies(t, s.Queries, 60)); !same(got, []int64{k}) {
+		t.Errorf("claimed %v, want only the live team's %d", got, k)
+	}
+	var pending int
+	if err := s.pool.QueryRow(t.Context(),
+		`SELECT count(*) FROM replies WHERE team_id = $1 AND status = 'pending' AND attempts = 0`, doomed.team).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Errorf("the deleted team has %d untouched pending replies, want 1 left for the purge", pending)
+	}
+}
+
+// What a run's page reads: each asked run's reply as it stands, and nothing
+// for a run with none.
+func TestListRunRepliesReadsWhatBecameOfEach(t *testing.T) {
+	s := queryStore(t)
+	c := newConversation(t, s, "list")
+	id := c.answered(t, s, "m-1", "hello")
+	var run uuid.UUID
+	if err := s.pool.QueryRow(t.Context(), `SELECT run_id FROM replies WHERE id = $1`, id).Scan(&run); err != nil {
+		t.Fatal(err)
+	}
+	claimReplies(t, s.Queries, 60)
+	if _, err := s.RetryReply(t.Context(), db.RetryReplyParams{ID: id, Attempts: 1, Error: "the reply URL answered 503", RetrySeconds: 300}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListRunReplies(t.Context(), []uuid.UUID{run, uuid.New()})
+	if err != nil {
+		t.Fatalf("ListRunReplies: %v", err)
+	}
+	if len(got) != 1 || got[0].RunID != run || got[0].Status != "pending" || got[0].Attempts != 1 ||
+		got[0].LastError == nil || *got[0].LastError != "the reply URL answered 503" || got[0].Kind != "answer" {
+		t.Errorf("ListRunReplies = %+v, want the one pending reply with its error", got)
 	}
 }

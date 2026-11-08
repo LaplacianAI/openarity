@@ -572,7 +572,7 @@ paths:
       summary: Set where a channel's replies go
       description: |
         Requires `channel:write` in this team. `reply_url` is required: a URL
-        sets it, `null` clears it, and a reply waiting to be sent to a channel
+        sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
         with none fails rather than waiting for one.
 
         The URL must be http or https with a host, and carry no credentials,
@@ -3053,7 +3053,7 @@ components:
 
     Channel:
       type: object
-      required: [id, team_id, provider, name]
+      required: [id, team_id, provider, name, can_reply]
       properties:
         id:
           type: string
@@ -3085,6 +3085,11 @@ components:
             `WEBHOOK_PUBLIC_URL`, or no adapter for `provider` — never a
             guess at an address the provider might not reach.
           examples: ["https://hooks.example.com/hooks/custom/0192f5c4-7d1e-7c3a-9b2e-4f6a8d0c1e23"]
+        can_reply:
+          type: boolean
+          description: |
+            Whether this channel's provider sends replies at all. Offer
+            `reply_url` only when it is true; it is refused otherwise.
         reply_url:
           type: string
           format: uri
@@ -3145,7 +3150,7 @@ components:
           format: uri
           maxLength: 2048
           nullable: true
-          description: The URL replies go to, or null to stop sending them
+          description: The URL replies go to; null or an empty string stops sending them
 
     ListedChannel:
       description: |
@@ -4276,7 +4281,15 @@ components:
         - depth
         - hub
         - delegates
+        - reply
       properties:
+        reply:
+          $ref: "#/components/schemas/Reply"
+          nullable: true
+          description: |
+            What became of the run's answer to the channel conversation it
+            came from; null for a run that answers none, such as one started
+            from the dashboard or a delegate's.
         parent_run_id:
           type: string
           format: uuid
@@ -4341,6 +4354,47 @@ components:
           type: string
           format: date-time
           nullable: true
+
+    Reply:
+      type: object
+      description: |
+        A run's reply to its channel, as the outbox holds it. It is sent in
+        order within its conversation and retried for about two and a half
+        hours before it is given up.
+      required: [kind, status, attempts, last_error, sent_at, next_attempt_at]
+      properties:
+        kind:
+          type: string
+          description: |
+            `answer`, or `apology` when the run failed or answered nothing; an
+            apology never carries the error.
+          examples: ["answer"]
+        status:
+          type: string
+          description: |
+            `pending` until the channel takes it, then `sent`; `failed` once it
+            is given up, because the channel has no reply URL or every attempt
+            failed.
+          examples: ["sent"]
+        attempts:
+          type: integer
+          format: int32
+          description: How many times it was tried; 0 before the first
+        last_error:
+          type: string
+          nullable: true
+          description: Why the last attempt failed, null when none has
+          examples: ["the reply URL answered 503"]
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the channel took it, null until it has
+        next_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a pending reply is tried next; null once it is sent or given up
 
     RunPage:
       type: object

@@ -34,6 +34,7 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa teams settings set <team>` | Change only the settings named by flags              |
 | `oa channels list <team>`      | List a team's channels                                   |
 | `oa channels create <team> <name>` | Connect a channel                                    |
+| `oa channels update <team> <channel>` | Set where a channel's replies go (`--reply-url`), or stop them (`--no-reply-url`) |
 | `oa channels delete <team> <channel>` | Disconnect a channel                              |
 | `oa channels senders pending <team> <channel>` | List senders waiting to be approved      |
 | `oa channels senders list <team> <channel>` | List approved senders                       |

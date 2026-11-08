@@ -447,6 +447,17 @@ quoted on their way to a terminal, because the hook URL is public and a
 terminal reads an escape sequence as an instruction; `-o json` carries them
 exactly as they arrived.
 
+An approved sender is answered by the team's hub: every direct message, and a
+message in a group when it mentions the bot. The answer is posted back to the
+channel's reply URL, signed as a webhook is, in order within the conversation
+and retried for a couple of hours. A channel with no reply URL keeps the
+answer in the conversation and sends nothing:
+
+```sh
+oa channels update platform support --reply-url https://support.example.com/openarity/replies
+oa channels update platform support --no-reply-url
+```
+
 A list is one page per call. When more remain the response carries a cursor,
 and the table says how to use it:
 
