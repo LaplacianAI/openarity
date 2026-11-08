@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -614,5 +615,70 @@ func TestOpenBaoLogsInOnceUnderConcurrentReads(t *testing.T) {
 
 	if _, logins, _ := stub.snapshot(); logins != 1 {
 		t.Errorf("logins = %d, want 1 — twenty cold readers stampeded the login", logins)
+	}
+}
+
+func asCreator(t *testing.T, s secrets.Store) secrets.Creator {
+	t.Helper()
+
+	c, ok := s.(secrets.Creator)
+	if !ok {
+		t.Fatalf("%T does not implement secrets.Creator", s)
+	}
+	return c
+}
+
+// Create is how a team's data key is first stored, and DataKeys trusts a nil
+// error to mean the key is in OpenBao. Only a check-and-set mismatch means
+// someone else got there first; every other refusal is a write that did not
+// happen, and calling it success hands back a key that was never stored.
+func TestOpenBaoCreateSaysWhatHappened(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		want   error
+	}{
+		{"created", http.StatusOK, `{"data":{"version":1}}`, nil},
+		{"created with no body", http.StatusNoContent, ``, nil},
+		{"already there", http.StatusBadRequest, `{"errors":["check-and-set parameter did not match the current version"]}`, secrets.ErrExists},
+		{"refused for another reason", http.StatusBadRequest, `{"errors":["no data provided"]}`, secrets.ErrUnavailable},
+		{"server error", http.StatusInternalServerError, `{"errors":["internal error"]}`, secrets.ErrUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			stub := newStub(t, answering(tc.status, tc.body))
+			err := asCreator(t, newTestBao(t, stub)).Create(t.Context(), "teams/a/keys", "data_key", "v")
+
+			if tc.want == nil {
+				if err != nil {
+					t.Errorf("Create err = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.want) {
+				t.Errorf("Create err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+// The check-and-set option is what makes Create refuse to overwrite. Without
+// it OpenBao writes a new version over a key that already encrypts data.
+func TestOpenBaoCreateAsksForCheckAndSet(t *testing.T) {
+	t.Parallel()
+
+	stub := newStub(t, answering(http.StatusOK, `{"data":{"version":1}}`))
+	if err := asCreator(t, newTestBao(t, stub)).Create(t.Context(), "teams/a/keys", "data_key", "v"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got := stub.last(t)
+	if !strings.Contains(got.body, `"cas":0`) {
+		t.Errorf("Create body = %s, want options.cas = 0", got.body)
 	}
 }
