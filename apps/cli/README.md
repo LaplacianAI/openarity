@@ -36,7 +36,7 @@ make tools      # reinstall tooling — rerun after a Go toolchain upgrade
 
 Coverage excludes `internal/client` and `internal/clitest` — neither is this
 module's own code. The generated client is roughly two thousand lines nobody
-wrote, so counting it measures oapi-codegen: 71.3% with it, 86.3% without.
+wrote, so counting it measures oapi-codegen: 65.6% with it, 90.4% without.
 `clitest` is the test harness, and it is well covered enough that counting it
 flatters the total rather than testing anything.
 
@@ -55,18 +55,21 @@ Never edit it — the next `make generate` overwrites the change. `generate-chec
 runs in CI, and it is the job that catches a spec change landing in the brain
 without the client being rebuilt.
 
-The configuration is `oapi-codegen.yaml`. Two settings there are load-bearing:
-`client: true` generates the typed `ClientWithResponses` that every command
-uses, and `name-normalizer: ToCamelCaseWithInitialisms` is why the generated
-names are `UserID` rather than `UserId`.
+The configuration is `oapi-codegen.yaml`. Three settings there are
+load-bearing: `client: true` generates the typed `ClientWithResponses` that
+every command uses, `name-normalizer: ToCamelCaseWithInitialisms` is why the
+generated names are `UserID` rather than `UserId`, and `yaml-tags: true` is why
+`-o yaml` prints `user_id` and keeps `omitempty`, as json does.
 
 ## Layout
 
 ```text
 cmd/oa/            the composition root — main, and the list of commands
 internal/cli/      what a command may reach: Options, the root, unwrapping a
-                   response, paging, printing a page
+                   response, paging, printing a page, looking a name up as an
+                   id, and making text a stranger wrote safe for a terminal
 internal/command/  one package per command: whoami, config, context, teams,
+                   channels, agents, mcpservers, skills, sessions, runs,
                    users, login, logout
 internal/theme/    what a theme is — one Parse, zero dependencies
 internal/output/   what a format is
@@ -141,7 +144,7 @@ openarity` is how that was found and how it stays found.
 
 ## Conventions and decisions
 
-`CLAUDE.md` holds the house style, the layout rationale, and the decisions
-worth not relitigating. `.claude/skills/` holds the step-by-step guides for
+`AGENTS.md` holds the house style, the layout rationale, and the decisions
+worth not relitigating. `.agents/skills/` holds the step-by-step guides for
 adding a command, a setting or an output format, and for touching anything that
 handles a credential.

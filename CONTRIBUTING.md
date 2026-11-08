@@ -93,7 +93,7 @@ importing `openai-go` for one convenient type and making `ModelClient`
 decorative.
 
 Adding a reasoning pattern or a runnable example there has a skill each:
-`sdk/agent/.claude/skills/add-a-pattern` and `.../add-an-example`. Both record
+`sdk/agent/.agents/skills/add-a-pattern` and `.../add-an-example`. Both record
 traps that cost a debugging session the first time — dispatching a tool call
 from a turn that was truncated at `MaxTokens`, and a stub gateway that repeats
 its usage on every chunk so the run reports five times the tokens it spent.
@@ -184,7 +184,7 @@ assertion but a green run against a database nobody meant to use. It fails
 rather than skipping for the same reason: a skip would have been the same
 silence in a different colour.
 
-New database tests should follow `apps/brain/.claude/skills/test-with-postgres`.
+New database tests should follow `apps/brain/.agents/skills/test-with-postgres`.
 
 ## Tests that need a secret store
 
@@ -288,7 +288,7 @@ sourced after make already has its environment. Comment the line out in `.env`
 rather than fighting it.
 
 `internal/config/config.go` is the full list. Adding a setting is documented in
-`apps/brain/.claude/skills/add-env-var`.
+`apps/brain/.agents/skills/add-env-var`.
 
 ## Queries
 
@@ -328,7 +328,7 @@ with `brain migrate down` — never with the `goose` CLI, which does not take th
 same advisory lock.
 
 **Never edit a migration that has already been applied anywhere.** Write a new
-one. Always write the `Down`. `apps/brain/.claude/skills/write-migration`
+one. Always write the `Down`. `apps/brain/.agents/skills/write-migration`
 covers locking, expand–contract changes and batched backfills.
 
 ## Working on the CLI
@@ -358,7 +358,7 @@ Coverage there excludes `internal/client`. It is roughly two thousand generated
 lines nobody wrote, so counting it measures oapi-codegen rather than the module.
 
 Adding a command, a setting or an output format is documented in
-`apps/cli/.claude/skills/`.
+`apps/cli/.agents/skills/`.
 
 ## Branches and pull requests
 
@@ -389,6 +389,21 @@ Subject in the imperative, no trailing period, under about 72 characters. Put
 *why* in the body — the diff already shows *what*.
 
 There is no CLA and no sign-off requirement.
+
+## Coding agents
+
+Instructions are in `AGENTS.md` at the repo root and in `apps/brain`,
+`apps/brain/internal/gateway`, `apps/cli` and `apps/dashboard`; each has a
+one-line `CLAUDE.md` beside it that imports it with `@AGENTS.md`. Skills are in
+`.agents/skills/<name>/SKILL.md` at the root and in `apps/brain`, `apps/cli`,
+`apps/dashboard` and `sdk/agent`. The `.claude/skills/<name>` entries beside
+them are symlinks to those folders, which is how Claude Code finds them; Codex
+and OpenCode read `.agents/skills` directly. Start the agent in the app's
+directory to get that app's instructions and skills.
+
+On Windows, git checks symlinks out as plain files unless Developer Mode is on
+and `core.symlinks` is true. Without that, Claude Code does not see the skills;
+Codex and OpenCode still do.
 
 ## Releasing `sdk/agent`
 
