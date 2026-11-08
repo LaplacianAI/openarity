@@ -34,7 +34,17 @@ function open(actions: string[] = [], started: Reply = { status: 404 }) {
     },
     "GET /teams/{id}/skills": { body: { items: [{ name: "incident-postmortem" }] } },
     "GET /teams/{id}/sessions": {
-      body: { items: [{ id: "s-1", provider_ref: "eng-support:t-1001", kind: "thread" }] },
+      body: {
+        items: [
+          { id: "s-1", provider_ref: "eng-support:t-1001", kind: "thread" },
+          {
+            id: "s-2",
+            provider_ref: "",
+            kind: "direct",
+            first_asked: "Why did the nightly export fail?",
+          },
+        ],
+      },
     },
   });
   return showAt("/ui", [["/ui", UiRoute]]);
@@ -71,6 +81,23 @@ describe("the command palette", () => {
     while (target.getAttribute("aria-selected") !== "true") await userEvent.keyboard("{ArrowDown}");
     await userEvent.keyboard("{Enter}");
     await waitFor(() => expect(router.state.location.pathname).toBe("/ui/sessions/s-1"));
+  });
+
+  // A session started by asking the team is found by its question.
+  it("finds a direct session by what was first asked in it", async () => {
+    const router = open();
+    await screen.findByRole("navigation", { name: "Main" });
+
+    await userEvent.keyboard("{Meta>}k{/Meta}");
+    const palette = await screen.findByRole("dialog", { name: "Go to" });
+    await userEvent.type(within(palette).getByRole("combobox"), "nightly");
+    const option = await within(palette).findByRole("option", {
+      name: /Why did the nightly export fail\?/,
+    });
+
+    while (option.getAttribute("aria-selected") !== "true") await userEvent.keyboard("{ArrowDown}");
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/ui/sessions/s-2"));
   });
 
   it("closes on Escape without going anywhere", async () => {

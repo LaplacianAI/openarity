@@ -124,6 +124,28 @@ describe("the sessions list", () => {
     expect(router.state.location.pathname).toBe(PAGE);
   });
 
+  // A session started by asking the team has no reference: its question names it.
+  it("names a direct session by what was first asked in it", async () => {
+    listed({
+      "GET /teams/{id}/sessions": {
+        body: {
+          items: [
+            {
+              ...listedSession,
+              provider_ref: "",
+              kind: "direct",
+              first_asked: "Why did the nightly\nexport fail?",
+            },
+          ],
+        },
+      },
+    });
+    at("/ui/sessions");
+
+    const link = await screen.findByRole("link", { name: "Why did the nightly export fail?" });
+    expect(link).toHaveAttribute("href", PAGE);
+  });
+
   // Six columns with a message among them are wider than a small tablet.
   it("stacks its rows below a tablet's width", async () => {
     listed({});
@@ -264,6 +286,25 @@ describe("a session's page", () => {
     await userEvent.click(within(crumbs).getByRole("link", { name: "Sessions" }));
     await screen.findByRole("link", { name: /ticket-42/ });
     expect(router.state.location.pathname).toBe("/ui/sessions");
+  });
+
+  it("titles a direct session by what was first asked in it, and a new one as a direct session", async () => {
+    const direct = { ...session, provider_ref: "", kind: "direct" };
+    listed({ [SESSION]: { body: { ...direct, first_asked: "Why did the nightly export fail?" } } });
+    at(PAGE);
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Why did the nightly export fail?" }),
+    ).toBeVisible();
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByText("Why did the nightly export fail?")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    cleanup();
+    listed({ [SESSION]: { body: { ...direct, first_asked: null } } });
+    at(PAGE);
+    expect(await screen.findByRole("heading", { level: 1, name: "Direct session" })).toBeVisible();
   });
 
   it("reads a linked session on its own, never by paging the list", async () => {

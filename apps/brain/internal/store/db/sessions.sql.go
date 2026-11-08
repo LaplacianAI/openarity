@@ -125,6 +125,24 @@ func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (Session, error)
 	return i, err
 }
 
+const getSessionFirstAsked = `-- name: GetSessionFirstAsked :one
+SELECT input FROM runs
+WHERE session_id = $1 AND id = root_run_id
+ORDER BY created_at, id
+LIMIT 1
+`
+
+// What was first asked in a session: its oldest root run's input, as the
+// lists carry it. A delegate's run is never a root, so a hand-off cannot name
+// the session. No row means no run was started in it. Read only after the
+// session was found visible; this decides nothing about access.
+func (q *Queries) GetSessionFirstAsked(ctx context.Context, sessionID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getSessionFirstAsked, sessionID)
+	var input string
+	err := row.Scan(&input)
+	return input, err
+}
+
 const getSessionVisible = `-- name: GetSessionVisible :one
 SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id FROM sessions
 WHERE id = $1 AND team_id = $2
@@ -171,7 +189,8 @@ SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.starte
        pu.email   AS participant_email,
        pu.subject AS participant_subject,
        m.text     AS last_message,
-       lr.status  AS latest_run_status
+       lr.status  AS latest_run_status,
+       fr.input   AS first_asked
 FROM sessions s
 LEFT JOIN channels c ON c.id = s.channel_id
 LEFT JOIN messages m ON m.id = (
@@ -183,6 +202,11 @@ LEFT JOIN runs lr ON lr.id = (
     SELECT id FROM runs
     WHERE session_id = s.id AND id = root_run_id
     ORDER BY created_at DESC, id DESC
+    LIMIT 1)
+LEFT JOIN runs fr ON fr.id = (
+    SELECT id FROM runs
+    WHERE session_id = s.id AND id = root_run_id
+    ORDER BY created_at, id
     LIMIT 1)
 LEFT JOIN users pu ON pu.id = CASE WHEN s.kind = 'direct' THEN s.user_id ELSE m.user_id END
 WHERE s.channel_id = $1
@@ -212,6 +236,7 @@ type ListSessionsByChannelRow struct {
 	ParticipantSubject *string
 	LastMessage        *string
 	LatestRunStatus    *string
+	FirstAsked         *string
 }
 
 // A direct session is one person's conversation, and every member of the team
@@ -259,6 +284,7 @@ func (q *Queries) ListSessionsByChannel(ctx context.Context, arg ListSessionsByC
 			&i.ParticipantSubject,
 			&i.LastMessage,
 			&i.LatestRunStatus,
+			&i.FirstAsked,
 		); err != nil {
 			return nil, err
 		}
@@ -276,7 +302,8 @@ SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.starte
        pu.email   AS participant_email,
        pu.subject AS participant_subject,
        m.text     AS last_message,
-       lr.status  AS latest_run_status
+       lr.status  AS latest_run_status,
+       fr.input   AS first_asked
 FROM sessions s
 LEFT JOIN channels c ON c.id = s.channel_id
 LEFT JOIN messages m ON m.id = (
@@ -288,6 +315,11 @@ LEFT JOIN runs lr ON lr.id = (
     SELECT id FROM runs
     WHERE session_id = s.id AND id = root_run_id
     ORDER BY created_at DESC, id DESC
+    LIMIT 1)
+LEFT JOIN runs fr ON fr.id = (
+    SELECT id FROM runs
+    WHERE session_id = s.id AND id = root_run_id
+    ORDER BY created_at, id
     LIMIT 1)
 LEFT JOIN users pu ON pu.id = CASE WHEN s.kind = 'direct' THEN s.user_id ELSE m.user_id END
 WHERE s.team_id = $1
@@ -325,18 +357,21 @@ type ListSessionsByTeamRow struct {
 	ParticipantSubject *string
 	LastMessage        *string
 	LatestRunStatus    *string
+	FirstAsked         *string
 }
 
 // ListSessionsByTeam is what a session started from the dashboard appears in,
 // since it has no channel to be listed under. Same visibility rule.
 //
-// Each row carries its channel's name, who it is with, the newest message
-// and the newest root run's status. The newest message and run are picked by
-// id in a subquery and joined as plain LEFT JOINs, not LATERAL: sqlc reads
-// a lateral's columns as never null, and a session with no messages would
-// then fail to scan. The run_statuses filter reads the newest run, so it
-// asks "is the latest run failed", not "did any run fail", and leaves out a
-// session with no run whenever it is set.
+// Each row carries its channel's name, who it is with, the newest message,
+// the newest root run's status, and the oldest root run's input: what was
+// first asked, which names a direct session that has no reference of its
+// own. The newest message and the runs are picked by id in a subquery and
+// joined as plain LEFT JOINs, not LATERAL: sqlc reads a lateral's columns as
+// never null, and a session with no messages would then fail to scan. The
+// run_statuses filter reads the newest run, so it asks "is the latest run
+// failed", not "did any run fail", and leaves out a session with no run
+// whenever it is set.
 func (q *Queries) ListSessionsByTeam(ctx context.Context, arg ListSessionsByTeamParams) ([]ListSessionsByTeamRow, error) {
 	rows, err := q.db.Query(ctx, listSessionsByTeam,
 		arg.TeamID,
@@ -372,6 +407,7 @@ func (q *Queries) ListSessionsByTeam(ctx context.Context, arg ListSessionsByTeam
 			&i.ParticipantSubject,
 			&i.LastMessage,
 			&i.LatestRunStatus,
+			&i.FirstAsked,
 		); err != nil {
 			return nil, err
 		}

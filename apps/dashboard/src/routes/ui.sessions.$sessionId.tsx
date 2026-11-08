@@ -35,6 +35,7 @@ import { EmptyState, LoadMore, Mono } from "@/components/ui-bits";
 import { conversation, noAnswer } from "@/lib/conversation";
 import { absoluteTime, fileSize } from "@/lib/format";
 import { useMediaQuery } from "@/lib/media";
+import { sessionName } from "@/lib/sessions";
 import { cn } from "@/lib/utils";
 
 type Tab = "messages" | "runs";
@@ -115,7 +116,7 @@ function SessionPage() {
   const needsLook = latest?.status === "failed" || latest?.status === "running";
   const tab: Tab = search.tab ?? (search.run || needsLook ? "runs" : "messages");
   const s = session.data ?? null;
-  const title = s?.provider_ref ?? sessionId;
+  const title = s ? sessionName(s) : sessionId;
   const loadedRuns = runs.data?.pages.reduce((n, p) => n + p.items.length, 0) ?? 0;
   // Wide enough for both: the conversation beside the run it started.
   const sideBySide = useMediaQuery("(min-width: 80rem)");

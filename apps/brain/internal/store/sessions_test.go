@@ -1,12 +1,14 @@
 package store
 
 import (
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -588,7 +590,7 @@ func TestASessionWithNothingInItListsNulls(t *testing.T) {
 	rows := listRows(t, s, db.ListSessionsByTeamParams{TeamID: team.ID, Moderator: true})
 	got := rowFor(t, rows, empty)
 	if got.ChannelName != nil || got.ParticipantEmail != nil || got.ParticipantSubject != nil ||
-		got.LastMessage != nil || got.LatestRunStatus != nil {
+		got.LastMessage != nil || got.LatestRunStatus != nil || got.FirstAsked != nil {
 		t.Errorf("an empty session lists %+v, want every extra null", got)
 	}
 
@@ -596,6 +598,73 @@ func TestASessionWithNothingInItListsNulls(t *testing.T) {
 	dm := rowFor(t, rows, direct.ID)
 	if dm.ParticipantEmail != nil || deref(dm.ParticipantSubject) != "carol" {
 		t.Errorf("email %s, subject %s; want none and carol", deref(dm.ParticipantEmail), deref(dm.ParticipantSubject))
+	}
+}
+
+// asks sets what a run was asked.
+func asks(t *testing.T, s *Store, run uuid.UUID, input string) {
+	t.Helper()
+
+	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET input = $2 WHERE id = $1`, run, input); err != nil {
+		t.Fatalf("set input: %v", err)
+	}
+}
+
+// What was first asked in a session is its oldest root run's input, read the
+// same by both lists and by the single read. A delegate's run is the work
+// handed on, not a question asked, so an older one does not count; nor does
+// an older run in another session.
+func TestWhatWasFirstAskedIsTheOldestRootRunsInput(t *testing.T) {
+	s := queryStore(t)
+	ch, teamID := sessionFixture(t, s, "support")
+	agent := insertAgent(t, s, teamID, "triage")
+
+	room := mustEnsureSession(t, s, teamID, ch.ID, "C-ROOM", "group")
+	first := ranIn(t, s, teamID, room.ID, agent, "succeeded", 120)
+	asks(t, s, first, "Why did the nightly export fail?")
+	later := ranIn(t, s, teamID, room.ID, agent, "succeeded", 30)
+	asks(t, s, later, "and the one before?")
+	child := mustInsertRun(t, s, inState(run{
+		id: uuid.New(), team: teamID, session: room.ID, agent: &agent,
+		root: later, parent: &later, toolCall: ptr("call-1"), depth: 1,
+	}, "succeeded"))
+	age(t, s, child, "created_at", 600)
+	asks(t, s, child, "the hand-off")
+
+	other := mustEnsureSession(t, s, teamID, ch.ID, "C-OTHER", "group")
+	older := ranIn(t, s, teamID, other.ID, agent, "succeeded", 900)
+	asks(t, s, older, "another conversation")
+
+	const want = "Why did the nightly export fail?"
+	got := rowFor(t, listRows(t, s, db.ListSessionsByTeamParams{TeamID: teamID, Moderator: true}), room.ID)
+	if deref(got.FirstAsked) != want {
+		t.Errorf("the team list says %s, want %q", deref(got.FirstAsked), want)
+	}
+	byChannel, err := s.ListSessionsByChannel(t.Context(), db.ListSessionsByChannelParams{
+		ChannelID: &ch.ID, PageSize: 10, Moderator: true,
+	})
+	if err != nil {
+		t.Fatalf("ListSessionsByChannel: %v", err)
+	}
+	for _, r := range byChannel {
+		if r.Session.ID == room.ID && deref(r.FirstAsked) != want {
+			t.Errorf("the channel list says %s, want %q", deref(r.FirstAsked), want)
+		}
+	}
+	if alone, err := s.GetSessionFirstAsked(t.Context(), room.ID); err != nil || alone != want {
+		t.Errorf("GetSessionFirstAsked = %q, %v; want %q", alone, err, want)
+	}
+}
+
+// A session nobody started a run in was asked nothing, and says so as no row
+// rather than an empty question.
+func TestASessionWithNoRunWasAskedNothing(t *testing.T) {
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+
+	empty := insertSession(t, s, team.ID)
+	if got, err := s.GetSessionFirstAsked(t.Context(), empty); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("GetSessionFirstAsked = %q, %v; want no rows", got, err)
 	}
 }
 

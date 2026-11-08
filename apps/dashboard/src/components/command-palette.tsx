@@ -23,6 +23,7 @@ import { listAgents, listSessions, listSkills } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { isSend, Refusal, RUN_WRITE, useAsk } from "@/components/ask-team";
 import { askProblem, askRefusal } from "@/lib/ask";
+import { sessionName } from "@/lib/sessions";
 import { cn } from "@/lib/utils";
 
 export type Destination = {
@@ -128,7 +129,7 @@ export function CommandPalette({
         to: "/ui/skills",
       })),
       ...(sessions.data?.items ?? []).map((s) => ({
-        label: s.provider_ref,
+        label: sessionName(s),
         kind: "Session",
         icon: MessagesSquare,
         to: "/ui/sessions/$sessionId",

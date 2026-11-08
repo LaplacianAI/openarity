@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/table";
 import { EmptyState, LoadMore, PageHeader } from "@/components/ui-bits";
 import { count, RUN_STATUSES, STATUS_WORDS } from "@/lib/runs";
+import { sessionName } from "@/lib/sessions";
 
 type SessionsSearch = { channel?: string | undefined; run?: RunStatus | undefined };
 
@@ -210,7 +211,7 @@ function SessionTable({ sessions }: { sessions: ListedSession[] }) {
                   tabIndex={-1}
                   className="truncate font-medium hover:underline"
                 >
-                  {s.provider_ref}
+                  {sessionName(s)}
                 </Link>
                 <span className="text-xs text-muted-foreground">{s.kind}</span>
               </span>

@@ -1203,8 +1203,16 @@ type Session struct {
 
 	// ChannelName The channel's name, and null with no channel. Sent by the two
 	// lists, null or not; absent from a single session's read.
-	ChannelName *string            `json:"channel_name,omitempty" yaml:"channel_name,omitempty"`
-	ID          openapi_types.UUID `json:"id" yaml:"id"`
+	ChannelName *string `json:"channel_name,omitempty" yaml:"channel_name,omitempty"`
+
+	// FirstAsked The input of the oldest top-level run started in this session, cut
+	// to 140 characters as `last_message` is, and null when no run was
+	// started in it. A direct session started from the dashboard or the
+	// API has no `provider_ref`, so this is what names it. A delegate's
+	// run is work handed on, not a question asked, so it never counts.
+	// Sent by the lists and by a single session's read.
+	FirstAsked *string            `json:"first_asked,omitempty" yaml:"first_asked,omitempty"`
+	ID         openapi_types.UUID `json:"id" yaml:"id"`
 
 	// Kind How many people can speak, not what the provider calls the room.
 	// Slack's `mpim` looks like a direct message and is a group.
