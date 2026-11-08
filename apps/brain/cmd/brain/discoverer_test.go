@@ -18,6 +18,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/discovery"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets/static"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -176,7 +177,7 @@ func mcpMux(t *testing.T, s *store.Store, d *recordingDiscoverer) *http.ServeMux
 	t.Helper()
 
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
-	for _, r := range newRouters(cfg, discardLogger(), s, nil, nil, nil, nil, nil, d, nil, nil) {
+	for _, r := range newRouters(cfg, discardLogger(), s, nil, nil, gateway.Registry{}, nil, nil, d, nil, nil) {
 		rr, ok := r.(registrable)
 		if !ok || !strings.Contains(strings.Join(rr.Patterns(), " "), "/discover") {
 			continue

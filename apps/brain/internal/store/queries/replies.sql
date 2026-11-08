@@ -31,3 +31,56 @@ SELECT kind, text, at, author FROM (
 WHERE at < sqlc.arg('before')::timestamptz
 ORDER BY at DESC
 LIMIT sqlc.arg('turns')::int;
+
+-- The replies due now, at most one per conversation: the oldest still pending.
+-- A conversation is read in order, so a reply waiting to be retried holds back
+-- the ones after it, and only those.
+--
+-- A claim is a committed mark, not a held lock: the sender posts to the
+-- provider between claiming and marking, and a transaction held open across
+-- that would hold a connection for as long as the provider is slow. The claim
+-- pushes next_attempt_at out by the lease, so nobody else takes the reply while
+-- it is being sent, and a sender that died with it is retried once the lease
+-- runs out. SKIP LOCKED only keeps two senders from claiming one row at once.
+--
+-- attempts is the claim's own number. The marks below match on it, so a
+-- sender whose lease ran out cannot mark a newer attempt.
+-- name: ClaimDueReplies :many
+WITH claimed AS (
+    UPDATE replies r
+    SET attempts = r.attempts + 1,
+        next_attempt_at = now() + make_interval(secs => sqlc.arg('lease_seconds')::float8)
+    WHERE r.id IN (
+        SELECT d.id FROM replies d
+        WHERE d.status = 'pending' AND d.next_attempt_at <= now()
+          AND NOT EXISTS (
+              SELECT 1 FROM replies o
+              WHERE o.session_id = d.session_id AND o.status = 'pending' AND o.id < d.id)
+        ORDER BY d.next_attempt_at, d.id
+        LIMIT sqlc.arg('batch_size')
+        FOR UPDATE SKIP LOCKED)
+    RETURNING r.*
+)
+SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts,
+       ch.provider, ch.reply_url,
+       s.provider_ref AS session_ref, s.kind AS session_kind,
+       m.external_id AS in_reply_to
+FROM claimed c
+JOIN channels ch ON ch.id = c.channel_id
+JOIN sessions s ON s.id = c.session_id
+LEFT JOIN messages m ON m.id = c.in_reply_to
+ORDER BY c.id;
+
+-- name: ReplySent :execrows
+UPDATE replies SET status = 'sent', sent_at = now(), last_error = NULL
+WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attempts');
+
+-- name: RetryReply :execrows
+UPDATE replies
+SET last_error = sqlc.arg('error')::text,
+    next_attempt_at = now() + make_interval(secs => sqlc.arg('retry_seconds')::float8)
+WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attempts');
+
+-- name: GiveUpReply :execrows
+UPDATE replies SET status = 'failed', last_error = sqlc.arg('error')::text
+WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attempts');

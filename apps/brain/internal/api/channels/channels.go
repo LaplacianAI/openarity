@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/google/uuid"
@@ -31,6 +32,7 @@ const (
 
 type Store interface {
 	CreateChannel(ctx context.Context, arg db.CreateChannelParams) (db.Channel, error)
+	SetChannelReplyURL(ctx context.Context, arg db.SetChannelReplyURLParams) (db.Channel, error)
 	GetChannel(ctx context.Context, id uuid.UUID) (db.Channel, error)
 	ListChannelsByTeam(ctx context.Context, arg db.ListChannelsByTeamParams) ([]db.ListChannelsByTeamRow, error)
 	DeleteChannel(ctx context.Context, id uuid.UUID) error
@@ -52,6 +54,7 @@ type Secrets interface {
 
 type Providers interface {
 	Get(name string) (gateway.Provider, bool)
+	Replier(name string) (gateway.Replier, bool)
 }
 
 type handler struct {
@@ -61,17 +64,24 @@ type handler struct {
 	secrets   Secrets
 	providers Providers
 	hookBase  string
+	// allow is which addresses a reply URL may name; the sender's dialer
+	// asks the same at send time.
+	allow func(netip.Addr) bool
 }
 
-func New(logger *slog.Logger, s Store, a api.Authorizer, sec Secrets, p Providers, hookBase string) *api.Router {
+func New(
+	logger *slog.Logger, s Store, a api.Authorizer, sec Secrets, p Providers, hookBase string,
+	allow func(netip.Addr) bool,
+) *api.Router {
 	h := &handler{
 		logger: logger, store: s, authz: a, secrets: sec, providers: p,
-		hookBase: strings.TrimSuffix(hookBase, "/"),
+		hookBase: strings.TrimSuffix(hookBase, "/"), allow: allow,
 	}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/channels", h.list)
 	r.Post("/{id}/channels", h.create)
+	r.Patch("/{id}/channels/{channelID}", h.update)
 	r.Delete("/{id}/channels/{channelID}", h.delete)
 
 	senders := "/{id}/channels/{channelID}/senders"
@@ -107,6 +117,14 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown provider", http.StatusBadRequest)
 		return
 	}
+	var replyURL *string
+	if req.ReplyURL != nil {
+		v := strings.TrimSpace(*req.ReplyURL)
+		if !h.replyURLOK(w, req.Provider, v) {
+			return
+		}
+		replyURL = &v
+	}
 
 	secret, generated, ok := h.signingSecret(w, req)
 	if !ok {
@@ -114,7 +132,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	row, err := h.store.CreateChannel(r.Context(), db.CreateChannelParams{
-		TeamID: teamID, Provider: req.Provider, Name: name,
+		TeamID: teamID, Provider: req.Provider, Name: name, ReplyUrl: replyURL,
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -232,6 +250,53 @@ func (h *handler) page(w http.ResponseWriter, r *http.Request, teamID uuid.UUID,
 	return params, true
 }
 
+// update sets where the channel's replies go, or with null stops them.
+func (h *handler) update(w http.ResponseWriter, r *http.Request) {
+	u := api.Caller(r)
+
+	row, ok := h.channelInTeam(w, r)
+	if !ok {
+		return
+	}
+
+	var req updateRequest
+	if !api.DecodeJSON(w, r, &req) {
+		return
+	}
+	if !req.ReplyURL.Set {
+		http.Error(w, "reply_url is required; send null to stop replies", http.StatusBadRequest)
+		return
+	}
+	if v := req.ReplyURL.Value; v != nil && !h.replyURLOK(w, row.Provider, *v) {
+		return
+	}
+
+	updated, err := h.store.SetChannelReplyURL(r.Context(), db.SetChannelReplyURLParams{
+		ID: row.ID, TeamID: row.TeamID, ReplyUrl: req.ReplyURL.Value,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to update channel", err)
+		return
+	}
+	api.WriteJSON(w, h.logger, http.StatusOK, h.view(updated))
+}
+
+func (h *handler) replyURLOK(w http.ResponseWriter, provider, raw string) bool {
+	if _, ok := h.providers.Replier(provider); !ok {
+		http.Error(w, "the "+provider+" provider sends no replies, so it takes no reply_url", http.StatusBadRequest)
+		return false
+	}
+	if err := checkReplyURL(raw, h.allow); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
 func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 	u := api.Caller(r)
 
@@ -271,6 +336,9 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) view(row db.Channel) channel {
 	c := channel{ID: row.ID, TeamID: row.TeamID, Provider: row.Provider, Name: row.Name}
+	if row.ReplyUrl != nil {
+		c.ReplyURL = *row.ReplyUrl
+	}
 	if h.hookBase == "" {
 		return c
 	}

@@ -68,6 +68,7 @@ apps/brain/
     importer.go        newImporter: where a skill may be imported from
     discoverer.go      newDiscoverer: what MCP discovery may reach
     runtime.go         newRunJob: the builder, the runner and the executor, for the worker
+    replies.go         newReplyJob and the reply client: what a reply URL may reach
     websearch.go       newSearchers: a team's search provider, built from its settings
     webfetch.go        newFetch: the plain fetch, a team's Firecrawl, and the public-host check
     logger.go          newLogger()
@@ -85,7 +86,7 @@ apps/brain/
     loops/             the loops an agent may choose, which are the runner's
     teamsettings/      a team's model, web search, learning and compaction
     teamsummary/       the Home counts: one statement, one snapshot
-  internal/gateway/    a provider's webhook in, normalised messages out
+  internal/gateway/    a provider's webhook in, normalised messages out; replies back out
     providertest/      the conformance suite every adapter runs
     <provider>/        one package per platform; custom is the reference
   internal/secrets/    the port: Store, Writer, Creator, Prober, secret paths

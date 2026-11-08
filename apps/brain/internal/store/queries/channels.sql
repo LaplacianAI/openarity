@@ -1,5 +1,13 @@
 -- name: CreateChannel :one
-INSERT INTO channels (team_id, provider, name) VALUES ($1, $2, $3) RETURNING *;
+INSERT INTO channels (team_id, provider, name, reply_url)
+VALUES (sqlc.arg('team_id'), sqlc.arg('provider'), sqlc.arg('name'), sqlc.narg('reply_url'))
+RETURNING *;
+
+-- Null stops replies from being sent; the ones already waiting fail.
+-- name: SetChannelReplyURL :one
+UPDATE channels SET reply_url = sqlc.narg('reply_url')
+WHERE id = sqlc.arg('id') AND team_id = sqlc.arg('team_id')
+RETURNING *;
 
 -- name: GetChannel :one
 -- A deleted team's channel answers as an unknown one, so its webhooks are

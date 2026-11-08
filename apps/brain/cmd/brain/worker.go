@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/purge"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/reaper"
@@ -16,7 +17,7 @@ import (
 )
 
 func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore *store.Store) error {
-	secretStore := newSecretStore(cfg, logger)
+	secretStore := openSecretStore(cfg, logger)
 
 	effects, err := newEffects(ctx, cfg, logger, dbStore, secretStore)
 	if err != nil {
@@ -45,6 +46,10 @@ func newJobs(
 ) ([]worker.Job, func(), error) {
 	sweep := reaper.SweepJob(logger, effects...)
 	teamPurge := purge.Job(dbStore, cfg.TeamPurgeAfter, logger)
+	replies, err := newReplyJob(cfg, logger, dbStore, secretStore)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	if cfg.EmbeddingModel == "" {
 		logger.WarnContext(ctx, "EMBEDDING_MODEL is not set, so the graph is not being projected or searched")
@@ -52,7 +57,7 @@ func newJobs(
 		if err != nil {
 			return nil, nil, err
 		}
-		return []worker.Job{sweep, teamPurge, runs}, func() {}, nil
+		return []worker.Job{sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies)}, func() {}, nil
 	}
 
 	g, embedder, closeGraph, err := dialGraph(ctx, cfg)
@@ -66,5 +71,7 @@ func newJobs(
 		return nil, nil, err
 	}
 	projector := graph.NewProjector(dbStore, g, embedder, logger)
-	return []worker.Job{sweep, teamPurge, runs, graph.DrainJob(projector, logger)}, closeGraph, nil
+	return []worker.Job{
+		sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies), graph.DrainJob(projector, logger),
+	}, closeGraph, nil
 }

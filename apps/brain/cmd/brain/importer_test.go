@@ -16,6 +16,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill/hub"
 )
 
@@ -56,7 +57,7 @@ func skillsMux(t *testing.T, importer *recordingImporter) *http.ServeMux {
 	t.Helper()
 
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
-	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, nil, importer, nil, nil, nil) {
+	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, gateway.Registry{}, nil, importer, nil, nil, nil) {
 		rr, ok := r.(registrable)
 		if !ok || !strings.Contains(strings.Join(rr.Patterns(), " "), "/skills/import") {
 			continue

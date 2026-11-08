@@ -270,3 +270,26 @@ func TestTheZeroResultIsNothingToDo(t *testing.T) {
 		t.Errorf("Ack = %q, want none", r.Ack)
 	}
 }
+
+// A provider that can reply is found as a Replier by its name; one that
+// cannot is not, rather than being found with a Reply that does nothing.
+func TestTheRegistryKnowsWhichProvidersReply(t *testing.T) {
+	t.Parallel()
+
+	reg, err := NewRegistry(&relay{}, &fetchProvider{})
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	if _, ok := reg.Replier("relay"); !ok {
+		t.Error("the provider with Reply is not a Replier")
+	}
+	if _, ok := reg.Replier("fake"); ok {
+		t.Error("a provider with no Reply was found as a Replier")
+	}
+	if _, ok := reg.Replier("nobody"); ok {
+		t.Error("an unknown provider was found as a Replier")
+	}
+	if got := reg.Names(); len(got) != 2 || got[0] != "fake" || got[1] != "relay" {
+		t.Errorf("Names = %v, want both, sorted", got)
+	}
+}

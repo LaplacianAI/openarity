@@ -473,6 +473,7 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// admin act, so writes carry a permission.
 		"GET /teams/{id}/channels":                "member",
 		"POST /teams/{id}/channels":               "team channel:write",
+		"PATCH /teams/{id}/channels/{channelID}":  "team channel:write",
 		"DELETE /teams/{id}/channels/{channelID}": "team channel:write",
 
 		// Senders have permissions of their own, apart from channel:write.

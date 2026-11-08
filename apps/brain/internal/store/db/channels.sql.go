@@ -13,17 +13,25 @@ import (
 )
 
 const createChannel = `-- name: CreateChannel :one
-INSERT INTO channels (team_id, provider, name) VALUES ($1, $2, $3) RETURNING id, team_id, provider, name, created_at, updated_at, reply_url
+INSERT INTO channels (team_id, provider, name, reply_url)
+VALUES ($1, $2, $3, $4)
+RETURNING id, team_id, provider, name, created_at, updated_at, reply_url
 `
 
 type CreateChannelParams struct {
 	TeamID   uuid.UUID
 	Provider string
 	Name     string
+	ReplyUrl *string
 }
 
 func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (Channel, error) {
-	row := q.db.QueryRow(ctx, createChannel, arg.TeamID, arg.Provider, arg.Name)
+	row := q.db.QueryRow(ctx, createChannel,
+		arg.TeamID,
+		arg.Provider,
+		arg.Name,
+		arg.ReplyUrl,
+	)
 	var i Channel
 	err := row.Scan(
 		&i.ID,
@@ -153,4 +161,32 @@ func (q *Queries) ListChannelsByTeam(ctx context.Context, arg ListChannelsByTeam
 		return nil, err
 	}
 	return items, nil
+}
+
+const setChannelReplyURL = `-- name: SetChannelReplyURL :one
+UPDATE channels SET reply_url = $1
+WHERE id = $2 AND team_id = $3
+RETURNING id, team_id, provider, name, created_at, updated_at, reply_url
+`
+
+type SetChannelReplyURLParams struct {
+	ReplyUrl *string
+	ID       uuid.UUID
+	TeamID   uuid.UUID
+}
+
+// Null stops replies from being sent; the ones already waiting fail.
+func (q *Queries) SetChannelReplyURL(ctx context.Context, arg SetChannelReplyURLParams) (Channel, error) {
+	row := q.db.QueryRow(ctx, setChannelReplyURL, arg.ReplyUrl, arg.ID, arg.TeamID)
+	var i Channel
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Provider,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ReplyUrl,
+	)
+	return i, err
 }
