@@ -34,10 +34,12 @@ spec:
           type: RuntimeDefault
 
       # Migrations run before the container that serves traffic, and they run
-      # in every pod. That is safe: `brain migrate up` takes a Postgres
-      # advisory lock for ours and another for DBOS's, which takes none of its
-      # own, so replicas starting together serialise rather than racing. It also means a rollout cannot begin serving against a schema
-      # it has not applied.
+      # in every pod. That is safe: `brain migrate up` serialises on Postgres
+      # advisory locks (goose's migrationLockID, rbacLockID for the role
+      # seed, and dbosMigrationLockID for DBOS's tables, which takes none of
+      # its own), so replicas starting together queue rather than race. It
+      # also means a rollout cannot begin serving against a schema it has not
+      # applied.
       initContainers:
         - name: migrate
           image: ghcr.io/laplacianai/openarity-brain:latest
