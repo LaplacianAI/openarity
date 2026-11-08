@@ -36,7 +36,7 @@ Everything in the rest of this skill is about the **API** listener. If you are
 adding a provider webhook, you are almost certainly not adding a route at all:
 `internal/gateway` mounts one per `(provider, suffix)` automatically from the
 registry, so an adapter declaring a `Route` is the whole of it. Read
-`internal/gateway/CLAUDE.md`.
+`internal/gateway/AGENTS.md`.
 
 A webhook router must be public. `server.New` refuses a non-public one by name,
 because that listener has no guard to hand `Register` and the alternative is a

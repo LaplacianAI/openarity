@@ -144,7 +144,7 @@ openarity` is how that was found and how it stays found.
 
 ## Conventions and decisions
 
-`CLAUDE.md` holds the house style, the layout rationale, and the decisions
-worth not relitigating. `.claude/skills/` holds the step-by-step guides for
+`AGENTS.md` holds the house style, the layout rationale, and the decisions
+worth not relitigating. `.agents/skills/` holds the step-by-step guides for
 adding a command, a setting or an output format, and for touching anything that
 handles a credential.

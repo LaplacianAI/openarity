@@ -229,7 +229,7 @@ attachments not appearing" before anything else does.
   following `docker-compose.objects.yml`. Publish on a `1`-prefixed host port
   (15432, 16379, 19000): the stack must be able to run all its own overlays at
   once, and a store's default 9000 collides with authentik.
-- `apps/brain/CLAUDE.md` — one line, if the choice changes how the brain is
+- `apps/brain/AGENTS.md` — one line, if the choice changes how the brain is
   run locally.
 
 ## Known rough edge

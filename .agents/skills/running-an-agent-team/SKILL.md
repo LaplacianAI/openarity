@@ -5,6 +5,10 @@ description: How to run a team of coding agents on Openarity in any harness — 
 
 # Running an agent team
 
+`working-agreement` and `verifying-what-you-build`, named below, are skills in
+the openarity-practices plugin for Claude Code. Their rules for this repository
+are written out in each app's `AGENTS.md`, which every agent reads.
+
 One lead, a few builders and sweepers, and one adversary. Roles are set by
 **effort level**, not by model name, because names change every few months
 and differ between harnesses; the effort a job needs does not.

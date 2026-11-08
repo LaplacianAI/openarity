@@ -3,6 +3,7 @@
 .git
 .github
 .claude
+.agents
 deployment
 docs
 *.md

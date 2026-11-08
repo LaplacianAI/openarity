@@ -6,13 +6,18 @@ is generated from it — this module never guesses what an endpoint looks like.
 
 ## Working agreement
 
-Two tiers, as in the `working-agreement` skill. **Tier 1, the user's:**
-`internal/auth` and `internal/credential`. Claude tests and attacks that code,
-explains, and reviews; it does not write it. **Tier 2, Claude's:** the commands'
+Two tiers. The rules an agent needs are all in this section; Claude Code users
+also have them as the `working-agreement` skill from the openarity-practices
+plugin. **Tier 1, the user's:**
+`internal/auth` and `internal/credential`. The agent tests and attacks that code,
+explains, and reviews; it does not write it. **Tier 2, the agent's:** the commands'
 flags and output, the generated client, tests, docs and Makefiles. Design first
 in both: a high-level and a low-level design, each with a diagram, approved
 before code, and every edit handed over with a link to its file and line.
 
+- "Make the change yourself, be like me" is a *style* instruction (sparse
+  comments, only where the why is not obvious), not permission to write tier 1
+  code.
 - For tier 1 code, one file per reply, then stop and wait. The user reads it,
   raises doubts, and changes the design *in that file* before the next one
   exists. Naming the remaining files as a checklist is fine; handing over their

@@ -140,6 +140,6 @@ never learn what a port is.
 
 ## Conventions and decisions
 
-`CLAUDE.md` holds the house style, the layout rationale, and the decisions worth
-not relitigating. `.claude/skills/` holds the step-by-step guides for adding an
+`AGENTS.md` holds the house style, the layout rationale, and the decisions worth
+not relitigating. `.agents/skills/` holds the step-by-step guides for adding an
 environment variable, a route, a middleware, a migration or a query.
