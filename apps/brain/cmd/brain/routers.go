@@ -78,8 +78,9 @@ func newWebhookRouters(
 	secretStore secrets.Store,
 	registry gateway.Registry,
 	attachments gateway.Objects,
+	runs gateway.Enqueuer,
 ) []server.Router {
-	sink := gateway.NewInbox(inbox{dbStore})
+	sink := gateway.NewInbox(inbox{dbStore}, runs, logger)
 	ingest := gateway.NewIngest(attachments, logger)
 
 	return []server.Router{

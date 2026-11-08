@@ -418,3 +418,17 @@ func (q *Queries) ListSessionsByTeam(ctx context.Context, arg ListSessionsByTeam
 	}
 	return items, nil
 }
+
+const lockSession = `-- name: LockSession :one
+SELECT id FROM sessions WHERE id = $1 FOR UPDATE
+`
+
+// Holds a session for the rest of the transaction. Finishing a channel run
+// takes it before the run's own row, in the order delivery takes them, so the
+// two never wait on each other. A session that is gone is pgx.ErrNoRows.
+func (q *Queries) LockSession(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockSession, id)
+	var id_2 uuid.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}

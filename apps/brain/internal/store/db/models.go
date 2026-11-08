@@ -86,6 +86,7 @@ type Channel struct {
 	Name      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	ReplyUrl  *string
 }
 
 type ChannelSender struct {
@@ -174,6 +175,23 @@ type Permission struct {
 	Description string
 }
 
+type Reply struct {
+	ID            int64
+	TeamID        uuid.UUID
+	RunID         uuid.UUID
+	SessionID     uuid.UUID
+	ChannelID     uuid.UUID
+	InReplyTo     *uuid.UUID
+	Kind          string
+	Text          string
+	Status        string
+	Attempts      int32
+	LastError     *string
+	NextAttemptAt time.Time
+	CreatedAt     time.Time
+	SentAt        *time.Time
+}
+
 type Role struct {
 	Name        string
 	Description string
@@ -216,6 +234,8 @@ type Run struct {
 	FinishedAt        *time.Time
 	TokenBudget       *int64
 	Hub               bool
+	MessageID         *uuid.UUID
+	ReplyToChannel    bool
 }
 
 type RunEvent struct {

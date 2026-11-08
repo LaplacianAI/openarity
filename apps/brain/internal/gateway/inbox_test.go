@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -40,6 +41,18 @@ type inboxStore struct {
 
 	calls        []db.InsertMessageParams
 	sessionCalls []db.EnsureSessionParams
+
+	// Runs, as answering a message sees them. active is the channel run
+	// answering each session; steers are what was added to a run; created is
+	// every run started. mayNot and noModel make the sender or the team unable
+	// to start one; runErr fails starting it.
+	active  map[uuid.UUID]uuid.UUID
+	steers  map[uuid.UUID][]string
+	created []db.CreateChannelRunParams
+	mayNot  bool
+	noModel bool
+	runErr  error
+	inTx    bool
 }
 
 func newInboxStore() *inboxStore {
@@ -47,6 +60,8 @@ func newInboxStore() *inboxStore {
 		stored:   map[string]db.InsertMessageParams{},
 		ids:      map[string]uuid.UUID{},
 		sessions: map[string]db.Session{},
+		active:   map[uuid.UUID]uuid.UUID{},
+		steers:   map[uuid.UUID][]string{},
 	}
 }
 
@@ -60,13 +75,69 @@ func (f *inboxStore) InTx(_ context.Context, fn func(Queries) error) error {
 	sessions := maps.Clone(f.sessions)
 	attachments := slices.Clone(f.attachments)
 	reserved := slices.Clone(f.reserved)
+	active := maps.Clone(f.active)
+	steers := maps.Clone(f.steers)
+	created := slices.Clone(f.created)
 
+	f.inTx = true
+	defer func() { f.inTx = false }()
 	if err := fn(f); err != nil {
 		f.stored, f.ids, f.sessions, f.attachments = stored, ids, sessions, attachments
 		f.reserved = reserved
+		f.active, f.steers, f.created = active, steers, created
 		return err
 	}
 	return nil
+}
+
+func (f *inboxStore) MemberMay(context.Context, db.MemberMayParams) (bool, error) {
+	return !f.mayNot, nil
+}
+
+func (f *inboxStore) ActiveChannelRun(_ context.Context, sessionID uuid.UUID) (uuid.UUID, error) {
+	if id, ok := f.active[sessionID]; ok {
+		return id, nil
+	}
+	return uuid.Nil, pgx.ErrNoRows
+}
+
+func (f *inboxStore) AddSteer(_ context.Context, arg db.AddSteerParams) error {
+	f.steers[arg.RunID] = append(slices.Clone(f.steers[arg.RunID]), arg.Text)
+	return nil
+}
+
+func (f *inboxStore) HubCanRun(context.Context, uuid.UUID) (bool, error) {
+	return !f.noModel, nil
+}
+
+func (f *inboxStore) CreateChannelRun(_ context.Context, arg db.CreateChannelRunParams) (db.Run, error) {
+	if f.runErr != nil {
+		return db.Run{}, f.runErr
+	}
+	f.created = append(f.created, arg)
+	f.active[arg.SessionID] = arg.ID
+	return db.Run{ID: arg.ID, SessionID: arg.SessionID, MessageID: arg.MessageID, Hub: true, ReplyToChannel: true}, nil
+}
+
+// enqueued records the runs handed to the workers, and whether any was handed
+// over while the transaction that created it was still open.
+type enqueued struct {
+	store *inboxStore
+	runs  []uuid.UUID
+	early bool
+	err   error
+}
+
+func (e *enqueued) Enqueue(_ context.Context, id uuid.UUID) error {
+	if e.store != nil && e.store.inTx {
+		e.early = true
+	}
+	e.runs = append(e.runs, id)
+	return e.err
+}
+
+func inboxFor(store *inboxStore) *Inbox {
+	return NewInbox(store, &enqueued{store: store}, slog.New(slog.DiscardHandler))
 }
 
 func (f *inboxStore) LockLiveTeam(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
@@ -164,7 +235,7 @@ func TestDeliverWritesTheMessage(t *testing.T) {
 	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 	msg := delivery("m-1", "what's our deploy status?")
 
-	if err := NewInbox(store).Deliver(t.Context(), ch, []Delivery{msg}); err != nil {
+	if err := inboxFor(store).Deliver(t.Context(), ch, []Delivery{msg}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
@@ -208,7 +279,7 @@ func TestDeliveringTheSameMessageTwiceLeavesOneRow(t *testing.T) {
 	msg := delivery("m-1", "hi")
 
 	for range 2 {
-		if err := NewInbox(store).Deliver(t.Context(), ch, []Delivery{msg}); err != nil {
+		if err := inboxFor(store).Deliver(t.Context(), ch, []Delivery{msg}); err != nil {
 			t.Fatalf("Deliver: %v", err)
 		}
 	}
@@ -228,7 +299,7 @@ func TestAReplayIsNotAnError(t *testing.T) {
 	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 	msg := delivery("m-1", "hi")
 
-	inbox := NewInbox(store)
+	inbox := inboxFor(store)
 	if err := inbox.Deliver(t.Context(), ch, []Delivery{msg}); err != nil {
 		t.Fatalf("first delivery: %v", err)
 	}
@@ -246,7 +317,7 @@ func TestTheSameExternalIDInTwoChannelsIsTwoRows(t *testing.T) {
 	first, second := uuid.New(), uuid.New()
 	msg := delivery("m-1", "hi")
 
-	inbox := NewInbox(store)
+	inbox := inboxFor(store)
 	for _, channelID := range []uuid.UUID{first, second} {
 		if err := inbox.Deliver(t.Context(),
 			Channel{ID: channelID, TeamID: uuid.New()}, []Delivery{msg}); err != nil {
@@ -266,7 +337,7 @@ func TestDeliverWritesEveryMessageInABatch(t *testing.T) {
 	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 
 	msgs := []Delivery{delivery("m-1", "first"), delivery("m-2", "second"), delivery("m-3", "third")}
-	if err := NewInbox(store).Deliver(t.Context(), ch, msgs); err != nil {
+	if err := inboxFor(store).Deliver(t.Context(), ch, msgs); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
@@ -282,7 +353,7 @@ func TestDeliveringNothingIsNotAnError(t *testing.T) {
 
 	store := newInboxStore()
 
-	if err := NewInbox(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, nil); err != nil {
+	if err := inboxFor(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, nil); err != nil {
 		t.Errorf("Deliver with no messages: %v", err)
 	}
 	if len(store.calls) != 0 {
@@ -299,7 +370,7 @@ func TestAMessageWithNoTimestampStoresNull(t *testing.T) {
 	msg := delivery("m-1", "hi")
 	msg.SentAt = time.Time{}
 
-	if err := NewInbox(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
+	if err := inboxFor(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if store.calls[0].SentAt != nil {
@@ -315,7 +386,7 @@ func TestAMessageWithATimestampKeepsIt(t *testing.T) {
 	msg := delivery("m-1", "hi")
 	msg.SentAt = want
 
-	if err := NewInbox(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
+	if err := inboxFor(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if store.calls[0].SentAt == nil {
@@ -337,7 +408,7 @@ func TestEachMessageKeepsItsOwnTimestamp(t *testing.T) {
 	second := delivery("m-2", "second")
 	second.SentAt = time.Unix(2000, 0).UTC()
 
-	if err := NewInbox(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{first, second}); err != nil {
+	if err := inboxFor(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{first, second}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
@@ -357,7 +428,7 @@ func TestAFailedWriteIsReported(t *testing.T) {
 	store := newInboxStore()
 	store.err = errors.New("connection reset")
 
-	err := NewInbox(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{delivery("m-1", "hi")})
+	err := inboxFor(store).Deliver(t.Context(), Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{delivery("m-1", "hi")})
 	if err == nil {
 		t.Fatal("a failed write was swallowed")
 	}
@@ -373,7 +444,7 @@ func TestAFailedWriteIsReported(t *testing.T) {
 func TestInboxIsASink(t *testing.T) {
 	t.Parallel()
 
-	var _ Sink = NewInbox(newInboxStore())
+	var _ Sink = inboxFor(newInboxStore())
 }
 
 // --- sessions ---
@@ -388,7 +459,7 @@ func TestTwoMessagesInOneConversationShareASession(t *testing.T) {
 	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 
 	first, second := delivery("m-1", "hi"), delivery("m-2", "still here")
-	if err := NewInbox(store).Deliver(t.Context(), ch, []Delivery{first, second}); err != nil {
+	if err := inboxFor(store).Deliver(t.Context(), ch, []Delivery{first, second}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
@@ -412,7 +483,7 @@ func TestTwoConversationsInOneChannelAreTwoSessions(t *testing.T) {
 	second := delivery("m-2", "unrelated")
 	second.Session.Ref = "c-2"
 
-	if err := NewInbox(store).Deliver(t.Context(), ch, []Delivery{first, second}); err != nil {
+	if err := inboxFor(store).Deliver(t.Context(), ch, []Delivery{first, second}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
@@ -438,7 +509,7 @@ func TestTheSessionCarriesItsKind(t *testing.T) {
 			msg := delivery("m-1", "hi")
 			msg.Session.Kind = kind
 
-			if err := NewInbox(store).Deliver(t.Context(),
+			if err := inboxFor(store).Deliver(t.Context(),
 				Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{msg}); err != nil {
 				t.Fatalf("Deliver: %v", err)
 			}
@@ -459,7 +530,7 @@ func TestTheSessionBelongsToTheChannelsTeam(t *testing.T) {
 	store := newInboxStore()
 	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 
-	if err := NewInbox(store).Deliver(t.Context(), ch, []Delivery{delivery("m-1", "hi")}); err != nil {
+	if err := inboxFor(store).Deliver(t.Context(), ch, []Delivery{delivery("m-1", "hi")}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
@@ -480,7 +551,7 @@ func TestAFailedSessionStopsTheMessage(t *testing.T) {
 	store := newInboxStore()
 	store.sessionErr = errors.New("connection reset")
 
-	err := NewInbox(store).Deliver(t.Context(),
+	err := inboxFor(store).Deliver(t.Context(),
 		Channel{ID: uuid.New(), TeamID: uuid.New()}, []Delivery{delivery("m-1", "hi")})
 	if err == nil {
 		t.Fatal("a failed session was swallowed")
@@ -497,7 +568,7 @@ func TestAFailedSessionStopsTheMessage(t *testing.T) {
 // session, so this is the only writer.
 func TestADirectSessionRecordsItsParticipant(t *testing.T) {
 	store := newInboxStore()
-	inbox := NewInbox(store)
+	inbox := inboxFor(store)
 
 	msg := Delivery{
 		Inbound: Inbound{
@@ -532,7 +603,7 @@ func TestAGroupSessionRecordsNoParticipant(t *testing.T) {
 	for _, kind := range []SessionKind{SessionGroup, SessionThread} {
 		t.Run(string(kind), func(t *testing.T) {
 			store := newInboxStore()
-			inbox := NewInbox(store)
+			inbox := inboxFor(store)
 
 			msg := Delivery{
 				Inbound: Inbound{
@@ -572,7 +643,7 @@ func TestAnAttachmentIsWrittenAgainstItsMessageAndSession(t *testing.T) {
 	d := delivery("m-1", "here is the label")
 	d.Files = []Stored{stored("teams/x/objects/one", "label.png")}
 
-	if err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{d}); err != nil {
+	if err := inboxFor(f).Deliver(t.Context(), ch, []Delivery{d}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
@@ -618,7 +689,7 @@ func TestAReplayWritesNoAttachments(t *testing.T) {
 	d := delivery("m-1", "here is the label")
 	d.Files = []Stored{stored("teams/x/objects/one", "label.png")}
 
-	inbox := NewInbox(f)
+	inbox := inboxFor(f)
 	if err := inbox.Deliver(t.Context(), ch, []Delivery{d}); err != nil {
 		t.Fatalf("first delivery: %v", err)
 	}
@@ -647,7 +718,7 @@ func TestAMessageWithNoFilesWritesNoAttachments(t *testing.T) {
 	f := newInboxStore()
 	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 
-	if err := NewInbox(f).Deliver(t.Context(), ch,
+	if err := inboxFor(f).Deliver(t.Context(), ch,
 		[]Delivery{delivery("m-1", "just words")}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
@@ -669,7 +740,7 @@ func TestEveryFileOnAMessageBecomesARow(t *testing.T) {
 		stored("teams/x/objects/three", "c.png"),
 	}
 
-	if err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{d}); err != nil {
+	if err := inboxFor(f).Deliver(t.Context(), ch, []Delivery{d}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if len(f.attachments) != 3 {
@@ -695,7 +766,7 @@ func TestAFailedAttachmentWriteIsReported(t *testing.T) {
 	d := delivery("m-1", "here is the label")
 	d.Files = []Stored{stored("teams/x/objects/one", "label.png")}
 
-	err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{d})
+	err := inboxFor(f).Deliver(t.Context(), ch, []Delivery{d})
 	if err == nil {
 		t.Fatal("Deliver reported success after the attachment write failed")
 	}
@@ -721,7 +792,7 @@ func TestARetryAfterAFailedAttachmentStillStoresIt(t *testing.T) {
 	d := delivery("m-1", "here is the label")
 	d.Files = []Stored{stored("teams/x/objects/one", "label.png")}
 
-	inbox := NewInbox(f)
+	inbox := inboxFor(f)
 
 	f.attachmentErr = errors.New("connection reset")
 	if err := inbox.Deliver(t.Context(), ch, []Delivery{d}); err == nil {
@@ -777,7 +848,7 @@ func TestADeliveryToADeletedTeamTombstonesItsFiles(t *testing.T) {
 	f.deleted = true
 	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 
-	err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{
+	err := inboxFor(f).Deliver(t.Context(), ch, []Delivery{
 		withFiles(delivery("m-1", "one"), "k1", "k2"),
 		withFiles(delivery("m-2", "two"), "k3"),
 	})
@@ -809,7 +880,7 @@ func TestATeamDeletedMidBatchKeepsWhatLanded(t *testing.T) {
 	f.liveFor = 1
 	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 
-	err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{
+	err := inboxFor(f).Deliver(t.Context(), ch, []Delivery{
 		withFiles(delivery("m-1", "one"), "k1"),
 		withFiles(delivery("m-2", "two"), "k2"),
 		withFiles(delivery("m-3", "three"), "k3"),
@@ -834,7 +905,7 @@ func TestEveryMessageLocksItsTeamFirst(t *testing.T) {
 	f := newInboxStore()
 	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 
-	if err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{
+	if err := inboxFor(f).Deliver(t.Context(), ch, []Delivery{
 		delivery("m-1", "one"), delivery("m-2", "two"),
 	}); err != nil {
 		t.Fatalf("Deliver: %v", err)
@@ -856,7 +927,7 @@ func TestAFailedTeamLockIsReported(t *testing.T) {
 	f.lockErr = errors.New("connection reset")
 	ch := Channel{ID: uuid.New(), TeamID: uuid.New()}
 
-	err := NewInbox(f).Deliver(t.Context(), ch, []Delivery{withFiles(delivery("m-1", "one"), "k1")})
+	err := inboxFor(f).Deliver(t.Context(), ch, []Delivery{withFiles(delivery("m-1", "one"), "k1")})
 
 	if err == nil || errors.Is(err, ErrTeamDeleted) {
 		t.Fatalf("Deliver = %v, want the lock's error", err)

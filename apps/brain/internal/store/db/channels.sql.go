@@ -13,7 +13,7 @@ import (
 )
 
 const createChannel = `-- name: CreateChannel :one
-INSERT INTO channels (team_id, provider, name) VALUES ($1, $2, $3) RETURNING id, team_id, provider, name, created_at, updated_at
+INSERT INTO channels (team_id, provider, name) VALUES ($1, $2, $3) RETURNING id, team_id, provider, name, created_at, updated_at, reply_url
 `
 
 type CreateChannelParams struct {
@@ -32,6 +32,7 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReplyUrl,
 	)
 	return i, err
 }
@@ -46,7 +47,7 @@ func (q *Queries) DeleteChannel(ctx context.Context, id uuid.UUID) error {
 }
 
 const getChannel = `-- name: GetChannel :one
-SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at
+SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url
 FROM channels c
 JOIN teams t ON t.id = c.team_id
 WHERE c.id = $1 AND t.deleted_at IS NULL
@@ -64,12 +65,13 @@ func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (Channel, error)
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReplyUrl,
 	)
 	return i, err
 }
 
 const listChannelsByTeam = `-- name: ListChannelsByTeam :many
-SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at,
+SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url,
     latest.last_message_at,
     (SELECT count(*) FROM sessions s
      WHERE s.channel_id = c.id
@@ -139,6 +141,7 @@ func (q *Queries) ListChannelsByTeam(ctx context.Context, arg ListChannelsByTeam
 			&i.Channel.Name,
 			&i.Channel.CreatedAt,
 			&i.Channel.UpdatedAt,
+			&i.Channel.ReplyUrl,
 			&i.LastMessageAt,
 			&i.Sessions24h,
 		); err != nil {
