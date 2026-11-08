@@ -203,33 +203,43 @@ function SessionTable({ sessions }: { sessions: ListedSession[] }) {
               void navigate({ to: "/ui/sessions/$sessionId", params: { sessionId: s.id } })
             }
           >
-            <TableCell>
+            {/* The name and the last message share the width the others leave,
+                three parts to two, each cut to a line: a long first question
+                must not push the row past the frame. */}
+            <TableCell className="sm:w-3/5 sm:max-w-0 stacked:w-auto stacked:max-w-none">
               <span className="flex min-w-0 items-baseline gap-2">
                 <Link
                   to="/ui/sessions/$sessionId"
                   params={{ sessionId: s.id }}
                   tabIndex={-1}
+                  title={sessionName(s)}
                   className="truncate font-medium hover:underline"
                 >
                   {sessionName(s)}
                 </Link>
-                <span className="text-xs text-muted-foreground">{s.kind}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{s.kind}</span>
               </span>
             </TableCell>
+            {/* Bounded on the span: a cell's own max-width is not honoured in an
+                auto-layout table. */}
             <TableCell label="Channel" className="text-muted-foreground">
-              {s.channel_name ?? "None"}
+              <span className="block max-w-[16ch] truncate stacked:max-w-none">
+                {s.channel_name ?? "None"}
+              </span>
             </TableCell>
-            <TableCell label="With" className="sm:max-w-[24ch] stacked:max-w-none">
-              <span className="block min-w-0 truncate">{s.participant ?? "—"}</span>
+            <TableCell label="With">
+              <span className="block max-w-[16ch] truncate stacked:max-w-none">
+                {s.participant ?? "—"}
+              </span>
             </TableCell>
             <TableCell
               label="Last message"
-              className="text-muted-foreground sm:w-full sm:max-w-0 stacked:w-auto stacked:max-w-none"
+              className="text-muted-foreground sm:w-2/5 sm:max-w-0 stacked:w-auto stacked:max-w-none"
             >
               {/* A stranger's words: text, cut to a line. */}
               <span className="block min-w-0 truncate">{s.last_message ?? "Nothing said yet"}</span>
             </TableCell>
-            <TableCell label="Latest run">
+            <TableCell label="Latest run" className="whitespace-nowrap">
               {s.latest_run_status ? (
                 <StatusPill status={s.latest_run_status} />
               ) : (
