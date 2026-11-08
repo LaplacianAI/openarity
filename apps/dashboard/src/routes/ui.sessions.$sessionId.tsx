@@ -25,7 +25,7 @@ import type { Attachment, Page, Run, Session } from "@/api/types";
 import { Time } from "@/components/facts";
 import { Markdown } from "@/components/markdown";
 import { isLive, RunDetail, RunStatus } from "@/components/run-detail";
-import { HubTag } from "@/components/run-table";
+import { HandedTo, HubTag } from "@/components/run-table";
 import { ErrorState } from "@/components/states";
 import { StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
@@ -439,6 +439,7 @@ function AgentTurn({ sessionId, run }: { sessionId: string; run: Run }) {
           {absoluteTime(run.created_at)}
         </time>
       </div>
+      <HandedTo run={run} className="mt-0.5" />
       {/* What it was asked, as typed: text, cut to a few lines. */}
       <p data-asked className="mt-1 line-clamp-3 text-sm whitespace-pre-wrap text-muted-foreground">
         <span className="sr-only">Asked: </span>
@@ -605,8 +606,11 @@ function RunLink({ sessionId, run, current }: { sessionId: string; run: Run; cur
         current ? "bg-sheet shadow-[inset_0_0_0_1px_var(--color-primary)]" : "hover:bg-sheet/60",
       )}
     >
-      <span data-agent className="min-w-0 flex-1 truncate text-sm font-medium">
-        {run.agent}
+      <span className="min-w-0 flex-1">
+        <span data-agent className="block truncate text-sm font-medium">
+          {run.agent}
+        </span>
+        <HandedTo run={run} />
       </span>
       <RunStatus status={run.status} />
       <span className="flex basis-full gap-3 text-xs text-muted-foreground tabular-nums sm:basis-auto">

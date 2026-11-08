@@ -93,6 +93,27 @@ describe("the team's runs", () => {
     expect(within(hub).getByText("hub")).toBeInTheDocument();
   });
 
+  it("says whom a run handed work to under its agent, and nothing for one that handed none", async () => {
+    runs({
+      [RUNS]: {
+        body: {
+          items: [
+            run("r1", { delegates: ["log-reader", "billing"] }),
+            run("r2", { agent: "billing", hub: false, delegates: [] }),
+          ],
+        },
+      },
+    });
+    at("/ui/runs");
+
+    const hub = (await screen.findByRole("link", { name: "orchestrator" })).closest(
+      "tr",
+    ) as HTMLElement;
+    expect(within(hub).getByText("→ log-reader, billing")).toBeInTheDocument();
+    const alone = screen.getByRole("link", { name: "billing" }).closest("tr") as HTMLElement;
+    expect(alone.querySelector("[data-delegates]")).toBeNull();
+  });
+
   it("says how the last day went, from the brain's totals", async () => {
     runs();
     at("/ui/runs");

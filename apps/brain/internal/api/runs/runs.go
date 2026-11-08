@@ -45,6 +45,7 @@ type Store interface {
 	ListRunEvents(ctx context.Context, arg db.ListRunEventsParams) ([]db.RunEvent, error)
 	ListRunsBySession(ctx context.Context, arg db.ListRunsBySessionParams) ([]db.Run, error)
 	ListRunsByTeam(ctx context.Context, arg db.ListRunsByTeamParams) ([]db.Run, error)
+	ListRunDelegates(ctx context.Context, runIDs []uuid.UUID) ([]db.ListRunDelegatesRow, error)
 	StartRun(ctx context.Context, arg StartArgs) (db.Run, error)
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 }
@@ -154,7 +155,7 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 		h.logger.WarnContext(r.Context(), "Enqueuing a run failed; the sweep will start it",
 			"run_id", row.ID, "error", err)
 	}
-	api.WriteJSON(w, h.logger, http.StatusAccepted, view(row))
+	api.WriteJSON(w, h.logger, http.StatusAccepted, view(row, nil))
 }
 
 func (h *handler) hubCanRun(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) bool {
@@ -176,7 +177,12 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, view(row))
+	out, err := h.one(r.Context(), row)
+	if err != nil {
+		api.Fail(w, h.logger, api.Caller(r), "failed to read whom the run handed work to", err)
+		return
+	}
+	api.WriteJSON(w, h.logger, http.StatusOK, out)
 }
 
 func (h *handler) cancel(w http.ResponseWriter, r *http.Request) {
@@ -194,7 +200,12 @@ func (h *handler) cancel(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, api.Caller(r), "failed to cancel the run", err)
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusAccepted, view(cancelled))
+	out, err := h.one(r.Context(), cancelled)
+	if err != nil {
+		api.Fail(w, h.logger, api.Caller(r), "failed to read whom the run handed work to", err)
+		return
+	}
+	api.WriteJSON(w, h.logger, http.StatusAccepted, out)
 }
 
 func (h *handler) listBySession(w http.ResponseWriter, r *http.Request) {
@@ -244,7 +255,7 @@ func (h *handler) listBySession(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to list runs", err)
 		return
 	}
-	h.writeRuns(w, u, rows, limit)
+	h.writeRuns(r.Context(), w, u, rows, limit)
 }
 
 // listByTeam is the team's run history. Filters narrow it and the cursor pages
@@ -308,13 +319,18 @@ func (h *handler) listByTeam(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to list runs", err)
 		return
 	}
-	h.writeRuns(w, u, rows, limit)
+	h.writeRuns(r.Context(), w, u, rows, limit)
 }
 
-func (h *handler) writeRuns(w http.ResponseWriter, u *auth.User, rows []db.Run, limit int32) {
+func (h *handler) writeRuns(ctx context.Context, w http.ResponseWriter, u *auth.User, rows []db.Run, limit int32) {
+	by, err := h.delegatesOf(ctx, rows[:min(len(rows), int(limit))])
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read whom the runs handed work to", err)
+		return
+	}
 	page, err := api.MapPage(rows, limit,
 		func(row db.Run) any { return runCursor{CreatedAt: row.CreatedAt, ID: row.ID} },
-		view,
+		func(row db.Run) run { return view(row, by[row.ID]) },
 	)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to page runs", err)
@@ -361,12 +377,45 @@ func (h *handler) moderates(r *http.Request, u *auth.User, teamID uuid.UUID) boo
 	return ok
 }
 
-func view(r db.Run) run {
+func view(r db.Run, delegates []string) run {
+	if delegates == nil {
+		delegates = []string{}
+	}
 	return run{
 		ID: r.ID, SessionID: r.SessionID, Agent: r.AgentName, Status: r.Status,
 		Input: r.Input, Output: r.Output, Error: r.Error,
 		InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
 		CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		ParentRunID: r.ParentRunID, Depth: r.Depth, Hub: r.Hub,
+		Delegates: delegates,
 	}
+}
+
+func (h *handler) delegatesOf(ctx context.Context, rows []db.Run) (map[uuid.UUID][]string, error) {
+	var roots []uuid.UUID
+	for _, r := range rows {
+		if r.ID == r.RootRunID {
+			roots = append(roots, r.ID)
+		}
+	}
+	if len(roots) == 0 {
+		return nil, nil
+	}
+	found, err := h.store.ListRunDelegates(ctx, roots)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[uuid.UUID][]string, len(roots))
+	for _, d := range found {
+		by[d.RootRunID] = append(by[d.RootRunID], d.AgentName)
+	}
+	return by, nil
+}
+
+func (h *handler) one(ctx context.Context, row db.Run) (run, error) {
+	by, err := h.delegatesOf(ctx, []db.Run{row})
+	if err != nil {
+		return run{}, err
+	}
+	return view(row, by[row.ID]), nil
 }

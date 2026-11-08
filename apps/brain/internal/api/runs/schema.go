@@ -31,6 +31,7 @@ type run struct {
 	ParentRunID *uuid.UUID `json:"parent_run_id"`
 	Depth       int32      `json:"depth"`
 	Hub         bool       `json:"hub"`
+	Delegates   []string   `json:"delegates"`
 }
 
 type runCursor struct {

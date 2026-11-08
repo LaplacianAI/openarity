@@ -1,4 +1,4 @@
-import type { RunStatus, TeamSummary } from "@/api/types";
+import type { Run, RunStatus, TeamSummary } from "@/api/types";
 
 /** Every run status, in the order a reader looks for them. */
 export const RUN_STATUSES: readonly RunStatus[] = [
@@ -33,4 +33,19 @@ export function dayFinding(summary: TeamSummary): string {
   return counts.failed > 0
     ? `${runs}, ${counts.failed.toLocaleString("en-US")} failed.`
     : `${runs}.`;
+}
+
+/** Past this many names, the rest are counted rather than named. */
+const NAMED = 3;
+
+/**
+ * Whom a run handed work to, as one line under its agent: "→ clerk, billing",
+ * or "→ a, b, c and 2 more". Null when it handed none, or the brain did not say.
+ */
+export function handedTo(run: Pick<Run, "delegates">): string | null {
+  const names = run.delegates ?? [];
+  if (names.length === 0) return null;
+  const shown = names.slice(0, NAMED).join(", ");
+  const rest = names.length - NAMED;
+  return rest > 0 ? `→ ${shown} and ${rest} more` : `→ ${shown}`;
 }

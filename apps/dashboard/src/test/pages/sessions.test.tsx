@@ -2156,3 +2156,27 @@ describe("the conversation", () => {
     expect(await screen.findByText("hello")).toBeInTheDocument();
   });
 });
+
+describe("whom a session's runs handed work to", () => {
+  it("is said in the runs list and in the conversation", async () => {
+    listed({
+      [RUNS]: {
+        body: {
+          items: [
+            run("r1", "ops-lead", "succeeded", {
+              hub: true,
+              output: "Done.",
+              delegates: ["log-reader"],
+            }),
+          ],
+        },
+      },
+    });
+    await open("?tab=runs");
+    expect(await within(runList()).findByText("→ log-reader")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Conversation" }));
+    const turn = await waitFor(() => document.querySelector('[data-turn="r1"]') as HTMLElement);
+    expect(within(turn).getByText("→ log-reader")).toBeInTheDocument();
+  });
+});

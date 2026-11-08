@@ -48,12 +48,15 @@ type fakeStore struct {
 	readErr    error
 	sessionErr error
 	listErr    error
-	listed     []db.ListRunsBySessionParams
-	teamListed []db.ListRunsByTeamParams
-	started    []StartArgs
-	cancelled  []uuid.UUID
-	visible    []db.GetRunVisibleParams
-	calls      int
+
+	delegatesErr   error
+	delegatesAsked [][]uuid.UUID
+	listed         []db.ListRunsBySessionParams
+	teamListed     []db.ListRunsByTeamParams
+	started        []StartArgs
+	cancelled      []uuid.UUID
+	visible        []db.GetRunVisibleParams
+	calls          int
 }
 
 func newFakeStore() *fakeStore {
@@ -221,6 +224,35 @@ func (s *fakeStore) ListRunsBySession(_ context.Context, arg db.ListRunsBySessio
 	return out, nil
 }
 
+// ListRunDelegates answers as the query does: the agents of each asked run's
+// direct children, each once, in the order the run first handed them work.
+// Which rows that reads is the query's, tested against Postgres; here the
+// question is what the handler asked and what it did with the answer.
+func (s *fakeStore) ListRunDelegates(_ context.Context, ids []uuid.UUID) ([]db.ListRunDelegatesRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	s.delegatesAsked = append(s.delegatesAsked, slices.Clone(ids))
+	if s.delegatesErr != nil {
+		return nil, s.delegatesErr
+	}
+	var children []db.Run
+	for _, r := range s.runs {
+		if r.Depth == 1 && slices.Contains(ids, r.RootRunID) {
+			children = append(children, r)
+		}
+	}
+	sort.Slice(children, func(i, j int) bool { return children[i].CreatedAt.Before(children[j].CreatedAt) })
+	var out []db.ListRunDelegatesRow
+	for _, c := range children {
+		row := db.ListRunDelegatesRow{RootRunID: c.RootRunID, AgentName: c.AgentName}
+		if !slices.Contains(out, row) {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
 func (s *fakeStore) StartRun(_ context.Context, arg StartArgs) (db.Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -234,7 +266,7 @@ func (s *fakeStore) StartRun(_ context.Context, arg StartArgs) (db.Run, error) {
 		session = *arg.SessionID
 	}
 	r := db.Run{
-		ID: arg.ID, TeamID: arg.TeamID, SessionID: session, AgentID: &arg.AgentID, AgentName: "triage",
+		ID: arg.ID, RootRunID: arg.ID, TeamID: arg.TeamID, SessionID: session, AgentID: &arg.AgentID, AgentName: "triage",
 		UserID: &arg.UserID, Status: "queued", Input: arg.Input, CreatedAt: time.Now(),
 	}
 	// CreateHubRun reads the hub as it inserts: the chosen agent, or none.
@@ -663,14 +695,14 @@ func TestTheRunIsReadAsItIs(t *testing.T) {
 	for _, k := range []string{
 		"id", "session_id", "agent", "status", "input", "output", "error",
 		"input_tokens", "output_tokens", "created_at", "started_at", "finished_at",
-		"parent_run_id", "depth", "hub",
+		"parent_run_id", "depth", "hub", "delegates",
 	} {
 		if _, ok := keys[k]; !ok {
 			t.Errorf("the run has no %q", k)
 		}
 	}
-	if len(keys) != 15 {
-		t.Errorf("the run has %d fields, want the 15 in the contract", len(keys))
+	if len(keys) != 16 {
+		t.Errorf("the run has %d fields, want the 16 in the contract", len(keys))
 	}
 	if keys["parent_run_id"] != nil || keys["depth"] != float64(0) {
 		t.Errorf("a top-level run says parent %v depth %v, want null and 0", keys["parent_run_id"], keys["depth"])
@@ -1337,5 +1369,147 @@ func TestAFailedRunHistoryIsA500ThatLeaksNothing(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "reset by peer") ||
 		strings.Contains(rec.Body.String(), "items") {
 		t.Errorf("status %d %q, want a 500 that says nothing", rec.Code, rec.Body)
+	}
+}
+
+// --- whom a run handed work to ---
+
+// delegate adds a direct child of root, run by agent, a second after the last.
+func (w *world) delegate(root db.Run, agent string, at time.Time) db.Run {
+	c := w.run(root.SessionID, "succeeded")
+	c.ParentRunID, c.RootRunID, c.Depth, c.AgentName, c.CreatedAt = &root.ID, root.ID, 1, agent, at
+	w.store.runs[c.ID] = c
+	return c
+}
+
+// The list says whom each run handed work to, and never null: a client
+// iterates the field without first asking whether it is there.
+func TestTheTeamsRunsSayWhomTheyHandedWorkTo(t *testing.T) {
+	w := newWorld(t)
+	now := time.Now()
+	busy := w.root(w.session("group", nil), "succeeded", now)
+	quiet := w.root(w.session("group", nil), "succeeded", now.Add(-time.Hour))
+	w.delegate(busy, "clerk", now.Add(time.Second))
+	w.delegate(busy, "billing", now.Add(2*time.Second))
+	w.delegate(busy, "clerk", now.Add(3*time.Second))
+
+	rec := w.call(t, w.me, http.MethodGet, w.runs(), nil)
+
+	page := decodeRuns(t, rec)
+	if rec.Code != http.StatusOK || len(page.Items) != 2 {
+		t.Fatalf("status %d, page %+v", rec.Code, page)
+	}
+	if got := page.Items[0].Delegates; page.Items[0].ID != busy.ID || !slices.Equal(got, []string{"clerk", "billing"}) {
+		t.Errorf("busy handed work to %v, want [clerk billing]", got)
+	}
+	if got := page.Items[1].Delegates; page.Items[1].ID != quiet.ID || got == nil || len(got) != 0 {
+		t.Errorf("quiet handed work to %#v, want an empty list", got)
+	}
+	if !strings.Contains(rec.Body.String(), `"delegates":[]`) {
+		t.Errorf("a run that handed none is not an empty list in %s", rec.Body)
+	}
+}
+
+// One read for the page, of the runs on it: never one per run, and never a
+// run the page does not show.
+func TestARunPageReadsItsDelegatesOnce(t *testing.T) {
+	w := newWorld(t)
+	now := time.Now()
+	shown := w.root(w.session("group", nil), "succeeded", now)
+	off := w.root(w.session("group", nil), "succeeded", now.Add(-time.Hour))
+
+	rec := w.call(t, w.me, http.MethodGet, w.runs()+"?limit=1", nil)
+
+	if rec.Code != http.StatusOK || len(w.store.delegatesAsked) != 1 {
+		t.Fatalf("status %d, delegates read %d times, want once", rec.Code, len(w.store.delegatesAsked))
+	}
+	asked := w.store.delegatesAsked[0]
+	if !slices.Contains(asked, shown.ID) || slices.Contains(asked, off.ID) {
+		t.Errorf("asked about %v, want %s and not the next page's %s", asked, shown.ID, off.ID)
+	}
+}
+
+func TestASessionsRunsSayWhomTheyHandedWorkTo(t *testing.T) {
+	w := newWorld(t)
+	session := w.session("group", nil)
+	root := w.root(session, "succeeded", time.Now())
+	w.delegate(root, "clerk", time.Now())
+
+	rec := w.call(t, w.me, http.MethodGet, "/teams/"+w.team.String()+"/sessions/"+session.String()+"/runs", nil)
+
+	page := decodeRuns(t, rec)
+	var got []string
+	for _, r := range page.Items {
+		if r.ID == root.ID {
+			got = r.Delegates
+		}
+	}
+	if rec.Code != http.StatusOK || !slices.Equal(got, []string{"clerk"}) {
+		t.Errorf("status %d, root handed work to %v, want [clerk]", rec.Code, got)
+	}
+}
+
+func TestOneRunSaysWhomItHandedWorkTo(t *testing.T) {
+	w := newWorld(t)
+	root := w.root(w.session("group", nil), "running", time.Now())
+	w.delegate(root, "billing", time.Now())
+
+	rec := w.call(t, w.me, http.MethodGet, w.one(root.ID), nil)
+
+	if got := decodeRun(t, rec).Delegates; rec.Code != http.StatusOK || !slices.Equal(got, []string{"billing"}) {
+		t.Errorf("status %d, delegates %v, want [billing]", rec.Code, got)
+	}
+}
+
+// A delegate's own run lists none: its delegates are in its parent's trace,
+// and the query keys on roots, so asking for one would read nothing anyway.
+func TestADelegatesOwnRunListsNoDelegates(t *testing.T) {
+	w := newWorld(t)
+	root := w.root(w.session("group", nil), "running", time.Now())
+	child := w.delegate(root, "billing", time.Now())
+
+	rec := w.call(t, w.me, http.MethodGet, w.one(child.ID), nil)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delegates":[]`) {
+		t.Errorf("status %d, body %s, want an empty list", rec.Code, rec.Body)
+	}
+	for _, ids := range w.store.delegatesAsked {
+		if slices.Contains(ids, child.ID) {
+			t.Errorf("asked for a delegate's own delegates")
+		}
+	}
+}
+
+// A run just started has handed nothing to anyone: no read is spent finding out.
+func TestAStartedRunHasNoDelegatesAndAsksNone(t *testing.T) {
+	w := newWorld(t)
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), start("triage the bug reports", nil))
+
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"delegates":[]`) {
+		t.Errorf("status %d, body %s, want 202 and an empty list", rec.Code, rec.Body)
+	}
+	if len(w.store.delegatesAsked) != 0 {
+		t.Errorf("a new run read delegates %d times", len(w.store.delegatesAsked))
+	}
+}
+
+func TestAFailedDelegatesReadIsA500ThatLeaksNothing(t *testing.T) {
+	for name, path := range map[string]func(w *world, r db.Run) string{
+		"list": func(w *world, _ db.Run) string { return w.runs() },
+		"one":  func(w *world, r db.Run) string { return w.one(r.ID) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			r := w.root(w.session("group", nil), "succeeded", time.Now())
+			w.store.delegatesErr = errAny
+
+			rec := w.call(t, w.me, http.MethodGet, path(w, r), nil)
+
+			if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "reset by peer") ||
+				strings.Contains(rec.Body.String(), r.ID.String()) {
+				t.Errorf("status %d %q, want a 500 that says nothing", rec.Code, rec.Body)
+			}
+		})
 	}
 }
