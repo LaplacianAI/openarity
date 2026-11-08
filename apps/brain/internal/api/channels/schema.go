@@ -13,6 +13,9 @@ type channel struct {
 	Name     string    `json:"name"`
 	HookURL  string    `json:"hook_url,omitempty"`
 	ReplyURL string    `json:"reply_url,omitempty"`
+	// CanReply is whether the channel's provider sends replies at all, so a
+	// client offers reply_url only where it means something.
+	CanReply bool `json:"can_reply"`
 }
 
 // listedChannel is a row of the channels list: the channel, and how recently

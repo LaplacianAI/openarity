@@ -6,7 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRight, ChevronRight, Paperclip } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, Clock, Paperclip, X } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -32,7 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, LoadMore, Mono } from "@/components/ui-bits";
-import { conversation, noAnswer } from "@/lib/conversation";
+import { awaitsReply, conversation, noAnswer, replyLine } from "@/lib/conversation";
 import { absoluteTime, fileSize } from "@/lib/format";
 import { useMediaQuery } from "@/lib/media";
 import { sessionName } from "@/lib/sessions";
@@ -103,10 +103,15 @@ function SessionPage() {
     getNextPageParam: nextCursorOf,
     enabled: Boolean(teamId),
     // While the newest run works, its answer is read again until it lands:
-    // the conversation shows it whether or not its trace is open.
+    // the conversation shows it whether or not its trace is open. A reply
+    // still on its way to the channel is read again too, more slowly: its
+    // next try can be an hour off.
     refetchInterval: (q) => {
       const newest = q.state.data?.pages[0]?.items[0];
-      return newest && isLive(newest.status) ? LIVE_EVERY_MS : false;
+      if (newest && isLive(newest.status)) return LIVE_EVERY_MS;
+      return awaitsReply(q.state.data?.pages.flatMap((p) => p.items) ?? [])
+        ? REPLY_EVERY_MS
+        : false;
     },
   });
 
@@ -248,6 +253,7 @@ function save(bytes: Blob, filename: string): void {
 
 /** How often a working run is read again for its answer. */
 const LIVE_EVERY_MS = 3000;
+const REPLY_EVERY_MS = 15_000;
 
 /**
  * The conversation: what people said, and each run with what it was asked
@@ -462,6 +468,7 @@ function AgentTurn({ sessionId, run }: { sessionId: string; run: Run }) {
           </p>
         )}
       </div>
+      <ReplyStatus run={run} />
       <Link
         to="/ui/sessions/$sessionId"
         params={{ sessionId }}
@@ -472,6 +479,33 @@ function AgentTurn({ sessionId, run }: { sessionId: string; run: Run }) {
         <ArrowRight aria-hidden className="size-3" />
       </Link>
     </li>
+  );
+}
+
+/** Whether the answer reached the person on the channel; nothing for a run that answers none. */
+function ReplyStatus({ run }: { run: Run }) {
+  const line = replyLine(run.reply);
+  if (!line) return null;
+  const Icon = line.tone === "sent" ? Check : line.tone === "failed" ? X : Clock;
+  return (
+    <p
+      data-reply-status={line.tone}
+      className={cn(
+        "mt-2 flex items-start gap-1.5 text-xs",
+        line.tone === "failed" ? "text-failed" : "text-muted-foreground",
+      )}
+    >
+      <Icon aria-hidden className="mt-px size-3.5 shrink-0" />
+      <span>
+        {line.text}
+        {line.when ? (
+          <>
+            {line.when.lead}
+            <time dateTime={line.when.iso}>{absoluteTime(line.when.iso)}</time>
+          </>
+        ) : null}
+      </span>
+    </p>
   );
 }
 

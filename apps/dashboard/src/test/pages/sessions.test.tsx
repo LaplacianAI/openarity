@@ -2221,3 +2221,135 @@ describe("whom a session's runs handed work to", () => {
     expect(within(turn).getByText("→ log-reader")).toBeInTheDocument();
   });
 });
+
+describe("whether an answer reached the channel", () => {
+  const CONVERSATION = "?tab=messages";
+  const reply = (extra: Record<string, unknown>) => ({
+    kind: "answer",
+    status: "pending",
+    attempts: 0,
+    last_error: null,
+    sent_at: null,
+    next_attempt_at: null,
+    ...extra,
+  });
+  const statusOf = async (id: string) =>
+    waitFor(() => {
+      const el = document.querySelector(`[data-turn="${id}"] [data-reply-status]`);
+      if (!el) throw new Error(`no reply status on ${id}`);
+      return el as HTMLElement;
+    });
+
+  it("says under each answer whether it was sent, is on its way, or was given up", async () => {
+    listed({
+      [RUNS]: {
+        body: {
+          items: [
+            run("r3", "orchestrator", "failed", {
+              hub: true,
+              reply: reply({
+                kind: "apology",
+                status: "failed",
+                attempts: 1,
+                last_error: "custom: the channel has no reply URL",
+              }),
+            }),
+            run("r2", "orchestrator", "succeeded", {
+              hub: true,
+              output: "Retrying.",
+              reply: reply({
+                attempts: 2,
+                last_error: "the reply URL answered 503",
+                next_attempt_at: "2026-10-01T00:10:00Z",
+              }),
+            }),
+            run("r1", "orchestrator", "succeeded", {
+              hub: true,
+              output: "Billing is up.",
+              reply: reply({ status: "sent", attempts: 1, sent_at: "2026-10-01T00:04:00Z" }),
+            }),
+          ],
+        },
+      },
+    });
+    await open(CONVERSATION);
+
+    const sent = await statusOf("r1");
+    expect(sent).toHaveAttribute("data-reply-status", "sent");
+    expect(sent).toHaveTextContent("The answer was sent to the channel at");
+    expect(within(sent).getByText((_, el) => el?.tagName === "TIME")).toHaveAttribute(
+      "datetime",
+      "2026-10-01T00:04:00Z",
+    );
+
+    const waiting = await statusOf("r2");
+    expect(waiting).toHaveAttribute("data-reply-status", "waiting");
+    expect(waiting).toHaveTextContent(
+      "has not reached the channel yet: the reply URL answered 503. Trying again at",
+    );
+
+    const failed = await statusOf("r3");
+    expect(failed).toHaveAttribute("data-reply-status", "failed");
+    expect(failed).toHaveTextContent(
+      "The apology was not sent: custom: the channel has no reply URL",
+    );
+    expect(failed.className).toContain("text-failed");
+  });
+
+  // A run started from the dashboard answers there; it has nothing to say
+  // about a channel, and a brain from before the field says nothing either.
+  it("says nothing under a run that answers no channel", async () => {
+    listed({
+      [RUNS]: {
+        body: {
+          items: [
+            run("r2", "triage", "succeeded", { output: "From the dashboard.", reply: null }),
+            run("r1", "triage", "succeeded", { output: "From an older brain." }),
+          ],
+        },
+      },
+    });
+    await open(CONVERSATION);
+    await screen.findByText("From the dashboard.");
+    expect(document.querySelector("[data-reply-status]")).toBeNull();
+  });
+
+  it("reads again while a reply is on its way, until it is sent", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let reads = 0;
+    listed({
+      [RUNS]: () => {
+        reads += 1;
+        return {
+          body: {
+            items: [
+              run("r1", "orchestrator", "succeeded", {
+                output: "Done.",
+                reply:
+                  reads === 1
+                    ? reply({ attempts: 1 })
+                    : reply({ status: "sent", attempts: 1, sent_at: "2026-10-01T00:04:00Z" }),
+              }),
+            ],
+          },
+        };
+      },
+    });
+    await open(CONVERSATION);
+    expect(await statusOf("r1")).toHaveAttribute("data-reply-status", "waiting");
+
+    await vi.advanceTimersByTimeAsync(16_000);
+    await waitFor(() =>
+      expect(document.querySelector("[data-reply-status]")).toHaveAttribute(
+        "data-reply-status",
+        "sent",
+      ),
+    );
+    const after = reads;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reads).toBe(after);
+  });
+});

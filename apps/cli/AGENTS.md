@@ -12,8 +12,9 @@ plugin. **Tier 1, the user's:**
 `internal/auth` and `internal/credential`. The agent tests and attacks that code,
 explains, and reviews; it does not write it. **Tier 2, the agent's:** the commands'
 flags and output, the generated client, tests, docs and Makefiles. Design first
-in both: a high-level and a low-level design, each with a diagram, approved
-before code, and every edit handed over with a link to its file and line.
+in both: a high-level design (the user flow first, then the UML diagrams the
+change has: sequence, state, component, entity) and a low-level design with its
+sequence diagram, approved before code, and every edit handed over with a link to its file and line.
 
 - "Make the change yourself, be like me" is a *style* instruction (sparse
   comments, only where the why is not obvious), not permission to write tier 1
@@ -82,7 +83,7 @@ apps/cli/
     context/           oa context list|use|create|rename|delete
     teams/             oa teams list|create|delete|restore, oa teams members list|add|remove,
                        oa teams settings show|set
-    channels/          oa channels list|create|delete, oa channels senders …
+    channels/          oa channels list|create|update|delete, oa channels senders …
     sessions/          oa sessions list|get|read — the conversations, and their messages
     runs/              oa runs start|list|get|events|cancel — events is an SSE stream
     users/             oa users list — who has logged in, and their id

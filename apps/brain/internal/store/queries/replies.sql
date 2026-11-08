@@ -53,6 +53,9 @@ WITH claimed AS (
     WHERE r.id IN (
         SELECT d.id FROM replies d
         WHERE d.status = 'pending' AND d.next_attempt_at <= now()
+          -- A deleted team's channels take no messages; its replies wait for
+          -- the purge that deletes them rather than going out after it.
+          AND EXISTS (SELECT 1 FROM teams t WHERE t.id = d.team_id AND t.deleted_at IS NULL)
           AND NOT EXISTS (
               SELECT 1 FROM replies o
               WHERE o.session_id = d.session_id AND o.status = 'pending' AND o.id < d.id)
@@ -84,3 +87,10 @@ WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attemp
 -- name: GiveUpReply :execrows
 UPDATE replies SET status = 'failed', last_error = sqlc.arg('error')::text
 WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attempts');
+
+-- What became of each of these runs' replies. A run that answers no channel
+-- has none and is not in the result. Rides replies_one_per_run.
+-- name: ListRunReplies :many
+SELECT run_id, kind, status, attempts, last_error, sent_at, next_attempt_at
+FROM replies
+WHERE run_id = ANY(sqlc.arg('run_ids')::uuid[]);

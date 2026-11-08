@@ -533,6 +533,10 @@ type AuthConfigEnvironment string
 
 // Channel defines model for Channel.
 type Channel struct {
+	// CanReply Whether this channel's provider sends replies at all. Offer
+	// `reply_url` only when it is true; it is refused otherwise.
+	CanReply bool `json:"can_reply" yaml:"can_reply"`
+
 	// HookURL The full address to give the provider: the brain's public
 	// webhook address, then `/hooks/<provider>/<id>` and the
 	// provider's route. Absent when the brain has no
@@ -625,6 +629,10 @@ type CreateTeamRequest struct {
 
 // CreatedChannel defines model for CreatedChannel.
 type CreatedChannel struct {
+	// CanReply Whether this channel's provider sends replies at all. Offer
+	// `reply_url` only when it is true; it is refused otherwise.
+	CanReply bool `json:"can_reply" yaml:"can_reply"`
+
 	// HookURL The full address to give the provider: the brain's public
 	// webhook address, then `/hooks/<provider>/<id>` and the
 	// provider's route. Absent when the brain has no
@@ -762,6 +770,10 @@ type ListedAgent struct {
 // count only the sessions the caller may open: their own direct
 // sessions, and everyone's with `session:read_all`.
 type ListedChannel struct {
+	// CanReply Whether this channel's provider sends replies at all. Offer
+	// `reply_url` only when it is true; it is refused otherwise.
+	CanReply bool `json:"can_reply" yaml:"can_reply"`
+
 	// HookURL The full address to give the provider: the brain's public
 	// webhook address, then `/hooks/<provider>/<id>` and the
 	// provider's route. Absent when the brain has no
@@ -1097,6 +1109,40 @@ type PendingSenderPage struct {
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
+// Reply A run's reply to its channel, as the outbox holds it. It is sent in
+// order within its conversation and retried for about two and a half
+// hours before it is given up.
+type Reply struct {
+	// Attempts How many times it was tried; 0 before the first
+	Attempts int32 `json:"attempts" yaml:"attempts"`
+
+	// Kind `answer`, or `apology` when the run failed or answered nothing; an
+	// apology never carries the error.
+	//
+	//
+	// Examples: answer
+	Kind string `json:"kind" yaml:"kind"`
+
+	// LastError Why the last attempt failed, null when none has
+	//
+	// Examples: the reply URL answered 503
+	LastError string `json:"last_error" yaml:"last_error"`
+
+	// NextAttemptAt When a pending reply is tried next; null once it is sent or given up
+	NextAttemptAt time.Time `json:"next_attempt_at" yaml:"next_attempt_at"`
+
+	// SentAt When the channel took it, null until it has
+	SentAt time.Time `json:"sent_at" yaml:"sent_at"`
+
+	// Status `pending` until the channel takes it, then `sent`; `failed` once it
+	// is given up, because the channel has no reply URL or every attempt
+	// failed.
+	//
+	//
+	// Examples: sent
+	Status string `json:"status" yaml:"status"`
+}
+
 // Run defines model for Run.
 type Run struct {
 	// Agent The agent's name when the run started, kept if it is later renamed or deleted
@@ -1133,7 +1179,12 @@ type Run struct {
 
 	// ParentRunID The run that delegated this one; null for a run a person started
 	ParentRunID *openapi_types.UUID `json:"parent_run_id,omitempty" yaml:"parent_run_id,omitempty"`
-	SessionID   openapi_types.UUID  `json:"session_id" yaml:"session_id"`
+
+	// Reply What became of the run's answer to the channel conversation it
+	// came from; null for a run that answers none, such as one started
+	// from the dashboard or a delegate's.
+	Reply     Reply              `json:"reply" yaml:"reply"`
+	SessionID openapi_types.UUID `json:"session_id" yaml:"session_id"`
 
 	// StartedAt When a worker first took it, null while queued
 	StartedAt *time.Time `json:"started_at,omitempty" yaml:"started_at,omitempty"`
@@ -1579,7 +1630,7 @@ type TeamSummary struct {
 
 // UpdateChannelRequest defines model for UpdateChannelRequest.
 type UpdateChannelRequest struct {
-	// ReplyURL The URL replies go to, or null to stop sending them
+	// ReplyURL The URL replies go to; null or an empty string stops sending them
 	ReplyURL string `json:"reply_url" yaml:"reply_url"`
 }
 
@@ -2270,7 +2321,7 @@ type ClientInterface interface {
 	// UpdateChannelWithBody Set where a channel's replies go
 	//
 	// Requires `channel:write` in this team. `reply_url` is required: a URL
-	// sets it, `null` clears it, and a reply waiting to be sent to a channel
+	// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
 	// with none fails rather than waiting for one.
 	//
 	// The URL must be http or https with a host, and carry no credentials,
@@ -2294,7 +2345,7 @@ type ClientInterface interface {
 	// UpdateChannel Set where a channel's replies go
 	//
 	// Requires `channel:write` in this team. `reply_url` is required: a URL
-	// sets it, `null` clears it, and a reply waiting to be sent to a channel
+	// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
 	// with none fails rather than waiting for one.
 	//
 	// The URL must be http or https with a host, and carry no credentials,
@@ -3540,7 +3591,7 @@ func (c *Client) DeleteChannel(ctx context.Context, id TeamID, channelID openapi
 // UpdateChannelWithBody Set where a channel's replies go
 //
 // Requires `channel:write` in this team. `reply_url` is required: a URL
-// sets it, `null` clears it, and a reply waiting to be sent to a channel
+// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
 // with none fails rather than waiting for one.
 //
 // The URL must be http or https with a host, and carry no credentials,
@@ -3574,7 +3625,7 @@ func (c *Client) UpdateChannelWithBody(ctx context.Context, id TeamID, channelID
 // UpdateChannel Set where a channel's replies go
 //
 // Requires `channel:write` in this team. `reply_url` is required: a URL
-// sets it, `null` clears it, and a reply waiting to be sent to a channel
+// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
 // with none fails rather than waiting for one.
 //
 // The URL must be http or https with a host, and carry no credentials,
@@ -8431,7 +8482,7 @@ type ClientWithResponsesInterface interface {
 	// UpdateChannelWithBodyWithResponse Set where a channel's replies go
 	//
 	// Requires `channel:write` in this team. `reply_url` is required: a URL
-	// sets it, `null` clears it, and a reply waiting to be sent to a channel
+	// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
 	// with none fails rather than waiting for one.
 	//
 	// The URL must be http or https with a host, and carry no credentials,
@@ -8455,7 +8506,7 @@ type ClientWithResponsesInterface interface {
 	// UpdateChannelWithResponse Set where a channel's replies go
 	//
 	// Requires `channel:write` in this team. `reply_url` is required: a URL
-	// sets it, `null` clears it, and a reply waiting to be sent to a channel
+	// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
 	// with none fails rather than waiting for one.
 	//
 	// The URL must be http or https with a host, and carry no credentials,
@@ -12496,7 +12547,7 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, id 
 // UpdateChannelWithBodyWithResponse Set where a channel's replies go
 //
 // Requires `channel:write` in this team. `reply_url` is required: a URL
-// sets it, `null` clears it, and a reply waiting to be sent to a channel
+// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
 // with none fails rather than waiting for one.
 //
 // The URL must be http or https with a host, and carry no credentials,
@@ -12526,7 +12577,7 @@ func (c *ClientWithResponses) UpdateChannelWithBodyWithResponse(ctx context.Cont
 // UpdateChannelWithResponse Set where a channel's replies go
 //
 // Requires `channel:write` in this team. `reply_url` is required: a URL
-// sets it, `null` clears it, and a reply waiting to be sent to a channel
+// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
 // with none fails rather than waiting for one.
 //
 // The URL must be http or https with a host, and carry no credentials,

@@ -267,6 +267,11 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "reply_url is required; send null to stop replies", http.StatusBadRequest)
 		return
 	}
+	// "" stops replies as null does: a client generated from the spec cannot
+	// always send a null for a required field.
+	if v := req.ReplyURL.Value; v != nil && *v == "" {
+		req.ReplyURL.Value = nil
+	}
 	if v := req.ReplyURL.Value; v != nil && !h.replyURLOK(w, row.Provider, *v) {
 		return
 	}
@@ -339,6 +344,7 @@ func (h *handler) view(row db.Channel) channel {
 	if row.ReplyUrl != nil {
 		c.ReplyURL = *row.ReplyUrl
 	}
+	_, c.CanReply = h.providers.Replier(row.Provider)
 	if h.hookBase == "" {
 		return c
 	}

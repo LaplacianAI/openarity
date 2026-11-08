@@ -46,6 +46,7 @@ type Store interface {
 	ListRunsBySession(ctx context.Context, arg db.ListRunsBySessionParams) ([]db.Run, error)
 	ListRunsByTeam(ctx context.Context, arg db.ListRunsByTeamParams) ([]db.Run, error)
 	ListRunDelegates(ctx context.Context, runIDs []uuid.UUID) ([]db.ListRunDelegatesRow, error)
+	ListRunReplies(ctx context.Context, runIDs []uuid.UUID) ([]db.ListRunRepliesRow, error)
 	StartRun(ctx context.Context, arg StartArgs) (db.Run, error)
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 }
@@ -155,7 +156,7 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 		h.logger.WarnContext(r.Context(), "Enqueuing a run failed; the sweep will start it",
 			"run_id", row.ID, "error", err)
 	}
-	api.WriteJSON(w, h.logger, http.StatusAccepted, view(row, nil))
+	api.WriteJSON(w, h.logger, http.StatusAccepted, view(row, nil, nil))
 }
 
 func (h *handler) hubCanRun(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) bool {
@@ -323,14 +324,20 @@ func (h *handler) listByTeam(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) writeRuns(ctx context.Context, w http.ResponseWriter, u *auth.User, rows []db.Run, limit int32) {
-	by, err := h.delegatesOf(ctx, rows[:min(len(rows), int(limit))])
+	shown := rows[:min(len(rows), int(limit))]
+	by, err := h.delegatesOf(ctx, shown)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to read whom the runs handed work to", err)
 		return
 	}
+	replies, err := h.repliesOf(ctx, shown)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read the runs' replies", err)
+		return
+	}
 	page, err := api.MapPage(rows, limit,
 		func(row db.Run) any { return runCursor{CreatedAt: row.CreatedAt, ID: row.ID} },
-		func(row db.Run) run { return view(row, by[row.ID]) },
+		func(row db.Run) run { return view(row, by[row.ID], replies[row.ID]) },
 	)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to page runs", err)
@@ -377,7 +384,7 @@ func (h *handler) moderates(r *http.Request, u *auth.User, teamID uuid.UUID) boo
 	return ok
 }
 
-func view(r db.Run, delegates []string) run {
+func view(r db.Run, delegates []string, rp *reply) run {
 	if delegates == nil {
 		delegates = []string{}
 	}
@@ -387,8 +394,36 @@ func view(r db.Run, delegates []string) run {
 		InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
 		CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		ParentRunID: r.ParentRunID, Depth: r.Depth, Hub: r.Hub,
-		Delegates: delegates,
+		Delegates: delegates, Reply: rp,
 	}
+}
+
+// repliesOf reads the replies of the runs that answer a channel, once for the
+// page, and asks nothing when none of them does.
+func (h *handler) repliesOf(ctx context.Context, rows []db.Run) (map[uuid.UUID]*reply, error) {
+	var ids []uuid.UUID
+	for _, r := range rows {
+		if r.ReplyToChannel {
+			ids = append(ids, r.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	found, err := h.store.ListRunReplies(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[uuid.UUID]*reply, len(found))
+	for _, f := range found {
+		rp := &reply{Kind: f.Kind, Status: f.Status, Attempts: f.Attempts, LastError: f.LastError, SentAt: f.SentAt}
+		if f.Status == "pending" {
+			next := f.NextAttemptAt
+			rp.NextAttemptAt = &next
+		}
+		by[f.RunID] = rp
+	}
+	return by, nil
 }
 
 func (h *handler) delegatesOf(ctx context.Context, rows []db.Run) (map[uuid.UUID][]string, error) {
@@ -417,5 +452,9 @@ func (h *handler) one(ctx context.Context, row db.Run) (run, error) {
 	if err != nil {
 		return run{}, err
 	}
-	return view(row, by[row.ID]), nil
+	replies, err := h.repliesOf(ctx, []db.Run{row})
+	if err != nil {
+		return run{}, err
+	}
+	return view(row, by[row.ID], replies[row.ID]), nil
 }

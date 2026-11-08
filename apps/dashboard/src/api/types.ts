@@ -57,7 +57,17 @@ export type Channel = {
   provider: string;
   name: string;
   hook_url?: string;
+  /** Where the team's replies are posted; absent when none is set. */
+  reply_url?: string;
+  /**
+   * Whether the channel's provider sends replies at all. Optional: a brain
+   * from before the field sends none, and is read as one that does not.
+   */
+  can_reply?: boolean;
 };
+
+/** PATCH /teams/{id}/channels/{channelID}. Null stops replies. */
+export type UpdateChannelRequest = { reply_url: string | null };
 
 /**
  * POST /teams/{id}/channels. Leave `signing_secret` out and the brain
@@ -67,6 +77,7 @@ export type CreateChannelRequest = {
   provider: string;
   name: string;
   signing_secret?: string;
+  reply_url?: string;
 };
 
 /**
@@ -194,6 +205,25 @@ export type Run = {
    * order it first did. Optional: a brain from before the field sends none.
    */
   delegates?: string[];
+  /**
+   * What became of the run's answer to its channel; null for a run that
+   * answers none. Optional: a brain from before the field sends none.
+   */
+  reply?: Reply | null;
+};
+
+/** A run's reply to the channel conversation it came from, as the outbox holds it. */
+export type Reply = {
+  /** `apology` when the run failed or answered nothing; it never carries the error. */
+  kind: "answer" | "apology";
+  /** `failed` is given up: the channel has no reply URL, or every attempt failed. */
+  status: "pending" | "sent" | "failed";
+  /** How many times it was tried; 0 before the first. */
+  attempts: number;
+  last_error: string | null;
+  sent_at: string | null;
+  /** When a pending reply is tried next; null once it is sent or given up. */
+  next_attempt_at: string | null;
 };
 
 /** POST /teams/{id}/runs. No `agent` asks the team's hub; no `session_id` gives the run a session of its own. */

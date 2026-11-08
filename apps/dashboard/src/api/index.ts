@@ -14,6 +14,7 @@ import type {
   ApprovedSender,
   Attachment,
   AuthConfig,
+  Channel,
   CreateChannelRequest,
   CreatedChannel,
   ListedAgent,
@@ -41,6 +42,7 @@ import type {
   TeamSettings,
   TeamSettingsRequest,
   TeamSummary,
+  UpdateChannelRequest,
   User,
 } from "./types";
 
@@ -125,6 +127,15 @@ export function createChannel(
   channel: CreateChannelRequest,
 ): Promise<CreatedChannel> {
   return request<CreatedChannel>(`/teams/${teamId}/channels`, { method: "POST", body: channel });
+}
+
+/** Sets where a channel's replies go, or with null stops them. */
+export function updateChannel(
+  teamId: string,
+  channelId: string,
+  body: UpdateChannelRequest,
+): Promise<Channel> {
+  return request<Channel>(`/teams/${teamId}/channels/${channelId}`, { method: "PATCH", body });
 }
 
 export function deleteChannel(teamId: string, channelId: string): Promise<void> {

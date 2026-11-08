@@ -28,6 +28,7 @@ func New(opts *cli.Options) *cobra.Command {
 	cmd.AddCommand(
 		newListCmd(opts),
 		newCreateCmd(opts),
+		newUpdateCmd(opts),
 		newDeleteCmd(opts),
 		newSendersCmd(opts),
 	)
@@ -82,7 +83,7 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 }
 
 func newCreateCmd(opts *cli.Options) *cobra.Command {
-	var provider string
+	var provider, replyURL string
 	var secretStdin bool
 
 	cmd := &cobra.Command{
@@ -113,6 +114,10 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			body := client.CreateChannelJSONRequestBody{
 				Provider: strings.TrimSpace(provider),
 				Name:     name,
+			}
+			if cmd.Flags().Changed("reply-url") {
+				u := strings.TrimSpace(replyURL)
+				body.ReplyURL = &u
 			}
 			if secretStdin {
 				secret, err := readSecret(cmd.InOrStdin())
@@ -163,8 +168,75 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 		"which adapter parses this channel's webhooks, for example custom")
 	cmd.Flags().BoolVar(&secretStdin, "secret-stdin", false,
 		"read the provider's own signing secret from stdin instead of generating one")
+	cmd.Flags().StringVar(&replyURL, "reply-url", "",
+		"where the team's replies to this channel's conversations are posted")
 	_ = cmd.MarkFlagRequired("provider")
 
+	return cmd
+}
+
+func newUpdateCmd(opts *cli.Options) *cobra.Command {
+	var replyURL string
+	var noReplyURL bool
+
+	cmd := &cobra.Command{
+		Use:   "update <team> <channel>",
+		Short: "Set or stop where a channel's replies go",
+		Long: "Both arguments take a name or an id. Needs channel:write in the team.\n\n" +
+			"--reply-url sets where the team's replies are posted; --no-reply-url\n" +
+			"stops them, and any reply still waiting is given up rather than sent\n" +
+			"later. Exactly one is required.\n\n" +
+			"The URL must be http or https, with no credentials, query or fragment:\n" +
+			"every member can read it, and the receiver checks a reply by its\n" +
+			"signature instead.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			set := cmd.Flags().Changed("reply-url")
+			if set == noReplyURL {
+				return fmt.Errorf("pass exactly one of --reply-url or --no-reply-url")
+			}
+			body := client.UpdateChannelJSONRequestBody{}
+			if set {
+				body.ReplyURL = strings.TrimSpace(replyURL)
+				if body.ReplyURL == "" {
+					return fmt.Errorf("--reply-url cannot be empty — use --no-reply-url to stop replies")
+				}
+			}
+
+			api, err := opts.API(cmd.Context())
+			if err != nil {
+				return err
+			}
+			team, err := cli.ResolveTeam(cmd.Context(), api, args[0])
+			if err != nil {
+				return err
+			}
+			channel, err := cli.ResolveChannel(cmd.Context(), api, team, args[1])
+			if err != nil {
+				return err
+			}
+
+			ch, err := cli.Result(api.UpdateChannelWithResponse(cmd.Context(), team, channel, body))
+			if err != nil {
+				return cli.Needs(err, "channel:write")
+			}
+
+			return opts.Out.Print(ch, printer.Options{
+				Table: func(table *printer.Table) {
+					if ch.ReplyURL == nil || *ch.ReplyURL == "" {
+						table.Row(opts.Styles.OK.Render("updated"), opts.Styles.Value.Render(ch.Name),
+							opts.Styles.Muted.Render("replies stopped"))
+						return
+					}
+					table.Row(opts.Styles.OK.Render("updated"), opts.Styles.Value.Render(ch.Name),
+						opts.Styles.Muted.Render("replies to ")+cli.Safe(*ch.ReplyURL))
+				},
+			})
+		},
+	}
+
+	cmd.Flags().StringVar(&replyURL, "reply-url", "", "where the team's replies are posted")
+	cmd.Flags().BoolVar(&noReplyURL, "no-reply-url", false, "stop sending replies")
 	return cmd
 }
 

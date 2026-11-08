@@ -131,13 +131,17 @@ func TestUpdatingAChannelSetsAndClearsItsReplyURL(t *testing.T) {
 		t.Errorf("the guard asked for %v, want channel:write", a.asked)
 	}
 
-	rec = call(t, s, newFakeSecrets(), a, memberOf(teamID, "admin"),
-		http.MethodPatch, channelPath(teamID, ch.ID), `{"reply_url":null}`)
-	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "reply_url") {
-		t.Fatalf("PATCH null = %d %s, want 200 with no URL", rec.Code, rec.Body)
-	}
-	if s.channels[0].ReplyUrl != nil {
-		t.Errorf("stored %q after null, want none", *s.channels[0].ReplyUrl)
+	for _, clear := range []string{`{"reply_url":null}`, `{"reply_url":""}`, `{"reply_url":"  "}`} {
+		url := "https://support.example.com/replies"
+		s.channels[0].ReplyUrl = &url
+		rec = call(t, s, newFakeSecrets(), a, memberOf(teamID, "admin"),
+			http.MethodPatch, channelPath(teamID, ch.ID), clear)
+		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "reply_url") {
+			t.Fatalf("PATCH %s = %d %s, want 200 with no URL", clear, rec.Code, rec.Body)
+		}
+		if s.channels[0].ReplyUrl != nil {
+			t.Errorf("stored %q after %s, want none", *s.channels[0].ReplyUrl, clear)
+		}
 	}
 }
 
@@ -195,5 +199,30 @@ func TestAnUpdateWithoutChannelWriteIsForbidden(t *testing.T) {
 	}
 	if s.channels[0].ReplyUrl != nil {
 		t.Error("a refused caller set the reply URL")
+	}
+}
+
+// A client offers a reply URL only where the provider can use one.
+func TestAChannelSaysWhetherItsProviderCanReply(t *testing.T) {
+	t.Parallel()
+
+	for name, p := range map[string]Providers{
+		"replies":       providers{"custom": custom.New()},
+		"never replies": providers{"custom": receiveOnly{custom.New()}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			teamID := uuid.New()
+			rec := callWith(t, p, "", &fakeStore{}, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+				http.MethodPost, "/teams/"+teamID.String()+"/channels", `{"provider":"custom","name":"support"}`)
+			var out channel
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatalf("decode %s: %v", rec.Body, err)
+			}
+			if want := name == "replies"; out.CanReply != want || !strings.Contains(rec.Body.String(), `"can_reply"`) {
+				t.Errorf("can_reply = %v in %s, want %v, always present", out.CanReply, rec.Body, want)
+			}
+		})
 	}
 }

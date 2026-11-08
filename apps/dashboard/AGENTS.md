@@ -9,8 +9,9 @@ HTTP API, the same one `oa` uses. What it is for and who it serves is
 
 The dashboard is **tier 2, all of it**: the agent writes it, and the user reviews
 the design before anything is written (two tiers; Claude Code users also have this as the `working-agreement`
-skill from the openarity-practices plugin). Design first still holds: a high-level and a low-level design, each
-with a diagram, approved before code. Every edit is handed over with a link to
+skill from the openarity-practices plugin). Design first still holds: a high-level design (the user flow first,
+then the UML diagrams the change has: sequence, state, component, entity) and a
+low-level design with its sequence diagram, approved before code. Every edit is handed over with a link to
 its file and line, grouped into a few large pieces.
 
 ## Skills

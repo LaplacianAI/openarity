@@ -51,6 +51,9 @@ type fakeStore struct {
 
 	delegatesErr   error
 	delegatesAsked [][]uuid.UUID
+	replies        map[uuid.UUID]db.ListRunRepliesRow
+	repliesErr     error
+	repliesAsked   [][]uuid.UUID
 	listed         []db.ListRunsBySessionParams
 	teamListed     []db.ListRunsByTeamParams
 	started        []StartArgs
@@ -248,6 +251,23 @@ func (s *fakeStore) ListRunDelegates(_ context.Context, ids []uuid.UUID) ([]db.L
 		row := db.ListRunDelegatesRow{RootRunID: c.RootRunID, AgentName: c.AgentName}
 		if !slices.Contains(out, row) {
 			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeStore) ListRunReplies(_ context.Context, ids []uuid.UUID) ([]db.ListRunRepliesRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	s.repliesAsked = append(s.repliesAsked, slices.Clone(ids))
+	if s.repliesErr != nil {
+		return nil, s.repliesErr
+	}
+	var out []db.ListRunRepliesRow
+	for _, id := range ids {
+		if r, ok := s.replies[id]; ok {
+			out = append(out, r)
 		}
 	}
 	return out, nil
@@ -695,14 +715,14 @@ func TestTheRunIsReadAsItIs(t *testing.T) {
 	for _, k := range []string{
 		"id", "session_id", "agent", "status", "input", "output", "error",
 		"input_tokens", "output_tokens", "created_at", "started_at", "finished_at",
-		"parent_run_id", "depth", "hub", "delegates",
+		"parent_run_id", "depth", "hub", "delegates", "reply",
 	} {
 		if _, ok := keys[k]; !ok {
 			t.Errorf("the run has no %q", k)
 		}
 	}
-	if len(keys) != 16 {
-		t.Errorf("the run has %d fields, want the 16 in the contract", len(keys))
+	if len(keys) != 17 {
+		t.Errorf("the run has %d fields, want the 17 in the contract", len(keys))
 	}
 	if keys["parent_run_id"] != nil || keys["depth"] != float64(0) {
 		t.Errorf("a top-level run says parent %v depth %v, want null and 0", keys["parent_run_id"], keys["depth"])
@@ -1511,5 +1531,124 @@ func TestAFailedDelegatesReadIsA500ThatLeaksNothing(t *testing.T) {
 				t.Errorf("status %d %q, want a 500 that says nothing", rec.Code, rec.Body)
 			}
 		})
+	}
+}
+
+// --- what became of a run's reply ---
+
+// answering is a root run in its own session that answers a channel, with its
+// reply in the outbox as given.
+func (w *world) answering(t *testing.T, rp db.ListRunRepliesRow, at time.Time) db.Run {
+	t.Helper()
+	r := w.root(w.session("group", nil), "succeeded", at)
+	r.ReplyToChannel = true
+	w.store.runs[r.ID] = r
+	rp.RunID = r.ID
+	if w.store.replies == nil {
+		w.store.replies = map[uuid.UUID]db.ListRunRepliesRow{}
+	}
+	w.store.replies[r.ID] = rp
+	return r
+}
+
+func replyOf(t *testing.T, page api.Page[run], id uuid.UUID) *reply {
+	t.Helper()
+	for _, r := range page.Items {
+		if r.ID == id {
+			return r.Reply
+		}
+	}
+	t.Fatalf("run %s is not on the page", id)
+	return nil
+}
+
+// A conversation shows whether each answer reached the sender: sent and when,
+// or when it is tried next and why the last try failed, or that it was given up.
+func TestAChannelRunSaysWhatBecameOfItsReply(t *testing.T) {
+	w := newWorld(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	failed := "the reply URL answered 503"
+	sent := w.answering(t, db.ListRunRepliesRow{Kind: "answer", Status: "sent", Attempts: 1, SentAt: &now, NextAttemptAt: now}, now)
+	waiting := w.answering(t, db.ListRunRepliesRow{
+		Kind: "answer", Status: "pending", Attempts: 2, LastError: &failed, NextAttemptAt: now.Add(5 * time.Minute),
+	}, now.Add(-time.Minute))
+	gaveUp := w.answering(t, db.ListRunRepliesRow{
+		Kind: "apology", Status: "failed", Attempts: 6, LastError: &failed, NextAttemptAt: now,
+	}, now.Add(-2*time.Minute))
+
+	page := decodeRuns(t, w.call(t, w.me, http.MethodGet, w.runs(), nil))
+
+	if got := replyOf(t, page, sent.ID); got == nil || got.Status != "sent" || got.SentAt == nil ||
+		!got.SentAt.Equal(now) || got.NextAttemptAt != nil {
+		t.Errorf("sent reply = %+v, want sent at %v and no next attempt", got, now)
+	}
+	if got := replyOf(t, page, waiting.ID); got == nil || got.Status != "pending" || got.Attempts != 2 ||
+		got.LastError == nil || *got.LastError != failed || got.NextAttemptAt == nil || !got.NextAttemptAt.Equal(now.Add(5*time.Minute)) {
+		t.Errorf("waiting reply = %+v, want pending with the next attempt and the last error", got)
+	}
+	if got := replyOf(t, page, gaveUp.ID); got == nil || got.Status != "failed" || got.Kind != "apology" ||
+		got.NextAttemptAt != nil || got.LastError == nil {
+		t.Errorf("given-up reply = %+v, want failed with its error and no next attempt", got)
+	}
+}
+
+// A run started from the dashboard answers there. It has no reply, says so as
+// null, and costs the page no read of the outbox.
+func TestARunThatAnswersNoChannelHasNoReplyAndAsksNothing(t *testing.T) {
+	w := newWorld(t)
+	r := w.root(w.session("group", nil), "succeeded", time.Now())
+
+	rec := w.call(t, w.me, http.MethodGet, w.runs(), nil)
+
+	if !strings.Contains(rec.Body.String(), `"reply":null`) {
+		t.Errorf("body %s, want reply null", rec.Body)
+	}
+	if replyOf(t, decodeRuns(t, rec), r.ID) != nil {
+		t.Error("a dashboard run has a reply")
+	}
+	if len(w.store.repliesAsked) != 0 {
+		t.Errorf("read the outbox %d times for a page with no channel run", len(w.store.repliesAsked))
+	}
+}
+
+// One read for the page, for its channel runs only, after the cursor row is cut.
+func TestARunPageReadsItsRepliesOnce(t *testing.T) {
+	w := newWorld(t)
+	now := time.Now()
+	shown := w.answering(t, db.ListRunRepliesRow{Kind: "answer", Status: "pending"}, now)
+	dashboard := w.root(w.session("group", nil), "succeeded", now.Add(-time.Minute))
+	off := w.answering(t, db.ListRunRepliesRow{Kind: "answer", Status: "pending"}, now.Add(-time.Hour))
+
+	rec := w.call(t, w.me, http.MethodGet, w.runs()+"?limit=2", nil)
+
+	if rec.Code != http.StatusOK || len(w.store.repliesAsked) != 1 {
+		t.Fatalf("status %d, replies read %d times, want once", rec.Code, len(w.store.repliesAsked))
+	}
+	asked := w.store.repliesAsked[0]
+	if !slices.Equal(asked, []uuid.UUID{shown.ID}) || slices.Contains(asked, dashboard.ID) || slices.Contains(asked, off.ID) {
+		t.Errorf("asked about %v, want only %s", asked, shown.ID)
+	}
+}
+
+func TestOneRunSaysWhatBecameOfItsReply(t *testing.T) {
+	w := newWorld(t)
+	r := w.answering(t, db.ListRunRepliesRow{Kind: "answer", Status: "pending", NextAttemptAt: time.Now()}, time.Now())
+
+	got := decodeRun(t, w.call(t, w.me, http.MethodGet, w.one(r.ID), nil))
+
+	if got.Reply == nil || got.Reply.Status != "pending" {
+		t.Errorf("reply = %+v, want the pending one", got.Reply)
+	}
+}
+
+// A page whose replies cannot be read is a failure, not a page that claims
+// its answers were never sent.
+func TestARunPageWhoseRepliesCannotBeReadFails(t *testing.T) {
+	w := newWorld(t)
+	w.answering(t, db.ListRunRepliesRow{Kind: "answer", Status: "sent"}, time.Now())
+	w.store.repliesErr = errors.New("connection reset")
+
+	if rec := w.call(t, w.me, http.MethodGet, w.runs(), nil); rec.Code != http.StatusInternalServerError {
+		t.Errorf("status %d, want 500", rec.Code)
 	}
 }

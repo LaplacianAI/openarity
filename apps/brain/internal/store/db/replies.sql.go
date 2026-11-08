@@ -20,6 +20,9 @@ WITH claimed AS (
     WHERE r.id IN (
         SELECT d.id FROM replies d
         WHERE d.status = 'pending' AND d.next_attempt_at <= now()
+          -- A deleted team's channels take no messages; its replies wait for
+          -- the purge that deletes them rather than going out after it.
+          AND EXISTS (SELECT 1 FROM teams t WHERE t.id = d.team_id AND t.deleted_at IS NULL)
           AND NOT EXISTS (
               SELECT 1 FROM replies o
               WHERE o.session_id = d.session_id AND o.status = 'pending' AND o.id < d.id)
@@ -167,6 +170,52 @@ func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply
 		&i.SentAt,
 	)
 	return i, err
+}
+
+const listRunReplies = `-- name: ListRunReplies :many
+SELECT run_id, kind, status, attempts, last_error, sent_at, next_attempt_at
+FROM replies
+WHERE run_id = ANY($1::uuid[])
+`
+
+type ListRunRepliesRow struct {
+	RunID         uuid.UUID
+	Kind          string
+	Status        string
+	Attempts      int32
+	LastError     *string
+	SentAt        *time.Time
+	NextAttemptAt time.Time
+}
+
+// What became of each of these runs' replies. A run that answers no channel
+// has none and is not in the result. Rides replies_one_per_run.
+func (q *Queries) ListRunReplies(ctx context.Context, runIds []uuid.UUID) ([]ListRunRepliesRow, error) {
+	rows, err := q.db.Query(ctx, listRunReplies, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunRepliesRow
+	for rows.Next() {
+		var i ListRunRepliesRow
+		if err := rows.Scan(
+			&i.RunID,
+			&i.Kind,
+			&i.Status,
+			&i.Attempts,
+			&i.LastError,
+			&i.SentAt,
+			&i.NextAttemptAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listSessionTurns = `-- name: ListSessionTurns :many
