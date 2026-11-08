@@ -29,21 +29,49 @@ const botToken = "7012345678:AAHk-example_token"
 type telegramAPI struct {
 	mu     sync.Mutex
 	asked  []*http.Request
+	bodies []string
+	status int
+	body   string
+	err    error
+	// methods answers a method, such as "setWebhook", differently from the rest.
+	methods map[string]answer
+}
+
+type answer struct {
 	status int
 	body   string
 	err    error
 }
 
+func (f *telegramAPI) methodsAsked() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, r := range f.asked {
+		out = append(out, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+	}
+	return out
+}
+
 func (f *telegramAPI) client() *http.Client {
 	return &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		var body []byte
+		if r.Body != nil {
+			body, _ = io.ReadAll(r.Body)
+		}
 		f.mu.Lock()
 		f.asked = append(f.asked, r)
+		f.bodies = append(f.bodies, string(body))
 		f.mu.Unlock()
-		if f.err != nil {
-			return nil, f.err
+		a := answer{f.status, f.body, f.err}
+		if m, ok := f.methods[r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]]; ok {
+			a = m
+		}
+		if a.err != nil {
+			return nil, a.err
 		}
 		return &http.Response{
-			StatusCode: f.status, Body: io.NopCloser(strings.NewReader(f.body)), Header: http.Header{}, Request: r,
+			StatusCode: a.status, Body: io.NopCloser(strings.NewReader(a.body)), Header: http.Header{}, Request: r,
 		}, nil
 	})}
 }
@@ -94,8 +122,24 @@ func TestATelegramChannelIsConnectedWithItsBotsIdentity(t *testing.T) {
 		t.Error("the response shows the bot token")
 	}
 
-	if len(tg.asked) != 1 || tg.asked[0].URL.String() != "https://api.telegram.org/bot"+botToken+"/getMe" {
-		t.Fatalf("asked Telegram %v, want one getMe", tg.asked)
+	if got := tg.methodsAsked(); len(got) != 2 || got[0] != "getMe" || got[1] != "setWebhook" ||
+		tg.asked[0].URL.String() != "https://api.telegram.org/bot"+botToken+"/getMe" {
+		t.Fatalf("asked Telegram %v, want getMe then setWebhook", got)
+	}
+	var hook struct {
+		URL            string   `json:"url"`
+		SecretToken    string   `json:"secret_token"`
+		AllowedUpdates []string `json:"allowed_updates"`
+	}
+	if err := json.Unmarshal([]byte(tg.bodies[1]), &hook); err != nil {
+		t.Fatalf("setWebhook body %q: %v", tg.bodies[1], err)
+	}
+	if hook.URL != got.HookURL || hook.SecretToken != got.SigningSecret ||
+		len(hook.AllowedUpdates) != 1 || hook.AllowedUpdates[0] != "message" {
+		t.Errorf("setWebhook = %+v, want the hook URL, the secret, and messages only", hook)
+	}
+	if !got.Connected {
+		t.Error("a channel the brain pointed the bot at does not say it is connected")
 	}
 	path := secrets.Path(got.TeamID, secrets.KindChannel, got.ID)
 	want := map[string]string{
@@ -251,5 +295,141 @@ func TestACustomChannelTakesAReplyURL(t *testing.T) {
 	rec := connect(t, &telegramAPI{}, both(), &fakeStore{}, newFakeSecrets(), `{"provider":"custom","name":"support"}`)
 	if got := decodeCreated(t, rec); rec.Code != http.StatusCreated || !got.TakesReplyURL {
 		t.Errorf("POST = %d, takes_reply_url = %v; want 201 and true", rec.Code, got.TakesReplyURL)
+	}
+}
+
+// A channel Telegram will not post to is one nothing reaches: it is taken
+// away again, row and secret, and the person is told Telegram's own reason.
+func TestABotTelegramWillNotPointAtTheChannelLeavesNoChannel(t *testing.T) {
+	t.Parallel()
+
+	for name, a := range map[string]answer{
+		"refused":      {status: http.StatusBadRequest, body: `{"ok":false,"error_code":400,"description":"Bad Request: bad webhook: Failed to resolve host"}`},
+		"out of reach": {err: errAny},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tg := knownBot()
+			tg.methods = map[string]answer{"setWebhook": a}
+			s, sec := &fakeStore{}, newFakeSecrets()
+			rec := connect(t, tg, both(), s, sec, `{"provider":"telegram","name":"ops","credentials":{"bot_token":"`+botToken+`"}}`)
+			if rec.Code != http.StatusBadGateway || strings.Contains(rec.Body.String(), botToken) {
+				t.Fatalf("POST = %d %q, want 502 naming no token", rec.Code, rec.Body)
+			}
+			if name == "refused" && !strings.Contains(rec.Body.String(), "Failed to resolve host") {
+				t.Errorf("the answer %q does not say why", rec.Body)
+			}
+			if len(s.created) != 1 || len(s.deleted) != 1 || len(s.channels) != 0 {
+				t.Fatalf("created %d, deleted %v, left %d: want the channel taken away", len(s.created), s.deleted, len(s.channels))
+			}
+			if len(sec.deleted) != 1 || sec.deleted[0] != secrets.Path(s.created[0].TeamID, secrets.KindChannel, s.deleted[0]) {
+				t.Errorf("deleted secrets %v, want the channel's", sec.deleted)
+			}
+		})
+	}
+}
+
+// With no public https address there is nothing to point Telegram at: the
+// channel is made, says it is not connected, and the step is the person's.
+func TestWithNoPublicAddressTheBotIsLeftForThePersonToPoint(t *testing.T) {
+	t.Parallel()
+
+	for name, hookBase := range map[string]string{"none": "", "plain http": "http://brain.internal:21121"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tg, s, sec := knownBot(), &fakeStore{}, newFakeSecrets()
+			teamID := uuid.New()
+			mux := http.NewServeMux()
+			a := &fakeAuthz{allowed: true}
+			New(discardLogger(), s, a, sec, both(), hookBase, publicOnly, tg.client()).
+				Register(mux, api.NewGuard(channelRoutes(t), a, liveTeams{}, discardLogger()))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/teams/"+teamID.String()+"/channels",
+				strings.NewReader(`{"provider":"telegram","name":"ops","credentials":{"bot_token":"`+botToken+`"}}`))
+			req = req.WithContext(auth.WithUser(req.Context(), memberOf(teamID, "admin")))
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusCreated || decodeCreated(t, rec).Connected {
+				t.Errorf("POST = %d %s, want 201 and not connected", rec.Code, rec.Body)
+			}
+			if got := tg.methodsAsked(); len(got) != 1 || got[0] != "getMe" {
+				t.Errorf("asked Telegram %v, want only getMe", got)
+			}
+		})
+	}
+}
+
+func deleteChannel(t *testing.T, tg *telegramAPI, s *fakeStore, sec *fakeSecrets, ch db.Channel) *httptest.ResponseRecorder {
+	t.Helper()
+	mux := http.NewServeMux()
+	a := &fakeAuthz{allowed: true}
+	New(discardLogger(), s, a, sec, both(), "https://hooks.example.com", publicOnly, tg.client()).
+		Register(mux, api.NewGuard(channelRoutes(t), a, liveTeams{}, discardLogger()))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, channelPath(ch.TeamID, ch.ID), nil)
+	req = req.WithContext(auth.WithUser(req.Context(), memberOf(ch.TeamID, "admin")))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func storedBot(sec *fakeSecrets, ch db.Channel) {
+	sec.put[secrets.Path(ch.TeamID, secrets.KindChannel, ch.ID)] = map[string]string{
+		gateway.KeySigning: "oawh_x", telegram.KeyBotToken: botToken,
+		telegram.KeyBotID: "7012345678", telegram.KeyBotUsername: "OpenarityBot",
+	}
+}
+
+// Deleting a Telegram channel tells Telegram to stop posting, with the
+// channel's own token, before the row goes.
+func TestDeletingATelegramChannelLetsTheBotGo(t *testing.T) {
+	t.Parallel()
+
+	ch := tgChannel(uuid.New())
+	tg, s, sec := &telegramAPI{status: http.StatusOK, body: `{"ok":true,"result":true}`}, &fakeStore{channels: []db.Channel{ch}}, newFakeSecrets()
+	storedBot(sec, ch)
+	if rec := deleteChannel(t, tg, s, sec, ch); rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE = %d %s", rec.Code, rec.Body)
+	}
+	if got := tg.methodsAsked(); len(got) != 1 || got[0] != "deleteWebhook" ||
+		tg.asked[0].URL.String() != "https://api.telegram.org/bot"+botToken+"/deleteWebhook" {
+		t.Errorf("asked Telegram %v, want deleteWebhook with the channel's token", got)
+	}
+	if len(s.deleted) != 1 {
+		t.Error("the channel was not deleted")
+	}
+}
+
+// Letting the bot go is best effort: the person asked for the channel to go,
+// so Telegram refusing, out of reach, or a token that cannot be read never
+// keeps it.
+func TestATelegramChannelIsDeletedEvenIfTelegramCannotBeTold(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		tg      *telegramAPI
+		noToken bool
+	}{
+		"refused":         {tg: &telegramAPI{status: http.StatusUnauthorized, body: `{"ok":false,"description":"Unauthorized"}`}},
+		"out of reach":    {tg: &telegramAPI{err: errAny}},
+		"no token stored": {tg: &telegramAPI{status: http.StatusOK, body: `{"ok":true}`}, noToken: true},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			ch := tgChannel(uuid.New())
+			s, sec := &fakeStore{channels: []db.Channel{ch}}, newFakeSecrets()
+			if !c.noToken {
+				storedBot(sec, ch)
+			}
+			if rec := deleteChannel(t, c.tg, s, sec, ch); rec.Code != http.StatusNoContent || len(s.deleted) != 1 {
+				t.Errorf("DELETE = %d, deleted %v; want it gone", rec.Code, s.deleted)
+			}
+			if c.noToken && len(c.tg.asked) != 0 {
+				t.Error("Telegram was asked with no token")
+			}
+		})
 	}
 }

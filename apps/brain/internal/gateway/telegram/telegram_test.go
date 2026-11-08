@@ -523,3 +523,99 @@ func TestTheRegistryTakesTelegram(t *testing.T) {
 		t.Error("telegram does not reply through the registry")
 	}
 }
+
+func connector(t *testing.T) gateway.Connector {
+	t.Helper()
+	c, ok := telegram.New().(gateway.Connector)
+	if !ok {
+		t.Fatal("telegram cannot be pointed at a channel")
+	}
+	return c
+}
+
+// setWebhook carries the channel's address and secret, and asks for new
+// messages only: edits and the rest would be posted to be dropped.
+func TestConnectPointsTheBotAtTheChannel(t *testing.T) {
+	t.Parallel()
+
+	req, err := connector(t).ConnectRequest("https://hooks.example.com/hooks/telegram/c-1", creds())
+	if err != nil {
+		t.Fatalf("ConnectRequest: %v", err)
+	}
+	if req.URL != "https://api.telegram.org/bot"+token+"/setWebhook" || req.Header.Get("Content-Type") != "application/json" {
+		t.Errorf("request = %s %v", req.URL, req.Header)
+	}
+	var body struct {
+		URL            string   `json:"url"`
+		SecretToken    string   `json:"secret_token"`
+		AllowedUpdates []string `json:"allowed_updates"`
+	}
+	if err := json.Unmarshal(req.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.URL != "https://hooks.example.com/hooks/telegram/c-1" || body.SecretToken != secret ||
+		len(body.AllowedUpdates) != 1 || body.AllowedUpdates[0] != "message" {
+		t.Errorf("body = %+v", body)
+	}
+}
+
+// Telegram posts only to https; without a token or a secret there is nothing
+// to point with.
+func TestConnectRefusesWhatTelegramCouldNotUse(t *testing.T) {
+	t.Parallel()
+
+	noToken, noSecret := creds(), creds()
+	delete(noToken, telegram.KeyBotToken)
+	delete(noSecret, gateway.KeySigning)
+	cases := map[string]struct {
+		url   string
+		creds gateway.Credentials
+	}{
+		"plain http": {"http://brain.internal/hooks/telegram/c-1", creds()},
+		"no address": {"", creds()},
+		"no token":   {"https://h.example.com/x", noToken},
+		"no secret":  {"https://h.example.com/x", noSecret},
+	}
+	for name, c := range cases {
+		if req, err := connector(t).ConnectRequest(c.url, c.creds); err == nil {
+			t.Errorf("%s: built %s", name, req.URL)
+		}
+	}
+}
+
+func TestDisconnectLetsTheBotGo(t *testing.T) {
+	t.Parallel()
+
+	req, err := connector(t).DisconnectRequest(creds())
+	if err != nil || req.URL != "https://api.telegram.org/bot"+token+"/deleteWebhook" {
+		t.Errorf("DisconnectRequest = %+v, %v", req, err)
+	}
+	if _, err := connector(t).DisconnectRequest(gateway.Credentials{}); err == nil {
+		t.Error("a disconnect was built with no token")
+	}
+}
+
+// Only "ok" is success. Telegram's own reason is passed on, cut to a line,
+// and an answer that is not Telegram's says only its status.
+func TestAnsweredSaysWhyTelegramRefused(t *testing.T) {
+	t.Parallel()
+
+	c := connector(t)
+	if err := c.Answered(http.StatusOK, []byte(`{"ok":true,"result":true,"description":"Webhook was set"}`)); err != nil {
+		t.Errorf("success read as %v", err)
+	}
+	for name, a := range map[string]struct {
+		status int
+		body   string
+		says   string
+	}{
+		"a refusal":  {http.StatusBadRequest, `{"ok":false,"description":"Bad Request: bad webhook:\n Failed to resolve host"}`, "telegram said: Bad Request: bad webhook: Failed to resolve host"},
+		"not ok":     {http.StatusOK, `{"ok":false}`, "telegram answered 200"},
+		"not json":   {http.StatusBadGateway, `<html>`, "telegram answered 502"},
+		"a long one": {http.StatusBadRequest, `{"ok":false,"description":"` + strings.Repeat("x", 500) + `"}`, "telegram said: " + strings.Repeat("x", 200)},
+	} {
+		if err := c.Answered(a.status, []byte(a.body)); err == nil || err.Error() != a.says {
+			t.Errorf("%s: %v, want %q", name, err, a.says)
+		}
+	}
+}

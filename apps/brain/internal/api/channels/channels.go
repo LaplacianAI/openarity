@@ -55,6 +55,7 @@ type Store interface {
 }
 
 type Secrets interface {
+	Get(ctx context.Context, path, key string) (string, error)
 	PutAll(ctx context.Context, path string, values map[string]string) error
 	Delete(ctx context.Context, path string) error
 }
@@ -63,6 +64,7 @@ type Providers interface {
 	Get(name string) (gateway.Provider, bool)
 	Replier(name string) (gateway.Replier, bool)
 	Setup(name string) (gateway.Setup, bool)
+	Connector(name string) (gateway.Connector, bool)
 	TakesReplyURL(name string) bool
 }
 
@@ -180,7 +182,95 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	if generated {
 		out.SigningSecret = secret
 	}
+	out.Connected, ok = h.connect(w, r, row, out.HookURL, creds)
+	if !ok {
+		return
+	}
 	api.WriteJSON(w, h.logger, http.StatusCreated, out)
+}
+
+// connect points the provider at a new channel, for a provider that can be
+// told where to post. A channel the provider was not pointed at is one nothing
+// ever reaches, so a refusal takes the channel away again rather than leaving
+// it to look connected. With no public https address there is nothing to point
+// at: the channel stays, and the person is shown the step instead.
+func (h *handler) connect(
+	w http.ResponseWriter, r *http.Request, row db.Channel, hookURL string, creds map[string]string,
+) (connected, ok bool) {
+	c, can := h.providers.Connector(row.Provider)
+	if !can {
+		return false, true
+	}
+	// An address the provider cannot post to, none at all included, is the
+	// adapter's to refuse: Telegram posts only to https.
+	out, err := c.ConnectRequest(hookURL, creds)
+	if err != nil {
+		h.logger.InfoContext(r.Context(), "the provider is left for the person to point at the channel",
+			"channel_id", row.ID, "provider", row.Provider, "reason", err)
+		return false, true
+	}
+
+	status, body, err := h.ask(r.Context(), out)
+	if err != nil {
+		h.undo(r.Context(), row)
+		h.logger.WarnContext(r.Context(), "could not reach a provider to connect a channel",
+			"channel_id", row.ID, "provider", row.Provider, "error", err)
+		http.Error(w, "could not reach "+row.Provider+" to point it at the channel, so the channel was not created; try again",
+			http.StatusBadGateway)
+		return false, false
+	}
+	if err := c.Answered(status, body); err != nil {
+		h.undo(r.Context(), row)
+		http.Error(w, row.Provider+" would not post to the channel, so it was not created: "+err.Error(),
+			http.StatusBadGateway)
+		return false, false
+	}
+	return true, true
+}
+
+// undo removes a channel that was created and could not be connected: its row
+// and the secret written for it.
+func (h *handler) undo(ctx context.Context, row db.Channel) {
+	if err := h.store.DeleteChannel(ctx, row.ID); err != nil {
+		h.logger.ErrorContext(ctx, "an unconnected channel was left behind", "channel_id", row.ID, "error", err)
+	}
+	if err := h.secrets.Delete(ctx, secrets.Path(row.TeamID, secrets.KindChannel, row.ID)); err != nil {
+		h.logger.ErrorContext(ctx, "an unconnected channel's secret was left behind", "channel_id", row.ID, "error", err)
+	}
+}
+
+// disconnect tells the provider to stop posting to a channel that is going.
+// It is best effort: the person asked for the channel to go, and a provider
+// still posting is refused at the webhook as an unknown channel.
+func (h *handler) disconnect(ctx context.Context, row db.Channel) {
+	c, can := h.providers.Connector(row.Provider)
+	p, known := h.providers.Get(row.Provider)
+	if !can || !known {
+		return
+	}
+	path := secrets.Path(row.TeamID, secrets.KindChannel, row.ID)
+	creds := gateway.Credentials{}
+	for _, k := range p.Keys() {
+		v, err := h.secrets.Get(ctx, path, k)
+		if err != nil {
+			h.logger.WarnContext(ctx, "could not read a channel's credentials to disconnect it",
+				"channel_id", row.ID, "key", k, "error", err)
+			return
+		}
+		creds[k] = v
+	}
+	out, err := c.DisconnectRequest(creds)
+	if err == nil {
+		var status int
+		var body []byte
+		if status, body, err = h.ask(ctx, out); err == nil {
+			err = c.Answered(status, body)
+		}
+	}
+	if err != nil {
+		h.logger.WarnContext(ctx, "could not disconnect a channel from its provider",
+			"channel_id", row.ID, "provider", row.Provider, "error", err)
+	}
 }
 
 func (h *handler) signingSecret(w http.ResponseWriter, req createRequest) (string, bool, bool) {
@@ -439,6 +529,7 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.disconnect(r.Context(), row)
 	if err := h.store.DeleteChannel(r.Context(), channelID); err != nil {
 		api.Fail(w, h.logger, u, "failed to delete channel", err)
 		return

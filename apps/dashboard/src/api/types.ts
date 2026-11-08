@@ -91,7 +91,12 @@ export type CreateChannelRequest = {
  * The create response. `signing_secret` is present only when the brain
  * generated it, and no endpoint returns it again.
  */
-export type CreatedChannel = Channel & { signing_secret?: string };
+/**
+ * POST /teams/{id}/channels. connected is whether the brain pointed the
+ * provider at the channel itself (Telegram's setWebhook); then there is no
+ * step left for the person.
+ */
+export type CreatedChannel = Channel & { signing_secret?: string; connected?: boolean };
 
 /**
  * A row of GET /teams/{id}/channels. Both facts count only the sessions the

@@ -47,6 +47,9 @@ type updateRequest struct {
 type created struct {
 	channel
 	SigningSecret string `json:"signing_secret,omitempty"`
+	// Connected is whether the brain pointed the provider at the channel
+	// itself, so there is no step left for the person.
+	Connected bool `json:"connected"`
 }
 
 type channelCursor struct {

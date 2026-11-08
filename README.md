@@ -432,8 +432,11 @@ printf %s "$BOT_TOKEN" |
     oa channels create platform bot --provider telegram --credential-stdin bot_token
 ```
 
-Telegram does not yet know about the channel. Point the bot at it, with the hook
-URL and signing secret that `create` printed and your own bot token in place of
+The brain then points the bot at the channel itself (Telegram's `setWebhook`)
+and deleting the channel lets it go, so there is nothing more to run. A brain
+with no public https webhook address (`OPENARITY_WEBHOOK_PUBLIC_URL`) has
+nowhere to point it; `create` then prints the step, with the hook URL and
+signing secret filled in and your bot token left for you to put in place of
 `<bot token>`:
 
 ```sh

@@ -240,6 +240,15 @@ because groups are where a team's bot is most used. The username comes from
 `getMe` when the channel is connected (`Setup`), not from a person, so a typo
 cannot silently mute the bot in every group.
 
+The brain calls `setWebhook` itself (`Connector`), with the hook URL, the
+secret and `allowed_updates=["message"]`, as Hermes and OpenClaw do at
+startup. Considered: printing the command for the person to run, which is
+what happens when the brain has no public https address, since Telegram posts
+only to https. A refusal or Telegram out of reach removes the channel and its
+secret and answers 502 with Telegram's reason: a channel nothing posts to
+looks connected and is not. Deleting a channel calls `deleteWebhook` first,
+best effort, so a person's delete is never held up by Telegram.
+
 ## Settled: who may read a direct session
 
 **Its participant, plus anyone holding `session:read_all` in the team.** A

@@ -583,6 +583,30 @@ describe("a telegram channel", () => {
     expect(text).not.toContain(TOKEN);
   });
 
+  // The brain pointed the bot at the channel itself: there is nothing to run,
+  // and no secret the person needs.
+  it("says the bot is connected, with no step left, when the brain connected it", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [] } },
+      "POST /teams/{id}/channels": {
+        status: 201,
+        body: { ...telegram, hook_url: TG_HOOK, signing_secret: GENERATED, connected: true },
+      },
+    });
+    show(Channels);
+    await chosen();
+    await userEvent.type(screen.getByLabelText(/^bot token$/i), TOKEN);
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /connected bot/i });
+    const text = dialog.textContent ?? "";
+    expect(text).toMatch(/the bot now sends its messages here/i);
+    expect(text).not.toContain("setWebhook");
+    expect(text).not.toContain(GENERATED);
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeInTheDocument();
+  });
+
   it("does not show the setWebhook step for a custom channel", async () => {
     brain({
       ...team(["channel:write"]),

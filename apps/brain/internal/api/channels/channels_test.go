@@ -133,6 +133,7 @@ type fakeSecrets struct {
 	writes  int
 	deleted []string
 	putErr  error
+	getErr  error
 	delErr  error
 }
 
@@ -149,6 +150,17 @@ func (f *fakeSecrets) Put(_ context.Context, path, key, value string) error {
 	}
 	f.put[path][key] = value
 	return nil
+}
+
+func (f *fakeSecrets) Get(_ context.Context, path, key string) (string, error) {
+	if f.getErr != nil {
+		return "", f.getErr
+	}
+	v, ok := f.put[path][key]
+	if !ok {
+		return "", secrets.ErrNotFound
+	}
+	return v, nil
 }
 
 // PutAll replaces the path, as the real stores do.
@@ -884,6 +896,11 @@ func (p providers) Replier(name string) (gateway.Replier, bool) {
 func (p providers) Setup(name string) (gateway.Setup, bool) {
 	s, ok := p[name].(gateway.Setup)
 	return s, ok
+}
+
+func (p providers) Connector(name string) (gateway.Connector, bool) {
+	c, ok := p[name].(gateway.Connector)
+	return c, ok
 }
 
 func (p providers) TakesReplyURL(name string) bool {

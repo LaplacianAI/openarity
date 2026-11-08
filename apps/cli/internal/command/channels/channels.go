@@ -172,7 +172,11 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 					"the signing secret is shown once and cannot be read back"))
 			}
 
-			if ch.Provider == "telegram" && ch.HookURL != nil && ch.SigningSecret != nil {
+			switch {
+			case ch.Connected:
+				opts.Out.Note(cli.Safe(ch.Provider) + " now sends this channel's messages to the brain.")
+			case ch.Provider == "telegram" && ch.HookURL != nil && ch.SigningSecret != nil:
+				// The brain had no public https address to point the bot at.
 				opts.Out.Note(telegramHint(*ch.HookURL, *ch.SigningSecret))
 			}
 

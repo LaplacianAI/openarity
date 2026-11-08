@@ -73,6 +73,18 @@ type Setup interface {
 	Complete(status int, body []byte) (Credentials, error)
 }
 
+// Connector is a provider that can be told where to post: Telegram's
+// setWebhook. The channels API points it at a channel when the channel is
+// created and lets it go when the channel is deleted, so a person never runs
+// the step by hand. Pure like Reply: it builds the requests and reads the
+// answers; the brain sends them.
+type Connector interface {
+	ConnectRequest(hookURL string, creds Credentials) (OutboundRequest, error)
+	DisconnectRequest(creds Credentials) (OutboundRequest, error)
+	// Answered reads the provider's answer to either request.
+	Answered(status int, body []byte) error
+}
+
 // URLReplier is a Replier that posts to an address its channel names, the
 // reply URL, rather than into the conversation through the provider's own
 // API. Only for these does a channel take a reply URL.
@@ -106,12 +118,13 @@ type Registry struct {
 	repliers  map[string]Replier
 	setups    map[string]Setup
 	toURL     map[string]bool
+	connects  map[string]Connector
 }
 
 func NewRegistry(providers ...Provider) (Registry, error) {
 	reg := Registry{
 		providers: map[string]Provider{}, repliers: map[string]Replier{}, setups: map[string]Setup{},
-		toURL: map[string]bool{},
+		toURL: map[string]bool{}, connects: map[string]Connector{},
 	}
 	for _, p := range providers {
 		name := p.Name()
@@ -134,6 +147,9 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		if _, ok := p.(URLReplier); ok {
 			reg.toURL[name] = true
 		}
+		if c, ok := p.(Connector); ok {
+			reg.connects[name] = c
+		}
 		if s, ok := p.(Setup); ok {
 			for _, k := range s.Supplied() {
 				if !slices.Contains(p.Keys(), k) {
@@ -155,6 +171,12 @@ func (r Registry) Get(name string) (Provider, bool) {
 func (r Registry) Replier(name string) (Replier, bool) {
 	rp, ok := r.repliers[name]
 	return rp, ok
+}
+
+// Connector is how the named provider is pointed at a channel, if it can be.
+func (r Registry) Connector(name string) (Connector, bool) {
+	c, ok := r.connects[name]
+	return c, ok
 }
 
 // TakesReplyURL is whether the named provider's channels say where replies go.

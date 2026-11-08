@@ -151,3 +151,29 @@ func TestARefusedReplyURLOnTelegramSaysWhy(t *testing.T) {
 		t.Errorf("err = %v, want the brain's reason", err)
 	}
 }
+
+const connectedTelegram = `{
+  "id": "` + channelID + `", "team_id": "` + teamID + `",
+  "provider": "telegram", "name": "bot", "can_reply": true, "takes_reply_url": false,
+  "hook_url": "https://hooks.example.com/hooks/telegram/` + channelID + `",
+  "signing_secret": "oawh_generated-by-the-brain", "connected": true
+}`
+
+// When the brain pointed the bot at the channel itself there is no step
+// left: the curl is not printed, and the person is told it is done.
+func TestAConnectedTelegramChannelHasNoStepLeft(t *testing.T) {
+	clitest.Routes(t, telegramRoutes(connectedTelegram))
+
+	out, err := clitest.ExecuteWithStdin(t, commands, botToken,
+		"channels", "create", "platform", "bot", "--provider", "telegram",
+		"--credential-stdin", "bot_token")
+	if err != nil {
+		t.Fatalf("create: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "setWebhook") {
+		t.Errorf("a connected channel still shows the setWebhook step:\n%s", out)
+	}
+	if !strings.Contains(out, "telegram now sends this channel's messages to the brain") {
+		t.Errorf("the output does not say the bot is connected:\n%s", out)
+	}
+}

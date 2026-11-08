@@ -650,6 +650,13 @@ type CreatedChannel struct {
 	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
+	// Connected Whether the brain pointed the provider at this channel itself,
+	// as it does for `telegram` (setWebhook) when it has a public
+	// https webhook address. False for `custom`, and for a brain with
+	// no such address: the person then points the provider at
+	// `hook_url` with `signing_secret`.
+	Connected bool `json:"connected" yaml:"connected"`
+
 	// HookURL The full address to give the provider: the brain's public
 	// webhook address, then `/hooks/<provider>/<id>` and the
 	// provider's route. Absent when the brain has no
@@ -2338,6 +2345,10 @@ type ClientInterface interface {
 	// Requires `channel:write` in this team. Its signing secret is deleted
 	// with it — Postgres cascades do not reach the secret store.
 	//
+	// A `telegram` channel's bot is told to stop posting (deleteWebhook)
+	// first. That is best effort: Telegram refusing or out of reach never
+	// keeps the channel.
+	//
 	// A channel belonging to another team answers 404, not 403: the caller
 	// was authorised for the team they named, not for a channel they only
 	// guessed the id of, and confirming the id exists would let anyone walk
@@ -3597,6 +3608,10 @@ func (c *Client) CreateChannel(ctx context.Context, id TeamID, body CreateChanne
 //
 // Requires `channel:write` in this team. Its signing secret is deleted
 // with it — Postgres cascades do not reach the secret store.
+//
+// A `telegram` channel's bot is told to stop posting (deleteWebhook)
+// first. That is best effort: Telegram refusing or out of reach never
+// keeps the channel.
 //
 // A channel belonging to another team answers 404, not 403: the caller
 // was authorised for the team they named, not for a channel they only
@@ -8497,6 +8512,10 @@ type ClientWithResponsesInterface interface {
 	// Requires `channel:write` in this team. Its signing secret is deleted
 	// with it — Postgres cascades do not reach the secret store.
 	//
+	// A `telegram` channel's bot is told to stop posting (deleteWebhook)
+	// first. That is best effort: Telegram refusing or out of reach never
+	// keeps the channel.
+	//
 	// A channel belonging to another team answers 404, not 403: the caller
 	// was authorised for the team they named, not for a channel they only
 	// guessed the id of, and confirming the id exists would let anyone walk
@@ -12555,6 +12574,10 @@ func (c *ClientWithResponses) CreateChannelWithResponse(ctx context.Context, id 
 //
 // Requires `channel:write` in this team. Its signing secret is deleted
 // with it — Postgres cascades do not reach the secret store.
+//
+// A `telegram` channel's bot is told to stop posting (deleteWebhook)
+// first. That is best effort: Telegram refusing or out of reach never
+// keeps the channel.
 //
 // A channel belonging to another team answers 404, not 403: the caller
 // was authorised for the team they named, not for a channel they only

@@ -177,7 +177,7 @@ func mcpMux(t *testing.T, s *store.Store, d *recordingDiscoverer) *http.ServeMux
 	t.Helper()
 
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
-	for _, r := range newRouters(cfg, discardLogger(), s, nil, nil, gateway.Registry{}, nil, nil, d, nil, nil) {
+	for _, r := range newRouters(cfg, discardLogger(), s, nil, nil, nil, gateway.Registry{}, nil, nil, d, nil, nil) {
 		rr, ok := r.(registrable)
 		if !ok || !strings.Contains(strings.Join(rr.Patterns(), " "), "/discover") {
 			continue

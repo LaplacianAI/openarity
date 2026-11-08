@@ -236,7 +236,11 @@ the chat itself, so it can reply and takes no URL.
 needs more than a person can type (Telegram's bot id and username, from
 `getMe`) declares `Supplied()` keys, builds the request and reads the answer;
 the channels API sends it with the reply client. Like `Reply`, it holds no
-client. Every key a channel holds is written as one secret with `PutAll`:
+client. **`Connector`** points the provider at a channel (Telegram's
+`setWebhook`) when it is created and lets it go (`deleteWebhook`) when it is
+deleted; a refusal on create takes the channel away again, since nothing would
+ever reach it, while a refusal on delete is logged and the channel goes anyway.
+Every key a channel holds is written as one secret with `PutAll`:
 OpenBao's KV write replaces the whole secret, so a `Put` per key keeps only the
 last.
 

@@ -309,6 +309,73 @@ func messageIn(externalID string, chatID int64) (int64, bool) {
 	return id, err == nil
 }
 
+type setWebhook struct {
+	URL            string   `json:"url"`
+	SecretToken    string   `json:"secret_token"`
+	AllowedUpdates []string `json:"allowed_updates"`
+}
+
+// ConnectRequest points the bot at the channel: Telegram posts each new
+// message to hookURL with the channel's secret, and nothing else. Telegram
+// posts only to https, so a brain without a public https address cannot be
+// pointed at; the person is shown the step instead.
+func (provider) ConnectRequest(hookURL string, creds gateway.Credentials) (gateway.OutboundRequest, error) {
+	token, secret := creds.Get(KeyBotToken), creds.Get(gateway.KeySigning)
+	switch {
+	case !tokenPattern.MatchString(token):
+		return gateway.OutboundRequest{}, errors.New("telegram: no bot token")
+	case secret == "":
+		return gateway.OutboundRequest{}, errors.New("telegram: no secret token")
+	case !strings.HasPrefix(hookURL, "https://"):
+		return gateway.OutboundRequest{}, errors.New("telegram posts only to an https address")
+	}
+	raw, err := json.Marshal(setWebhook{URL: hookURL, SecretToken: secret, AllowedUpdates: []string{"message"}})
+	if err != nil {
+		return gateway.OutboundRequest{}, fmt.Errorf("telegram: encoding setWebhook: %w", err)
+	}
+	return gateway.OutboundRequest{URL: apiBase + token + "/setWebhook", Header: jsonHeader(), Body: raw}, nil
+}
+
+// DisconnectRequest stops Telegram posting to a channel that is going away.
+// Pending updates are kept: the bot may be connected again.
+func (provider) DisconnectRequest(creds gateway.Credentials) (gateway.OutboundRequest, error) {
+	token := creds.Get(KeyBotToken)
+	if !tokenPattern.MatchString(token) {
+		return gateway.OutboundRequest{}, errors.New("telegram: no bot token")
+	}
+	return gateway.OutboundRequest{URL: apiBase + token + "/deleteWebhook", Header: jsonHeader(), Body: []byte("{}")}, nil
+}
+
+// Answered reads Telegram's answer to setWebhook or deleteWebhook. Its own
+// description says what to fix ("bad webhook: Failed to resolve host"), and
+// never holds the token, so it is passed on, cut to a line.
+func (provider) Answered(status int, body []byte) error {
+	var a struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(body, &a); err != nil {
+		return fmt.Errorf("telegram answered %d", status)
+	}
+	if status == http.StatusOK && a.OK {
+		return nil
+	}
+	reason := strings.Join(strings.Fields(a.Description), " ")
+	if reason == "" {
+		return fmt.Errorf("telegram answered %d", status)
+	}
+	if r := []rune(reason); len(r) > 200 {
+		reason = string(r[:200])
+	}
+	return fmt.Errorf("telegram said: %s", reason)
+}
+
+func jsonHeader() http.Header {
+	h := http.Header{}
+	h.Set("Content-Type", "application/json")
+	return h
+}
+
 // Supplied is what a person gives when connecting a Telegram channel.
 func (provider) Supplied() []string { return []string{KeyBotToken} }
 

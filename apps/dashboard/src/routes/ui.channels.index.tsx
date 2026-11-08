@@ -718,7 +718,22 @@ function CreatedDialog({
   return (
     <Dialog open={channel !== null} onOpenChange={(o) => (o ? null : done())}>
       <DialogContent className="sm:max-w-lg">
-        {channel ? (
+        {channel?.connected ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Connected {channel.name}</DialogTitle>
+              <DialogDescription>
+                The bot now sends its messages here. Message it to try it: someone writing for the
+                first time waits under Approvals until you let them in.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button type="button" onClick={done}>
+                Done
+              </Button>
+            </DialogFooter>
+          </>
+        ) : channel ? (
           <>
             <DialogHeader>
               <DialogTitle>Connected {channel.name}</DialogTitle>
@@ -770,7 +785,7 @@ function CreatedDialog({
                   <p className="text-xs font-medium">Point the bot at this channel</p>
                   <p className="text-xs text-muted-foreground">
                     Run this once, replacing {"<bot token>"} with your bot's token. Telegram then
-                    sends its messages here, signed with the secret above.
+                    sends its messages here, each carrying the secret above.
                   </p>
                   <div className="flex items-start gap-2">
                     <code className="min-w-0 flex-1 whitespace-pre-wrap break-all rounded bg-secondary px-2 py-1 font-mono text-xs">
