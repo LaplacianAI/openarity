@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,11 +33,28 @@ type Teams interface {
 	ReserveObjects(ctx context.Context, arg db.ReserveObjectsParams) error
 }
 
+// Runs is what answering a message needs: whether its sender may, the run
+// already answering the conversation, and starting one.
+type Runs interface {
+	MemberMay(ctx context.Context, arg db.MemberMayParams) (bool, error)
+	ActiveChannelRun(ctx context.Context, sessionID uuid.UUID) (uuid.UUID, error)
+	AddSteer(ctx context.Context, arg db.AddSteerParams) error
+	HubCanRun(ctx context.Context, teamID uuid.UUID) (bool, error)
+	CreateChannelRun(ctx context.Context, arg db.CreateChannelRunParams) (db.Run, error)
+}
+
 type Queries interface {
 	Sessions
 	Messages
 	AttachmentRows
 	Teams
+	Runs
+}
+
+// Enqueuer hands a run to the workers. A run it fails to hand over is still
+// queued in Postgres, and the sweep starts it within a minute.
+type Enqueuer interface {
+	Enqueue(ctx context.Context, runID uuid.UUID) error
 }
 
 // ErrTeamDeleted is a delivery refused because the channel's team was
@@ -49,10 +67,14 @@ type InboxStore interface {
 }
 
 type Inbox struct {
-	store InboxStore
+	store  InboxStore
+	runs   Enqueuer
+	logger *slog.Logger
 }
 
-func NewInbox(s InboxStore) *Inbox { return &Inbox{store: s} }
+func NewInbox(s InboxStore, runs Enqueuer, logger *slog.Logger) *Inbox {
+	return &Inbox{store: s, runs: runs, logger: logger}
+}
 
 // Deliver writes each message in a transaction of its own, which starts by
 // locking the channel's team. A team deleted since the channel was read
@@ -62,6 +84,7 @@ func NewInbox(s InboxStore) *Inbox { return &Inbox{store: s} }
 func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error {
 	for n, m := range msgs {
 		refused := false
+		var out outcome
 		if err := i.store.InTx(ctx, func(q Queries) error {
 			if _, err := q.LockLiveTeam(ctx, ch.TeamID); err != nil {
 				if !errors.Is(err, pgx.ErrNoRows) {
@@ -70,15 +93,35 @@ func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error 
 				refused = true
 				return tombstone(ctx, q, ch.TeamID, msgs[n:])
 			}
-			return deliverOne(ctx, q, ch, m)
+			var err error
+			out, err = deliverOne(ctx, q, ch, m)
+			return err
 		}); err != nil {
 			return err
 		}
 		if refused {
 			return ErrTeamDeleted
 		}
+		i.follow(ctx, ch, m, out)
 	}
 	return nil
+}
+
+// follow acts on what a stored message started, once it is committed: a run
+// goes to the workers, and a message that asked and got no answer says why.
+// Handing a run over before its row commits would let a worker claim a run it
+// cannot find.
+func (i *Inbox) follow(ctx context.Context, ch Channel, m Delivery, out outcome) {
+	switch {
+	case out.run != uuid.Nil:
+		if err := i.runs.Enqueue(ctx, out.run); err != nil {
+			i.logger.WarnContext(ctx, "run not enqueued; the sweep will start it",
+				"run", out.run, "err", err)
+		}
+	case out.unanswered != "":
+		i.logger.InfoContext(ctx, "message not answered",
+			"channel", ch.ID, "message", m.ExternalID, "why", out.unanswered)
+	}
 }
 
 func tombstone(ctx context.Context, q Queries, teamID uuid.UUID, msgs []Delivery) error {
@@ -102,7 +145,7 @@ func tombstone(ctx context.Context, q Queries, teamID uuid.UUID, msgs []Delivery
 	return nil
 }
 
-func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) error {
+func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) (outcome, error) {
 	session, err := q.EnsureSession(ctx, db.EnsureSessionParams{
 		TeamID:      ch.TeamID,
 		ChannelID:   ch.ID,
@@ -111,7 +154,7 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) error {
 		UserID:      participant(m),
 	})
 	if err != nil {
-		return fmt.Errorf("resolve session %q: %w", m.Session.Ref, err)
+		return outcome{}, fmt.Errorf("resolve session %q: %w", m.Session.Ref, err)
 	}
 
 	var sentAt *time.Time
@@ -130,9 +173,9 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) error {
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
+			return outcome{}, nil
 		}
-		return fmt.Errorf("store message %q: %w", m.ExternalID, err)
+		return outcome{}, fmt.Errorf("store message %q: %w", m.ExternalID, err)
 	}
 
 	for _, f := range m.Files {
@@ -146,12 +189,12 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) error {
 			SizeBytes:  f.SizeBytes,
 			Filename:   f.Filename,
 		}); err != nil {
-			return fmt.Errorf("store attachment %q of %q: %w",
+			return outcome{}, fmt.Errorf("store attachment %q of %q: %w",
 				f.ObjectKey, m.ExternalID, err)
 		}
 	}
 
-	return nil
+	return answer(ctx, q, ch, session, m, messageID)
 }
 
 func participant(m Delivery) *uuid.UUID {

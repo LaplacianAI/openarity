@@ -156,3 +156,9 @@ WHERE s.team_id = sqlc.arg('team_id')
    OR (s.last_message_at, s.id) < (sqlc.arg('after_last_message_at')::timestamptz, sqlc.arg('after_id')::uuid))
 ORDER BY s.last_message_at DESC, s.id DESC
 LIMIT sqlc.arg('page_size');
+
+-- Holds a session for the rest of the transaction. Finishing a channel run
+-- takes it before the run's own row, in the order delivery takes them, so the
+-- two never wait on each other. A session that is gone is pgx.ErrNoRows.
+-- name: LockSession :one
+SELECT id FROM sessions WHERE id = $1 FOR UPDATE;

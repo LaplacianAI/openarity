@@ -317,7 +317,7 @@ func TestADeliveryToADeletedTeamLeavesClaimableTombstones(t *testing.T) {
 		d.Files = append(d.Files, gateway.Stored{ObjectKey: k, MediaType: "image/png", SizeBytes: 1, Filename: "f.png"})
 	}
 
-	err = gateway.NewInbox(inbox{w.store.Store}).Deliver(t.Context(),
+	err = gateway.NewInbox(inbox{w.store.Store}, nil, discardLogger()).Deliver(t.Context(),
 		gateway.Channel{ID: ch.ID, TeamID: w.team}, []gateway.Delivery{d})
 	if !errors.Is(err, gateway.ErrTeamDeleted) {
 		t.Fatalf("Deliver = %v, want gateway.ErrTeamDeleted", err)

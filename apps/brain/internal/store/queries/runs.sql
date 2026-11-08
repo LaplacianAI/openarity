@@ -203,3 +203,69 @@ WITH RECURSIVE below AS (
 UPDATE runs SET status = 'failed', error = sqlc.arg('reason')::text, finished_at = now()
 WHERE id IN (SELECT id FROM below) AND status = 'running'
 RETURNING id;
+
+-- A message starts a hub run that answers its conversation. The message has to
+-- be in the run's session: a message from another conversation inserts nothing
+-- and the caller gets pgx.ErrNoRows. A run started for steers that arrived too
+-- late for the run they were meant for has no message, and passes null.
+-- name: CreateChannelRun :one
+INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input,
+                  token_budget, hub, message_id, reply_to_channel)
+SELECT sqlc.arg('id')::uuid, t.id, sqlc.arg('session_id')::uuid, sqlc.arg('id')::uuid,
+       a.id, coalesce(a.name, 'orchestrator'), sqlc.narg('user_id')::uuid, sqlc.arg('input')::text,
+       a.token_budget, true, sqlc.narg('message_id')::uuid, true
+FROM teams t
+LEFT JOIN team_settings s ON s.team_id = t.id
+LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = t.id
+WHERE t.id = sqlc.arg('team_id')::uuid
+  AND (sqlc.narg('message_id')::uuid IS NULL OR EXISTS (
+        SELECT 1 FROM messages m
+        WHERE m.id = sqlc.narg('message_id')::uuid AND m.session_id = sqlc.arg('session_id')::uuid))
+RETURNING *;
+
+-- The run answering this conversation now. Read it only while holding the
+-- session's lock (EnsureSession or LockSession): every path that makes a
+-- channel run terminal takes that lock first, so what this returns cannot
+-- finish, and no follow-up can appear, before the caller commits. No run, no
+-- row.
+-- name: ActiveChannelRun :one
+SELECT id FROM runs
+WHERE session_id = $1 AND reply_to_channel AND status IN ('queued', 'running')
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+
+-- A message for a run that is already working: the run's SDK session is keyed
+-- by the run's id, and its loop takes whatever is here before every request.
+-- name: AddSteer :exec
+INSERT INTO agent_steers (session, text) VALUES (sqlc.arg('run_id')::uuid::text, sqlc.arg('text'));
+
+-- Steers written after the run's last request, which nothing will ever read.
+-- Deleted as they are returned, oldest first, so they are answered once.
+-- name: TakeLeftoverSteers :many
+WITH gone AS (
+    DELETE FROM agent_steers WHERE session = sqlc.arg('run_id')::uuid::text RETURNING id, text
+)
+SELECT text FROM gone ORDER BY id;
+
+-- Whether the team's hub can run: a hub agent that still exists, or a model
+-- for the built-in orchestrator. The same rule the runtime fails a run on, so
+-- a channel never starts a run that is bound to fail with ErrNoModel.
+-- name: HubCanRun :one
+SELECT EXISTS (
+    SELECT 1 FROM team_settings s
+    LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = s.team_id
+    WHERE s.team_id = $1 AND (a.id IS NOT NULL OR s.model_name IS NOT NULL)
+)::bool AS can_run;
+
+-- Whether someone may do something in a team now: their current role there
+-- grants it. A sender was bound to a member at approval, and that member can
+-- since have been removed or moved to a role without it; this is asked at the
+-- moment of acting, so neither starts a run. Permissions are rows, not a role
+-- name in code.
+-- name: MemberMay :one
+SELECT EXISTS (
+    SELECT 1 FROM team_members tm
+    JOIN role_permissions rp ON rp.role = tm.role
+    WHERE tm.team_id = sqlc.arg('team_id') AND tm.user_id = sqlc.arg('user_id')
+      AND rp.action = sqlc.arg('action')::text
+)::bool AS may;

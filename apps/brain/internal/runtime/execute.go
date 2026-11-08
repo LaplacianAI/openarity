@@ -26,7 +26,8 @@ type Store interface {
 	ClaimRun(ctx context.Context, arg db.ClaimRunParams) (db.ClaimRunRow, error)
 	HeartbeatRun(ctx context.Context, arg db.HeartbeatRunParams) (*time.Time, error)
 	FinishRun(ctx context.Context, arg db.FinishRunParams) (int64, error)
-	FinishRunWithEvent(ctx context.Context, finish db.FinishRunParams, event db.AppendRunEventParams) (int64, error)
+	FinishRunWithEvent(ctx context.Context, finish db.FinishRunParams, event db.AppendRunEventParams) (int64, uuid.UUID, error)
+	ListSessionTurns(ctx context.Context, arg db.ListSessionTurnsParams) ([]db.ListSessionTurnsRow, error)
 	StartChildRun(ctx context.Context, arg db.StartChildRunParams) (db.Run, error)
 	ReapChildren(ctx context.Context, arg db.ReapChildrenParams) ([]uuid.UUID, error)
 	GetRun(ctx context.Context, id uuid.UUID) (db.Run, error)
@@ -74,6 +75,10 @@ type Executor struct {
 	logger    *slog.Logger
 	every     time.Duration
 	lostAfter time.Duration
+
+	// enqueue hands a run this executor started to the workers. Nil leaves it
+	// to the sweep, which starts any queued run within a minute.
+	enqueue func(uuid.UUID) error
 
 	// notes holds, for each run executing here, the channel its recorder takes
 	// the brain's own events on, so they are written in order with the agent's.
@@ -223,6 +228,7 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		return "", err
 	}
 	defer built.Close()
+	built.Spec = forChannel(row, built.Spec)
 
 	if len(msgs) > 0 {
 		if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: row.ID, Reason: reapReason}); err != nil {
@@ -230,9 +236,15 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		}
 		err = appendEvent(ctx, e.store, row.ID, l.Worker, "resumed", resumedPayload{Messages: len(msgs)})
 	} else {
+		input := row.Input
+		if row.ReplyToChannel {
+			if input, err = e.conversation(ctx, row); err != nil {
+				return "", err
+			}
+		}
 		msgs = []agent.Message{{
 			Role:    agent.RoleUser,
-			Content: []agent.Content{{Type: agent.ContentText, Text: row.Input}},
+			Content: []agent.Content{{Type: agent.ContentText, Text: input}},
 		}}
 		err = appendEvent(ctx, e.store, row.ID, l.Worker, "started", startedOf(built.Agent, built.Spec))
 	}
@@ -356,7 +368,7 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 		return fmt.Errorf("encoding the finished event: %w", err)
 	}
 
-	n, err := e.store.FinishRunWithEvent(ctx, p, db.AppendRunEventParams{
+	n, followUp, err := e.store.FinishRunWithEvent(ctx, p, db.AppendRunEventParams{
 		RunID: runID, Kind: "finished", Payload: raw, Worker: worker,
 	})
 	if err != nil {
@@ -368,6 +380,11 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 
 	if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: runID, Reason: endedReason}); err != nil {
 		return fmt.Errorf("ending what run %s left running: %w", runID, err)
+	}
+	if followUp != uuid.Nil && e.enqueue != nil {
+		if err := e.enqueue(followUp); err != nil {
+			e.logger.WarnContext(ctx, "run not enqueued; the sweep will start it", "run", followUp, "err", err)
+		}
 	}
 	return nil
 }
@@ -395,6 +412,6 @@ func runOf(r db.ClaimRunRow) db.Run {
 		OutputTokens: r.OutputTokens, Worker: r.Worker, HeartbeatAt: r.HeartbeatAt,
 		CancelRequestedAt: r.CancelRequestedAt, CreatedAt: r.CreatedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, TokenBudget: r.TokenBudget,
-		Hub: r.Hub,
+		Hub: r.Hub, MessageID: r.MessageID, ReplyToChannel: r.ReplyToChannel,
 	}
 }

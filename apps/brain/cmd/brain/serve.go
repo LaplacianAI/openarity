@@ -87,8 +87,9 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	defer func() { _ = dbos.Shutdown(runQueue, runQueueShutdown) }()
 
 	authorizer := authz.New(dbStore, cfg.SuperAdmins)
-	routers := newRouters(cfg, logger, dbStore, authorizer, secretWriter, registry, attachments, newImporter(cfg), newDiscoverer(cfg, secretStore), graphs, runtime.NewEnqueuer(runQueue))
-	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry, attachments)
+	enqueuer := runtime.NewEnqueuer(runQueue)
+	routers := newRouters(cfg, logger, dbStore, authorizer, secretWriter, registry, attachments, newImporter(cfg), newDiscoverer(cfg, secretStore), graphs, enqueuer)
+	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry, attachments, enqueuer)
 
 	guard, err := newGuard(ctx, logger, dbStore, authorizer)
 	if err != nil {

@@ -12,6 +12,25 @@ import (
 	"github.com/google/uuid"
 )
 
+const activeChannelRun = `-- name: ActiveChannelRun :one
+SELECT id FROM runs
+WHERE session_id = $1 AND reply_to_channel AND status IN ('queued', 'running')
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+// The run answering this conversation now. Read it only while holding the
+// session's lock (EnsureSession or LockSession): every path that makes a
+// channel run terminal takes that lock first, so what this returns cannot
+// finish, and no follow-up can appear, before the caller commits. No run, no
+// row.
+func (q *Queries) ActiveChannelRun(ctx context.Context, sessionID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, activeChannelRun, sessionID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const addRunUsage = `-- name: AddRunUsage :one
 UPDATE runs SET
     input_tokens  = input_tokens  + $1::bigint,
@@ -40,6 +59,22 @@ func (q *Queries) AddRunUsage(ctx context.Context, arg AddRunUsageParams) (int64
 	return spent, err
 }
 
+const addSteer = `-- name: AddSteer :exec
+INSERT INTO agent_steers (session, text) VALUES ($1::uuid::text, $2)
+`
+
+type AddSteerParams struct {
+	RunID uuid.UUID
+	Text  string
+}
+
+// A message for a run that is already working: the run's SDK session is keyed
+// by the run's id, and its loop takes whatever is here before every request.
+func (q *Queries) AddSteer(ctx context.Context, arg AddSteerParams) error {
+	_, err := q.db.Exec(ctx, addSteer, arg.RunID, arg.Text)
+	return err
+}
+
 const claimRun = `-- name: ClaimRun :one
 UPDATE runs SET
     status       = 'running',
@@ -48,7 +83,7 @@ UPDATE runs SET
     started_at   = coalesce(started_at, now())
 WHERE id = $2
   AND (status = 'queued' OR (status = 'running' AND worker = $1::text))
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub,
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel,
     extract(epoch FROM started_at
         + make_interval(secs => $3::float8) - now())::float8
         AS remaining_seconds
@@ -85,6 +120,8 @@ type ClaimRunRow struct {
 	FinishedAt        *time.Time
 	TokenBudget       *int64
 	Hub               bool
+	MessageID         *uuid.UUID
+	ReplyToChannel    bool
 	RemainingSeconds  float64
 }
 
@@ -119,7 +156,79 @@ func (q *Queries) ClaimRun(ctx context.Context, arg ClaimRunParams) (ClaimRunRow
 		&i.FinishedAt,
 		&i.TokenBudget,
 		&i.Hub,
+		&i.MessageID,
+		&i.ReplyToChannel,
 		&i.RemainingSeconds,
+	)
+	return i, err
+}
+
+const createChannelRun = `-- name: CreateChannelRun :one
+INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input,
+                  token_budget, hub, message_id, reply_to_channel)
+SELECT $1::uuid, t.id, $2::uuid, $1::uuid,
+       a.id, coalesce(a.name, 'orchestrator'), $3::uuid, $4::text,
+       a.token_budget, true, $5::uuid, true
+FROM teams t
+LEFT JOIN team_settings s ON s.team_id = t.id
+LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = t.id
+WHERE t.id = $6::uuid
+  AND ($5::uuid IS NULL OR EXISTS (
+        SELECT 1 FROM messages m
+        WHERE m.id = $5::uuid AND m.session_id = $2::uuid))
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel
+`
+
+type CreateChannelRunParams struct {
+	ID        uuid.UUID
+	SessionID uuid.UUID
+	UserID    *uuid.UUID
+	Input     string
+	MessageID *uuid.UUID
+	TeamID    uuid.UUID
+}
+
+// A message starts a hub run that answers its conversation. The message has to
+// be in the run's session: a message from another conversation inserts nothing
+// and the caller gets pgx.ErrNoRows. A run started for steers that arrived too
+// late for the run they were meant for has no message, and passes null.
+func (q *Queries) CreateChannelRun(ctx context.Context, arg CreateChannelRunParams) (Run, error) {
+	row := q.db.QueryRow(ctx, createChannelRun,
+		arg.ID,
+		arg.SessionID,
+		arg.UserID,
+		arg.Input,
+		arg.MessageID,
+		arg.TeamID,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.SessionID,
+		&i.ParentRunID,
+		&i.RootRunID,
+		&i.ParentToolCall,
+		&i.Depth,
+		&i.AgentID,
+		&i.AgentName,
+		&i.UserID,
+		&i.Status,
+		&i.Input,
+		&i.Output,
+		&i.Error,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.Worker,
+		&i.HeartbeatAt,
+		&i.CancelRequestedAt,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.TokenBudget,
+		&i.Hub,
+		&i.MessageID,
+		&i.ReplyToChannel,
 	)
 	return i, err
 }
@@ -133,7 +242,7 @@ FROM teams t
 LEFT JOIN team_settings s ON s.team_id = t.id
 LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = t.id
 WHERE t.id = $5::uuid
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel
 `
 
 type CreateHubRunParams struct {
@@ -181,6 +290,8 @@ func (q *Queries) CreateHubRun(ctx context.Context, arg CreateHubRunParams) (Run
 		&i.FinishedAt,
 		&i.TokenBudget,
 		&i.Hub,
+		&i.MessageID,
+		&i.ReplyToChannel,
 	)
 	return i, err
 }
@@ -191,7 +302,7 @@ SELECT $1::uuid, a.team_id, $2::uuid, $1::uuid,
        a.id, a.name, $3::uuid, $4::text, a.token_budget
 FROM agents a
 WHERE a.id = $5 AND a.team_id = $6
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel
 `
 
 type CreateRunParams struct {
@@ -240,6 +351,8 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 		&i.FinishedAt,
 		&i.TokenBudget,
 		&i.Hub,
+		&i.MessageID,
+		&i.ReplyToChannel,
 	)
 	return i, err
 }
@@ -276,7 +389,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub FROM runs WHERE id = $1
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel FROM runs WHERE id = $1
 `
 
 func (q *Queries) GetRun(ctx context.Context, id uuid.UUID) (Run, error) {
@@ -307,12 +420,14 @@ func (q *Queries) GetRun(ctx context.Context, id uuid.UUID) (Run, error) {
 		&i.FinishedAt,
 		&i.TokenBudget,
 		&i.Hub,
+		&i.MessageID,
+		&i.ReplyToChannel,
 	)
 	return i, err
 }
 
 const getRunVisible = `-- name: GetRunVisible :one
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub FROM runs r
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel FROM runs r
 WHERE r.id = $1 AND r.team_id = $2
   AND EXISTS (
     SELECT 1 FROM sessions s
@@ -363,6 +478,8 @@ func (q *Queries) GetRunVisible(ctx context.Context, arg GetRunVisibleParams) (R
 		&i.FinishedAt,
 		&i.TokenBudget,
 		&i.Hub,
+		&i.MessageID,
+		&i.ReplyToChannel,
 	)
 	return i, err
 }
@@ -384,6 +501,24 @@ func (q *Queries) HeartbeatRun(ctx context.Context, arg HeartbeatRunParams) (*ti
 	var cancel_requested_at *time.Time
 	err := row.Scan(&cancel_requested_at)
 	return cancel_requested_at, err
+}
+
+const hubCanRun = `-- name: HubCanRun :one
+SELECT EXISTS (
+    SELECT 1 FROM team_settings s
+    LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = s.team_id
+    WHERE s.team_id = $1 AND (a.id IS NOT NULL OR s.model_name IS NOT NULL)
+)::bool AS can_run
+`
+
+// Whether the team's hub can run: a hub agent that still exists, or a model
+// for the built-in orchestrator. The same rule the runtime fails a run on, so
+// a channel never starts a run that is bound to fail with ErrNoModel.
+func (q *Queries) HubCanRun(ctx context.Context, teamID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hubCanRun, teamID)
+	var can_run bool
+	err := row.Scan(&can_run)
+	return can_run, err
 }
 
 const listRunDelegates = `-- name: ListRunDelegates :many
@@ -426,7 +561,7 @@ func (q *Queries) ListRunDelegates(ctx context.Context, runIds []uuid.UUID) ([]L
 }
 
 const listRunsBySession = `-- name: ListRunsBySession :many
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub FROM runs
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel FROM runs
 WHERE session_id = $1
   AND id = root_run_id
   AND (NOT $2::bool
@@ -484,6 +619,8 @@ func (q *Queries) ListRunsBySession(ctx context.Context, arg ListRunsBySessionPa
 			&i.FinishedAt,
 			&i.TokenBudget,
 			&i.Hub,
+			&i.MessageID,
+			&i.ReplyToChannel,
 		); err != nil {
 			return nil, err
 		}
@@ -496,7 +633,7 @@ func (q *Queries) ListRunsBySession(ctx context.Context, arg ListRunsBySessionPa
 }
 
 const listRunsByTeam = `-- name: ListRunsByTeam :many
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub FROM runs r
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel FROM runs r
 WHERE r.team_id = $1
   AND r.id = r.root_run_id
   AND EXISTS (
@@ -579,6 +716,8 @@ func (q *Queries) ListRunsByTeam(ctx context.Context, arg ListRunsByTeamParams) 
 			&i.FinishedAt,
 			&i.TokenBudget,
 			&i.Hub,
+			&i.MessageID,
+			&i.ReplyToChannel,
 		); err != nil {
 			return nil, err
 		}
@@ -616,6 +755,33 @@ func (q *Queries) ListUnstartedRuns(ctx context.Context, olderThanSeconds float6
 		return nil, err
 	}
 	return items, nil
+}
+
+const memberMay = `-- name: MemberMay :one
+SELECT EXISTS (
+    SELECT 1 FROM team_members tm
+    JOIN role_permissions rp ON rp.role = tm.role
+    WHERE tm.team_id = $1 AND tm.user_id = $2
+      AND rp.action = $3::text
+)::bool AS may
+`
+
+type MemberMayParams struct {
+	TeamID uuid.UUID
+	UserID uuid.UUID
+	Action string
+}
+
+// Whether someone may do something in a team now: their current role there
+// grants it. A sender was bound to a member at approval, and that member can
+// since have been removed or moved to a role without it; this is asked at the
+// moment of acting, so neither starts a run. Permissions are rows, not a role
+// name in code.
+func (q *Queries) MemberMay(ctx context.Context, arg MemberMayParams) (bool, error) {
+	row := q.db.QueryRow(ctx, memberMay, arg.TeamID, arg.UserID, arg.Action)
+	var may bool
+	err := row.Scan(&may)
+	return may, err
 }
 
 const reapChildren = `-- name: ReapChildren :many
@@ -673,7 +839,7 @@ UPDATE runs SET
     status      = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
     finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END
 WHERE runs.id = $1::uuid AND runs.status IN ('queued', 'running')
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel
 `
 
 // Queued: cancelled now, since no worker holds it. Running: flagged for the
@@ -709,6 +875,8 @@ func (q *Queries) RequestRunCancel(ctx context.Context, id uuid.UUID) (Run, erro
 		&i.FinishedAt,
 		&i.TokenBudget,
 		&i.Hub,
+		&i.MessageID,
+		&i.ReplyToChannel,
 	)
 	return i, err
 }
@@ -724,7 +892,7 @@ SELECT $1::uuid, p.team_id, p.session_id, p.id, p.root_run_id,
 FROM runs p
 JOIN agents a ON a.id = $6::uuid AND a.team_id = p.team_id
 WHERE p.id = $7::uuid AND p.team_id = $8::uuid
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel
 `
 
 type StartChildRunParams struct {
@@ -779,8 +947,39 @@ func (q *Queries) StartChildRun(ctx context.Context, arg StartChildRunParams) (R
 		&i.FinishedAt,
 		&i.TokenBudget,
 		&i.Hub,
+		&i.MessageID,
+		&i.ReplyToChannel,
 	)
 	return i, err
+}
+
+const takeLeftoverSteers = `-- name: TakeLeftoverSteers :many
+WITH gone AS (
+    DELETE FROM agent_steers WHERE session = $1::uuid::text RETURNING id, text
+)
+SELECT text FROM gone ORDER BY id
+`
+
+// Steers written after the run's last request, which nothing will ever read.
+// Deleted as they are returned, oldest first, so they are answered once.
+func (q *Queries) TakeLeftoverSteers(ctx context.Context, runID uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, takeLeftoverSteers, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return nil, err
+		}
+		items = append(items, text)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const takeOverStaleRuns = `-- name: TakeOverStaleRuns :many
