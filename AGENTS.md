@@ -22,6 +22,8 @@ app boundary is `apps/brain/api/openapi.yaml`.
 
 Commits follow Conventional Commits, scoped by app: `feat(brain): ...`,
 `fix(cli): ...`, `docs: ...`. Pull requests are squash-merged, so the pull
-request title is the commit subject.
+request title is the commit subject. No agent attribution in either: no
+`Co-Authored-By` trailer naming an AI and no "Generated with" line in a commit
+message or a pull request description.
 
 Add a skill under the level's `.agents/skills/<name>/SKILL.md` and link it with `ln -s ../../.agents/skills/<name> .claude/skills/<name>`.
