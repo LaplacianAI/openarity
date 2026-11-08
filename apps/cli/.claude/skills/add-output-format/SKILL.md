@@ -62,7 +62,14 @@ type jsonlPrinter struct {
 func (p jsonlPrinter) Print(value any, _ Options) error {
 	...
 }
+
+func (p jsonlPrinter) Line(value any, _ Options) error {
+	...
+}
 ```
+
+`Print` renders a whole value; `Line` renders one record of a stream as it
+arrives.
 
 `base` gives it the writer and a silent `Note`. Only `tablePrinter` overrides
 `Note`, because only a person can read one.
@@ -122,6 +129,8 @@ Then:
    is `oa teams list -o jsonl | head` in real life.
 5. **`Note` is silent** for a machine format.
 6. **It writes to the writer it was given**, never `os.Stdout`.
+7. **`Line` is one record per call** — `TestJSONLineIsOneObjectPerLine` and
+   `TestYAMLLineSeparatesDocuments` are the models.
 
 Mutate the factory to return the wrong printer and confirm test 2 fails. That
 mutation survived until the assertion was tightened.

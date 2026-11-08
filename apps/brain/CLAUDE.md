@@ -7,13 +7,22 @@ under `Tech Design/HLD-V1/HLD.md`.
 
 ## Working agreement
 
-**The user writes the production code. Claude writes the tests and tries to
-break it, explains, and reviews.**
+Two tiers, as in the `working-agreement` skill. **Tier 1, the user's:**
+`internal/auth`, `authz`, `secrets`, `objects`, `runtime`, `gateway`, `purge`,
+`reaper`, the store's Go and `cmd/brain`, and the decisions in any handler: who
+may see what, which status a failure gets. The agent tests and attacks that
+code, explains and reviews; it does not write it. **Tier 2, the agent's:**
+generated code (`internal/store/db`), wire-shape plumbing in `internal/api/*`
+(schema fields, view mappers, ripples of a signature), migrations, SQL
+queries, `sqlc.yaml`, `api/openapi.yaml`, `rbac.json`, tests, docs and
+Makefiles. Design first in both: a high-level and a low-level design, each
+with a diagram, approved before code; every edit handed over with a link to
+its file and line.
 
-- Do not write implementation code, scaffold files, or finish a function unless
-  explicitly asked. Guide step by step, method by method.
-- When code is pasted: review it, list what is missing or wrong, then write
-  tests that attack it — not tests that confirm it works.
+- For tier 1, guide step by step, one file per reply. Do not scaffold files or
+  finish a function unless explicitly asked.
+- When tier 1 code is pasted: review it, list what is missing or wrong, then
+  write tests that attack it — not tests that confirm it works.
 - Explanations stay short and plain, and always include a small snippet.
   Functions in snippets stay small: one job, few lines, no cleverness.
 - Verify library behaviour with a throwaway probe under the scratchpad rather
@@ -36,6 +45,16 @@ break it, explains, and reviews.**
   request came back 403 or 404. Covers the five scopes, `rbac.json`, what is
   live versus what needs a restart, and the checks that fail the boot. Read it
   before adding a route, and before touching `internal/authz`.
+- **`add-a-backend`** — a new implementation behind one of the storage ports,
+  a secret store or an object store. Covers the port, the adapter package, the
+  enum value that names it, per-backend validation, the wiring in `cmd/brain`,
+  and the tests that catch a switch case falling through. Use it whenever a new
+  provider must be selectable by name.
+- **`update-api-spec`** — `api/openapi.yaml` whenever an endpoint is added,
+  changed or removed. Covers what belongs in the spec, its conventions, the
+  keywords that wreck the generated client, how to validate it, the test that
+  fails when it drifts from the routes, and when a change is breaking. Use it
+  alongside `add-route` for every endpoint.
 - **`add-route`** — every API endpoint, and every new domain package under
   `internal/api`. Covers where the route lives, the `Router` and its prefix,
   per-package dependencies, the response contract, which status each failure
@@ -98,9 +117,10 @@ apps/brain/
     <domain>/          one package per domain, each its own Router
       <domain>.go      handler, New, the handlers
       schema.go        request and response structs — the wire contract
-    runs/              start, read, cancel and follow a run; events.go is the stream
+    runs/              start, read, cancel and follow a run; list a team's runs; events.go is the stream
     loops/             the loops an agent may choose, which are the runner's
     teamsettings/      a team's model, web search, learning and compaction
+    teamsummary/       the Home counts: one statement, one snapshot
   internal/gateway/    a provider's webhook in, normalised messages out
     providertest/      the conformance suite every adapter runs
     <provider>/        one package per platform; custom is the reference
@@ -258,7 +278,7 @@ they should be talking over HTTP instead.
   undoes that. Errors reach stderr and the log shipper.
 - **Never delete error handling to raise a coverage number.** When a branch is
   untestable, say so in a comment and pin the assumption with a test that fails
-  if it stops holding — see `TestSessionLockerCannotFailWithoutOptions`.
+  if it stops holding — see `TestTheSessionLockerWeBuildCannotFail`.
 
 ## Commands
 
@@ -935,9 +955,10 @@ reinstalled.
   a provider gives you identity, never episode. It belongs to a *team* rather
   than to a channel, because a channel is only one way a session starts and
   because a workspace or a sandbox will hang off it. `sessions` carries
-  `status` and `last_message_at` that nothing writes yet: a Slack thread ends
-  on its own, a direct message never does, and an idle sweep is the only thing
-  that can tell them apart. The partial unique index is what lets that land as
+  `status` and `last_message_at`. Every message bumps `last_message_at`, which
+  orders the lists and their cursor. `status` is still only `open`, though the
+  lists already filter on it: a Slack thread ends on its own, a direct message
+  never does, and an idle sweep is the only thing that can tell them apart. The partial unique index is what lets that land as
   an UPDATE rather than a redesign. See `internal/gateway/CLAUDE.md`.
 - **A direct session belongs to one person; the check is a permission, not a
   role.** `group` and `thread` sessions are the team's, `direct` is its
@@ -946,10 +967,12 @@ reinstalled.
   because which role holds it is data in `rbac.json` — a role name in Go would
   put that mapping back into a deploy.
 
-  This is the first row-level check in the API: the guard authorises reaching
-  the route, and the handler decides which rows come back. The two lists filter
-  in SQL, and the single-session read filters in Go, so both have to agree —
-  which is why the mutation pass breaks each independently.
+  The guard authorises reaching the route, and the handler decides which rows
+  come back. Several handlers ask `Can(session:read_all)` for that: the
+  session lists, a team's run history, a channel's 24-hour session count and
+  the team summary. They filter in SQL, and the single-session read filters in
+  Go, so both have to agree — which is why the mutation pass breaks each
+  independently.
 - **The reference adapter ships; it is not a fake.** `internal/gateway/custom`
   is a real generic webhook anyone can integrate against, and it runs the same
   `providertest` suite as every other adapter. A test double is written by the

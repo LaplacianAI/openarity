@@ -1,6 +1,6 @@
 ---
 name: write-tests
-description: Write a Go test for the CLI — any package, any layer. Covers the execute/isolate/seed helpers, the two stub brains and when the routed one is required, when t.Parallel() is allowed, what the test writer cannot see, and the mutation step that proves the test would actually fail. Use for every test.
+description: Write a Go test for the CLI — any package, any layer. Covers the clitest.Execute/Isolate/Seed helpers, the two stub brains and when the routed one is required, when t.Parallel() is allowed, what the test writer cannot see, and the mutation step that proves the test would actually fail. Use for every test.
 ---
 
 # Write a test
@@ -35,22 +35,23 @@ not what it asserts. The assertion is already in the code.
 | Testing                     | Use                                    |
 | --------------------------- | -------------------------------------- |
 | a pure function             | call it directly, `t.Parallel()`       |
-| a command end to end        | `execute(t, "context", "list")`        |
-| anything touching the config file | `isolate(t)` first, no `t.Parallel()` |
+| a command end to end        | `clitest.Execute(t, commands, "context", "list")` |
+| anything touching the config file | `clitest.Isolate(t)` first, no `t.Parallel()` |
 | a command that calls one endpoint | `clitest.BrainStub(t, status, body)` |
 | a command that calls two, or where the order matters | `clitest.Routes(t, ...)` |
 
-`execute` drives the whole binary the way a shell does — it builds the root
+Each package declares `var commands = []clitest.Build{New}`. `clitest.Execute`
+drives the whole binary the way a shell does — it builds the root
 command, so a command that is built but never registered fails here rather than
 passing every test written about its body.
 
 ```go
 func TestListMarksTheActiveContext(t *testing.T) {
-	isolate(t)
+	clitest.Isolate(t)
 
-	seed(t, "context", "create", "local", "--server", "http://127.0.0.1:21120")
+	clitest.Seed(t, commands, "context", "create", "local", "--server", "http://127.0.0.1:21120")
 
-	out, err := execute(t, "context", "list")
+	out, err := clitest.Execute(t, commands, "context", "list")
 	if err != nil {
 		t.Fatalf("context list: %v", err)
 	}
@@ -58,12 +59,19 @@ func TestListMarksTheActiveContext(t *testing.T) {
 }
 ```
 
-- **`isolate(t)`** gives the test its own config directory by setting
-  `XDG_CONFIG_HOME` *and* `HOME` — macOS ignores the former.
-- **`seed(t, ...)`** runs a setup command and `t.Fatalf`s if it fails. Use it
-  for anything whose failure would make the real assertion meaningless.
-- **`execute` returns combined output and the error.** Assert on `out+err.Error()`
-  when checking a message, because cobra may print rather than return.
+- **`clitest.Isolate(t)`** gives the test its own config directory by setting
+  `OPENARITY_CONFIG_DIR`, `XDG_CONFIG_HOME` *and* `HOME` — macOS ignores the
+  second — and sets `OPENARITY_NO_KEYCHAIN` so a seeded credential never
+  reaches the real keychain.
+- **`clitest.Seed(t, commands, ...)`** runs a setup command and `t.Fatalf`s if
+  it fails. Use it for anything whose failure would make the real assertion
+  meaningless.
+- **`clitest.Execute` returns combined output and the error.** Assert on
+  `out+err.Error()` when checking a message, because cobra may print rather
+  than return.
+- **`clitest.ExecuteWithStdin`** pipes something in, for a command that reads a
+  secret from stdin. **`clitest.ExecuteContext`** runs under a context the test
+  controls, which is how a test presses Ctrl-C.
 
 ### Two stubs, and when the second one is required
 
@@ -95,15 +103,19 @@ seen := script.All()   // in order
   request still succeeds, it just needed an authority it should not have.
 - **An unrouted request answers 404 and is still recorded**, so a call nobody
   expected shows up as a failed assertion rather than a hang.
+- **A stream test needs `clitest.ExecuteContext` and a streaming stub.** The
+  handler writes and flushes as it likes, so the test controls where the bytes
+  break and when the connection stays open. See `streamBrain` in
+  `internal/command/runs/events_test.go`.
 
 ## Step 3 — t.Parallel() only where nothing is shared
 
 Anything that reads or writes the environment cannot be parallel, and that
-includes every test using `isolate`. `t.Setenv` fails the test outright if
-`t.Parallel` was called.
+includes every test using `clitest.Isolate`. `t.Setenv` fails the test
+outright if `t.Parallel` was called.
 
-Pure packages — `theme`, `output`, and `config`'s resolution — are parallel
-throughout.
+Pure packages — `theme` and `output` — are parallel throughout. `config`'s
+resolution tests use `t.Setenv`, so they are not.
 
 ## Step 4 — assert the negative too
 
@@ -111,7 +123,7 @@ A test that only checks the happy path passes when a guard is deleted. For every
 refusal, assert that **nothing changed**:
 
 ```go
-	if _, err := execute(t, "context", "create", "prod", "--server", "x"); err == nil {
+	if _, err := clitest.Execute(t, commands, "context", "create", "prod", "--server", "x"); err == nil {
 		t.Fatal("a duplicate name was accepted")
 	}
 

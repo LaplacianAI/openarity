@@ -52,7 +52,7 @@ else — a method you can spell at the call site should be spelled there.
 internal/api/router.go            Router: prefixes, verb helpers, Register
 internal/api/response.go          WriteJSON — the one shared response function
 internal/api/request.go           DecodeJSON — the one shared body reader
-internal/api/<domain>/            one package per domain: teams, agents, tools
+internal/api/<domain>/            one package per domain: teams, agents, mcpservers
 internal/api/<domain>/<domain>.go handler, New, the handlers
 internal/api/<domain>/schema.go   request and response structs — the wire contract
 cmd/brain/routers.go              one line per domain, the only assembly point
@@ -102,9 +102,14 @@ func New(logger *slog.Logger, s Store) *api.Router {
 
 Most domain packages take **no authorizer at all** — `users` does not import
 `internal/authz`. Take one only when a handler decides *what to return* rather
-than *whether to run*: `teams` declares a one-method `SuperAdmins` interface
-because `GET /teams` shows every team to a super admin and only your own to
-everyone else. That is a content decision, not an access check.
+than *whether to run*. `channels`, `runs`, `sessions` and `teamsummary` take
+`api.Authorizer` (see `cmd/brain/routers.go`) and ask
+`Can(session:read_all)` to decide which rows come back: everyone sees the
+team's conversations, and only a holder sees another person's direct ones.
+`teams` declares a one-method `SuperAdmins` interface because `GET /teams`
+shows every team to a super admin and only your own to everyone else. Those are
+content decisions, not access checks. Never take one to re-check the route's
+own permission: the guard has already done that.
 
 Name such an interface for what it answers, not `Authorizer`. `api.Authorizer`
 is the guard's, and it is the only one that decides access — a second type
@@ -213,6 +218,11 @@ page, err := api.MapPage(rows, limit,
 )
 ```
 
+- **A filter is a query parameter checked against a closed set.** Read it with
+  `api.OneOf(w, r, "status", api.RunStatuses)` (`internal/api/filter.go`). A
+  value outside the set is a 400 with `<param> must be one of …`, never an
+  ignored filter. A cursor is valid only with the filters it was issued under;
+  say so in the spec.
 - **The envelope goes in before the first client, not when the table grows.**
   An array cannot become an object later without breaking every caller. The
   cursor is additive; the envelope is not.
@@ -351,12 +361,17 @@ already knows the resource exists.
 
 ```go
 // cmd/brain/routers.go
-func newRouters(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, a *authz.Authorizer) []server.Router {
-	return []server.Router{
+// trimmed: the real list has more domains and more parameters
+func newRouters(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, authorizer *authz.Authorizer /* , … */) []server.Router {
+	routers := []server.Router{
 		whoami.New(logger),
-		teams.New(logger, dbStore, a),
+		teams.New(logger, dbStore, authorizer, cfg.TeamPurgeAfter),
+		teamsummary.New(logger, dbStore, authorizer),
 		users.New(logger, dbStore),
+		// …
 	}
+	// …
+	return routers
 }
 ```
 
@@ -403,7 +418,7 @@ Test 3 builds the guard from the scopes `rbac.json` gives this package's
 routes, so the composition under test is the one production uses:
 
 ```go
-New(logger, s, a).Register(mux, api.NewGuard(teamRoutes(t), a, logger))
+New(logger, s, a).Register(mux, api.NewGuard(teamRoutes(t), a, teams, logger))
 ```
 
 An open guard is right only where the package has nothing to say about

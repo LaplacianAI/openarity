@@ -383,7 +383,7 @@ second test.
 
 - **Never delete error handling to raise a number.** When a branch is
   genuinely unreachable, say so in a comment and pin the assumption with a test
-  that fails if it stops holding — see `TestSessionLockerCannotFailWithoutOptions`.
+  that fails if it stops holding — see `TestTheSessionLockerWeBuildCannotFail`.
 - **Never read a coverage report produced without a database.** Database tests
   skip, so `serve`, `migrateUp` and every generated query read 0% and the total
   drops from 96.9% to 70.3%. That looks like a coverage problem and is not one.

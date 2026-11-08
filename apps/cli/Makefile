@@ -13,7 +13,8 @@ COVER_MIN     := 70
 
 # Two exclusions, for the same reason: neither is this module's own code.
 # The generated client is ~2000 lines nobody wrote — counting it measures
-# oapi-codegen, and drags the total from 84% to 35%. internal/clitest is the
+# oapi-codegen, and drags the total down (90% without it and the harness, 66%
+# with both, as of November 2026). internal/clitest is the
 # test harness; it is well covered, so counting it flatters the number rather
 # than testing anything.
 COVER_PKGS = $(shell $(GO) list ./... | grep -v -e '/internal/client$$' -e '/internal/clitest$$' | paste -sd, -)

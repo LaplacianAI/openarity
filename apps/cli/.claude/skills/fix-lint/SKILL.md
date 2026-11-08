@@ -37,8 +37,8 @@ case. The fix is the case, never a `default:`.
 enum must break every switch that ignores it. Keep the `default:` arm anyway
 where it returns a clear fallback, but never write one *instead of* a case.
 
-**`gosec` G304** — a file read with a non-constant path. `config.Load` carries
-the one `#nosec` in the module:
+**`gosec` G304** — a file read with a non-constant path. `config.Load` is the
+model `#nosec`:
 
 ```go
 	// #nosec G304 -- the path is built by Path() from the user's own config
@@ -47,12 +47,17 @@ the one `#nosec` in the module:
 ```
 
 A `#nosec` **must** carry the reason after `--`. One without is a silenced
-finding nobody can review.
+finding nobody can review. `keyring.go` has another (`#nosec G117`), and
+`skills.go` uses the `golangci-lint` form, which also carries its reason:
+
+```go
+raw, err := os.ReadFile(name) //nolint:gosec // the path is the one the user named
+```
 
 **`errcheck`** — an ignored error. Assign to `_` only where ignoring is the
 intent and it is obvious why: `defer func() { _ = os.Remove(temp.Name()) }()`.
 In tests, a setup command whose failure would invalidate the assertion goes
-through `seed(t, ...)`, which fails the test.
+through `clitest.Seed(t, commands, ...)`, which fails the test.
 
 **`revive` var-naming** — initialisms keep one case. `URL`, `API`, `ID`,
 `JSON`, `YAML`. Unexported names starting with one go all-lowercase:

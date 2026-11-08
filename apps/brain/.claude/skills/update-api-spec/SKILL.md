@@ -78,14 +78,18 @@ Match these rather than inventing a second style:
   the status code.
 - **Every list operation takes `Limit` and `Cursor`** and returns a `*Page`
   schema with `items` required and `next_cursor` optional. The absence of
-  `next_cursor` is the end of the collection — never add a second flag.
+  `next_cursor` is the end of the collection — never add a second flag. Some
+  lists also take filter query parameters (`status`, `run_status`,
+  `channel_id`, `since`, `hub`). A value outside a filter's set is a 400, and
+  the description must say a cursor is only meaningful with the filters it was
+  issued under.
 - **Request schemas set `additionalProperties: false`**, because `DecodeJSON`
   rejects unknown fields. A spec that allows them promises something the
   service refuses.
 - **Optional response fields are the ones genuinely absent** — `role` on a team
   the caller is not in, `email` from a provider that released none. Never mark
   a collection optional.
-- **`security: []` on an operation makes it public.** Only the probes have it.
+- **`security: []` on an operation makes it public.** Only the probes and `/auth/config` have it.
   Adding it anywhere else is a decision for review, and it belongs in the
   `SECURITY.md` list of unauthenticated endpoints too.
 - **A body that accepts one of two fields is documented, not `oneOf`.** Mark

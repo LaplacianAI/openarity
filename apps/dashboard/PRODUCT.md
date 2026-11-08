@@ -109,10 +109,12 @@ Constraints:
 - Targets are light and dark, at 1440, 768 and 390 pixels, all production
   grade.
 
-Undecided, for later gates:
+Decided since the first gates:
 
-- Whether runs get a screen of their own apart from sessions.
-- Whether the agent editor becomes a page rather than a dialog.
+- Runs have a screen of their own beside Sessions, filtered by status, by hub
+  or named agent, and to the last day.
+- The agent editor is a page (`/ui/agents/new`, `/ui/agents/$agentId`), not a
+  dialog.
 
 ## Brand Commitments
 
@@ -163,7 +165,8 @@ not measurements.
 
 | Screen | Magnitude | One question | The finding it surfaces | Most frequent job, one click away |
 | --- | --- | --- | --- | --- |
-| Home (now Overview) | — | Is the team working, and does anything need me? | Runs that failed in the last 24 h; senders waiting; a server whose discovery failed | Open the failed run; ask the team |
+| Home | — | Is the team working, and does anything need me? | Runs that failed in the last 24 h; senders waiting; a server whose discovery failed | Open the failed run; ask the team |
+| Runs | tens to thousands | Which runs failed, or are still going? | Runs that failed in the last day, hub or named agent | Open the failed run |
 | Sessions | tens to thousands | Which conversations are live or need attention? | Sessions with a running or failed run | Open a session |
 | Session detail and run trace | 1–50 runs, traces of 1–100 steps | What did the agent do, and did it work? | Where the run failed or spent its tokens; which delegate answered | Read the failing step; cancel a running run |
 | Approvals | 0–20 waiting | Who is waiting to be let in? | The oldest waiting sender, and how long they have waited | Bind the sender to a user |

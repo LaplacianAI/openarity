@@ -6,23 +6,21 @@ is generated from it — this module never guesses what an endpoint looks like.
 
 ## Working agreement
 
-**The user writes the production code. Claude writes the tests and tries to
-break it, explains, and reviews.**
+Two tiers, as in the `working-agreement` skill. **Tier 1, the user's:**
+`internal/auth` and `internal/credential`. Claude tests and attacks that code,
+explains, and reviews; it does not write it. **Tier 2, Claude's:** the commands'
+flags and output, the generated client, tests, docs and Makefiles. Design first
+in both: a high-level and a low-level design, each with a diagram, approved
+before code, and every edit handed over with a link to its file and line.
 
-Same as the brain, and it holds even when an instruction sounds like the
-opposite. "Make the change yourself, be like me" is a *style* instruction —
-sparse comments, only where the why is not obvious — not permission to write
-production files.
-
-- One file per reply, then stop and wait. The user reads it, raises doubts, and
-  changes the design *in that file* before the next one exists. Naming the
-  remaining files as a checklist is fine; handing over their contents is not.
-- Never hand over signatures, skeletons or `// ...` placeholders. Every function
-  given is complete: imports, body, error paths.
-- Once a file exists, give only the edits, each anchored and each with a
-  sentence on why. A whole file is only right the first time it is created.
-- Claude writes test files to disk directly — those are Claude's own work
-  product.
+- For tier 1 code, one file per reply, then stop and wait. The user reads it,
+  raises doubts, and changes the design *in that file* before the next one
+  exists. Naming the remaining files as a checklist is fine; handing over their
+  contents is not.
+- For tier 1 code, never hand over signatures, skeletons or `// ...`
+  placeholders. Every function given is complete: imports, body, error paths.
+  Once a file exists, give only the edits, each anchored and each with a
+  sentence on why.
 - Verify library behaviour with a throwaway probe rather than asserting it from
   memory. `url.Parse` accepts `not a url at all` without error; `lipgloss.Width`
   and `len` disagree by 15 bytes on a styled five-character string; `yaml.v3`
@@ -51,7 +49,7 @@ production files.
 - **`regenerate-client`** — after the brain's spec changes. Covers `make
   generate`, what oapi-codegen does and does not support, and why the generated
   file is committed.
-- **`write-tests`** — every test. Covers the `execute`/`isolate`/`seed` helpers,
+- **`write-tests`** — every test. Covers the `clitest.Execute`/`Isolate`/`Seed` helpers,
   when `t.Parallel()` is allowed, and step 7: mutate the guard and confirm the
   test fails. A test that passes with the code broken is worse than no test.
 - **`fix-lint`** — any golangci-lint or gofumpt failure. Same linter set as the
@@ -66,9 +64,13 @@ apps/cli/
   internal/cli/
     root.go            the root command and its persistent flags
     options.go         Options — the whole surface a command may reach
-    response.go        Result, Created, Accepted, NoContent: a call becomes a value
+    response.go        Result, Created, Accepted, NoContent, Needs, APIError: a call becomes a value
     page.go            Paging and PrintPage: a page becomes a table
-    lookup.go          ResolveTeam, ResolveMember, …: a name becomes an id
+    lookup.go          ResolveTeam, ResolveDeletedTeam, ResolveMember, ResolveChannel,
+                       ResolveSkill, ResolveAgent, ResolveMCPServer: a name becomes an id
+    safe.go            Safe, WriteRaw, ErrUnsafeForTerminal: untrusted text becomes a
+                       safe cell or file output
+    lines.go           Lines, Line: untrusted prose becomes lines
   internal/command/
     whoami/            oa whoami
     config/            oa config show|set|unset|path
@@ -76,7 +78,7 @@ apps/cli/
     teams/             oa teams list|create|delete|restore, oa teams members list|add|remove,
                        oa teams settings show|set
     channels/          oa channels list|create|delete, oa channels senders …
-    sessions/          oa sessions list|read — the conversations, and their messages
+    sessions/          oa sessions list|get|read — the conversations, and their messages
     runs/              oa runs start|list|get|events|cancel — events is an SSE stream
     users/             oa users list — who has logged in, and their id
     skills/            oa skills list|get|upload|replace|import|sync|cat|delete
@@ -137,22 +139,25 @@ unreachable from here by construction. The only thing crossing the boundary is
 - **A bad output format is a hard error; a bad theme is not.** A wrong colour
   still shows the data. A table written into a file that expected JSON does not.
 - **A generated call is unwrapped in one line, never six.** `cli.Result`,
-  `cli.Created` and `cli.NoContent` take the call whole —
+  `cli.Created`, `cli.Accepted` and `cli.NoContent` take the call whole —
   `page, err := cli.Result(api.ListTeamsWithResponse(ctx, params))` — and hand
-  back the body or a sentence. Three functions because the field the generated
-  code fills is part of the type: a 201 has `GetJSON201`, and a 204 has no
+  back the body or a sentence. Four functions because the field the generated
+  code fills is part of the type: a 201 has `GetJSON201`, a 202 has `GetJSON202`
+  (`cli.Accepted`), and a 204 has no
   `JSONxxx` field at all, so its status is the only thing that says it worked.
 - **A list command owns its rows and nothing else.** `cli.Paging` declares
   `--limit` and `--cursor`; `cli.PrintPage` prints the envelope, the note when
   it is empty, and the hint that names the next page. What is left is `Row`.
   A limit of zero is never sent — the brain refuses it, so the flag's own
   default has to mean unspecified.
-- **`PrintPage` prints its own envelope type, not the client's.** The generated
-  page types carry no yaml tags and `yaml.v3` lowercases a field name, so
-  printing them directly spells it `nextcursor` — one name in json and another
-  in yaml for the same field, and differently again per collection.
+- **`PrintPage` prints its own envelope type, not the client's.** Every
+  collection has its own generated page type, and `PrintPage` is generic over
+  the item, so it needs one envelope for all of them. Its own also turns a nil
+  `Items` into `[]`, where a generated page would marshal `null`. (The client's
+  page types do carry yaml tags now, so the field names agree either way.)
 - **Every command prints through `opts.Out`, never `fmt.Fprintln(opts.Stdout)`.**
-  The exception is a hint, which goes through `Note` — it reaches a person and
+  A stream prints one record at a time through `Line`, where `Print` is for a
+  whole value. The exception is a hint, which goes through `Note` — it reaches a person and
   is silent under json and yaml, so a consumer never sees prose before the
   document.
 - **A list prints an empty array, not nothing.** Build view slices with
@@ -163,6 +168,11 @@ unreachable from here by construction. The only thing crossing the boundary is
   sequences and every other row is padded to match — 26 columns out of line, and
   only ever on a terminal, so no test and no pipe will show it. `printer.Table`
   uses `lipgloss.Width`.
+- **Text a stranger wrote is made safe in the table callback, by what it is.**
+  `cli.Safe` for one value: it quotes only when the value holds something a
+  terminal would act on, so ordinary names stay plain. `cli.Line` and
+  `cli.Lines` for prose, which keep the paragraph and drop the escapes.
+  `cli.WriteRaw` with `--raw` for a file's bytes. Never in the view type.
 - **Styling happens inside the table callback and nowhere else.** A value styled
   before it reaches `Print` puts escape sequences inside a JSON string. No test
   catches this: the test writer is a `bytes.Buffer`, lipgloss detects no
@@ -174,13 +184,18 @@ unreachable from here by construction. The only thing crossing the boundary is
   `config.Resolve` never puts a token value in a `Setting` — it reports
   `set (N characters)` — so there is nothing to redact further up.
 - **An argument that takes an id takes a name too, and a uuid is never looked
-  up.** `cli.ResolveTeam` and `cli.ResolveMember` parse first and return an id
-  unchanged, so existing scripts pay nothing and a name costs one request.
+  up.** `cli.ResolveTeam`, `ResolveDeletedTeam`, `ResolveMember`,
+  `ResolveChannel`, `ResolveSkill`, `ResolveAgent` and `ResolveMCPServer` parse
+  first and return an id unchanged, so existing scripts pay nothing and a name costs one request.
 - **Resolve against the narrowest list that can answer.** A team resolves
   through `GET /teams`, which every member may read. A member resolves through
   that team's own `GET /teams/{id}/members`, not `GET /users` — the directory
   needs `user:read` somewhere, which is a far larger permission to require for
   "take this person out of my team".
+
+  Skills, agents, channels and MCP servers resolve through the team's own
+  paged list, 100 a page, and give up after 50 pages with an error that asks
+  for the id.
 - **Adding somebody resolves nothing.** The subject goes into the request body
   and the brain resolves it while adding, so `oa teams members add` needs no
   directory permission at all. `ResolveUser` existed for one afternoon and was
@@ -196,7 +211,9 @@ unreachable from here by construction. The only thing crossing the boundary is
 - **`os.Exit` appears only in `main`, and `main` holds no defers.** Same reason
   as the brain: `os.Exit` skips deferred functions.
 - **Tests mirror source files**, and a test that needs a config file gets its
-  own directory through `isolate(t)`.
+  own directory through `clitest.Isolate(t)`. A test runs a command with
+  `clitest.Execute(t, commands, ...)` and sets one up with
+  `clitest.Seed(t, commands, ...)`, where `var commands = []clitest.Build{New}`.
 - **Config writes are atomic.** `os.WriteFile` opens with `O_TRUNC`, so a
   concurrent reader sees an empty file and YAML parses that happily into a zero
   config. Temp file, then rename.
@@ -207,6 +224,7 @@ unreachable from here by construction. The only thing crossing the boundary is
 make            # list targets
 make check      # everything CI runs: tidy, generate, format, vet, lint, build, cover, vuln
 make cover      # coverage, fails below 70%
+make generate-check  # regenerate, and fail if the committed client differs
 make generate   # regenerate the client from the brain's spec
 make install    # put oa on your PATH, at $(go env GOPATH)/bin
 make fmt        # apply gofumpt and fix import order
@@ -217,7 +235,7 @@ make tools      # reinstall tooling — rerun after a Go upgrade
 
 **Coverage excludes `internal/client` and `internal/clitest`.** Neither is this
 module's own code: the generated client is two thousand lines nobody wrote, so
-counting it measures oapi-codegen (71.3% with it, 86.3% without), and `clitest`
+counting it measures oapi-codegen (65.6% with it, 90.4% without), and `clitest`
 is the test harness, well covered enough that counting it flatters the total.
 
 ## Decisions worth not relitigating
@@ -295,15 +313,18 @@ is the test harness, well covered enough that counting it flatters the total.
   result differs, which is what catches a spec change landing in the brain
   without the client being rebuilt.
 - **Anything a stranger typed is quoted before it reaches a terminal.**
-  `strconv.QuoteToGraphic`, inside the `Table` callback, on message text,
-  sender refs and sender names. A channel's hook URL is public by design —
+  `cli.Safe`, inside the `Table` callback, on message text, sender refs and
+  sender names. Prose goes through `cli.Line`/`cli.Lines` and a skill's file
+  bytes through `cli.WriteRaw`, which refuses a terminal unless `--raw` says
+  the person knows. A channel's hook URL is public by design —
   that is the whole reason senders need approving — so those fields are bytes
   an unauthenticated caller chose, and a terminal reads `\x1b[2J` as "clear
-  the screen". `QuoteToGraphic` rather than a hand-rolled filter because it
-  also covers the C1 controls, invalid UTF-8 and the Cf formatting runes, so a
+  the screen". `Safe` calls `strconv.QuoteToGraphic` rather than a hand-rolled
+  filter because that also covers the C1 controls, invalid UTF-8 and the Cf formatting runes, so a
   right-to-left override cannot make a ref display in an order it is not
   stored in; and because a quoted string cannot contain a newline, one message
-  can never become two rows. **Never in the view type** — `-o json` must carry
+  can never become two rows. `Safe` quotes only when it has to, so a clean
+  value costs nothing to read. **Never in the view type** — `-o json` must carry
   what arrived, and `json.Marshal` escapes it again anyway.
 
   Taint follows the value, not the way it arrived. `oa channels senders

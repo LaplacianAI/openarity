@@ -46,7 +46,7 @@ creating a new group if none fits.
 PostgresDSN string `env:"POSTGRES_DSN" envDefault:"postgres://postgres:postgres@localhost:5432/openarity?sslmode=disable"`
 ```
 
-Pick the local default to match `deploy/compose.yaml`. If the two disagree,
+Pick the local default to match `deployment/docker-compose.yml` (at the repo root). If the two disagree,
 local development breaks in a way that looks like a code bug.
 
 ## Step 2 — a type, if the value is a fixed set

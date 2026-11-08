@@ -45,6 +45,12 @@ reaches a team's rows through it — `GetLiveTeam`, `ListUserTeams`,
 `ListTeamIDs` and `GetChannel` all carry `deleted_at IS NULL`. Forget it and a
 deleted team is still served to its old members.
 
+A query keyed on `team_id` alone, behind a `member` or `team` route, can
+leave the filter to the guard. A member's teams are loaded by `ListUserTeams`,
+which carries `deleted_at IS NULL`, so the guard already refuses a deleted
+team's members (`internal/store/identity.go`, `internal/api/authorize.go`). A
+query that is reachable some other way, or by a super admin, still filters.
+
 `GetTeam` is the one deliberate exception: the graph projector reads its
 `ErrNoRows` as "drop this team's graph", so it has to keep seeing a deleted
 team. Never add the filter there, and never call it from a handler a member
@@ -176,10 +182,11 @@ aggregate wants to be nullable, return the row it came from.**
 `sqlc.yaml` maps `uuid` to `uuid.UUID` and `timestamptz` to `time.Time`.
 Without those overrides every caller would be unwrapping `pgtype.UUID`.
 
-Both apply to `NOT NULL` columns. **A nullable column of either type needs its
-own override** with `nullable: true`, or sqlc falls back to the pgtype wrapper
-for that field only — which is correct, just inconsistent. Add the override
-when you add the column.
+Both apply to `NOT NULL` columns. `sqlc.yaml` already maps a nullable `uuid`,
+`timestamptz`, `text`, `float8`, `int4` and `int8` to pointers. **Any other
+nullable type needs its own override** with `nullable: true`, or sqlc falls
+back to the pgtype wrapper for that field only — which is correct, just
+inconsistent. Add the override when you add the column.
 
 ## Step 4 — one write or several?
 
@@ -292,7 +299,7 @@ committed Go still holds the original query and the mutation is invisible.
 ## Step 6b — a query only its own tests call
 
 `unused` cannot see this: every sqlc query is an exported method on `*Queries`,
-so it always looks used. `GetAttachmentWithTeam` was written to join for a team
+so it always looks used. `GetAttachmentWithTeam` (since deleted) was written to join for a team
 id, kept its tests when a column made the join unnecessary, and was called by
 nothing else for a whole change.
 

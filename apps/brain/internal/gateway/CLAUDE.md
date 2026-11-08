@@ -22,7 +22,7 @@ internal/gateway/
   sink.go           where a delivery goes; inbox.go is the stand-in
   providertest/     the conformance suite every adapter runs
   custom/           the generic adapter, and the reference implementation
-  <provider>/       one package per platform: slack, telegram, discord
+  <provider>/       one package per platform; only custom ships today
 ```
 
 Imports run one way. `custom` imports `gateway`; `gateway` never imports
@@ -232,8 +232,9 @@ Three of Slack's four conversation types are in the second group. Threads are
 the exception that makes "one session per ref" look sufficient, and they are
 what you will test with.
 
-So `sessions` carries `status` and `last_message_at`, and nothing writes them
-yet. The unique index is partial — `WHERE status = 'open'` — which today means
+So `sessions` carries `status` and `last_message_at`. Every message bumps
+`last_message_at`, and the lists order by it. `status` is still only `open`,
+though the lists already filter on it. The unique index is partial — `WHERE status = 'open'` — which today means
 exactly one session per conversation and find-or-create is unambiguous. When an
 idle sweep lands, the same index lets the next message open a second row for
 the same ref, and `EnsureSession` does not change. That is the whole reason the
@@ -370,8 +371,9 @@ private message: the person sent it to the agent, not to the room.
 
 The gateway is where the participant is recorded. `Deliver` sets
 `sessions.user_id` to the approved sender for a direct session and to nothing
-for any other kind, and nothing else writes that column — the API never creates
-a session. `EnsureSession` leaves it alone on conflict, so a second approved
+for any other kind. Only one other path writes that column:
+`CreateDirectSession`, which `POST /teams/{id}/runs` uses when it is given no
+session, and which owns the new direct session by the caller. `EnsureSession` leaves it alone on conflict, so a second approved
 sender reaching the same conversation cannot take over somebody else's thread.
 
 Two things that look like details and are the whole rule:

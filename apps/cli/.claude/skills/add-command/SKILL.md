@@ -17,7 +17,7 @@ internal/command/<noun>/        one package per noun: whoami, config, context, t
   <noun>.go                     New(opts) and the verbs
   <noun>_test.go                the tests
 internal/cli/options.go         Options — everything a command may reach
-internal/cli/response.go        Result, Created, NoContent
+internal/cli/response.go        Result, Created, Accepted, NoContent
 internal/cli/page.go            Paging, PrintPage
 cmd/oa/main.go                  the command list
 ```
@@ -100,8 +100,9 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 - **`opts.API(ctx)` for anything authenticated.** It resolves the credential and
   fails before the request when there is none.
 - **An argument that names a resource goes through a resolver, not a uuid
-  parse.** `cli.ResolveTeam` and `cli.ResolveMember` take a name *or* an id and
-  return an id — a uuid is used as given and never looked up, so a script
+  parse.** `cli.ResolveTeam`, `ResolveDeletedTeam`, `ResolveMember`,
+  `ResolveChannel`, `ResolveSkill`, `ResolveAgent` and `ResolveMCPServer` take
+  a name *or* an id and return an id — a uuid is used as given and never looked up, so a script
   passing ids pays nothing.
 
   Resolve against the narrowest list that can answer. A team goes through
@@ -121,17 +122,18 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 
 ## Step 3 — unwrap the call
 
-Three functions, picked by what the endpoint answers. Each takes the generated
+Four functions, picked by what the endpoint answers. Each takes the generated
 call whole and returns the body or a sentence.
 
 ```go
 page, err := cli.Result(api.ListTeamsWithResponse(ctx, params))          // 200
 team, err := cli.Created(api.CreateTeamWithResponse(ctx, body))          // 201
+run, err := cli.Accepted(api.StartRunWithResponse(ctx, id, body))        // 202
 err := cli.NoContent(api.AddTeamMemberWithResponse(ctx, id, body))       // 204
 ```
 
-Three rather than one because the field the generated code fills is part of the
-type: a 201 has `GetJSON201`, and a 204 has no `JSONxxx` field at all, so its
+Four rather than one because the field the generated code fills is part of the
+type: a 201 has `GetJSON201`, a 202 has `GetJSON202`, and a 204 has no `JSONxxx` field at all, so its
 status is the only thing that says it worked. Never hand-write the
 `if res.JSONxxx == nil { return cli.APIError(...) }` shape — the point of these
 is that the check cannot be forgotten.
@@ -192,6 +194,8 @@ return opts.Out.Print(views, printer.Options{
 
 - **Never `fmt.Fprintln(opts.Stdout, ...)` for data.** It bypasses `-o json`
   entirely.
+- **A stream prints each record with `opts.Out.Line`.** `Print` is for a whole
+  value; a stream has no end to wait for.
 - **A hint goes through `opts.Out.Note`.** It reaches a person and is silent
   under json and yaml, so a consumer never sees prose before the document.
 - **Styling happens inside the `Table` callback and nowhere else.** A value
@@ -199,12 +203,14 @@ return opts.Out.Print(views, printer.Options{
   will catch it: the test writer is a buffer, so `Render` is a no-op there.
 - **An empty result still calls `Print`.** Returning early prints nothing, and
   `-o json` must emit `[]`.
-- **A field a stranger chose is wrapped in `strconv.QuoteToGraphic`.** Message
+- **A field a stranger chose is made safe before it is printed.** Message
   text, sender refs, sender names — anything that reached the brain through a
-  channel's hook, which is public by design. A terminal reads `\x1b[2J` as
+  channel's hook, which is public by design. `cli.Safe` for one value, `cli.Line`
+  or `cli.Lines` for prose, `cli.WriteRaw` for a file's bytes. A terminal reads `\x1b[2J` as
   "clear the screen", and this is the last place it can be stopped.
 
-  `QuoteToGraphic` rather than stripping the C0 range: it also covers the C1
+  `Safe` quotes with `strconv.QuoteToGraphic`, and only when the value needs
+  it, rather than stripping the C0 range: that also covers the C1
   controls, invalid UTF-8, and the Cf formatting runes, so a right-to-left
   override cannot make text display in an order it is not stored in. And a
   quoted string cannot contain a newline, so one row stays one row.
@@ -218,12 +224,16 @@ return opts.Out.Print(views, printer.Options{
 
 ## Step 6 — register it
 
-In `cmd/oa/main.go`:
+In `cmd/oa/main.go` (abbreviated here; the real list has every noun):
 
 ```go
 func commands(opts *cli.Options) []*cobra.Command {
 	return []*cobra.Command{
-		whoami.New(opts), config.New(opts), cmdcontext.New(opts), teams.New(opts),
+		whoami.New(opts),
+		config.New(opts),
+		cmdcontext.New(opts),
+		teams.New(opts),
+		// ...
 	}
 }
 ```

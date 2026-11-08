@@ -43,6 +43,10 @@ one-millisecond `ALTER` into a table-wide outage lasting as long as that query.
 With `lock_timeout` the migration fails fast, the Job retries, and nobody
 queues behind it. Failing is cheap. Blocking is not.
 
+`3s` is the convention. `5s` has been used on busy tables, as in
+`20261101064820_add_team_deleted_at.sql` and
+`20261104121504_record_mcp_discovery.sql`.
+
 ## Step 0 — is the migration you want to change already merged?
 
 **A merged migration is a migration that has run.** `brain migrate up` records

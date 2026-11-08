@@ -76,8 +76,9 @@ order never varies: **flag, environment, file, built-in.**
   `set (N characters)` and names where it was found — a keychain, a file, a
   flag, `OPENARITY_TOKEN`. See the `token` function.
 
-Its position in the `Settings` struct is the order `oa config show` prints, and
-the token goes last.
+The order `oa config show` prints is the list in
+`internal/command/config/views.go` (`settingViews`), not the `Settings` struct
+order. Add the setting there too, and keep the token last.
 
 `Resolve` takes the credential it should describe as an `Input` field rather
 than reading a store itself — `config` must not learn what a keychain is. That

@@ -113,9 +113,22 @@ reports it — `/teams/{id}/agents`, not `/agents`. A key that does not match is
 a route that will not start.
 
 Then add it to `TestTheRouteMappingIsWhatWeIntend` in
-`internal/store/rbac_test.go`. That test pins all eight mappings and fails when
+`internal/store/rbac_test.go`. That test pins every route mapping and fails when
 one is added without a decision, which is the point: a route's scope is the
 kind of thing that changes quietly and matters a lot.
+
+## A permission that lets you act as someone else
+
+`sender:approve` is separate from `channel:write`, because approving a sender
+lets a platform account speak as a team member. Holding it is not enough:
+approving or removing a sender also requires the caller to cover every
+permission of the target user's role, and of the sender's current holder
+(`covers` and `coversHolder` in `internal/api/channels/senders.go`). Otherwise
+an approver could make a stranger speak as an admin. A caller who falls short
+gets a 403, "you may not let someone speak as a user with more access than
+yours". If the binding moved between the check and the write, the answer is a
+409, "the sender's binding changed while this was being decided; look again and
+retry". Any new permission of this kind needs the same cover check.
 
 ## What the loader touches
 
@@ -189,10 +202,13 @@ if !h.authz.IsSuperAdmin(u) {
 - **Read the caller with `api.Caller(r)`** and the team with
   `api.TeamFrom(r.Context())`. The guard parsed the uuid to run its check;
   parsing it again is a chance to get a different answer.
-- **A domain package should not import `internal/authz` at all.** `users` does
+- **A domain package should rarely import `internal/authz`.** `users` does
   not. `teams` does, for one `IsSuperAdmin` used to filter a list, and declares
   it as `SuperAdmins` rather than `Authorizer` — the name says it answers a
-  question about people, not that it decides access.
+  question about people, not that it decides access. `channels`, `runs`,
+  `sessions` and `teamsummary` import it for `authz.Action` and
+  `authz.Resource`, to ask `Can(session:read_all)` and filter which rows come
+  back. They must not re-check their route's own permission.
 
 ## What fails the boot, and what it says
 
@@ -200,7 +216,7 @@ Three checks, all before the first request:
 
 | Situation | Where | Message |
 | --- | --- | --- |
-| a protected route with no row | `Router.Register` panics | `route "GET /x" is not in rbac.json` |
+| a protected route with no row | `Router.Register` panics | `api: route "GET /x" is not in rbac.json — every protected route needs an entry` |
 | a row for a route nothing serves | `serve` returns an error | `rbac.json maps routes this server does not serve: …` |
 | an empty `route_permissions` | `newGuard` returns an error | `no route permissions in the database — run brain migrate up` |
 
@@ -259,7 +275,7 @@ func teamRoutes(t *testing.T) authz.Routes {
 	return rs
 }
 
-New(logger, s, a).Register(mux, api.NewGuard(teamRoutes(t), a, logger))
+New(logger, s, a).Register(mux, api.NewGuard(teamRoutes(t), a, teams, logger))
 ```
 
 An open guard is right only where the package has nothing to say about

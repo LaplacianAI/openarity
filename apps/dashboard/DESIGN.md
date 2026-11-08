@@ -157,11 +157,11 @@ components:
 
 **Creative North Star: "The Framed Sheet"**
 
-The dashboard is a sheet of paper laid in a frame. The frame, in BRAND's stone surface, holds the sidebar and a 48px top bar on one ground with no rule between them; the work sits on a lighter sheet of BRAND's bg, inset 8px from the window's right and bottom, edged by one 1px line, with 16px corners and no shadow. Everything a reader came for is on the sheet; everything that moves them between sheets is on the frame. Below 768px the frame drops away and the sheet is the screen, with navigation behind a menu.
+The dashboard is a sheet of paper laid in a frame. The frame, in BRAND's stone surface, holds the sidebar and a 48px top bar on one ground with no rule between them; the work sits on a lighter sheet of BRAND's bg, inset 8px from the window's right and bottom, edged by one 1px line, with 16px corners and no shadow. Everything a reader came for is on the sheet; everything that moves them between sheets is on the frame. Below 768px the frame drops away and the sheet is the screen, with navigation in a bar at the bottom.
 
 The voice is plain and exact, set in IBM Plex Sans at five sizes. Plex Mono appears only where a reader might copy or compare exact characters: ids, tool names, arguments and output. Colour is BRAND's Spectral palette and nothing else: warm graphite neutrals and one cool teal, with BRAND's ok, warn and error carrying status, always beside an icon and a word. Depth is tone, not shadow: the frame is one step darker than the sheet, a card one step darker than the sheet again.
 
-The reference screen, the session and its run trace, carries the system's signature: a run read as a timeline of numbered steps on a rail, each step's tokens drawn as a bar against the run's largest step, tool calls folded to one line each, and a delegation nested under the call that made it. The system as recorded here is what that screen, the shell and the states gallery ship. Home, Sessions list, Approvals, Agents, MCP servers, Skills, Channels, Graph, Team settings, Teams, Deleted teams and Sign in sit inside the new shell but still carry their pre-redesign internals; they are not evidence for this system and should be brought into it, not copied from.
+The reference screen, the session and its run trace, carries the system's signature: a run read as a timeline of numbered steps on a rail, each step's tokens drawn as a bar against the run's largest step, tool calls folded to one line each, and a delegation nested under the call that made it. The system as recorded here is what that screen, the shell and the states gallery ship. Home, Runs, Sessions list, Approvals, Agents, MCP servers, Skills, Channels, Graph, Team settings, Teams, Deleted teams and Sign in sit inside the new shell but still carry their pre-redesign internals; they are not evidence for this system and should be brought into it, not copied from.
 
 **Key Characteristics:**
 - A frame and a sheet, told apart by tone and a 1px edge, never by shadow.
@@ -239,7 +239,7 @@ Warm graphite paper with a single cool teal: BRAND's Spectral palette, copied in
 
 ## Layout
 
-**The frame.** From 768px the shell is a two-column, two-row grid: a 228px sidebar spanning both rows, a 48px top bar, and the sheet in the remaining cell, inset 8px from the window's right and bottom edges. The sidebar and the top bar share the frame's ground with no line between them. Inside the sheet, content is padded 24px; below 768px the sheet is the whole screen, padded 16px across and 20px down, and the top bar becomes a sticky 48px strip with the menu button, the mark and the team picker.
+**The frame.** The shell has three layouts, chosen by width. From 1280px it is a two-column, two-row grid: a 228px sidebar spanning both rows, grouped by job (Work, Build, Understand, Team), a 48px top bar, and the sheet in the remaining cell, inset 8px from the window's right and bottom edges. From 768px to 1279px the sidebar folds to a 56px rail of icons, each named in a tooltip, with a dot on Approvals while someone waits. The sidebar or rail and the top bar share the frame's ground with no line between them. Inside the sheet, content is padded 24px; below 768px the sheet is the whole screen, padded 16px across and 20px down, the top bar becomes a sticky 48px strip with the mark, the team picker and search, and a bar is fixed to the bottom.
 
 **The reference screen.** A title row (breadcrumb, headline, a status line of state, kind and times joined by middle dots), then two halves. At 1280px and wider they sit side by side, conversation on the left (two fifths) and the run on the right (three fifths), 32px apart. Narrower, they stack behind a line of tabs (Conversation, Runs) that the URL remembers.
 
@@ -301,7 +301,7 @@ Quiet, compact, one filled button at most per view.
 
 ### Navigation
 - **Sidebar:** 36px rows, 14px Muted Slate text and a 16px icon, 8px radius. Hover lays the sheet at 60%. The current item becomes a small piece of sheet (Paper fill, inset sheet-edge ring, 500 Graphite text) with its icon in teal.
-- **Phone:** a menu button opens the same list in a 288px sheet from the left over a 40% scrim.
+- **Phone:** a bar fixed to the bottom holds Home, Runs, Approvals and More; More opens the rest of the list in a sheet that rises from the bottom, up to 85% of the screen's height.
 - **Tabs (narrow screens):** a line of tabs over a rule; the current tab is Graphite with a 2px Graphite underline, the rest Muted Slate. A count sits in a small Stone pill.
 
 ### Run row

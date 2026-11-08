@@ -48,27 +48,27 @@ Commands use the second. The CLI has to tell 403 from 404 to say anything
 useful, and the typed variant parses a body per status code:
 
 ```go
-	res, err := api.ListTeamsWithResponse(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if res.JSON200 == nil {
-		return apiError(res.HTTPResponse, res.Body)
-	}
+	page, err := cli.Result(api.ListTeamsWithResponse(ctx, params))
 ```
 
-`err` is a transport failure — the request never completed. A non-2xx status is
-**not** an error here; `res.JSON200` being nil is how you find out. Treating
-`err == nil` as success is the mistake this shape invites.
+`err` from the generated call is a transport failure — the request never
+completed. A non-2xx status is **not** an error there; the typed body being nil
+is how you find out, which is the check `cli.Result` makes for you and turns
+into `cli.APIError` (`response.go`). Treating `err == nil` as success is the
+mistake the raw shape invites.
 
 ## Settings that are load-bearing
 
-`oapi-codegen.yaml` is short, and two lines in it are not cosmetic:
+`oapi-codegen.yaml` is short, and three lines in it are not cosmetic:
 
 - **`name-normalizer: ToCamelCaseWithInitialisms`** — initialisms keep one case,
   so the generated names are `UserID` and `ClientID`. Without it they are
   `UserId` and `ClientId`, which is the one place in the repository that breaks
   `revive`'s `var-naming`, and every call site inherits the wrong spelling.
+- **`yaml-tags: true`** — `oa ... -o yaml` renders the generated types, and
+  `yaml.v3` does not read json tags. Without it `-o yaml` shows `userid` for
+  `user_id` and ignores `omitempty`. The generated yaml tag mirrors the json
+  name and its `omitempty`.
 - **`package: client` / `output: internal/client/client.gen.go`** — one file,
   one package, never edited by hand. `.golangci.yml` excludes it from
   `bodyclose`, `errcheck`, `gocritic`, `gosec`, `revive` and `unparam`, because
@@ -100,7 +100,7 @@ It also means a clone builds without the generator installed.
   `next_cursor` generates as a struct with those fields; looping is the
   command's job.
 - **A generated field is not a view.** Do not print the generated struct
-  directly — build a view in `views.go`, so the printed shape does not change
+  directly — build a view type in the command's package, so the printed shape does not change
   the day the wire shape does. The exception is a page envelope, which is
   printed as it arrived so `items` and `next_cursor` survive.
 

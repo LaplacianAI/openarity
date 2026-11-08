@@ -10,7 +10,7 @@ the module itself.
 
 ```sh
 make run        # sources .env if present, Ctrl-C to shut down gracefully
-make build      # compile into ./bin
+make build      # compile everything (go build ./..., writes no binary)
 ```
 
 Requires Go 1.26.10 and a Postgres 13 or newer — 13 is where `gen_random_uuid()`
@@ -51,11 +51,11 @@ make migration name=add_tenants  # scaffold a timestamped migration
 ## The gate
 
 ```sh
-make check db=postgres    # tidy, generate, format, vet, lint, build, test
+make check db=postgres    # tidy-check, generate-check, fmt-check, vet, lint, build, cover, vuln
 ```
 
-Run it before saying anything is done. CI runs the same thing plus `make cover`
-and `make vuln` against a Postgres service container, in the `brain` job of
+Run it before saying anything is done. CI runs the same steps, one by one,
+against a Postgres service container, in the `brain` job of
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
 
 **Always pass `db=` when measuring coverage.** Tests that need a database skip

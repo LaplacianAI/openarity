@@ -1,6 +1,6 @@
 ---
 name: add-middleware
-description: Add an HTTP middleware to the brain — request logging, authentication, request IDs, panic recovery, rate limiting, body size limits, or anything else that wraps a handler. Covers the signature, wiring into both listeners, chain order, and the tests, so it cannot end up built but never applied.
+description: Add an HTTP middleware to the brain — request logging, authentication, user resolution, rate limiting, or anything else that wraps a handler. Covers the signature, wiring into both listeners, chain order, and the tests, so it cannot end up built but never applied.
 ---
 
 # Add a middleware to `internal/middleware`
@@ -24,7 +24,8 @@ One middleware per file, named after what it does:
 ```text
 internal/middleware/middleware.go   the Middleware type, shared helpers
 internal/middleware/logging.go      LogRequests
-internal/middleware/auth.go         RequireSession
+internal/middleware/auth.go         Authenticate
+internal/middleware/identity.go     ResolveUser
 ```
 
 Anything used by exactly one middleware — a response wrapper, a header
@@ -36,7 +37,7 @@ when a second file needs it.
 Dependencies in the outer call, the handler in the inner one:
 
 ```go
-func RequireSession(store *store.Sessions) Middleware {
+func Authenticate(v auth.Verifier) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// ... work before
@@ -47,18 +48,18 @@ func RequireSession(store *store.Sessions) Middleware {
 }
 ```
 
-Never `func RequireSession(store *store.Sessions, next http.Handler)`. The
+Never `func Authenticate(v auth.Verifier, next http.Handler)`. The
 two-argument form nests inside-out and becomes unreadable at three:
 
 ```go
-LogRequests(logger, RequestID(RecoverPanic(logger, RequireSession(store, mux))))
+LogRequests(logger, Authenticate(v, ResolveUser(r, logger, mux)))
 ```
 
 The closure form lets each middleware take its own dependencies and still chain
 in reading order.
 
-Name it for what it does to the request — `RequireSession`, `LogRequests`,
-`LimitBody`. Not `AuthMiddleware`: the package name is already `middleware`, so
+Name it for what it does to the request — `Authenticate`, `ResolveUser`,
+`LogRequests`. Not `AuthMiddleware`: the package name is already `middleware`, so
 `middleware.AuthMiddleware` stutters.
 
 ## Step 3 — wrapping the response
@@ -97,7 +98,7 @@ wrapper copies.
 never calls `WriteHeader` — Go sends 200 implicitly. Start at 0 and every
 successful request records status 0.
 
-`internal/server` already has one `recorder` in `logging.go`. If a second
+`internal/middleware/logging.go` already has one `recorder`. If a second
 middleware needs the same thing, move it to `middleware.go` rather than
 declaring another.
 
@@ -108,22 +109,20 @@ an exported identifier has a caller in another package, so a middleware that is
 built and never applied passes `make check` completely.
 
 ```go
-func New(cfg *config.Config, logger *slog.Logger) *Server {
-	logRequests := middleware.LogRequests(logger)
-
-	return &Server{
-		api:     newHTTPServer(cfg.APIBind, logRequests(apiHandler())),
-		webhook: newHTTPServer(cfg.WebhookBind, logRequests(webhookHandler())),
-		logger:  logger,
-	}
-}
+// internal/server/server.go, trimmed
+logRequests := middleware.LogRequests(logger)
+s.api = newHTTPServer(cfg.APIBind, logRequests(s.apiHandler()))
+s.webhook = newHTTPServer(cfg.WebhookBind, logRequests(s.webhookHandler()))
 ```
 
-Decide deliberately whether it applies to **both** listeners. Session auth is
-API-only — the webhook listener authenticates by request signature, not by
-credentials, and wrapping it in session auth would reject every provider.
+`Authenticate` and `ResolveUser` are applied inside `apiHandler()`
+(`internal/server/api.go`), around the protected mux only.
 
-Once there is a second middleware, add `Chain` and list them in order rather
+Decide deliberately whether it applies to **both** listeners. Authentication
+is API-only — the webhook listener authenticates by request signature, not by
+credentials, and wrapping it in `Authenticate` would reject every provider.
+
+Once there are more middleware, add `Chain` and list them in order rather
 than nesting.
 
 ## Step 5 — order
@@ -132,11 +131,13 @@ Order is behaviour, not style. Outermost first:
 
 | Position | Middleware | Why there |
 |---|---|---|
-| outermost | `RecoverPanic` | must catch panics from everything inside it, including other middleware |
-| | `RequestID` | later middleware and handlers log the id, so it has to exist first |
-| | `LogRequests` | inside RequestID so the id is on the line; outside auth so rejected requests are still logged |
-| | `LimitBody` | before anything reads the body |
-| innermost | `RequireSession` | last, so a 401 is still logged and still has an id |
+| outermost | `LogRequests` | outside authentication so rejected requests are still logged |
+| | `Authenticate` | verifies the token and puts the `Principal` in the context |
+| innermost | `ResolveUser` | needs the `Principal`, so it runs after `Authenticate` |
+
+If one is added, it goes where its job says: a panic recoverer outermost so it
+catches everything inside it, a request id before `LogRequests` so the id is
+on the line, a body limit before anything reads the body.
 
 The rule: anything that must observe a request it might reject goes **outside**
 the thing that rejects it.
@@ -151,7 +152,8 @@ the thing that rejects it.
 - **Skip `/healthz`** in anything that logs. Kubernetes probes it every ten
   seconds on two listeners — roughly 17k lines a day. Let the response through
   untouched; only the log is skipped.
-- **Do not swallow panics** unless the middleware is `RecoverPanic`. Recovering
+- **Do not swallow panics** unless the middleware exists to recover them (none
+  does today). Recovering
   and continuing leaves a half-written response.
 
 ## Step 7 — tests
@@ -165,7 +167,7 @@ middleware needs at least these four:
    a handler that sets all three. A response wrapper that swallows the body is
    easy to write and invisible until production.
 3. **It handles the implicit 200** — a handler that only calls `Write`.
-4. **It passes panics through**, unless it is `RecoverPanic`.
+4. **It passes panics through**, unless it exists to recover them.
 
 Then the wiring test in `internal/server/server_test.go`. Extend
 `TestNewWrapsBothListenersInTheRequestLogger` or add its equivalent — build a
@@ -183,4 +185,5 @@ behaviour.
 cd apps/brain && make check && make cover
 ```
 
-Coverage is at 100%. A middleware with an untested branch will drop it.
+`make cover` fails below `COVER_MIN` (70, in the `Makefile`). A middleware with
+an untested branch lowers the total.
