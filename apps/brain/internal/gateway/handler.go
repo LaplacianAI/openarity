@@ -5,9 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"maps"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,8 +45,8 @@ func New(
 	h := &handler{logger: logger, store: s, secrets: sec, sink: sink, ingest: ingest}
 
 	r := api.NewPublicRouter("/hooks")
-	for _, name := range slices.Sorted(maps.Keys(reg)) {
-		p := reg[name]
+	for _, name := range reg.Names() {
+		p, _ := reg.Get(name)
 		for _, rt := range p.Routes() {
 			r.Handle(rt.Method, "/"+name+"/{channel_id}"+rt.Suffix, h.hook(p, rt))
 		}

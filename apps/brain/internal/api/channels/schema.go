@@ -12,6 +12,7 @@ type channel struct {
 	Provider string    `json:"provider"`
 	Name     string    `json:"name"`
 	HookURL  string    `json:"hook_url,omitempty"`
+	ReplyURL string    `json:"reply_url,omitempty"`
 }
 
 // listedChannel is a row of the channels list: the channel, and how recently
@@ -27,6 +28,11 @@ type createRequest struct {
 	Name     string `json:"name"`
 
 	SigningSecret *string `json:"signing_secret,omitempty"`
+	ReplyURL      *string `json:"reply_url,omitempty"`
+}
+
+type updateRequest struct {
+	ReplyURL nullableString `json:"reply_url"`
 }
 
 type created struct {

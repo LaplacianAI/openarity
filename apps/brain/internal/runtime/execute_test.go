@@ -1679,3 +1679,91 @@ func TestTheDelegatedEventWaitsForItsCall(t *testing.T) {
 		t.Errorf("the parent's call events = %v, want each tool_call, delegated, tool_result in turn", calls)
 	}
 }
+
+// --- the reply ---
+
+// kicks records the runs whose replies the executor asked to have sent.
+type kicks struct {
+	mu   sync.Mutex
+	runs []uuid.UUID
+	err  error
+}
+
+func (k *kicks) kick(id uuid.UUID) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.runs = append(k.runs, id)
+	return k.err
+}
+
+func (k *kicks) got() []uuid.UUID {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return slices.Clone(k.runs)
+}
+
+func (f *execFixture) answersAChannel(t *testing.T) *kicks {
+	t.Helper()
+	f.mustExec(t, `UPDATE runs SET reply_to_channel = true WHERE id = $1`, f.run)
+	k := &kicks{}
+	f.exec.kickReply = k.kick
+	return k
+}
+
+// A channel run's reply is sent as soon as its finish commits, not at the
+// next sweep. Failing is still a reply: the apology.
+func TestAChannelRunKicksItsReply(t *testing.T) {
+	for name, model := range map[string]*scripted{
+		"ok":     newScripted(answer("42", 1, 1)),
+		"failed": newScripted(turn{err: errors.New("model down")}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newExecFixture(t, model)
+			k := f.answersAChannel(t)
+
+			f.mustExecute(t)
+
+			if got := k.got(); len(got) != 1 || got[0] != f.run {
+				t.Errorf("kicked %v, want [%s]", got, f.run)
+			}
+		})
+	}
+}
+
+// Someone stopped it on purpose, and a cancelled run writes no reply.
+func TestACancelledChannelRunKicksNothing(t *testing.T) {
+	f := newExecFixture(t, newScripted(blocked()))
+	k := f.answersAChannel(t)
+	f.onFirstCall(t, `UPDATE runs SET cancel_requested_at = now() WHERE id = $1`)
+
+	f.mustExecute(t)
+
+	if got := k.got(); len(got) != 0 {
+		t.Errorf("a cancelled run kicked %v", got)
+	}
+}
+
+// A run started from the dashboard answers there, not in a conversation.
+func TestARunThatAnswersNoChannelKicksNothing(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("42", 1, 1)))
+	k := &kicks{}
+	f.exec.kickReply = k.kick
+
+	f.mustExecute(t)
+
+	if got := k.got(); len(got) != 0 {
+		t.Errorf("a dashboard run kicked %v", got)
+	}
+}
+
+// The kick is a shortcut. Failing it leaves the reply to the sweep and the
+// run succeeded all the same.
+func TestAFailedKickDoesNotFailTheRun(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("42", 1, 1)))
+	k := f.answersAChannel(t)
+	k.err = errors.New("dbos unavailable")
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+}

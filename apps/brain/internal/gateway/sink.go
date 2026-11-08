@@ -9,6 +9,9 @@ import (
 type Channel struct {
 	ID     uuid.UUID
 	TeamID uuid.UUID
+	// ReplyURL is where a provider that posts replies to a URL sends them.
+	// Empty is a channel that does not reply.
+	ReplyURL string
 }
 
 type Delivery struct {

@@ -12,6 +12,118 @@ import (
 	"github.com/google/uuid"
 )
 
+const claimDueReplies = `-- name: ClaimDueReplies :many
+WITH claimed AS (
+    UPDATE replies r
+    SET attempts = r.attempts + 1,
+        next_attempt_at = now() + make_interval(secs => $1::float8)
+    WHERE r.id IN (
+        SELECT d.id FROM replies d
+        WHERE d.status = 'pending' AND d.next_attempt_at <= now()
+          AND NOT EXISTS (
+              SELECT 1 FROM replies o
+              WHERE o.session_id = d.session_id AND o.status = 'pending' AND o.id < d.id)
+        ORDER BY d.next_attempt_at, d.id
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED)
+    RETURNING r.id, r.team_id, r.run_id, r.session_id, r.channel_id, r.in_reply_to, r.kind, r.text, r.status, r.attempts, r.last_error, r.next_attempt_at, r.created_at, r.sent_at
+)
+SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts,
+       ch.provider, ch.reply_url,
+       s.provider_ref AS session_ref, s.kind AS session_kind,
+       m.external_id AS in_reply_to
+FROM claimed c
+JOIN channels ch ON ch.id = c.channel_id
+JOIN sessions s ON s.id = c.session_id
+LEFT JOIN messages m ON m.id = c.in_reply_to
+ORDER BY c.id
+`
+
+type ClaimDueRepliesParams struct {
+	LeaseSeconds float64
+	BatchSize    int32
+}
+
+type ClaimDueRepliesRow struct {
+	ID          int64
+	RunID       uuid.UUID
+	TeamID      uuid.UUID
+	ChannelID   uuid.UUID
+	Kind        string
+	Text        string
+	Attempts    int32
+	Provider    string
+	ReplyUrl    *string
+	SessionRef  *string
+	SessionKind string
+	InReplyTo   *string
+}
+
+// The replies due now, at most one per conversation: the oldest still pending.
+// A conversation is read in order, so a reply waiting to be retried holds back
+// the ones after it, and only those.
+//
+// A claim is a committed mark, not a held lock: the sender posts to the
+// provider between claiming and marking, and a transaction held open across
+// that would hold a connection for as long as the provider is slow. The claim
+// pushes next_attempt_at out by the lease, so nobody else takes the reply while
+// it is being sent, and a sender that died with it is retried once the lease
+// runs out. SKIP LOCKED only keeps two senders from claiming one row at once.
+//
+// attempts is the claim's own number. The marks below match on it, so a
+// sender whose lease ran out cannot mark a newer attempt.
+func (q *Queries) ClaimDueReplies(ctx context.Context, arg ClaimDueRepliesParams) ([]ClaimDueRepliesRow, error) {
+	rows, err := q.db.Query(ctx, claimDueReplies, arg.LeaseSeconds, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimDueRepliesRow
+	for rows.Next() {
+		var i ClaimDueRepliesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.TeamID,
+			&i.ChannelID,
+			&i.Kind,
+			&i.Text,
+			&i.Attempts,
+			&i.Provider,
+			&i.ReplyUrl,
+			&i.SessionRef,
+			&i.SessionKind,
+			&i.InReplyTo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const giveUpReply = `-- name: GiveUpReply :execrows
+UPDATE replies SET status = 'failed', last_error = $1::text
+WHERE id = $2 AND status = 'pending' AND attempts = $3
+`
+
+type GiveUpReplyParams struct {
+	Error    string
+	ID       int64
+	Attempts int32
+}
+
+func (q *Queries) GiveUpReply(ctx context.Context, arg GiveUpReplyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, giveUpReply, arg.Error, arg.ID, arg.Attempts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertReply = `-- name: InsertReply :one
 INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text)
 SELECT r.team_id, r.id, r.session_id, s.channel_id,
@@ -112,4 +224,49 @@ func (q *Queries) ListSessionTurns(ctx context.Context, arg ListSessionTurnsPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const replySent = `-- name: ReplySent :execrows
+UPDATE replies SET status = 'sent', sent_at = now(), last_error = NULL
+WHERE id = $1 AND status = 'pending' AND attempts = $2
+`
+
+type ReplySentParams struct {
+	ID       int64
+	Attempts int32
+}
+
+func (q *Queries) ReplySent(ctx context.Context, arg ReplySentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, replySent, arg.ID, arg.Attempts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retryReply = `-- name: RetryReply :execrows
+UPDATE replies
+SET last_error = $1::text,
+    next_attempt_at = now() + make_interval(secs => $2::float8)
+WHERE id = $3 AND status = 'pending' AND attempts = $4
+`
+
+type RetryReplyParams struct {
+	Error        string
+	RetrySeconds float64
+	ID           int64
+	Attempts     int32
+}
+
+func (q *Queries) RetryReply(ctx context.Context, arg RetryReplyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, retryReply,
+		arg.Error,
+		arg.RetrySeconds,
+		arg.ID,
+		arg.Attempts,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

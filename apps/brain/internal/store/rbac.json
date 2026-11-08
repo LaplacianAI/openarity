@@ -237,6 +237,12 @@
       "permission": "channel:write"
     },
     {
+      "method": "PATCH",
+      "path": "/teams/{id}/channels/{channelID}",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+    {
       "method": "DELETE",
       "path": "/teams/{id}/channels/{channelID}",
       "scope": "team",

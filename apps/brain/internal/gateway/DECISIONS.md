@@ -190,6 +190,25 @@ that succeeds and is wrong. The suite asserts uniqueness; adapters that build a
 ref with a fallback have to check the *computed* ref, because an id can collide
 with another attachment's fallback form.
 
+## A reply is built by the adapter and sent by the gateway
+
+Considered: `Reply(ctx, ch, out, creds) error`, the adapter posting with an
+HTTP client it was given. Refused because it hands every adapter — code
+written against someone else's documentation, often by whoever wanted that
+platform — a client that can reach the network, which is the capability this
+package exists to withhold. The pure form keeps the address check, the
+no-redirect rule and the error text that reaches `last_error` in one place,
+and makes `Reply` testable the way `Parse` is.
+
+What it costs: a provider that answers 200 with an error in the body (Slack's
+`"ok": false`) needs one more optional method to read the response. Nothing
+needs it yet, so it does not exist.
+
+Ordering is a claim condition rather than a worker per conversation. The
+tombstone sweep's rule — no ordering, because deletes commute — does not hold
+for replies, and a `NOT EXISTS` over the session's older pending replies gives
+the order without a partition scheme to run.
+
 ## Settled: who may read a direct session
 
 **Its participant, plus anyone holding `session:read_all` in the team.** A

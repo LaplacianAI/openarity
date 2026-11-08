@@ -34,11 +34,19 @@ type Job struct {
 	logger   *slog.Logger
 	dbos     dbos.Context
 	restart  func(uuid.UUID) error
+	kick     func(dbos.Client, uuid.UUID) error
 }
 
 func RunJob(e *Executor, s SweepStore, logger *slog.Logger) *Job {
 	j := &Job{executor: e, store: s, logger: logger}
 	j.restart = j.restartRun
+	return j
+}
+
+// SendsReplies has a channel run's reply sent as soon as the run finishes,
+// through kick. Without it replies wait for their sweep.
+func (j *Job) SendsReplies(kick func(dbos.Client, uuid.UUID) error) *Job {
+	j.kick = kick
 	return j
 }
 
@@ -56,6 +64,9 @@ func (j *Job) Register(d dbos.Context) ([]dbos.ScheduleSpec, error) {
 	dbos.RegisterWorkflow(d, j.sweep, dbos.WithWorkflowName(sweepWorkflow))
 	j.dbos = d
 	j.executor.enqueue = func(id uuid.UUID) error { return enqueue(d, id) }
+	if j.kick != nil {
+		j.executor.kickReply = func(id uuid.UUID) error { return j.kick(d, id) }
+	}
 
 	return []dbos.ScheduleSpec{j.schedule()}, nil
 }

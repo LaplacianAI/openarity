@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -55,9 +56,22 @@ func (f *fakeStore) CreateChannel(_ context.Context, arg db.CreateChannelParams)
 	if f.err != nil {
 		return db.Channel{}, f.err
 	}
-	row := db.Channel{ID: uuid.New(), TeamID: arg.TeamID, Provider: arg.Provider, Name: arg.Name}
+	row := db.Channel{ID: uuid.New(), TeamID: arg.TeamID, Provider: arg.Provider, Name: arg.Name, ReplyUrl: arg.ReplyUrl}
 	f.channels = append(f.channels, row)
 	return row, nil
+}
+
+func (f *fakeStore) SetChannelReplyURL(_ context.Context, arg db.SetChannelReplyURLParams) (db.Channel, error) {
+	if f.err != nil {
+		return db.Channel{}, f.err
+	}
+	for i, c := range f.channels {
+		if c.ID == arg.ID && c.TeamID == arg.TeamID {
+			f.channels[i].ReplyUrl = arg.ReplyUrl
+			return f.channels[i], nil
+		}
+	}
+	return db.Channel{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) GetChannel(_ context.Context, id uuid.UUID) (db.Channel, error) {
@@ -192,6 +206,7 @@ func channelRoutes(t *testing.T) authz.Routes {
 	write := "channel:write"
 	add("GET", "/teams/{id}/channels", "member", nil)
 	add("POST", "/teams/{id}/channels", "team", &write)
+	add("PATCH", "/teams/{id}/channels/{channelID}", "team", &write)
 	add("DELETE", "/teams/{id}/channels/{channelID}", "team", &write)
 
 	read, approve := "channel:read", "sender:approve"
@@ -203,6 +218,9 @@ func channelRoutes(t *testing.T) authz.Routes {
 	add("GET", "/teams/{id}/senders/pending", "team", &read)
 	return rs
 }
+
+// publicOnly is the brain with no private networks named.
+func publicOnly(a netip.Addr) bool { return !a.IsPrivate() && !a.IsLoopback() && !a.IsUnspecified() }
 
 func registry(t *testing.T) gateway.Registry {
 	t.Helper()
@@ -229,7 +247,7 @@ func callWith(
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), s, a, sec, p, hookBase).
+	New(discardLogger(), s, a, sec, p, hookBase, publicOnly).
 		Register(mux, api.NewGuard(channelRoutes(t), a, liveTeams{}, discardLogger()))
 
 	var reader io.Reader
@@ -831,6 +849,11 @@ type providers map[string]gateway.Provider
 func (p providers) Get(name string) (gateway.Provider, bool) {
 	v, ok := p[name]
 	return v, ok
+}
+
+func (p providers) Replier(name string) (gateway.Replier, bool) {
+	rp, ok := p[name].(gateway.Replier)
+	return rp, ok
 }
 
 func TestAChannelCarriesTheURLItsProviderPostsTo(t *testing.T) {

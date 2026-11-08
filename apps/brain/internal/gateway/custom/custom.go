@@ -203,3 +203,53 @@ func (a attachment) ref(i int) string {
 	}
 	return "#" + strconv.Itoa(i)
 }
+
+// SignReply signs a reply the way Sign signs a message, under its own prefix:
+// a reply someone captured cannot be posted back to the webhook as a message
+// and pass Verify.
+func SignReply(secret, timestamp string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	fmt.Fprintf(mac, "reply:v1:%s:", timestamp)
+	mac.Write(body)
+	return "v1=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+type replyBody struct {
+	ID      string `json:"id"`
+	Session struct {
+		Ref  string `json:"ref"`
+		Kind string `json:"kind"`
+	} `json:"session"`
+	InReplyTo string `json:"in_reply_to,omitempty"`
+	Kind      string `json:"kind"`
+	Text      string `json:"text"`
+}
+
+// Reply is the signed POST of out to the channel's reply URL. The id lets the
+// receiver drop a repeat: the same reply is sent again when an attempt's
+// answer was lost.
+func (provider) Reply(
+	ch gateway.Channel, out gateway.Outbound, creds gateway.Credentials, at time.Time,
+) (gateway.OutboundRequest, error) {
+	secret := creds.Get(gateway.KeySigning)
+	switch {
+	case ch.ReplyURL == "":
+		return gateway.OutboundRequest{}, errors.New("custom: the channel has no reply URL")
+	case secret == "":
+		return gateway.OutboundRequest{}, errors.New("custom: no signing secret")
+	}
+
+	b := replyBody{ID: out.ID, InReplyTo: out.InReplyTo, Kind: out.Kind, Text: out.Text}
+	b.Session.Ref, b.Session.Kind = out.Session.Ref, string(out.Session.Kind)
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return gateway.OutboundRequest{}, fmt.Errorf("custom: encoding the reply: %w", err)
+	}
+
+	ts := strconv.FormatInt(at.Unix(), 10)
+	h := http.Header{}
+	h.Set("Content-Type", "application/json")
+	h.Set(HeaderTimestamp, ts)
+	h.Set(HeaderSignature, SignReply(secret, ts, raw))
+	return gateway.OutboundRequest{URL: ch.ReplyURL, Header: h, Body: raw}, nil
+}

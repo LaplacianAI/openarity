@@ -162,8 +162,8 @@ func TestTheWorkerDoesNotDrainWhenNoModelIsSet(t *testing.T) {
 	}
 	closeJobs()
 
-	if got := jobNames(jobs); !slices.Equal(got, []string{"reaper.sweep", "teams.purge", "runtime"}) {
-		t.Errorf("jobs = %v, want the reaper's, the purge and the runtime's", got)
+	if got := jobNames(jobs); !slices.Equal(got, []string{"reaper.sweep", "teams.purge", "gateway.replies", "runtime"}) {
+		t.Errorf("jobs = %v, want the reaper's, the purge, the replies and the runtime's", got)
 	}
 	if !strings.Contains(logs.String(), "EMBEDDING_MODEL is not set") || !strings.Contains(logs.String(), "level=WARN") {
 		t.Errorf("the worker did not say the graph is not being projected:\n%s", logs.String())
@@ -182,8 +182,8 @@ func TestTheWorkerDrainsWhenAModelIsSet(t *testing.T) {
 	}
 	t.Cleanup(closeJobs)
 
-	if got := jobNames(jobs); !slices.Equal(got, []string{"reaper.sweep", "teams.purge", "runtime", "graph.drain"}) {
-		t.Errorf("jobs = %v, want the reaper's, the purge, the runtime's and the drain", got)
+	if got := jobNames(jobs); !slices.Equal(got, []string{"reaper.sweep", "teams.purge", "gateway.replies", "runtime", "graph.drain"}) {
+		t.Errorf("jobs = %v, want the reaper's, the purge, the replies, the runtime's and the drain", got)
 	}
 	if strings.Contains(logs.String(), "not being projected") {
 		t.Error("the worker said the graph is not projected, with a model set")

@@ -558,7 +558,14 @@ type Channel struct {
 	//
 	//
 	// Examples: custom
-	Provider string             `json:"provider" yaml:"provider"`
+	Provider string `json:"provider" yaml:"provider"`
+
+	// ReplyURL Where the team's replies to this channel's conversations are
+	// posted. Absent for a channel that does not reply.
+	//
+	//
+	// Examples: https://support.example.com/openarity/replies
+	ReplyURL *string            `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
 	TeamID   openapi_types.UUID `json:"team_id" yaml:"team_id"`
 }
 
@@ -595,6 +602,13 @@ type CreateChannelRequest struct {
 
 	// Provider Examples: custom
 	Provider string `json:"provider" yaml:"provider"`
+
+	// ReplyURL Where replies are posted, for a provider that sends them; see
+	// `updateChannel` for what is accepted and what is sent.
+	//
+	//
+	// Examples: https://support.example.com/openarity/replies
+	ReplyURL *string `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
 
 	// SigningSecret The provider's own signing secret, when the provider issues one.
 	// Omit it to have the server generate a strong one and return it
@@ -637,6 +651,13 @@ type CreatedChannel struct {
 	//
 	// Examples: custom
 	Provider string `json:"provider" yaml:"provider"`
+
+	// ReplyURL Where the team's replies to this channel's conversations are
+	// posted. Absent for a channel that does not reply.
+	//
+	//
+	// Examples: https://support.example.com/openarity/replies
+	ReplyURL *string `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
 
 	// SigningSecret Present only when the server generated it, and only in this
 	// response. It is never returned again by any endpoint.
@@ -770,6 +791,13 @@ type ListedChannel struct {
 	//
 	// Examples: custom
 	Provider string `json:"provider" yaml:"provider"`
+
+	// ReplyURL Where the team's replies to this channel's conversations are
+	// posted. Absent for a channel that does not reply.
+	//
+	//
+	// Examples: https://support.example.com/openarity/replies
+	ReplyURL *string `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
 
 	// Sessions24H Its sessions with a message in the last 24 hours, on the brain's clock
 	Sessions24H int64              `json:"sessions_24h" yaml:"sessions_24h"`
@@ -1549,6 +1577,12 @@ type TeamSummary struct {
 	WaitingSenders int64 `json:"waiting_senders" yaml:"waiting_senders"`
 }
 
+// UpdateChannelRequest defines model for UpdateChannelRequest.
+type UpdateChannelRequest struct {
+	// ReplyURL The URL replies go to, or null to stop sending them
+	ReplyURL string `json:"reply_url" yaml:"reply_url"`
+}
+
 // User defines model for User.
 type User struct {
 	// Email Absent when the provider released none
@@ -1903,6 +1937,9 @@ type ReplaceAgentJSONRequestBody = AgentRequest
 // CreateChannelJSONRequestBody defines body for CreateChannel for application/json ContentType.
 type CreateChannelJSONRequestBody = CreateChannelRequest
 
+// UpdateChannelJSONRequestBody defines body for UpdateChannel for application/json ContentType.
+type UpdateChannelJSONRequestBody = UpdateChannelRequest
+
 // ApproveChannelSenderJSONRequestBody defines body for ApproveChannelSender for application/json ContentType.
 type ApproveChannelSenderJSONRequestBody = ApproveSenderRequest
 
@@ -2229,6 +2266,54 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateChannelWithBody Set where a channel's replies go
+	//
+	// Requires `channel:write` in this team. `reply_url` is required: a URL
+	// sets it, `null` clears it, and a reply waiting to be sent to a channel
+	// with none fails rather than waiting for one.
+	//
+	// The URL must be http or https with a host, and carry no credentials,
+	// query or fragment: every member can read it, and the receiver
+	// authenticates a reply by its signature. A literal private, loopback or
+	// link-local address is refused here, and a name resolving to one is
+	// refused when the reply is sent.
+	//
+	// A reply is a POST of `{"id", "session": {"ref", "kind"},
+	// "in_reply_to", "kind", "text"}`, signed as a webhook is, with
+	// `X-Openarity-Timestamp` and `X-Openarity-Signature`, the HMAC-SHA256
+	// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
+	// anything else is retried for about two and a half hours. A reply can
+	// arrive twice; drop a repeat by `id`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
+	UpdateChannelWithBody(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateChannel Set where a channel's replies go
+	//
+	// Requires `channel:write` in this team. `reply_url` is required: a URL
+	// sets it, `null` clears it, and a reply waiting to be sent to a channel
+	// with none fails rather than waiting for one.
+	//
+	// The URL must be http or https with a host, and carry no credentials,
+	// query or fragment: every member can read it, and the receiver
+	// authenticates a reply by its signature. A literal private, loopback or
+	// link-local address is refused here, and a name resolving to one is
+	// refused when the reply is sent.
+	//
+	// A reply is a POST of `{"id", "session": {"ref", "kind"},
+	// "in_reply_to", "kind", "text"}`, signed as a webhook is, with
+	// `X-Openarity-Timestamp` and `X-Openarity-Signature`, the HMAC-SHA256
+	// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
+	// anything else is retried for about two and a half hours. A reply can
+	// arrive twice; drop a repeat by `id`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
+	UpdateChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, body UpdateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RemoveChannelSender Remove a sender, or dismiss a pending one
 	//
@@ -3442,6 +3527,74 @@ func (c *Client) CreateChannel(ctx context.Context, id TeamID, body CreateChanne
 // Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 func (c *Client) DeleteChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteChannelRequest(c.Server, id, channelID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateChannelWithBody Set where a channel's replies go
+//
+// Requires `channel:write` in this team. `reply_url` is required: a URL
+// sets it, `null` clears it, and a reply waiting to be sent to a channel
+// with none fails rather than waiting for one.
+//
+// The URL must be http or https with a host, and carry no credentials,
+// query or fragment: every member can read it, and the receiver
+// authenticates a reply by its signature. A literal private, loopback or
+// link-local address is refused here, and a name resolving to one is
+// refused when the reply is sent.
+//
+// A reply is a POST of `{"id", "session": {"ref", "kind"},
+// "in_reply_to", "kind", "text"}`, signed as a webhook is, with
+// `X-Openarity-Timestamp` and `X-Openarity-Signature`, the HMAC-SHA256
+// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
+// anything else is retried for about two and a half hours. A reply can
+// arrive twice; drop a repeat by `id`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
+func (c *Client) UpdateChannelWithBody(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateChannelRequestWithBody(c.Server, id, channelID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateChannel Set where a channel's replies go
+//
+// Requires `channel:write` in this team. `reply_url` is required: a URL
+// sets it, `null` clears it, and a reply waiting to be sent to a channel
+// with none fails rather than waiting for one.
+//
+// The URL must be http or https with a host, and carry no credentials,
+// query or fragment: every member can read it, and the receiver
+// authenticates a reply by its signature. A literal private, loopback or
+// link-local address is refused here, and a name resolving to one is
+// refused when the reply is sent.
+//
+// A reply is a POST of `{"id", "session": {"ref", "kind"},
+// "in_reply_to", "kind", "text"}`, signed as a webhook is, with
+// `X-Openarity-Timestamp` and `X-Openarity-Signature`, the HMAC-SHA256
+// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
+// anything else is retried for about two and a half hours. A reply can
+// arrive twice; drop a repeat by `id`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
+func (c *Client) UpdateChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, body UpdateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateChannelRequest(c.Server, id, channelID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5459,6 +5612,60 @@ func NewDeleteChannelRequest(server string, id TeamID, channelID openapi_types.U
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewUpdateChannelRequest calls the generic UpdateChannel builder with application/json body
+func NewUpdateChannelRequest(server string, id TeamID, channelID openapi_types.UUID, body UpdateChannelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateChannelRequestWithBody(server, id, channelID, "application/json", bodyReader)
+}
+
+// NewUpdateChannelRequestWithBody constructs an http.Request for the UpdateChannel method, with any body, and a specified content type
+func NewUpdateChannelRequestWithBody(server string, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "channelID", channelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/channels/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -8221,6 +8428,54 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteChannelResponse, error)
 
+	// UpdateChannelWithBodyWithResponse Set where a channel's replies go
+	//
+	// Requires `channel:write` in this team. `reply_url` is required: a URL
+	// sets it, `null` clears it, and a reply waiting to be sent to a channel
+	// with none fails rather than waiting for one.
+	//
+	// The URL must be http or https with a host, and carry no credentials,
+	// query or fragment: every member can read it, and the receiver
+	// authenticates a reply by its signature. A literal private, loopback or
+	// link-local address is refused here, and a name resolving to one is
+	// refused when the reply is sent.
+	//
+	// A reply is a POST of `{"id", "session": {"ref", "kind"},
+	// "in_reply_to", "kind", "text"}`, signed as a webhook is, with
+	// `X-Openarity-Timestamp` and `X-Openarity-Signature`, the HMAC-SHA256
+	// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
+	// anything else is retried for about two and a half hours. A reply can
+	// arrive twice; drop a repeat by `id`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
+	UpdateChannelWithBodyWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateChannelResponse, error)
+
+	// UpdateChannelWithResponse Set where a channel's replies go
+	//
+	// Requires `channel:write` in this team. `reply_url` is required: a URL
+	// sets it, `null` clears it, and a reply waiting to be sent to a channel
+	// with none fails rather than waiting for one.
+	//
+	// The URL must be http or https with a host, and carry no credentials,
+	// query or fragment: every member can read it, and the receiver
+	// authenticates a reply by its signature. A literal private, loopback or
+	// link-local address is refused here, and a name resolving to one is
+	// refused when the reply is sent.
+	//
+	// A reply is a POST of `{"id", "session": {"ref", "kind"},
+	// "in_reply_to", "kind", "text"}`, signed as a webhook is, with
+	// `X-Openarity-Timestamp` and `X-Openarity-Signature`, the HMAC-SHA256
+	// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
+	// anything else is retried for about two and a half hours. A reply can
+	// arrive twice; drop a repeat by `id`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
+	UpdateChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, body UpdateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateChannelResponse, error)
+
 	// RemoveChannelSenderWithResponse Remove a sender, or dismiss a pending one
 	//
 	// Requires `sender:approve` in this team, and every permission the user
@@ -9755,6 +10010,54 @@ func (r DeleteChannelResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DeleteChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// UpdateChannelResponse401Headers the declared response headers of an HTTP 401 response for UpdateChannel
+type UpdateChannelResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type UpdateChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Channel
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *UpdateChannelResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateChannelResponse) GetJSON200() *Channel {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateChannelResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12190,6 +12493,66 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, id 
 	return ParseDeleteChannelResponse(rsp)
 }
 
+// UpdateChannelWithBodyWithResponse Set where a channel's replies go
+//
+// Requires `channel:write` in this team. `reply_url` is required: a URL
+// sets it, `null` clears it, and a reply waiting to be sent to a channel
+// with none fails rather than waiting for one.
+//
+// The URL must be http or https with a host, and carry no credentials,
+// query or fragment: every member can read it, and the receiver
+// authenticates a reply by its signature. A literal private, loopback or
+// link-local address is refused here, and a name resolving to one is
+// refused when the reply is sent.
+//
+// A reply is a POST of `{"id", "session": {"ref", "kind"},
+// "in_reply_to", "kind", "text"}`, signed as a webhook is, with
+// `X-Openarity-Timestamp` and `X-Openarity-Signature`, the HMAC-SHA256
+// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
+// anything else is retried for about two and a half hours. A reply can
+// arrive twice; drop a repeat by `id`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
+func (c *ClientWithResponses) UpdateChannelWithBodyWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateChannelResponse, error) {
+	rsp, err := c.UpdateChannelWithBody(ctx, id, channelID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateChannelResponse(rsp)
+}
+
+// UpdateChannelWithResponse Set where a channel's replies go
+//
+// Requires `channel:write` in this team. `reply_url` is required: a URL
+// sets it, `null` clears it, and a reply waiting to be sent to a channel
+// with none fails rather than waiting for one.
+//
+// The URL must be http or https with a host, and carry no credentials,
+// query or fragment: every member can read it, and the receiver
+// authenticates a reply by its signature. A literal private, loopback or
+// link-local address is refused here, and a name resolving to one is
+// refused when the reply is sent.
+//
+// A reply is a POST of `{"id", "session": {"ref", "kind"},
+// "in_reply_to", "kind", "text"}`, signed as a webhook is, with
+// `X-Openarity-Timestamp` and `X-Openarity-Signature`, the HMAC-SHA256
+// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
+// anything else is retried for about two and a half hours. A reply can
+// arrive twice; drop a repeat by `id`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
+func (c *ClientWithResponses) UpdateChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, body UpdateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateChannelResponse, error) {
+	rsp, err := c.UpdateChannel(ctx, id, channelID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateChannelResponse(rsp)
+}
+
 // RemoveChannelSenderWithResponse Remove a sender, or dismiss a pending one
 //
 // Requires `sender:approve` in this team, and every permission the user
@@ -13854,6 +14217,45 @@ func ParseDeleteChannelResponse(rsp *http.Response) (*DeleteChannelResponse, err
 	switch {
 	case rsp.StatusCode == 401:
 		var headers DeleteChannelResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUpdateChannelResponse parses an HTTP response from a UpdateChannelWithResponse call
+func ParseUpdateChannelResponse(rsp *http.Response) (*UpdateChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Channel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers UpdateChannelResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

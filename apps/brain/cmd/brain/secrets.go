@@ -14,6 +14,11 @@ import (
 
 const secretStoreTimeout = 5 * time.Second
 
+// openSecretStore is newSecretStore, and replaceable only by a test that runs
+// serve and the worker in one process: with the static backend each would
+// otherwise hold its own, and the worker could not read what serve wrote.
+var openSecretStore = newSecretStore
+
 func newSecretStore(cfg *config.Config, logger *slog.Logger) secrets.Store {
 	switch cfg.SecretsBackend {
 	// One adapter for both: Vault is what OpenBao was forked from, so the API
@@ -29,7 +34,7 @@ func newSecretStore(cfg *config.Config, logger *slog.Logger) secrets.Store {
 
 	case config.SecretsBackendStatic:
 		logger.Warn("SECRETS_BACKEND=static: secrets are held in this process " +
-			"and lost on restart. Channels will not verify.")
+			"and lost on restart. Channels will not verify, and the worker cannot sign their replies.")
 		return static.New()
 	}
 

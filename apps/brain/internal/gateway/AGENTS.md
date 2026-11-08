@@ -22,6 +22,9 @@ internal/gateway/
   handler.go        the request path: route, verify, parse, resolve, deliver
   senders.go        ResolveSender, and the display-name cleaning
   sink.go           where a delivery goes; inbox.go is the stand-in
+  answer.go         whether a stored message starts a run, steers one, or is left
+  send.go           the outbox's replies: claim, build through the provider, post, mark
+  job.go            the reply queue, the kick a finished run sends, the sweep
   providertest/     the conformance suite every adapter runs
   custom/           the generic adapter, and the reference implementation
   <provider>/       one package per platform; only custom ships today
@@ -181,7 +184,7 @@ implementation with users is what proves the abstraction rather than the code.
 Reading a session back, or an attachment. `internal/api/sessions` serves both;
 the gateway only writes. The promise this package makes by sniffing — that the
 recorded `media_type` is what a reader is given — is kept there, by serving it
-exactly and under `nosniff`. Outbound replies, and socket transports. Slack Socket Mode and the
+exactly and under `nosniff`. Socket transports: Slack Socket Mode and the
 Discord gateway are long-lived connections and `Provider` describes a request,
 so they need a second interface with a lifecycle.
 
@@ -190,13 +193,40 @@ in the delivery and is bounded by the ack window for everyone else. A provider
 with remote files and a three-second window will not fit, and the
 "attachment budget exhausted" log line is what says so.
 
-When outbound lands it is a `Replier` interface alongside `Fetcher`, not a
-method on `Provider` — an adapter for a plain incoming webhook has nowhere to
-post back to, and a stub returning nil is indistinguishable from success.
-Detected at registration, never with a type assertion at the call site. **A method belongs on `Provider` only when every
-implementation must have it and their implementations genuinely differ.**
+## Replies
+
+`Replier` sits beside `Provider`, not on it: an adapter for a plain incoming
+webhook has nowhere to post back to, and a stub returning nil is
+indistinguishable from success. `NewRegistry` records which providers have it;
+callers ask `reg.Replier(name)`. **A method belongs on `Provider` only when
+every implementation must have it and their implementations genuinely differ.**
+
+`Reply` is pure, like `Parse`: it builds an `OutboundRequest` from values (the
+channel, the reply, the credentials, the time) and never sends it. The sender
+posts it with the one client that refuses private addresses at dial time and
+follows no redirect. So an adapter still holds no HTTP client, and:
+
+- **An error from `Reply` is final.** The same inputs give the same answer, so
+  the sender gives the reply up at once. A failed POST, a non-2xx or an
+  unreadable secret is retried: 1, 5 and 30 minutes, then hourly, six
+  attempts in all.
+- **Replies are sent in order within a conversation.** The claim takes a reply
+  only when nothing older in its session is pending, so one waiting to retry
+  holds back its own conversation and nothing else.
+- **A claim is a lease, not a held lock.** It pushes `next_attempt_at` out two
+  minutes and counts the attempt; a mark matches on that count, so a sender
+  whose lease ran out cannot overwrite a newer attempt.
+- **Delivery is at least once.** A POST that succeeded before the worker died
+  is sent again; every reply carries the run's id for the receiver to drop a
+  repeat.
+- **A finished channel run kicks the queue**, so a reply goes out at once; the
+  sweep every minute is for retries and lost kicks.
+
+`custom` signs a reply under `reply:v1:` rather than the `v1:` of an incoming
+message, so a captured reply posted to the webhook does not verify as a
+message — the team would be answering itself.
 
 ## Decisions
 
 The decisions worth not relitigating, each with its reason, are in [DECISIONS.md](DECISIONS.md). Read it before changing a design, a boundary, or anything a convention above protects.
-Topics: the result of a delivery (`Result{}`), `Validate` on `Inbound`, sessions and messages, attachments fetched later, who may read a direct session.
+Topics: the result of a delivery (`Result{}`), `Validate` on `Inbound`, sessions and messages, attachments fetched later, who may read a direct session, why a reply is built here and sent there.

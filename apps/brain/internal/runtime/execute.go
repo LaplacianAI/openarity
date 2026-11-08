@@ -80,6 +80,10 @@ type Executor struct {
 	// to the sweep, which starts any queued run within a minute.
 	enqueue func(uuid.UUID) error
 
+	// kickReply has a channel run's reply sent now. Nil leaves it to the
+	// reply sweep, a minute at most.
+	kickReply func(uuid.UUID) error
+
 	// notes holds, for each run executing here, the channel its recorder takes
 	// the brain's own events on, so they are written in order with the agent's.
 	notes sync.Map
@@ -196,7 +200,15 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 		return nil
 	}
 	status, failure := outcome(runErr, cause)
-	return e.finish(ctx, row.ID, l.Worker, status, output, failure)
+	if err := e.finish(ctx, row.ID, l.Worker, status, output, failure); err != nil {
+		return err
+	}
+	if row.ReplyToChannel && status != "cancelled" && e.kickReply != nil {
+		if err := e.kickReply(row.ID); err != nil {
+			e.logger.WarnContext(ctx, "reply not kicked; the sweep will send it", "run", row.ID, "err", err)
+		}
+	}
+	return nil
 }
 
 func ours(cause error) bool {

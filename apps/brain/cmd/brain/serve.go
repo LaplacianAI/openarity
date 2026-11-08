@@ -55,7 +55,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 		return err
 	}
 
-	secretStore := newSecretStore(cfg, logger)
+	secretStore := openSecretStore(cfg, logger)
 	if err := checkSecretStore(ctx, secretStore); err != nil {
 		return err
 	}
