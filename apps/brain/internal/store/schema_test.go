@@ -72,6 +72,8 @@ func wantPGCode(t *testing.T, err error, code, what string) {
 // first-login upsert targets with ON CONFLICT — without the constraint that
 // statement will not even parse.
 func TestUsersRejectADuplicateIssuerAndSubject(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	insertUser(t, s, "https://idp.example.com", "user-42")
@@ -85,6 +87,8 @@ func TestUsersRejectADuplicateIssuerAndSubject(t *testing.T) {
 // sub is only unique within an issuer. Two providers both numbering their
 // users from 1 must not collide — this is the reason the key is the pair.
 func TestUsersAllowTheSameSubjectUnderADifferentIssuer(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	insertUser(t, s, "https://idp-a.example.com", "1")
@@ -94,6 +98,8 @@ func TestUsersAllowTheSameSubjectUnderADifferentIssuer(t *testing.T) {
 // Email is optional: a token need not carry the claim, and its absence is not
 // an authentication failure.
 func TestUsersAcceptAMissingEmail(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	_, err := s.pool.Exec(t.Context(),
@@ -106,6 +112,8 @@ func TestUsersAcceptAMissingEmail(t *testing.T) {
 // Issuer and subject are the identity. A row missing either identifies nobody
 // and would match every lookup that passes an empty string.
 func TestUsersRequireBothHalvesOfTheIdentity(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	for _, tc := range []struct{ name, sql string }{
@@ -120,6 +128,8 @@ func TestUsersRequireBothHalvesOfTheIdentity(t *testing.T) {
 }
 
 func TestTeamMembersAcceptTheDefinedRoles(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	user := insertUser(t, s, "https://idp", "user-1")
@@ -135,6 +145,8 @@ func TestTeamMembersAcceptTheDefinedRoles(t *testing.T) {
 // than by an application check. Two rows would make "what can this user do
 // here" ambiguous and order-dependent.
 func TestTeamMembersRejectASecondRoleForTheSamePair(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -151,6 +163,8 @@ func TestTeamMembersRejectASecondRoleForTheSamePair(t *testing.T) {
 // A membership pointing at a team or user that does not exist is a grant to
 // nobody, and it survives every join that would otherwise reveal it.
 func TestTeamMembersRejectDanglingReferences(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -170,6 +184,8 @@ func TestTeamMembersRejectDanglingReferences(t *testing.T) {
 // on a team that no longer exists, and it comes back the moment an id is
 // reused.
 func TestDeletingATeamRemovesItsMemberships(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -188,6 +204,8 @@ func TestDeletingATeamRemovesItsMemberships(t *testing.T) {
 
 // Deleting a user must take their memberships too, and must not take the team.
 func TestDeletingAUserRemovesTheirMembershipsButNotTheTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -211,6 +229,8 @@ func TestDeletingAUserRemovesTheirMembershipsButNotTheTeam(t *testing.T) {
 // composite primary key indexes (team_id, user_id), which is the wrong order
 // for that lookup, so a separate index on user_id has to exist.
 func TestTeamMembersAreIndexedByUser(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	// Restricted to this test's schema. pg_class.relname matches every schema

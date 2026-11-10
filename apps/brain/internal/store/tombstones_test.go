@@ -30,6 +30,8 @@ func tombstones(t *testing.T, s *Store) []db.DeletedObject {
 // seeing a row, so an outbox written by our own delete statements would catch
 // nothing — and every deletion that exists today is one of these.
 func TestEveryCascadeThatReachesAnAttachmentLeavesATombstone(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	type target struct {
@@ -104,6 +106,8 @@ func TestEveryCascadeThatReachesAnAttachmentLeavesATombstone(t *testing.T) {
 // attachments should be one insert into the outbox rather than ten thousand
 // trigger invocations.
 func TestABulkDeleteWritesEveryTombstone(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, teamID := seedMessage(t, s, "bulk")
@@ -131,6 +135,8 @@ func TestABulkDeleteWritesEveryTombstone(t *testing.T) {
 // rather than the same one. Without that two replicas do the same work twice
 // and neither makes progress on the backlog.
 func TestAClaimLeasesWhatItReturns(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, teamID := seedMessage(t, s, "lease")
@@ -187,6 +193,8 @@ func TestAClaimLeasesWhatItReturns(t *testing.T) {
 // how many rows still reference it before deleting anything, so a single
 // record of "somebody's claim ended" is all this has to carry.
 func TestTwoRowsSharingAnObjectMakeOneTombstone(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, teamID := seedMessage(t, s, "shared")
@@ -208,6 +216,8 @@ func TestTwoRowsSharingAnObjectMakeOneTombstone(t *testing.T) {
 // one is written is that the team itself is being deleted, so a foreign key
 // would cascade away the record of the work still to do.
 func TestATombstoneSurvivesTheTeamThatCausedIt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, teamID := seedMessage(t, s, "outlives")
@@ -234,6 +244,8 @@ func TestATombstoneSurvivesTheTeamThatCausedIt(t *testing.T) {
 // The backlog is what says whether erasure is keeping up, and it has to answer
 // on an empty table without failing: min() over no rows is null.
 func TestTheBacklogOnAnEmptyTableIsEmpty(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	rows, err := s.DeletedObjectBacklog(t.Context())
@@ -246,6 +258,8 @@ func TestTheBacklogOnAnEmptyTableIsEmpty(t *testing.T) {
 }
 
 func TestTheBacklogCountsAndDatesWhatIsOutstanding(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, teamID := seedMessage(t, s, "backlog")
@@ -277,6 +291,8 @@ func TestTheBacklogCountsAndDatesWhatIsOutstanding(t *testing.T) {
 // Forgetting is what the sweeper does once the object is gone, and it must
 // take exactly the one row.
 func TestForgettingRemovesOnlyThatTombstone(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, teamID := seedMessage(t, s, "forget")
@@ -318,6 +334,8 @@ func TestForgettingRemovesOnlyThatTombstone(t *testing.T) {
 // and nothing but this test connects them: change either and every secret
 // written afterwards is orphaned under a path no sweep will ever claim.
 func TestTheTriggersSpellSecretPathsTheWayGoDoes(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "paths")
@@ -367,6 +385,8 @@ func secretTombstones(t *testing.T, s *Store) []db.DeletedSecret {
 // this itself, best-effort, logging when it failed — which is a leak with a log
 // line in front of it.
 func TestDeletingAChannelRecordsItsSecret(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "one-channel")
@@ -391,6 +411,8 @@ func TestDeletingAChannelRecordsItsSecret(t *testing.T) {
 // The secret tombstone outlives the team for the same reason the object one
 // does: the commonest cause of one is the team being deleted.
 func TestASecretTombstoneSurvivesItsTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "outlives-secret")
@@ -408,6 +430,8 @@ func TestASecretTombstoneSurvivesItsTeam(t *testing.T) {
 }
 
 func TestTheSecretBacklogOnAnEmptyTableIsEmpty(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	rows, err := s.DeletedSecretBacklog(t.Context())
@@ -420,6 +444,8 @@ func TestTheSecretBacklogOnAnEmptyTableIsEmpty(t *testing.T) {
 }
 
 func TestForgettingASecretRemovesOnlyThatOne(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	first := mustCreate(t, s, "forget-a")

@@ -34,6 +34,8 @@ func delegationOf(t *testing.T, s *Store, agentID uuid.UUID) string {
 // --- the setting ---
 
 func TestAnAgentWorksAloneByDefault(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform").ID
 
@@ -43,6 +45,8 @@ func TestAnAgentWorksAloneByDefault(t *testing.T) {
 }
 
 func TestEveryKnownDelegationIsAccepted(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform").ID
 	a := insertAgent(t, s, team, "triage")
@@ -55,6 +59,8 @@ func TestEveryKnownDelegationIsAccepted(t *testing.T) {
 }
 
 func TestAnUnknownDelegationIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform").ID
 	a := insertAgent(t, s, team, "triage")
@@ -68,6 +74,8 @@ func TestAnUnknownDelegationIsRefused(t *testing.T) {
 // --- the listing ---
 
 func TestAnAgentCanListAnotherInItsTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform").ID
 	a, b := insertAgent(t, s, team, "lead"), insertAgent(t, s, team, "clerk")
@@ -81,6 +89,8 @@ func TestAnAgentCanListAnotherInItsTeam(t *testing.T) {
 }
 
 func TestAnAgentCannotListItself(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform").ID
 	a := insertAgent(t, s, team, "lead")
@@ -90,6 +100,8 @@ func TestAnAgentCannotListItself(t *testing.T) {
 
 // Both ends are in the row's team, whichever end is the stranger.
 func TestADelegateMustBeInTheSameTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	mine, theirs := mustCreate(t, s, "platform").ID, mustCreate(t, s, "billing").ID
 	a := insertAgent(t, s, mine, "lead")
@@ -102,6 +114,8 @@ func TestADelegateMustBeInTheSameTeam(t *testing.T) {
 // Deleting either end removes the listing and nothing else: an agent is
 // never kept alive by being somebody's delegate.
 func TestDeletingEitherEndRemovesTheListing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform").ID
 	lead, clerk, other := insertAgent(t, s, team, "lead"), insertAgent(t, s, team, "clerk"), insertAgent(t, s, team, "other")
@@ -128,6 +142,8 @@ func TestDeletingEitherEndRemovesTheListing(t *testing.T) {
 // when a strategy's limit is checked, so writing or clearing it is no reason
 // to reproject the agent.
 func TestAListingLeavesTheGraphAlone(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform").ID
 	lead, a, b := insertAgent(t, s, team, "lead"), insertAgent(t, s, team, "a"), insertAgent(t, s, team, "b")
@@ -161,6 +177,8 @@ func setDelegation(t *testing.T, s *Store, agentID uuid.UUID, d string) {
 }
 
 func TestDelegatesAreAddedListedAndCleared(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform").ID
 	lead, a, b := insertAgent(t, s, team, "lead"), insertAgent(t, s, team, "a"), insertAgent(t, s, team, "b")
@@ -189,6 +207,8 @@ func TestDelegatesAreAddedListedAndCleared(t *testing.T) {
 // The graph tool's agents follow the caller's setting: the rest of the team,
 // only those listed, or none.
 func TestReachFollowsTheSetting(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform").ID
 	other := mustCreate(t, s, "billing").ID
@@ -252,6 +272,8 @@ func mustStartChild(t *testing.T, s *Store, parent db.Run, agentID uuid.UUID, ca
 // A child is born running and held, so no sweep ever starts it on its own,
 // and carries everything that says whose it is.
 func TestAChildIsBornRunningUnderItsParent(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	alice := insertUser(t, s, testIssuer, "alice")
@@ -296,6 +318,8 @@ func setTokenBudget(t *testing.T, s *Store, agentID uuid.UUID, n int64) {
 
 // A grandchild is one deeper again, under the same root.
 func TestEachDelegationIsOneDeeper(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := createRun(t, s, f)
@@ -312,6 +336,8 @@ func TestEachDelegationIsOneDeeper(t *testing.T) {
 // The agent is selected within the team as the row is written, as CreateRun
 // does: another team's agent writes nothing.
 func TestAChildOfAnotherTeamsAgentIsNotStarted(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := createRun(t, s, f)
@@ -329,6 +355,8 @@ func TestAChildOfAnotherTeamsAgentIsNotStarted(t *testing.T) {
 // The unique key still holds: a call that somehow repeats its key does not
 // start a second child.
 func TestTheSameCallKeyStartsOneChild(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := createRun(t, s, f)
@@ -343,6 +371,8 @@ func TestTheSameCallKeyStartsOneChild(t *testing.T) {
 // --- a tree's measure ---
 
 func TestTreeUsageCountsTheWholeTreeAndNoOther(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := createRun(t, s, f)
@@ -376,6 +406,8 @@ func itoa(n int64) string { return fmt.Sprint(n) }
 // Everything running beneath the parent fails with the reason; a finished
 // child, the parent itself, and another parent's children are untouched.
 func TestReapFailsTheRunningSubtreeAndNothingElse(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := createRun(t, s, f)
@@ -422,6 +454,8 @@ func finishAs(t *testing.T, s *Store, id uuid.UUID, status string) {
 // Only a parent decides what happens to its child, so the sweep leaves a
 // stale child alone even when its heartbeat is long gone.
 func TestTheSweepNeverTakesOverAChild(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := createRun(t, s, f)
@@ -445,6 +479,8 @@ func TestTheSweepNeverTakesOverAChild(t *testing.T) {
 // A child's budget is what its parent's delegate call gave it, never its
 // agent's own: the call has already taken what the tree has left into account.
 func TestAChildStartsWithTheBudgetItIsGiven(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := createRun(t, s, f)
@@ -470,6 +506,8 @@ func TestAChildStartsWithTheBudgetItIsGiven(t *testing.T) {
 // the children it left running before its worker stopped. The cancel ends
 // them with it, at any depth, and leaves finished ones and other runs alone.
 func TestCancellingAQueuedRunCancelsWhatItLeftRunning(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := createRun(t, s, f)
@@ -509,6 +547,8 @@ func TestCancellingAQueuedRunCancelsWhatItLeftRunning(t *testing.T) {
 // A running run's cancel reaches its children through its own context, child
 // first; the request itself only flags the run.
 func TestCancellingARunningRunLeavesItsChildrenToIt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := createRun(t, s, f)
@@ -542,6 +582,8 @@ func delegatesByRoot(t *testing.T, s *Store, ids ...uuid.UUID) map[uuid.UUID][]s
 // Each agent once, in the order the run first handed it work; a grandchild
 // is its parent delegate's, and another root's children are its own.
 func TestARunsDelegatesAreItsChildrensAgentsInOrder(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := createRun(t, s, f)
@@ -572,6 +614,8 @@ func TestARunsDelegatesAreItsChildrensAgentsInOrder(t *testing.T) {
 
 // Only the runs asked about are read: a page never pays for the team's history.
 func TestOnlyTheRunsAskedAboutAreRead(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	asked := createRun(t, s, f)

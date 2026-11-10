@@ -71,6 +71,8 @@ func constraintName(err error) string {
 }
 
 func TestAttachmentRoundTrips(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, _ := seedMessage(t, s, "round-trip")
@@ -98,6 +100,8 @@ func TestAttachmentRoundTrips(t *testing.T) {
 // The team is on the row, because the reaper needs it after the session that
 // would have answered for it is already gone.
 func TestAnAttachmentCarriesItsTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, teamID := seedMessage(t, s, "with-team")
@@ -124,6 +128,8 @@ func TestAnAttachmentCarriesItsTeam(t *testing.T) {
 // the constraint *in its own schema* and asserts the query survives the
 // change rather than waiting to find out.
 func TestAnAttachmentOnAChannellessSessionStillResolvesItsTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform-channelless")
@@ -181,6 +187,8 @@ func TestAnAttachmentOnAChannellessSessionStillResolvesItsTeam(t *testing.T) {
 // the two could disagree, joining through sessions would authorise against a
 // different team than joining through channels.
 func TestASessionsTeamCannotDisagreeWithItsChannels(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	ch, session, _ := seedInbox(t, s, "same-team")
@@ -203,6 +211,8 @@ func TestASessionsTeamCannotDisagreeWithItsChannels(t *testing.T) {
 }
 
 func TestListAttachmentsByMessage(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, _ := seedMessage(t, s, "list")
@@ -232,6 +242,8 @@ func TestListAttachmentsByMessage(t *testing.T) {
 // is not hypothetical bookkeeping — it is what content-addressed names produce
 // when the same file is forwarded twice.
 func TestObjectReferencesCountEveryAttachmentNamingAKey(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	first, firstSession, _ := seedMessage(t, s, "count-a")
@@ -260,6 +272,8 @@ func TestObjectReferencesCountEveryAttachmentNamingAKey(t *testing.T) {
 // Deleting a message takes its attachment rows with it, and the trigger turns
 // each one into a tombstone the reaper acts on.
 func TestDeletingAMessageRemovesItsAttachmentRows(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, _ := seedMessage(t, s, "cascade")
@@ -280,6 +294,8 @@ func TestDeletingAMessageRemovesItsAttachmentRows(t *testing.T) {
 // constraint it expects, so a write refused by a different one fails rather
 // than reading as success.
 func TestTheDatabaseRefusesWhatTheColumnsCannotMean(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, _ := seedMessage(t, s, "constraints")
@@ -342,6 +358,8 @@ func TestTheDatabaseRefusesWhatTheColumnsCannotMean(t *testing.T) {
 // row would lose the attachment over a label — the bytes are what matter and
 // the media type is what makes them safe to serve.
 func TestAnEmptyFilenameIsAllowed(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, _ := seedMessage(t, s, "no-filename")
@@ -364,6 +382,8 @@ func TestAnEmptyFilenameIsAllowed(t *testing.T) {
 // The copy cannot drift. This is the test that says so rather than the
 // comment.
 func TestAnAttachmentCannotClaimAnotherSessionThanItsMessage(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, _ := seedMessage(t, s, "no-drift")
@@ -390,6 +410,8 @@ func TestAnAttachmentCannotClaimAnotherSessionThanItsMessage(t *testing.T) {
 // The query the column exists for: everything a session has accumulated,
 // across every message in it.
 func TestListAttachmentsBySession(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	ch, session, userID := seedInbox(t, s, "by-session")
@@ -440,6 +462,8 @@ func listAttachments(t *testing.T, s *Store, sessionID uuid.UUID, size int32) []
 // written in one request, and created_at defaults to now(), which is the
 // transaction's start time and identical for all of them.
 func TestAttachmentPagingIsStableWhenTimestampsTie(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, _ := seedMessage(t, s, "paging")
@@ -496,6 +520,8 @@ func TestAttachmentPagingIsStableWhenTimestampsTie(t *testing.T) {
 // The bytes route asks for one attachment inside a session it has already
 // proven the caller may read. An id from another session is a missing row.
 func TestGetAttachmentInSessionIsScopedToIt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	messageID, sessionID, _ := seedMessage(t, s, "scoped")

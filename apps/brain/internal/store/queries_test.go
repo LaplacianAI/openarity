@@ -16,16 +16,6 @@ import (
 
 // queryStore is migrationStore with the schema actually applied, which is what
 // every query test needs and no migration test wants.
-func queryStore(t *testing.T) *Store {
-	t.Helper()
-
-	s := migrationStore(t)
-	if _, err := s.Migrate(t.Context()); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-	return s
-}
-
 // teamLister is satisfied by both *Store and the *db.Queries a transaction
 // hands to its callback.
 type teamLister interface {
@@ -136,6 +126,8 @@ func countTeams(t *testing.T, s *Store) int {
 // The base case. Everything else in this file asserts an edge, so without one
 // plain round-trip a CreateTeam that never persisted would pass the suite.
 func TestCreateTeamRoundTrips(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	created := mustCreate(t, s, "platform")
@@ -156,6 +148,8 @@ func TestCreateTeamRoundTrips(t *testing.T) {
 // ever becomes RETURNING id, the defaulted columns come back as zero values and
 // every caller silently starts seeing a zero timestamp.
 func TestCreateTeamReturnsTheDefaultedColumns(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -175,6 +169,8 @@ func TestCreateTeamReturnsTheDefaultedColumns(t *testing.T) {
 // generate would hand back the same value twice, and the primary key would only
 // complain on the second insert — after the first had already been trusted.
 func TestCreateTeamGeneratesADistinctID(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	first := mustCreate(t, s, "first")
@@ -189,6 +185,8 @@ func TestCreateTeamGeneratesADistinctID(t *testing.T) {
 // Two teams sharing one are indistinguishable in every listing, so the schema
 // refuses rather than the handler.
 func TestCreateTeamRefusesADuplicateName(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	mustCreate(t, s, "platform")
@@ -212,6 +210,8 @@ func TestCreateTeamRefusesADuplicateName(t *testing.T) {
 // records that the database does not fold case, which would surprise anyone
 // who assumed it did.
 func TestTeamNamesAreUniqueExactly(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	mustCreate(t, s, "platform")
@@ -225,6 +225,8 @@ func TestTeamNamesAreUniqueExactly(t *testing.T) {
 // branch on this, so it is part of the contract rather than an implementation
 // detail of :one.
 func TestGetTeamReportsAMissingRow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	_, err := s.GetTeam(t.Context(), uuid.New())
@@ -238,6 +240,8 @@ func TestGetTeamReportsAMissingRow(t *testing.T) {
 // rows and checking they come back in insertion order proves nothing — that is
 // what an unordered scan returns anyway.
 func TestListTeamsReturnsNewestFirst(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	now := time.Now()
@@ -272,6 +276,8 @@ func TestListTeamsReturnsNewestFirst(t *testing.T) {
 // paginate over this, and a query that errored on empty would only fail on a
 // fresh install.
 func TestListTeamsOnAnEmptyTable(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	teams, err := allTeams(t.Context(), s)
@@ -294,6 +300,8 @@ func TestListTeamsOnAnEmptyTable(t *testing.T) {
 
 // Branch one: the query never runs.
 func TestListTeamsReportsAQueryFailure(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	s.Close()
 
@@ -309,6 +317,8 @@ func TestListTeamsReportsAQueryFailure(t *testing.T) {
 // Branch two: the query runs and a row will not scan. Widening id to text and
 // putting a non-uuid in it makes the generated Scan fail on the first row.
 func TestListTeamsReportsAScanFailure(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	// A uuid column cannot be widened to text while anything references it.
@@ -334,6 +344,8 @@ func TestListTeamsReportsAScanFailure(t *testing.T) {
 // Query. This is the branch that turns a partial result into an error, and the
 // only one where a caller could otherwise be handed half a list.
 func TestListTeamsReportsAFailureMidStream(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	// CASCADE because team_members references teams. Without it the drop
@@ -361,6 +373,8 @@ func TestListTeamsReportsAFailureMidStream(t *testing.T) {
 // Without a cursor the WHERE clause must let every row through, or the first
 // page of every listing is empty.
 func TestListTeamsIgnoresTheCursorWhenUnused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	mustCreate(t, s, "first")
@@ -378,6 +392,8 @@ func TestListTeamsIgnoresTheCursorWhenUnused(t *testing.T) {
 }
 
 func TestListTeamsRespectsThePageSize(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	for _, name := range []string{"a", "b", "c"} {
@@ -396,6 +412,8 @@ func TestListTeamsRespectsThePageSize(t *testing.T) {
 // Walking the pages must yield every team exactly once. An off-by-one in the
 // row comparison shows up here as a repeat or a gap, and nowhere else.
 func TestListTeamsPagesThroughEveryRow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	now := time.Now()
@@ -446,6 +464,8 @@ func TestListTeamsPagesThroughEveryRow(t *testing.T) {
 // are dropped; with a row constructor they are ordered by id and paged
 // through.
 func TestListTeamsPagesThroughRowsSharingATimestamp(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	at := time.Now().Add(-time.Hour)
@@ -484,6 +504,8 @@ func TestListTeamsPagesThroughRowsSharingATimestamp(t *testing.T) {
 // A cursor must exclude the row it points at, or every page repeats its own
 // last row forever.
 func TestListTeamsExcludesTheCursorRow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "only")
@@ -506,6 +528,8 @@ func TestListTeamsExcludesTheCursorRow(t *testing.T) {
 // share one — users is unique on (issuer, subject), not on subject. The id
 // tiebreak is what keeps that pair pageable.
 func TestListTeamMembersPagesThroughASharedSubject(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -559,6 +583,8 @@ func TestListTeamMembersPagesThroughASharedSubject(t *testing.T) {
 
 // Branch one: the query never runs.
 func TestListTeamMembersReportsAQueryFailure(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	s.Close()
 
@@ -576,6 +602,8 @@ func TestListTeamMembersReportsAQueryFailure(t *testing.T) {
 // Branch two: the query runs and a row will not scan. Widening users.id to
 // text and putting a non-uuid in it makes the generated Scan fail.
 func TestListTeamMembersReportsAScanFailure(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -613,6 +641,8 @@ func TestListTeamMembersReportsAScanFailure(t *testing.T) {
 // rows have already been scanned — the error surfaces from rows.Err(). This is
 // the only branch where a caller could otherwise be handed half a listing.
 func TestListTeamMembersReportsAFailureMidStream(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, "DROP TABLE team_members")
@@ -641,6 +671,8 @@ func TestListTeamMembersReportsAFailureMidStream(t *testing.T) {
 // The query is scoped to one team. A missing WHERE would return the other
 // team's members, which is a cross-team leak rather than a paging bug.
 func TestListTeamMembersReturnsOnlyThatTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	mine := mustCreate(t, s, "mine")
@@ -672,6 +704,8 @@ func TestListTeamMembersReturnsOnlyThatTeam(t *testing.T) {
 }
 
 func TestDeleteTeamRemovesOnlyItsOwnRow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	doomed := mustCreate(t, s, "doomed")
@@ -693,6 +727,8 @@ func TestDeleteTeamRemovesOnlyItsOwnRow(t *testing.T) {
 // is not a failure in SQL. Worth pinning: a caller that wants "did it exist"
 // has to check first, and this is where that surprise is documented.
 func TestDeleteTeamIsSilentOnAMissingRow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	if err := s.DeleteTeam(t.Context(), uuid.New()); err != nil {
@@ -701,6 +737,8 @@ func TestDeleteTeamIsSilentOnAMissingRow(t *testing.T) {
 }
 
 func TestInTxCommitsWhenTheCallbackSucceeds(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	err := s.InTx(t.Context(), func(q *db.Queries) error {
@@ -722,6 +760,8 @@ func TestInTxCommitsWhenTheCallbackSucceeds(t *testing.T) {
 // The reason InTx exists. A write that succeeded before the failure must not
 // survive it — otherwise callers get half a change and no way to know.
 func TestInTxRollsBackEverythingWhenTheCallbackFails(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	sentinel := errors.New("callback failed")
@@ -745,6 +785,8 @@ func TestInTxRollsBackEverythingWhenTheCallbackFails(t *testing.T) {
 // Without it the connection goes back to the pool with an open transaction and
 // poisons whoever picks it up next.
 func TestInTxRollsBackWhenTheCallbackPanics(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	func() {
@@ -771,6 +813,8 @@ func TestInTxRollsBackWhenTheCallbackPanics(t *testing.T) {
 // pool. If InTx ever handed over s.Queries by mistake, every test above would
 // still pass — the writes would land, just not transactionally.
 func TestInTxWritesAreInvisibleUntilCommit(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	err := s.InTx(t.Context(), func(q *db.Queries) error {
@@ -807,6 +851,8 @@ func TestInTxWritesAreInvisibleUntilCommit(t *testing.T) {
 // would land, unprotected, and the caller would be told the transaction
 // failed.
 func TestInTxDoesNotRunTheCallbackWhenBeginFails(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	s.Close()
 
@@ -831,6 +877,8 @@ func TestInTxDoesNotRunTheCallbackWhenBeginFails(t *testing.T) {
 // block once the pool is empty. Without a bounded context this test hangs
 // until Go's ten-minute timeout instead of failing in seconds.
 func TestInTxReleasesItsConnection(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)

@@ -9,6 +9,8 @@ import (
 // about the three failure paths as about the happy one.
 
 func TestListRoutePermissionsReturnsEveryMappedRoute(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	routes, err := s.ListRoutePermissions(t.Context())
@@ -26,6 +28,8 @@ func TestListRoutePermissionsReturnsEveryMappedRoute(t *testing.T) {
 }
 
 func TestARouteCarriesItsScopeAndPermission(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	routes, err := s.ListRoutePermissions(t.Context())
@@ -55,6 +59,8 @@ func TestARouteCarriesItsScopeAndPermission(t *testing.T) {
 // with "requires a permission whose name is empty" — which would be a
 // permission nobody can ever hold, and so a route nobody can ever reach.
 func TestARouteThatNeedsNoPermissionComesBackNil(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	routes, err := s.ListRoutePermissions(t.Context())
@@ -77,6 +83,8 @@ func TestARouteThatNeedsNoPermissionComesBackNil(t *testing.T) {
 // missing. Unordered rows would make that report shuffle between boots for no
 // reason, which is enough to make an operator doubt it.
 func TestRoutesComeBackOrdered(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	routes, err := s.ListRoutePermissions(t.Context())
@@ -98,6 +106,8 @@ func TestRoutesComeBackOrdered(t *testing.T) {
 // ignored the error and guarded nothing is the shape this prevents.
 
 func TestListRoutePermissionsReportsAQueryFailure(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	s.Close()
 
@@ -113,6 +123,8 @@ func TestListRoutePermissionsReportsAQueryFailure(t *testing.T) {
 // will — an integer scans into a string without complaint — so the column is
 // replaced with an array, which does not.
 func TestListRoutePermissionsReportsAScanFailure(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, "DROP TABLE route_permissions")
@@ -133,6 +145,8 @@ func TestListRoutePermissionsReportsAScanFailure(t *testing.T) {
 // branch that would otherwise return a partial route table as a success, and
 // leave every route past the 499th unguarded.
 func TestListRoutePermissionsReportsAFailureMidStream(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, "DROP TABLE route_permissions")

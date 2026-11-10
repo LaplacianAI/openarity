@@ -693,6 +693,8 @@ func TestRemovingARefReadAsUnboundLeavesALaterBinding(t *testing.T) {
 // Deterministic rather than raced: the test holds the lock itself and asserts
 // the write is still blocked before letting go.
 func TestABindingMovedWhileTheWriteWaitsIsRefused(t *testing.T) {
+	t.Parallel()
+
 	// One store for both: its schema is named after the test, and a
 	// subtest's name has a slash in it.
 	s := queryStore(t)
@@ -804,6 +806,8 @@ func refsOf(rows []db.ListTeamPendingSendersRow) []string {
 // Whoever has waited longest comes first, whichever channel they wrote in
 // on, with the channel named; another team's strangers are not this team's.
 func TestTheTeamQueueIsOldestFirstAcrossChannels(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	support := mustCreateChannel(t, s, team.ID, "custom", "support")
@@ -840,6 +844,8 @@ func TestTheTeamQueueIsOldestFirstAcrossChannels(t *testing.T) {
 // a cursor of the time and the ref alone would skip or repeat across it,
 // because a ref is unique only within its channel.
 func TestPagingThroughATieReturnsEverySenderOnce(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	a := mustCreateChannel(t, s, team.ID, "custom", "a")
@@ -893,6 +899,8 @@ func TestPagingThroughATieReturnsEverySenderOnce(t *testing.T) {
 
 // An approved sender has left every channel's queue, so the team's too.
 func TestAnApprovedSenderLeavesTheTeamQueue(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	ch := mustCreateChannel(t, s, team.ID, "custom", "support")

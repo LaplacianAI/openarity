@@ -34,6 +34,8 @@ func hubRun(t *testing.T, s *Store, f runFixture) db.Run {
 // A team that chose no hub agent has the built-in orchestrator: a hub run
 // with no agent row, named for it, on the deployment's default budget.
 func TestAHubRunWithNoChosenAgentIsTheOrchestrator(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 
@@ -48,6 +50,8 @@ func TestAHubRunWithNoChosenAgentIsTheOrchestrator(t *testing.T) {
 }
 
 func TestAHubRunIsTheTeamsChosenAgent(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	setTokenBudget(t, s, f.agent, 5000)
@@ -63,6 +67,8 @@ func TestAHubRunIsTheTeamsChosenAgent(t *testing.T) {
 // Nothing breaks when the hub agent goes: the setting clears, and the next
 // hub run is the orchestrator again.
 func TestDeletingTheHubAgentReturnsTheTeamToTheOrchestrator(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	setHub(t, s, f.team, &f.agent)
@@ -84,6 +90,8 @@ func TestDeletingTheHubAgentReturnsTheTeamToTheOrchestrator(t *testing.T) {
 }
 
 func TestARunNamingAnAgentIsNotTheHubs(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 
@@ -94,6 +102,8 @@ func TestARunNamingAnAgentIsNotTheHubs(t *testing.T) {
 
 // The hub is a role at the root: a delegate's run is never the hub's.
 func TestAChildIsNeverTheHub(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := createRun(t, s, f)
@@ -107,6 +117,8 @@ func TestAChildIsNeverTheHub(t *testing.T) {
 // The hub reaches every agent, tool and skill in its team, and nothing in
 // another; the hub agent itself is left out of the agents when named.
 func TestTheTeamsReachIsEveryAgentToolAndSkillInIt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	clerk := insertAgent(t, s, f.team, "clerk")
@@ -142,6 +154,8 @@ func TestTheTeamsReachIsEveryAgentToolAndSkillInIt(t *testing.T) {
 // An empty team's reach is empty lists, not nulls, so a caller can range
 // over it without a check.
 func TestAnEmptyTeamReachesNothing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "empty").ID
 
@@ -156,6 +170,8 @@ func TestAnEmptyTeamReachesNothing(t *testing.T) {
 }
 
 func TestCountingOtherAgents(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	empty := mustCreate(t, s, "empty").ID
 	f := newRunFixture(t, s, "platform")
@@ -185,6 +201,8 @@ func TestCountingOtherAgents(t *testing.T) {
 }
 
 func TestAPlanEventIsOneTheRuntimeWrites(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -199,6 +217,8 @@ func TestAPlanEventIsOneTheRuntimeWrites(t *testing.T) {
 
 // A later save replaces the hub, and a save without one clears it.
 func TestSavingTheSettingsAgainChangesTheHub(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	clerk := insertAgent(t, s, f.team, "clerk")
@@ -218,6 +238,8 @@ func TestSavingTheSettingsAgainChangesTheHub(t *testing.T) {
 // The API keeps the hub in its team; should a row ever name another team's
 // agent, the run is still the team's own orchestrator, never that agent.
 func TestAHubFromAnotherTeamIsNeverRun(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	theirs := insertAgent(t, s, mustCreate(t, s, "support").ID, "theirs")

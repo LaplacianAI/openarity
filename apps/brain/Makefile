@@ -109,9 +109,10 @@ lint:
 
 ## test: run tests with the race detector
 #
-# internal/store migrates a fresh schema for each of its ~400 tests, so the
-# package grows with every migration and passed go test's 10m default in
-# October 2026. TEST_TIMEOUT is the stopgap; migrating once per package is the fix.
+# internal/store once migrated a fresh schema for each of its ~500 tests and
+# passed go test's 10m default; it now copies one migrated template per test
+# (testdb_test.go) and takes about a minute. The timeout stays generous for a
+# slow CI runner.
 TEST_TIMEOUT ?= 20m
 
 test:

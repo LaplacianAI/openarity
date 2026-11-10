@@ -17,6 +17,8 @@ import (
 // A grant naming a server or skill outside the agent's team — or one that
 // does not exist — is refused by the composite foreign keys the handler names.
 func TestAGrantOutsideTheTeamIsRefusedByTheConstraintsTheHandlerNames(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	mine := mustCreate(t, s, "platform")
 	theirs := mustCreate(t, s, "other")
@@ -47,6 +49,8 @@ func TestAGrantOutsideTheTeamIsRefusedByTheConstraintsTheHandlerNames(t *testing
 // than as an empty array, which the column refuses. pgx has to send a nil
 // slice as NULL for that to hold.
 func TestAnUnrestrictedGrantIsStoredAsNull(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	a := mustCreateAgent(t, s, team.ID, "triage")
@@ -84,6 +88,8 @@ func TestAnUnrestrictedGrantIsStoredAsNull(t *testing.T) {
 // database: the row edit and the cleared grants roll back with the refused
 // grant, so the agent is never left half on its old grants and half on none.
 func TestAReplaceThatFailsPartWayKeepsTheOldGrants(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	mine := mustCreate(t, s, "platform")
 	theirs := mustCreate(t, s, "other")
@@ -133,6 +139,8 @@ func TestAReplaceThatFailsPartWayKeepsTheOldGrants(t *testing.T) {
 // A name is unique per team regardless of case, and the handler answers the
 // 23505 as a conflict.
 func TestAnAgentNameIsUniqueRegardlessOfCase(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	mustCreateAgent(t, s, team.ID, "Triage")

@@ -71,6 +71,8 @@ func statusOf(t *testing.T, s *Store, id uuid.UUID) db.Run {
 // --- starting one ---
 
 func TestCreateRunIsItsOwnRootUnderItsAgentsName(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 
@@ -88,6 +90,8 @@ func TestCreateRunIsItsOwnRootUnderItsAgentsName(t *testing.T) {
 // A run's budget is the agent's as it was when the run was created: editing
 // the agent afterwards does not move the limit of a run already going.
 func TestCreateRunCopiesTheAgentsBudgetAndKeepsIt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 
@@ -112,6 +116,8 @@ func TestCreateRunCopiesTheAgentsBudgetAndKeepsIt(t *testing.T) {
 }
 
 func TestATokenBudgetMustBePositive(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 
@@ -132,6 +138,8 @@ func TestATokenBudgetMustBePositive(t *testing.T) {
 // The SELECT is the team check: an agent of another team inserts nothing,
 // before the key on (agent_id, team_id) would have refused it anyway.
 func TestCreateRunRefusesAnAgentFromAnotherTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	other := newRunFixture(t, s, "billing")
@@ -146,6 +154,8 @@ func TestCreateRunRefusesAnAgentFromAnotherTeam(t *testing.T) {
 }
 
 func TestGetAgentByNameIgnoresCaseAndTeams(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	other := newRunFixture(t, s, "billing")
@@ -168,6 +178,8 @@ func TestGetAgentByNameIgnoresCaseAndTeams(t *testing.T) {
 // claim and take nothing. tx holds the first claim open so the second really
 // overlaps it rather than running after it.
 func TestClaimRunTakesAQueuedRunOnce(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -208,6 +220,8 @@ func TestClaimRunTakesAQueuedRunOnce(t *testing.T) {
 // After a takeover the new holder claims again to carry on; that must work,
 // and a third worker must still get nothing.
 func TestClaimRunCarriesOnARunThisWorkerHolds(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -220,6 +234,8 @@ func TestClaimRunCarriesOnARunThisWorkerHolds(t *testing.T) {
 }
 
 func TestClaimRunIgnoresACancelledRun(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -234,6 +250,8 @@ func TestClaimRunIgnoresACancelledRun(t *testing.T) {
 // A resumed run must not get a fresh thirty minutes: the budget is counted
 // from the first start, on the database's clock.
 func TestTheWallClockLeftIsMeasuredFromTheFirstStart(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -256,6 +274,8 @@ func TestTheWallClockLeftIsMeasuredFromTheFirstStart(t *testing.T) {
 }
 
 func TestAHeartbeatFromALostWorkerReturnsNothing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -269,6 +289,8 @@ func TestAHeartbeatFromALostWorkerReturnsNothing(t *testing.T) {
 }
 
 func TestAHeartbeatCarriesACancelRequest(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -288,6 +310,8 @@ func TestAHeartbeatCarriesACancelRequest(t *testing.T) {
 }
 
 func TestUsageAddsUpAndOnlyForTheHolder(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -313,6 +337,8 @@ func TestUsageAddsUpAndOnlyForTheHolder(t *testing.T) {
 }
 
 func TestFinishRunOnlyFinishesARunThisWorkerHolds(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -347,6 +373,8 @@ func TestFinishRunOnlyFinishesARunThisWorkerHolds(t *testing.T) {
 // --- cancelling one ---
 
 func TestCancelOfAQueuedRunFinishesIt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -362,6 +390,8 @@ func TestCancelOfAQueuedRunFinishesIt(t *testing.T) {
 }
 
 func TestCancelOfARunningRunOnlyFlagsIt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -380,6 +410,8 @@ func TestCancelOfARunningRunOnlyFlagsIt(t *testing.T) {
 // Asking twice is not an error, and does not move the time of the first ask:
 // that is when the person wanted it to stop.
 func TestCancellingTwiceKeepsTheFirstRequest(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -401,6 +433,8 @@ func TestCancellingTwiceKeepsTheFirstRequest(t *testing.T) {
 }
 
 func TestCancelOfAFinishedRunReturnsNothing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -421,6 +455,8 @@ func TestCancelOfAFinishedRunReturnsNothing(t *testing.T) {
 // --- the sweep ---
 
 func TestListUnstartedRunsSkipsFreshAndStartedRuns(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	lost := createRun(t, s, f)
@@ -441,6 +477,8 @@ func TestListUnstartedRunsSkipsFreshAndStartedRuns(t *testing.T) {
 }
 
 func TestTakeOverStaleRunsLeavesALiveRunAlone(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -453,6 +491,8 @@ func TestTakeOverStaleRunsLeavesALiveRunAlone(t *testing.T) {
 }
 
 func TestTakeOverStaleRunsTakesAStalledRun(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -482,6 +522,8 @@ func TestTakeOverStaleRunsTakesAStalledRun(t *testing.T) {
 // The wall clock is the run's, not the attempt's: a run taken over five hours
 // in has one hour left.
 func TestATakenOverRunKeepsItsWallClock(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -502,6 +544,8 @@ func TestATakenOverRunKeepsItsWallClock(t *testing.T) {
 // Two sweeps at once must split stale runs, never share one. The first holds
 // its takeover open; SKIP LOCKED means the second returns at once, empty.
 func TestTakeOverStaleRunsHasOneWinner(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -556,6 +600,8 @@ func insertDirectSession(t *testing.T, s *Store, teamID, userID uuid.UUID) uuid.
 }
 
 func TestSomeoneElsesDirectRunIsHidden(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	alice := insertUser(t, s, testIssuer, "alice")
@@ -580,6 +626,8 @@ func TestSomeoneElsesDirectRunIsHidden(t *testing.T) {
 }
 
 func TestAGroupRunIsVisibleToTheTeamAndNoOneElse(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	other := newRunFixture(t, s, "billing")
@@ -598,6 +646,8 @@ func TestAGroupRunIsVisibleToTheTeamAndNoOneElse(t *testing.T) {
 }
 
 func TestSomeoneElsesDirectSessionIsHidden(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	alice := insertUser(t, s, testIssuer, "alice")
@@ -623,6 +673,8 @@ func TestSomeoneElsesDirectSessionIsHidden(t *testing.T) {
 // --- what a run binds ---
 
 func TestListGrantedMCPServersCarriesTheAllowList(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	github := insertServer(t, s, f.team, "github")
@@ -648,6 +700,8 @@ func TestListGrantedMCPServersCarriesTheAllowList(t *testing.T) {
 }
 
 func TestListGrantedSkillsReadsTheBodyOfOnlyThoseGranted(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	review := insertSkill(t, s, f.team, "review")
@@ -674,6 +728,8 @@ func runIDs(rows []db.Run) []uuid.UUID {
 }
 
 func TestASessionListsItsTopLevelRunsNewestFirst(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	first := mustInsertRun(t, s, f.root())
@@ -696,6 +752,8 @@ func TestASessionListsItsTopLevelRunsNewestFirst(t *testing.T) {
 
 // Runs started in the same instant still page once each: the id breaks the tie.
 func TestASessionsRunsPageWithoutRepeatsOrGaps(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	var made []uuid.UUID
@@ -774,6 +832,8 @@ func rootAt(t *testing.T, s *Store, f runFixture, status string, secondsAgo int)
 // A delegate's run is in its parent's trace, not the history, and another
 // team's runs are not in this one's at all.
 func TestTheTeamsRunsAreItsRootRunsNewestFirst(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	other := newRunFixture(t, s, "elsewhere")
@@ -792,6 +852,8 @@ func TestTheTeamsRunsAreItsRootRunsNewestFirst(t *testing.T) {
 // The history follows the session rule: a direct session's runs are its
 // participant's and a moderator's, and nobody else's.
 func TestAnotherPersonsDirectRunIsNotInTheHistory(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	asha := insertUser(t, s, "dev", "asha")
@@ -824,6 +886,8 @@ func TestAnotherPersonsDirectRunIsNotInTheHistory(t *testing.T) {
 }
 
 func TestTheRunHistoryFilters(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 
@@ -872,6 +936,8 @@ func TestTheRunHistoryFilters(t *testing.T) {
 // A page ends where the next begins, with nothing skipped or repeated, even
 // when two runs share a created_at.
 func TestTheRunHistoryPagesWithoutGapsOrRepeats(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 

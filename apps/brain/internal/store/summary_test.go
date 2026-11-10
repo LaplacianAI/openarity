@@ -31,6 +31,8 @@ func runIn(t *testing.T, s *Store, teamID, session, agent uuid.UUID, status stri
 // A team with nothing in it still has a summary: an aggregate with no GROUP BY
 // returns its row, so a new team reads as zeros rather than as no row.
 func TestANewTeamSummarisesAsZeros(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -44,6 +46,8 @@ func TestANewTeamSummarisesAsZeros(t *testing.T) {
 // of its parent's, an older one is history, and another team's is not this
 // team's at all.
 func TestTheSummaryCountsTheLastDaysRootRunsByStatus(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	other := newRunFixture(t, s, "elsewhere")
@@ -73,6 +77,8 @@ func TestTheSummaryCountsTheLastDaysRootRunsByStatus(t *testing.T) {
 // Both counts follow the session rule, so nobody learns how many private
 // conversations, or runs in them, they cannot open.
 func TestTheSummaryFollowsTheSessionRule(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	asha := insertUser(t, s, "dev", "asha")
@@ -105,6 +111,8 @@ func TestTheSummaryFollowsTheSessionRule(t *testing.T) {
 // Waiting senders are counted across every channel of the team, and only
 // this team's. Whether the caller may see the count is the handler's.
 func TestTheSummaryCountsWaitingSendersAcrossTheTeamsChannels(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	support := mustCreateChannel(t, s, team.ID, "custom", "support")
@@ -125,6 +133,8 @@ func TestTheSummaryCountsWaitingSendersAcrossTheTeamsChannels(t *testing.T) {
 // A server is failing while its last discovery failed. One that failed and
 // then worked is not, and neither is one never discovered.
 func TestTheSummaryCountsServersWhoseLastDiscoveryFailed(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	other := mustCreate(t, s, "elsewhere")
@@ -144,6 +154,8 @@ func TestTheSummaryCountsServersWhoseLastDiscoveryFailed(t *testing.T) {
 // Agents are counted as the list lists them: every one of this team's, and
 // no other team's.
 func TestTheSummaryCountsTheTeamsAgents(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	other := mustCreate(t, s, "elsewhere")

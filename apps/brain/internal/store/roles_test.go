@@ -17,6 +17,8 @@ import (
 // with an empty roles table can grant nobody anything, and the failure is
 // silent — every membership insert simply fails a foreign key.
 func TestSeededRolesExist(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	roles, err := s.ListRoles(t.Context())
@@ -37,6 +39,8 @@ func TestSeededRolesExist(t *testing.T) {
 }
 
 func TestSeededPermissions(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	for role, want := range map[string][]string{
@@ -73,6 +77,8 @@ func TestSeededPermissions(t *testing.T) {
 // permission added to one role and forgotten on the next would do exactly
 // that without a word.
 func TestTheShippedRolesNest(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	chain := []string{"member", "approver", "admin"}
@@ -97,6 +103,8 @@ func TestTheShippedRolesNest(t *testing.T) {
 // A role nobody holds should be removable. Its permissions go with it —
 // leaving them behind means recreating the role silently restores old grants.
 func TestDeletingAnUnusedRoleTakesItsPermissions(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `INSERT INTO roles (name) VALUES ('auditor')`)
@@ -117,6 +125,8 @@ func TestDeletingAnUnusedRoleTakesItsPermissions(t *testing.T) {
 // memberships. An admin removing "member" should be told twelve people
 // are using it, not discover it from a support ticket.
 func TestARoleInUseCannotBeDeleted(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -138,6 +148,8 @@ func TestARoleInUseCannotBeDeleted(t *testing.T) {
 // The CHECK constraint became a foreign key. It still has to constrain, and
 // now it constrains against a table rather than a literal list.
 func TestTeamMembersRejectARoleThatDoesNotExist(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -152,6 +164,8 @@ func TestTeamMembersRejectARoleThatDoesNotExist(t *testing.T) {
 // A role invented by an admin is immediately grantable — that is the whole
 // point of moving roles into a table.
 func TestANewRoleCanBeGrantedWithoutADeploy(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `INSERT INTO roles (name, description) VALUES ('release-manager', 'Ships things')`)
@@ -173,6 +187,8 @@ func TestANewRoleCanBeGrantedWithoutADeploy(t *testing.T) {
 // Permissions cannot be granted to a role that does not exist. Otherwise a
 // typo produces rules that apply to nobody and are never noticed.
 func TestPermissionsRequireAnExistingRole(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	_, err := s.pool.Exec(t.Context(),
@@ -183,6 +199,8 @@ func TestPermissionsRequireAnExistingRole(t *testing.T) {
 // The composite key makes granting the same action twice a no-op rather than
 // two rows that have to agree.
 func TestAPermissionCannotBeGrantedTwice(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	_, err := s.pool.Exec(t.Context(),
@@ -193,6 +211,8 @@ func TestAPermissionCannotBeGrantedTwice(t *testing.T) {
 // A role with no permissions is legal — an admin creates it, then grants. It
 // must come back as an empty list rather than an error.
 func TestARoleWithNoPermissionsIsEmptyNotAnError(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `INSERT INTO roles (name) VALUES ('newcomer')`)
@@ -207,6 +227,8 @@ func TestARoleWithNoPermissionsIsEmptyNotAnError(t *testing.T) {
 }
 
 func TestListRolePermissionsIsScopedToItsRole(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	perms, err := s.ListRolePermissions(t.Context(), "member")
@@ -219,6 +241,8 @@ func TestListRolePermissionsIsScopedToItsRole(t *testing.T) {
 }
 
 func TestListRolesIsOrderedByName(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `INSERT INTO roles (name) VALUES ('zebra'), ('aardvark')`)
@@ -240,6 +264,8 @@ func TestListRolesIsOrderedByName(t *testing.T) {
 // Down has to restore the CHECK it replaced, not just drop the tables — a
 // rollback that leaves team_members.role unconstrained accepts anything.
 func TestRolesRollBackRestoresTheCheck(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	// Roll back until the roles migration itself is undone rather than
@@ -293,6 +319,8 @@ func TestRolesRollBackRestoresTheCheck(t *testing.T) {
 // branches and none may return the rows it managed to read.
 
 func TestRoleQueriesReportAQueryFailure(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	s.Close()
 
@@ -314,6 +342,8 @@ func TestRoleQueriesReportAQueryFailure(t *testing.T) {
 // a string without complaint, and so does jsonb. An array does not, which is
 // what makes it usable here.
 func TestRoleQueriesReportAScanFailure(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, "ALTER TABLE team_members DROP CONSTRAINT team_members_role_fkey")
@@ -340,6 +370,8 @@ func TestRoleQueriesReportAScanFailure(t *testing.T) {
 // good rows, so it surfaces from rows.Err() rather than from Query — the
 // branch that would otherwise return a partial permission set as a success.
 func TestRoleQueriesReportAFailureMidStream(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, "ALTER TABLE team_members DROP CONSTRAINT team_members_role_fkey")

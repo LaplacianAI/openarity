@@ -45,7 +45,9 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	dropTemplate()
+	os.Exit(code)
 }
 
 // checkServerVersion connects once and reports what it found. The message
