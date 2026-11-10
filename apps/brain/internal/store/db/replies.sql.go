@@ -133,27 +133,37 @@ const insertReply = `-- name: InsertReply :one
 INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text)
 SELECT r.team_id, r.id, r.session_id, s.channel_id,
        (SELECT m.id FROM messages m WHERE m.session_id = r.session_id
+          AND ($1::timestamptz IS NULL OR m.received_at < $1::timestamptz)
         ORDER BY m.received_at DESC, m.id DESC LIMIT 1),
-       $1::text, $2::text
+       $2::text, $3::text
 FROM runs r
 JOIN sessions s ON s.id = r.session_id
-WHERE r.id = $3::uuid AND r.reply_to_channel AND s.channel_id IS NOT NULL
+WHERE r.id = $4::uuid AND r.reply_to_channel AND s.channel_id IS NOT NULL
 RETURNING id, team_id, run_id, session_id, channel_id, in_reply_to, kind, text, status, attempts, last_error, next_attempt_at, created_at, sent_at, parts_sent
 `
 
 type InsertReplyParams struct {
-	Kind  string
-	Text  string
-	RunID uuid.UUID
+	UnreadSince *time.Time
+	Kind        string
+	Text        string
+	RunID       uuid.UUID
 }
 
 // The reply to a channel run, written in the transaction that finishes it. It
-// answers the newest message of the conversation, which is the last one the run
-// read whether it came in as the input or as a steer. A run that does not
+// answers the newest message the run read, whether it came in as the input or
+// as a steer. A message that arrived after the run's last request was steered
+// into it and never read: it goes to the follow-up run, and unread_since, when
+// the first such steer was written, keeps this reply from quoting it. A message
+// and its steer share a transaction, so they share now(). A run that does not
 // answer a channel, or whose session came from none, inserts nothing and the
 // caller gets pgx.ErrNoRows.
 func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply, error) {
-	row := q.db.QueryRow(ctx, insertReply, arg.Kind, arg.Text, arg.RunID)
+	row := q.db.QueryRow(ctx, insertReply,
+		arg.UnreadSince,
+		arg.Kind,
+		arg.Text,
+		arg.RunID,
+	)
 	var i Reply
 	err := row.Scan(
 		&i.ID,

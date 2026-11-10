@@ -1,12 +1,16 @@
 -- The reply to a channel run, written in the transaction that finishes it. It
--- answers the newest message of the conversation, which is the last one the run
--- read whether it came in as the input or as a steer. A run that does not
+-- answers the newest message the run read, whether it came in as the input or
+-- as a steer. A message that arrived after the run's last request was steered
+-- into it and never read: it goes to the follow-up run, and unread_since, when
+-- the first such steer was written, keeps this reply from quoting it. A message
+-- and its steer share a transaction, so they share now(). A run that does not
 -- answer a channel, or whose session came from none, inserts nothing and the
 -- caller gets pgx.ErrNoRows.
 -- name: InsertReply :one
 INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text)
 SELECT r.team_id, r.id, r.session_id, s.channel_id,
        (SELECT m.id FROM messages m WHERE m.session_id = r.session_id
+          AND (sqlc.narg('unread_since')::timestamptz IS NULL OR m.received_at < sqlc.narg('unread_since')::timestamptz)
         ORDER BY m.received_at DESC, m.id DESC LIMIT 1),
        sqlc.arg('kind')::text, sqlc.arg('text')::text
 FROM runs r

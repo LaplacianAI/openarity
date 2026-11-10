@@ -243,9 +243,9 @@ INSERT INTO agent_steers (session, text) VALUES (sqlc.arg('run_id')::uuid::text,
 -- Deleted as they are returned, oldest first, so they are answered once.
 -- name: TakeLeftoverSteers :many
 WITH gone AS (
-    DELETE FROM agent_steers WHERE session = sqlc.arg('run_id')::uuid::text RETURNING id, text
+    DELETE FROM agent_steers WHERE session = sqlc.arg('run_id')::uuid::text RETURNING id, text, created_at
 )
-SELECT text FROM gone ORDER BY id;
+SELECT text, created_at FROM gone ORDER BY id;
 
 -- Whether the team's hub can run: a hub agent that still exists, or a model
 -- for the built-in orchestrator. The same rule the runtime fails a run on, so

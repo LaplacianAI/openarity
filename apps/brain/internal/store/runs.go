@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -70,11 +71,19 @@ func answerChannel(ctx context.Context, q *db.Queries, run db.Run, finish db.Fin
 	}
 
 	var followUp uuid.UUID
+	// The reply quotes only what this run read: the messages behind these
+	// steers are the follow-up's to answer.
+	var unreadSince *time.Time
 	if len(left) > 0 {
+		unreadSince = &left[0].CreatedAt
+		texts := make([]string, len(left))
+		for i, l := range left {
+			texts[i] = l.Text
+		}
 		followUp = uuid.New()
 		if _, err := q.CreateChannelRun(ctx, db.CreateChannelRunParams{
 			ID: followUp, TeamID: run.TeamID, SessionID: run.SessionID, UserID: run.UserID,
-			Input: strings.Join(left, "\n"),
+			Input: strings.Join(texts, "\n"),
 		}); err != nil {
 			return uuid.Nil, fmt.Errorf("start a run for what came after run %s: %w", run.ID, err)
 		}
@@ -85,7 +94,9 @@ func answerChannel(ctx context.Context, q *db.Queries, run db.Run, finish db.Fin
 		kind, text = "answer", *finish.Output
 	}
 	// No row is a session whose channel is gone: nowhere to send it.
-	if _, err := q.InsertReply(ctx, db.InsertReplyParams{RunID: run.ID, Kind: kind, Text: text}); err != nil &&
+	if _, err := q.InsertReply(ctx, db.InsertReplyParams{
+		RunID: run.ID, Kind: kind, Text: text, UnreadSince: unreadSince,
+	}); err != nil &&
 		!errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, fmt.Errorf("write the reply to run %s: %w", run.ID, err)
 	}
