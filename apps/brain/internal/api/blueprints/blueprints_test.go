@@ -420,6 +420,34 @@ func TestAnItemTheBlueprintDoesNotNameIsLeftAlone(t *testing.T) {
 	}
 }
 
+// A grant may name what the team already holds without the blueprint
+// describing it too, both for an agent it creates and for one it changes.
+func TestAnAgentMayBeGrantedWhatTheTeamAlreadyHolds(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	if rec := w.apply(t, supportTeam()); rec.Code != http.StatusOK {
+		t.Fatalf("apply: %d %s", rec.Code, rec.Body)
+	}
+
+	listed := "listed"
+	clerk := agentNamed("clerk")
+	clerk.MCPServers = []serverRef{{Name: "helpdesk"}}
+	clerk.Skills = []string{"support-faq"}
+	clerk.Delegation, clerk.Delegates = &listed, []string{"writer"}
+	writer := agentNamed("writer")
+	writer.Skills = []string{"support-faq"}
+
+	if rec := w.apply(t, Blueprint{Agents: []agentSpec{clerk, writer}}); rec.Code != http.StatusOK {
+		t.Fatalf("apply grants of what the team holds: %d %s", rec.Code, rec.Body)
+	}
+	got := w.written(t)
+	for table, want := range map[string]int{"agent_mcp_servers": 2, "agent_skills": 3, "agent_delegates": 2} {
+		if got[table] != want {
+			t.Errorf("%s: %d rows, want %d", table, got[table], want)
+		}
+	}
+}
+
 // Each refusal refuses the whole plan: nothing is written, and no object is
 // reserved for a skill that will never be stored.
 func TestARefusedBlueprintWritesNothing(t *testing.T) {

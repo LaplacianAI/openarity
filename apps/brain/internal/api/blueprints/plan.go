@@ -54,6 +54,7 @@ var nounOf = map[Kind]string{KindMCPServer: "an MCP server", KindSkill: "a skill
 // planned is a plan and the writes that applying it makes, in order.
 type planned struct {
 	Plan
+	team    team // what it was planned against
 	servers []serverStep
 	skills  []skillStep
 	agents  []agentStep
@@ -82,6 +83,7 @@ type agentStep struct {
 func planOf(t team, bp Blueprint, loops []string, m may) planned {
 	p := planned{Plan: Plan{Changes: []Change{}, Refusals: []Refusal{}}, refused: map[Kind]bool{}}
 	t.declared = declared(bp)
+	p.team = t
 
 	p.planServers(t, bp.MCPServers, m)
 	p.planSkills(t, bp.Skills, m)
@@ -360,21 +362,27 @@ func twice(a agentSpec) error {
 	return nil
 }
 
-// standIn is the id a name has, or will have once the blueprint creates it.
-func (t team) standIn(k Kind, name string) (uuid.UUID, bool) {
+// existing is the id of what the team already holds under that name.
+func (t team) existing(k Kind, name string) (uuid.UUID, bool) {
 	switch k {
 	case KindMCPServer:
-		if s, ok := t.servers[name]; ok {
-			return s.ID, true
-		}
+		s, ok := t.servers[name]
+		return s.ID, ok
 	case KindSkill:
-		if s, ok := t.skills[name]; ok {
-			return s.ID, true
-		}
+		s, ok := t.skills[name]
+		return s.ID, ok
 	case KindAgent:
-		if a, ok := t.agents[name]; ok {
-			return a.ID, true
-		}
+		a, ok := t.agents[name]
+		return a.ID, ok
+	default:
+		return uuid.Nil, false
+	}
+}
+
+// standIn is the id a name has, or will have once the blueprint creates it.
+func (t team) standIn(k Kind, name string) (uuid.UUID, bool) {
+	if id, ok := t.existing(k, name); ok {
+		return id, true
 	}
 	if t.declared[k][name] {
 		return uuid.NewSHA1(uuid.NameSpaceOID, []byte(string(k)+"/"+name)), true

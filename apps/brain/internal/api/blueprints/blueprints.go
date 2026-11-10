@@ -237,9 +237,13 @@ func writeAgents(ctx context.Context, q Queries, p *planned, ids map[Kind]map[st
 		p.made(a.change, rows[i].ID, ids)
 	}
 
+	// What was just written, then what the team already held; never a
+	// stand-in, which is only for planning.
 	idOf := func(k Kind, name string) (uuid.UUID, bool) {
-		id, ok := ids[k][name]
-		return id, ok
+		if id, ok := ids[k][name]; ok {
+			return id, true
+		}
+		return p.team.existing(k, name)
 	}
 	for i, a := range p.agents {
 		req, err := resolve(a.spec, idOf)
