@@ -3160,6 +3160,17 @@ components:
                 https webhook address. False for `custom`, and for a brain with
                 no such address: the person then points the provider at
                 `hook_url` with `signing_secret`.
+            warnings:
+              type: array
+              items:
+                type: string
+              description: |
+                What the person should know about how the provider's account is
+                set up, read when the channel was connected. The channel is made
+                either way. A `telegram` bot whose privacy mode is on is sent, in
+                a group, only commands to it and replies to it, so a message that
+                only @mentions it never arrives; the warning says how to turn it
+                off. Absent when there is nothing to say.
             signing_secret:
               type: string
               description: |

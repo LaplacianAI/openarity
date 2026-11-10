@@ -447,8 +447,10 @@ curl https://api.telegram.org/bot<bot token>/setWebhook \
 
 Who may speak through a channel is a separate decision from connecting it, and
 a separate permission: an `approver` may let senders in without being able to
-change the channel. A sender nobody has approved gets their provider-side id
-recorded and their message dropped:
+change the channel. A sender nobody has approved who asks the bot (any direct
+message, or a group message that names it) gets their provider-side id
+recorded and their message dropped; someone talking in a group without asking
+the bot is not queued:
 
 ```sh
 oa channels senders pending platform support

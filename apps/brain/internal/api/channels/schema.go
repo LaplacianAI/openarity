@@ -57,6 +57,10 @@ type created struct {
 	// Connected is whether the brain pointed the provider at the channel
 	// itself, so there is no step left for the person.
 	Connected bool `json:"connected"`
+	// Warnings is what the person should know about how the provider's
+	// account is set up, such as a Telegram bot whose privacy mode hides
+	// group messages. The channel is made either way.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type channelCursor struct {

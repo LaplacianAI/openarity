@@ -153,7 +153,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	creds, ok := h.credentials(w, r, req)
+	creds, warnings, ok := h.credentials(w, r, req)
 	if !ok {
 		return
 	}
@@ -187,7 +187,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := created{channel: h.view(row)}
+	out := created{channel: h.view(row), Warnings: warnings}
 	if generated {
 		out.SigningSecret = secret
 	}
@@ -304,28 +304,30 @@ func (h *handler) signingSecret(w http.ResponseWriter, req createRequest) (strin
 // the keys its provider asks a person for, completed from the provider's own
 // API, Telegram's bot from getMe. A provider that asks for nothing takes
 // nothing, so a key it would never read is not stored.
-func (h *handler) credentials(w http.ResponseWriter, r *http.Request, req createRequest) (map[string]string, bool) {
+func (h *handler) credentials(
+	w http.ResponseWriter, r *http.Request, req createRequest,
+) (map[string]string, []string, bool) {
 	s, asks := h.providers.Setup(req.Provider)
 	if !asks {
 		if len(req.Credentials) > 0 {
 			http.Error(w, "the "+req.Provider+" provider takes no credentials", http.StatusBadRequest)
-			return nil, false
+			return nil, nil, false
 		}
-		return map[string]string{}, true
+		return map[string]string{}, nil, true
 	}
 
 	supplied := gateway.Credentials{}
 	for k := range req.Credentials {
 		if !slices.Contains(s.Supplied(), k) {
 			http.Error(w, "credentials."+k+" is not something a "+req.Provider+" channel takes", http.StatusBadRequest)
-			return nil, false
+			return nil, nil, false
 		}
 	}
 	for _, k := range s.Supplied() {
 		v := strings.TrimSpace(req.Credentials[k])
 		if v == "" {
 			http.Error(w, "credentials."+k+" is required for a "+req.Provider+" channel", http.StatusBadRequest)
-			return nil, false
+			return nil, nil, false
 		}
 		supplied[k] = v
 	}
@@ -333,19 +335,19 @@ func (h *handler) credentials(w http.ResponseWriter, r *http.Request, req create
 	out, err := s.SetupRequest(supplied)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return nil, false
+		return nil, nil, false
 	}
 	status, body, err := h.ask(r.Context(), out)
 	if err != nil {
 		h.logger.WarnContext(r.Context(), "could not reach a provider to set up a channel",
 			"provider", req.Provider, "error", err)
 		http.Error(w, "could not reach "+req.Provider+" to check the credentials; try again", http.StatusBadGateway)
-		return nil, false
+		return nil, nil, false
 	}
-	completed, err := s.Complete(status, body)
+	completed, warnings, err := s.Complete(status, body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return nil, false
+		return nil, nil, false
 	}
 
 	// Only keys the provider declares, and never the signing secret: what a
@@ -358,7 +360,7 @@ func (h *handler) credentials(w http.ResponseWriter, r *http.Request, req create
 		}
 	}
 	maps.Copy(creds, supplied)
-	return creds, true
+	return creds, warnings, true
 }
 
 // ask sends a provider's setup request. The URL can hold a credential, as a

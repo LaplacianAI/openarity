@@ -737,6 +737,14 @@ type CreatedChannel struct {
 	// true; it is refused otherwise.
 	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
+
+	// Warnings What the person should know about how the provider's account is
+	// set up, read when the channel was connected. The channel is made
+	// either way. A `telegram` bot whose privacy mode is on is sent, in
+	// a group, only commands to it and replies to it, so a message that
+	// only @mentions it never arrives; the warning says how to turn it
+	// off. Absent when there is nothing to say.
+	Warnings *[]string `json:"warnings,omitempty" yaml:"warnings,omitempty"`
 }
 
 // Delegation Whom the agent may hand work to with the delegate tool: any other

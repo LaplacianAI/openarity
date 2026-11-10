@@ -94,7 +94,17 @@ type user struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	Username  string `json:"username"`
+	// ReadsGroups is getMe's can_read_all_group_messages: false while the
+	// bot's privacy mode is on.
+	ReadsGroups bool `json:"can_read_all_group_messages"`
 }
+
+// PrivacyWarning is said when a bot is connected with privacy mode on. In a
+// group, such a bot is sent only commands to it and replies to it, so a
+// message that only mentions it never reaches the brain.
+const PrivacyWarning = "This bot's privacy mode is on, so in a group it only sees commands to it and replies to it: " +
+	"a message that just @mentions it never arrives. In @BotFather send /setprivacy, choose the bot, " +
+	"pick Disable, then remove the bot from each group and add it back."
 
 type chat struct {
 	ID   int64  `json:"id"`
@@ -391,25 +401,29 @@ func (provider) SetupRequest(supplied gateway.Credentials) (gateway.OutboundRequ
 
 // Complete reads getMe. What it returns about a refusal never echoes the
 // token: it is shown to whoever connected the channel.
-func (provider) Complete(status int, body []byte) (gateway.Credentials, error) {
+func (provider) Complete(status int, body []byte) (gateway.Credentials, []string, error) {
 	if status == http.StatusUnauthorized || status == http.StatusNotFound {
-		return nil, errors.New("the bot token is not one Telegram knows")
+		return nil, nil, errors.New("the bot token is not one Telegram knows")
 	}
 	if status != http.StatusOK {
-		return nil, fmt.Errorf("asked about the bot, Telegram answered %d", status)
+		return nil, nil, fmt.Errorf("asked about the bot, Telegram answered %d", status)
 	}
 	var me struct {
 		OK     bool `json:"ok"`
 		Result user `json:"result"`
 	}
 	if err := json.Unmarshal(body, &me); err != nil || !me.OK {
-		return nil, errors.New("the answer Telegram gave about the bot could not be read")
+		return nil, nil, errors.New("the answer Telegram gave about the bot could not be read")
 	}
 	if !me.Result.IsBot || me.Result.ID == 0 || me.Result.Username == "" {
-		return nil, errors.New("the token belongs to an account that is not a bot")
+		return nil, nil, errors.New("the token belongs to an account that is not a bot")
+	}
+	var warnings []string
+	if !me.Result.ReadsGroups {
+		warnings = append(warnings, PrivacyWarning)
 	}
 	return gateway.Credentials{
 		KeyBotID:       strconv.FormatInt(me.Result.ID, 10),
 		KeyBotUsername: me.Result.Username,
-	}, nil
+	}, warnings, nil
 }

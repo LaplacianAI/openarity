@@ -107,7 +107,16 @@ export type CreateChannelRequest = {
  * provider at the channel itself (Telegram's setWebhook); then there is no
  * step left for the person.
  */
-export type CreatedChannel = Channel & { signing_secret?: string; connected?: boolean };
+export type CreatedChannel = Channel & {
+  signing_secret?: string;
+  connected?: boolean;
+  /**
+   * What the person should know about how the provider's account is set up,
+   * such as a Telegram bot whose privacy mode hides group messages. Absent
+   * when there is nothing to say; the channel is made either way.
+   */
+  warnings?: string[];
+};
 
 /**
  * A row of GET /teams/{id}/channels. Both facts count only the sessions the

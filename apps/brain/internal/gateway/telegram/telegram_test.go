@@ -472,10 +472,32 @@ func TestSetupRefusesWhatIsNotATokenBeforeSendingIt(t *testing.T) {
 func TestCompleteReadsTheBotsIdentity(t *testing.T) {
 	t.Parallel()
 
-	got, err := setup(t).Complete(http.StatusOK,
-		[]byte(`{"ok":true,"result":{"id":7012345678,"is_bot":true,"first_name":"Openarity","username":"OpenarityBot","can_join_groups":true}}`))
+	got, warnings, err := setup(t).Complete(http.StatusOK,
+		[]byte(`{"ok":true,"result":{"id":7012345678,"is_bot":true,"first_name":"Openarity","username":"OpenarityBot","can_join_groups":true,"can_read_all_group_messages":true}}`))
 	if err != nil || got[telegram.KeyBotID] != "7012345678" || got[telegram.KeyBotUsername] != "OpenarityBot" || len(got) != 2 {
 		t.Errorf("Complete = %v, %v", got, err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("a bot that reads every group message was warned about: %v", warnings)
+	}
+}
+
+// A bot as BotFather makes it has privacy mode on: in a group it is sent only
+// commands and replies to it, so the person is told, and the channel is made.
+func TestABotWithPrivacyModeOnIsConnectedWithAWarning(t *testing.T) {
+	t.Parallel()
+
+	for name, body := range map[string]string{
+		"said":    `{"ok":true,"result":{"id":7,"is_bot":true,"username":"OpenarityBot","can_read_all_group_messages":false}}`,
+		"omitted": `{"ok":true,"result":{"id":7,"is_bot":true,"username":"OpenarityBot"}}`,
+	} {
+		got, warnings, err := setup(t).Complete(http.StatusOK, []byte(body))
+		if err != nil || got[telegram.KeyBotUsername] != "OpenarityBot" {
+			t.Errorf("%s: Complete = %v, %v; want the bot", name, got, err)
+		}
+		if len(warnings) != 1 || warnings[0] != telegram.PrivacyWarning {
+			t.Errorf("%s: warnings = %v, want the privacy warning", name, warnings)
+		}
 	}
 }
 
@@ -498,7 +520,7 @@ func TestCompleteRefusesAnythingButABot(t *testing.T) {
 		"no id":            {http.StatusOK, `{"ok":true,"result":{"is_bot":true,"username":"x_bot"}}`},
 	}
 	for name, c := range cases {
-		got, err := setup(t).Complete(c.status, []byte(c.body))
+		got, _, err := setup(t).Complete(c.status, []byte(c.body))
 		if err == nil {
 			t.Errorf("%s: completed with %v", name, got)
 			continue
