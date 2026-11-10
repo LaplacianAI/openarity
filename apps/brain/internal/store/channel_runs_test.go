@@ -189,7 +189,7 @@ func TestLeftoverSteersAreTakenOnceOldestFirst(t *testing.T) {
 	}
 
 	got, err := s.TakeLeftoverSteers(t.Context(), r.ID)
-	if err != nil || len(got) != 2 || got[0] != "first" || got[1] != "second" {
+	if err != nil || len(got) != 2 || got[0].Text != "first" || got[1].Text != "second" {
 		t.Fatalf("TakeLeftoverSteers = %q, %v; want [first second]", got, err)
 	}
 	if again, err := s.TakeLeftoverSteers(t.Context(), r.ID); err != nil || len(again) != 0 {
@@ -455,7 +455,7 @@ func TestASteerIsNeverLostToAFinish(t *testing.T) {
 	}
 
 	refused := errors.Is(result, pgx.ErrNoRows)
-	taken := len(left) == 1 && left[0] == "late"
+	taken := len(left) == 1 && left[0].Text == "late"
 	if !refused && !taken {
 		t.Errorf("the message steered into a finishing run (err %v) and the finish took %q: the steer is lost", result, left)
 	}
@@ -489,10 +489,10 @@ func TestAFinishWaitingOnASteerTakesItAsALeftover(t *testing.T) {
 		t.Fatalf("AddSteer: %v", err)
 	}
 
-	left := make(chan []string, 1)
+	left := make(chan []db.TakeLeftoverSteersRow, 1)
 	errs := make(chan error, 1)
 	go func() {
-		var got []string
+		var got []db.TakeLeftoverSteersRow
 		errs <- s.InTx(t.Context(), func(q *db.Queries) error {
 			if _, err := q.LockSession(t.Context(), c.session.ID); err != nil {
 				return err
@@ -511,7 +511,7 @@ func TestAFinishWaitingOnASteerTakesItAsALeftover(t *testing.T) {
 	if err := <-errs; err != nil {
 		t.Fatalf("finish: %v", err)
 	}
-	if got := <-left; len(got) != 1 || got[0] != "late" {
+	if got := <-left; len(got) != 1 || got[0].Text != "late" {
 		t.Errorf("leftovers = %q, want [late]: a steer written before the finish must reach it", got)
 	}
 }
@@ -843,5 +843,53 @@ func TestTheFinishWaitsForADeliveryHoldingTheSession(t *testing.T) {
 	}
 	if got := <-followUp; got == uuid.Nil {
 		t.Error("the finish did not take the steer written while it waited: it did not wait")
+	}
+}
+
+// A message that arrived after the run's last request was steered into it and
+// never read: the run's reply quotes what the run did read, and the late one is
+// the follow-up's. Each message and its steer are written in one transaction,
+// as a delivery writes them, so they share now().
+func TestAReplyQuotesTheNewestMessageItsRunRead(t *testing.T) {
+	s := queryStore(t)
+	c := newConversation(t, s, "unread")
+	first := c.says(t, s, "m-1", "can you search the internet?")
+	r, err := c.startRun(t, s.Queries, &first, "can you search the internet?")
+	if err != nil {
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	running(t, s, r.ID)
+
+	steered := func(externalID, text string) uuid.UUID {
+		var id uuid.UUID
+		if err := s.InTx(t.Context(), func(q *db.Queries) error {
+			var err error
+			if id, err = q.InsertMessage(t.Context(), message(c.channel, c.session, c.user, externalID, text)); err != nil {
+				return err
+			}
+			return q.AddSteer(t.Context(), db.AddSteerParams{RunID: r.ID, Text: "Asha: " + text})
+		}); err != nil {
+			t.Fatalf("delivering %s: %v", externalID, err)
+		}
+		return id
+	}
+	// Read mid-run: the SDK takes a steer before its next request.
+	read := steered("m-2", "only this week")
+	if _, err := s.pool.Exec(t.Context(), `DELETE FROM agent_steers WHERE session = $1`, r.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	// Too late: after the last request, so nothing reads it.
+	late := steered("m-3", "I mean web")
+
+	followUp := endChannelRun(t, s, r.ID, "succeeded", "Yes, I can search.", "")
+	if followUp == uuid.Nil {
+		t.Fatal("the late message started no follow-up")
+	}
+	var quoted *uuid.UUID
+	if err := s.pool.QueryRow(t.Context(), `SELECT in_reply_to FROM replies WHERE run_id = $1`, r.ID).Scan(&quoted); err != nil {
+		t.Fatalf("reading the reply: %v", err)
+	}
+	if quoted == nil || *quoted != read {
+		t.Errorf("the reply quotes %v, want %s, the newest message the run read (not %s)", quoted, read, late)
 	}
 }

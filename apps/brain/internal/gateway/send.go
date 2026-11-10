@@ -27,6 +27,7 @@ var retryAfter = []time.Duration{time.Minute, 5 * time.Minute, 30 * time.Minute,
 
 type ReplyStore interface {
 	ClaimDueReplies(ctx context.Context, arg db.ClaimDueRepliesParams) ([]db.ClaimDueRepliesRow, error)
+	ReplyPartSent(ctx context.Context, arg db.ReplyPartSentParams) (int64, error)
 	ReplySent(ctx context.Context, arg db.ReplySentParams) (int64, error)
 	RetryReply(ctx context.Context, arg db.RetryReplyParams) (int64, error)
 	GiveUpReply(ctx context.Context, arg db.GiveUpReplyParams) (int64, error)
@@ -76,12 +77,17 @@ func (s *Sender) Drain(ctx context.Context) (int, error) {
 // errUnsendable is a reply no retry can send: the answer would be the same.
 var errUnsendable = errors.New("unsendable")
 
+// errLeaseLost is a reply another sender now holds: it marks the row, not us.
+var errLeaseLost = errors.New("lease lost")
+
 // send makes one attempt and marks how it went. Only a failed mark is an
 // error; a failed send is the row's to record. A mark matching no row lost
 // its lease to another sender, and that sender's mark is the one that counts.
 func (s *Sender) send(ctx context.Context, row db.ClaimDueRepliesRow) (bool, error) {
 	err := s.attempt(ctx, row)
 	switch {
+	case errors.Is(err, errLeaseLost):
+		return false, nil
 	case err == nil:
 		if _, markErr := s.store.ReplySent(ctx, db.ReplySentParams{ID: row.ID, Attempts: row.Attempts}); markErr != nil {
 			return false, fmt.Errorf("marking reply %d sent: %w", row.ID, markErr)
@@ -128,11 +134,37 @@ func (s *Sender) attempt(ctx context.Context, row db.ClaimDueRepliesRow) error {
 		Kind:      row.Kind,
 		Text:      row.Text,
 	}
-	req, err := rp.Reply(ch, out, creds, time.Now())
+	parts, err := rp.Reply(ch, out, creds, time.Now())
 	if err != nil {
 		return fmt.Errorf("%w: %w", errUnsendable, err)
 	}
-	return s.post(ctx, req)
+	if len(parts) == 0 {
+		return fmt.Errorf("%w: the %s provider built no request", errUnsendable, row.Provider)
+	}
+	// Each part is recorded as it goes, so a retry starts at the first one
+	// not sent rather than sending the earlier ones twice.
+	for i := int(row.PartsSent); i < len(parts); i++ {
+		if err := s.post(ctx, parts[i]); err != nil {
+			return err
+		}
+		if err := s.partSent(ctx, row, i+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Sender) partSent(ctx context.Context, row db.ClaimDueRepliesRow, sent int) error {
+	n, err := s.store.ReplyPartSent(ctx, db.ReplyPartSentParams{
+		ID: row.ID, Attempts: row.Attempts, PartsSent: int32(sent), //nolint:gosec // G115: parts are few
+	})
+	switch {
+	case err != nil:
+		return fmt.Errorf("recording part %d of reply %d: %w", sent, row.ID, err)
+	case n == 0:
+		return errLeaseLost
+	}
+	return nil
 }
 
 func (s *Sender) credentials(ctx context.Context, row db.ClaimDueRepliesRow, keys []string) (Credentials, error) {

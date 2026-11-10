@@ -85,6 +85,7 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 func newCreateCmd(opts *cli.Options) *cobra.Command {
 	var provider, replyURL string
 	var secretStdin bool
+	var credentialStdin string
 
 	cmd := &cobra.Command{
 		Use:   "create <team> <name>",
@@ -98,6 +99,12 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"Secret — pass --secret-stdin and pipe it in:\n\n" +
 			"    printf %s \"$SLACK_SIGNING_SECRET\" | oa channels create platform slack \\\n" +
 			"        --provider slack --secret-stdin\n\n" +
+			"A provider that needs a credential of its own, such as Telegram's bot\n" +
+			"token, takes it with --credential-stdin NAME, which reads that one\n" +
+			"value from stdin:\n\n" +
+			"    printf %s \"$BOT_TOKEN\" | oa channels create platform bot \\\n" +
+			"        --provider telegram --credential-stdin bot_token\n\n" +
+			"It cannot be combined with --secret-stdin: there is one stdin.\n\n" +
 			"There is deliberately no --secret flag. Arguments are readable by\n" +
 			"every process on the machine through ps, and they land in shell\n" +
 			"history.",
@@ -118,6 +125,21 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			if cmd.Flags().Changed("reply-url") {
 				u := strings.TrimSpace(replyURL)
 				body.ReplyURL = &u
+			}
+			if secretStdin && cmd.Flags().Changed("credential-stdin") {
+				return fmt.Errorf("--secret-stdin and --credential-stdin both read stdin — pass only one")
+			}
+			if cmd.Flags().Changed("credential-stdin") {
+				credName := strings.TrimSpace(credentialStdin)
+				if credName == "" {
+					return fmt.Errorf("--credential-stdin needs the credential's name, for example bot_token")
+				}
+				value, err := readStdin(cmd.InOrStdin(), "the "+credName+" credential",
+					"pipe it in, or drop --credential-stdin")
+				if err != nil {
+					return err
+				}
+				body.Credentials = &map[string]string{credName: value}
 			}
 			if secretStdin {
 				secret, err := readSecret(cmd.InOrStdin())
@@ -150,6 +172,14 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 					"the signing secret is shown once and cannot be read back"))
 			}
 
+			switch {
+			case ch.Connected:
+				opts.Out.Note(cli.Safe(ch.Provider) + " now sends this channel's messages to the brain.")
+			case ch.Provider == "telegram" && ch.HookURL != nil && ch.SigningSecret != nil:
+				// The brain had no public https address to point the bot at.
+				opts.Out.Note(telegramHint(*ch.HookURL, *ch.SigningSecret))
+			}
+
 			return opts.Out.Print(ch, printer.Options{
 				Table: func(table *printer.Table) {
 					table.Row(opts.Styles.OK.Render("connected"),
@@ -168,6 +198,8 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 		"which adapter parses this channel's webhooks, for example custom")
 	cmd.Flags().BoolVar(&secretStdin, "secret-stdin", false,
 		"read the provider's own signing secret from stdin instead of generating one")
+	cmd.Flags().StringVar(&credentialStdin, "credential-stdin", "",
+		"read the value of the named credential, such as bot_token, from stdin")
 	cmd.Flags().StringVar(&replyURL, "reply-url", "",
 		"where the team's replies to this channel's conversations are posted")
 	_ = cmd.MarkFlagRequired("provider")
@@ -240,20 +272,34 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 	return cmd
 }
 
+// telegramHint is the one step Telegram leaves to the person: pointing the bot
+// at the channel. The token stays a placeholder; this process never echoes it.
+func telegramHint(hookURL, secret string) string {
+	return "Point the bot at this channel, replacing <bot token>:\n\n" +
+		"  curl https://api.telegram.org/bot<bot token>/setWebhook \\\n" +
+		"    -d url=" + hookURL + " \\\n" +
+		"    -d secret_token=" + secret + " \\\n" +
+		"    -d 'allowed_updates=[\"message\"]'"
+}
+
 func readSecret(in io.Reader) (string, error) {
+	return readStdin(in, "the signing secret", "pipe the secret in, or drop --secret-stdin to have one generated")
+}
+
+func readStdin(in io.Reader, what, advice string) (string, error) {
 	raw, err := io.ReadAll(io.LimitReader(in, maxSecretBytes+1))
 	if err != nil {
-		return "", fmt.Errorf("read the signing secret from stdin: %w", err)
+		return "", fmt.Errorf("read %s from stdin: %w", what, err)
 	}
 	if len(raw) > maxSecretBytes {
-		return "", fmt.Errorf("the signing secret on stdin is over %d bytes — is that the right pipe?", maxSecretBytes)
+		return "", fmt.Errorf("%s on stdin is over %d bytes — is that the right pipe?", what, maxSecretBytes)
 	}
 
-	secret := strings.TrimRight(string(raw), "\r\n")
-	if strings.TrimSpace(secret) == "" {
-		return "", fmt.Errorf("nothing arrived on stdin — pipe the secret in, or drop --secret-stdin to have one generated")
+	value := strings.TrimRight(string(raw), "\r\n")
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("nothing arrived on stdin — %s", advice)
 	}
-	return secret, nil
+	return value, nil
 }
 
 func newDeleteCmd(opts *cli.Options) *cobra.Command {

@@ -232,6 +232,14 @@ func (s *store) Put(ctx context.Context, path, key, value string) error {
 	return s.write(ctx, http.MethodPost, s.dataURL(path), payload)
 }
 
+func (s *store) PutAll(ctx context.Context, path string, values map[string]string) error {
+	payload, err := json.Marshal(map[string]map[string]string{"data": values})
+	if err != nil {
+		return fmt.Errorf("%w: %w", secrets.ErrUnavailable, err)
+	}
+	return s.write(ctx, http.MethodPost, s.dataURL(path), payload)
+}
+
 func (s *store) Create(ctx context.Context, path, key, value string) error {
 	payload, err := json.Marshal(map[string]any{
 		"data":    map[string]string{key: value},

@@ -34,7 +34,7 @@ func (s stubProvider) Keys() []string {
 
 func (s stubProvider) Verify(WebhookRequest, Credentials) error { return nil }
 
-func (s stubProvider) Parse(WebhookRequest) (Result, error) { return Result{}, nil }
+func (s stubProvider) Parse(WebhookRequest, Credentials) (Result, error) { return Result{}, nil }
 
 // A key an adapter did not declare reads as empty rather than panicking, and
 // an empty secret must never verify. Every Verify therefore has to refuse ""
@@ -293,3 +293,77 @@ func TestTheRegistryKnowsWhichProvidersReply(t *testing.T) {
 		t.Errorf("Names = %v, want both, sorted", got)
 	}
 }
+
+// setupStub completes its credentials; supplied is what it asks a person for.
+type setupStub struct {
+	stubProvider
+	supplied []string
+}
+
+func (s setupStub) Supplied() []string { return s.supplied }
+
+func (setupStub) SetupRequest(Credentials) (OutboundRequest, error) { return OutboundRequest{}, nil }
+
+func (setupStub) Complete(int, []byte) (Credentials, error) { return nil, nil }
+
+// A provider found by its Setup is the one that has it; the getter for one
+// interface never answers for another.
+func TestTheRegistryKnowsWhichProvidersSetUp(t *testing.T) {
+	t.Parallel()
+
+	reg, err := NewRegistry(
+		setupStub{stubProvider: stubProvider{name: "tg"}, supplied: []string{KeySigning}},
+		&relay{},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	if _, ok := reg.Setup("tg"); !ok {
+		t.Error("the provider with Setup is not found by it")
+	}
+	if _, ok := reg.Setup("relay"); ok {
+		t.Error("a provider with no Setup was found by it")
+	}
+	if _, ok := reg.Setup("nobody"); ok {
+		t.Error("an unknown provider was found by Setup")
+	}
+	if _, ok := reg.Replier("relay"); !ok {
+		t.Error("registering a Setup lost the Replier beside it")
+	}
+}
+
+// A person is never asked for a key the provider does not declare: the
+// handler fetches only declared keys, so it would be stored and never read.
+func TestARegistryRefusesASetupSuppliedAKeyItDoesNotDeclare(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewRegistry(setupStub{stubProvider: stubProvider{name: "tg"}, supplied: []string{"bot_token"}})
+	if err == nil || !strings.Contains(err.Error(), "bot_token") {
+		t.Errorf("err = %v, want a refusal naming bot_token", err)
+	}
+}
+
+// Only a provider that posts to an address takes one: Telegram replies into
+// the chat it was asked in, and a reply URL there would be stored and ignored.
+func TestOnlyAURLReplierTakesAReplyURL(t *testing.T) {
+	t.Parallel()
+
+	reg, err := NewRegistry(&urlRelay{}, &relay{}, &fetchProvider{})
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	if !reg.TakesReplyURL("url-relay") {
+		t.Error("a URLReplier does not take a reply URL")
+	}
+	for _, name := range []string{"relay", "fake", "nobody"} {
+		if reg.TakesReplyURL(name) {
+			t.Errorf("%s takes a reply URL", name)
+		}
+	}
+}
+
+type urlRelay struct{ relay }
+
+func (*urlRelay) Name() string { return "url-relay" }
+
+func (*urlRelay) RepliesToURL() {}

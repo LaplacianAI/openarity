@@ -57,7 +57,12 @@ const WRITE = "channel:write";
 const READ_ALL = "session:read_all";
 
 /** The adapters this build ships, each with the name a person knows it by. */
-const PROVIDERS: [value: string, word: string][] = [["custom", "Custom webhook"]];
+const PROVIDERS: [value: string, word: string][] = [
+  ["custom", "Custom webhook"],
+  ["telegram", "Telegram"],
+];
+
+const TELEGRAM = "telegram";
 
 /** The brain's own limit on a channel's name. */
 const MAX_NAME = 200;
@@ -260,7 +265,12 @@ function ChannelDetail({
         <KeyValue label="Signing secret">
           In the secret store. It was shown once, when the channel was connected.
         </KeyValue>
-        {channel.can_reply ? (
+        {channel.provider === TELEGRAM && channel.can_reply ? (
+          <KeyValue label="Replies to">
+            Back into the Telegram chat each message came from.
+          </KeyValue>
+        ) : null}
+        {channel.takes_reply_url ? (
           <KeyValue label="Replies to">
             {channel.reply_url ? (
               <Mono className="break-all text-foreground">{channel.reply_url}</Mono>
@@ -469,14 +479,24 @@ export type ChannelDraft = {
   provider: string;
   ownSecret: boolean;
   secret: string;
+  /** Telegram's bot token, from @BotFather. */
+  botToken: string;
 };
 
-const EMPTY: ChannelDraft = { name: "", provider: "custom", ownSecret: false, secret: "" };
+const EMPTY: ChannelDraft = {
+  name: "",
+  provider: "custom",
+  ownSecret: false,
+  secret: "",
+  botToken: "",
+};
 
 /**
  * The request the form sends, or the sentence saying why it cannot. The
  * secret is sent exactly as typed — trimming a credential changes it — and
  * left out entirely unless the provider issued one, so the brain generates it.
+ * Telegram's secret is always the brain's to generate, and it needs the bot
+ * token, which has no spaces in it, so the ones pasted around it are dropped.
  */
 export function channelRequest(d: ChannelDraft): CreateChannelRequest | string {
   const name = d.name.trim();
@@ -484,6 +504,10 @@ export function channelRequest(d: ChannelDraft): CreateChannelRequest | string {
   if (name === "") return "A channel needs a name.";
   if (name.length > MAX_NAME) return `A name is at most ${MAX_NAME} characters.`;
   if (provider === "") return "A channel needs a provider: the adapter that reads its webhooks.";
+  if (provider === TELEGRAM) {
+    if (d.botToken.trim() === "") return "Paste the bot token from @BotFather.";
+    return { name, provider, credentials: { bot_token: d.botToken.trim() } };
+  }
   if (!d.ownSecret) return { name, provider };
   if (d.secret.trim() === "")
     return "Paste the provider's signing secret, or let the brain make one.";
@@ -502,6 +526,24 @@ export function hookPath(c: { provider: string; id: string }): string {
  */
 export function hookAddress(c: { provider: string; id: string; hook_url?: string }): string {
   return c.hook_url ?? hookPath(c);
+}
+
+/**
+ * The step Telegram leaves to the person: pointing the bot at the channel.
+ * The bot token is a placeholder; this page never has it after the form.
+ */
+export function setWebhookCommand(c: {
+  provider: string;
+  id: string;
+  hook_url?: string;
+  signing_secret?: string;
+}): string {
+  return [
+    "curl https://api.telegram.org/bot<bot token>/setWebhook \\",
+    `  -d url=${hookAddress(c)} \\`,
+    `  -d secret_token=${c.signing_secret ?? ""} \\`,
+    `  -d 'allowed_updates=["message"]'`,
+  ].join("\n");
 }
 
 /** Connecting a channel, in a sheet beside the list. */
@@ -577,7 +619,12 @@ function ConnectSheet({
           </Field>
           <Field label="Provider" htmlFor="channel-provider" hint="What sends its webhooks.">
             {/* A choice, not a field: a provider this build lacks could only be refused. */}
-            <Select value={draft.provider} onValueChange={(provider) => set({ provider })}>
+            <Select
+              value={draft.provider}
+              onValueChange={(provider) =>
+                set({ provider, ownSecret: false, secret: "", botToken: "" })
+              }
+            >
               <SelectTrigger id="channel-provider" className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -590,12 +637,29 @@ function ConnectSheet({
               </SelectContent>
             </Select>
           </Field>
-          <SwitchField
-            label="The provider gave me a signing secret"
-            checked={draft.ownSecret}
-            onCheckedChange={(on) => set({ ownSecret: on, secret: "" })}
-          />
-          {draft.ownSecret ? (
+          {draft.provider === TELEGRAM ? (
+            <Field
+              label="Bot token"
+              htmlFor="channel-bot-token"
+              hint="From @BotFather. Kept in the secret store; never shown again."
+            >
+              <Input
+                id="channel-bot-token"
+                type="password"
+                autoComplete="new-password"
+                spellCheck={false}
+                value={draft.botToken}
+                onChange={(e) => set({ botToken: e.target.value })}
+              />
+            </Field>
+          ) : (
+            <SwitchField
+              label="The provider gave me a signing secret"
+              checked={draft.ownSecret}
+              onCheckedChange={(on) => set({ ownSecret: on, secret: "" })}
+            />
+          )}
+          {draft.provider !== TELEGRAM && draft.ownSecret ? (
             <Field
               label="Signing secret"
               htmlFor="channel-secret"
@@ -644,15 +708,32 @@ function CreatedDialog({
   onDone: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copiedCommand, setCopiedCommand] = useState(false);
   const done = () => {
     setCopied(false);
+    setCopiedCommand(false);
     onDone();
   };
 
   return (
     <Dialog open={channel !== null} onOpenChange={(o) => (o ? null : done())}>
       <DialogContent className="sm:max-w-lg">
-        {channel ? (
+        {channel?.connected ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Connected {channel.name}</DialogTitle>
+              <DialogDescription>
+                The bot now sends its messages here. Message it to try it: someone writing for the
+                first time waits under Approvals until you let them in.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button type="button" onClick={done}>
+                Done
+              </Button>
+            </DialogFooter>
+          </>
+        ) : channel ? (
           <>
             <DialogHeader>
               <DialogTitle>Connected {channel.name}</DialogTitle>
@@ -699,6 +780,32 @@ function CreatedDialog({
                   The secret you pasted is in the secret store. The provider signs with it already.
                 </p>
               )}
+              {channel.provider === TELEGRAM && channel.signing_secret ? (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium">Point the bot at this channel</p>
+                  <p className="text-xs text-muted-foreground">
+                    Run this once, replacing {"<bot token>"} with your bot's token. Telegram then
+                    sends its messages here, each carrying the secret above.
+                  </p>
+                  <div className="flex items-start gap-2">
+                    <code className="min-w-0 flex-1 whitespace-pre-wrap break-all rounded bg-secondary px-2 py-1 font-mono text-xs">
+                      {setWebhookCommand(channel)}
+                    </code>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        void navigator.clipboard
+                          ?.writeText(setWebhookCommand(channel))
+                          .then(() => setCopiedCommand(true));
+                      }}
+                    >
+                      {copiedCommand ? "Copied" : "Copy"}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </div>
             <DialogFooter>
               <Button type="button" onClick={done}>

@@ -533,8 +533,7 @@ type AuthConfigEnvironment string
 
 // Channel defines model for Channel.
 type Channel struct {
-	// CanReply Whether this channel's provider sends replies at all. Offer
-	// `reply_url` only when it is true; it is refused otherwise.
+	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
 	// HookURL The full address to give the provider: the brain's public
@@ -558,7 +557,7 @@ type Channel struct {
 	Name string `json:"name" yaml:"name"`
 
 	// Provider The adapter that parses this channel's webhooks, lower case and
-	// matched exactly.
+	// matched exactly: `custom` or `telegram`.
 	//
 	//
 	// Examples: custom
@@ -569,8 +568,14 @@ type Channel struct {
 	//
 	//
 	// Examples: https://support.example.com/openarity/replies
-	ReplyURL *string            `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
-	TeamID   openapi_types.UUID `json:"team_id" yaml:"team_id"`
+	ReplyURL *string `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
+
+	// TakesReplyURL Whether replies go to an address the channel names. `custom`
+	// posts to `reply_url`; `telegram` replies in the chat a message
+	// came from and takes none. Offer `reply_url` only when this is
+	// true; it is refused otherwise.
+	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
+	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
 }
 
 // ChannelPage defines model for ChannelPage.
@@ -601,14 +606,27 @@ type ChannelSenderPage struct {
 
 // CreateChannelRequest defines model for CreateChannelRequest.
 type CreateChannelRequest struct {
+	// Credentials What the provider asks a person for, and nothing else: for
+	// `telegram`, `bot_token`, the token @BotFather gave. The brain
+	// asks the provider about them before the channel exists, so a
+	// token it does not know is refused (400) and a provider out of
+	// reach is a 502. They go to the secret store with the signing
+	// secret, as one secret, and are never returned. A provider that
+	// asks for nothing refuses any.
+	//
+	//
+	// Examples: {"bot_token":"\u003ctoken from @BotFather\u003e"}
+	Credentials *map[string]string `json:"credentials,omitempty" yaml:"credentials,omitempty"`
+
 	// Name Examples: support-tickets
 	Name string `json:"name" yaml:"name"`
 
 	// Provider Examples: custom
 	Provider string `json:"provider" yaml:"provider"`
 
-	// ReplyURL Where replies are posted, for a provider that sends them; see
-	// `updateChannel` for what is accepted and what is sent.
+	// ReplyURL Where replies are posted, for a provider that posts them to an
+	// address (`takes_reply_url`); see `updateChannel` for what is
+	// accepted and what is sent.
 	//
 	//
 	// Examples: https://support.example.com/openarity/replies
@@ -629,9 +647,15 @@ type CreateTeamRequest struct {
 
 // CreatedChannel defines model for CreatedChannel.
 type CreatedChannel struct {
-	// CanReply Whether this channel's provider sends replies at all. Offer
-	// `reply_url` only when it is true; it is refused otherwise.
+	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
+
+	// Connected Whether the brain pointed the provider at this channel itself,
+	// as it does for `telegram` (setWebhook) when it has a public
+	// https webhook address. False for `custom`, and for a brain with
+	// no such address: the person then points the provider at
+	// `hook_url` with `signing_secret`.
+	Connected bool `json:"connected" yaml:"connected"`
 
 	// HookURL The full address to give the provider: the brain's public
 	// webhook address, then `/hooks/<provider>/<id>` and the
@@ -654,7 +678,7 @@ type CreatedChannel struct {
 	Name string `json:"name" yaml:"name"`
 
 	// Provider The adapter that parses this channel's webhooks, lower case and
-	// matched exactly.
+	// matched exactly: `custom` or `telegram`.
 	//
 	//
 	// Examples: custom
@@ -677,7 +701,13 @@ type CreatedChannel struct {
 	//
 	//
 	// Examples: oawh_EXAMPLE-NOT-A-REAL-SECRET
-	SigningSecret *string            `json:"signing_secret,omitempty" yaml:"signing_secret,omitempty"`
+	SigningSecret *string `json:"signing_secret,omitempty" yaml:"signing_secret,omitempty"`
+
+	// TakesReplyURL Whether replies go to an address the channel names. `custom`
+	// posts to `reply_url`; `telegram` replies in the chat a message
+	// came from and takes none. Offer `reply_url` only when this is
+	// true; it is refused otherwise.
+	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
 }
 
@@ -770,8 +800,7 @@ type ListedAgent struct {
 // count only the sessions the caller may open: their own direct
 // sessions, and everyone's with `session:read_all`.
 type ListedChannel struct {
-	// CanReply Whether this channel's provider sends replies at all. Offer
-	// `reply_url` only when it is true; it is refused otherwise.
+	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
 	// HookURL The full address to give the provider: the brain's public
@@ -798,7 +827,7 @@ type ListedChannel struct {
 	Name string `json:"name" yaml:"name"`
 
 	// Provider The adapter that parses this channel's webhooks, lower case and
-	// matched exactly.
+	// matched exactly: `custom` or `telegram`.
 	//
 	//
 	// Examples: custom
@@ -812,8 +841,14 @@ type ListedChannel struct {
 	ReplyURL *string `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
 
 	// Sessions24H Its sessions with a message in the last 24 hours, on the brain's clock
-	Sessions24H int64              `json:"sessions_24h" yaml:"sessions_24h"`
-	TeamID      openapi_types.UUID `json:"team_id" yaml:"team_id"`
+	Sessions24H int64 `json:"sessions_24h" yaml:"sessions_24h"`
+
+	// TakesReplyURL Whether replies go to an address the channel names. `custom`
+	// posts to `reply_url`; `telegram` replies in the chat a message
+	// came from and takes none. Offer `reply_url` only when this is
+	// true; it is refused otherwise.
+	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
+	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
 }
 
 // ListedSkill A row of the skills list, with how many agents hold the skill.
@@ -2310,6 +2345,10 @@ type ClientInterface interface {
 	// Requires `channel:write` in this team. Its signing secret is deleted
 	// with it — Postgres cascades do not reach the secret store.
 	//
+	// A `telegram` channel's bot is told to stop posting (deleteWebhook)
+	// first. That is best effort: Telegram refusing or out of reach never
+	// keeps the channel.
+	//
 	// A channel belonging to another team answers 404, not 403: the caller
 	// was authorised for the team they named, not for a channel they only
 	// guessed the id of, and confirming the id exists would let anyone walk
@@ -3569,6 +3608,10 @@ func (c *Client) CreateChannel(ctx context.Context, id TeamID, body CreateChanne
 //
 // Requires `channel:write` in this team. Its signing secret is deleted
 // with it — Postgres cascades do not reach the secret store.
+//
+// A `telegram` channel's bot is told to stop posting (deleteWebhook)
+// first. That is best effort: Telegram refusing or out of reach never
+// keeps the channel.
 //
 // A channel belonging to another team answers 404, not 403: the caller
 // was authorised for the team they named, not for a channel they only
@@ -8469,6 +8512,10 @@ type ClientWithResponsesInterface interface {
 	// Requires `channel:write` in this team. Its signing secret is deleted
 	// with it — Postgres cascades do not reach the secret store.
 	//
+	// A `telegram` channel's bot is told to stop posting (deleteWebhook)
+	// first. That is best effort: Telegram refusing or out of reach never
+	// keeps the channel.
+	//
 	// A channel belonging to another team answers 404, not 403: the caller
 	// was authorised for the team they named, not for a channel they only
 	// guessed the id of, and confirming the id exists would let anyone walk
@@ -12527,6 +12574,10 @@ func (c *ClientWithResponses) CreateChannelWithResponse(ctx context.Context, id 
 //
 // Requires `channel:write` in this team. Its signing secret is deleted
 // with it — Postgres cascades do not reach the secret store.
+//
+// A `telegram` channel's bot is told to stop posting (deleteWebhook)
+// first. That is best effort: Telegram refusing or out of reach never
+// keeps the channel.
 //
 // A channel belonging to another team answers 404, not 403: the caller
 // was authorised for the team they named, not for a channel they only

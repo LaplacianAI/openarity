@@ -1,11 +1,11 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import { brain, pageOf, STAMP, show, showAt, TEAM, team } from "@/test/brain";
 
-const { Route, channelRequest, hookAddress, hookPath, isQuiet } = await import(
+const { Route, channelRequest, hookAddress, hookPath, isQuiet, setWebhookCommand } = await import(
   "@/routes/ui.channels.index"
 );
 const Channels = await pageOf(Route);
@@ -23,6 +23,8 @@ const support = {
   name: "support",
   last_message_at: STAMP,
   sessions_24h: 3,
+  can_reply: false,
+  takes_reply_url: false,
 };
 const GENERATED = "oawh_generated-in-the-brain";
 const PASTED = " pasted secret ";
@@ -46,7 +48,13 @@ function posted(seen: { method: string; body: BodyInit | null | undefined }[]) {
 }
 
 describe("the create form", () => {
-  const draft = { name: " support ", provider: " custom ", ownSecret: false, secret: "" };
+  const draft = {
+    name: " support ",
+    provider: " custom ",
+    ownSecret: false,
+    secret: "",
+    botToken: "",
+  };
 
   it("trims the name and provider, and leaves the secret to the brain", () => {
     expect(channelRequest(draft)).toEqual({ name: "support", provider: "custom" });
@@ -76,6 +84,29 @@ describe("the create form", () => {
     [{ ...draft, ownSecret: true, secret: "   " }, /signing secret/],
   ])("refuses %o before asking the brain", (d, said) => {
     expect(channelRequest(d)).toMatch(said);
+  });
+
+  describe("for telegram", () => {
+    const tg = { ...draft, provider: "telegram", botToken: " 123:TEST-ONLY " };
+
+    it("sends the bot token as a credential, and no signing secret", () => {
+      expect(channelRequest({ ...tg, ownSecret: true, secret: "ignored" })).toEqual({
+        name: "support",
+        provider: "telegram",
+        credentials: { bot_token: "123:TEST-ONLY" },
+      });
+    });
+
+    it("refuses a missing bot token before asking the brain", () => {
+      expect(channelRequest({ ...tg, botToken: "  " })).toMatch(/bot token/i);
+    });
+
+    it("does not ask custom for a bot token", () => {
+      expect(channelRequest({ ...draft, botToken: "left behind" })).toEqual({
+        name: "support",
+        provider: "custom",
+      });
+    });
   });
 
   it("names the path the provider posts to", () => {
@@ -378,7 +409,7 @@ describe("a channel's sheet", () => {
 
 describe("where a channel's replies go", () => {
   const at = () => showAt("/ui/channels/", [["/ui/channels/", Route]]);
-  const replying = { ...support, can_reply: true };
+  const replying = { ...support, can_reply: true, takes_reply_url: true };
   const URL_ = "https://support.example.com/replies";
 
   function patched(seen: { method: string; path?: string; body: BodyInit | null | undefined }[]) {
@@ -486,5 +517,146 @@ describe("where a channel's replies go", () => {
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("must not have a query");
     expect(screen.getByRole("dialog", { name: "Replies from support" })).toBeInTheDocument();
+  });
+});
+
+describe("a telegram channel", () => {
+  const TOKEN = "123456:TEST-ONLY-NOT-A-TOKEN";
+  const telegram = {
+    ...support,
+    id: "t1",
+    provider: "telegram",
+    name: "bot",
+    can_reply: true,
+    takes_reply_url: false,
+  };
+  const TG_HOOK = "https://hooks.example.com/hooks/telegram/t1";
+
+  // A Radix select opens from the keyboard in jsdom, which has no pointer
+  // capture, and scrolls its highlighted option into view, which it lacks.
+  async function chosen() {
+    Element.prototype.scrollIntoView = vi.fn();
+    onTestFinished(() => {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    });
+    await userEvent.click(await screen.findByRole("button", { name: /connect channel/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "bot");
+    screen.getByRole("combobox", { name: /^provider$/i }).focus();
+    await userEvent.keyboard("{ArrowDown}");
+    await userEvent.click(await screen.findByRole("option", { name: "Telegram" }));
+  }
+
+  it("asks for a bot token, and not for the provider's signing secret", async () => {
+    brain({ ...team(["channel:write"]), "GET /teams/{id}/channels": { body: { items: [] } } });
+    show(Channels);
+    await chosen();
+    const field = screen.getByLabelText(/^bot token$/i);
+    expect(field).toHaveAttribute("type", "password");
+    expect(screen.getByText(/from @BotFather/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/gave me a signing secret/i)).toBeNull();
+  });
+
+  it("sends the token, shows the setWebhook step with a placeholder, and never the token", async () => {
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [] } },
+      "POST /teams/{id}/channels": {
+        status: 201,
+        body: { ...telegram, hook_url: TG_HOOK, signing_secret: GENERATED },
+      },
+    });
+    show(Channels);
+    await chosen();
+    await userEvent.type(screen.getByLabelText(/^bot token$/i), TOKEN);
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /connected bot/i });
+    expect(posted(seen)).toEqual({
+      name: "bot",
+      provider: "telegram",
+      credentials: { bot_token: TOKEN },
+    });
+    const text = dialog.textContent ?? "";
+    expect(text).toContain("bot<bot token>/setWebhook");
+    expect(text).toContain(`url=${TG_HOOK}`);
+    expect(text).toContain(`secret_token=${GENERATED}`);
+    expect(text).not.toContain(TOKEN);
+  });
+
+  // The brain pointed the bot at the channel itself: there is nothing to run,
+  // and no secret the person needs.
+  it("says the bot is connected, with no step left, when the brain connected it", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [] } },
+      "POST /teams/{id}/channels": {
+        status: 201,
+        body: { ...telegram, hook_url: TG_HOOK, signing_secret: GENERATED, connected: true },
+      },
+    });
+    show(Channels);
+    await chosen();
+    await userEvent.type(screen.getByLabelText(/^bot token$/i), TOKEN);
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /connected bot/i });
+    const text = dialog.textContent ?? "";
+    expect(text).toMatch(/the bot now sends its messages here/i);
+    expect(text).not.toContain("setWebhook");
+    expect(text).not.toContain(GENERATED);
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeInTheDocument();
+  });
+
+  it("does not show the setWebhook step for a custom channel", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [] } },
+      "POST /teams/{id}/channels": {
+        status: 201,
+        body: { ...support, hook_url: HOOK_URL, signing_secret: GENERATED },
+      },
+    });
+    show(Channels);
+    await userEvent.click(await screen.findByRole("button", { name: /connect channel/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "support");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await screen.findByRole("dialog", { name: /connected support/i });
+    expect(screen.queryByText(/setWebhook/)).toBeNull();
+  });
+
+  it("keeps the form open with the brain's reason when Telegram refuses the token", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [] } },
+      "POST /teams/{id}/channels": { status: 400, text: "Telegram refused the bot token" },
+    });
+    show(Channels);
+    await chosen();
+    await userEvent.type(screen.getByLabelText(/^bot token$/i), TOKEN);
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Telegram refused the bot token");
+    expect(screen.getByLabelText(/^name$/i)).toHaveValue("bot");
+  });
+
+  it("says replies go into the chat, and offers no reply URL even to a writer", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [telegram] } },
+    });
+    showAt("/ui/channels/", [["/ui/channels/", Route]]);
+    const sheet = await opened("bot");
+    expect(within(sheet).getByText(/back into the telegram chat/i)).toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: /where replies go/i })).toBeNull();
+  });
+
+  it("builds the command with the placeholder, the URL and the secret", () => {
+    expect(setWebhookCommand({ ...telegram, hook_url: TG_HOOK, signing_secret: GENERATED })).toBe(
+      [
+        "curl https://api.telegram.org/bot<bot token>/setWebhook \\",
+        `  -d url=${TG_HOOK} \\`,
+        `  -d secret_token=${GENERATED} \\`,
+        `  -d 'allowed_updates=["message"]'`,
+      ].join("\n"),
+    );
   });
 });

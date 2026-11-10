@@ -64,6 +64,11 @@ export type Channel = {
    * from before the field sends none, and is read as one that does not.
    */
   can_reply?: boolean;
+  /**
+   * Whether replies go to an address the channel names (`reply_url`). False
+   * for Telegram, which replies in the chat; the brain refuses a reply URL.
+   */
+  takes_reply_url: boolean;
 };
 
 /** PATCH /teams/{id}/channels/{channelID}. Null stops replies. */
@@ -78,13 +83,20 @@ export type CreateChannelRequest = {
   name: string;
   signing_secret?: string;
   reply_url?: string;
+  /** What the provider asks a person for: Telegram needs `bot_token`. */
+  credentials?: Record<string, string>;
 };
 
 /**
  * The create response. `signing_secret` is present only when the brain
  * generated it, and no endpoint returns it again.
  */
-export type CreatedChannel = Channel & { signing_secret?: string };
+/**
+ * POST /teams/{id}/channels. connected is whether the brain pointed the
+ * provider at the channel itself (Telegram's setWebhook); then there is no
+ * step left for the person.
+ */
+export type CreatedChannel = Channel & { signing_secret?: string; connected?: boolean };
 
 /**
  * A row of GET /teams/{id}/channels. Both facts count only the sessions the

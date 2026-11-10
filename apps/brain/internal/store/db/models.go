@@ -61,9 +61,10 @@ type AgentSkill struct {
 }
 
 type AgentSteer struct {
-	ID      int64
-	Session string
-	Text    string
+	ID        int64
+	Session   string
+	Text      string
+	CreatedAt time.Time
 }
 
 type Attachment struct {
@@ -190,6 +191,7 @@ type Reply struct {
 	NextAttemptAt time.Time
 	CreatedAt     time.Time
 	SentAt        *time.Time
+	PartsSent     int32
 }
 
 type Role struct {

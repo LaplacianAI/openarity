@@ -45,15 +45,26 @@ func to() gateway.Channel {
 
 func creds() gateway.Credentials { return gateway.Credentials{gateway.KeySigning: secret} }
 
+// only is the one request a custom reply always is: a receiver takes a reply
+// whole, so custom never splits one.
+func only(t *testing.T, reqs []gateway.OutboundRequest) gateway.OutboundRequest {
+	t.Helper()
+	if len(reqs) != 1 {
+		t.Fatalf("a custom reply is %d requests, want 1", len(reqs))
+	}
+	return reqs[0]
+}
+
 // What the receiver gets: the reply, at the URL, signed so they can check it
 // with the secret they already hold.
 func TestAReplyIsTheSignedPostOfTheAnswer(t *testing.T) {
 	t.Parallel()
 
-	req, err := replier(t).Reply(to(), outbound(), creds(), replyAt)
+	reqs, err := replier(t).Reply(to(), outbound(), creds(), replyAt)
 	if err != nil {
 		t.Fatalf("Reply: %v", err)
 	}
+	req := only(t, reqs)
 	if req.URL != "https://support.example.com/replies" {
 		t.Errorf("URL = %q", req.URL)
 	}
@@ -82,10 +93,11 @@ func TestAReplyToSeveralMessagesNamesNone(t *testing.T) {
 
 	out := outbound()
 	out.InReplyTo = ""
-	req, err := replier(t).Reply(to(), out, creds(), replyAt)
+	reqs, err := replier(t).Reply(to(), out, creds(), replyAt)
 	if err != nil {
 		t.Fatalf("Reply: %v", err)
 	}
+	req := only(t, reqs)
 	if bytes.Contains(req.Body, []byte("in_reply_to")) {
 		t.Errorf("body %s names a message", req.Body)
 	}
@@ -96,10 +108,11 @@ func TestAReplyToSeveralMessagesNamesNone(t *testing.T) {
 func TestACapturedReplyIsNotAValidMessage(t *testing.T) {
 	t.Parallel()
 
-	req, err := replier(t).Reply(to(), outbound(), creds(), replyAt)
+	reqs, err := replier(t).Reply(to(), outbound(), creds(), replyAt)
 	if err != nil {
 		t.Fatalf("Reply: %v", err)
 	}
+	req := only(t, reqs)
 	hook := gateway.WebhookRequest{
 		Method: http.MethodPost, Header: req.Header, Body: req.Body, ReceivedAt: replyAt,
 	}
@@ -114,8 +127,9 @@ func TestAReplyIsTheSameEveryTime(t *testing.T) {
 	t.Parallel()
 
 	rp, ch := replier(t), to()
-	a, _ := rp.Reply(ch, outbound(), creds(), replyAt)
-	b, _ := rp.Reply(ch, outbound(), creds(), replyAt)
+	as, _ := rp.Reply(ch, outbound(), creds(), replyAt)
+	bs, _ := rp.Reply(ch, outbound(), creds(), replyAt)
+	a, b := only(t, as), only(t, bs)
 	if !bytes.Equal(a.Body, b.Body) || a.Header.Get(custom.HeaderSignature) != b.Header.Get(custom.HeaderSignature) {
 		t.Error("two identical replies differ")
 	}
@@ -132,5 +146,14 @@ func TestAReplyWithNowhereToGoOrNoSecretIsRefused(t *testing.T) {
 	}
 	if _, err := replier(t).Reply(to(), outbound(), gateway.Credentials{}, replyAt); err == nil {
 		t.Error("a reply was signed with an empty secret")
+	}
+}
+
+// custom posts to the address its channel names, so its channels take one.
+func TestCustomTakesAReplyURL(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := custom.New().(gateway.URLReplier); !ok {
+		t.Error("custom does not take a reply URL")
 	}
 }

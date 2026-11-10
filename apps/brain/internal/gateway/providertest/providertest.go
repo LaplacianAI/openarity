@@ -35,6 +35,13 @@ type Fixtures struct {
 	// token with no timestamp at all, and cannot.
 	EnforcesFreshness bool
 
+	// SignsNoBody says the provider proves a delivery with a shared secret
+	// it echoes in a header rather than a signature over the body, as
+	// Telegram's secret_token does. A changed body cannot be told from the
+	// real one, so the suite does not ask for it to be refused; only TLS to
+	// the webhook protects the body. Every other forgery is still refused.
+	SignsNoBody bool
+
 	// AttachmentRequest is a valid, signed delivery carrying a message with
 	// at least one attachment. Recorded from the provider like Request is —
 	// attachment payloads are where adapters differ most, and a constructed
@@ -55,7 +62,7 @@ func Run(t *testing.T, p gateway.Provider, f Fixtures) {
 
 	t.Run("declares itself", func(t *testing.T) { declares(t, p, f) })
 	t.Run("refuses a forgery", func(t *testing.T) { refusesForgery(t, p, f) })
-	t.Run("survives junk", func(t *testing.T) { survivesJunk(t, p) })
+	t.Run("survives junk", func(t *testing.T) { survivesJunk(t, p, f) })
 	t.Run("produces usable messages", func(t *testing.T) { produces(t, p, f) })
 	t.Run("names its attachments", func(t *testing.T) { attachments(t, p, f) })
 }
@@ -102,6 +109,9 @@ func refusesForgery(t *testing.T, p gateway.Provider, f Fixtures) {
 	}
 
 	t.Run("a tampered body", func(t *testing.T) {
+		if f.SignsNoBody {
+			t.Skip("the provider signs no body")
+		}
 		req := f.Request
 		req.Body = append(bytes.Clone(f.Request.Body), ' ')
 		if err := p.Verify(req, f.Creds); err == nil {
@@ -186,7 +196,7 @@ func refusesForgery(t *testing.T, p gateway.Provider, f Fixtures) {
 // survivesJunk runs Parse on bytes a stranger chose. It may return an error
 // for any of these, but it may not panic: a panic on the webhook path is a
 // request that takes the process with it, and the sender controls the input.
-func survivesJunk(t *testing.T, p gateway.Provider) {
+func survivesJunk(t *testing.T, p gateway.Provider, f Fixtures) {
 	t.Helper()
 
 	for name, body := range map[string][]byte{
@@ -222,7 +232,7 @@ func survivesJunk(t *testing.T, p gateway.Provider) {
 			// Whatever comes back is the adapter's business. A malformed
 			// message for malformed input is dropped by the handler and
 			// stored nowhere; a panic takes the process down.
-			_, _ = p.Parse(req)
+			_, _ = p.Parse(req, f.Creds)
 		})
 	}
 }
@@ -230,7 +240,7 @@ func survivesJunk(t *testing.T, p gateway.Provider) {
 func produces(t *testing.T, p gateway.Provider, f Fixtures) {
 	t.Helper()
 
-	res, err := p.Parse(f.Request)
+	res, err := p.Parse(f.Request, f.Creds)
 	if err != nil {
 		t.Fatalf("Parse on the valid fixture: %v", err)
 	}
@@ -254,7 +264,7 @@ func produces(t *testing.T, p gateway.Provider, f Fixtures) {
 	// An adapter reading the clock or a counter fails here, and would
 	// otherwise surface as a flake somewhere far away.
 	t.Run("is deterministic", func(t *testing.T) {
-		again, err := p.Parse(f.Request)
+		again, err := p.Parse(f.Request, f.Creds)
 		if err != nil {
 			t.Fatalf("Parse on the second call: %v", err)
 		}
@@ -265,7 +275,7 @@ func produces(t *testing.T, p gateway.Provider, f Fixtures) {
 
 	t.Run("without altering the body", func(t *testing.T) {
 		body := bytes.Clone(f.Request.Body)
-		_, _ = p.Parse(f.Request)
+		_, _ = p.Parse(f.Request, f.Creds)
 		if !bytes.Equal(body, f.Request.Body) {
 			t.Error("Parse mutated Body; the handler still needs it for logging and replay")
 		}
@@ -305,7 +315,7 @@ func attachments(t *testing.T, p gateway.Provider, f Fixtures) {
 			"Give a recorded delivery with an attachment, or say the provider has none")
 	}
 
-	res, err := p.Parse(f.AttachmentRequest)
+	res, err := p.Parse(f.AttachmentRequest, f.Creds)
 	if err != nil {
 		t.Fatalf("Parse on the attachment fixture: %v", err)
 	}

@@ -139,7 +139,7 @@ func decode(b []byte) (payload, error) {
 	return p, nil
 }
 
-func (good) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
+func (good) Parse(req gateway.WebhookRequest, _ gateway.Credentials) (gateway.Result, error) {
 	p, err := decode(req.Body)
 	if err != nil {
 		return gateway.Result{}, err
@@ -193,11 +193,11 @@ func (noFreshness) Verify(req gateway.WebhookRequest, creds gateway.Credentials)
 // panicky indexes the body before checking that there is one.
 type panicky struct{ good }
 
-func (p panicky) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
+func (p panicky) Parse(req gateway.WebhookRequest, creds gateway.Credentials) (gateway.Result, error) {
 	if req.Body[0] != '{' {
 		return gateway.Result{}, errors.New("panicky: not an object")
 	}
-	return p.good.Parse(req)
+	return p.good.Parse(req, creds)
 }
 
 // nondeterministic reads state Parse is not allowed to have.
@@ -205,8 +205,8 @@ type nondeterministic struct{ good }
 
 var seen int
 
-func (n nondeterministic) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
-	res, err := n.good.Parse(req)
+func (n nondeterministic) Parse(req gateway.WebhookRequest, creds gateway.Credentials) (gateway.Result, error) {
+	res, err := n.good.Parse(req, creds)
 	if err != nil {
 		return res, err
 	}
@@ -218,8 +218,8 @@ func (n nondeterministic) Parse(req gateway.WebhookRequest) (gateway.Result, err
 // mutates writes into the body it was lent, which the handler still needs.
 type mutates struct{ good }
 
-func (m mutates) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
-	res, err := m.good.Parse(req)
+func (m mutates) Parse(req gateway.WebhookRequest, creds gateway.Credentials) (gateway.Result, error) {
+	res, err := m.good.Parse(req, creds)
 	if len(req.Body) > 0 {
 		req.Body[0] = 'X'
 	}
@@ -229,8 +229,8 @@ func (m mutates) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
 // noAuthor produces a message the handler cannot attribute to anyone.
 type noAuthor struct{ good }
 
-func (n noAuthor) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
-	res, err := n.good.Parse(req)
+func (n noAuthor) Parse(req gateway.WebhookRequest, creds gateway.Credentials) (gateway.Result, error) {
+	res, err := n.good.Parse(req, creds)
 	if err != nil {
 		return res, err
 	}
@@ -242,8 +242,8 @@ func (n noAuthor) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
 // resolve them. The baseline plus the two methods that go together.
 type carries struct{ good }
 
-func (c carries) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
-	res, err := c.good.Parse(req)
+func (c carries) Parse(req gateway.WebhookRequest, creds gateway.Credentials) (gateway.Result, error) {
+	res, err := c.good.Parse(req, creds)
 	if err != nil || len(res.Messages) == 0 {
 		return res, err
 	}
@@ -273,8 +273,8 @@ func (refsNoFetcher) FetchAttachment() {}
 // under the second one's filename — an ingest that succeeds and is wrong.
 type duplicateRefs struct{ carries }
 
-func (d duplicateRefs) Parse(req gateway.WebhookRequest) (gateway.Result, error) {
-	res, err := d.carries.Parse(req)
+func (d duplicateRefs) Parse(req gateway.WebhookRequest, creds gateway.Credentials) (gateway.Result, error) {
+	res, err := d.carries.Parse(req, creds)
 	if err != nil || len(res.Messages) == 0 {
 		return res, err
 	}

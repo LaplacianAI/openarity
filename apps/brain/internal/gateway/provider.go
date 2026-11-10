@@ -39,7 +39,7 @@ type Provider interface {
 	Routes() []Route
 	Keys() []string
 	Verify(req WebhookRequest, creds Credentials) error
-	Parse(req WebhookRequest) (Result, error)
+	Parse(req WebhookRequest, creds Credentials) (Result, error)
 }
 
 type Fetcher interface {
@@ -56,8 +56,41 @@ type Fetcher interface {
 // result is lost, so a provider passes out.ID along for the receiver to drop
 // a repeat by.
 type Replier interface {
-	// Reply is pure, like Parse: no network, no clock.
-	Reply(ch Channel, out Outbound, creds Credentials, at time.Time) (OutboundRequest, error)
+	// Reply is pure. A long reply is several requests, sent in order, and
+	// the same inputs must split the same way, so a retry resumes where it
+	// stopped rather than sending a part twice.
+	Reply(ch Channel, out Outbound, creds Credentials, at time.Time) ([]OutboundRequest, error)
+}
+
+// Setup completes a channel's credentials from the provider's own API when
+// the channel is connected: Telegram's bot id and username, from getMe.
+type Setup interface {
+	// Supplied is the keys a person gives when connecting the channel.
+	Supplied() []string
+	SetupRequest(supplied Credentials) (OutboundRequest, error)
+	// Complete reads the answer and returns the keys to store beside
+	// what was supplied. An error here refuses the channel.
+	Complete(status int, body []byte) (Credentials, error)
+}
+
+// Connector is a provider that can be told where to post: Telegram's
+// setWebhook. The channels API points it at a channel when the channel is
+// created and lets it go when the channel is deleted, so a person never runs
+// the step by hand. Pure like Reply: it builds the requests and reads the
+// answers; the brain sends them.
+type Connector interface {
+	ConnectRequest(hookURL string, creds Credentials) (OutboundRequest, error)
+	DisconnectRequest(creds Credentials) (OutboundRequest, error)
+	// Answered reads the provider's answer to either request.
+	Answered(status int, body []byte) error
+}
+
+// URLReplier is a Replier that posts to an address its channel names, the
+// reply URL, rather than into the conversation through the provider's own
+// API. Only for these does a channel take a reply URL.
+type URLReplier interface {
+	Replier
+	RepliesToURL()
 }
 
 type OutboundRequest struct {
@@ -83,10 +116,16 @@ type Outbound struct {
 type Registry struct {
 	providers map[string]Provider
 	repliers  map[string]Replier
+	setups    map[string]Setup
+	toURL     map[string]bool
+	connects  map[string]Connector
 }
 
 func NewRegistry(providers ...Provider) (Registry, error) {
-	reg := Registry{providers: map[string]Provider{}, repliers: map[string]Replier{}}
+	reg := Registry{
+		providers: map[string]Provider{}, repliers: map[string]Replier{}, setups: map[string]Setup{},
+		toURL: map[string]bool{}, connects: map[string]Connector{},
+	}
 	for _, p := range providers {
 		name := p.Name()
 		if name == "" {
@@ -105,6 +144,20 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		if rp, ok := p.(Replier); ok {
 			reg.repliers[name] = rp
 		}
+		if _, ok := p.(URLReplier); ok {
+			reg.toURL[name] = true
+		}
+		if c, ok := p.(Connector); ok {
+			reg.connects[name] = c
+		}
+		if s, ok := p.(Setup); ok {
+			for _, k := range s.Supplied() {
+				if !slices.Contains(p.Keys(), k) {
+					return Registry{}, fmt.Errorf("gateway: provider %q is supplied %q, which it does not declare", name, k)
+				}
+			}
+			reg.setups[name] = s
+		}
 	}
 	return reg, nil
 }
@@ -118,6 +171,21 @@ func (r Registry) Get(name string) (Provider, bool) {
 func (r Registry) Replier(name string) (Replier, bool) {
 	rp, ok := r.repliers[name]
 	return rp, ok
+}
+
+// Connector is how the named provider is pointed at a channel, if it can be.
+func (r Registry) Connector(name string) (Connector, bool) {
+	c, ok := r.connects[name]
+	return c, ok
+}
+
+// TakesReplyURL is whether the named provider's channels say where replies go.
+func (r Registry) TakesReplyURL(name string) bool { return r.toURL[name] }
+
+// Setup is how the named provider completes its credentials, if it needs to.
+func (r Registry) Setup(name string) (Setup, bool) {
+	s, ok := r.setups[name]
+	return s, ok
 }
 
 // Names is every registered provider, sorted.

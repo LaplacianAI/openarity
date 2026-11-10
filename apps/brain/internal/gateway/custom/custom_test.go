@@ -93,7 +93,7 @@ func TestParseReadsEveryField(t *testing.T) {
 	  ]
 	}`
 
-	res, err := custom.New().Parse(request(t, body))
+	res, err := custom.New().Parse(request(t, body), nil)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestAnOmittedSentAtBecomesWhenItArrived(t *testing.T) {
 
 	body := `{"id":"m-1","author":{"ref":"u-1"},"session":{"ref":"c-1","kind":"direct"}}`
 
-	res, err := custom.New().Parse(request(t, body))
+	res, err := custom.New().Parse(request(t, body), nil)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestAMessageMissingARequiredFieldDoesNotValidate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			res, err := custom.New().Parse(request(t, body))
+			res, err := custom.New().Parse(request(t, body), nil)
 			if err != nil {
 				return // refusing outright is also a correct answer
 			}
@@ -190,7 +190,7 @@ func TestAnUnparseableSentAtIsRefused(t *testing.T) {
 
 	body := `{"id":"m-1","sent_at":"yesterday","author":{"ref":"u-1"},"session":{"ref":"c-1","kind":"direct"}}`
 
-	if _, err := custom.New().Parse(request(t, body)); err == nil {
+	if _, err := custom.New().Parse(request(t, body), nil); err == nil {
 		t.Error("Parse accepted a sent_at that is not a timestamp")
 	}
 }
@@ -283,7 +283,7 @@ func TestAttachmentsRoundTripThroughTheirRefs(t *testing.T) {
 
 	req := request(t, withAttachments)
 
-	res, err := custom.New().Parse(req)
+	res, err := custom.New().Parse(req, nil)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestAttachmentsRoundTripThroughTheirRefs(t *testing.T) {
 func TestParseDoesNotDecodeToReportASize(t *testing.T) {
 	t.Parallel()
 
-	res, err := custom.New().Parse(request(t, withAttachments))
+	res, err := custom.New().Parse(request(t, withAttachments), nil)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestFetchAttachmentRefusesWhatItCannotResolve(t *testing.T) {
 func TestAMessageWithoutAttachmentsHasNone(t *testing.T) {
 	t.Parallel()
 
-	res, err := custom.New().Parse(request(t, message))
+	res, err := custom.New().Parse(request(t, message), nil)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestParseRefusesAmbiguousAttachmentRefs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			res, err := custom.New().Parse(request(t, body))
+			res, err := custom.New().Parse(request(t, body), nil)
 			if err == nil {
 				t.Fatalf("Parse accepted %d messages from an ambiguous delivery", len(res.Messages))
 			}

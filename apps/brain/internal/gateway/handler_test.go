@@ -99,7 +99,7 @@ func (p *hookProvider) Verify(req WebhookRequest, creds Credentials) error {
 	return nil
 }
 
-func (p *hookProvider) Parse(req WebhookRequest) (Result, error) {
+func (p *hookProvider) Parse(req WebhookRequest, _ Credentials) (Result, error) {
 	p.parses++
 	p.sawReq = req
 	if p.parseErr != nil {

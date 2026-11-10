@@ -34,11 +34,19 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
+// channelSecrets reads as well as writes: deleting a Telegram channel reads
+// its token to tell Telegram to stop posting.
+type channelSecrets struct {
+	secrets.Store
+	secrets.Writer
+}
+
 func newRouters(
 	cfg *config.Config,
 	logger *slog.Logger,
 	dbStore *store.Store,
 	authorizer *authz.Authorizer,
+	secretStore secrets.Store,
 	secretWriter secrets.Writer,
 	registry gateway.Registry,
 	attachments *objects.Encrypted,
@@ -50,8 +58,8 @@ func newRouters(
 	routers := []server.Router{
 		whoami.New(logger),
 		teams.New(logger, dbStore, authorizer, cfg.TeamPurgeAfter),
-		channels.New(logger, dbStore, authorizer, secretWriter, registry, cfg.WebhookPublicURL,
-			reachable(cfg.MCPPrivateNetworks)),
+		channels.New(logger, dbStore, authorizer, channelSecrets{secretStore, secretWriter}, registry, cfg.WebhookPublicURL,
+			reachable(cfg.MCPPrivateNetworks), replyClient(reachable(cfg.MCPPrivateNetworks))),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
 		mcpservers.New(logger, mcpStore{dbStore}, discoverer),
 		agents.New(logger, agentStore{dbStore}, runtime.Loops()),

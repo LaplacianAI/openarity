@@ -288,3 +288,34 @@ func TestListRunRepliesReadsWhatBecameOfEach(t *testing.T) {
 		t.Errorf("ListRunReplies = %+v, want the one pending reply with its error", got)
 	}
 }
+
+// A part's mark is a mark like the others: only the sender holding the
+// current claim moves it, and the next claim carries how far it got.
+func TestAReplysPartsAreRecordedUnderItsClaimAndCarriedToTheNext(t *testing.T) {
+	s := queryStore(t)
+	c := newConversation(t, s, "parts")
+	id := c.answered(t, s, "m-1", "hello")
+
+	first := claimReplies(t, s.Queries, 60)
+	if len(first) != 1 || first[0].PartsSent != 0 {
+		t.Fatalf("first claim %+v, want no parts sent", first)
+	}
+	if n, err := s.ReplyPartSent(t.Context(), db.ReplyPartSentParams{ID: id, Attempts: 1, PartsSent: 1}); err != nil || n != 1 {
+		t.Fatalf("the current sender's part matched %d rows (%v), want 1", n, err)
+	}
+
+	if _, err := s.pool.Exec(t.Context(), `UPDATE replies SET next_attempt_at = now() - interval '1 second' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	again := claimReplies(t, s.Queries, 60)
+	if len(again) != 1 || again[0].PartsSent != 1 {
+		t.Fatalf("the next claim %+v, want it to resume after part 1", again)
+	}
+	if n, err := s.ReplyPartSent(t.Context(), db.ReplyPartSentParams{ID: id, Attempts: 1, PartsSent: 3}); err != nil || n != 0 {
+		t.Errorf("a stale sender's part matched %d rows (%v), want 0", n, err)
+	}
+	var parts int32
+	if err := s.pool.QueryRow(t.Context(), `SELECT parts_sent FROM replies WHERE id = $1`, id).Scan(&parts); err != nil || parts != 1 {
+		t.Errorf("parts_sent = %d (%v), want 1: the stale sender moved it", parts, err)
+	}
+}

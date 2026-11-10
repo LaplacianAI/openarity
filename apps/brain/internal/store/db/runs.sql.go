@@ -955,26 +955,31 @@ func (q *Queries) StartChildRun(ctx context.Context, arg StartChildRunParams) (R
 
 const takeLeftoverSteers = `-- name: TakeLeftoverSteers :many
 WITH gone AS (
-    DELETE FROM agent_steers WHERE session = $1::uuid::text RETURNING id, text
+    DELETE FROM agent_steers WHERE session = $1::uuid::text RETURNING id, text, created_at
 )
-SELECT text FROM gone ORDER BY id
+SELECT text, created_at FROM gone ORDER BY id
 `
+
+type TakeLeftoverSteersRow struct {
+	Text      string
+	CreatedAt time.Time
+}
 
 // Steers written after the run's last request, which nothing will ever read.
 // Deleted as they are returned, oldest first, so they are answered once.
-func (q *Queries) TakeLeftoverSteers(ctx context.Context, runID uuid.UUID) ([]string, error) {
+func (q *Queries) TakeLeftoverSteers(ctx context.Context, runID uuid.UUID) ([]TakeLeftoverSteersRow, error) {
 	rows, err := q.db.Query(ctx, takeLeftoverSteers, runID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []TakeLeftoverSteersRow
 	for rows.Next() {
-		var text string
-		if err := rows.Scan(&text); err != nil {
+		var i TakeLeftoverSteersRow
+		if err := rows.Scan(&i.Text, &i.CreatedAt); err != nil {
 			return nil, err
 		}
-		items = append(items, text)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

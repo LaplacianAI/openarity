@@ -37,8 +37,8 @@ func (*fetchProvider) Keys() []string { return []string{KeySigning} }
 func (*fetchProvider) Routes() []Route {
 	return []Route{{Method: "POST"}}
 }
-func (*fetchProvider) Verify(WebhookRequest, Credentials) error { return nil }
-func (*fetchProvider) Parse(WebhookRequest) (Result, error)     { return Result{}, nil }
+func (*fetchProvider) Verify(WebhookRequest, Credentials) error          { return nil }
+func (*fetchProvider) Parse(WebhookRequest, Credentials) (Result, error) { return Result{}, nil }
 
 func (f *fetchProvider) FetchAttachment(
 	ctx context.Context, _ WebhookRequest, ref string, _ Credentials,
