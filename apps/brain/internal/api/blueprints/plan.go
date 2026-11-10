@@ -10,6 +10,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -149,24 +150,40 @@ func serverFields(teamID uuid.UUID, s serverSpec) (mcpservers.Fields, error) {
 	req := mcpservers.Request{Name: s.Name, URL: s.URL, Command: s.Command, Bare: s.Bare}
 
 	if s.AuthSecret != nil {
-		if !mcpservers.RefPattern.MatchString(*s.AuthSecret) {
-			return mcpservers.Fields{}, errors.New("auth_secret is a secret's name and key, name#key, among the team's MCP secrets")
+		ref, err := teamRef(root, "auth_secret", *s.AuthSecret)
+		if err != nil {
+			return mcpservers.Fields{}, err
 		}
-		ref := root + *s.AuthSecret
 		req.AuthSecretRef = &ref
 	}
 
 	if s.Env != nil {
 		req.Env = make(map[string]string, len(s.Env))
 		for _, k := range slices.Sorted(maps.Keys(s.Env)) {
-			if !mcpservers.RefPattern.MatchString(s.Env[k]) {
-				return mcpservers.Fields{}, fmt.Errorf("env %s is a secret's name and key, name#key, among the team's MCP secrets", k)
+			ref, err := teamRef(root, "env "+k, s.Env[k])
+			if err != nil {
+				return mcpservers.Fields{}, err
 			}
-			req.Env[k] = root + s.Env[k]
+			req.Env[k] = ref
 		}
 	}
 
 	return mcpservers.Parse(teamID, req)
+}
+
+// teamRef places a reference among the team's MCP secrets. It may be written
+// relative (name#key) or whole, as the MCP server API and its form take it;
+// either way it is the team's own. A whole one under another team is refused
+// rather than nested under this one.
+func teamRef(root, field, ref string) (string, error) {
+	rel, whole := strings.CutPrefix(ref, root)
+	if !whole && strings.HasPrefix(ref, "teams/") {
+		return "", fmt.Errorf("%s names another team's secret: a blueprint reaches only its own team's", field)
+	}
+	if !mcpservers.RefPattern.MatchString(rel) {
+		return "", fmt.Errorf("%s is a secret's name and key, name#key, among the team's MCP secrets", field)
+	}
+	return root + rel, nil
 }
 
 func serverDiff(cur db.McpServer, f mcpservers.Fields) []string {

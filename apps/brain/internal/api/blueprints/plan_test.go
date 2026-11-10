@@ -116,6 +116,41 @@ func TestASecretInsteadOfAReferenceIsSaidInTheBlueprintsTerms(t *testing.T) {
 	}
 }
 
+// The MCP server API and its form take a reference whole; written that way
+// in a blueprint it is the same secret, never one nested under itself.
+func TestAWholeReferenceIsTakenAsTheTeamsOwn(t *testing.T) {
+	t.Parallel()
+
+	tm := emptyTeam()
+	root := "teams/" + tm.id.String() + "/mcp/"
+	url := "https://h.example/mcp"
+	whole, short := root+"helpdesk#token", "helpdesk#token"
+	for _, ref := range []string{whole, short} {
+		p := planOf(tm, Blueprint{MCPServers: []serverSpec{{Name: "helpdesk", URL: &url, AuthSecret: &ref}}}, loops, all())
+		if len(p.Refusals) != 0 || len(p.servers) != 1 || *p.servers[0].fields.AuthSecretRef != whole {
+			t.Errorf("%s: refusals %+v, stored %v; want %s", ref, p.Refusals, p.servers, whole)
+		}
+	}
+
+	env := planOf(tm, Blueprint{MCPServers: []serverSpec{{
+		Name: "gh", Command: []string{"gh-mcp"}, Env: map[string]string{"A": whole, "B": short},
+	}}}, loops, all())
+	if len(env.Refusals) != 0 || string(env.servers[0].fields.Env) != `{"A":"`+whole+`","B":"`+whole+`"}` {
+		t.Errorf("env: refusals %+v, stored %s", env.Refusals, env.servers[0].fields.Env)
+	}
+}
+
+func TestAnotherTeamsReferenceIsRefused(t *testing.T) {
+	t.Parallel()
+
+	url := "https://h.example/mcp"
+	theirs := "teams/" + uuid.NewString() + "/mcp/helpdesk#token"
+	p := planOf(emptyTeam(), Blueprint{MCPServers: []serverSpec{{Name: "helpdesk", URL: &url, AuthSecret: &theirs}}}, loops, all())
+	if !refusedFor(p, "helpdesk", "another team's secret") {
+		t.Errorf("refusals = %+v", p.Refusals)
+	}
+}
+
 func TestAServerIsComparedFieldByField(t *testing.T) {
 	t.Parallel()
 

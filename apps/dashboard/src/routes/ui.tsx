@@ -103,7 +103,7 @@ export function navGroups(superAdmin: boolean): readonly NavGroup[] {
         { to: "/ui/skills", label: "Skills", icon: BookOpen, exact: false },
         { to: "/ui/servers", label: "MCP servers", icon: Server, exact: false },
         { to: "/ui/channels", label: "Channels", icon: Radio, exact: false },
-        { to: "/ui/blueprint", label: "Blueprint", icon: FileCode2, exact: false },
+        { to: "/ui/compose", label: "Compose", icon: FileCode2, exact: false },
       ],
     },
     {

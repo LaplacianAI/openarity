@@ -17,7 +17,8 @@ import { useCurrentTeam } from "@/api/session";
 import { useTeamSummary } from "@/api/summary";
 import type { MCPServer, MCPServerRequest } from "@/api/types";
 import { Time } from "@/components/facts";
-import { Field, ReadOnlyNote, Tag, TextArea } from "@/components/registry-bits";
+import { ReadOnlyNote, Tag } from "@/components/registry-bits";
+import { ServerFields } from "@/components/server-fields";
 import { ErrorState } from "@/components/states";
 import { StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import {
   Sheet,
   SheetContent,
@@ -38,7 +38,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SwitchField } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -599,81 +598,7 @@ function ServerDialog({
             save.mutate(body);
           }}
         >
-          <Field
-            label="Name"
-            htmlFor="server-name"
-            hint="Each tool reaches the model as <name>__<tool>."
-          >
-            <Input
-              id="server-name"
-              value={draft.name}
-              autoComplete="off"
-              onChange={(e) => set({ name: e.target.value })}
-            />
-          </Field>
-          <fieldset className="space-y-1.5">
-            <legend className="text-sm font-medium">Reached at</legend>
-            <div className="flex gap-5 text-sm">
-              {(["url", "command"] as const).map((t) => (
-                <label key={t} className="flex cursor-pointer items-center gap-2">
-                  <input
-                    type="radio"
-                    name="transport"
-                    checked={draft.transport === t}
-                    onChange={() => set({ transport: t })}
-                    className="size-4 accent-primary"
-                  />
-                  {t === "url" ? "A URL" : "A command"}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-          {draft.transport === "url" ? (
-            <>
-              <Field label="URL" htmlFor="server-url">
-                <Input
-                  id="server-url"
-                  value={draft.url}
-                  placeholder="https://mcp.example.com/v1"
-                  spellCheck={false}
-                  onChange={(e) => set({ url: e.target.value })}
-                />
-              </Field>
-              <Field label="Bearer token reference" htmlFor="server-auth" hint="Optional.">
-                <Input
-                  id="server-auth"
-                  value={draft.authRef}
-                  spellCheck={false}
-                  onChange={(e) => set({ authRef: e.target.value })}
-                />
-              </Field>
-            </>
-          ) : (
-            <>
-              <Field label="Command" htmlFor="server-command" hint="One argument per line.">
-                <TextArea
-                  id="server-command"
-                  value={draft.command}
-                  spellCheck={false}
-                  onChange={(e) => set({ command: e.target.value })}
-                />
-              </Field>
-              <Field label="Environment" htmlFor="server-env" hint="NAME=reference, one per line.">
-                <TextArea
-                  id="server-env"
-                  value={draft.env}
-                  spellCheck={false}
-                  onChange={(e) => set({ env: e.target.value })}
-                />
-              </Field>
-            </>
-          )}
-          <SwitchField
-            label="Bare"
-            description="Its tools reach the model without the server's name in front."
-            checked={draft.bare}
-            onCheckedChange={(bare) => set({ bare })}
-          />
+          <ServerFields draft={draft} set={set} />
           {problem ? (
             <p role="alert" className="text-sm text-destructive">
               {problem}

@@ -50,7 +50,7 @@ export const SCREENS = [
   // By name: "Define agent" links under the same path and comes first.
   { name: "agent", path: "/ui/agents", follow: "/ui/agents/", followName: "log-reader" },
   { name: "servers", path: "/ui/servers", open: "Register server" },
-  { name: "blueprint", path: "/ui/blueprint" },
+  { name: "compose", path: "/ui/compose", open: "Agent" },
   { name: "skills", path: "/ui/skills" },
   { name: "graph", path: "/ui/graph" },
   { name: "settings", path: "/ui/settings" },

@@ -39,7 +39,8 @@ An agent takes the fields `oa agents create` takes, except that its MCP
 servers, skills and delegates are named rather than given by id. An MCP server
 takes what `oa mcp-servers create` takes, with each secret reference written
 relative to the team (`helpdesk#token` rather than
-`teams/<team_id>/mcp/helpdesk#token`), so one file works for every team. A key
+`teams/<team_id>/mcp/helpdesk#token`), so one file works for every team. The
+whole reference is accepted too, as long as it is the team's own. A key
 the format does not have is refused before anything is sent, so a misspelt
 field is never quietly left out.
 
@@ -82,11 +83,10 @@ or the plan that stopped it.
 
 ## In the dashboard
 
-**Blueprint**, under Build, takes the same file pasted as YAML or JSON. **Plan**
-shows the plan, **Apply** applies exactly that plan, and editing the text takes
-the plan away. A browser cannot open `./skills/support-faq` itself, so each
-skill's folder is added with **Add skill folder** and matched to its `path:` by
-the folder's name.
+**Compose**, under Build, builds a blueprint from forms rather than a file: add
+MCP servers, skill folders and agents to a draft, or change the team's own,
+then **Plan** and **Apply**. An agent in the draft may be granted a server or
+skill the same draft creates.
 
 ## The rules
 
