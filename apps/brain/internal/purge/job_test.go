@@ -5,8 +5,6 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +15,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/storetest"
 )
 
 func discardLogger() *slog.Logger {
@@ -66,69 +65,30 @@ func TestTheJobRegistersOneHourlySchedule(t *testing.T) {
 
 // --- against Postgres ---
 
-func liveDSN(t *testing.T) string {
-	t.Helper()
-
-	dsn := os.Getenv("BRAIN_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("BRAIN_TEST_POSTGRES_DSN is not set")
-	}
-	return dsn
-}
-
 type world struct {
 	store *store.Store
 	raw   *pgx.Conn
 }
 
-// newWorld is a migrated schema of the test's own, dropped afterwards.
+// newWorld is a migrated database of the test's own, dropped afterwards.
 func newWorld(t *testing.T) *world {
 	t.Helper()
 
-	base := liveDSN(t)
-	schema := "brain_purge_" + strings.ToLower(t.Name())
-	drop := "DROP SCHEMA IF EXISTS " + schema + " CASCADE"
-
-	admin, err := pgx.Connect(t.Context(), base)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	for _, sql := range []string{drop, "CREATE SCHEMA " + schema} {
-		if _, err := admin.Exec(t.Context(), sql); err != nil {
-			t.Fatalf("%s: %v", sql, err)
-		}
-	}
-	_ = admin.Close(t.Context())
-	t.Cleanup(func() {
-		ctx := context.WithoutCancel(t.Context())
-		conn, err := pgx.Connect(ctx, base)
+	dsn := storetest.Migrated(t, func(ctx context.Context, dsn string) error {
+		s, err := store.New(ctx, dsn)
 		if err != nil {
-			t.Errorf("cleanup connect: %v", err)
-			return
+			return err
 		}
-		defer func() { _ = conn.Close(ctx) }()
-		if _, err := conn.Exec(ctx, drop); err != nil {
-			t.Errorf("drop schema: %v", err)
-		}
+		defer s.Close()
+		_, err = s.Migrate(ctx)
+		return err
 	})
-
-	u, err := url.Parse(base)
-	if err != nil {
-		t.Fatalf("parse dsn: %v", err)
-	}
-	q := u.Query()
-	q.Set("search_path", schema)
-	u.RawQuery = q.Encode()
-
-	s, err := store.New(t.Context(), u.String())
+	s, err := store.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
 	t.Cleanup(s.Close)
-	if _, err := s.Migrate(t.Context()); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	raw, err := pgx.Connect(t.Context(), u.String())
+	raw, err := pgx.Connect(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -183,6 +143,8 @@ func (c *counting) PurgeTeams(ctx context.Context, arg db.PurgeTeamsParams) ([]u
 }
 
 func TestPurgeTeamsLoopsUntilNothingIsLeft(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	for i := range 25 {
 		w.deletedTeam(t, "gone-"+string(rune('a'+i)), 2*time.Hour)
@@ -208,6 +170,8 @@ func TestPurgeTeamsLoopsUntilNothingIsLeft(t *testing.T) {
 // Review focus 4: the window is the caller's, read on every tick. The same
 // team survives a week's window and goes under an hour's.
 func TestPurgeUsesTheWindowItIsGiven(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	id := w.deletedTeam(t, "old", 2*time.Hour)
 
@@ -230,6 +194,8 @@ func TestPurgeUsesTheWindowItIsGiven(t *testing.T) {
 // of the tick purges, the error names the team, and the next tick tries it
 // again.
 func TestOneFailingTeamDoesNotHoldBackTheOthers(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	stuck := w.deletedTeam(t, "stuck", 3*time.Hour) // oldest, so in the first batch
 	var others []uuid.UUID

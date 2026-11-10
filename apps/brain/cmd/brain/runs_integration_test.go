@@ -15,9 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dbos-inc/dbos-transact-golang/dbos"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/worker"
 )
 
 const (
@@ -145,10 +149,33 @@ func tracker(t *testing.T) (url string, calls *atomic.Int32) {
 
 type brain struct {
 	api   string
+	dsn   string
 	raw   *pgx.Conn
 	llm   *scriptedLLM
 	calls *atomic.Int32
 	team  uuid.UUID
+}
+
+// sweepNow runs the workers' sweep at once rather than on its schedule, once
+// a minute on the minute, which made a takeover test wait up to that minute.
+// It is the scheduled workflow itself, enqueued by name, so the takeover is
+// the one the schedule would have run; that the schedule names it is
+// internal/runtime's TestTheSweepSpecIsWhatItClaims.
+func (b *brain) sweepNow(t *testing.T) {
+	t.Helper()
+
+	c, err := dbos.NewClient(t.Context(), dbos.ClientConfig{
+		DatabaseURL: b.dsn, AppName: worker.AppName, Logger: discardLogger(),
+	})
+	if err != nil {
+		t.Fatalf("connect to the queue: %v", err)
+	}
+	defer func() { _ = dbos.Shutdown(c, 5*time.Second) }()
+
+	if _, err := dbos.Enqueue[string](c, runtime.RunQueue, "openarity.runtime.sweep",
+		dbos.ScheduledWorkflowInput{ScheduledTime: time.Now()}); err != nil {
+		t.Fatalf("enqueue the sweep: %v", err)
+	}
 }
 
 // newBrain is serve, on a fresh database, with a team the development user
@@ -180,7 +207,7 @@ func newBrain(t *testing.T, llm *scriptedLLM) *brain {
 	}
 	t.Cleanup(func() { _ = raw.Close(context.WithoutCancel(t.Context())) })
 
-	b := &brain{api: "http://" + apiBind, raw: raw, llm: llm, calls: calls}
+	b := &brain{api: "http://" + apiBind, dsn: dsn, raw: raw, llm: llm, calls: calls}
 
 	// The first authenticated request is what creates the user.
 	if status, _ := b.call(t, http.MethodGet, "/whoami", nil); status != http.StatusOK {
@@ -524,8 +551,8 @@ func TestARunWhoseWorkerStopsIsFinishedByAnother(t *testing.T) {
 	}
 
 	startWorker(t)
-	// The sweep runs once a minute, on the minute.
-	frames := b.follow(t, r.ID, 90*time.Second)
+	b.sweepNow(t)
+	frames := b.follow(t, r.ID, 60*time.Second)
 
 	got := kinds(frames)
 	if !inOrder(got, aWholeRun) || !inOrder(got, []string{"tool_result:" + lookupTool, "resumed", "finished"}) {

@@ -160,6 +160,8 @@ func (w *world) logged(msg string) []map[string]any {
 }
 
 func TestATickDrainsTheOutboxAndSaysWhatItDid(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	waiting := w.outstanding()
@@ -177,6 +179,8 @@ func TestATickDrainsTheOutboxAndSaysWhatItDid(t *testing.T) {
 
 // 1,440 ticks a day, nearly all of them with nothing to do.
 func TestATickWithNothingToDoSaysNothing(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	w.acme()
 	w.drained()
@@ -194,6 +198,8 @@ func TestATickWithNothingToDoSaysNothing(t *testing.T) {
 
 // A failure is worth a line even when nothing was projected.
 func TestATickThatOnlyFailedSaysSo(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	w.skill(team, "pdf", "Extract text")
@@ -211,6 +217,8 @@ func TestATickThatOnlyFailedSaysSo(t *testing.T) {
 // Another worker draining is the ordinary case with two replicas, not a
 // failed workflow.
 func TestATickWhileAnotherWorkerDrainsIsNotAnError(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	w.acme()
 	waiting := w.outstanding()
@@ -228,6 +236,8 @@ func TestATickWhileAnotherWorkerDrainsIsNotAnError(t *testing.T) {
 
 // A drain that could not run fails its workflow, where it is seen.
 func TestATickThatCannotDrainIsAnError(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	w.acme()
 	w.store.claim = errors.New("the database went away")
@@ -254,6 +264,8 @@ func (w *world) stuck(age time.Duration) {
 // An outbox that stops shrinking is a projector that stopped. The age of the
 // oldest row is the signal, never the count.
 func TestAGraphLeftBehindIsReportedOnTheQuarterHour(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	w.stuck(time.Hour)
 
@@ -290,6 +302,8 @@ func TestAGraphLeftBehindIsReportedOnTheQuarterHour(t *testing.T) {
 }
 
 func TestABacklogYoungerThanTheThresholdIsNotAnAlarm(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	w.stuck(behindAfter - time.Minute)
 
@@ -309,6 +323,8 @@ func TestABacklogYoungerThanTheThresholdIsNotAnAlarm(t *testing.T) {
 // The alarm does not depend on this worker having drained: a worker that is
 // always turned away still reports a graph that is behind.
 func TestABusyTickStillRaisesTheAlarm(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	w.stuck(time.Hour)
 
@@ -324,6 +340,8 @@ func TestABusyTickStillRaisesTheAlarm(t *testing.T) {
 }
 
 func TestABacklogThatCannotBeReadIsLoggedAndTheTickStands(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	w.stuck(time.Hour)
 	w.store.backlog = errors.New("the database went away")
@@ -341,6 +359,8 @@ func TestABacklogThatCannotBeReadIsLoggedAndTheTickStands(t *testing.T) {
 }
 
 func TestBacklogCountsEveryRowAndFindsTheOldest(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 
 	outstanding, oldest, err := w.p.Backlog(t.Context())

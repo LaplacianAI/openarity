@@ -11,8 +11,6 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
-	"net/url"
-	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -24,6 +22,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/storetest"
 )
 
 // The projector is tested against the three things it sits between: a real
@@ -38,69 +37,33 @@ const (
 	cleanupTimeout = 30 * time.Second
 )
 
-// liveSchema is a migrated schema of its own for one test, and a plain
-// connection into it for the few statements no query is generated for.
+// liveSchema is a migrated database of the test's own, and a plain
+// connection into it for the statements no query is generated for.
 func liveSchema(t *testing.T) (*store.Store, *pgx.Conn) {
 	t.Helper()
 
-	dsn := os.Getenv("BRAIN_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("BRAIN_TEST_POSTGRES_DSN is not set")
-	}
-
-	// Postgres cuts an identifier at 63 bytes without failing, and two tests
-	// cut to the same name would share their tables.
-	schema := "graph_test_" + strings.ToLower(t.Name())
-	if len(schema) > 63 {
-		t.Fatalf("the schema name %s is %d bytes, and Postgres keeps 63", schema, len(schema))
-	}
-
-	admin, err := pgx.Connect(t.Context(), dsn)
+	dsn := storetest.Migrated(t, migrateDSN)
+	s, err := store.New(t.Context(), dsn)
 	if err != nil {
-		t.Fatalf("connect: %v", err)
+		t.Fatalf("connect to the test database: %v", err)
 	}
-	for _, statement := range []string{"DROP SCHEMA IF EXISTS " + schema + " CASCADE", "CREATE SCHEMA " + schema} {
-		if _, err := admin.Exec(t.Context(), statement); err != nil {
-			t.Fatalf("%s: %v", statement, err)
-		}
-	}
-	_ = admin.Close(t.Context())
-
-	u, err := url.Parse(dsn)
+	t.Cleanup(s.Close)
+	raw, err := pgx.Connect(t.Context(), dsn)
 	if err != nil {
-		t.Fatal("BRAIN_TEST_POSTGRES_DSN is not a URL")
+		t.Fatalf("connect to the test database: %v", err)
 	}
-	q := u.Query()
-	q.Set("search_path", schema)
-	u.RawQuery = q.Encode()
-
-	s, err := store.New(t.Context(), u.String())
-	if err != nil {
-		t.Fatalf("connect to the schema: %v", err)
-	}
-	raw, err := pgx.Connect(t.Context(), u.String())
-	if err != nil {
-		t.Fatalf("connect to the schema: %v", err)
-	}
-
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), cleanupTimeout)
-		defer cancel()
-
-		s.Close()
-		if _, err := raw.Exec(ctx, "SET lock_timeout = '5s'"); err != nil {
-			t.Errorf("set lock_timeout: %v", err)
-		}
-		if _, err := raw.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
-			t.Errorf("drop schema: %v", err)
-		}
-		_ = raw.Close(ctx)
-	})
-
-	if _, err := s.Migrate(t.Context()); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	t.Cleanup(func() { _ = raw.Close(context.WithoutCancel(t.Context())) })
 	return s, raw
+}
+
+func migrateDSN(ctx context.Context, dsn string) error {
+	s, err := store.New(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	_, err = s.Migrate(ctx)
+	return err
 }
 
 // vectorOf is the vector the fake router gives a text under a model: three
@@ -523,6 +486,8 @@ var (
 // --- what reaches the graph ---
 
 func TestEachEntityAppearsInTheGraph(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 
@@ -575,6 +540,8 @@ func TestEachEntityAppearsInTheGraph(t *testing.T) {
 // A vector has to be findable, not only stored: the index the projector made
 // is the one a search reads.
 func TestAProjectedSkillIsFoundByItsVector(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	pdf := w.skill(team, "pdf", "Extract text from PDFs")
@@ -594,6 +561,8 @@ func TestAProjectedSkillIsFoundByItsVector(t *testing.T) {
 }
 
 func TestADeletedRowLeavesTheGraph(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -631,6 +600,8 @@ func TestADeletedRowLeavesTheGraph(t *testing.T) {
 // A drain interrupted after its writes and before it cleared its rows runs
 // them all again.
 func TestReplayingAnOutboxRowChangesNothing(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -662,6 +633,8 @@ func TestReplayingAnOutboxRowChangesNothing(t *testing.T) {
 // --- what an embedding costs ---
 
 func TestAnUnchangedDescriptionIsNotEmbeddedAgain(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -687,6 +660,8 @@ func TestAnUnchangedDescriptionIsNotEmbeddedAgain(t *testing.T) {
 }
 
 func TestChangingOnlyInstructionsCostsNoEmbedding(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -724,6 +699,8 @@ func TestChangingOnlyInstructionsCostsNoEmbedding(t *testing.T) {
 
 // A renamed thing is a different text, whatever its description.
 func TestARenameIsEmbeddedAgain(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	pdf := w.skill(team, "pdf", "Extract text")
@@ -744,6 +721,8 @@ func TestARenameIsEmbeddedAgain(t *testing.T) {
 // The name and the description are joined with a line break, so the pair
 // ("a b", "c") is not the pair ("a", "b c") and the two are told apart.
 func TestTheEmbeddedTextKeepsTheNameAndDescriptionApart(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	one := w.skill(team, "pdf", "reader extracts text")
@@ -760,6 +739,8 @@ func TestTheEmbeddedTextKeepsTheNameAndDescriptionApart(t *testing.T) {
 }
 
 func TestAChangedModelReembeds(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -784,6 +765,8 @@ func TestAChangedModelReembeds(t *testing.T) {
 
 // A vector with no record of what made it cannot be trusted to match.
 func TestANodeWithNoFingerprintIsEmbedded(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	pdf := w.skill(team, "pdf", "Extract text")
@@ -805,6 +788,8 @@ func TestANodeWithNoFingerprintIsEmbedded(t *testing.T) {
 // --- grants ---
 
 func TestARevokedGrantLeavesTheGraph(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	linear := w.server(a.team, "linear")
@@ -834,6 +819,8 @@ func TestARevokedGrantLeavesTheGraph(t *testing.T) {
 }
 
 func TestAnAllowListReachesTheGrantedEdge(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	github, linear := w.server(team, "github"), w.server(team, "linear")
@@ -871,6 +858,8 @@ func TestAnAllowListReachesTheGrantedEdge(t *testing.T) {
 // --- changes that arrive together ---
 
 func TestManyChangesToOneThingAreProjectedOnce(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	pdf := w.skill(team, "pdf", "v0")
@@ -895,6 +884,8 @@ func TestManyChangesToOneThingAreProjectedOnce(t *testing.T) {
 // were made in. Usually: a row that failed sinks behind fresh ones. Within a
 // batch the projector does not depend on it.
 func TestABatchIsProjectedInDependencyOrderWhateverItsOwn(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.exec("DELETE FROM graph_outbox")
@@ -913,6 +904,8 @@ func TestABatchIsProjectedInDependencyOrderWhateverItsOwn(t *testing.T) {
 
 // One Drain empties the outbox however small its batches.
 func TestADrainRunsUntilTheOutboxIsEmpty(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	waiting := w.outstanding()
@@ -937,6 +930,8 @@ func TestADrainRunsUntilTheOutboxIsEmpty(t *testing.T) {
 // --- failures ---
 
 func TestAFailedEmbeddingLeavesTheRowToRetry(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	github := w.server(team, "github")
@@ -983,6 +978,8 @@ func TestAFailedEmbeddingLeavesTheRowToRetry(t *testing.T) {
 // A description that changed while the router was down: the node keeps the
 // vector and the text it had, together, until the retry replaces both.
 func TestAFailedEmbeddingLeavesTheOldNodeWhole(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	pdf := w.skill(team, "pdf", "Extract text")
@@ -1006,6 +1003,8 @@ func TestAFailedEmbeddingLeavesTheOldNodeWhole(t *testing.T) {
 // A tool whose toolkit is not in the graph is not left half-attached and
 // forgotten: its row stays until the toolkit is there.
 func TestAToolWaitsForItsToolkit(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	github := w.server(team, "github")
@@ -1030,6 +1029,8 @@ func TestAToolWaitsForItsToolkit(t *testing.T) {
 
 // An agent granted a server that is not in the graph yet waits the same way.
 func TestAnAgentWaitsForWhatItWasGranted(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	github := w.server(team, "github")
@@ -1063,6 +1064,8 @@ func TestAnAgentWaitsForWhatItWasGranted(t *testing.T) {
 // A row that keeps failing is a warning three times and an error after:
 // the first few are a dependency arriving late, the rest are somebody's job.
 func TestARowThatKeepsFailingIsLoggedAsAnError(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	w.skill(team, "pdf", "Extract text")
@@ -1092,6 +1095,8 @@ func TestARowThatKeepsFailingIsLoggedAsAnError(t *testing.T) {
 // ever names a sixth before the projector knows it, the row must stay and say
 // so, not be cleared as done.
 func TestAnEntityTheProjectorDoesNotKnowIsKeptAndReported(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	w.skill(team, "pdf", "Extract text")
@@ -1111,6 +1116,8 @@ func TestAnEntityTheProjectorDoesNotKnowIsKeptAndReported(t *testing.T) {
 // written here by the trigger that owns it, never by this test, so a renamed
 // entity in a migration fails here.
 func TestTheProjectorKnowsEveryEntityTheTriggersWrite(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.must(w.store.DeleteTeam(t.Context(), a.team.ID))
@@ -1142,6 +1149,8 @@ func TestTheProjectorKnowsEveryEntityTheTriggersWrite(t *testing.T) {
 // --- teams ---
 
 func TestDeletingATeamDropsItsGraphAndNoOther(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	globex := w.team("globex")
@@ -1173,6 +1182,8 @@ func TestDeletingATeamDropsItsGraphAndNoOther(t *testing.T) {
 // A team made and deleted between two drains never had a graph, and must not
 // get one.
 func TestATeamDeletedBeforeItWasEverProjectedGetsNoGraph(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.must(w.store.DeleteTeam(t.Context(), a.team.ID))
@@ -1192,6 +1203,8 @@ func TestATeamDeletedBeforeItWasEverProjectedGetsNoGraph(t *testing.T) {
 
 // Each team's rows land in that team's graph and nowhere else.
 func TestOneTeamsRowsNeverReachAnothersGraph(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	globex := w.team("globex")
@@ -1216,6 +1229,8 @@ func TestOneTeamsRowsNeverReachAnothersGraph(t *testing.T) {
 
 // A team that cannot be read is not a team that was deleted.
 func TestATeamThatCannotBeReadKeepsItsGraphAndItsRows(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -1239,6 +1254,8 @@ func TestATeamThatCannotBeReadKeepsItsGraphAndItsRows(t *testing.T) {
 // not write a vector nothing can search; it leaves the rows and says what to
 // run.
 func TestAGraphBuiltForAnotherWidthIsLeftAlone(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -1268,6 +1285,8 @@ func TestAGraphBuiltForAnotherWidthIsLeftAlone(t *testing.T) {
 // A row is cleared only after its change reached the graph. If clearing
 // fails the drain says so, and the rows are still there to run again.
 func TestRowsThatCannotBeClearedAreKept(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	waiting := w.outstanding()
@@ -1287,6 +1306,8 @@ func TestRowsThatCannotBeClearedAreKept(t *testing.T) {
 }
 
 func TestAClaimThatFailsIsTheDrainsError(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	w.acme()
 	w.store.claim = errors.New("the database went away")
@@ -1301,6 +1322,8 @@ func TestAClaimThatFailsIsTheDrainsError(t *testing.T) {
 // this drain did not claim and must not clear. The graph is stale for one
 // drain, and the next one catches it up.
 func TestAChangeMadeDuringADrainIsNotLost(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	pdf := w.skill(team, "pdf", "first")
@@ -1329,6 +1352,8 @@ func TestAChangeMadeDuringADrainIsNotLost(t *testing.T) {
 // --- one drain at a time ---
 
 func TestADrainDoesNothingWhileAnotherHoldsTheLock(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	waiting := w.outstanding()
@@ -1362,6 +1387,8 @@ func TestADrainDoesNothingWhileAnotherHoldsTheLock(t *testing.T) {
 // Two projectors in one process share the lock: it is the key that matters,
 // not who made the projector.
 func TestTwoProjectorsShareOneLock(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	w.acme()
 	other := w.projector(testModel, w.graph)
@@ -1395,6 +1422,8 @@ func TestTheDrainLockIsItsOwn(t *testing.T) {
 }
 
 func TestACancelledDrainIsAnErrorAndClaimsNothing(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	w.acme()
 	waiting := w.outstanding()
@@ -1413,6 +1442,8 @@ func TestACancelledDrainIsAnErrorAndClaimsNothing(t *testing.T) {
 // Cancelled before anything was projected, there is nothing to clear and so
 // no failed write to carry the news. The drain still has to say it stopped.
 func TestADrainCancelledBeforeItsFirstWriteSaysSo(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 	w.skill(team, "pdf", "Extract text")
@@ -1431,6 +1462,8 @@ func TestADrainCancelledBeforeItsFirstWriteSaysSo(t *testing.T) {
 // Cancelled part-way, a drain stops and says so: it does not report a clean
 // run with rows still waiting.
 func TestADrainCancelledPartWayStops(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	w.acme()
 

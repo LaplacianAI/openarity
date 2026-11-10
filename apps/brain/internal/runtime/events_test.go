@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/url"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -18,6 +16,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/storetest"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
@@ -26,69 +25,33 @@ const (
 	cleanupTimeout = 30 * time.Second
 )
 
-// liveSchema is a migrated schema of its own for one test, and a plain
-// connection into it for the statements no query is generated for, and its DSN.
+// liveSchema is a migrated database of the test's own, a plain connection
+// into it for the statements no query is generated for, and its DSN.
 func liveSchema(t *testing.T) (*store.Store, *pgx.Conn, string) {
 	t.Helper()
 
-	dsn := os.Getenv("BRAIN_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("BRAIN_TEST_POSTGRES_DSN is not set")
-	}
-
-	// Postgres cuts an identifier at 63 bytes without failing, and two tests
-	// cut to the same name would share their tables.
-	schema := "runtime_test_" + strings.NewReplacer("/", "_", "'", "").Replace(strings.ToLower(t.Name()))
-	if len(schema) > 63 {
-		t.Fatalf("the schema name %s is %d bytes, and Postgres keeps 63", schema, len(schema))
-	}
-
-	admin, err := pgx.Connect(t.Context(), dsn)
+	dsn := storetest.Migrated(t, migrateDSN)
+	s, err := store.New(t.Context(), dsn)
 	if err != nil {
-		t.Fatalf("connect: %v", err)
+		t.Fatalf("connect to the test database: %v", err)
 	}
-	for _, statement := range []string{"DROP SCHEMA IF EXISTS " + schema + " CASCADE", "CREATE SCHEMA " + schema} {
-		if _, err := admin.Exec(t.Context(), statement); err != nil {
-			t.Fatalf("%s: %v", statement, err)
-		}
-	}
-	_ = admin.Close(t.Context())
-
-	u, err := url.Parse(dsn)
+	t.Cleanup(s.Close)
+	raw, err := pgx.Connect(t.Context(), dsn)
 	if err != nil {
-		t.Fatal("BRAIN_TEST_POSTGRES_DSN is not a URL")
+		t.Fatalf("connect to the test database: %v", err)
 	}
-	q := u.Query()
-	q.Set("search_path", schema)
-	u.RawQuery = q.Encode()
+	t.Cleanup(func() { _ = raw.Close(context.WithoutCancel(t.Context())) })
+	return s, raw, dsn
+}
 
-	s, err := store.New(t.Context(), u.String())
+func migrateDSN(ctx context.Context, dsn string) error {
+	s, err := store.New(ctx, dsn)
 	if err != nil {
-		t.Fatalf("connect to the schema: %v", err)
+		return err
 	}
-	raw, err := pgx.Connect(t.Context(), u.String())
-	if err != nil {
-		t.Fatalf("connect to the schema: %v", err)
-	}
-
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), cleanupTimeout)
-		defer cancel()
-
-		s.Close()
-		if _, err := raw.Exec(ctx, "SET lock_timeout = '5s'"); err != nil {
-			t.Errorf("set lock_timeout: %v", err)
-		}
-		if _, err := raw.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
-			t.Errorf("drop schema: %v", err)
-		}
-		_ = raw.Close(ctx)
-	})
-
-	if _, err := s.Migrate(t.Context()); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	return s, raw, u.String()
+	defer s.Close()
+	_, err = s.Migrate(ctx)
+	return err
 }
 
 // heldRun is a run this worker has claimed, in a schema of its own.
@@ -228,6 +191,8 @@ type toolResult struct {
 }
 
 func TestEachSDKEventBecomesItsRow(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 
 	st := feed(t, h.store, h.id,
@@ -269,6 +234,8 @@ func TestEachSDKEventBecomesItsRow(t *testing.T) {
 // Text arrives a token at a time; storing it would be a row per token for
 // what the transcript already holds whole.
 func TestTextIsNotStored(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 
 	st := feed(t, h.store, h.id, agent.TextEvent{Delta: "Hel"}, agent.TextEvent{Delta: "lo"})
@@ -279,6 +246,8 @@ func TestTextIsNotStored(t *testing.T) {
 }
 
 func TestALargeToolResultIsCutAndSaysSo(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 	// One byte, then two-byte runes, so 64 KiB falls inside a rune.
 	output := "a" + strings.Repeat("é", 35<<10)
@@ -298,6 +267,8 @@ func TestALargeToolResultIsCutAndSaysSo(t *testing.T) {
 }
 
 func TestAnOutputAtTheLimitIsNotCut(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 	output := strings.Repeat("a", maxEventText)
 
@@ -310,6 +281,8 @@ func TestAnOutputAtTheLimitIsNotCut(t *testing.T) {
 }
 
 func TestALargeErrorOrArgumentsAreCutToo(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 	big := strings.Repeat("x", maxEventText+10)
 
@@ -336,6 +309,8 @@ func TestALargeErrorOrArgumentsAreCutToo(t *testing.T) {
 // Postgres refuses \u0000 in jsonb, so a tool that prints a NUL would fail
 // the append and stop the run over a byte nobody needs.
 func TestANULInAToolsOutputDoesNotStopTheRun(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 
 	st := feed(t, h.store, h.id,
@@ -356,6 +331,8 @@ func TestANULInAToolsOutputDoesNotStopTheRun(t *testing.T) {
 // A model's arguments are whatever it wrote, and a half-written object is
 // still worth seeing when working out why its call failed.
 func TestArgumentsThatAreNotJSONAreStoredAsWritten(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 
 	st := feed(t, h.store, h.id, agent.ToolCallEvent{ID: "c", Name: "read", Arguments: json.RawMessage(`{"path": "/tm`)})
@@ -373,6 +350,8 @@ func usage(in, out int) agent.UsageEvent {
 }
 
 func TestUsagePastTheBudgetStopsTheRun(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 
 	st := feed(t, h.store, h.id, usage(400_000, 200_000), usage(300_000, 100_001))
@@ -388,6 +367,8 @@ func TestUsagePastTheBudgetStopsTheRun(t *testing.T) {
 }
 
 func TestUsageExactlyAtTheBudgetDoesNotStopTheRun(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 
 	wantNoStop(t, feed(t, h.store, h.id, usage(600_000, 400_000)))
@@ -396,6 +377,8 @@ func TestUsageExactlyAtTheBudgetDoesNotStopTheRun(t *testing.T) {
 // An agent's own budget replaces the default in both directions: a smaller
 // one stops the run sooner, a larger one lets it carry on past a million.
 func TestARunsOwnBudgetIsTheLimit(t *testing.T) {
+	t.Parallel()
+
 	for name, tc := range map[string]struct {
 		budget int64
 		spend  agent.UsageEvent
@@ -431,6 +414,8 @@ func TestARunWithNoBudgetOfItsOwnGetsTheDefault(t *testing.T) {
 // A resumed run is a new process with nothing in memory; what it has spent
 // is the row's.
 func TestUsageCarriesOnFromWhatWasSpentBeforeAResume(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 	if _, err := h.raw.Exec(t.Context(),
 		`UPDATE runs SET input_tokens = 900000, output_tokens = 99000 WHERE id = $1`, h.id); err != nil {
@@ -446,6 +431,8 @@ func TestUsageCarriesOnFromWhatWasSpentBeforeAResume(t *testing.T) {
 // Events still in flight when the budget runs out are recorded: the run is
 // stopping, not lost.
 func TestARunStoppedForItsBudgetStillRecordsWhatFollows(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 
 	feed(t, h.store, h.id, usage(1_000_001, 0), agent.ToolResultEvent{ID: "c", Name: "read", Output: "late"})
@@ -488,6 +475,8 @@ func (h heldRun) takenOver(t *testing.T) {
 }
 
 func TestAnAppendForALostRunStopsWithErrLostRun(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 	h.takenOver(t)
 	c := &counting{EventStore: h.store}
@@ -508,6 +497,8 @@ func TestAnAppendForALostRunStopsWithErrLostRun(t *testing.T) {
 }
 
 func TestUsageForALostRunStopsWithErrLostRun(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 	h.takenOver(t)
 
@@ -552,6 +543,8 @@ func TestAFailedWriteStopsTheRunWithItsReason(t *testing.T) {
 }
 
 func TestTheRecorderDrainsEverythingBeforeItSaysDone(t *testing.T) {
+	t.Parallel()
+
 	h := newHeldRun(t)
 	events := make([]agent.Event, 50)
 	for i := range events {

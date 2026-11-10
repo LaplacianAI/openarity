@@ -55,35 +55,31 @@ variable being **empty**, not on the server being unreachable — so a default
 would turn "no Postgres installed" from a skip into a wall of failures for
 every contributor who does not happen to run one on 5432.
 
-The helper is duplicated per package rather than shared. It is six lines, and a
-`testdb` package would be a dependency crossing every boundary in the tree.
+Every package gets its database from `internal/store/storetest`, which only
+tests import. It imports nothing from the store, so the store's own tests use
+it too, and the caller passes how to migrate. A package that uses it calls
+`os.Exit(storetest.Main(m))` from `TestMain`, which drops the template.
 
 ## Step 2 — a database of its own, copied from a migrated template
 
-In `internal/store`, a test that needs the schema calls `queryStore(t)`
-(`testdb_test.go`). The first call in a process migrates one template
-database, `brain_tmpl_<run>`; every call then runs `CREATE DATABASE
-brain_t_<run>_<n> TEMPLATE brain_tmpl_<run>` and drops it with `WITH (FORCE)`
-when the test ends. `TestMain` drops the template.
+`storetest.Migrated(t, migrate)` returns the DSN of a database of the test's
+own. The first call in a process runs `migrate` on one template database,
+`brain_tmpl_<run>`; every call then runs `CREATE DATABASE brain_t_<run>_<n>
+TEMPLATE brain_tmpl_<run>` and drops it `WITH (FORCE)` when the test ends.
+`storetest.Empty(t)` is an empty one, for a test of migrating itself or one
+that runs the `migrate` command.
 
-Why not migrate per test, as this package once did: `Migrate` takes an
-advisory lock with one fixed id, and an advisory lock covers the whole
-database, so every test's migration queued behind the last and the package
-passed eight minutes. A copy takes about 0.2 s and no lock anyone waits on.
+Why not a migrated schema per test, as these packages once did: `Migrate`
+takes an advisory lock with one fixed id, and an advisory lock covers the
+whole database, so every test's migration queued behind the last and the
+brain's check took eight to ten minutes. A copy takes about 0.2 s and no lock
+anyone waits on.
 
-`<run>` is random per `go test` process, so two runs against one server never
-drop each other's databases. Test connections set `synchronous_commit=off`:
-the database is thrown away, and on a containerised Postgres waiting for each
-commit to reach the disk was most of the time.
-
-A test of migrations themselves needs an empty database, not a migrated one:
-`migrationStore(t)` gives it one, `brain_m_<run>_<n>`, dropped the same way.
-A database rather than a schema because the migration lock is an advisory
-lock, and an advisory lock covers a whole database: two tests migrating
-schemas of one database, or two runs, would wait on each other's lock.
-
-The test user needs `CREATEDB`; the compose and CI `postgres` user is a
-superuser.
+`<run>` is random per test process, so two runs against one server never drop
+each other's databases. Test connections set `synchronous_commit=off`: the
+database is thrown away, and on a containerised Postgres waiting for each
+commit to reach the disk was most of the time. The test user needs
+`CREATEDB`; the compose and CI `postgres` user is a superuser.
 
 ## Step 3 — `t.Parallel()` on a test with a database of its own
 

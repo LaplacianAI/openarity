@@ -5,10 +5,6 @@ import (
 	"time"
 )
 
-// Long enough that a slow CI runner is not flaky, short enough that a wedged
-// cleanup fails the suite instead of hanging it.
-const cleanupTimeout = 30 * time.Second
-
 // tableExists answers for the test's own database.
 func tableExists(t *testing.T, s *Store, name string) bool {
 	t.Helper()

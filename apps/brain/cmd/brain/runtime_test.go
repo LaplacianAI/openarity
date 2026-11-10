@@ -3,9 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
-	"hash/crc32"
-	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/storetest"
 )
 
 func TestTheRunsRoutesAreMounted(t *testing.T) {
@@ -32,50 +30,11 @@ func TestTheRunsRoutesAreMounted(t *testing.T) {
 	}
 }
 
-// freshDatabase is a database of the test's own. DBOS keeps its tables in a
-// schema called dbos whatever the search_path says, so a test about who
-// creates them cannot use a schema of its own the way schemaDSN does: it
-// would be looking at the tables every other test in the database made.
+// freshDatabase is an empty database of the test's own: the tests here run
+// the migrate command themselves.
 func freshDatabase(t *testing.T) string {
 	t.Helper()
-
-	base := liveDSN(t)
-	name := fmt.Sprintf("brain_cmd_%08x", crc32.ChecksumIEEE([]byte(t.Name())))
-	drop := "DROP DATABASE IF EXISTS " + name + " WITH (FORCE)"
-
-	admin, err := pgx.Connect(t.Context(), base)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer func() { _ = admin.Close(context.WithoutCancel(t.Context())) }()
-
-	if _, err := admin.Exec(t.Context(), drop); err != nil {
-		t.Fatalf("clear database: %v", err)
-	}
-	if _, err := admin.Exec(t.Context(), "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-
-	t.Cleanup(func() {
-		ctx := context.WithoutCancel(t.Context())
-		conn, err := pgx.Connect(ctx, base)
-		if err != nil {
-			t.Errorf("cleanup connect: %v", err)
-			return
-		}
-		defer func() { _ = conn.Close(ctx) }()
-
-		if _, err := conn.Exec(ctx, drop); err != nil {
-			t.Errorf("drop database: %v", err)
-		}
-	})
-
-	u, err := url.Parse(base)
-	if err != nil {
-		t.Fatalf("parse dsn: %v", err)
-	}
-	u.Path = "/" + name
-	return u.String()
+	return storetest.Empty(t)
 }
 
 func hasDBOSTables(t *testing.T, dsn string) bool {
