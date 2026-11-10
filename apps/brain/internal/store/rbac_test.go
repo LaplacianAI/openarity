@@ -561,6 +561,14 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"PUT /teams/{id}/agents/{agentID}":    "team agent:write",
 		"DELETE /teams/{id}/agents/{agentID}": "team agent:write",
 
+		// A plan only reads, so it is member-wide. An apply writes servers,
+		// skills and agents, each needing its own permission, which the
+		// handler checks for what the plan writes: one permission on the route
+		// would either let a blueprint write what its holder could not, or
+		// refuse one that writes only what they can.
+		"POST /teams/{id}/blueprints/plan":  "member",
+		"POST /teams/{id}/blueprints/apply": "member",
+
 		// The loops are the values an agent's pattern takes, so anyone who
 		// can read an agent can read what its pattern may be.
 		"GET /teams/{id}/loops": "member",

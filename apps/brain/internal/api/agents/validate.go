@@ -19,7 +19,7 @@ const (
 
 var toolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
-func validate(req agentRequest, loops []string) error {
+func Validate(req Request, loops []string) error {
 	switch {
 	case req.Name == "" || len(req.Name) > maxNameBytes || strings.TrimSpace(req.Name) != req.Name:
 		return errors.New("name must be 1-200 bytes with no space at either end")
@@ -72,7 +72,7 @@ func checkModel(field, name string, maxTokens *int32, temperature *float64) erro
 	return nil
 }
 
-func checkOutput(req agentRequest) error {
+func checkOutput(req Request) error {
 	o := req.OutputSchema
 	if o == nil {
 		switch {
@@ -106,7 +106,7 @@ func isObject(raw json.RawMessage) bool {
 	return len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed)
 }
 
-func checkGrants(req agentRequest) error {
+func checkGrants(req Request) error {
 	servers := map[uuid.UUID]bool{}
 	for _, g := range req.MCPServers {
 		if servers[g.ID] {
@@ -140,14 +140,14 @@ func checkGrants(req agentRequest) error {
 	return nil
 }
 
-func delegationOf(req agentRequest) string {
+func delegationOf(req Request) string {
 	if req.Delegation == nil {
 		return "none"
 	}
 	return *req.Delegation
 }
 
-func checkDelegation(req agentRequest) error {
+func checkDelegation(req Request) error {
 	switch d := delegationOf(req); {
 	case d != "team" && d != "listed" && d != "none":
 		return errors.New("delegation must be team, listed or none")

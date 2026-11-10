@@ -13,7 +13,7 @@ The sidebar is grouped by the job a screen is for:
 | Group | Screens | What they are for |
 | ----- | ------- | ----------------- |
 | Work | Home, Runs, Sessions, Approvals | Is the team working, what did it do, who is waiting |
-| Build | Agents, Skills, MCP servers, Channels | Defining what the team can do and where it hears from |
+| Build | Agents, Skills, MCP servers, Channels, Compose | Defining what the team can do and where it hears from |
 | Understand | Graph | The team's agents, servers, tools and skills as the graph holds them |
 | Team | Team settings, Teams, Deleted teams | The team's model, hub, web search and learning; its members; and, for super admins only, deleted teams and restoring one |
 
@@ -71,6 +71,15 @@ server's sheet shows its tools, when discovery was last tried and why it failed,
 and has **Discover** to ask it again; its credentials are references into the
 secret store, never the secret. A channel's sheet shows its webhook address and
 **Replies to**, and lets you set where replies go or stop them.
+
+**Compose** gathers new and changed MCP servers, skills and agents into one
+draft, through the same forms the other screens use, and writes nothing until
+**Apply**. An agent may be granted a server or skill the draft creates, and
+**Change an existing one** opens one of the team's own agents or servers.
+**Plan** shows what applying the draft would change, with every refusal; Apply
+appears only for a plan with changes and no refusals, applies exactly that
+plan, and any change to the draft takes the plan away. It is a
+[blueprint](blueprints.md), applied in one transaction.
 
 **Teams** lists the teams you can see and their members, with each member's
 role: `member`, `approver` or `admin`. **Team settings** has four groups: the

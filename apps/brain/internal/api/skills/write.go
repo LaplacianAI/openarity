@@ -35,7 +35,7 @@ type Objects interface {
 }
 
 type writeStore interface {
-	ReserveObjects(ctx context.Context, arg db.ReserveObjectsParams) error
+	Reserver
 	InTx(ctx context.Context, fn func(Queries) error) error
 }
 
@@ -45,59 +45,75 @@ type writer struct {
 }
 
 func (w writer) create(ctx context.Context, teamID uuid.UUID, dir skill.Directory, o Origin) (db.Skill, error) {
-	keys, err := w.upload(ctx, teamID, dir.Files)
+	keys, err := Reserve(ctx, w.store, w.objects, teamID, dir.Files)
 	if err != nil {
 		return db.Skill{}, err
 	}
 
-	m := dir.Manifest
 	var row db.Skill
 	err = w.store.InTx(ctx, func(q Queries) error {
 		var err error
-		row, err = q.CreateSkill(ctx, db.CreateSkillParams{
-			TeamID: teamID, Name: m.Name, Description: m.Description,
-			License: m.License, Compatibility: m.Compatibility, Metadata: metadata(m),
-			AllowedTools: m.AllowedTools, Body: m.Body,
-			Source: o.Source, SourceRef: o.Ref, SourceSha: o.SHA,
-		})
-		if err != nil {
-			return err
-		}
-		return insertFiles(ctx, q, row, dir.Files, keys)
+		row, err = Create(ctx, q, teamID, dir, o, keys)
+		return err
 	})
-
 	return row, err
 }
 
 func (w writer) replace(ctx context.Context, skillID, teamID uuid.UUID, dir skill.Directory, o Origin) (db.Skill, error) {
-	keys, err := w.upload(ctx, teamID, dir.Files)
+	keys, err := Reserve(ctx, w.store, w.objects, teamID, dir.Files)
 	if err != nil {
 		return db.Skill{}, err
 	}
 
-	m := dir.Manifest
 	var row db.Skill
 	err = w.store.InTx(ctx, func(q Queries) error {
 		var err error
-		row, err = q.UpdateSkill(ctx, db.UpdateSkillParams{
-			ID: skillID, Name: m.Name, Description: m.Description,
-			License: m.License, Compatibility: m.Compatibility, Metadata: metadata(m),
-			AllowedTools: m.AllowedTools, Body: m.Body,
-			Source: o.Source, SourceRef: o.Ref, SourceSha: o.SHA,
-		})
-		if err != nil {
-			return err
-		}
-		if err := q.ClearSkillFiles(ctx, skillID); err != nil {
-			return err
-		}
-		return insertFiles(ctx, q, row, dir.Files, keys)
+		row, err = Replace(ctx, q, skillID, dir, o, keys)
+		return err
 	})
-
 	return row, err
 }
 
-func (w writer) upload(ctx context.Context, teamID uuid.UUID, files []skill.File) ([]string, error) {
+// Create writes a skill whose files Reserve has already stored under keys.
+func Create(ctx context.Context, q Queries, teamID uuid.UUID, dir skill.Directory, o Origin, keys []string) (db.Skill, error) {
+	m := dir.Manifest
+	row, err := q.CreateSkill(ctx, db.CreateSkillParams{
+		TeamID: teamID, Name: m.Name, Description: m.Description,
+		License: m.License, Compatibility: m.Compatibility, Metadata: Metadata(m),
+		AllowedTools: m.AllowedTools, Body: m.Body,
+		Source: o.Source, SourceRef: o.Ref, SourceSha: o.SHA,
+	})
+	if err != nil {
+		return db.Skill{}, err
+	}
+	return row, insertFiles(ctx, q, row, dir.Files, keys)
+}
+
+// Replace rewrites a skill and its files, whose bytes Reserve has stored.
+func Replace(ctx context.Context, q Queries, skillID uuid.UUID, dir skill.Directory, o Origin, keys []string) (db.Skill, error) {
+	m := dir.Manifest
+	row, err := q.UpdateSkill(ctx, db.UpdateSkillParams{
+		ID: skillID, Name: m.Name, Description: m.Description,
+		License: m.License, Compatibility: m.Compatibility, Metadata: Metadata(m),
+		AllowedTools: m.AllowedTools, Body: m.Body,
+		Source: o.Source, SourceRef: o.Ref, SourceSha: o.SHA,
+	})
+	if err != nil {
+		return db.Skill{}, err
+	}
+	if err := q.ClearSkillFiles(ctx, skillID); err != nil {
+		return db.Skill{}, err
+	}
+	return row, insertFiles(ctx, q, row, dir.Files, keys)
+}
+
+type Reserver interface {
+	ReserveObjects(ctx context.Context, arg db.ReserveObjectsParams) error
+}
+
+// Reserve stores files under new keys held for an hour first, so bytes whose
+// rows never commit are the reaper's to remove.
+func Reserve(ctx context.Context, s Reserver, o Objects, teamID uuid.UUID, files []skill.File) ([]string, error) {
 	if len(files) == 0 {
 		return nil, nil
 	}
@@ -107,14 +123,14 @@ func (w writer) upload(ctx context.Context, teamID uuid.UUID, files []skill.File
 		keys[i] = objects.TeamPrefix(teamID) + "objects/" + uuid.New().String()
 	}
 
-	if err := w.store.ReserveObjects(ctx, db.ReserveObjectsParams{
+	if err := s.ReserveObjects(ctx, db.ReserveObjectsParams{
 		ObjectKeys: keys, TeamID: teamID, HoldSeconds: reservationHold.Seconds(),
 	}); err != nil {
 		return nil, fmt.Errorf("reserve objects: %w", err)
 	}
 
 	for i, f := range files {
-		if err := w.objects.Put(ctx, teamID, keys[i], f.Data); err != nil {
+		if err := o.Put(ctx, teamID, keys[i], f.Data); err != nil {
 			return nil, fmt.Errorf("store %s: %w", f.Path, err)
 		}
 	}
@@ -139,7 +155,7 @@ func insertFiles(ctx context.Context, q Queries, row db.Skill, files []skill.Fil
 	return err
 }
 
-func metadata(m skill.Manifest) []byte {
+func Metadata(m skill.Manifest) []byte {
 	b, _ := json.Marshal(m.Metadata)
 	return b
 }

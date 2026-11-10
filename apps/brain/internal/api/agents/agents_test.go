@@ -649,7 +649,7 @@ func TestCreateStoresEveryField(t *testing.T) {
 		p.ParserMaxTokens == nil || *p.ParserMaxTokens != 256 || p.ParserTemperature == nil || *p.ParserTemperature != 0 {
 		t.Errorf("created %+v", p)
 	}
-	var o outputSchema
+	var o OutputSchema
 	if err := json.Unmarshal(p.OutputSchema, &o); err != nil || o.Name != "verdict" || o.Description != "d" || !o.Strict ||
 		string(o.JSON) != `{"type":"object"}` {
 		t.Errorf("output_schema stored as %s", p.OutputSchema)
@@ -796,7 +796,7 @@ func TestTheResponseCarriesTheGrants(t *testing.T) {
 
 	// And GET answers in the same shape.
 	got := decode(t, call(t, s, &fakeAuthz{}, memberOf(team), http.MethodGet, one(team, created.ID), nil))
-	if !slices.EqualFunc(got.MCPServers, created.MCPServers, func(x, y serverGrant) bool {
+	if !slices.EqualFunc(got.MCPServers, created.MCPServers, func(x, y ServerGrant) bool {
 		return x.ID == y.ID && slices.Equal(x.Allow, y.Allow)
 	}) || !slices.Equal(got.Skills, created.Skills) {
 		t.Errorf("GET grants %+v %v differ from POST's %+v %v", got.MCPServers, got.Skills, created.MCPServers, created.Skills)

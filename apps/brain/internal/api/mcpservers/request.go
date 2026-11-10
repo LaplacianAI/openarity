@@ -18,10 +18,10 @@ import (
 var (
 	namePattern   = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 	envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	refPattern    = regexp.MustCompile(`^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*#[A-Za-z0-9_-]+$`)
+	RefPattern    = regexp.MustCompile(`^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*#[A-Za-z0-9_-]+$`)
 )
 
-type fields struct {
+type Fields struct {
 	Name          string
 	URL           *string
 	Command       []string
@@ -30,9 +30,9 @@ type fields struct {
 	Bare          bool
 }
 
-func parse(teamID uuid.UUID, req serverRequest) (fields, error) {
+func Parse(teamID uuid.UUID, req Request) (Fields, error) {
 	if !namePattern.MatchString(req.Name) {
-		return fields{}, errors.New("name must be 1-64 letters, digits, hyphens or underscores, because each tool is named name__tool")
+		return Fields{}, errors.New("name must be 1-64 letters, digits, hyphens or underscores, because each tool is named name__tool")
 	}
 
 	var err error
@@ -47,7 +47,7 @@ func parse(teamID uuid.UUID, req serverRequest) (fields, error) {
 		err = errors.New("a server needs a url or a command")
 	}
 	if err != nil {
-		return fields{}, err
+		return Fields{}, err
 	}
 
 	env := req.Env
@@ -56,16 +56,16 @@ func parse(teamID uuid.UUID, req serverRequest) (fields, error) {
 	}
 	encoded, err := json.Marshal(env)
 	if err != nil {
-		return fields{}, err
+		return Fields{}, err
 	}
 
-	return fields{
+	return Fields{
 		Name: req.Name, URL: req.URL, Command: req.Command, Env: encoded,
 		AuthSecretRef: req.AuthSecretRef, Bare: req.Bare,
 	}, nil
 }
 
-func checkURLServer(teamID uuid.UUID, req serverRequest) error {
+func checkURLServer(teamID uuid.UUID, req Request) error {
 	u, err := url.Parse(*req.URL)
 	switch {
 	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
@@ -82,7 +82,7 @@ func checkURLServer(teamID uuid.UUID, req serverRequest) error {
 	return nil
 }
 
-func checkCommandServer(teamID uuid.UUID, req serverRequest) error {
+func checkCommandServer(teamID uuid.UUID, req Request) error {
 	if len(req.Command) == 0 || req.Command[0] == "" {
 		return errors.New("command must name a program to run")
 	}
@@ -103,7 +103,7 @@ func checkCommandServer(teamID uuid.UUID, req serverRequest) error {
 func checkRef(teamID uuid.UUID, field, ref string) error {
 	root := secrets.TeamPath(teamID, secrets.KindMCP) + "/"
 	rest, under := strings.CutPrefix(ref, root)
-	if !under || !refPattern.MatchString(rest) {
+	if !under || !RefPattern.MatchString(rest) {
 		return fmt.Errorf("%s is a secret reference, %s<name>#<key>, not a secret", field, root)
 	}
 	return nil

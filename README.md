@@ -159,6 +159,10 @@ the web and read a page. The graph holds the team's agents, MCP servers, tools
 and skills, projected from Postgres into FalkorDB. The dashboard is served at
 `/ui`.
 
+A team's MCP servers, skills and agents can be written as one file, a
+blueprint: `oa plan` shows what applying it would change and `oa apply` makes
+the team match it, in one transaction, writing only what changed.
+
 A message on a channel starts a hub run, or steers the one already answering
 its conversation, and the answer goes back to the channel: into the chat for
 Telegram, to a signed reply URL for `custom`, a generic webhook.

@@ -90,6 +90,7 @@ apps/cli/
     skills/            oa skills list|get|upload|replace|import|sync|cat|delete
     agents/            oa agents list|get|create|replace|delete — a file, grants by name
     mcpservers/        oa mcp-servers list|get|create|replace|delete|tools|discover
+    blueprints/        oa plan, oa apply — a team in one file; skills read from their folders
     login/             oa login — the device flow, start to stored
     logout/            oa logout — discard this context's credential
   internal/theme/      what a theme is — one Parse, zero dependencies

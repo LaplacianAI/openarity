@@ -14,6 +14,9 @@ import type {
   ApprovedSender,
   Attachment,
   AuthConfig,
+  Blueprint,
+  BlueprintChange,
+  BlueprintPlan,
   Channel,
   CreateChannelRequest,
   CreatedChannel,
@@ -560,4 +563,52 @@ export function saveTeamSettings(
   settings: TeamSettingsRequest,
 ): Promise<TeamSettings> {
   return request<TeamSettings>(`/teams/${teamId}/settings`, { method: "PUT", body: settings });
+}
+
+/* ------------------------------------------------------------- blueprints */
+
+/** A read: what applying the blueprint would change. */
+export function planBlueprint(teamId: string, blueprint: Blueprint): Promise<BlueprintPlan> {
+  return request<BlueprintPlan>(`/teams/${teamId}/blueprints/plan`, {
+    method: "POST",
+    body: blueprint,
+  });
+}
+
+/**
+ * Applies the plan with that digest. The brain answers a plan, not a
+ * sentence, when it will not: 422 when the plan has refusals and 409 when the
+ * team changed since it was shown. Both come back as the new plan to show; a
+ * plain-text 409 (a name taken while applying) stays an error.
+ */
+export type Applied =
+  | { kind: "applied"; changes: BlueprintChange[] }
+  | { kind: "refused" | "changed"; plan: BlueprintPlan };
+
+export async function applyBlueprint(
+  teamId: string,
+  blueprint: Blueprint,
+  digest: string,
+): Promise<Applied> {
+  try {
+    const out = await request<{ changes: BlueprintChange[] }>(`/teams/${teamId}/blueprints/apply`, {
+      method: "POST",
+      body: { blueprint, plan_digest: digest },
+    });
+    return { kind: "applied", changes: out.changes };
+  } catch (err) {
+    const plan = err instanceof ApiError ? planIn(err) : null;
+    if (!plan) throw err;
+    return { kind: (err as ApiError).status === 422 ? "refused" : "changed", plan };
+  }
+}
+
+function planIn(err: ApiError): BlueprintPlan | null {
+  if (err.status !== 409 && err.status !== 422) return null;
+  try {
+    const plan = JSON.parse(err.message) as BlueprintPlan;
+    return Array.isArray(plan.changes) && typeof plan.digest === "string" ? plan : null;
+  } catch {
+    return null;
+  }
 }

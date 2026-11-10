@@ -178,6 +178,16 @@
       "permission": "agent:write"
     },
     {
+      "method": "POST",
+      "path": "/teams/{id}/blueprints/plan",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/blueprints/apply",
+      "scope": "member"
+    },
+    {
       "method": "GET",
       "path": "/teams/{id}/loops",
       "scope": "member"

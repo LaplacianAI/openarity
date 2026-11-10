@@ -28,6 +28,7 @@ nav = [
     "docs/platform/agents.md",
     "docs/platform/skills.md",
     "docs/platform/mcp-servers.md",
+    "docs/platform/blueprints.md",
     "docs/platform/channels.md",
     "docs/platform/web.md",
     "docs/platform/dashboard.md",

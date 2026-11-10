@@ -32,6 +32,8 @@ a message on a channel.
 - **Skills and MCP servers**: uploaded, imported from a repository and kept in
   sync; servers discovered for their tools, with their credentials in the
   secret store.
+- **Blueprints**: a team's MCP servers, skills and agents in one file, planned
+  with `oa plan` and applied with `oa apply`. See [Blueprints](blueprints.md).
 - **Channels**: a Telegram bot, or a `custom` signed webhook, brings messages
   in. Senders are let in by an admin or approver; a message to the team starts
   a hub run or steers the one going, and the answer goes back into the Telegram

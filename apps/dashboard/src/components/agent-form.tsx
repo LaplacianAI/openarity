@@ -20,6 +20,7 @@ import { Field, TextArea } from "@/components/registry-bits";
 import { Input } from "@/components/ui/input";
 import { SwitchField } from "@/components/ui/switch";
 import type { Draft } from "@/lib/agent-draft";
+import { type Drafted, draftId, isDraftId, withDrafted } from "@/lib/compose";
 
 /** Names for the ids an agent's grants carry, from the team's own first pages. */
 function useNames(teamId: string) {
@@ -129,12 +130,18 @@ export function AgentForm({
   draft,
   set,
   self,
+  drafted,
 }: {
   teamId: string;
   draft: Draft;
   set: (patch: Partial<Draft>) => void;
   /** The agent being edited, which is never offered as its own delegate. */
   self?: string;
+  /**
+   * What a Compose draft will create, offered beside the team's own so an
+   * agent can be granted a server or skill that does not exist yet.
+   */
+  drafted?: Drafted;
 }) {
   const names = useNames(teamId);
   const settings = useQuery({
@@ -155,26 +162,28 @@ export function AgentForm({
   const [learned, setLearned] = useState<Map<string, string>>(new Map());
   const learn = (picked: Picked[]) =>
     setLearned((m) => new Map([...m, ...picked.map((p): [string, string] => [p.id, p.name])]));
-  const known = (list: { id: string; name: string }[]) =>
-    new Map([...list.map((i): [string, string] => [i.id, i.name]), ...learned]);
+  const fromDraft = (kind: keyof Drafted) =>
+    (drafted?.[kind] ?? []).map((n): [string, string] => [draftId(kind, n), n]);
+  const known = (list: { id: string; name: string }[], kind: keyof Drafted) =>
+    new Map([...list.map((i): [string, string] => [i.id, i.name]), ...fromDraft(kind), ...learned]);
 
   const servers = useNamed(
     draft.servers.map((g) => g.id),
-    known(names.servers),
+    known(names.servers, "servers"),
     names.settled.servers,
     ["mcp-servers", teamId],
     (id) => getMCPServer(teamId, id),
   );
   const skills = useNamed(
     draft.skills,
-    known(names.skills),
+    known(names.skills, "skills"),
     names.settled.skills,
     ["skills", teamId],
     (id) => getSkill(teamId, id),
   );
   const delegates = useNamed(
     draft.delegates,
-    known(names.agents),
+    known(names.agents, "agents"),
     names.settled.agents,
     ["agents", teamId],
     (id) => getAgent(teamId, id),
@@ -282,10 +291,13 @@ export function AgentForm({
                 servers: next.map((p) => draft.servers.find((g) => g.id === p.id) ?? { id: p.id }),
               });
             }}
-            search={(q) => listMCPServers(teamId, null, { q, limit: PICK_PAGE }).then(searchResult)}
-            searchKey={["mcp-servers", teamId]}
+            search={withDrafted(drafted, "servers", (q) =>
+              listMCPServers(teamId, null, { q, limit: PICK_PAGE }).then(searchResult),
+            )}
+            searchKey={["mcp-servers", teamId, drafted?.servers ?? []]}
             extra={(p) =>
-              commandServers.has(p.id) ? (
+              // Not created yet, so it has no tools to limit: granted whole.
+              isDraftId(p.id) ? null : commandServers.has(p.id) ? (
                 // Granted, but a run starts without it: said on the chip itself.
                 <span className="px-1 text-warning">can't be used yet</span>
               ) : (
@@ -316,8 +328,10 @@ export function AgentForm({
               learn(next);
               set({ skills: next.map((p) => p.id) });
             }}
-            search={(q) => listSkills(teamId, null, { q, limit: PICK_PAGE }).then(searchResult)}
-            searchKey={["skills", teamId]}
+            search={withDrafted(drafted, "skills", (q) =>
+              listSkills(teamId, null, { q, limit: PICK_PAGE }).then(searchResult),
+            )}
+            searchKey={["skills", teamId, drafted?.skills ?? []]}
           />
         </div>
       </Section>
@@ -333,6 +347,7 @@ export function AgentForm({
           chosen={delegates}
           learn={learn}
           self={self}
+          drafted={drafted}
         />
       </Section>
 
@@ -403,6 +418,7 @@ function Delegates({
   chosen,
   learn,
   self,
+  drafted,
 }: {
   teamId: string;
   draft: Draft;
@@ -410,6 +426,7 @@ function Delegates({
   chosen: Picked[];
   learn: (picked: Picked[]) => void;
   self?: string;
+  drafted?: Drafted;
 }) {
   const name = useId();
   return (
@@ -444,8 +461,10 @@ function Delegates({
               learn(next);
               set({ delegates: next.map((p) => p.id) });
             }}
-            search={(q) => listAgents(teamId, null, { q, limit: PICK_PAGE }).then(searchResult)}
-            searchKey={["agents", teamId]}
+            search={withDrafted(drafted, "agents", (q) =>
+              listAgents(teamId, null, { q, limit: PICK_PAGE }).then(searchResult),
+            )}
+            searchKey={["agents", teamId, drafted?.agents ?? []]}
             exclude={self ? [self] : []}
           />
         </div>

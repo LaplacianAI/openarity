@@ -23,7 +23,7 @@ type server struct {
 	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
-type serverRequest struct {
+type Request struct {
 	Name          string            `json:"name"`
 	URL           *string           `json:"url"`
 	Command       []string          `json:"command"`

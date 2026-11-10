@@ -743,6 +743,18 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   Postgres advisory locks are scoped per database, not per schema. Ours is
   crc32 of `"openarity"`. Locking is also off unless `WithSessionLocker` is
   passed — the default is no lock at all.
+- **A blueprint writes through the domain packages' own code, in one
+  transaction.** `internal/api/blueprints` turns each item into the request
+  its own API takes and runs `agents.Validate`, `mcpservers.Parse` and
+  `skill.Assemble` on it, then writes with `agents.Regrant` and
+  `skills.Create`/`Replace`, so a rule changed in one place holds for both.
+  Its routes are member-wide and the apply handler checks `tool:write`,
+  `skill:write` and `agent:write` for what the plan writes: one permission on
+  the route would either let a blueprint write what its holder could not, or
+  refuse one that writes only what they can. Apply plans again and refuses
+  (409, with the new plan) unless the plan's digest is the one the caller was
+  shown, so nobody applies a plan they did not see. Only changed items are
+  written, so a second apply leaves no outbox row and no `updated_at` moved.
 
 ## Skills, full descriptions
 
