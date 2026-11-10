@@ -54,12 +54,13 @@ func newRouters(
 	discoverer mcpservers.Discoverer,
 	graphs teamgraph.Viewer,
 	starter runs.Starter,
+	notices gateway.Kicker,
 ) []server.Router {
 	routers := []server.Router{
 		whoami.New(logger),
 		teams.New(logger, dbStore, authorizer, cfg.TeamPurgeAfter),
 		channels.New(logger, dbStore, authorizer, channelSecrets{secretStore, secretWriter}, registry, cfg.WebhookPublicURL,
-			reachable(cfg.MCPPrivateNetworks), replyClient(reachable(cfg.MCPPrivateNetworks))),
+			reachable(cfg.MCPPrivateNetworks), replyClient(reachable(cfg.MCPPrivateNetworks)), notices),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
 		mcpservers.New(logger, mcpStore{dbStore}, discoverer),
 		agents.New(logger, agentStore{dbStore}, runtime.Loops()),
@@ -88,12 +89,13 @@ func newWebhookRouters(
 	registry gateway.Registry,
 	attachments gateway.Objects,
 	runs gateway.Enqueuer,
+	notices gateway.Kicker,
 ) []server.Router {
 	sink := gateway.NewInbox(inbox{dbStore}, runs, logger)
 	ingest := gateway.NewIngest(attachments, logger)
 
 	return []server.Router{
-		gateway.New(logger, dbStore, secretStore, registry, sink, ingest),
+		gateway.New(logger, dbStore, secretStore, registry, sink, ingest, notices),
 	}
 }
 

@@ -93,6 +93,46 @@ type URLReplier interface {
 	RepliesToURL()
 }
 
+// Notifier tells a sender nobody has let in where they stand, in the
+// conversation they wrote in: that they are waiting, and later that they are
+// in. Optional, like Replier. Notice is pure.
+type Notifier interface {
+	Notice(ch Channel, n Notice, creds Credentials) (OutboundRequest, error)
+}
+
+type NoticeKind string
+
+const (
+	NoticeWaiting  NoticeKind = "waiting"
+	NoticeAdmitted NoticeKind = "admitted"
+)
+
+// Notice is one notice, as a provider needs it. The brain owns the words: the
+// provider names the sender, in its own way, before Text.
+type Notice struct {
+	// ID is the same on every attempt to send this notice.
+	ID      string
+	Kind    NoticeKind
+	Session Session
+	// InReplyTo is the provider's id for the message it answers; empty quotes
+	// nothing.
+	InReplyTo string
+	Sender    Author
+	Text      string
+}
+
+// NoticeText is what a notice says after the sender's name.
+func NoticeText(k NoticeKind) string {
+	switch k {
+	case NoticeWaiting:
+		return "I can't answer you yet: someone on the team has to let you in first. I'll tell you here when they have."
+	case NoticeAdmitted:
+		return "you're in. Send your message again and I'll answer it."
+	default:
+		return ""
+	}
+}
+
 type OutboundRequest struct {
 	URL    string
 	Header http.Header
@@ -119,12 +159,13 @@ type Registry struct {
 	setups    map[string]Setup
 	toURL     map[string]bool
 	connects  map[string]Connector
+	notifiers map[string]Notifier
 }
 
 func NewRegistry(providers ...Provider) (Registry, error) {
 	reg := Registry{
 		providers: map[string]Provider{}, repliers: map[string]Replier{}, setups: map[string]Setup{},
-		toURL: map[string]bool{}, connects: map[string]Connector{},
+		toURL: map[string]bool{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
 	}
 	for _, p := range providers {
 		name := p.Name()
@@ -149,6 +190,9 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		}
 		if c, ok := p.(Connector); ok {
 			reg.connects[name] = c
+		}
+		if n, ok := p.(Notifier); ok {
+			reg.notifiers[name] = n
 		}
 		if s, ok := p.(Setup); ok {
 			for _, k := range s.Supplied() {
@@ -177,6 +221,12 @@ func (r Registry) Replier(name string) (Replier, bool) {
 func (r Registry) Connector(name string) (Connector, bool) {
 	c, ok := r.connects[name]
 	return c, ok
+}
+
+// Notifier is how the named provider tells a waiting sender, if it can.
+func (r Registry) Notifier(name string) (Notifier, bool) {
+	n, ok := r.notifiers[name]
+	return n, ok
 }
 
 // TakesReplyURL is whether the named provider's channels say where replies go.

@@ -24,6 +24,8 @@ type fakeSenders struct {
 
 	found    []db.FindChannelSenderParams
 	recorded []db.RecordPendingSenderParams
+	noted    []db.NoteWaitingSenderParams
+	noteErr  error
 }
 
 func newFakeSenders() *fakeSenders {
@@ -53,6 +55,11 @@ func (f *fakeSenders) RecordPendingSender(_ context.Context, arg db.RecordPendin
 		return 0, f.recordErr
 	}
 	return 1, nil
+}
+
+func (f *fakeSenders) NoteWaitingSender(_ context.Context, arg db.NoteWaitingSenderParams) (int64, error) {
+	f.noted = append(f.noted, arg)
+	return int64(len(f.noted)), f.noteErr
 }
 
 func message(ref, name string) Inbound {

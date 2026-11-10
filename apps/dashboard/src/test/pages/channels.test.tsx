@@ -660,3 +660,77 @@ describe("a telegram channel", () => {
     );
   });
 });
+
+describe("telling senders nobody has let in", () => {
+  const at = () => showAt("/ui/channels/", [["/ui/channels/", Route]]);
+  const bot = { ...support, provider: "telegram", can_notify: true, notify_strangers: true };
+
+  function patched(seen: { method: string; body: BodyInit | null | undefined }[]) {
+    const patch = seen.find((s) => s.method === "PATCH");
+    return patch ? JSON.parse(String(patch.body)) : undefined;
+  }
+
+  it("says whether they are told", async () => {
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [bot] } } });
+    at();
+    const sheet = await opened("support");
+    expect(within(sheet).getByText("Waiting senders")).toBeInTheDocument();
+    expect(within(sheet).getByText(/told once that they are waiting/i)).toBeInTheDocument();
+  });
+
+  // A custom channel sends no notices, and a brain from before the field is
+  // read as one that sends none: there is nothing to switch.
+  it("is not offered where the provider sends no notices", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [support] } },
+    });
+    at();
+    const sheet = await opened("support");
+    expect(within(sheet).queryByText("Waiting senders")).toBeNull();
+  });
+
+  it("offers no switch without channel:write", async () => {
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [bot] } } });
+    at();
+    const sheet = await opened("support");
+    expect(within(sheet).queryByRole("button", { name: /stop telling them/i })).toBeNull();
+  });
+
+  // Only the switch is sent: the reply URL is left as it is.
+  it("switches it off, sending only that, and says so", async () => {
+    let off = false;
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": () => ({
+        body: { items: [off ? { ...bot, notify_strangers: false } : bot] },
+      }),
+      "PATCH /teams/{id}/channels/{cid}": () => {
+        off = true;
+        return { body: { ...bot, notify_strangers: false } };
+      },
+    });
+    at();
+    const sheet = await opened("support");
+    await userEvent.click(within(sheet).getByRole("button", { name: /stop telling them/i }));
+
+    expect(await within(sheet).findByText(/not told anything/i)).toBeInTheDocument();
+    expect(patched(seen)).toEqual({ notify_strangers: false });
+    expect(await within(sheet).findByRole("button", { name: /^tell them$/i })).toBeInTheDocument();
+  });
+
+  it("shows the brain's refusal", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [bot] } },
+      "PATCH /teams/{id}/channels/{cid}": {
+        status: 400,
+        body: "the custom provider sends no notices",
+      },
+    });
+    at();
+    const sheet = await opened("support");
+    await userEvent.click(within(sheet).getByRole("button", { name: /stop telling them/i }));
+    expect(await within(sheet).findByRole("alert")).toHaveTextContent(/sends no notices/);
+  });
+});

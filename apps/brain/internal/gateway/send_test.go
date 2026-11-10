@@ -73,6 +73,36 @@ type outbox struct {
 	sent    []db.ReplySentParams
 	retried []db.RetryReplyParams
 	gaveUp  []db.GiveUpReplyParams
+
+	notices       []db.ClaimDueNoticesRow
+	noticeSent    []db.NoticeSentParams
+	noticeRetried []db.RetryNoticeParams
+	noticeGaveUp  []db.GiveUpNoticeParams
+}
+
+func (o *outbox) ClaimDueNotices(_ context.Context, arg db.ClaimDueNoticesParams) ([]db.ClaimDueNoticesRow, error) {
+	if o.claimErr != nil {
+		return nil, o.claimErr
+	}
+	n := min(int(arg.BatchSize), len(o.notices))
+	rows := o.notices[:n]
+	o.notices = o.notices[n:]
+	return rows, nil
+}
+
+func (o *outbox) NoticeSent(_ context.Context, arg db.NoticeSentParams) (int64, error) {
+	o.noticeSent = append(o.noticeSent, arg)
+	return 1, o.markErr
+}
+
+func (o *outbox) RetryNotice(_ context.Context, arg db.RetryNoticeParams) (int64, error) {
+	o.noticeRetried = append(o.noticeRetried, arg)
+	return 1, o.markErr
+}
+
+func (o *outbox) GiveUpNotice(_ context.Context, arg db.GiveUpNoticeParams) (int64, error) {
+	o.noticeGaveUp = append(o.noticeGaveUp, arg)
+	return 1, o.markErr
 }
 
 func (o *outbox) ClaimDueReplies(_ context.Context, arg db.ClaimDueRepliesParams) ([]db.ClaimDueRepliesRow, error) {
@@ -516,5 +546,117 @@ func TestAReplyBuiltAsNothingIsGivenUp(t *testing.T) {
 	}
 	if rcv.got() != 0 || len(s.store.sent) != 0 || len(s.store.gaveUp) != 1 {
 		t.Errorf("posted %d, sent %d, gave up %d; want it given up unposted", rcv.got(), len(s.store.sent), len(s.store.gaveUp))
+	}
+}
+
+// noticer is a provider that tells strangers: the notice is posted to the
+// address the test gives it, and what the sender handed over is kept.
+type noticer struct {
+	relay
+	url string
+
+	nmu     sync.Mutex
+	notices []Notice
+}
+
+func (*noticer) Name() string { return "noticer" }
+
+func (n *noticer) Notice(_ Channel, notice Notice, creds Credentials) (OutboundRequest, error) {
+	n.nmu.Lock()
+	n.notices = append(n.notices, notice)
+	n.nmu.Unlock()
+	h := http.Header{}
+	h.Set("X-Secret", creds.Get(KeySigning))
+	return OutboundRequest{URL: n.url, Header: h, Body: []byte(notice.Sender.DisplayName + ": " + notice.Text)}, nil
+}
+
+func waitingNotice(attempts int32) db.ClaimDueNoticesRow {
+	return db.ClaimDueNoticesRow{
+		ID: 3, TeamID: uuid.New(), ChannelID: uuid.New(), SenderRef: "4242", SenderName: "Erik",
+		SessionRef: "4242", SessionKind: "direct", InReplyTo: "4242:7", Kind: "waiting",
+		Attempts: attempts, Provider: "noticer",
+	}
+}
+
+func TestANoticeIsBuiltByItsProviderPostedAndMarkedSent(t *testing.T) {
+	t.Parallel()
+
+	rcv := newReceiver(t, http.StatusOK)
+	p := &noticer{url: rcv.URL}
+	s := newSending(t, p)
+	s.store.notices = []db.ClaimDueNoticesRow{waitingNotice(1)}
+
+	if n, err := s.sender.Drain(t.Context()); err != nil || n != 1 {
+		t.Fatalf("Drain = %d, %v, want 1", n, err)
+	}
+	if rcv.got() != 1 || rcv.heads[0].Get("X-Secret") != "s3cr3t" {
+		t.Errorf("received %d posts %v", rcv.got(), rcv.heads)
+	}
+	if len(p.notices) != 1 {
+		t.Fatalf("provider built %d notices, want 1", len(p.notices))
+	}
+	got := p.notices[0]
+	if got.Kind != NoticeWaiting || got.Text != NoticeText(NoticeWaiting) || got.InReplyTo != "4242:7" ||
+		got.Sender.Ref != "4242" || got.Session.Kind != SessionDirect || got.ID != "notice:3" {
+		t.Errorf("notice = %+v", got)
+	}
+	if len(s.store.noticeSent) != 1 || s.store.noticeSent[0].Attempts != 1 {
+		t.Errorf("marked %+v, want sent on attempt 1", s.store.noticeSent)
+	}
+}
+
+func TestANoticeThatFailsIsRetriedLikeAReplyAndGivenUpAfterSix(t *testing.T) {
+	t.Parallel()
+
+	rcv := newReceiver(t, http.StatusInternalServerError)
+	s := newSending(t, &noticer{url: rcv.URL})
+	s.store.notices = []db.ClaimDueNoticesRow{waitingNotice(1)}
+	if n, err := s.sender.Drain(t.Context()); err != nil || n != 0 {
+		t.Fatalf("Drain = %d, %v, want 0", n, err)
+	}
+	if len(s.store.noticeRetried) != 1 || s.store.noticeRetried[0].RetrySeconds != time.Minute.Seconds() {
+		t.Errorf("retried %+v, want one retry after a minute", s.store.noticeRetried)
+	}
+
+	s.store.notices = []db.ClaimDueNoticesRow{waitingNotice(replyAttempts)}
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.store.noticeGaveUp) != 1 || len(s.store.noticeSent) != 0 {
+		t.Errorf("gave up %+v, sent %+v; want one give-up and nothing sent", s.store.noticeGaveUp, s.store.noticeSent)
+	}
+}
+
+// A provider that cannot send notices can only be asked by a row that should
+// not exist: the answer is the same every time, so it is given up at once.
+func TestANoticeForAProviderThatSendsNoneIsGivenUpAtOnce(t *testing.T) {
+	t.Parallel()
+
+	s := newSending(t)
+	row := waitingNotice(1)
+	row.Provider = "relay"
+	s.store.notices = []db.ClaimDueNoticesRow{row}
+
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.store.noticeGaveUp) != 1 || len(s.store.noticeRetried) != 0 {
+		t.Errorf("gave up %d, retried %d; want a give-up and no retry", len(s.store.noticeGaveUp), len(s.store.noticeRetried))
+	}
+}
+
+// Replies and notices share one sender: a drain sends both.
+func TestADrainSendsRepliesAndNotices(t *testing.T) {
+	t.Parallel()
+
+	rcv := newReceiver(t, http.StatusOK)
+	p := &noticer{url: rcv.URL}
+	s := newSending(t, p)
+	s.store.notices = []db.ClaimDueNoticesRow{waitingNotice(1)}
+	s.store.due = []db.ClaimDueRepliesRow{due(rcv.URL, 1)}
+	s.store.due[0].Provider = "noticer"
+
+	if n, err := s.sender.Drain(t.Context()); err != nil || n != 2 {
+		t.Fatalf("Drain = %d, %v, want 2", n, err)
 	}
 }

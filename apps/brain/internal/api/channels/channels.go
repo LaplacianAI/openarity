@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
@@ -39,7 +40,7 @@ const (
 
 type Store interface {
 	CreateChannel(ctx context.Context, arg db.CreateChannelParams) (db.Channel, error)
-	SetChannelReplyURL(ctx context.Context, arg db.SetChannelReplyURLParams) (db.Channel, error)
+	UpdateChannel(ctx context.Context, arg db.UpdateChannelParams) (db.Channel, error)
 	GetChannel(ctx context.Context, id uuid.UUID) (db.Channel, error)
 	ListChannelsByTeam(ctx context.Context, arg db.ListChannelsByTeamParams) ([]db.ListChannelsByTeamRow, error)
 	DeleteChannel(ctx context.Context, id uuid.UUID) error
@@ -50,7 +51,7 @@ type Store interface {
 	FindTeamMember(ctx context.Context, arg db.FindTeamMemberParams) (string, error)
 	FindChannelSender(ctx context.Context, arg db.FindChannelSenderParams) (uuid.UUID, error)
 	ListRolePermissions(ctx context.Context, role string) ([]string, error)
-	ApproveSender(ctx context.Context, arg db.ApproveSenderParams) (int64, error)
+	ApproveSender(ctx context.Context, arg db.ApproveSenderParams) (db.ApproveSenderRow, error)
 	RemoveSender(ctx context.Context, arg db.RemoveSenderParams) (bool, error)
 }
 
@@ -65,7 +66,14 @@ type Providers interface {
 	Replier(name string) (gateway.Replier, bool)
 	Setup(name string) (gateway.Setup, bool)
 	Connector(name string) (gateway.Connector, bool)
+	Notifier(name string) (gateway.Notifier, bool)
 	TakesReplyURL(name string) bool
+}
+
+// Kicker has a notice sent now; a failed kick is only late, since the sweep
+// sends it within a minute.
+type Kicker interface {
+	KickNotice(ctx context.Context, noticeID int64) error
 }
 
 type handler struct {
@@ -81,15 +89,16 @@ type handler struct {
 	// setup asks a provider about the credentials a channel is connected
 	// with. It refuses what a team may not reach and follows no redirect.
 	setup *http.Client
+	kick  Kicker
 }
 
 func New(
 	logger *slog.Logger, s Store, a api.Authorizer, sec Secrets, p Providers, hookBase string,
-	allow func(netip.Addr) bool, setup *http.Client,
+	allow func(netip.Addr) bool, setup *http.Client, kick Kicker,
 ) *api.Router {
 	h := &handler{
 		logger: logger, store: s, authz: a, secrets: sec, providers: p,
-		hookBase: strings.TrimSuffix(hookBase, "/"), allow: allow, setup: setup,
+		hookBase: strings.TrimSuffix(hookBase, "/"), allow: allow, setup: setup, kick: kick,
 	}
 
 	r := api.NewRouter("/teams")
@@ -456,9 +465,16 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	if !api.DecodeJSON(w, r, &req) {
 		return
 	}
-	if !req.ReplyURL.Set {
-		http.Error(w, "reply_url is required; send null to stop replies", http.StatusBadRequest)
+	if !req.ReplyURL.Set && req.NotifyStrangers == nil {
+		http.Error(w, "send reply_url, notify_strangers or both", http.StatusBadRequest)
 		return
+	}
+	if req.NotifyStrangers != nil {
+		if _, ok := h.providers.Notifier(row.Provider); !ok {
+			http.Error(w, "the "+row.Provider+" provider sends no notices, so it takes no notify_strangers",
+				http.StatusBadRequest)
+			return
+		}
 	}
 	// "" stops replies as null does: a client generated from the spec cannot
 	// always send a null for a required field.
@@ -469,9 +485,13 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.store.SetChannelReplyURL(r.Context(), db.SetChannelReplyURLParams{
-		ID: row.ID, TeamID: row.TeamID, ReplyUrl: req.ReplyURL.Value,
-	})
+	params := db.UpdateChannelParams{
+		ID: row.ID, TeamID: row.TeamID, SetReplyUrl: req.ReplyURL.Set, ReplyUrl: req.ReplyURL.Value,
+	}
+	if req.NotifyStrangers != nil {
+		params.NotifyStrangers = pgtype.Bool{Bool: *req.NotifyStrangers, Valid: true}
+	}
+	updated, err := h.store.UpdateChannel(r.Context(), params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -544,6 +564,8 @@ func (h *handler) view(row db.Channel) channel {
 		c.ReplyURL = *row.ReplyUrl
 	}
 	_, c.CanReply = h.providers.Replier(row.Provider)
+	_, c.CanNotify = h.providers.Notifier(row.Provider)
+	c.NotifyStrangers = c.CanNotify && row.NotifyStrangers
 	c.TakesReplyURL = h.providers.TakesReplyURL(row.Provider)
 	if h.hookBase == "" {
 		return c

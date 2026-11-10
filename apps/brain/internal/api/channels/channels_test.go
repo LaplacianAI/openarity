@@ -44,8 +44,18 @@ type fakeStore struct {
 	created  []db.CreateChannelParams
 	deleted  []uuid.UUID
 	listArgs []db.ListChannelsByTeamParams
+	updates  []db.UpdateChannelParams
 
 	senders senderState
+
+	// The store is the test's kicker too: what approving asked to be sent now.
+	kicked  []int64
+	kickErr error
+}
+
+func (f *fakeStore) KickNotice(_ context.Context, id int64) error {
+	f.kicked = append(f.kicked, id)
+	return f.kickErr
 }
 
 // errAny stands in for any failure of ours. Which one never changes the
@@ -62,13 +72,19 @@ func (f *fakeStore) CreateChannel(_ context.Context, arg db.CreateChannelParams)
 	return row, nil
 }
 
-func (f *fakeStore) SetChannelReplyURL(_ context.Context, arg db.SetChannelReplyURLParams) (db.Channel, error) {
+func (f *fakeStore) UpdateChannel(_ context.Context, arg db.UpdateChannelParams) (db.Channel, error) {
 	if f.err != nil {
 		return db.Channel{}, f.err
 	}
+	f.updates = append(f.updates, arg)
 	for i, c := range f.channels {
 		if c.ID == arg.ID && c.TeamID == arg.TeamID {
-			f.channels[i].ReplyUrl = arg.ReplyUrl
+			if arg.SetReplyUrl {
+				f.channels[i].ReplyUrl = arg.ReplyUrl
+			}
+			if arg.NotifyStrangers.Valid {
+				f.channels[i].NotifyStrangers = arg.NotifyStrangers.Bool
+			}
 			return f.channels[i], nil
 		}
 	}
@@ -284,7 +300,8 @@ func callWith(
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), s, a, sec, p, hookBase, publicOnly, offline(t)).
+	k, _ := s.(Kicker)
+	New(discardLogger(), s, a, sec, p, hookBase, publicOnly, offline(t), k).
 		Register(mux, api.NewGuard(channelRoutes(t), a, liveTeams{}, discardLogger()))
 
 	var reader io.Reader
@@ -901,6 +918,11 @@ func (p providers) Setup(name string) (gateway.Setup, bool) {
 func (p providers) Connector(name string) (gateway.Connector, bool) {
 	c, ok := p[name].(gateway.Connector)
 	return c, ok
+}
+
+func (p providers) Notifier(name string) (gateway.Notifier, bool) {
+	n, ok := p[name].(gateway.Notifier)
+	return n, ok
 }
 
 func (p providers) TakesReplyURL(name string) bool {

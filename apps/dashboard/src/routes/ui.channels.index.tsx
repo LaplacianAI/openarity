@@ -270,6 +270,16 @@ function ChannelDetail({
             Back into the Telegram chat each message came from.
           </KeyValue>
         ) : null}
+        {channel.can_notify ? (
+          <KeyValue label="Waiting senders">
+            {channel.notify_strangers
+              ? "Told once that they are waiting, and again when let in."
+              : "Not told anything. Their messages wait in Approvals."}
+            {canWrite ? (
+              <NotifyStrangers teamId={teamId} channel={channel} onChanged={onChanged} />
+            ) : null}
+          </KeyValue>
+        ) : null}
         {channel.takes_reply_url ? (
           <KeyValue label="Replies to">
             {channel.reply_url ? (
@@ -294,6 +304,53 @@ function ChannelDetail({
           <DeleteChannel teamId={teamId} channel={channel} onDeleted={onDeleted} />
         ) : null}
       </div>
+    </>
+  );
+}
+
+/**
+ * Whether a sender nobody has let in is told so. Off, they hear nothing, as
+ * before; on, the bot says once that they are waiting and again when they are
+ * in, so they know to send their message again.
+ */
+function NotifyStrangers({
+  teamId,
+  channel,
+  onChanged,
+}: {
+  teamId: string;
+  channel: ListedChannel;
+  onChanged: () => void;
+}) {
+  const on = channel.notify_strangers === true;
+  const save = useMutation({
+    mutationFn: (next: boolean) => updateChannel(teamId, channel.id, { notify_strangers: next }),
+    onSuccess: (c) => {
+      toast.success(
+        c.notify_strangers
+          ? `${channel.name} tells senders they are waiting`
+          : `${channel.name} no longer tells senders they are waiting`,
+      );
+      onChanged();
+    },
+  });
+
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        className="mt-2 block"
+        loading={save.isPending}
+        onClick={() => save.mutate(!on)}
+      >
+        {on ? "Stop telling them" : "Tell them"}
+      </Button>
+      {save.isError ? (
+        <p role="alert" className="mt-1 text-sm text-destructive">
+          {save.error.message}
+        </p>
+      ) : null}
     </>
   );
 }

@@ -209,30 +209,47 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 
 func newUpdateCmd(opts *cli.Options) *cobra.Command {
 	var replyURL string
-	var noReplyURL bool
+	var noReplyURL, notify, noNotify bool
 
 	cmd := &cobra.Command{
 		Use:   "update <team> <channel>",
-		Short: "Set or stop where a channel's replies go",
-		Long: "Both arguments take a name or an id. Needs channel:write in the team.\n\n" +
+		Short: "Change where a channel's replies go, or whether it tells strangers they are waiting",
+		Long: "Both arguments take a name or an id. Needs channel:write in the team.\n" +
+			"Change either or both; what you leave out stays as it is.\n\n" +
 			"--reply-url sets where the team's replies are posted; --no-reply-url\n" +
 			"stops them, and any reply still waiting is given up rather than sent\n" +
-			"later. Exactly one is required.\n\n" +
-			"The URL must be http or https, with no credentials, query or fragment:\n" +
-			"every member can read it, and the receiver checks a reply by its\n" +
-			"signature instead.",
+			"later. The URL must be http or https, with no credentials, query or\n" +
+			"fragment: every member can read it, and the receiver checks a reply by\n" +
+			"its signature instead.\n\n" +
+			"--notify-strangers and --no-notify-strangers switch what a sender nobody\n" +
+			"has let in is told: that they are waiting, once, and that they are in.\n" +
+			"Telegram channels only.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			set := cmd.Flags().Changed("reply-url")
-			if set == noReplyURL {
-				return fmt.Errorf("pass exactly one of --reply-url or --no-reply-url")
+			setURL := cmd.Flags().Changed("reply-url")
+			if setURL && noReplyURL {
+				return fmt.Errorf("pass one of --reply-url or --no-reply-url, not both")
+			}
+			if notify && noNotify {
+				return fmt.Errorf("pass one of --notify-strangers or --no-notify-strangers, not both")
+			}
+			if !setURL && !noReplyURL && !notify && !noNotify {
+				return fmt.Errorf("pass --reply-url, --no-reply-url, --notify-strangers or --no-notify-strangers")
 			}
 			body := client.UpdateChannelJSONRequestBody{}
-			if set {
-				body.ReplyURL = strings.TrimSpace(replyURL)
-				if body.ReplyURL == "" {
+			switch {
+			case setURL:
+				u := strings.TrimSpace(replyURL)
+				if u == "" {
 					return fmt.Errorf("--reply-url cannot be empty — use --no-reply-url to stop replies")
 				}
+				body.ReplyURL = &u
+			case noReplyURL:
+				none := ""
+				body.ReplyURL = &none
+			}
+			if notify || noNotify {
+				body.NotifyStrangers = &notify
 			}
 
 			api, err := opts.API(cmd.Context())
@@ -255,13 +272,22 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 
 			return opts.Out.Print(ch, printer.Options{
 				Table: func(table *printer.Table) {
-					if ch.ReplyURL == nil || *ch.ReplyURL == "" {
-						table.Row(opts.Styles.OK.Render("updated"), opts.Styles.Value.Render(ch.Name),
-							opts.Styles.Muted.Render("replies stopped"))
-						return
+					var what []string
+					switch {
+					case body.ReplyURL != nil && ch.ReplyURL == nil, body.ReplyURL != nil && *ch.ReplyURL == "":
+						what = append(what, opts.Styles.Muted.Render("replies stopped"))
+					case body.ReplyURL != nil:
+						what = append(what, opts.Styles.Muted.Render("replies to ")+cli.Safe(*ch.ReplyURL))
+					}
+					if body.NotifyStrangers != nil {
+						state := "off"
+						if ch.NotifyStrangers {
+							state = "on"
+						}
+						what = append(what, opts.Styles.Muted.Render("strangers are told they are waiting: "+state))
 					}
 					table.Row(opts.Styles.OK.Render("updated"), opts.Styles.Value.Render(ch.Name),
-						opts.Styles.Muted.Render("replies to ")+cli.Safe(*ch.ReplyURL))
+						strings.Join(what, opts.Styles.Muted.Render("; ")))
 				},
 			})
 		},
@@ -269,6 +295,8 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 
 	cmd.Flags().StringVar(&replyURL, "reply-url", "", "where the team's replies are posted")
 	cmd.Flags().BoolVar(&noReplyURL, "no-reply-url", false, "stop sending replies")
+	cmd.Flags().BoolVar(&notify, "notify-strangers", false, "tell a sender nobody has let in that they are waiting, and that they are in")
+	cmd.Flags().BoolVar(&noNotify, "no-notify-strangers", false, "stop telling them")
 	return cmd
 }
 

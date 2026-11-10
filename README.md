@@ -481,6 +481,16 @@ oa channels update platform support --reply-url https://support.example.com/open
 oa channels update platform support --no-reply-url
 ```
 
+On a Telegram channel a sender nobody has approved is told so, once, the first
+time they ask the bot: "I can't answer you yet, someone on the team has to let
+you in first". When they are let in it says so, and asks them to send their
+message again. In a group both messages tag them by name. It is on by default;
+`--no-notify-strangers` turns it off:
+
+```sh
+oa channels update platform bot --no-notify-strangers
+```
+
 A list is one page per call. When more remain the response carries a cursor,
 and the table says how to use it:
 

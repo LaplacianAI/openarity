@@ -41,6 +41,31 @@ SET last_seen  = now(),
     -- they can see in the provider.
     sender_name = EXCLUDED.sender_name;
 
+-- NoteWaitingSender tells a waiting sender once per wait: it marks the pending
+-- row and writes the notice in one statement, so two messages arriving at once
+-- make one notice. The UPDATE's WHERE is re-checked against the row the first
+-- statement committed, and the second finds notified_at set. Where to answer
+-- is the provider's ids only. The caller decides the notice is wanted: the
+-- message asked the bot, the channel allows notices, its provider sends them.
+-- Returns the notice's id, or no rows when the sender was already told.
+-- name: NoteWaitingSender :one
+WITH due AS (
+    UPDATE pending_senders
+    SET notified_at         = now(),
+        notice_session_ref  = sqlc.arg('session_ref')::text,
+        notice_session_kind = sqlc.arg('session_kind')::text,
+        notice_message_ref  = sqlc.arg('message_ref')::text
+    WHERE channel_id = sqlc.arg('channel_id')::uuid
+      AND sender_ref = sqlc.arg('sender_ref')::text
+      AND notified_at IS NULL
+    RETURNING channel_id, sender_ref, sender_name
+)
+INSERT INTO notices (team_id, channel_id, sender_ref, sender_name, session_ref, session_kind, in_reply_to, kind)
+SELECT sqlc.arg('team_id')::uuid, d.channel_id, d.sender_ref, d.sender_name,
+       sqlc.arg('session_ref')::text, sqlc.arg('session_kind')::text, sqlc.arg('message_ref')::text, 'waiting'
+FROM due d
+RETURNING id;
+
 -- name: CountPendingSenders :one
 SELECT count(*) FROM pending_senders WHERE channel_id = $1;
 
@@ -89,7 +114,8 @@ DELETE FROM pending_senders WHERE channel_id = $1 AND sender_ref = $2;
 -- checked. ON CONFLICT re-reads the row it locked, so a holder changed by a
 -- transaction that committed first is seen, and the WHERE refuses the update.
 -- The dequeue runs only when the link did, so a refusal changes nothing.
--- Returns how many bindings were written: 0 is a 409, never a success.
+-- Returns how many bindings were written: 0 is a 409, never a success; and
+-- the "you're in" notice it wrote, if any, for the caller to kick.
 -- name: ApproveSender :one
 WITH linked AS (
     INSERT INTO channel_senders (channel_id, sender_ref, user_id)
@@ -97,13 +123,29 @@ WITH linked AS (
     ON CONFLICT (channel_id, sender_ref) DO UPDATE SET user_id = EXCLUDED.user_id
     WHERE channel_senders.user_id IS NOT DISTINCT FROM sqlc.narg('expected_holder')::uuid
     RETURNING 1
+), admitted AS (
+    -- Every CTE reads the snapshot the statement started with, so this sees
+    -- the pending row the dequeue below deletes. "You're in" goes only to a
+    -- sender who was told they were waiting, where they were told, and only
+    -- while the channel still sends notices.
+    INSERT INTO notices (team_id, channel_id, sender_ref, sender_name, session_ref, session_kind, kind)
+    SELECT c.team_id, p.channel_id, p.sender_ref, p.sender_name,
+           p.notice_session_ref, p.notice_session_kind, 'admitted'
+    FROM pending_senders p
+    JOIN channels c ON c.id = p.channel_id
+    WHERE p.channel_id = sqlc.arg('channel_id')
+      AND p.sender_ref = sqlc.arg('sender_ref')
+      AND p.notified_at IS NOT NULL
+      AND c.notify_strangers
+      AND EXISTS (SELECT 1 FROM linked)
+    RETURNING id
 ), dequeued AS (
     DELETE FROM pending_senders
     WHERE pending_senders.channel_id = sqlc.arg('channel_id')
       AND pending_senders.sender_ref = sqlc.arg('sender_ref')
       AND EXISTS (SELECT 1 FROM linked)
 )
-SELECT count(*) FROM linked;
+SELECT (SELECT count(*) FROM linked) AS linked, COALESCE((SELECT id FROM admitted), 0)::bigint AS admitted;
 
 -- RemoveSender is both "this person should not speak here any more" and "this
 -- pending row is spam". One statement covers both, because the caller cannot

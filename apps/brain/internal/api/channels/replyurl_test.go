@@ -226,3 +226,64 @@ func TestAChannelSaysWhetherItsProviderCanReply(t *testing.T) {
 		})
 	}
 }
+
+// The switch is Telegram's: custom sends no notices, so it has none to switch.
+func TestAChannelSaysWhetherItTellsStrangersAndCanBeSwitched(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	bot := db.Channel{ID: uuid.New(), TeamID: teamID, Provider: "telegram", Name: "bot", NotifyStrangers: true}
+	hook := db.Channel{ID: uuid.New(), TeamID: teamID, Provider: "custom", Name: "hook", NotifyStrangers: true}
+	s := &fakeStore{channels: []db.Channel{bot, hook}}
+	a := &fakeAuthz{allowed: true}
+	admin := memberOf(teamID, "admin")
+
+	rec := callWith(t, both(), "", s, newFakeSecrets(), a, admin, http.MethodPatch, channelPath(teamID, bot.ID), `{"notify_strangers":false}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"notify_strangers":false`) ||
+		!strings.Contains(rec.Body.String(), `"can_notify":true`) {
+		t.Fatalf("PATCH = %d %s, want 200, can_notify true and notify_strangers false", rec.Code, rec.Body)
+	}
+	if s.channels[0].NotifyStrangers || len(s.updates) != 1 || s.updates[0].SetReplyUrl {
+		t.Errorf("stored %v, update %+v; want it off and the reply URL untouched", s.channels[0].NotifyStrangers, s.updates)
+	}
+	if len(a.asked) != 1 || a.asked[0] != authz.Action("channel:write") {
+		t.Errorf("the guard asked for %v, want channel:write", a.asked)
+	}
+
+	rec = callWith(t, both(), "", s, newFakeSecrets(), a, admin, http.MethodPatch, channelPath(teamID, hook.ID), `{"notify_strangers":false}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "sends no notices") {
+		t.Errorf("PATCH on custom = %d %q, want 400 naming the provider", rec.Code, rec.Body)
+	}
+	if !s.channels[1].NotifyStrangers {
+		t.Error("a refused update switched the channel")
+	}
+}
+
+// A channel whose provider cannot notify reports the switch as off, whatever
+// the column holds: it is never offered, and never true.
+func TestAChannelThatCannotNotifyNeverReportsItDoes(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	hook := db.Channel{ID: uuid.New(), TeamID: teamID, Provider: "custom", Name: "hook", NotifyStrangers: true}
+	s := &fakeStore{channels: []db.Channel{hook}}
+	rec := callWith(t, both(), "", s, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+		http.MethodGet, "/teams/"+teamID.String()+"/channels", "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"can_notify":false`) ||
+		!strings.Contains(rec.Body.String(), `"notify_strangers":false`) {
+		t.Errorf("GET = %d %s, want can_notify and notify_strangers false", rec.Code, rec.Body)
+	}
+}
+
+func TestAnUpdateThatNamesNothingIsRefused(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	bot := db.Channel{ID: uuid.New(), TeamID: teamID, Provider: "telegram", Name: "bot", NotifyStrangers: true}
+	s := &fakeStore{channels: []db.Channel{bot}}
+	rec := callWith(t, both(), "", s, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+		http.MethodPatch, channelPath(teamID, bot.ID), `{}`)
+	if rec.Code != http.StatusBadRequest || len(s.updates) != 0 {
+		t.Errorf("PATCH {} = %d, updates %v; want 400 and nothing written", rec.Code, s.updates)
+	}
+}

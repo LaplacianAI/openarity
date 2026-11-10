@@ -249,6 +249,32 @@ secret and answers 502 with Telegram's reason: a channel nothing posts to
 looks connected and is not. Deleting a channel calls `deleteWebhook` first,
 best effort, so a person's delete is never held up by Telegram.
 
+## A stranger is told, from an outbox of its own
+
+A sender nobody has let in used to hear nothing, and from their side the bot
+was broken. Now the first time they ask the bot in a wait, it says they are
+waiting, and when they are let in, it says so and asks them to send their
+message again (it was never stored). Telegram only: `Notifier` is optional
+beside `Replier`, and `custom` is left alone because its receivers already
+parse a reply's shape.
+
+A notice is not a reply. A reply hangs off a run, a session and a stored
+message, and a stranger has none of the three, so `notices` is its own table,
+addressed by the provider's ids (conversation, message) kept on the pending
+row. Never what they wrote. One sender drains both tables with one attempt
+path, so lease, retry and give-up exist once.
+
+Once per wait is `pending_senders.notified_at`, set by the statement that
+writes the notice, not `seen_count = 1`: in a group the first message may not
+name the bot, and the one that does would never be told. Two messages at once
+make one notice. "You're in" is written by the approving statement and only
+when "waiting" went, so nobody is welcomed who was never told to wait.
+
+The brain owns the words and the adapter names the sender: in a group by a
+link to their account, so nobody else takes it as theirs; the name is the
+sender's own text, so it is escaped. A notice that cannot be written is
+logged and the stranger stays queued: the queue is what they came for.
+
 ## Settled: who may read a direct session
 
 **Its participant, plus anyone holding `session:read_all` in the team.** A

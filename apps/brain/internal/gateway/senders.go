@@ -21,6 +21,7 @@ const (
 type Senders interface {
 	FindChannelSender(ctx context.Context, arg db.FindChannelSenderParams) (uuid.UUID, error)
 	RecordPendingSender(ctx context.Context, arg db.RecordPendingSenderParams) (int64, error)
+	NoteWaitingSender(ctx context.Context, arg db.NoteWaitingSenderParams) (int64, error)
 }
 
 func ResolveSender(
@@ -72,4 +73,29 @@ func CleanName(raw string) string {
 		cleaned = string([]rune(cleaned)[:displayNameMax])
 	}
 	return cleaned
+}
+
+// TellWaiting writes the notice telling a sender nobody has let in that they
+// are waiting, the first time in this wait that they ask the bot. It is
+// called after ResolveSender queued them: a sender dropped at the cap has no
+// pending row, and so no notice. Reports the notice written, if one was.
+func TellWaiting(ctx context.Context, s Senders, ch db.Channel, in Inbound) (int64, bool, error) {
+	if !ch.NotifyStrangers || !addressed(in.Session.Kind, in) {
+		return 0, false, nil
+	}
+	id, err := s.NoteWaitingSender(ctx, db.NoteWaitingSenderParams{
+		TeamID:      ch.TeamID,
+		ChannelID:   ch.ID,
+		SenderRef:   in.Author.Ref,
+		SessionRef:  in.Session.Ref,
+		SessionKind: string(in.Session.Kind),
+		MessageRef:  in.ExternalID,
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return 0, false, nil
+	case err != nil:
+		return 0, false, err
+	}
+	return id, true, nil
 }

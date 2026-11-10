@@ -64,14 +64,18 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 	return outcome{run: id}, nil
 }
 
-func asksUs(s db.Session, m Delivery) bool {
-	if m.Author.IsBot {
+func asksUs(s db.Session, m Delivery) bool { return addressed(SessionKind(s.Kind), m.Inbound) }
+
+// addressed is whether a message asks the bot: always in a direct
+// conversation, elsewhere only when it mentions us; never from a bot.
+func addressed(kind SessionKind, in Inbound) bool {
+	if in.Author.IsBot {
 		return false
 	}
-	if s.Kind == string(SessionDirect) {
+	if kind == SessionDirect {
 		return true
 	}
-	return slices.ContainsFunc(m.Mentions, func(x Mention) bool { return x.IsUs })
+	return slices.ContainsFunc(in.Mentions, func(x Mention) bool { return x.IsUs })
 }
 
 func steer(m Delivery) string {

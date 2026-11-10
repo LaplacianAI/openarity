@@ -23,7 +23,7 @@ internal/gateway/
   senders.go        ResolveSender, and the display-name cleaning
   sink.go           where a delivery goes; inbox.go is the stand-in
   answer.go         whether a stored message starts a run, steers one, or is left
-  send.go           the outbox's replies: claim, build through the provider, post, mark
+  send.go           the outbox's replies and notices: claim, build through the provider, post, mark
   job.go            the reply queue, the kick a finished run sends, the sweep
   providertest/     the conformance suite every adapter runs
   custom/           the generic adapter, and the reference implementation
@@ -227,6 +227,12 @@ follows no redirect. So an adapter still holds no HTTP client, and:
   repeat.
 - **A finished channel run kicks the queue**, so a reply goes out at once; the
   sweep every minute is for retries and lost kicks.
+
+A provider may also be a `Notifier`: it tells a sender nobody has let in that
+they are waiting (once per wait) and, when they are let in, that they are in.
+A notice is built like a reply and sent by the same sender, from its own
+`notices` outbox, since a stranger has no run or session to hang it on.
+Telegram is one; `custom` is not. A channel's `notify_strangers` switches it.
 
 A channel takes a `reply_url` only when its provider is a `URLReplier`, which
 posts to an address the channel names. `custom` is; `telegram` replies into

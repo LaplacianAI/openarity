@@ -69,10 +69,21 @@ export type Channel = {
    * for Telegram, which replies in the chat; the brain refuses a reply URL.
    */
   takes_reply_url: boolean;
+  /**
+   * Whether the provider tells a sender nobody has let in that they are
+   * waiting, and that they are in. Telegram does. Optional: a brain from
+   * before the field sends none, and is read as one that does not.
+   */
+  can_notify?: boolean;
+  /** Whether this channel does. Always false where `can_notify` is. */
+  notify_strangers?: boolean;
 };
 
-/** PATCH /teams/{id}/channels/{channelID}. Null stops replies. */
-export type UpdateChannelRequest = { reply_url: string | null };
+/**
+ * PATCH /teams/{id}/channels/{channelID}. What is sent changes and the rest is
+ * left: a null `reply_url` stops replies.
+ */
+export type UpdateChannelRequest = { reply_url?: string | null; notify_strangers?: boolean };
 
 /**
  * POST /teams/{id}/channels. Leave `signing_secret` out and the brain

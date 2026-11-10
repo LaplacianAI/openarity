@@ -134,3 +134,67 @@ func TestCreateSendsTheReplyURLOnlyWhenGiven(t *testing.T) {
 		t.Errorf("body = %s, want the reply URL", body)
 	}
 }
+
+func telegramUpdated(notify bool) string {
+	state := "false"
+	if notify {
+		state = "true"
+	}
+	return `{"id": "` + channelID + `", "team_id": "` + teamID + `", "provider": "telegram", "name": "support", ` +
+		`"can_reply": true, "can_notify": true, "notify_strangers": ` + state + `}`
+}
+
+// The switch is sent alone: a reply URL left out is left as it is, so
+// nothing but notify_strangers is in the body.
+func TestUpdateSwitchesNoticesToStrangers(t *testing.T) {
+	for flag, want := range map[string]string{
+		"--no-notify-strangers": `{"notify_strangers":false}`,
+		"--notify-strangers":    `{"notify_strangers":true}`,
+	} {
+		t.Run(flag, func(t *testing.T) {
+			script := clitest.Routes(t, updateRoutes(clitest.Reply{
+				Status: http.StatusOK, Body: telegramUpdated(flag == "--notify-strangers"),
+			}))
+
+			out, err := clitest.Execute(t, commands, "channels", "update", "platform", "support", flag)
+			if err != nil {
+				t.Fatalf("channels update %s: %v\n%s", flag, err, out)
+			}
+			if body := patchBody(t, script); body != want {
+				t.Errorf("sent %s, want %s", body, want)
+			}
+			state := "off"
+			if flag == "--notify-strangers" {
+				state = "on"
+			}
+			if !strings.Contains(out, "told they are waiting: "+state) || strings.Contains(out, "replies") {
+				t.Errorf("output should say only the notices are %s:\n%s", state, out)
+			}
+		})
+	}
+}
+
+func TestUpdateCanChangeBothAtOnce(t *testing.T) {
+	script := clitest.Routes(t, updateRoutes(clitest.Reply{Status: http.StatusOK, Body: updated(repliesTo)}))
+
+	if _, err := clitest.Execute(t, commands,
+		"channels", "update", "platform", "support", "--reply-url", repliesTo, "--no-notify-strangers"); err != nil {
+		t.Fatal(err)
+	}
+	if body := patchBody(t, script); body != `{"notify_strangers":false,"reply_url":"`+repliesTo+`"}` {
+		t.Errorf("sent %s", body)
+	}
+}
+
+func TestUpdateRefusesTheSwitchBothWays(t *testing.T) {
+	script := clitest.Routes(t, updateRoutes(clitest.Reply{Status: http.StatusOK, Body: telegramUpdated(true)}))
+
+	_, err := clitest.Execute(t, commands,
+		"channels", "update", "platform", "support", "--notify-strangers", "--no-notify-strangers")
+	if err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Errorf("err = %v, want it to refuse both", err)
+	}
+	if len(script.All()) != 0 {
+		t.Errorf("made %d calls before refusing", len(script.All()))
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/dbos-inc/dbos-transact-golang/dbos"
@@ -56,10 +57,12 @@ func (replyJob) schedules() []dbos.ScheduleSpec {
 	}}
 }
 
-func (j replyJob) kicked(ctx dbos.Context, runID string) (string, error) {
+// kicked drains everything due, not only what kicked it: key is the run or
+// the notice that asked, so the workflow id keeps a double kick to one send.
+func (j replyJob) kicked(ctx dbos.Context, key string) (string, error) {
 	return dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
 		_, err := j.sender.Drain(sctx)
-		return runID, err
+		return key, err
 	})
 }
 
@@ -77,6 +80,20 @@ func KickReplies(c dbos.Client, runID uuid.UUID) error {
 		dbos.WithEnqueueWorkflowID("reply:"+runID.String()))
 	if err != nil {
 		return fmt.Errorf("kicking the reply to run %s: %w", runID, err)
+	}
+	return nil
+}
+
+// NoticeKicker has a notice sent at once, through the same queue and workflow
+// as a reply, rather than at the next sweep.
+type NoticeKicker struct{ c dbos.Client }
+
+func NewNoticeKicker(c dbos.Client) NoticeKicker { return NoticeKicker{c: c} }
+
+func (k NoticeKicker) KickNotice(_ context.Context, noticeID int64) error {
+	key := "notice:" + strconv.FormatInt(noticeID, 10)
+	if _, err := dbos.Enqueue[string](k.c, replyQueue, replyWorkflow, key, dbos.WithEnqueueWorkflowID(key)); err != nil {
+		return fmt.Errorf("kicking notice %d: %w", noticeID, err)
 	}
 	return nil
 }
