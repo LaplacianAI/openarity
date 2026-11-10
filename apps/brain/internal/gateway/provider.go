@@ -69,8 +69,10 @@ type Setup interface {
 	Supplied() []string
 	SetupRequest(supplied Credentials) (OutboundRequest, error)
 	// Complete reads the answer and returns the keys to store beside
-	// what was supplied. An error here refuses the channel.
-	Complete(status int, body []byte) (Credentials, error)
+	// what was supplied, and anything the person should know about how
+	// the account is set up: Telegram's privacy mode. An error here
+	// refuses the channel; a warning does not.
+	Complete(status int, body []byte) (Credentials, []string, error)
 }
 
 // Connector is a provider that can be told where to post: Telegram's

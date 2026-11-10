@@ -583,6 +583,45 @@ describe("a telegram channel", () => {
     expect(text).not.toContain(TOKEN);
   });
 
+  // A bot whose privacy mode is on is connected, and the person is told what
+  // it will miss in groups and how to fix it.
+  it("shows the brain's warning about the bot", async () => {
+    const WARNING = "This bot's privacy mode is on, so in a group it only sees commands to it.";
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [] } },
+      "POST /teams/{id}/channels": {
+        status: 201,
+        body: { ...telegram, hook_url: TG_HOOK, connected: true, warnings: [WARNING] },
+      },
+    });
+    show(Channels);
+    await chosen();
+    await userEvent.type(screen.getByLabelText(/^bot token$/i), TOKEN);
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /connected bot/i });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(WARNING);
+  });
+
+  it("shows no warning when there is none", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [] } },
+      "POST /teams/{id}/channels": {
+        status: 201,
+        body: { ...telegram, hook_url: TG_HOOK, connected: true },
+      },
+    });
+    show(Channels);
+    await chosen();
+    await userEvent.type(screen.getByLabelText(/^bot token$/i), TOKEN);
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /connected bot/i });
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+  });
+
   // The brain pointed the bot at the channel itself: there is nothing to run,
   // and no secret the person needs.
   it("says the bot is connected, with no step left, when the brain connected it", async () => {

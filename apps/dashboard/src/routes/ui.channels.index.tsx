@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -757,6 +758,25 @@ function ConnectSheet({
  * What to configure at the provider. A generated secret is shown here and
  * nowhere else: it lives in this dialog's props until it closes.
  */
+/**
+ * What the brain said about how the provider's account is set up, such as a
+ * Telegram bot whose privacy mode hides group messages. The channel is made;
+ * this is what will keep it from hearing everything until it is fixed.
+ */
+function SetupWarnings({ warnings }: { warnings?: string[] }) {
+  if (!warnings?.length) return null;
+  return (
+    <ul className="space-y-2">
+      {warnings.map((w) => (
+        <li key={w} role="alert" className="flex gap-2 text-sm">
+          <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
+          <span>{w}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function CreatedDialog({
   channel,
   onDone,
@@ -784,6 +804,7 @@ function CreatedDialog({
                 first time waits under Approvals until you let them in.
               </DialogDescription>
             </DialogHeader>
+            <SetupWarnings warnings={channel.warnings} />
             <DialogFooter>
               <Button type="button" onClick={done}>
                 Done
@@ -800,6 +821,7 @@ function CreatedDialog({
                   : "Point the provider's webhook at this path on the brain's webhook listener."}
               </DialogDescription>
             </DialogHeader>
+            <SetupWarnings warnings={channel.warnings} />
             <div className="space-y-3 text-sm">
               <div className="space-y-1">
                 <p className="text-xs font-medium">

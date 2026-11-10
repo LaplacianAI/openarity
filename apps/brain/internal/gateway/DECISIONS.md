@@ -275,6 +275,24 @@ link to their account, so nobody else takes it as theirs; the name is the
 sender's own text, so it is escaped. A notice that cannot be written is
 logged and the stranger stays queued: the queue is what they came for.
 
+## Only a stranger who asked is queued; privacy mode is said at connect
+
+`ResolveSender` queues an unknown sender only when the message is addressed
+to the bot, by the same rule that decides whether a message is answered. A
+Telegram bot with privacy mode off is sent everything said in a group, and
+queueing everyone who spoke would fill the 50-place queue with people who
+never asked for anything.
+
+A new Telegram bot has privacy mode on, and is then sent in a group only
+commands and replies to it, so a plain mention never arrives; this was found
+on staging, not in Telegram's reference, which does not list mentions either
+way. `getMe` reports `can_read_all_group_messages`, so `Setup.Complete`
+returns warnings beside the credentials and the create response carries them.
+They are said once, at connect, and not stored: the setting can change in
+BotFather at any time, and a stored one would keep warning after it was
+fixed. Considered: refusing such a bot. Refused because private chats,
+commands and replies work, and some teams want exactly that.
+
 ## Settled: who may read a direct session
 
 **Its participant, plus anyone holding `session:read_all` in the team.** A

@@ -304,7 +304,7 @@ func (s setupStub) Supplied() []string { return s.supplied }
 
 func (setupStub) SetupRequest(Credentials) (OutboundRequest, error) { return OutboundRequest{}, nil }
 
-func (setupStub) Complete(int, []byte) (Credentials, error) { return nil, nil }
+func (setupStub) Complete(int, []byte) (Credentials, []string, error) { return nil, nil, nil }
 
 // A provider found by its Setup is the one that has it; the getter for one
 // interface never answers for another.
