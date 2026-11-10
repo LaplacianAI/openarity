@@ -6,7 +6,7 @@ The brain serves two listeners. This page describes the API one,
 `OPENARITY_API_BIND`, which defaults to `127.0.0.1:21120`. The other is the
 inbound gateway, `OPENARITY_WEBHOOK_BIND` — it authenticates a request by its
 channel's signing secret rather than by a credential, so nothing here applies to
-it.
+it. [Channels](../platform/channels.md) describes what it accepts.
 
 The contract is
 [`apps/brain/api/openapi.yaml`](https://github.com/LaplacianAI/openarity/blob/main/apps/brain/api/openapi.yaml),
@@ -47,7 +47,9 @@ and response field this table leaves out.
 | DELETE | `/teams/{id}/members/{userID}`                                | Remove a member                                    |
 | GET    | `/teams/{id}/channels`                                        | List a team's channels                             |
 | POST   | `/teams/{id}/channels`                                        | Connect a channel                                  |
+| PATCH  | `/teams/{id}/channels/{channelID}`                            | Set where a channel's replies go, or stop them     |
 | DELETE | `/teams/{id}/channels/{channelID}`                            | Disconnect a channel                               |
+| GET    | `/teams/{id}/senders/pending`                                 | List senders waiting on any of the team's channels |
 | GET    | `/teams/{id}/channels/{channelID}/senders/pending`            | List senders waiting to be approved                |
 | GET    | `/teams/{id}/channels/{channelID}/senders`                    | List approved senders                              |
 | POST   | `/teams/{id}/channels/{channelID}/senders`                    | Approve a sender                                   |
@@ -73,8 +75,9 @@ and response field this table leaves out.
 | PUT    | `/teams/{id}/agents/{agentID}`                                | Replace an agent and its grants                    |
 | DELETE | `/teams/{id}/agents/{agentID}`                                | Delete an agent                                    |
 | GET    | `/teams/{id}/loops`                                           | List the loops an agent may use                    |
+| GET    | `/teams/{id}/runs`                                            | List the team's runs, newest first                 |
 | POST   | `/teams/{id}/runs`                                            | Start a run of an agent, or ask the team's hub     |
-| GET    | `/teams/{id}/runs/{runID}`                                    | Read a run                                         |
+| GET    | `/teams/{id}/runs/{runID}`                                    | Read a run, with the fate of its channel reply     |
 | GET    | `/teams/{id}/runs/{runID}/events`                             | Follow what a run does                             |
 | POST   | `/teams/{id}/runs/{runID}/cancel`                             | Cancel a run                                       |
 | GET    | `/teams/{id}/settings`                                        | Read a team's settings                             |
@@ -86,6 +89,7 @@ and response field this table leaves out.
 | DELETE | `/teams/{id}/mcp-servers/{serverID}`                          | Delete an MCP server                               |
 | GET    | `/teams/{id}/mcp-servers/{serverID}/tools`                    | List the tools a server offers                     |
 | POST   | `/teams/{id}/mcp-servers/{serverID}/discover`                 | Ask a server which tools it offers, and store them |
+| GET    | `/teams/{id}/summary`                                         | The team at a glance: counts for its home          |
 | GET    | `/teams/{id}/graph`                                           | The team's graph                                   |
 | GET    | `/users`                                                      | Find a user                                        |
 

@@ -7,9 +7,29 @@ erases nothing yet. The team, with everything it held, is kept until its purge
 date and can be restored whole until then. Only a super admin can delete or
 restore a team.
 
+## Roles
+
+A member has one role in a team. Each role can do what the one before it can:
+
+| Role | Adds |
+| ---- | ---- |
+| `member` | Define agents, skills and MCP servers, and start runs |
+| `approver` | See a team's channels and their queues, and let senders in or remove them (`sender:approve`) |
+| `admin` | Connect and change channels, change the team's settings, add and remove members, read every conversation including direct ones |
+
+Letting senders in is its own permission, apart from connecting channels, so an
+approver can let people in without being able to rewire a channel or reach its
+signing secret. An approver cannot bind a sender to an admin. See
+[Channels](channels.md). Pass the role when adding someone, and see it in the
+top bar and on the **Teams** page of the dashboard:
+
+```sh
+oa teams members add platform erik --role approver
+```
+
 ## Deleting
 
-From the dashboard, the team's **Settings** page ends with a danger zone; the
+From the dashboard, the team's **Team settings** page ends with a danger zone; the
 name has to be typed back before the delete is sent. From the command line:
 
 ```sh
@@ -34,7 +54,7 @@ deleted changes nothing, and keeps its first purge date.
 
 ## Restoring
 
-Deleted teams are listed under **Teams → Deleted teams** in the dashboard,
+Deleted teams are listed under **Team → Deleted teams** in the dashboard,
 each with the date it will be erased, and with `oa teams list --deleted`:
 
 ```sh

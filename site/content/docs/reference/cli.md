@@ -28,22 +28,22 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa teams restore <team>`      | Bring back a deleted team                                |
 | `oa teams list --deleted`      | List deleted teams, and when each is erased              |
 | `oa teams members list <team>` | List a team's members                                    |
-| `oa teams members add <team> <user>` | Add someone to a team                              |
+| `oa teams members add <team> <user>` | Add someone to a team, with `--role` (`member`, `approver` or `admin`) |
 | `oa teams members remove <team> <user>` | Take someone out of a team                      |
 | `oa teams settings show <team>` | Show a team's model, web search, learning, compaction and hub |
 | `oa teams settings set <team>` | Change only the settings named by flags              |
 | `oa channels list <team>`      | List a team's channels                                   |
-| `oa channels create <team> <name>` | Connect a channel (`--provider`; `--secret-stdin` or `--credential-stdin NAME` pipe a secret in) |
+| `oa channels create <team> <name>` | Connect a channel: `--provider`, and optionally `--reply-url`, `--secret-stdin`, or `--credential-stdin NAME` for a provider's credential such as Telegram's `bot_token` |
 | `oa channels update <team> <channel>` | Set where a channel's replies go (`--reply-url`), or stop them (`--no-reply-url`) |
 | `oa channels delete <team> <channel>` | Disconnect a channel                              |
 | `oa channels senders pending <team> <channel>` | List senders waiting to be approved      |
 | `oa channels senders list <team> <channel>` | List approved senders                       |
 | `oa channels senders approve <team> <channel> <sender-ref> <user>` | Let a sender speak as a user |
 | `oa channels senders remove <team> <channel> <sender-ref>` | Take a sender's access away, or dismiss a pending one |
-| `oa sessions list <team>`      | List a team's conversations                              |
+| `oa sessions list <team>`      | List a team's conversations, or one channel's with `--channel` |
 | `oa sessions get <team> <session>` | Show a conversation: its kind, where it came from and when |
 | `oa sessions read <team> <session>` | Read a conversation                                 |
-| `oa runs start <team> [agent] <input>` | Ask the team's hub, or start an agent on a task |
+| `oa runs start <team> [agent] <input>` | Ask the team's hub, or start an agent on a task; `--session` continues a conversation, `--follow` prints its events |
 | `oa runs events <team> <run>`  | Follow what a run does, as it does it                    |
 | `oa runs get <team> <run>`     | Show a run: its status, input, answer and what it spent  |
 | `oa runs list <team> <session>`| List the runs started in a conversation                  |
