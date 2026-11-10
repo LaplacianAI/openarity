@@ -13,7 +13,7 @@ The sidebar is grouped by the job a screen is for:
 | Group | Screens | What they are for |
 | ----- | ------- | ----------------- |
 | Work | Home, Runs, Sessions, Approvals | Is the team working, what did it do, who is waiting |
-| Build | Agents, Skills, MCP servers, Channels | Defining what the team can do and where it hears from |
+| Build | Agents, Skills, MCP servers, Channels, Blueprint | Defining what the team can do and where it hears from |
 | Understand | Graph | The team's agents, servers, tools and skills as the graph holds them |
 | Team | Team settings, Teams, Deleted teams | The team's model, hub, web search and learning; its members; and, for super admins only, deleted teams and restoring one |
 
@@ -71,6 +71,13 @@ server's sheet shows its tools, when discovery was last tried and why it failed,
 and has **Discover** to ask it again; its credentials are references into the
 secret store, never the secret. A channel's sheet shows its webhook address and
 **Replies to**, and lets you set where replies go or stop them.
+
+**Blueprint** takes a [blueprint](blueprints.md) pasted as YAML or JSON.
+**Plan** shows what applying it would change, item by item, with every refusal;
+**Apply** appears only for a plan with changes and no refusals, and applies
+exactly that plan. Editing the text takes the plan away. A skill's `path:` is
+matched by name to a folder added under **Skill folders**, since a browser
+cannot open a path itself, so the same file works here and with `oa apply`.
 
 **Teams** lists the teams you can see and their members, with each member's
 role: `member`, `approver` or `admin`. **Team settings** has four groups: the

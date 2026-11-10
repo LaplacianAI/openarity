@@ -517,3 +517,37 @@ export type TeamSettingsRequest = {
   /** An agent's name in the team; null for the built-in orchestrator. */
   hub: string | null;
 };
+
+/**
+ * POST /teams/{id}/blueprints/plan. The dashboard does not build a blueprint's
+ * servers and agents; a person writes them, and the brain checks every field,
+ * so they pass through as written. Skills are folders the page reads.
+ */
+export type Blueprint = {
+  mcp_servers?: Record<string, unknown>[];
+  skills?: BlueprintSkill[];
+  agents?: Record<string, unknown>[];
+};
+
+/** A skill's files, each one's bytes as base64. */
+export type BlueprintSkill = { files: { path: string; data: string }[] };
+
+export type BlueprintKind = "mcp_server" | "skill" | "agent";
+
+export type BlueprintChange = {
+  kind: BlueprintKind;
+  name: string;
+  action: "create" | "update" | "unchanged";
+  /** What an update changes, by field name, never the values. */
+  fields?: string[];
+  id?: string;
+};
+
+export type BlueprintRefusal = { kind: BlueprintKind; name: string; message: string };
+
+export type BlueprintPlan = {
+  changes: BlueprintChange[];
+  refusals: BlueprintRefusal[];
+  /** Names this plan; apply sends it back. */
+  digest: string;
+};

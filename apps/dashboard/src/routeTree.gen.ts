@@ -14,6 +14,7 @@ import { Route as UiRouteImport } from './routes/ui'
 import { Route as UiIndexRouteImport } from './routes/ui.index'
 import { Route as UiGalleryRouteImport } from './routes/ui.[_]gallery'
 import { Route as UiApprovalsRouteImport } from './routes/ui.approvals'
+import { Route as UiBlueprintRouteImport } from './routes/ui.blueprint'
 import { Route as UiCallbackRouteImport } from './routes/ui.callback'
 import { Route as UiGraphRouteImport } from './routes/ui.graph'
 import { Route as UiSettingsRouteImport } from './routes/ui.settings'
@@ -52,6 +53,11 @@ const UiGalleryRoute = UiGalleryRouteImport.update({
 const UiApprovalsRoute = UiApprovalsRouteImport.update({
   id: '/approvals',
   path: '/approvals',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiBlueprintRoute = UiBlueprintRouteImport.update({
+  id: '/blueprint',
+  path: '/blueprint',
   getParentRoute: () => UiRoute,
 } as any)
 const UiCallbackRoute = UiCallbackRouteImport.update({
@@ -130,6 +136,7 @@ export interface FileRoutesByFullPath {
   '/ui': typeof UiRouteWithChildren
   '/ui/_gallery': typeof UiGalleryRoute
   '/ui/approvals': typeof UiApprovalsRoute
+  '/ui/blueprint': typeof UiBlueprintRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/graph': typeof UiGraphRoute
   '/ui/settings': typeof UiSettingsRoute
@@ -150,6 +157,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ui/_gallery': typeof UiGalleryRoute
   '/ui/approvals': typeof UiApprovalsRoute
+  '/ui/blueprint': typeof UiBlueprintRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/graph': typeof UiGraphRoute
   '/ui/settings': typeof UiSettingsRoute
@@ -172,6 +180,7 @@ export interface FileRoutesById {
   '/ui': typeof UiRouteWithChildren
   '/ui/_gallery': typeof UiGalleryRoute
   '/ui/approvals': typeof UiApprovalsRoute
+  '/ui/blueprint': typeof UiBlueprintRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/graph': typeof UiGraphRoute
   '/ui/settings': typeof UiSettingsRoute
@@ -195,6 +204,7 @@ export interface FileRouteTypes {
     | '/ui'
     | '/ui/_gallery'
     | '/ui/approvals'
+    | '/ui/blueprint'
     | '/ui/callback'
     | '/ui/graph'
     | '/ui/settings'
@@ -215,6 +225,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ui/_gallery'
     | '/ui/approvals'
+    | '/ui/blueprint'
     | '/ui/callback'
     | '/ui/graph'
     | '/ui/settings'
@@ -236,6 +247,7 @@ export interface FileRouteTypes {
     | '/ui'
     | '/ui/_gallery'
     | '/ui/approvals'
+    | '/ui/blueprint'
     | '/ui/callback'
     | '/ui/graph'
     | '/ui/settings'
@@ -293,6 +305,13 @@ declare module '@tanstack/react-router' {
       path: '/approvals'
       fullPath: '/ui/approvals'
       preLoaderRoute: typeof UiApprovalsRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/blueprint': {
+      id: '/ui/blueprint'
+      path: '/blueprint'
+      fullPath: '/ui/blueprint'
+      preLoaderRoute: typeof UiBlueprintRouteImport
       parentRoute: typeof UiRoute
     }
     '/ui/callback': {
@@ -399,6 +418,7 @@ declare module '@tanstack/react-router' {
 interface UiRouteChildren {
   UiGalleryRoute: typeof UiGalleryRoute
   UiApprovalsRoute: typeof UiApprovalsRoute
+  UiBlueprintRoute: typeof UiBlueprintRoute
   UiCallbackRoute: typeof UiCallbackRoute
   UiGraphRoute: typeof UiGraphRoute
   UiSettingsRoute: typeof UiSettingsRoute
@@ -419,6 +439,7 @@ interface UiRouteChildren {
 const UiRouteChildren: UiRouteChildren = {
   UiGalleryRoute: UiGalleryRoute,
   UiApprovalsRoute: UiApprovalsRoute,
+  UiBlueprintRoute: UiBlueprintRoute,
   UiCallbackRoute: UiCallbackRoute,
   UiGraphRoute: UiGraphRoute,
   UiSettingsRoute: UiSettingsRoute,

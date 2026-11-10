@@ -80,6 +80,14 @@ plan and the answer, nothing is written and the new plan is shown. Under
 show before the question, and the one document printed is what was applied,
 or the plan that stopped it.
 
+## In the dashboard
+
+**Blueprint**, under Build, takes the same file pasted as YAML or JSON. **Plan**
+shows the plan, **Apply** applies exactly that plan, and editing the text takes
+the plan away. A browser cannot open `./skills/support-faq` itself, so each
+skill's folder is added with **Add skill folder** and matched to its `path:` by
+the folder's name.
+
 ## The rules
 
 - **Names are the keys.** An item the file names is the team's item of that
