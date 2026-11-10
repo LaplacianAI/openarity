@@ -19,7 +19,8 @@ generated code (`internal/store/db`), wire-shape plumbing in `internal/api/*`
 queries, `sqlc.yaml`, `api/openapi.yaml`, `rbac.json`, tests, docs and
 Makefiles. Design first in both: a high-level design (the user flow first, then
 the UML diagrams the change has: sequence, state, component, entity) and a
-low-level design with its sequence diagram, approved before code; every edit handed over with a link to
+low-level design with its sequence diagram, approved before code. Diagrams in
+a reply are ASCII, never Mermaid; every edit handed over with a link to
 its file and line.
 
 - "Make the change yourself, be like me" is a *style* instruction (sparse
