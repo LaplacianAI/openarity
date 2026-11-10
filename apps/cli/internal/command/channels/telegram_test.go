@@ -177,3 +177,33 @@ func TestAConnectedTelegramChannelHasNoStepLeft(t *testing.T) {
 		t.Errorf("the output does not say the bot is connected:\n%s", out)
 	}
 }
+
+// The brain's warning reaches the person who connected the bot, and a
+// terminal escape in it does not reach their terminal.
+func TestAWarningAboutTheBotIsShown(t *testing.T) {
+	warned := strings.Replace(connectedTelegram, `"connected": true`,
+		`"connected": true, "warnings": ["This bot's privacy mode is on.\u001b[2J"]`, 1)
+	clitest.Routes(t, telegramRoutes(warned))
+
+	out, err := clitest.ExecuteWithStdin(t, commands, botToken,
+		"channels", "create", "platform", "bot", "--provider", "telegram", "--credential-stdin", "bot_token")
+	if err != nil {
+		t.Fatalf("create: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "warning") || !strings.Contains(out, "privacy mode is on") {
+		t.Errorf("the output does not carry the warning:\n%s", out)
+	}
+	if strings.Contains(out, "\x1b[2J") {
+		t.Errorf("the warning's escape sequence reached the terminal:\n%q", out)
+	}
+}
+
+func TestNoWarningIsShownWhenThereIsNone(t *testing.T) {
+	clitest.Routes(t, telegramRoutes(connectedTelegram))
+
+	out, err := clitest.ExecuteWithStdin(t, commands, botToken,
+		"channels", "create", "platform", "bot", "--provider", "telegram", "--credential-stdin", "bot_token")
+	if err != nil || strings.Contains(out, "warning") {
+		t.Errorf("create = %v, output:\n%s", err, out)
+	}
+}

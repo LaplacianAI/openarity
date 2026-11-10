@@ -38,7 +38,10 @@ func ResolveSender(
 		return uuid.Nil, false, err
 	}
 
-	if in.Author.IsBot {
+	// Only a stranger who asked the bot is waiting for anything. In a group
+	// a bot may be sent every message, and queueing everyone who spoke would
+	// fill the queue with people who never asked; a bot is never queued.
+	if !addressed(in.Session.Kind, in) {
 		return uuid.Nil, false, nil
 	}
 

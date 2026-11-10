@@ -363,3 +363,41 @@ func TestCleanNameDropsInvalidUTF8(t *testing.T) {
 		t.Errorf("CleanName returned invalid utf-8: %q", got)
 	}
 }
+
+// In a group only a stranger who asked the bot is queued: a bot sent every
+// message would otherwise queue everyone who spoke.
+func TestOnlyAStrangerWhoAskedTheBotIsQueued(t *testing.T) {
+	t.Parallel()
+
+	inGroup := func(mentions ...Mention) Inbound {
+		in := message("u-new", "Asha")
+		in.Session = Session{Ref: "g-1", Kind: SessionGroup}
+		in.Mentions = mentions
+		return in
+	}
+	inThread := inGroup(Mention{SenderRef: "someone", IsUs: false})
+	inThread.Session.Kind = SessionThread
+
+	for name, tc := range map[string]struct {
+		in     Inbound
+		queued bool
+	}{
+		"a direct message":                {message("u-new", "Asha"), true},
+		"a group message to the bot":      {inGroup(Mention{SenderRef: "bot", IsUs: true}), true},
+		"a group message to nobody":       {inGroup(), false},
+		"a group message to someone else": {inGroup(Mention{SenderRef: "x", IsUs: false}), false},
+		"a thread message to someone":     {inThread, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := newFakeSenders()
+			_, known, err := ResolveSender(t.Context(), s, uuid.New(), tc.in)
+			if err != nil || known {
+				t.Fatalf("ResolveSender = %v, %v; want an unknown sender and no error", known, err)
+			}
+			if got := len(s.recorded) == 1; got != tc.queued {
+				t.Errorf("queued = %v, want %v", got, tc.queued)
+			}
+		})
+	}
+}

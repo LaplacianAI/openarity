@@ -179,6 +179,13 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 				// The brain had no public https address to point the bot at.
 				opts.Out.Note(telegramHint(*ch.HookURL, *ch.SigningSecret))
 			}
+			// The brain's sentence about how the provider's account is set up,
+			// such as a Telegram bot whose privacy mode hides group messages.
+			if ch.Warnings != nil {
+				for _, w := range *ch.Warnings {
+					opts.Out.Note(opts.Styles.Warn.Render("warning") + " " + cli.Line(w))
+				}
+			}
 
 			return opts.Out.Print(ch, printer.Options{
 				Table: func(table *printer.Table) {

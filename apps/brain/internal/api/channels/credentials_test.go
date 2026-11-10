@@ -76,8 +76,14 @@ func (f *telegramAPI) client() *http.Client {
 	})}
 }
 
+// knownBot is a bot whose privacy mode is off, so it reads every group message.
 func knownBot() *telegramAPI {
-	return &telegramAPI{status: http.StatusOK, body: `{"ok":true,"result":{"id":7012345678,"is_bot":true,"first_name":"Openarity","username":"OpenarityBot"}}`}
+	return &telegramAPI{status: http.StatusOK, body: `{"ok":true,"result":{"id":7012345678,"is_bot":true,"first_name":"Openarity","username":"OpenarityBot","can_read_all_group_messages":true}}`}
+}
+
+// privateBot is a bot as BotFather makes it: privacy mode on.
+func privateBot() *telegramAPI {
+	return &telegramAPI{status: http.StatusOK, body: `{"ok":true,"result":{"id":7012345678,"is_bot":true,"first_name":"Openarity","username":"OpenarityBot","can_read_all_group_messages":false}}`}
 }
 
 func both() Providers { return providers{"custom": custom.New(), "telegram": telegram.New()} }
@@ -237,8 +243,8 @@ func (greedy) SetupRequest(gateway.Credentials) (gateway.OutboundRequest, error)
 	return gateway.OutboundRequest{URL: "https://setup.example.com/"}, nil
 }
 
-func (greedy) Complete(int, []byte) (gateway.Credentials, error) {
-	return gateway.Credentials{"id": "1", "token": "replaced", gateway.KeySigning: "chosen", "admin": "yes"}, nil
+func (greedy) Complete(int, []byte) (gateway.Credentials, []string, error) {
+	return gateway.Credentials{"id": "1", "token": "replaced", gateway.KeySigning: "chosen", "admin": "yes"}, nil, nil
 }
 
 func TestAProvidersAnswerCannotWidenWhatAChannelHolds(t *testing.T) {
@@ -429,6 +435,33 @@ func TestATelegramChannelIsDeletedEvenIfTelegramCannotBeTold(t *testing.T) {
 			}
 			if c.noToken && len(c.tg.asked) != 0 {
 				t.Error("Telegram was asked with no token")
+			}
+		})
+	}
+}
+
+// A bot with privacy mode on is still connected, with the warning beside it;
+// one with it off is connected with nothing to say.
+func TestAConnectedBotsPrivacyModeIsSaid(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		tg   *telegramAPI
+		warn bool
+	}{
+		"privacy on":  {privateBot(), true},
+		"privacy off": {knownBot(), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := &fakeStore{}
+			rec := connect(t, tc.tg, both(), s, newFakeSecrets(),
+				`{"provider":"telegram","name":"ops","credentials":{"bot_token":"`+botToken+`"}}`)
+			if rec.Code != http.StatusCreated || len(s.created) != 1 {
+				t.Fatalf("POST = %d (%s), want the channel made either way", rec.Code, rec.Body)
+			}
+			if said := strings.Contains(rec.Body.String(), `"warnings":["This bot's privacy mode is on`); said != tc.warn {
+				t.Errorf("warned = %v, want %v: %s", said, tc.warn, rec.Body)
 			}
 		})
 	}

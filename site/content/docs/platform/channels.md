@@ -62,6 +62,18 @@ A Telegram message is answered:
 
 Edits, channel posts and button presses are not read.
 
+A new bot has **privacy mode** on, and then Telegram sends it, in a group,
+only commands to it and replies to it: a message that just names
+`@yourbot` never arrives. When you connect a bot with privacy mode on, the
+brain says so (in the dashboard, in `oa channels create`, and as `warnings` in
+the response). To fix it, send `/setprivacy` to @BotFather, choose the bot,
+pick **Disable**, then remove the bot from each group and add it back.
+Telegram applies the change only to groups the bot joins afterwards.
+
+With privacy mode off the bot is sent everything said in a group, but only
+someone who asks it (by name, command or reply) is queued for approval, so a
+busy group does not fill the queue.
+
 The answer goes back into the same chat, quoting the message it answers, as a
 Telegram rich message, so headings, lists, tables and code read as written. An
 answer longer than one message holds (32768 characters or 500 blocks) is split
@@ -116,9 +128,9 @@ and the sender should retry.
 
 ## Letting senders in
 
-The first time someone writes on a channel, the brain does not know who they
-are. It records the sender's id and display name in a queue of up to 50 per
-channel and drops the message: nothing they wrote is stored, and nothing
+The first time someone asks the bot something on a channel, the brain does
+not know who they are. It records the sender's id and display name in a queue
+of up to 50 per channel and drops the message: nothing they wrote is stored, and nothing
 reaches an agent. Their display name is text they chose, so it is shown as
 data.
 
