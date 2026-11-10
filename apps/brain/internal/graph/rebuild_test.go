@@ -54,6 +54,8 @@ func (w *world) describe(s Snapshot) []string {
 // creates, grants, revokes, renames and deletes, drained as it happened, and
 // then the same team rebuilt from nothing. The two graphs are the same graph.
 func TestARebuildEqualsTheIncrementalGraph(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -103,6 +105,8 @@ func TestARebuildEqualsTheIncrementalGraph(t *testing.T) {
 // A rebuild starts from nothing, so it embeds everything: one request for
 // each node that carries a vector, and none for the two kinds that do not.
 func TestARebuildReembedsEveryNode(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -121,6 +125,8 @@ func TestARebuildReembedsEveryNode(t *testing.T) {
 // What is in the graph and not in Postgres is gone afterwards. That is the
 // difference between rebuilding and projecting everything again.
 func TestARebuildRemovesWhatPostgresDoesNotHold(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -135,6 +141,8 @@ func TestARebuildRemovesWhatPostgresDoesNotHold(t *testing.T) {
 
 // A team that was never projected, or whose graph was lost, is built whole.
 func TestARebuildOfATeamWithNoGraphBuildsIt(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.exec("DELETE FROM graph_outbox")
@@ -149,6 +157,8 @@ func TestARebuildOfATeamWithNoGraphBuildsIt(t *testing.T) {
 // before their tools, agents last. Nothing promises that of a UNION ALL, so
 // the rebuild sorts them itself. Here they arrive agents first.
 func TestARebuildDoesNotDependOnTheOrderOfTheQuery(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.exec("DELETE FROM graph_outbox")
@@ -159,6 +169,8 @@ func TestARebuildDoesNotDependOnTheOrderOfTheQuery(t *testing.T) {
 }
 
 func TestARebuildOfAnEmptyTeamLeavesItsNodeAndIndexes(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	team := w.team("acme")
 
@@ -174,6 +186,8 @@ func TestARebuildOfAnEmptyTeamLeavesItsNodeAndIndexes(t *testing.T) {
 // Changing the model is the reason a rebuild exists. The old graph's index
 // is the wrong width for every new vector; the rebuilt one is not.
 func TestARebuildMovesAGraphToANewWidth(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -201,6 +215,8 @@ func TestARebuildMovesAGraphToANewWidth(t *testing.T) {
 }
 
 func TestARebuildTouchesNoOtherTeam(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	globex := w.team("globex")
@@ -224,6 +240,8 @@ func TestARebuildTouchesNoOtherTeam(t *testing.T) {
 // The outbox is the drain's. A rebuild that cleared it would lose a change
 // made while it ran; one that read it would not be a rebuild.
 func TestARebuildLeavesTheOutboxAlone(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	waiting := w.outstanding()
@@ -252,6 +270,8 @@ func TestARebuildLeavesTheOutboxAlone(t *testing.T) {
 // A mistyped id is the likeliest way to reach this, and it must not pass
 // for a team with nothing in it.
 func TestARebuildOfATeamThatDoesNotExistIsAnError(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	ghost := uuid.New()
 
@@ -267,6 +287,8 @@ func TestARebuildOfATeamThatDoesNotExistIsAnError(t *testing.T) {
 // Nothing is dropped until everything needed to build it again has been
 // read: a rebuild that cannot start leaves the graph that was there.
 func TestARebuildThatCannotReadTheTeamDropsNothing(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -279,6 +301,8 @@ func TestARebuildThatCannotReadTheTeamDropsNothing(t *testing.T) {
 }
 
 func TestARebuildThatCannotListTheTeamDropsNothing(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.drained()
@@ -293,6 +317,8 @@ func TestARebuildThatCannotListTheTeamDropsNothing(t *testing.T) {
 // One thing that will not project does not stop the rest, and the rebuild
 // says how many it missed: an exit code of zero would mean a whole graph.
 func TestARebuildReportsWhatItCouldNotProject(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	w.down.Store(true)
@@ -311,6 +337,8 @@ func TestARebuildReportsWhatItCouldNotProject(t *testing.T) {
 }
 
 func TestACancelledRebuildStops(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 
@@ -331,6 +359,8 @@ func TestACancelledRebuildStops(t *testing.T) {
 // the two take the same lock, and a rebuild waits for it where a drain would
 // skip its turn.
 func TestARebuildWaitsForADrainToFinish(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	holder := w.store.Store
@@ -378,6 +408,8 @@ func TestARebuildWaitsForADrainToFinish(t *testing.T) {
 }
 
 func TestARebuildWaitingForTheLockHonoursItsDeadline(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 
@@ -408,6 +440,8 @@ func TestARebuildWaitingForTheLockHonoursItsDeadline(t *testing.T) {
 // know would fail every rebuild, and a table left out would leave its nodes
 // out of every rebuilt graph with no error at all.
 func TestTheRebuildQueryListsEverythingTheTriggersEnqueue(t *testing.T) {
+	t.Parallel()
+
 	w := newWorld(t)
 	a := w.acme()
 	globex := w.team("globex")

@@ -9,6 +9,8 @@ import (
 // Every agent that existed before the grant, and every one created without
 // it, stays off the web: the column defaults to false and nothing sets it.
 func TestAnAgentIsNotOnTheWebUntilGranted(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -28,6 +30,8 @@ func TestAnAgentIsNotOnTheWebUntilGranted(t *testing.T) {
 // A replace is whole, as delegation is: the grant is what the replace says,
 // kept when it says so and taken away when it does not.
 func TestAGrantedAgentKeepsItsWebThroughAnUpdate(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 

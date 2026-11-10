@@ -1,6 +1,6 @@
 ---
 name: test-with-postgres
-description: Write a test that needs a real database — queries, migrations, transactions, anything sqlc-generated. Covers skipping when no database is available, isolating each test in its own schema, why these tests cannot be parallel, and how to check that a test would actually fail. Use for every test that talks to Postgres.
+description: Write a test that needs a real database — queries, migrations, transactions, anything sqlc-generated. Covers skipping when no database is available, isolating each test in a database copied from a migrated template, which tests may be parallel, and how to check that a test would actually fail. Use for every test that talks to Postgres.
 ---
 
 # Write a test that needs Postgres
@@ -55,49 +55,37 @@ variable being **empty**, not on the server being unreachable — so a default
 would turn "no Postgres installed" from a skip into a wall of failures for
 every contributor who does not happen to run one on 5432.
 
-The helper is duplicated per package rather than shared. It is six lines, and a
-`testdb` package would be a dependency crossing every boundary in the tree.
+Every package gets its database from `internal/store/storetest`, which only
+tests import. It imports nothing from the store, so the store's own tests use
+it too, and the caller passes how to migrate. A package that uses it calls
+`os.Exit(storetest.Main(m))` from `TestMain`, which drops the template.
 
-## Step 2 — one schema per test
+## Step 2 — a database of its own, copied from a migrated template
 
-Never share tables between tests. Create a schema, point the DSN at it with
-`search_path`, drop it afterwards:
+`storetest.Migrated(t, migrate)` returns the DSN of a database of the test's
+own. The first call in a process runs `migrate` on one template database,
+`brain_tmpl_<run>`; every call then runs `CREATE DATABASE brain_t_<run>_<n>
+TEMPLATE brain_tmpl_<run>` and drops it `WITH (FORCE)` when the test ends.
+`storetest.Empty(t)` is an empty one, for a test of migrating itself or one
+that runs the `migrate` command.
 
-```go
-schema := "brain_test_" + strings.ToLower(t.Name())
-```
+Why not a migrated schema per test, as these packages once did: `Migrate`
+takes an advisory lock with one fixed id, and an advisory lock covers the
+whole database, so every test's migration queued behind the last and the
+brain's check took eight to ten minutes. A copy takes about 0.2 s and no lock
+anyone waits on.
 
-```go
-u, _ := url.Parse(dsn)
-q := u.Query()
-q.Set("search_path", schema)
-u.RawQuery = q.Encode()
-```
+`<run>` is random per test process, so two runs against one server never drop
+each other's databases. Test connections set `synchronous_commit=off`: the
+database is thrown away, and on a containerised Postgres waiting for each
+commit to reach the disk was most of the time. The test user needs
+`CREATEDB`; the compose and CI `postgres` user is a superuser.
 
-Everything then lands inside that schema — your tables *and* goose's
-`goose_db_version` — so the drop takes all of it.
+## Step 3 — `t.Parallel()` on a test with a database of its own
 
-Use `t.Cleanup`, and wrap the context in `context.WithoutCancel(t.Context())`:
-a failing test cancels its context, and cleanup still has to run.
-
-```go
-t.Cleanup(func() {
-	ctx := context.WithoutCancel(t.Context())
-	// ... DROP SCHEMA ... CASCADE
-})
-```
-
-Naming the schema after `t.Name()` means a leaked schema tells you which test
-leaked it.
-
-## Step 3 — no `t.Parallel()`
-
-Database tests share one server, one set of advisory locks, and often one
-schema-creation path. `t.Parallel()` on two tests that migrate will have them
-fighting over the migration lock and blocking each other.
-
-Everything that needs a database runs serially. Everything that does not gets
-`t.Parallel()`.
+A `queryStore` test shares nothing with any other, so it calls `t.Parallel()`.
+Leave it off a test of advisory locks (`lockStore`), which share the server's
+lock table.
 
 ## Step 4 — assert both directions
 

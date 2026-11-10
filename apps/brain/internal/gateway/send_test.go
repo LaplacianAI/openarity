@@ -197,7 +197,11 @@ func newSending(t *testing.T, providers ...Provider) *sending {
 		relay:   rl,
 		log:     &bytes.Buffer{},
 	}
+	// A transport of its own: httptest.Server.Close closes the idle
+	// connections of http.DefaultTransport, so another parallel test's
+	// receiver closing would break this one's request mid-flight.
 	client := &http.Client{
+		Transport:     &http.Transport{},
 		Timeout:       5 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}

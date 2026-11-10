@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -18,13 +17,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets/static"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/storetest"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/worker"
 )
 
@@ -269,63 +268,27 @@ func (r *modelRouter) requests() []modelRequest {
 	return append([]modelRequest(nil), r.seen...)
 }
 
-// registrySchema is a migrated schema of its own, so a drain here sees only
+// registrySchema is a migrated database of its own, so a drain here sees only
 // this test's outbox.
 func registrySchema(t *testing.T) *store.Store {
 	t.Helper()
 
-	dsn := liveDSN(t)
-	schema := "cmd_test_" + strings.ToLower(t.Name())
-	if len(schema) > 63 {
-		t.Fatalf("the schema name %s is %d bytes, and Postgres keeps 63", schema, len(schema))
-	}
-
-	admin, err := pgx.Connect(t.Context(), dsn)
+	s, err := store.New(t.Context(), storetest.Migrated(t, migrateDSN))
 	if err != nil {
-		t.Fatalf("connect: %v", err)
+		t.Fatalf("connect to the test database: %v", err)
 	}
-	for _, statement := range []string{"DROP SCHEMA IF EXISTS " + schema + " CASCADE", "CREATE SCHEMA " + schema} {
-		if _, err := admin.Exec(t.Context(), statement); err != nil {
-			t.Fatalf("%s: %v", statement, err)
-		}
-	}
-	_ = admin.Close(t.Context())
-
-	u, err := url.Parse(dsn)
-	if err != nil {
-		t.Fatal("BRAIN_TEST_POSTGRES_DSN is not a URL")
-	}
-	q := u.Query()
-	q.Set("search_path", schema)
-	u.RawQuery = q.Encode()
-
-	s, err := store.New(t.Context(), u.String())
-	if err != nil {
-		t.Fatalf("connect to the schema: %v", err)
-	}
-	t.Cleanup(func() {
-		s.Close()
-
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 30*time.Second)
-		defer cancel()
-		conn, err := pgx.Connect(ctx, dsn)
-		if err != nil {
-			t.Errorf("cleanup connect: %v", err)
-			return
-		}
-		defer func() { _ = conn.Close(ctx) }()
-		if _, err := conn.Exec(ctx, "SET lock_timeout = '5s'"); err != nil {
-			t.Errorf("set lock_timeout: %v", err)
-		}
-		if _, err := conn.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
-			t.Errorf("drop schema: %v", err)
-		}
-	})
-
-	if _, err := s.Migrate(t.Context()); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	t.Cleanup(s.Close)
 	return s
+}
+
+func migrateDSN(ctx context.Context, dsn string) error {
+	s, err := store.New(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	_, err = s.Migrate(ctx)
+	return err
 }
 
 // Every setting reaches the thing it configures. A skill written to Postgres

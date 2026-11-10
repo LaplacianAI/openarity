@@ -98,6 +98,8 @@ func toolNames(t *testing.T, s *Store, serverID uuid.UUID) []string {
 // optional ones in both states — a nil that came back as 0 would be a
 // temperature nobody set.
 func TestAnAgentRoundTripsEveryField(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -173,6 +175,8 @@ func agentsEqual(a, b db.Agent) bool {
 // A replace is whole: leaving temperature out clears it. With sqlc.arg in
 // place of narg this would be a float64 and "unset" could not be said.
 func TestReplacingAnAgentCanClearItsTemperature(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -198,6 +202,8 @@ func TestReplacingAnAgentCanClearItsTemperature(t *testing.T) {
 // kind and team_id are not in UpdateAgent at all; this is what fails if
 // someone adds them.
 func TestReplacingAnAgentLeavesItsKindAndTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -224,6 +230,8 @@ func TestReplacingAnAgentLeavesItsKindAndTeam(t *testing.T) {
 }
 
 func TestReplacingAMissingAgentReportsNoRows(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	_, err := s.UpdateAgent(t.Context(), db.UpdateAgentParams{
@@ -238,6 +246,8 @@ func TestReplacingAMissingAgentReportsNoRows(t *testing.T) {
 // Rows sharing a timestamp are the case a created_at-only cursor gets wrong:
 // it either repeats one or skips one at the page boundary.
 func TestListAgentsPagesThroughASharedTimestampWithoutRepeats(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	other := mustCreate(t, s, "support")
@@ -284,6 +294,8 @@ func TestListAgentsPagesThroughASharedTimestampWithoutRepeats(t *testing.T) {
 // One statement for every skill: each id granted, sorted on the way out, and
 // one outbox row for the agent rather than one per skill.
 func TestGrantingSkillsIsOneStatement(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	agent := mustCreateAgent(t, s, team.ID, "triage")
@@ -318,6 +330,8 @@ func TestGrantingSkillsIsOneStatement(t *testing.T) {
 // The handler calls this for an agent with no skills; it must be a no-op, not
 // an error and not a NULL row.
 func TestGrantingNoSkillsGrantsNothing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	agent := mustCreateAgent(t, s, team.ID, "triage")
@@ -335,6 +349,8 @@ func TestGrantingNoSkillsGrantsNothing(t *testing.T) {
 // A nil allow list is "every tool" and must stay distinct from a list; the
 // schema refuses an empty one, so nil is the only way to say "all".
 func TestAServerGrantKeepsItsAllowList(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	agent := mustCreateAgent(t, s, team.ID, "triage")
@@ -369,6 +385,8 @@ func TestAServerGrantKeepsItsAllowList(t *testing.T) {
 }
 
 func TestClearingOneAgentsGrantsLeavesAnothers(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	a := mustCreateAgent(t, s, team.ID, "a")
@@ -404,6 +422,8 @@ func TestClearingOneAgentsGrantsLeavesAnothers(t *testing.T) {
 // If it arrived as '{}' every URL server would fail both the one-transport
 // and the command-present checks.
 func TestANilCommandIsStoredAsNull(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -420,6 +440,8 @@ func TestANilCommandIsStoredAsNull(t *testing.T) {
 // the handler must always send an object. This pins that the database, not
 // the default, is what the handler is relying on.
 func TestAServerWithNilEnvIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -430,6 +452,8 @@ func TestAServerWithNilEnvIsRefused(t *testing.T) {
 }
 
 func TestReplacingAServerKeepsItsDiscoveryWhileTheTransportIsTheSame(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
@@ -456,6 +480,8 @@ func mustMark(t *testing.T, s *Store, srv db.McpServer) {
 }
 
 func TestMarkingTheVersionThatWasDiscoveredSetsDiscoveredAt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
@@ -475,6 +501,8 @@ func TestMarkingTheVersionThatWasDiscoveredSetsDiscoveredAt(t *testing.T) {
 // The version it read is the only one it may mark: any edit, even one that
 // keeps the transport, moves updated_at and the mark matches nothing.
 func TestAServerEditedSinceItWasReadIsNotMarked(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	read := mustCreateServer(t, s, urlServer(team.ID, "github"))
@@ -499,6 +527,8 @@ func TestAServerEditedSinceItWasReadIsNotMarked(t *testing.T) {
 }
 
 func TestADeletedServerIsNotMarked(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
@@ -516,6 +546,8 @@ func TestADeletedServerIsNotMarked(t *testing.T) {
 // keeps an edit from landing between the mark and the tools. So an edit must
 // wait until that transaction commits.
 func TestAnEditWaitsForTheMarkToCommit(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
@@ -560,6 +592,8 @@ func TestAnEditWaitsForTheMarkToCommit(t *testing.T) {
 // the second is the case plain = would get wrong, since command is NULL on
 // one side.
 func TestReplacingAServersTransportForgetsItsDiscovery(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -597,6 +631,8 @@ func TestReplacingAServersTransportForgetsItsDiscovery(t *testing.T) {
 // Rediscovering a server that changed nothing must write nothing, or every
 // discovery re-enqueues every tool and the projector hashes each one again.
 func TestUpsertingAnUnchangedToolWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
@@ -623,6 +659,8 @@ func TestUpsertingAnUnchangedToolWritesNothing(t *testing.T) {
 }
 
 func TestUpsertingAChangedToolUpdatesItInPlace(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
@@ -644,6 +682,8 @@ func TestUpsertingAChangedToolUpdatesItInPlace(t *testing.T) {
 }
 
 func TestDeletingToolsNotListedKeepsTheListedOnes(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
@@ -678,6 +718,8 @@ func TestDeletingToolsNotListedKeepsTheListedOnes(t *testing.T) {
 // --- skills ---
 
 func TestReplacingASkillRewritesItsBody(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	sk := mustCreateSkill(t, s, team.ID, "review")
@@ -697,6 +739,8 @@ func TestReplacingASkillRewritesItsBody(t *testing.T) {
 // Every optional frontmatter field, and the origin, has to come back as it
 // went in: a nil that returned as "" is a licence nobody declared.
 func TestASkillRoundTripsItsFrontmatterAndOrigin(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -726,6 +770,8 @@ func TestASkillRoundTripsItsFrontmatterAndOrigin(t *testing.T) {
 // An upload over an imported skill makes it the team's own. The origin goes
 // with the rest of the replace, in the same statement.
 func TestReplacingAnImportWithAnUploadClearsItsOrigin(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -753,6 +799,8 @@ func TestReplacingAnImportWithAnUploadClearsItsOrigin(t *testing.T) {
 // A replace that sets the source but forgets half the origin is refused by
 // the CHECK, not stored — the query cannot write a half-recorded import.
 func TestAReplaceThatHalfRecordsAnImportIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	sk := mustCreateSkill(t, s, team.ID, "pdf")
@@ -765,6 +813,8 @@ func TestAReplaceThatHalfRecordsAnImportIsRefused(t *testing.T) {
 }
 
 func TestListingSkillsReturnsOnlyThisTeams(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	other := mustCreate(t, s, "support")
@@ -793,6 +843,8 @@ func claimIDs(rows []db.GraphOutbox) []int64 {
 // A claim marks and commits; a claimed row is not offered again until
 // retry_before passes it, and then comes back with its attempts counted.
 func TestAClaimedRowWaitsForItsRetry(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	mustCreateAgent(t, s, team.ID, "triage")
@@ -831,6 +883,8 @@ func TestAClaimedRowWaitsForItsRetry(t *testing.T) {
 // A row that keeps failing sinks behind work nobody has tried yet, so one
 // poisoned entity cannot hold the rest of the queue back.
 func TestNeverTriedRowsAreClaimedBeforeRetriedOnes(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	mustCreateAgent(t, s, team.ID, "poisoned")
@@ -856,6 +910,8 @@ func TestNeverTriedRowsAreClaimedBeforeRetriedOnes(t *testing.T) {
 // Two workers claiming at once get disjoint rows. The first claim is held
 // open in a transaction so the second genuinely runs while its locks exist.
 func TestConcurrentClaimsAreDisjoint(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	for _, n := range []string{"a", "b", "c", "d"} {
@@ -896,6 +952,8 @@ func TestConcurrentClaimsAreDisjoint(t *testing.T) {
 // ids must leave it — otherwise an edit made while the projector was reading
 // is never projected.
 func TestForgettingRemovesOnlyTheClaimedRows(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	agent := mustCreateAgent(t, s, team.ID, "triage")
@@ -921,6 +979,8 @@ func TestForgettingRemovesOnlyTheClaimedRows(t *testing.T) {
 }
 
 func TestTheBacklogIsEmptyWhenNothingIsOwed(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	rows, err := s.GraphOutboxBacklog(t.Context())
@@ -933,6 +993,8 @@ func TestTheBacklogIsEmptyWhenNothingIsOwed(t *testing.T) {
 }
 
 func TestTheBacklogCountsEverythingAndNamesTheOldest(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	mustCreateAgent(t, s, team.ID, "a")
@@ -953,6 +1015,8 @@ func TestTheBacklogCountsEverythingAndNamesTheOldest(t *testing.T) {
 }
 
 func TestListTeamIDsNamesEveryTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	a := mustCreate(t, s, "platform")
 	b := mustCreate(t, s, "support")
@@ -973,6 +1037,8 @@ func TestListTeamIDsNamesEveryTeam(t *testing.T) {
 // A search matches anywhere in the name, whatever its case, and takes what
 // was typed literally: a % or an _ is a character, not a wildcard.
 func TestListingSearchesByNameAnywhereInIt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	other := mustCreate(t, s, "support")
@@ -1050,6 +1116,8 @@ func TestListingSearchesByNameAnywhereInIt(t *testing.T) {
 // A search pages like the whole list does: the cursor goes on within the
 // matches, newest first.
 func TestASearchPagesWithTheCursor(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	for _, name := range []string{"invoice-a", "other", "invoice-b", "invoice-c"} {
@@ -1093,6 +1161,8 @@ func mustGetServer(t *testing.T, s *Store, id uuid.UUID) db.McpServer {
 // A failure keeps what was found before it: the tools and discovered_at stay,
 // and the error and its time say the last attempt did not work.
 func TestAFailedDiscoveryIsRecordedBesideTheLastSuccess(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
@@ -1117,6 +1187,8 @@ func TestAFailedDiscoveryIsRecordedBesideTheLastSuccess(t *testing.T) {
 }
 
 func TestASuccessClearsTheLastError(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	srv := mustCreateServer(t, s, urlServer(team.ID, "github"))
@@ -1136,6 +1208,8 @@ func TestASuccessClearsTheLastError(t *testing.T) {
 // The error belongs to the address that was asked. A server edited since it
 // was read keeps no error from the old one.
 func TestAFailureOnAServerEditedSinceItWasReadIsNotKept(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	read := mustCreateServer(t, s, urlServer(team.ID, "github"))
@@ -1161,6 +1235,8 @@ func TestAFailureOnAServerEditedSinceItWasReadIsNotKept(t *testing.T) {
 // discovered_at: an error from the old address says nothing about the new.
 // An edit that keeps the transport keeps it.
 func TestAnEditKeepsTheLastAttemptOnlyWhileTheTransportIsTheSame(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -1195,6 +1271,8 @@ func TestAnEditKeepsTheLastAttemptOnlyWhileTheTransportIsTheSame(t *testing.T) {
 // counting them adds no rows: three counts joined rather than asked for
 // would list an agent once per grant, and count its neighbour's.
 func TestTheAgentsListCountsEachAgentsOwnGrants(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	lead := mustCreateAgent(t, s, team.ID, "lead")
@@ -1240,6 +1318,8 @@ func TestTheAgentsListCountsEachAgentsOwnGrants(t *testing.T) {
 // A skill says how many agents hold it, its own and no other skill's. A
 // skill nobody holds reads zero, which is what the dashboard calls out.
 func TestTheSkillsListCountsTheAgentsThatHoldEach(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	pdf := mustCreateSkill(t, s, team.ID, "pdf")

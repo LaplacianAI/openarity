@@ -42,6 +42,8 @@ func reserve(t *testing.T, s *Store, teamID uuid.UUID, hold time.Duration, keys 
 // the object, and leave the skill that commits a moment later pointing at
 // nothing.
 func TestAReservationIsNotClaimedWhileTheUploadMayStillCommit(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	key := "teams/" + team.ID.String() + "/objects/uploading"
@@ -56,6 +58,8 @@ func TestAReservationIsNotClaimedWhileTheUploadMayStillCommit(t *testing.T) {
 // After the hold, a reservation no row came to name is an object an upload
 // abandoned, and is swept like any other tombstone.
 func TestAReservationIsClaimedOnceItsHoldHasPassed(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	key := "teams/" + team.ID.String() + "/objects/abandoned"
@@ -70,6 +74,8 @@ func TestAReservationIsClaimedOnceItsHoldHasPassed(t *testing.T) {
 // Everything that already wrote tombstones — the triggers — must behave as it
 // did before the column existed: claimable at once.
 func TestATriggersTombstoneIsClaimableAtOnce(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	skill := insertSkill(t, s, team.ID, "review")
@@ -91,6 +97,8 @@ func TestATriggersTombstoneIsClaimableAtOnce(t *testing.T) {
 // "never tried, or tried long enough ago" AND "claimable". Without the
 // parentheses the first half alone lets a fresh reservation through.
 func TestANeverTriedReservationIsStillHeld(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	key := "teams/" + team.ID.String() + "/objects/fresh"
@@ -114,6 +122,8 @@ func TestANeverTriedReservationIsStillHeld(t *testing.T) {
 // a row now, and a count that missed it would sweep the files of every
 // committed skill — the whole point of reserving would be undone by the check.
 func TestObjectReferencesCountSkillFilesAndAttachments(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	skill := insertSkill(t, s, team.ID, "review")
@@ -145,6 +155,8 @@ func TestObjectReferencesCountSkillFilesAndAttachments(t *testing.T) {
 // delete an object whose row was about to commit. Measured against Postgres's
 // own now(), so skew between this machine and the database cannot pass it.
 func TestTheHoldIsCountedOnTheDatabasesClock(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	key := "teams/" + team.ID.String() + "/objects/held"
@@ -166,6 +178,8 @@ func TestTheHoldIsCountedOnTheDatabasesClock(t *testing.T) {
 // reservation means two uploads chose one key — and both would believe they
 // own the object. Failing the second is the only answer that stays true.
 func TestReservingTheSameKeyTwiceFails(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	key := "teams/" + team.ID.String() + "/objects/twice"

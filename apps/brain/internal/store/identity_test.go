@@ -51,6 +51,8 @@ func teamNamesOf(rows []db.ListUserTeamsRow) []string {
 }
 
 func TestUpsertUserCreatesOnFirstLogin(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	user := upsert(t, s, testIssuer, "user-42", ptr("someone@example.com"))
@@ -69,6 +71,8 @@ func TestUpsertUserCreatesOnFirstLogin(t *testing.T) {
 // The second login must return the same row, not a new one, and not an error.
 // This runs on every request, so a conflict has to be the normal path.
 func TestUpsertUserIsStableAcrossLogins(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	first := upsert(t, s, testIssuer, "user-42", ptr("a@example.com"))
@@ -88,6 +92,8 @@ func TestUpsertUserIsStableAcrossLogins(t *testing.T) {
 // A DO NOTHING conflict clause returns no row at all, so every returning user
 // would come back as pgx.ErrNoRows. This is the assertion that catches that.
 func TestUpsertUserReturnsARowOnConflict(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	upsert(t, s, testIssuer, "user-42", nil)
@@ -110,6 +116,8 @@ func TestUpsertUserReturnsARowOnConflict(t *testing.T) {
 // this database. If the conflict clause does not update, the row keeps a stale
 // address forever.
 func TestUpsertUserUpdatesAChangedEmail(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	upsert(t, s, testIssuer, "user-42", ptr("old@example.com"))
@@ -123,6 +131,8 @@ func TestUpsertUserUpdatesAChangedEmail(t *testing.T) {
 // The email claim is optional, so it can appear and disappear between logins.
 // Both directions have to work.
 func TestUpsertUserHandlesAnEmailComingAndGoing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	if user := upsert(t, s, testIssuer, "user-42", nil); user.Email != nil {
@@ -139,6 +149,8 @@ func TestUpsertUserHandlesAnEmailComingAndGoing(t *testing.T) {
 // Postgres does not touch updated_at on its own. Without SET updated_at =
 // now() the column freezes at insert time and quietly starts lying.
 func TestUpsertUserAdvancesUpdatedAt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	first := upsert(t, s, testIssuer, "user-42", ptr("a@example.com"))
@@ -160,6 +172,8 @@ func TestUpsertUserAdvancesUpdatedAt(t *testing.T) {
 // Two identity providers numbering their users from the same strings are two
 // different people. This is why the key is the pair.
 func TestUpsertUserKeepsIssuersApart(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	a := upsert(t, s, "https://idp-a.example.com", "1", nil)
@@ -174,6 +188,8 @@ func TestUpsertUserKeepsIssuersApart(t *testing.T) {
 }
 
 func TestGetUserReturnsTheUpsertedRow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	created := upsert(t, s, testIssuer, "user-42", ptr("a@example.com"))
@@ -188,6 +204,8 @@ func TestGetUserReturnsTheUpsertedRow(t *testing.T) {
 }
 
 func TestGetUserReportsAnUnknownID(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	if _, err := s.GetUser(t.Context(), uuid.New()); !errors.Is(err, pgx.ErrNoRows) {
@@ -199,6 +217,8 @@ func TestGetUserReportsAnUnknownID(t *testing.T) {
 // how "registered, awaiting access" is represented, so it must be an empty
 // list rather than an error.
 func TestListUserTeamsIsEmptyForANewUser(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	user := upsert(t, s, testIssuer, "user-42", nil)
@@ -213,6 +233,8 @@ func TestListUserTeamsIsEmptyForANewUser(t *testing.T) {
 }
 
 func TestListUserTeamsReturnsTheRoleWithTheTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -234,6 +256,8 @@ func TestListUserTeamsReturnsTheRoleWithTheTeam(t *testing.T) {
 // Scoping is the whole point. A query returning another user's memberships
 // would grant their access on every request.
 func TestListUserTeamsSeesOnlyItsOwnUser(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	mine := mustCreate(t, s, "mine")
@@ -255,6 +279,8 @@ func TestListUserTeamsSeesOnlyItsOwnUser(t *testing.T) {
 
 // Unordered results make whoami's output flicker between identical calls.
 func TestListUserTeamsIsOrderedByName(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	user := upsert(t, s, testIssuer, "user-42", nil)
@@ -283,6 +309,8 @@ func TestListUserTeamsIsOrderedByName(t *testing.T) {
 // A user in several teams holds a different role in each. "This user is an
 // admin" is meaningless without naming the team.
 func TestListUserTeamsCarriesADifferentRolePerTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	user := upsert(t, s, testIssuer, "user-42", nil)
@@ -308,6 +336,8 @@ func TestListUserTeamsCarriesADifferentRolePerTeam(t *testing.T) {
 // Granting twice must fail rather than silently produce two roles. An admin
 // re-running a command is not the same as a role change.
 func TestAddTeamMemberRefusesADuplicate(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -321,6 +351,8 @@ func TestAddTeamMemberRefusesADuplicate(t *testing.T) {
 }
 
 func TestRemoveTeamMemberRevokesAccess(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -346,6 +378,8 @@ func TestRemoveTeamMemberRevokesAccess(t *testing.T) {
 // somebody twice should not see a failure. But it must not remove anything
 // else either.
 func TestRemoveTeamMemberIsIdempotentAndScoped(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -386,6 +420,8 @@ func countUsers(t *testing.T, s *Store) int {
 
 // Branch one: the query never runs.
 func TestListUserTeamsReportsAQueryFailure(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	user := upsert(t, s, testIssuer, "user-42", nil)
 	s.Close()
@@ -402,6 +438,8 @@ func TestListUserTeamsReportsAQueryFailure(t *testing.T) {
 // Branch two: a row arrives and will not scan. Replacing teams with a view
 // whose id is text makes the generated Scan fail on the first row.
 func TestListUserTeamsReportsAScanFailure(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -441,6 +479,8 @@ func TestListUserTeamsReportsAScanFailure(t *testing.T) {
 // This is the branch that would otherwise hand a caller a partial list — and
 // for this query a partial list of teams is a partial list of permissions.
 func TestListUserTeamsReportsAFailureMidStream(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	team := mustCreate(t, s, "platform")
@@ -474,6 +514,8 @@ func principal(subject, email string) *auth.Principal {
 }
 
 func TestResolveCreatesTheUserOnFirstLogin(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	u, err := s.Resolve(t.Context(), principal("user-42", "someone@example.com"))
@@ -498,6 +540,8 @@ func TestResolveCreatesTheUserOnFirstLogin(t *testing.T) {
 // A returning caller must land on the same row. A new id every request would
 // make audit trails meaningless and memberships unreachable.
 func TestResolveIsStableAcrossRequests(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	first, err := s.Resolve(t.Context(), principal("user-42", "a@example.com"))
@@ -520,6 +564,8 @@ func TestResolveIsStableAcrossRequests(t *testing.T) {
 // A token with no email claim must produce NULL, not "". Every user without an
 // email would otherwise share a value that looks real.
 func TestResolveStoresAMissingEmailAsNull(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	u, err := s.Resolve(t.Context(), principal("user-42", ""))
@@ -543,6 +589,8 @@ func TestResolveStoresAMissingEmailAsNull(t *testing.T) {
 // Registration grants nothing. An empty membership list is the pending state,
 // and it must be a list rather than an error or a nil that reads as unknown.
 func TestResolveGivesANewUserNoMemberships(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	u, err := s.Resolve(t.Context(), principal("newcomer", ""))
@@ -558,6 +606,8 @@ func TestResolveGivesANewUserNoMemberships(t *testing.T) {
 }
 
 func TestResolveCarriesMemberships(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	u, err := s.Resolve(t.Context(), principal("user-42", ""))
@@ -593,6 +643,8 @@ func TestResolveCarriesMemberships(t *testing.T) {
 // Two identity providers using the same subject are two people. Resolve keys
 // on the pair, so they must not collapse into one row.
 func TestResolveKeepsIssuersApart(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	a, err := s.Resolve(t.Context(), &auth.Principal{Issuer: "https://idp-a", Subject: "1"})
@@ -611,6 +663,8 @@ func TestResolveKeepsIssuersApart(t *testing.T) {
 // The dev token is a principal like any other and gets a real row. That is
 // what lets the local path exercise this code rather than branch around it.
 func TestResolveHandlesTheDevPrincipal(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	u, err := s.Resolve(t.Context(), &auth.Principal{Kind: auth.KindDev, Issuer: "dev", Subject: "dev"})
@@ -626,6 +680,8 @@ func TestResolveHandlesTheDevPrincipal(t *testing.T) {
 // first. Otherwise a request that failed still leaves a user row behind, and
 // the caller is told resolution failed while the row silently exists.
 func TestResolveRollsBackWhenMembershipsFail(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	// Break the second query only. team_members keeps its name, so UpsertUser
@@ -641,6 +697,8 @@ func TestResolveRollsBackWhenMembershipsFail(t *testing.T) {
 }
 
 func TestResolveReturnsNoUserOnFailure(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	s.Close()
 
@@ -655,6 +713,8 @@ func TestResolveReturnsNoUserOnFailure(t *testing.T) {
 
 // ActionsFor is the adapter that lets Store satisfy authz.Permissions.
 func TestActionsForReturnsTheRolePermissions(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	actions, err := s.ActionsFor(t.Context(), "member")
@@ -668,6 +728,8 @@ func TestActionsForReturnsTheRolePermissions(t *testing.T) {
 }
 
 func TestActionsForIsEmptyForAnUnknownRole(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	actions, err := s.ActionsFor(t.Context(), "no-such-role")
@@ -683,6 +745,8 @@ func TestActionsForIsEmptyForAnUnknownRole(t *testing.T) {
 // ListUserTeams never runs, which is the branch a broken second query cannot
 // reach.
 func TestResolveReportsAFailedUpsert(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, "ALTER TABLE users RENAME COLUMN subject TO subject_moved")

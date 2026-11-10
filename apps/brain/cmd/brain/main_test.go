@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/storetest"
 )
 
 // freeAddr returns an address nothing is listening on. Config rejects port 0,
@@ -167,3 +169,6 @@ func TestMainExitsNonZeroOnBadConfig(t *testing.T) {
 		t.Errorf("main did not report the error on stderr:\n%s", out)
 	}
 }
+
+// TestMain drops the migrated template the database tests copied.
+func TestMain(m *testing.M) { os.Exit(storetest.Main(m)) }

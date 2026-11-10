@@ -28,6 +28,8 @@ func seqs(events []db.RunEvent) []int32 {
 // A reader resumes a stream after the last number it saw, so a gap or a
 // repeat is a lost or doubled event on somebody's screen.
 func TestEventsAreNumberedFromOneWithoutGaps(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -42,6 +44,8 @@ func TestEventsAreNumberedFromOneWithoutGaps(t *testing.T) {
 }
 
 func TestEachRunIsNumberedOnItsOwn(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	a := createRun(t, s, f)
@@ -60,6 +64,8 @@ func TestEachRunIsNumberedOnItsOwn(t *testing.T) {
 // After a takeover the worker that claims it next carries on the numbering, and the worker
 // that lost the run can no longer write between its events.
 func TestAWorkerThatLostTheRunCannotAppendAnEvent(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -84,6 +90,8 @@ func TestAWorkerThatLostTheRunCannotAppendAnEvent(t *testing.T) {
 // The finished event is written after FinishRun has moved the status on, so
 // the guard is the worker and not the status.
 func TestTheHolderCanWriteTheFinishedEvent(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)
@@ -100,6 +108,8 @@ func TestTheHolderCanWriteTheFinishedEvent(t *testing.T) {
 }
 
 func TestListRunEventsReadsAfterASequenceNumber(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	r := createRun(t, s, f)

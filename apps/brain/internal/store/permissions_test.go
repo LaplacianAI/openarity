@@ -35,6 +35,8 @@ func pgCode(t *testing.T, err error) string {
 // behind it, so "membership:writ" inserted happily, granted nothing, and said
 // nothing. That is indistinguishable from a permissions bug at the far end.
 func TestAGrantMustNameAPermissionThatExists(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	err := execErr(t, s,
@@ -50,6 +52,8 @@ func TestAGrantMustNameAPermissionThatExists(t *testing.T) {
 // Every action already granted must have a permission row, or the backfill in
 // the migration missed one and the foreign key above is guarding nothing.
 func TestEveryGrantedActionHasAPermission(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	var orphans int
@@ -66,6 +70,8 @@ func TestEveryGrantedActionHasAPermission(t *testing.T) {
 
 // A permission still granted to somebody must not vanish underneath them.
 func TestAPermissionInUseCannotBeDeleted(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	err := execErr(t, s, `DELETE FROM permissions WHERE name = 'membership:write'`)
@@ -80,6 +86,8 @@ func TestAPermissionInUseCannotBeDeleted(t *testing.T) {
 // A permission nobody holds is removable, and the loader depends on it: an
 // entry dropped from rbac.json has to be able to go.
 func TestAnUnusedPermissionCanBeDeleted(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `INSERT INTO permissions (name, description) VALUES ('report:read', 'Read reports')`)
@@ -92,6 +100,8 @@ func TestAnUnusedPermissionCanBeDeleted(t *testing.T) {
 // Empty is allowed on the way in — the loader fills it — but the column must
 // exist and must not be null.
 func TestPermissionsCarryADescription(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	err := execErr(t, s,
@@ -108,6 +118,8 @@ func TestPermissionsCarryADescription(t *testing.T) {
 // grant may: a typo would leave the route requiring something nobody can ever
 // hold, which reads as "forbidden" for everyone.
 func TestARouteMustNameAPermissionThatExists(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	err := execErr(t, s, `
@@ -124,6 +136,8 @@ func TestARouteMustNameAPermissionThatExists(t *testing.T) {
 // One route, one permission. Two rows for the same method and path would make
 // which permission applies depend on row order.
 func TestARouteIsMappedOnlyOnce(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `
@@ -143,6 +157,8 @@ func TestARouteIsMappedOnlyOnce(t *testing.T) {
 
 // The same path under a different method is a different route.
 func TestTheSamePathUnderTwoMethodsIsTwoRoutes(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `
@@ -161,6 +177,8 @@ func TestTheSamePathUnderTwoMethodsIsTwoRoutes(t *testing.T) {
 // one team passes it — so a value outside the two must not reach the loader as
 // something to interpret.
 func TestScopeIsConstrainedToTheTwoChecks(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	err := execErr(t, s, `
@@ -175,6 +193,8 @@ func TestScopeIsConstrainedToTheTwoChecks(t *testing.T) {
 }
 
 func TestEveryScopeIsAccepted(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	for _, scope := range []string{"team", "any_team"} {
@@ -201,6 +221,8 @@ func TestEveryScopeIsAccepted(t *testing.T) {
 // A team-scoped route with no permission would check nothing at all — the
 // worst shape available, because the row exists so the startup check passes.
 func TestATeamScopedRouteMustNameAPermission(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	err := execErr(t, s, `
@@ -216,6 +238,8 @@ func TestATeamScopedRouteMustNameAPermission(t *testing.T) {
 
 // And the reverse: naming one where it is not consulted implies it matters.
 func TestASuperAdminRouteMustNotNameAPermission(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	err := execErr(t, s, `
@@ -232,6 +256,8 @@ func TestASuperAdminRouteMustNotNameAPermission(t *testing.T) {
 // The method is half the key, so a lower-case one would map a route the mux
 // never serves — http.ServeMux patterns are upper case.
 func TestMethodMustBeUpperCase(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	err := execErr(t, s, `

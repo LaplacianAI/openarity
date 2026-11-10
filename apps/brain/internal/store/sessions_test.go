@@ -521,6 +521,8 @@ func deref(p *string) string {
 // said, and how the newest run the team started in it went. A delegate's run
 // is part of its parent's, so a newer child does not count.
 func TestAListedSessionShowsItsChannelNewestMessageAndLatestRun(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	ch, teamID := sessionFixture(t, s, "support")
 	agent := insertAgent(t, s, teamID, "triage")
@@ -559,6 +561,8 @@ func TestAListedSessionShowsItsChannelNewestMessageAndLatestRun(t *testing.T) {
 
 // A direct session is with one person, whoever spoke last in it.
 func TestADirectSessionsParticipantIsWhoItIsWith(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	ch, teamID := sessionFixture(t, s, "support")
 	asha := insertUser(t, s, "dev", "asha")
@@ -577,6 +581,8 @@ func TestADirectSessionsParticipantIsWhoItIsWith(t *testing.T) {
 // null. This is the row that fails to scan if a column is generated as a
 // plain string, which a LATERAL join would have done.
 func TestASessionWithNothingInItListsNulls(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	carol := mustCreateUser(t, s, "carol")
@@ -615,6 +621,8 @@ func asks(t *testing.T, s *Store, run uuid.UUID, input string) {
 // handed on, not a question asked, so an older one does not count; nor does
 // an older run in another session.
 func TestWhatWasFirstAskedIsTheOldestRootRunsInput(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	ch, teamID := sessionFixture(t, s, "support")
 	agent := insertAgent(t, s, teamID, "triage")
@@ -659,6 +667,8 @@ func TestWhatWasFirstAskedIsTheOldestRootRunsInput(t *testing.T) {
 // A session nobody started a run in was asked nothing, and says so as no row
 // rather than an empty question.
 func TestASessionWithNoRunWasAskedNothing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -669,6 +679,8 @@ func TestASessionWithNoRunWasAskedNothing(t *testing.T) {
 }
 
 func TestTheSessionListFilters(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	ch, teamID := sessionFixture(t, s, "support")
 	other := mustCreateChannel(t, s, teamID, "custom", "sales")

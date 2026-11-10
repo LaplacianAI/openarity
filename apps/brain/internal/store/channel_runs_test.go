@@ -54,6 +54,8 @@ func isUniqueViolation(err error) bool {
 // A run started for a message is the team's hub, answering this conversation,
 // for this message.
 func TestAMessageStartsAHubRunThatAnswersItsConversation(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "asks")
 	m := c.says(t, s, "m-1", "why did the export fail?")
@@ -72,6 +74,8 @@ func TestAMessageStartsAHubRunThatAnswersItsConversation(t *testing.T) {
 // can arrive twice. The second run for it is refused by the database itself,
 // whatever the caller forgot to check.
 func TestAMessageStartsOneRunEvenWhenDeliveredTwice(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "twice")
 	m := c.says(t, s, "m-1", "hello")
@@ -87,6 +91,8 @@ func TestAMessageStartsOneRunEvenWhenDeliveredTwice(t *testing.T) {
 // A run for steers that came too late has no message of its own, and there can
 // be several of those in a conversation's life.
 func TestARunWithNoMessageIsNotLimitedToOne(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "late")
 
@@ -99,6 +105,8 @@ func TestARunWithNoMessageIsNotLimitedToOne(t *testing.T) {
 
 // A message from another conversation would answer the wrong people.
 func TestAChannelRunRefusesAMessageFromAnotherConversation(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "here")
 	elsewhere := mustEnsureSession(t, s, c.team, c.channel.ID, "D-there", "direct")
@@ -111,6 +119,8 @@ func TestAChannelRunRefusesAMessageFromAnotherConversation(t *testing.T) {
 
 // Only a root run answers a conversation; a delegate answers its parent.
 func TestOnlyARootRunRepliesToAChannel(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "roots")
 	parent, err := c.startRun(t, s.Queries, nil, "plan it")
@@ -134,6 +144,8 @@ func TestOnlyARootRunRepliesToAChannel(t *testing.T) {
 // now: queued or running, and started from the channel. A run someone started
 // from the dashboard in the same session is not it, and a finished run is not.
 func TestTheActiveChannelRunIsTheQueuedOrRunningOneThatReplies(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "active")
 	agent := insertAgent(t, s, c.team, "triage")
@@ -168,6 +180,8 @@ func TestTheActiveChannelRunIsTheQueuedOrRunningOneThatReplies(t *testing.T) {
 // Leftover steers come back oldest first, and only once: taking them again
 // finds nothing, so a message is never answered by two runs.
 func TestLeftoverSteersAreTakenOnceOldestFirst(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "steers")
 	r, err := c.startRun(t, s.Queries, nil, "hello")
@@ -203,6 +217,8 @@ func TestLeftoverSteersAreTakenOnceOldestFirst(t *testing.T) {
 // The reply answers the newest message of the conversation, which is the last
 // one the run read. One reply per run, whoever tries to write a second.
 func TestAReplyAnswersTheNewestMessageOncePerRun(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "reply")
 	first := c.says(t, s, "m-1", "why did the export fail?")
@@ -229,6 +245,8 @@ func TestAReplyAnswersTheNewestMessageOncePerRun(t *testing.T) {
 // A run that was not started from the channel writes no reply, so a question
 // asked from the dashboard never posts into somebody's conversation.
 func TestOnlyAChannelRunWritesAReply(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "dashboard")
 	agent := insertAgent(t, s, c.team, "triage")
@@ -242,6 +260,8 @@ func TestOnlyAChannelRunWritesAReply(t *testing.T) {
 // The hub can run when the team chose a hub agent that still exists, or set a
 // model for the built-in orchestrator. The same rule the runtime fails on.
 func TestTheHubCanRunWithAModelOrAHubAgent(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	can := func(team uuid.UUID) bool {
 		t.Helper()
@@ -289,6 +309,8 @@ func TestTheHubCanRunWithAModelOrAHubAgent(t *testing.T) {
 // History is what was said before the run's message, newest first, with the
 // answers sent back and without apologies, which tell the model nothing.
 func TestSessionTurnsAreWhatWasSaidBeforeNewestFirst(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "history")
 
@@ -379,6 +401,8 @@ func waitForLock(t *testing.T, s *Store, marker string) {
 // steer nobody will ever read. Whatever order the two land in, the steer must
 // either be refused or be among the finish's leftovers.
 func TestASteerIsNeverLostToAFinish(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "finishing")
 	r, err := c.startRun(t, s.Queries, nil, "hello")
@@ -465,6 +489,8 @@ func TestASteerIsNeverLostToAFinish(t *testing.T) {
 // finishes. The finish waits, then takes the steer as a leftover, so it is
 // answered by the follow-up run instead of lying unread in agent_steers.
 func TestAFinishWaitingOnASteerTakesItAsALeftover(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "steering")
 	r, err := c.startRun(t, s.Queries, nil, "hello")
@@ -521,6 +547,8 @@ func TestAFinishWaitingOnASteerTakesItAsALeftover(t *testing.T) {
 // one conversation. The finish holds the session; the message waits on it,
 // and when it goes on it sees the follow-up and steers into it.
 func TestAFollowUpAndANewMessageNeverMakeTwoActiveRuns(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "follow-up")
 	r, err := c.startRun(t, s.Queries, nil, "hello")
@@ -578,6 +606,8 @@ func TestAFollowUpAndANewMessageNeverMakeTwoActiveRuns(t *testing.T) {
 // the member's role now has to grant it, in this team, and they have to still
 // be a member at all.
 func TestMemberMayAsksTheRoleTheyHoldNow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "rights")
 	other := mustCreate(t, s, "elsewhere")
@@ -674,6 +704,8 @@ func repliesTo(t *testing.T, s *Store, run uuid.UUID) []db.Reply {
 // A channel run that answers sends its answer back, written in the
 // transaction that finishes it: a finished run with no reply cannot exist.
 func TestAFinishedChannelRunSendsItsAnswer(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "answers")
 	m := c.says(t, s, "m-1", "why did the export fail?")
@@ -694,6 +726,8 @@ func TestAFinishedChannelRunSendsItsAnswer(t *testing.T) {
 // A failed run tells the person it could not answer, and never why: the error
 // can name the brain's model endpoint, a server or a setting.
 func TestAFailedChannelRunApologisesWithoutTheError(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "fails")
 	r, err := c.startRun(t, s.Queries, nil, "hello")
@@ -712,6 +746,8 @@ func TestAFailedChannelRunApologisesWithoutTheError(t *testing.T) {
 // An answer that is empty is no answer; the person gets the apology rather
 // than a blank message.
 func TestAnEmptyAnswerIsAnApology(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "blank")
 	r, err := c.startRun(t, s.Queries, nil, "hello")
@@ -729,6 +765,8 @@ func TestAnEmptyAnswerIsAnApology(t *testing.T) {
 // Someone stopped the run on purpose; nothing is sent, and nothing is started
 // for what came after.
 func TestACancelledChannelRunSendsNothing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "cancelled")
 	r, err := c.startRun(t, s.Queries, nil, "hello")
@@ -752,6 +790,8 @@ func TestACancelledChannelRunSendsNothing(t *testing.T) {
 // run started in the same transaction, whose input is those messages, oldest
 // first. They are taken, so no later finish answers them again.
 func TestSteersLeftOverStartOneRunToAnswerThem(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "leftovers")
 	r, err := c.startRun(t, s.Queries, nil, "hello")
@@ -788,6 +828,8 @@ func TestSteersLeftOverStartOneRunToAnswerThem(t *testing.T) {
 // A run someone started from the dashboard finishes as it always did: no
 // reply, no lock it does not need.
 func TestARunFromTheDashboardFinishesAsBefore(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "dashboard-finish")
 	agent := insertAgent(t, s, c.team, "triage")
@@ -813,6 +855,8 @@ func TestARunFromTheDashboardFinishesAsBefore(t *testing.T) {
 // here by a delivery that has not committed, the finish waits for it, and then
 // takes the steer that delivery wrote.
 func TestTheFinishWaitsForADeliveryHoldingTheSession(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "finish-waits")
 	r, err := c.startRun(t, s.Queries, nil, "hello")
@@ -851,6 +895,8 @@ func TestTheFinishWaitsForADeliveryHoldingTheSession(t *testing.T) {
 // the follow-up's. Each message and its steer are written in one transaction,
 // as a delivery writes them, so they share now().
 func TestAReplyQuotesTheNewestMessageItsRunRead(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "unread")
 	first := c.says(t, s, "m-1", "can you search the internet?")

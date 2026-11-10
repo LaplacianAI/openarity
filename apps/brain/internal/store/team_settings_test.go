@@ -77,6 +77,8 @@ func samePaths(got, want []string) bool {
 // teams that existed before this table need no backfill. The API reads the
 // absence as the defaults.
 func TestATeamHasNoSettingsUntilTheyAreSaved(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "unsaved")
 
@@ -86,6 +88,8 @@ func TestATeamHasNoSettingsUntilTheyAreSaved(t *testing.T) {
 }
 
 func TestTheColumnDefaultsAreTheSpecsDefaults(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "defaults")
 
@@ -107,6 +111,8 @@ func TestTheColumnDefaultsAreTheSpecsDefaults(t *testing.T) {
 }
 
 func TestUpsertingTwiceKeepsOneRow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "twice")
 
@@ -137,6 +143,8 @@ func TestUpsertingTwiceKeepsOneRow(t *testing.T) {
 // row written by anything else — a migration, psql, a future handler — cannot
 // hold a state the brain would then have to interpret.
 func TestTeamSettingsRefuseWhatTheAPIWould(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "refused")
 
@@ -248,6 +256,8 @@ func TestTeamSettingsRefuseWhatTheAPIWould(t *testing.T) {
 // Self-hosted Firecrawl is the one provider whose key is optional: an
 // instance may run with authentication off.
 func TestSelfHostedFirecrawlTakesAKeyOrNone(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	url := "https://firecrawl.internal.example"
 
@@ -267,6 +277,8 @@ func ptrTo[T any](v T) *T { return &v }
 // replaces. One fixed path would let the tombstone of a cleared key destroy a
 // key saved after it but before the sweep ran.
 func TestReplacingTheSearchKeyTombstonesTheOldOne(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "replaced")
 	a, b := uuid.New(), uuid.New()
@@ -283,6 +295,8 @@ func TestReplacingTheSearchKeyTombstonesTheOldOne(t *testing.T) {
 // be destroyed, or every learning switch flipped in the dashboard would take
 // search down with it.
 func TestKeepingTheSearchKeyTombstonesNothing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "kept")
 	a := uuid.New()
@@ -298,6 +312,8 @@ func TestKeepingTheSearchKeyTombstonesNothing(t *testing.T) {
 }
 
 func TestTurningSearchOffTombstonesTheKey(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "off")
 	a := uuid.New()
@@ -313,6 +329,8 @@ func TestTurningSearchOffTombstonesTheKey(t *testing.T) {
 // A cascade runs no Go, so only a trigger on team_settings itself sees the
 // row go when its team is deleted.
 func TestDeletingATeamTombstonesItsSearchKey(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "gone")
 	a := uuid.New()
@@ -335,6 +353,8 @@ func TestDeletingATeamTombstonesItsSearchKey(t *testing.T) {
 }
 
 func TestDeletingSettingsWithNoKeyTombstonesNothing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "keyless")
 	mustUpsertSettings(t, s, settings(team.ID))
@@ -355,6 +375,8 @@ func TestDeletingSettingsWithNoKeyTombstonesNothing(t *testing.T) {
 // whichever loses the row must have its path recorded, along with the key the
 // winner replaced. The current key is never recorded.
 func TestTwoSavesRacingTombstoneEveryKeyButTheOneKept(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "racing")
 	x, a, b := uuid.New(), uuid.New(), uuid.New()
@@ -421,6 +443,8 @@ func TestTwoSavesRacingTombstoneEveryKeyButTheOneKept(t *testing.T) {
 // store: record that key so the sweep removes it, rather than leaving a
 // credential nothing names.
 func TestRecordingADeletedSecretIsIdempotent(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "orphan")
 	path := searchKeyPath(team.ID, uuid.New())

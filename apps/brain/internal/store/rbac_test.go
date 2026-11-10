@@ -180,6 +180,8 @@ func TestMalformedJSONIsAnError(t *testing.T) {
 // deployment that migrated but has no route mapping, which the startup check
 // reports as a missing route rather than a load that never ran.
 func TestMigrateLoadsTheFile(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	f, err := parseRBAC(rbacJSON)
@@ -196,6 +198,8 @@ func TestMigrateLoadsTheFile(t *testing.T) {
 }
 
 func TestARouteIsLoadedWithItsScopeAndPermission(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	scope := scalar[string](t, s,
@@ -214,6 +218,8 @@ func TestARouteIsLoadedWithItsScopeAndPermission(t *testing.T) {
 // A route needing no permission stores null rather than an empty string, so
 // "requires nothing" and "requires a permission named ”" stay distinct.
 func TestARouteThatNeedsNoPermissionStoresNull(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	null := scalar[bool](t, s,
@@ -226,6 +232,8 @@ func TestARouteThatNeedsNoPermissionStoresNull(t *testing.T) {
 // Every boot runs this. A second load that changes anything means restarting
 // the brain is a write, and two brains booting together would fight.
 func TestLoadingTwiceChangesNothing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	before := snapshot(t, s)
@@ -252,6 +260,8 @@ func snapshot(t *testing.T, s *Store) string {
 }
 
 func TestADescriptionEditedInTheDatabaseIsRestored(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `UPDATE permissions SET description = 'nonsense' WHERE name = 'user:read'`)
@@ -270,6 +280,8 @@ func TestADescriptionEditedInTheDatabaseIsRestored(t *testing.T) {
 // granted it, and the foreign key would refuse the delete anyway — so the
 // loader must not try and fail the whole load.
 func TestAPermissionTheFileDoesNotMentionSurvives(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `INSERT INTO permissions (name, description) VALUES ('report:read', 'Read reports')`)
@@ -286,6 +298,8 @@ func TestAPermissionTheFileDoesNotMentionSurvives(t *testing.T) {
 // The roles the product ships are its own: a grant added by hand is not a
 // customisation, it is drift, and the file is what says what admin means.
 func TestARoleInTheFileGetsExactlyTheGrantsItLists(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `INSERT INTO permissions (name) VALUES ('report:read')`)
@@ -306,6 +320,8 @@ func TestARoleInTheFileGetsExactlyTheGrantsItLists(t *testing.T) {
 // whoever made it. Rewriting it would undo an enterprise's own work on every
 // deploy, which is the failure this whole design exists to avoid.
 func TestARoleTheFileDoesNotNameIsUntouched(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `INSERT INTO roles (name, description) VALUES ('auditor', 'Reads everything')`)
@@ -329,6 +345,8 @@ func TestARoleTheFileDoesNotNameIsUntouched(t *testing.T) {
 // stale rather than somebody's configuration. Left behind, it would satisfy
 // the startup check for a route that does not exist and hide the removal.
 func TestAStaleRouteIsRemoved(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	exec(t, s, `
@@ -349,6 +367,8 @@ func TestAStaleRouteIsRemoved(t *testing.T) {
 // Half a load is worse than none: permissions and grants applied without the
 // routes leaves the mapping from the previous release guarding the new one.
 func TestAFailedLoadChangesNothing(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	// Make the last step of the load fail, after the permissions and grants
@@ -369,6 +389,8 @@ func TestAFailedLoadChangesNothing(t *testing.T) {
 // sees a foreign key violation and has to guess which of three inputs it came
 // from.
 func TestLoadRejectsAFileItCannotParse(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	err := s.loadRBAC(t.Context(), []byte(`{"permissions": [`))
@@ -386,6 +408,8 @@ func TestLoadRejectsAFileItCannotParse(t *testing.T) {
 // replaced the one asking whether every Go constant was granted; the file is
 // the vocabulary now, so the file is what gets checked.
 func TestEveryPermissionARouteRequiresIsHeldBySomeRole(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	f, err := parseRBAC(rbacJSON)
@@ -411,6 +435,8 @@ func TestEveryPermissionARouteRequiresIsHeldBySomeRole(t *testing.T) {
 // either a mistake in the file or a sign the description is no longer true,
 // and both are worth failing over.
 func TestAdminHoldsEveryPermissionTheFileDefines(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	f, err := parseRBAC(rbacJSON)

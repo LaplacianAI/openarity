@@ -163,6 +163,8 @@ func count(t *testing.T, s *Store, sql string, args ...any) int {
 // mcp.Connect refuses a server with both or neither, so a row that has either
 // is a server that can never be discovered or run.
 func TestAnMCPServerNeedsExactlyOneTransport(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -191,6 +193,8 @@ func TestAnMCPServerNeedsExactlyOneTransport(t *testing.T) {
 // The SDK prefixes each tool as server__tool and refuses any name outside
 // this set, so a server named like this has tools that never load.
 func TestAServerNameThatCannotPrefixAToolIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -209,6 +213,8 @@ func TestAServerNameThatCannotPrefixAToolIsRefused(t *testing.T) {
 // The SDK refuses a parser with no schema when the run starts. Refusing it
 // here means an agent that cannot run is never saved.
 func TestAParserWithNoOutputSchemaIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -220,6 +226,8 @@ func TestAParserWithNoOutputSchemaIsRefused(t *testing.T) {
 
 // A parser max_tokens with no parser model would be read by nothing.
 func TestParserSettingsWithNoParserModelAreRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -230,6 +238,8 @@ func TestParserSettingsWithNoParserModelAreRefused(t *testing.T) {
 }
 
 func TestAnUnknownKindOrPatternIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -263,6 +273,8 @@ func insertAgentWithLoop(t *testing.T, s *Store, teamID uuid.UUID, name, loop st
 // The database no longer knows which loops exist, only what a loop's name
 // looks like; a deployment's own loop is a name it has never seen.
 func TestALoopNameMustBeWellFormed(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -301,6 +313,8 @@ func TestALoopNameMustBeWellFormed(t *testing.T) {
 // refusal from this rule with a 500. A loop registered in Go under a name the
 // rule refuses fails here instead of on the first agent that chooses it.
 func TestEveryLoopTheBrainRunsHasANameTheDatabaseAccepts(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -342,6 +356,8 @@ func TestExistingAgentsSurviveTheChange(t *testing.T) {
 // NOT VALID skips the scan that takes the table's exclusive lock; the second
 // migration is what makes the rule hold for rows already there.
 func TestTheLoopRuleIsValidated(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	var validated bool
@@ -374,6 +390,8 @@ func downTo(t *testing.T, s *Store, version int64) {
 }
 
 func TestRollingBackRefusesWhileAnAgentUsesANewLoop(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	if err := insertAgentWithLoop(t, s, team.ID, "critic", "critic-pass"); err != nil {
@@ -407,6 +425,8 @@ func TestRollingBackRefusesWhileAnAgentUsesANewLoop(t *testing.T) {
 // An empty list would grant a server and none of its tools, which is a
 // grant that looks like access and is not.
 func TestAnEmptyAllowListIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	agent := insertAgent(t, s, team.ID, "triage")
@@ -421,6 +441,8 @@ func TestAnEmptyAllowListIsRefused(t *testing.T) {
 // A name is how a person refers to it on the command line, and "Triage" and
 // "triage" being two agents is a trap. Another team may use the same name.
 func TestNamesAreUniquePerTeamInAnyCase(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	other := mustCreate(t, s, "support")
@@ -453,6 +475,8 @@ func TestNamesAreUniquePerTeamInAnyCase(t *testing.T) {
 // Claude Code, Codex and Agno would all refuse to load, so it is refused here
 // before it is stored.
 func TestASkillNameFollowsTheSpec(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -476,6 +500,8 @@ func TestASkillNameFollowsTheSpec(t *testing.T) {
 // Lower case by rule, so plain uniqueness is enough — and another team may
 // use the same name.
 func TestSkillNamesAreUniquePerTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	other := mustCreate(t, s, "support")
@@ -489,6 +515,8 @@ func TestSkillNamesAreUniquePerTeam(t *testing.T) {
 }
 
 func TestTheSpecsFieldLimitsAreRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -518,6 +546,8 @@ func TestTheSpecsFieldLimitsAreRefused(t *testing.T) {
 // and exactly what was taken. Every mixed combination is refused, because a
 // half-recorded import is one sync cannot repeat and a team cannot audit.
 func TestASkillsOriginIsRecordedWholeOrNotAtAll(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -560,6 +590,8 @@ func TestASkillsOriginIsRecordedWholeOrNotAtAll(t *testing.T) {
 // Today's CreateSkill names none of the three columns; the default is what
 // keeps it an upload rather than a refused row.
 func TestASkillWithNoOriginIsAnUpload(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	insertSkill(t, s, team.ID, "review")
@@ -583,6 +615,8 @@ func insertSkillFile(t *testing.T, s *Store, skillID, teamID uuid.UUID, path, ke
 // import, a later migration, psql — from storing one that looks like a
 // traversal to the first caller that joins it onto a directory.
 func TestASkillFilePathStaysInsideTheSkill(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	skill := insertSkill(t, s, team.ID, "review")
@@ -611,6 +645,8 @@ func TestASkillFilePathStaysInsideTheSkill(t *testing.T) {
 // it on the way in. This pins that, so the missing clause stays a decision
 // rather than a gap — a clause calling chr(0) broke every insert once.
 func TestASkillFilePathWithANulIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	skill := insertSkill(t, s, team.ID, "review")
@@ -621,6 +657,8 @@ func TestASkillFilePathWithANulIsRefused(t *testing.T) {
 }
 
 func TestASkillFileCannotNameATeamItsSkillIsNotIn(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	other := mustCreate(t, s, "support")
@@ -645,6 +683,8 @@ func tombstoned(t *testing.T, s *Store, key string) (uuid.UUID, bool) {
 // tombstone is what makes the reaper delete them — for a skill deleted
 // directly and for one taken with its team, which runs no Go at all.
 func TestDeletingASkillTombstonesItsFiles(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	for name, del := range map[string]string{
@@ -682,6 +722,8 @@ func TestDeletingASkillTombstonesItsFiles(t *testing.T) {
 // The composite key is what stops a discovery for one team's server writing
 // tools into another team's graph.
 func TestAToolCannotNameATeamItsServerIsNotIn(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	other := mustCreate(t, s, "support")
@@ -696,6 +738,8 @@ func TestAToolCannotNameATeamItsServerIsNotIn(t *testing.T) {
 // Postgres, not a handler, refuses a grant across teams. Whichever team the
 // row claims, one of its two keys does not match.
 func TestAGrantAcrossTeamsIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	a := mustCreate(t, s, "platform")
 	b := mustCreate(t, s, "support")
@@ -725,6 +769,8 @@ func TestAGrantAcrossTeamsIsRefused(t *testing.T) {
 // the agent. RESTRICT's 23001, distinct from the 23503 a bad reference raises,
 // is what lets the handler say which one happened.
 func TestDeletingAGrantedServerOrSkillIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	agent := insertAgent(t, s, team.ID, "triage")
@@ -748,6 +794,8 @@ func TestDeletingAGrantedServerOrSkillIsRefused(t *testing.T) {
 }
 
 func TestDeletingAnUngrantedServerTakesItsTools(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	server := insertServer(t, s, team.ID, "github")
@@ -762,6 +810,8 @@ func TestDeletingAnUngrantedServerTakesItsTools(t *testing.T) {
 }
 
 func TestDeletingAnAgentDropsItsGrantsAndNothingElse(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	agent := insertAgent(t, s, team.ID, "triage")
@@ -791,6 +841,8 @@ func TestDeletingAnAgentDropsItsGrantsAndNothingElse(t *testing.T) {
 // fails if a later migration ever reorders them; NO ACTION would not help,
 // since each cascade is checked when it finishes.
 func TestDeletingATeamWithGrantsSucceeds(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	agent := insertAgent(t, s, team.ID, "triage")
@@ -816,6 +868,8 @@ func TestDeletingATeamWithGrantsSucceeds(t *testing.T) {
 // Every change the graph must follow leaves a row naming it, including the
 // ones no Go code runs for.
 func TestEveryWriteLeavesAnOutboxRow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -865,6 +919,8 @@ func TestEveryWriteLeavesAnOutboxRow(t *testing.T) {
 // Inserts are covered separately: the rows above were inserted before the
 // outbox was cleared, so they say nothing about the insert triggers.
 func TestAnInsertLeavesAnOutboxRow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 
@@ -889,6 +945,8 @@ func TestAnInsertLeavesAnOutboxRow(t *testing.T) {
 // The cascade no Go code sees. Every entity the team owned is named, and so
 // is the team, whose graph is dropped whole.
 func TestDeletingATeamNamesEverythingItTookWithIt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	agent := insertAgent(t, s, team.ID, "triage")
@@ -919,6 +977,8 @@ func TestDeletingATeamNamesEverythingItTookWithIt(t *testing.T) {
 // The outbox commits with the change or not at all. A refused write that
 // left a row would make the projector look for something that never existed.
 func TestARefusedWriteLeavesNoOutboxRow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	agent := insertAgent(t, s, team.ID, "triage")
@@ -943,6 +1003,8 @@ func TestARefusedWriteLeavesNoOutboxRow(t *testing.T) {
 // One statement over many rows is one trigger call, and each row is named
 // once — granting three servers to one agent is one agent to re-project.
 func TestOneStatementNamesEachRowOnce(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
 	agent := insertAgent(t, s, team.ID, "triage")

@@ -14,6 +14,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/storetest"
 )
 
 // The oldest Postgres these tests can run against, which is not the oldest
@@ -45,7 +47,7 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
-	os.Exit(m.Run())
+	os.Exit(storetest.Main(m))
 }
 
 // checkServerVersion connects once and reports what it found. The message

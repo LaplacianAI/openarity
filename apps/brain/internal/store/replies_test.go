@@ -75,6 +75,8 @@ func same(a, b []int64) bool {
 // A claimed reply carries everything a provider needs to send it, by the
 // names the provider gave: the conversation's ref and the message's own id.
 func TestAClaimedReplyCarriesWhereItGoes(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "where")
 	withReplyURL(t, s, c)
@@ -96,6 +98,8 @@ func TestAClaimedReplyCarriesWhereItGoes(t *testing.T) {
 // A conversation is read in order. Its second reply waits for its first,
 // while another conversation's reply goes at once.
 func TestAConversationsRepliesAreClaimedInOrder(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	a := newConversation(t, s, "order")
 	b := a.elsewhere(t, s, "D-other")
@@ -117,6 +121,8 @@ func TestAConversationsRepliesAreClaimedInOrder(t *testing.T) {
 // A reply waiting for its retry holds back its own conversation, and only
 // until it is given up: a failed reply is not pending, so the next goes.
 func TestAReplyWaitingToRetryHoldsBackItsConversationUntilGivenUp(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	a := newConversation(t, s, "retry")
 	a1 := a.answered(t, s, "m-1", "first")
@@ -156,6 +162,8 @@ func TestAReplyWaitingToRetryHoldsBackItsConversationUntilGivenUp(t *testing.T) 
 // is claimed again under a new attempt. The first sender's late mark matches
 // nothing, so it cannot record a send the second may be making differently.
 func TestALeasedReplyIsClaimedAgainOnlyOnceItRunsOutAndAStaleMarkIsIgnored(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "lease")
 	id := c.answered(t, s, "m-1", "hello")
@@ -193,6 +201,8 @@ func TestALeasedReplyIsClaimedAgainOnlyOnceItRunsOutAndAStaleMarkIsIgnored(t *te
 // Two senders claiming at the same moment: the second skips what the first
 // holds, and skips the reply queued behind it too.
 func TestTwoSendersNeverClaimTheSameReply(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	a := newConversation(t, s, "race")
 	b := a.elsewhere(t, s, "D-other")
@@ -219,6 +229,8 @@ func TestTwoSendersNeverClaimTheSameReply(t *testing.T) {
 
 // A reply's lease and backoff are counted from the database's clock.
 func TestARetryIsDueAfterItsWait(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "wait")
 	id := c.answered(t, s, "m-1", "hello")
@@ -241,6 +253,8 @@ func TestARetryIsDueAfterItsWait(t *testing.T) {
 // waiting stay where they are until the purge deletes them with the team.
 // Another team's conversation is not held back by it.
 func TestADeletedTeamsRepliesAreNotSent(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	doomed := newConversation(t, s, "doomed")
 	kept := newConversation(t, s, "kept")
@@ -267,6 +281,8 @@ func TestADeletedTeamsRepliesAreNotSent(t *testing.T) {
 // What a run's page reads: each asked run's reply as it stands, and nothing
 // for a run with none.
 func TestListRunRepliesReadsWhatBecameOfEach(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "list")
 	id := c.answered(t, s, "m-1", "hello")
@@ -292,6 +308,8 @@ func TestListRunRepliesReadsWhatBecameOfEach(t *testing.T) {
 // A part's mark is a mark like the others: only the sender holding the
 // current claim moves it, and the next claim carries how far it got.
 func TestAReplysPartsAreRecordedUnderItsClaimAndCarriedToTheNext(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	c := newConversation(t, s, "parts")
 	id := c.answered(t, s, "m-1", "hello")

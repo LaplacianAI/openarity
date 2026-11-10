@@ -118,6 +118,8 @@ func transcriptRows(t *testing.T, s *Store, runID uuid.UUID) int {
 // their own way. One that disagrees with parent_run_id is a tree no query can
 // walk correctly, so every disagreement is refused, one at a time.
 func TestARootRunIsItsOwnRootAtDepthZero(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	parent := mustInsertRun(t, s, f.root())
@@ -161,6 +163,8 @@ func TestARootRunIsItsOwnRootAtDepthZero(t *testing.T) {
 // The composite key is the only thing stopping a run being filed in another
 // team's conversation, where that team's members would read it.
 func TestARunCannotNameASessionInAnotherTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	other := newRunFixture(t, s, "billing")
@@ -174,6 +178,8 @@ func TestARunCannotNameASessionInAnotherTeam(t *testing.T) {
 // grants and its servers' tokens. Another team's agent would run inside this
 // team's run, so the database refuses the pair rather than trusting the insert.
 func TestARunCannotUseAnotherTeamsAgent(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	other := newRunFixture(t, s, "billing")
@@ -186,6 +192,8 @@ func TestARunCannotUseAnotherTeamsAgent(t *testing.T) {
 // Delegation writes children. A child filed under another team's parent would
 // show up in that team's tree and be cancelled by its cancels.
 func TestADelegateCannotHangUnderAnotherTeamsRun(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	other := newRunFixture(t, s, "billing")
@@ -198,6 +206,8 @@ func TestADelegateCannotHangUnderAnotherTeamsRun(t *testing.T) {
 // root_run_id is how "every run in this tree" is asked. A root in another
 // team would pull this run into that team's answer.
 func TestARunCannotNameARootInAnotherTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	other := newRunFixture(t, s, "billing")
@@ -216,6 +226,8 @@ func TestARunCannotNameARootInAnotherTeam(t *testing.T) {
 // so this fails only when neither cascades; the keys' team checks have their
 // own tests above.
 func TestDeletingARootDeletesItsWholeTree(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	root := mustInsertRun(t, s, f.root())
@@ -240,6 +252,8 @@ func TestDeletingARootDeletesItsWholeTree(t *testing.T) {
 // A running row with no worker or no heartbeat can never be judged stale, so
 // the sweep would never take it over and it would run forever on paper.
 func TestARunningRunNeedsAWorkerAndAHeartbeat(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 
@@ -261,6 +275,8 @@ func TestARunningRunNeedsAWorkerAndAHeartbeat(t *testing.T) {
 // finished_at is what tells a reader the run is over. A finished run without
 // one, or a queued run with one, makes "how long did it take" a lie.
 func TestOnlyAFinishedRunHasAFinishTime(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 
@@ -284,6 +300,8 @@ func TestOnlyAFinishedRunHasAFinishTime(t *testing.T) {
 // A failed run with no error is a failure nobody can explain; an error on a
 // run that succeeded is one somebody will chase for nothing.
 func TestOnlyAFailedRunHasAnError(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 
@@ -303,6 +321,8 @@ func TestOnlyAFailedRunHasAnError(t *testing.T) {
 }
 
 func TestAnUnknownRunStatusIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 
@@ -314,6 +334,8 @@ func TestAnUnknownRunStatusIsRefused(t *testing.T) {
 // A resumed parent that repeats a delegate call must find the child it already
 // made. Two children for one call would run the same brief twice.
 func TestAParentCannotMakeTwoChildrenFromOneToolCall(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	parent := mustInsertRun(t, s, f.root())
@@ -332,6 +354,8 @@ func TestAParentCannotMakeTwoChildrenFromOneToolCall(t *testing.T) {
 // The run is a record of what happened. Deleting the agent must not delete
 // the record, and must not leave it unreadable.
 func TestDeletingTheAgentKeepsTheRunAndItsName(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	id := mustInsertRun(t, s, f.root())
@@ -355,6 +379,8 @@ func TestDeletingTheAgentKeepsTheRunAndItsName(t *testing.T) {
 }
 
 func TestDeletingAUserKeepsTheRunsTheyAskedFor(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	user := insertUser(t, s, "https://idp.example.com", "alice")
@@ -374,6 +400,8 @@ func TestDeletingAUserKeepsTheRunsTheyAskedFor(t *testing.T) {
 // A transcript is keyed by a string, so no foreign key removes it. Without the
 // trigger a deleted run leaves the whole conversation behind.
 func TestDeletingARunForgetsItsTranscript(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	gone := mustInsertRun(t, s, f.root())
@@ -397,6 +425,8 @@ func TestDeletingARunForgetsItsTranscript(t *testing.T) {
 // own: the trigger has to fire there too, or every delegate's conversation
 // outlives the tree.
 func TestDeletingARunForgetsItsDelegatesTranscripts(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	parent := mustInsertRun(t, s, f.root())
@@ -418,6 +448,8 @@ func TestDeletingARunForgetsItsDelegatesTranscripts(t *testing.T) {
 // Deleting a team is the commonest reason a conversation must go, and it
 // reaches runs through two cascades without any Go code seeing a row.
 func TestDeletingATeamForgetsEveryTranscriptInIt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	other := newRunFixture(t, s, "billing")
@@ -442,6 +474,8 @@ func TestDeletingATeamForgetsEveryTranscriptInIt(t *testing.T) {
 // is what proves the copy is right: the SDK's own conformance suite, against
 // the migrated tables.
 func TestTheTranscriptTablesPassTheSDKsOwnStoreSuite(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	storetest.Run(t, func(t *testing.T) agent.Store {
@@ -466,6 +500,8 @@ func insertEvent(t *testing.T, s *Store, runID uuid.UUID, seq int, kind, payload
 }
 
 func TestARunEventMustBeOneTheRuntimeWrites(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	id := mustInsertRun(t, s, f.root())
@@ -481,6 +517,8 @@ func TestARunEventMustBeOneTheRuntimeWrites(t *testing.T) {
 }
 
 func TestDeletingARunDeletesItsEvents(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	id := mustInsertRun(t, s, f.root())
@@ -499,6 +537,8 @@ func TestDeletingARunDeletesItsEvents(t *testing.T) {
 // A parent records that it handed work on, so the dashboard and the CLI can
 // open the child while it is still working.
 func TestADelegatedEventIsOneTheRuntimeWrites(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	f := newRunFixture(t, s, "platform")
 	id := mustInsertRun(t, s, f.root())

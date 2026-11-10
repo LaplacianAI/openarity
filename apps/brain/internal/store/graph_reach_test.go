@@ -44,6 +44,8 @@ func mustGrantServer(t *testing.T, s *Store, a db.Agent, srv db.McpServer, allow
 // The graph tool's agent reach until slice C narrows it by delegation: the
 // whole team, never the caller itself, never another team.
 func TestReachableAgentsAreTheTeamWithoutTheCaller(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "reach-agents")
 	other := mustCreate(t, s, "reach-agents-other")
@@ -65,6 +67,8 @@ func TestReachableAgentsAreTheTeamWithoutTheCaller(t *testing.T) {
 }
 
 func TestAnAgentAloneInItsTeamReachesNoAgent(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "reach-alone")
 	caller := mustCreateAgent(t, s, team.ID, "only")
@@ -83,6 +87,8 @@ func TestAnAgentAloneInItsTeamReachesNoAgent(t *testing.T) {
 // A grant's allow-list cuts the tools reachable through it; a grant with no
 // list reaches every tool on the server.
 func TestGrantedToolsHonourTheAllowList(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "reach-tools")
 	srv := mustCreateServer(t, s, urlServer(team.ID, "files"))
@@ -117,6 +123,8 @@ func TestGrantedToolsHonourTheAllowList(t *testing.T) {
 // Two servers both granted: the tools of each, and nothing of a server the
 // agent was not granted.
 func TestGrantedToolsSpanEveryGrantedServerAndNoOther(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "reach-servers")
 	files := mustCreateServer(t, s, urlServer(team.ID, "files"))

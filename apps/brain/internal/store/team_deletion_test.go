@@ -46,6 +46,8 @@ func dbNow(t *testing.T, s *Store) time.Time {
 }
 
 func TestSoftDeleteMarksTheTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "doomed")
 
@@ -65,6 +67,8 @@ func TestSoftDeleteMarksTheTeam(t *testing.T) {
 // The 409 rests on this: a run that is queued or running holds the team, and
 // one that has finished does not.
 func TestSoftDeleteRefusesLiveRuns(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	queued := newRunFixture(t, s, "queued")
@@ -98,6 +102,8 @@ func TestSoftDeleteRefusesLiveRuns(t *testing.T) {
 // A repeated delete must not move the purge date: if it did, calling it once
 // a day would keep a team from ever being erased.
 func TestSoftDeleteKeepsTheFirstDeletedAt(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "twice")
 
@@ -113,6 +119,8 @@ func TestSoftDeleteKeepsTheFirstDeletedAt(t *testing.T) {
 }
 
 func TestSoftDeleteOfAMissingTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	if n := softDelete(t, s, uuid.New()); n != 0 {
@@ -121,6 +129,8 @@ func TestSoftDeleteOfAMissingTeam(t *testing.T) {
 }
 
 func TestRestoreBringsTheTeamBack(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "comeback")
 	softDelete(t, s, team.ID)
@@ -138,6 +148,8 @@ func TestRestoreBringsTheTeamBack(t *testing.T) {
 }
 
 func TestRestoreOfAMissingTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 
 	_, err := s.RestoreTeam(t.Context(), uuid.New())
@@ -147,6 +159,8 @@ func TestRestoreOfAMissingTeam(t *testing.T) {
 // A deleted team's name is free at once, so a team of the same name can be
 // made the same day. Restoring the old one then has to fail, not produce two.
 func TestADeletedTeamFreesItsName(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	old := mustCreate(t, s, "platform")
 	softDelete(t, s, old.ID)
@@ -163,6 +177,8 @@ func TestADeletedTeamFreesItsName(t *testing.T) {
 
 // Two live teams still cannot share a name; only deleted ones step aside.
 func TestLiveTeamsStillHaveUniqueNames(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	mustCreate(t, s, "platform")
 
@@ -174,6 +190,8 @@ func TestLiveTeamsStillHaveUniqueNames(t *testing.T) {
 // filter is what turns a deleted team into a 404 for every member on every
 // route.
 func TestListUserTeamsHidesADeletedTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	user := insertUser(t, s, "https://idp.example.com", "ada")
 	kept := mustCreate(t, s, "kept")
@@ -195,6 +213,8 @@ func TestListUserTeamsHidesADeletedTeam(t *testing.T) {
 }
 
 func TestListTeamsHidesADeletedTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	mustCreate(t, s, "kept")
 	softDelete(t, s, mustCreate(t, s, "gone").ID)
@@ -209,6 +229,8 @@ func TestListTeamsHidesADeletedTeam(t *testing.T) {
 }
 
 func TestListDeletedTeamsListsOnlyDeletedOnes(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	mustCreate(t, s, "kept")
 	softDelete(t, s, mustCreate(t, s, "gone").ID)
@@ -225,6 +247,8 @@ func TestListDeletedTeamsListsOnlyDeletedOnes(t *testing.T) {
 // The cursor walks deleted teams only, newest first, without repeating or
 // skipping one — the same contract ListTeams keeps.
 func TestListDeletedTeamsPagesThroughEveryRow(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	var want []string
@@ -259,6 +283,8 @@ func TestListDeletedTeamsPagesThroughEveryRow(t *testing.T) {
 // its graph. A deleted team is not gone yet, so GetTeam must still find it;
 // GetLiveTeam is the one the API reads.
 func TestGetTeamStillSeesADeletedTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "hidden")
 	softDelete(t, s, team.ID)
@@ -273,6 +299,8 @@ func TestGetTeamStillSeesADeletedTeam(t *testing.T) {
 // Webhooks reach a team through GetChannel, so a deleted team's channels have
 // to be as unknown as a channel that never existed.
 func TestGetChannelHidesADeletedTeamsChannel(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "quiet")
 	ch := mustCreateChannel(t, s, team.ID, "custom", "inbox")
@@ -290,6 +318,8 @@ func TestGetChannelHidesADeletedTeamsChannel(t *testing.T) {
 }
 
 func TestLockLiveTeamRefusesADeletedTeam(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	team := mustCreate(t, s, "locked")
 
@@ -304,6 +334,8 @@ func TestLockLiveTeamRefusesADeletedTeam(t *testing.T) {
 
 // A rebuild of every team must not project the deleted ones back.
 func TestListTeamIDsLeavesOutDeletedTeams(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	kept := mustCreate(t, s, "kept")
 	softDelete(t, s, mustCreate(t, s, "gone").ID)
@@ -320,6 +352,8 @@ func TestListTeamIDsLeavesOutDeletedTeams(t *testing.T) {
 // The purge is the old DELETE, so the cascade and its triggers still run:
 // the channel's signing secret is tombstoned exactly as it was before.
 func TestPurgeTeamsBoundary(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	const window = 7 * 24 * time.Hour
 
@@ -354,6 +388,8 @@ func TestPurgeTeamsBoundary(t *testing.T) {
 }
 
 func TestPurgeTeamsHonoursTheLimit(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	for _, name := range []string{"a", "b", "c"} {
 		deletedAgo(t, s, mustCreate(t, s, name).ID, 30*24*time.Hour)
@@ -374,6 +410,8 @@ func TestPurgeTeamsHonoursTheLimit(t *testing.T) {
 // The guard's question. A team that does not exist is not deleted: the
 // handler behind the guard answers 404 for it, as it always has.
 func TestTeamDeletedReadsTheMark(t *testing.T) {
+	t.Parallel()
+
 	s := queryStore(t)
 	live := mustCreate(t, s, "live")
 	gone := mustCreate(t, s, "gone")
