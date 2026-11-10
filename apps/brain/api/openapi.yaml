@@ -41,6 +41,8 @@ tags:
     description: The agents a team defines, and the servers and skills each is granted
   - name: mcp-servers
     description: The MCP servers a team's agents may be granted, and the tools each offers
+  - name: blueprints
+    description: A team's agents, skills and MCP servers described in one document, planned and applied
   - name: graph
     description: A team's agents, tools and skills as the graph index holds them
   - name: sessions
@@ -1783,6 +1785,92 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/blueprints/plan:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    post:
+      operationId: planBlueprint
+      tags: [blueprints]
+      summary: Show what applying a blueprint would change
+      description: |
+        A read, so belonging to the team is enough. Compares each item the
+        blueprint names with the team's item of that name and says whether it
+        would be created, updated (naming the fields, never their values) or
+        left unchanged. Items the blueprint does not name are not compared
+        and never removed. Every reason the blueprint cannot be applied is a
+        refusal, including a write permission the caller does not hold.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Blueprint"
+      responses:
+        "200":
+          description: The plan, refusals included
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintPlan"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/blueprints/apply:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    post:
+      operationId: applyBlueprint
+      tags: [blueprints]
+      summary: Apply a blueprint
+      description: |
+        Plans again and applies only the plan whose digest is the one sent.
+        Each write needs its own permission: `tool:write` for an MCP server,
+        `skill:write` for a skill, `agent:write` for an agent and its grants.
+        Changed skills' files are stored first, then every row is written in
+        one transaction, so a failure leaves nothing half-applied. MCP
+        discovery is not run, and no secret is written.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlueprintApply"
+      responses:
+        "200":
+          description: Applied. Each change carries the id of the item it made or changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintApplied"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            The team changed since the plan that was sent: the body is the new
+            plan, and nothing was written. A plain-text 409 is a name taken
+            while this was applying; plan again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintPlan"
+            text/plain:
+              schema:
+                type: string
+        "422":
+          description: The plan has refusals, and nothing was written. The body is the plan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintPlan"
 
   /teams/{id}/loops:
     parameters:
@@ -4176,6 +4264,230 @@ components:
               type: integer
               format: int64
               description: The agents it lists as delegates; read only when delegation is listed
+
+    Blueprint:
+      type: object
+      additionalProperties: false
+      description: |
+        What a team should hold. Items refer to each other, and to the team's
+        own, by name. At most 50 of each kind.
+      properties:
+        mcp_servers:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/BlueprintMCPServer"
+        skills:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/BlueprintSkill"
+        agents:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/BlueprintAgent"
+
+    BlueprintMCPServer:
+      type: object
+      required: [name]
+      additionalProperties: false
+      description: An MCP server as the MCP server API takes it, with each secret reference relative to the team.
+      properties:
+        name:
+          type: string
+          pattern: "^[a-zA-Z0-9_-]{1,64}$"
+        url:
+          type: string
+        command:
+          type: array
+          items:
+            type: string
+        env:
+          type: object
+          description: For a command server; each value a secret's name#key among the team's MCP secrets
+          additionalProperties:
+            type: string
+        auth_secret:
+          type: string
+          description: For a url server; a secret's name#key among the team's MCP secrets, never the secret
+          examples: ["helpdesk#token"]
+        bare:
+          type: boolean
+
+    BlueprintSkill:
+      type: object
+      required: [files]
+      additionalProperties: false
+      description: A skill's files. Its SKILL.md names it.
+      properties:
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlueprintSkillFile"
+
+    BlueprintSkillFile:
+      type: object
+      required: [path, data]
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+          examples: ["SKILL.md"]
+        data:
+          type: string
+          format: byte
+          description: The file's bytes, base64
+
+    BlueprintAgent:
+      type: object
+      required: [name, model, pattern, max_steps]
+      additionalProperties: false
+      description: |
+        An agent as the agents API takes it, except that its MCP servers,
+        skills and delegates are named. Described whole: a field left out is
+        its default, so leaving out skills takes its skills away.
+      properties:
+        kind:
+          type: string
+          description: Optional; custom. A blueprint describes custom agents only.
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+        instructions:
+          type: string
+        model:
+          $ref: "#/components/schemas/ModelRef"
+        pattern:
+          type: string
+          examples: ["react"]
+        max_steps:
+          type: integer
+          format: int32
+          minimum: 1
+        steer_continuations:
+          type: integer
+          format: int32
+          minimum: 0
+        output_schema:
+          $ref: "#/components/schemas/OutputSchema"
+        parser:
+          type: boolean
+        parser_model:
+          $ref: "#/components/schemas/ParserModel"
+        mcp_servers:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlueprintServerGrant"
+        skills:
+          type: array
+          description: Skills by name, in this blueprint or already in the team
+          items:
+            type: string
+        token_budget:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 100000000
+        delegation:
+          $ref: "#/components/schemas/Delegation"
+        delegates:
+          type: array
+          description: Agents by name, in this blueprint or already in the team
+          items:
+            type: string
+        web:
+          type: boolean
+
+    BlueprintServerGrant:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: An MCP server in this blueprint or already in the team
+        allow:
+          type: array
+          minItems: 1
+          description: The tools granted. Left out, every tool is granted.
+          items:
+            type: string
+            pattern: "^[a-zA-Z0-9_-]{1,64}$"
+
+    BlueprintApply:
+      type: object
+      required: [blueprint, plan_digest]
+      additionalProperties: false
+      properties:
+        blueprint:
+          $ref: "#/components/schemas/Blueprint"
+        plan_digest:
+          type: string
+          description: The digest of the plan that was shown
+          examples: ["sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"]
+
+    BlueprintChange:
+      type: object
+      required: [kind, name, action]
+      properties:
+        kind:
+          type: string
+          enum: [mcp_server, skill, agent]
+        name:
+          type: string
+        action:
+          type: string
+          enum: [create, update, unchanged]
+        fields:
+          type: array
+          description: What an update changes, by field name
+          items:
+            type: string
+        id:
+          type: string
+          format: uuid
+          description: The item's id, once it exists
+
+    BlueprintRefusal:
+      type: object
+      required: [kind, name, message]
+      properties:
+        kind:
+          type: string
+          enum: [mcp_server, skill, agent]
+        name:
+          type: string
+          description: The item's name, or "#n" for a skill whose files name none
+        message:
+          type: string
+
+    BlueprintPlan:
+      type: object
+      required: [changes, refusals, digest]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlueprintChange"
+        refusals:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlueprintRefusal"
+        digest:
+          type: string
+          description: Names this plan; send it to apply
+
+    BlueprintApplied:
+      type: object
+      required: [changes]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlueprintChange"
 
     AgentPage:
       type: object

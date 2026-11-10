@@ -9,6 +9,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/authconfig"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/blueprints"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/channels"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/docs"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/loops"
@@ -64,6 +65,7 @@ func newRouters(
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
 		mcpservers.New(logger, mcpStore{dbStore}, discoverer),
 		agents.New(logger, agentStore{dbStore}, runtime.Loops()),
+		blueprints.New(logger, blueprintStore{dbStore}, authorizer, attachments, runtime.Loops()),
 		loops.New(logger, runtime.Loops()),
 		runs.New(logger, runStore{dbStore}, authorizer, starter),
 		teamgraph.New(logger, graphs),
@@ -120,6 +122,12 @@ func (s mcpStore) InTx(ctx context.Context, fn func(mcpservers.Queries) error) e
 type agentStore struct{ *store.Store }
 
 func (s agentStore) InTx(ctx context.Context, fn func(agents.Queries) error) error {
+	return s.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
+}
+
+type blueprintStore struct{ *store.Store }
+
+func (s blueprintStore) InTx(ctx context.Context, fn func(blueprints.Queries) error) error {
 	return s.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
 }
 

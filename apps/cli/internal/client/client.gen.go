@@ -42,6 +42,69 @@ func (e AuthConfigEnvironment) Valid() bool {
 	}
 }
 
+// Defines values for BlueprintChangeAction.
+const (
+	Create    BlueprintChangeAction = "create"
+	Unchanged BlueprintChangeAction = "unchanged"
+	Update    BlueprintChangeAction = "update"
+)
+
+// Valid indicates whether the value is a known member of the BlueprintChangeAction enum.
+func (e BlueprintChangeAction) Valid() bool {
+	switch e {
+	case Create:
+		return true
+	case Unchanged:
+		return true
+	case Update:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BlueprintChangeKind.
+const (
+	BlueprintChangeKindAgent     BlueprintChangeKind = "agent"
+	BlueprintChangeKindMcpServer BlueprintChangeKind = "mcp_server"
+	BlueprintChangeKindSkill     BlueprintChangeKind = "skill"
+)
+
+// Valid indicates whether the value is a known member of the BlueprintChangeKind enum.
+func (e BlueprintChangeKind) Valid() bool {
+	switch e {
+	case BlueprintChangeKindAgent:
+		return true
+	case BlueprintChangeKindMcpServer:
+		return true
+	case BlueprintChangeKindSkill:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BlueprintRefusalKind.
+const (
+	BlueprintRefusalKindAgent     BlueprintRefusalKind = "agent"
+	BlueprintRefusalKindMcpServer BlueprintRefusalKind = "mcp_server"
+	BlueprintRefusalKindSkill     BlueprintRefusalKind = "skill"
+)
+
+// Valid indicates whether the value is a known member of the BlueprintRefusalKind enum.
+func (e BlueprintRefusalKind) Valid() bool {
+	switch e {
+	case BlueprintRefusalKindAgent:
+		return true
+	case BlueprintRefusalKindMcpServer:
+		return true
+	case BlueprintRefusalKindSkill:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Delegation.
 const (
 	DelegationListed Delegation = "listed"
@@ -530,6 +593,146 @@ type AuthConfig struct {
 // AuthConfigEnvironment What this deployment considers itself. A client uses it to decide
 // whether a shared token is even worth trying.
 type AuthConfigEnvironment string
+
+// Blueprint What a team should hold. Items refer to each other, and to the team's
+// own, by name. At most 50 of each kind.
+type Blueprint struct {
+	Agents     *[]BlueprintAgent     `json:"agents,omitempty" yaml:"agents,omitempty"`
+	McpServers *[]BlueprintMCPServer `json:"mcp_servers,omitempty" yaml:"mcp_servers,omitempty"`
+	Skills     *[]BlueprintSkill     `json:"skills,omitempty" yaml:"skills,omitempty"`
+}
+
+// BlueprintAgent An agent as the agents API takes it, except that its MCP servers,
+// skills and delegates are named. Described whole: a field left out is
+// its default, so leaving out skills takes its skills away.
+type BlueprintAgent struct {
+	// Delegates Agents by name, in this blueprint or already in the team
+	Delegates *[]string `json:"delegates,omitempty" yaml:"delegates,omitempty"`
+
+	// Delegation Whom the agent may hand work to with the delegate tool: any other
+	// agent in its team, only its delegates, or no one. An agent set to
+	// none is not given the tool. Left out of a request, it is none: the
+	// agent works alone, and a PUT replaces the whole agent.
+	Delegation   *Delegation `json:"delegation,omitempty" yaml:"delegation,omitempty"`
+	Description  *string     `json:"description,omitempty" yaml:"description,omitempty"`
+	Instructions *string     `json:"instructions,omitempty" yaml:"instructions,omitempty"`
+
+	// Kind Optional; custom. A blueprint describes custom agents only.
+	Kind         *string                 `json:"kind,omitempty" yaml:"kind,omitempty"`
+	MaxSteps     int32                   `json:"max_steps" yaml:"max_steps"`
+	McpServers   *[]BlueprintServerGrant `json:"mcp_servers,omitempty" yaml:"mcp_servers,omitempty"`
+	Model        ModelRef                `json:"model" yaml:"model"`
+	Name         string                  `json:"name" yaml:"name"`
+	OutputSchema *OutputSchema           `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
+	Parser       *bool                   `json:"parser,omitempty" yaml:"parser,omitempty"`
+
+	// ParserModel Only with parser. max_tokens and temperature fall back to the SDK's defaults.
+	ParserModel *ParserModel `json:"parser_model,omitempty" yaml:"parser_model,omitempty"`
+
+	// Pattern Examples: react
+	Pattern string `json:"pattern" yaml:"pattern"`
+
+	// Skills Skills by name, in this blueprint or already in the team
+	Skills             *[]string `json:"skills,omitempty" yaml:"skills,omitempty"`
+	SteerContinuations *int32    `json:"steer_continuations,omitempty" yaml:"steer_continuations,omitempty"`
+	TokenBudget        *int64    `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
+	Web                *bool     `json:"web,omitempty" yaml:"web,omitempty"`
+}
+
+// BlueprintApplied defines model for BlueprintApplied.
+type BlueprintApplied struct {
+	Changes []BlueprintChange `json:"changes" yaml:"changes"`
+}
+
+// BlueprintApply defines model for BlueprintApply.
+type BlueprintApply struct {
+	// Blueprint What a team should hold. Items refer to each other, and to the team's
+	// own, by name. At most 50 of each kind.
+	Blueprint Blueprint `json:"blueprint" yaml:"blueprint"`
+
+	// PlanDigest The digest of the plan that was shown
+	//
+	// Examples: sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+	PlanDigest string `json:"plan_digest" yaml:"plan_digest"`
+}
+
+// BlueprintChange defines model for BlueprintChange.
+type BlueprintChange struct {
+	Action BlueprintChangeAction `json:"action" yaml:"action"`
+
+	// Fields What an update changes, by field name
+	Fields *[]string `json:"fields,omitempty" yaml:"fields,omitempty"`
+
+	// ID The item's id, once it exists
+	ID   *openapi_types.UUID `json:"id,omitempty" yaml:"id,omitempty"`
+	Kind BlueprintChangeKind `json:"kind" yaml:"kind"`
+	Name string              `json:"name" yaml:"name"`
+}
+
+// BlueprintChangeAction defines model for BlueprintChange.Action.
+type BlueprintChangeAction string
+
+// BlueprintChangeKind defines model for BlueprintChange.Kind.
+type BlueprintChangeKind string
+
+// BlueprintMCPServer An MCP server as the MCP server API takes it, with each secret reference relative to the team.
+type BlueprintMCPServer struct {
+	// AuthSecret For a url server; a secret's name#key among the team's MCP secrets, never the secret
+	//
+	// Examples: helpdesk#token
+	AuthSecret *string   `json:"auth_secret,omitempty" yaml:"auth_secret,omitempty"`
+	Bare       *bool     `json:"bare,omitempty" yaml:"bare,omitempty"`
+	Command    *[]string `json:"command,omitempty" yaml:"command,omitempty"`
+
+	// Env For a command server; each value a secret's name#key among the team's MCP secrets
+	Env  *map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+	Name string             `json:"name" yaml:"name"`
+	URL  *string            `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
+// BlueprintPlan defines model for BlueprintPlan.
+type BlueprintPlan struct {
+	Changes []BlueprintChange `json:"changes" yaml:"changes"`
+
+	// Digest Names this plan; send it to apply
+	Digest   string             `json:"digest" yaml:"digest"`
+	Refusals []BlueprintRefusal `json:"refusals" yaml:"refusals"`
+}
+
+// BlueprintRefusal defines model for BlueprintRefusal.
+type BlueprintRefusal struct {
+	Kind    BlueprintRefusalKind `json:"kind" yaml:"kind"`
+	Message string               `json:"message" yaml:"message"`
+
+	// Name The item's name, or "#n" for a skill whose files name none
+	Name string `json:"name" yaml:"name"`
+}
+
+// BlueprintRefusalKind defines model for BlueprintRefusal.Kind.
+type BlueprintRefusalKind string
+
+// BlueprintServerGrant defines model for BlueprintServerGrant.
+type BlueprintServerGrant struct {
+	// Allow The tools granted. Left out, every tool is granted.
+	Allow *[]string `json:"allow,omitempty" yaml:"allow,omitempty"`
+
+	// Name An MCP server in this blueprint or already in the team
+	Name string `json:"name" yaml:"name"`
+}
+
+// BlueprintSkill A skill's files. Its SKILL.md names it.
+type BlueprintSkill struct {
+	Files []BlueprintSkillFile `json:"files" yaml:"files"`
+}
+
+// BlueprintSkillFile defines model for BlueprintSkillFile.
+type BlueprintSkillFile struct {
+	// Data The file's bytes, base64
+	Data []byte `json:"data" yaml:"data"`
+
+	// Path Examples: SKILL.md
+	Path string `json:"path" yaml:"path"`
+}
 
 // Channel defines model for Channel.
 type Channel struct {
@@ -2073,6 +2276,12 @@ type CreateAgentJSONRequestBody = AgentRequest
 // ReplaceAgentJSONRequestBody defines body for ReplaceAgent for application/json ContentType.
 type ReplaceAgentJSONRequestBody = AgentRequest
 
+// ApplyBlueprintJSONRequestBody defines body for ApplyBlueprint for application/json ContentType.
+type ApplyBlueprintJSONRequestBody = BlueprintApply
+
+// PlanBlueprintJSONRequestBody defines body for PlanBlueprint for application/json ContentType.
+type PlanBlueprintJSONRequestBody = Blueprint
+
 // CreateChannelJSONRequestBody defines body for CreateChannel for application/json ContentType.
 type CreateChannelJSONRequestBody = CreateChannelRequest
 
@@ -2345,6 +2554,62 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
 	ReplaceAgent(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyBlueprintWithBody Apply a blueprint
+	//
+	// Plans again and applies only the plan whose digest is the one sent.
+	// Each write needs its own permission: `tool:write` for an MCP server,
+	// `skill:write` for a skill, `agent:write` for an agent and its grants.
+	// Changed skills' files are stored first, then every row is written in
+	// one transaction, so a failure leaves nothing half-applied. MCP
+	// discovery is not run, and no secret is written.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/blueprints/apply (the `ApplyBlueprint` operationId).
+	ApplyBlueprintWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyBlueprint Apply a blueprint
+	//
+	// Plans again and applies only the plan whose digest is the one sent.
+	// Each write needs its own permission: `tool:write` for an MCP server,
+	// `skill:write` for a skill, `agent:write` for an agent and its grants.
+	// Changed skills' files are stored first, then every row is written in
+	// one transaction, so a failure leaves nothing half-applied. MCP
+	// discovery is not run, and no secret is written.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/blueprints/apply (the `ApplyBlueprint` operationId).
+	ApplyBlueprint(ctx context.Context, id TeamID, body ApplyBlueprintJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PlanBlueprintWithBody Show what applying a blueprint would change
+	//
+	// A read, so belonging to the team is enough. Compares each item the
+	// blueprint names with the team's item of that name and says whether it
+	// would be created, updated (naming the fields, never their values) or
+	// left unchanged. Items the blueprint does not name are not compared
+	// and never removed. Every reason the blueprint cannot be applied is a
+	// refusal, including a write permission the caller does not hold.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/blueprints/plan (the `PlanBlueprint` operationId).
+	PlanBlueprintWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PlanBlueprint Show what applying a blueprint would change
+	//
+	// A read, so belonging to the team is enough. Compares each item the
+	// blueprint names with the team's item of that name and says whether it
+	// would be created, updated (naming the fields, never their values) or
+	// left unchanged. Items the blueprint does not name are not compared
+	// and never removed. Every reason the blueprint cannot be applied is a
+	// refusal, including a write permission the caller does not hold.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/blueprints/plan (the `PlanBlueprint` operationId).
+	PlanBlueprint(ctx context.Context, id TeamID, body PlanBlueprintJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListChannels List a team's channels
 	//
@@ -3584,6 +3849,102 @@ func (c *Client) ReplaceAgentWithBody(ctx context.Context, id TeamID, agentID Ag
 // Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
 func (c *Client) ReplaceAgent(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReplaceAgentRequest(c.Server, id, agentID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyBlueprintWithBody Apply a blueprint
+//
+// Plans again and applies only the plan whose digest is the one sent.
+// Each write needs its own permission: `tool:write` for an MCP server,
+// `skill:write` for a skill, `agent:write` for an agent and its grants.
+// Changed skills' files are stored first, then every row is written in
+// one transaction, so a failure leaves nothing half-applied. MCP
+// discovery is not run, and no secret is written.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/blueprints/apply (the `ApplyBlueprint` operationId).
+func (c *Client) ApplyBlueprintWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyBlueprintRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyBlueprint Apply a blueprint
+//
+// Plans again and applies only the plan whose digest is the one sent.
+// Each write needs its own permission: `tool:write` for an MCP server,
+// `skill:write` for a skill, `agent:write` for an agent and its grants.
+// Changed skills' files are stored first, then every row is written in
+// one transaction, so a failure leaves nothing half-applied. MCP
+// discovery is not run, and no secret is written.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/blueprints/apply (the `ApplyBlueprint` operationId).
+func (c *Client) ApplyBlueprint(ctx context.Context, id TeamID, body ApplyBlueprintJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyBlueprintRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PlanBlueprintWithBody Show what applying a blueprint would change
+//
+// A read, so belonging to the team is enough. Compares each item the
+// blueprint names with the team's item of that name and says whether it
+// would be created, updated (naming the fields, never their values) or
+// left unchanged. Items the blueprint does not name are not compared
+// and never removed. Every reason the blueprint cannot be applied is a
+// refusal, including a write permission the caller does not hold.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/blueprints/plan (the `PlanBlueprint` operationId).
+func (c *Client) PlanBlueprintWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPlanBlueprintRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PlanBlueprint Show what applying a blueprint would change
+//
+// A read, so belonging to the team is enough. Compares each item the
+// blueprint names with the team's item of that name and says whether it
+// would be created, updated (naming the fields, never their values) or
+// left unchanged. Items the blueprint does not name are not compared
+// and never removed. Every reason the blueprint cannot be applied is a
+// refusal, including a write permission the caller does not hold.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/blueprints/plan (the `PlanBlueprint` operationId).
+func (c *Client) PlanBlueprint(ctx context.Context, id TeamID, body PlanBlueprintJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPlanBlueprintRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5621,6 +5982,100 @@ func NewReplaceAgentRequestWithBody(server string, id TeamID, agentID AgentID, c
 	}
 
 	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewApplyBlueprintRequest calls the generic ApplyBlueprint builder with application/json body
+func NewApplyBlueprintRequest(server string, id TeamID, body ApplyBlueprintJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApplyBlueprintRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewApplyBlueprintRequestWithBody constructs an http.Request for the ApplyBlueprint method, with any body, and a specified content type
+func NewApplyBlueprintRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/blueprints/apply", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPlanBlueprintRequest calls the generic PlanBlueprint builder with application/json body
+func NewPlanBlueprintRequest(server string, id TeamID, body PlanBlueprintJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPlanBlueprintRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewPlanBlueprintRequestWithBody constructs an http.Request for the PlanBlueprint method, with any body, and a specified content type
+func NewPlanBlueprintRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/blueprints/plan", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -8539,6 +8994,62 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
 	ReplaceAgentWithResponse(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentResponse, error)
 
+	// ApplyBlueprintWithBodyWithResponse Apply a blueprint
+	//
+	// Plans again and applies only the plan whose digest is the one sent.
+	// Each write needs its own permission: `tool:write` for an MCP server,
+	// `skill:write` for a skill, `agent:write` for an agent and its grants.
+	// Changed skills' files are stored first, then every row is written in
+	// one transaction, so a failure leaves nothing half-applied. MCP
+	// discovery is not run, and no secret is written.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/blueprints/apply (the `ApplyBlueprint` operationId).
+	ApplyBlueprintWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyBlueprintResponse, error)
+
+	// ApplyBlueprintWithResponse Apply a blueprint
+	//
+	// Plans again and applies only the plan whose digest is the one sent.
+	// Each write needs its own permission: `tool:write` for an MCP server,
+	// `skill:write` for a skill, `agent:write` for an agent and its grants.
+	// Changed skills' files are stored first, then every row is written in
+	// one transaction, so a failure leaves nothing half-applied. MCP
+	// discovery is not run, and no secret is written.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/blueprints/apply (the `ApplyBlueprint` operationId).
+	ApplyBlueprintWithResponse(ctx context.Context, id TeamID, body ApplyBlueprintJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyBlueprintResponse, error)
+
+	// PlanBlueprintWithBodyWithResponse Show what applying a blueprint would change
+	//
+	// A read, so belonging to the team is enough. Compares each item the
+	// blueprint names with the team's item of that name and says whether it
+	// would be created, updated (naming the fields, never their values) or
+	// left unchanged. Items the blueprint does not name are not compared
+	// and never removed. Every reason the blueprint cannot be applied is a
+	// refusal, including a write permission the caller does not hold.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/blueprints/plan (the `PlanBlueprint` operationId).
+	PlanBlueprintWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PlanBlueprintResponse, error)
+
+	// PlanBlueprintWithResponse Show what applying a blueprint would change
+	//
+	// A read, so belonging to the team is enough. Compares each item the
+	// blueprint names with the team's item of that name and says whether it
+	// would be created, updated (naming the fields, never their values) or
+	// left unchanged. Items the blueprint does not name are not compared
+	// and never removed. Every reason the blueprint cannot be applied is a
+	// refusal, including a write permission the caller does not hold.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/blueprints/plan (the `PlanBlueprint` operationId).
+	PlanBlueprintWithResponse(ctx context.Context, id TeamID, body PlanBlueprintJSONRequestBody, reqEditors ...RequestEditorFn) (*PlanBlueprintResponse, error)
+
 	// ListChannelsWithResponse List a team's channels
 	//
 	// A read, so belonging to the team is enough. A channel id is not a
@@ -10066,6 +10577,116 @@ func (r ReplaceAgentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ReplaceAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ApplyBlueprintResponse401Headers the declared response headers of an HTTP 401 response for ApplyBlueprint
+type ApplyBlueprintResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ApplyBlueprintResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BlueprintApplied
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *BlueprintPlan
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *BlueprintPlan
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ApplyBlueprintResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApplyBlueprintResponse) GetJSON200() *BlueprintApplied {
+	return r.JSON200
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ApplyBlueprintResponse) GetJSON409() *BlueprintPlan {
+	return r.JSON409
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r ApplyBlueprintResponse) GetJSON422() *BlueprintPlan {
+	return r.JSON422
+}
+
+// GetBody returns the raw response body bytes
+func (r ApplyBlueprintResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApplyBlueprintResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApplyBlueprintResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApplyBlueprintResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PlanBlueprintResponse401Headers the declared response headers of an HTTP 401 response for PlanBlueprint
+type PlanBlueprintResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type PlanBlueprintResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BlueprintPlan
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *PlanBlueprintResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PlanBlueprintResponse) GetJSON200() *BlueprintPlan {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r PlanBlueprintResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PlanBlueprintResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PlanBlueprintResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PlanBlueprintResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12598,6 +13219,86 @@ func (c *ClientWithResponses) ReplaceAgentWithResponse(ctx context.Context, id T
 	return ParseReplaceAgentResponse(rsp)
 }
 
+// ApplyBlueprintWithBodyWithResponse Apply a blueprint
+//
+// Plans again and applies only the plan whose digest is the one sent.
+// Each write needs its own permission: `tool:write` for an MCP server,
+// `skill:write` for a skill, `agent:write` for an agent and its grants.
+// Changed skills' files are stored first, then every row is written in
+// one transaction, so a failure leaves nothing half-applied. MCP
+// discovery is not run, and no secret is written.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/blueprints/apply (the `ApplyBlueprint` operationId).
+func (c *ClientWithResponses) ApplyBlueprintWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyBlueprintResponse, error) {
+	rsp, err := c.ApplyBlueprintWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyBlueprintResponse(rsp)
+}
+
+// ApplyBlueprintWithResponse Apply a blueprint
+//
+// Plans again and applies only the plan whose digest is the one sent.
+// Each write needs its own permission: `tool:write` for an MCP server,
+// `skill:write` for a skill, `agent:write` for an agent and its grants.
+// Changed skills' files are stored first, then every row is written in
+// one transaction, so a failure leaves nothing half-applied. MCP
+// discovery is not run, and no secret is written.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/blueprints/apply (the `ApplyBlueprint` operationId).
+func (c *ClientWithResponses) ApplyBlueprintWithResponse(ctx context.Context, id TeamID, body ApplyBlueprintJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyBlueprintResponse, error) {
+	rsp, err := c.ApplyBlueprint(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyBlueprintResponse(rsp)
+}
+
+// PlanBlueprintWithBodyWithResponse Show what applying a blueprint would change
+//
+// A read, so belonging to the team is enough. Compares each item the
+// blueprint names with the team's item of that name and says whether it
+// would be created, updated (naming the fields, never their values) or
+// left unchanged. Items the blueprint does not name are not compared
+// and never removed. Every reason the blueprint cannot be applied is a
+// refusal, including a write permission the caller does not hold.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/blueprints/plan (the `PlanBlueprint` operationId).
+func (c *ClientWithResponses) PlanBlueprintWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PlanBlueprintResponse, error) {
+	rsp, err := c.PlanBlueprintWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePlanBlueprintResponse(rsp)
+}
+
+// PlanBlueprintWithResponse Show what applying a blueprint would change
+//
+// A read, so belonging to the team is enough. Compares each item the
+// blueprint names with the team's item of that name and says whether it
+// would be created, updated (naming the fields, never their values) or
+// left unchanged. Items the blueprint does not name are not compared
+// and never removed. Every reason the blueprint cannot be applied is a
+// refusal, including a write permission the caller does not hold.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/blueprints/plan (the `PlanBlueprint` operationId).
+func (c *ClientWithResponses) PlanBlueprintWithResponse(ctx context.Context, id TeamID, body PlanBlueprintJSONRequestBody, reqEditors ...RequestEditorFn) (*PlanBlueprintResponse, error) {
+	rsp, err := c.PlanBlueprint(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePlanBlueprintResponse(rsp)
+}
+
 // ListChannelsWithResponse List a team's channels
 //
 // A read, so belonging to the team is enough. A channel id is not a
@@ -14321,6 +15022,101 @@ func ParseReplaceAgentResponse(rsp *http.Response) (*ReplaceAgentResponse, error
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ReplaceAgentResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseApplyBlueprintResponse parses an HTTP response from a ApplyBlueprintWithResponse call
+func ParseApplyBlueprintResponse(rsp *http.Response) (*ApplyBlueprintResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApplyBlueprintResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BlueprintApplied
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest BlueprintPlan
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest BlueprintPlan
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case rsp.StatusCode == 409:
+		// Content-type (text/plain) unsupported
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ApplyBlueprintResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePlanBlueprintResponse parses an HTTP response from a PlanBlueprintWithResponse call
+func ParsePlanBlueprintResponse(rsp *http.Response) (*PlanBlueprintResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PlanBlueprintResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BlueprintPlan
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers PlanBlueprintResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

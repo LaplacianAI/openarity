@@ -9,7 +9,12 @@ import (
 const maxBodyBytes = 1 << 20
 
 func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	return DecodeJSONWithin(w, r, v, maxBodyBytes)
+}
+
+// DecodeJSONWithin is DecodeJSON for a body that may be larger than a form's.
+func DecodeJSONWithin(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()

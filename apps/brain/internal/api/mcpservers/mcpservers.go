@@ -261,16 +261,16 @@ func (h *handler) write(w http.ResponseWriter, u *auth.User, status int, row db.
 	api.WriteJSON(w, h.logger, status, out)
 }
 
-func readRequest(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) (fields, bool) {
-	var req serverRequest
+func readRequest(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) (Fields, bool) {
+	var req Request
 	if !api.DecodeJSON(w, r, &req) {
-		return fields{}, false
+		return Fields{}, false
 	}
 
-	f, err := parse(teamID, req)
+	f, err := Parse(teamID, req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return fields{}, false
+		return Fields{}, false
 	}
 
 	return f, true

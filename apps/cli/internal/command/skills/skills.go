@@ -394,9 +394,31 @@ func readSkill(name string) (contentType string, body io.Reader, err error) {
 
 	var buf bytes.Buffer
 	form := multipart.NewWriter(&buf)
+	err = Walk(name, func(rel string, raw []byte) error {
+		part, err := form.CreateFormFile("files", rel)
+		if err != nil {
+			return err
+		}
+		_, err = part.Write(raw)
+		return err
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	if err := form.Close(); err != nil {
+		return "", nil, err
+	}
+
+	return form.FormDataContentType(), &buf, nil
+}
+
+// Walk reads a skill's directory, calling fn with each file's path inside it
+// and its bytes. A .git directory is left out; anything that is not a regular
+// file, and a skill over the brain's limits, is refused before it is sent.
+func Walk(name string, fn func(rel string, raw []byte) error) error {
 	files, total := 0, int64(0)
 
-	err = filepath.WalkDir(name, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(name, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -427,23 +449,13 @@ func readSkill(name string) (contentType string, body io.Reader, err error) {
 		if total > maxSkillBytes {
 			return fmt.Errorf("%s holds more than %d bytes, which is more than a skill may", name, maxSkillBytes)
 		}
-
-		part, err := form.CreateFormFile("files", path.Clean(filepath.ToSlash(rel)))
-		if err != nil {
-			return err
-		}
-		_, err = part.Write(raw)
-		return err
+		return fn(path.Clean(filepath.ToSlash(rel)), raw)
 	})
 	if err != nil {
-		return "", nil, fmt.Errorf("read the skill: %w", err)
+		return fmt.Errorf("read the skill: %w", err)
 	}
 	if files == 0 {
-		return "", nil, fmt.Errorf("%s is empty — a skill needs at least SKILL.md", name)
+		return fmt.Errorf("%s is empty — a skill needs at least SKILL.md", name)
 	}
-	if err := form.Close(); err != nil {
-		return "", nil, err
-	}
-
-	return form.FormDataContentType(), &buf, nil
+	return nil
 }

@@ -89,6 +89,8 @@ and response field this table leaves out.
 | DELETE | `/teams/{id}/mcp-servers/{serverID}`                          | Delete an MCP server                               |
 | GET    | `/teams/{id}/mcp-servers/{serverID}/tools`                    | List the tools a server offers                     |
 | POST   | `/teams/{id}/mcp-servers/{serverID}/discover`                 | Ask a server which tools it offers, and store them |
+| POST   | `/teams/{id}/blueprints/plan`                                 | Compare a blueprint with the team                  |
+| POST   | `/teams/{id}/blueprints/apply`                                | Apply the plan a blueprint was shown               |
 | GET    | `/teams/{id}/summary`                                         | The team at a glance: counts for its home          |
 | GET    | `/teams/{id}/graph`                                           | The team's graph                                   |
 | GET    | `/users`                                                      | Find a user                                        |

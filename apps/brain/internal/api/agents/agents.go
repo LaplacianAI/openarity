@@ -50,7 +50,7 @@ type handler struct {
 }
 
 type grants struct {
-	servers   []serverGrant
+	servers   []ServerGrant
 	skills    []uuid.UUID
 	delegates []uuid.UUID
 }
@@ -85,7 +85,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params, err := columns(req)
+	params, err := Columns(req)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to encode agent", err)
 		return
@@ -98,7 +98,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		if row, err = q.CreateAgent(r.Context(), params); err != nil {
 			return err
 		}
-		return grant(r.Context(), q, row, req)
+		return Grant(r.Context(), q, row, req)
 	})
 	if h.writeFailed(w, u, err) {
 		return
@@ -133,7 +133,7 @@ func (h *handler) replace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params, err := columns(req)
+	params, err := Columns(req)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to encode agent", err)
 		return
@@ -142,19 +142,10 @@ func (h *handler) replace(w http.ResponseWriter, r *http.Request) {
 	var row db.Agent
 	err = h.store.InTx(r.Context(), func(q Queries) error {
 		var err error
-		if row, err = q.UpdateAgent(r.Context(), updateParams(current.ID, params)); err != nil {
+		if row, err = q.UpdateAgent(r.Context(), UpdateParams(current.ID, params)); err != nil {
 			return err
 		}
-		if err := q.ClearAgentMCPServers(r.Context(), row.ID); err != nil {
-			return err
-		}
-		if err := q.ClearAgentSkills(r.Context(), row.ID); err != nil {
-			return err
-		}
-		if err := q.ClearAgentDelegates(r.Context(), row.ID); err != nil {
-			return err
-		}
-		return grant(r.Context(), q, row, req)
+		return Regrant(r.Context(), q, row, req)
 	})
 	if h.writeFailed(w, u, err) {
 		return
@@ -308,21 +299,21 @@ func (h *handler) write(w http.ResponseWriter, u *auth.User, status int, row db.
 	api.WriteJSON(w, h.logger, status, out)
 }
 
-func readRequest(w http.ResponseWriter, r *http.Request, loops []string) (agentRequest, bool) {
-	var req agentRequest
+func readRequest(w http.ResponseWriter, r *http.Request, loops []string) (Request, bool) {
+	var req Request
 	if !api.DecodeJSON(w, r, &req) {
-		return agentRequest{}, false
+		return Request{}, false
 	}
 
-	if err := validate(req, loops); err != nil {
+	if err := Validate(req, loops); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return agentRequest{}, false
+		return Request{}, false
 	}
 
 	return req, true
 }
 
-func columns(req agentRequest) (db.CreateAgentParams, error) {
+func Columns(req Request) (db.CreateAgentParams, error) {
 	p := db.CreateAgentParams{
 		Name: req.Name, Description: req.Description, Instructions: req.Instructions,
 		ModelName: req.Model.Name, MaxTokens: req.Model.MaxTokens, Temperature: req.Model.Temperature,
@@ -346,7 +337,7 @@ func columns(req agentRequest) (db.CreateAgentParams, error) {
 	return p, nil
 }
 
-func updateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
+func UpdateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
 	return db.UpdateAgentParams{
 		ID: id, Name: c.Name, Description: c.Description, Instructions: c.Instructions,
 		ModelName: c.ModelName, MaxTokens: c.MaxTokens, Temperature: c.Temperature,
@@ -357,7 +348,21 @@ func updateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
 	}
 }
 
-func grant(ctx context.Context, q Queries, row db.Agent, req agentRequest) error {
+// Regrant replaces what an agent may reach with what req grants it.
+func Regrant(ctx context.Context, q Queries, row db.Agent, req Request) error {
+	if err := q.ClearAgentMCPServers(ctx, row.ID); err != nil {
+		return err
+	}
+	if err := q.ClearAgentSkills(ctx, row.ID); err != nil {
+		return err
+	}
+	if err := q.ClearAgentDelegates(ctx, row.ID); err != nil {
+		return err
+	}
+	return Grant(ctx, q, row, req)
+}
+
+func Grant(ctx context.Context, q Queries, row db.Agent, req Request) error {
 	for _, g := range req.MCPServers {
 		err := q.AddAgentMCPServer(ctx, db.AddAgentMCPServerParams{
 			AgentID: row.ID, McpServerID: g.ID, TeamID: row.TeamID, Allow: g.Allow,
@@ -378,18 +383,18 @@ func grant(ctx context.Context, q Queries, row db.Agent, req agentRequest) error
 	return q.AddAgentDelegates(ctx, db.AddAgentDelegatesParams{AgentID: row.ID, DelegateIds: req.Delegates, TeamID: row.TeamID})
 }
 
-func requested(req agentRequest) grants {
+func requested(req Request) grants {
 	g := grants{servers: slices.Clone(req.MCPServers), skills: slices.Clone(req.Skills), delegates: slices.Clone(req.Delegates)}
-	slices.SortFunc(g.servers, func(a, b serverGrant) int { return bytes.Compare(a.ID[:], b.ID[:]) })
+	slices.SortFunc(g.servers, func(a, b ServerGrant) int { return bytes.Compare(a.ID[:], b.ID[:]) })
 	slices.SortFunc(g.skills, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
 	slices.SortFunc(g.delegates, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
 	return g
 }
 
 func stored(rows []db.AgentMcpServer, skills, delegates []uuid.UUID) grants {
-	servers := make([]serverGrant, len(rows))
+	servers := make([]ServerGrant, len(rows))
 	for i, row := range rows {
-		servers[i] = serverGrant{ID: row.McpServerID, Allow: row.Allow}
+		servers[i] = ServerGrant{ID: row.McpServerID, Allow: row.Allow}
 	}
 	return grants{servers: servers, skills: skills, delegates: delegates}
 }
@@ -433,7 +438,7 @@ func view(row db.Agent, g grants) (detail, error) {
 		Web:                row.Web,
 	}
 	if d.MCPServers == nil {
-		d.MCPServers = []serverGrant{}
+		d.MCPServers = []ServerGrant{}
 	}
 	if d.Skills == nil {
 		d.Skills = []uuid.UUID{}
@@ -443,7 +448,7 @@ func view(row db.Agent, g grants) (detail, error) {
 	}
 
 	if row.OutputSchema != nil {
-		var o outputSchema
+		var o OutputSchema
 		if err := json.Unmarshal(row.OutputSchema, &o); err != nil {
 			return detail{}, err
 		}
@@ -451,7 +456,7 @@ func view(row db.Agent, g grants) (detail, error) {
 	}
 
 	if row.ParserModelName != nil {
-		d.ParserModel = &parserModel{Name: *row.ParserModelName, MaxTokens: row.ParserMaxTokens, Temperature: row.ParserTemperature}
+		d.ParserModel = &ParserModel{Name: *row.ParserModelName, MaxTokens: row.ParserMaxTokens, Temperature: row.ParserTemperature}
 	}
 
 	return d, nil
@@ -461,7 +466,7 @@ func viewSummary(row db.Agent) summary {
 	return summary{
 		ID: row.ID, TeamID: row.TeamID, Name: row.Name, Description: row.Description,
 		Kind:      Kind(row.Kind),
-		Model:     modelRef{Name: row.ModelName, MaxTokens: row.MaxTokens, Temperature: row.Temperature},
+		Model:     ModelRef{Name: row.ModelName, MaxTokens: row.MaxTokens, Temperature: row.Temperature},
 		Pattern:   row.Pattern,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}

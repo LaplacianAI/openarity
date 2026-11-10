@@ -15,12 +15,12 @@ var (
 
 func ptr(s string) *string { return &s }
 
-func urlServer(u string) serverRequest {
-	return serverRequest{Name: "github", URL: ptr(u)}
+func urlServer(u string) Request {
+	return Request{Name: "github", URL: ptr(u)}
 }
 
-func commandServer(env map[string]string) serverRequest {
-	return serverRequest{Name: "fs", Command: []string{"npx", "-y", "server-fs"}, Env: env}
+func commandServer(env map[string]string) Request {
+	return Request{Name: "fs", Command: []string{"npx", "-y", "server-fs"}, Env: env}
 }
 
 func TestAURLServerIsAccepted(t *testing.T) {
@@ -30,7 +30,7 @@ func TestAURLServerIsAccepted(t *testing.T) {
 	req.AuthSecretRef = ptr(root + "github#token")
 	req.Bare = true
 
-	got, err := parse(team, req)
+	got, err := Parse(team, req)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestAURLServerIsAccepted(t *testing.T) {
 func TestACommandServerIsAcceptedWithItsEnvAsJSON(t *testing.T) {
 	t.Parallel()
 
-	got, err := parse(team, commandServer(map[string]string{
+	got, err := Parse(team, commandServer(map[string]string{
 		"TOKEN":   root + "fs#token",
 		"_NESTED": root + "a/b-c/d_e#k-1",
 	}))
@@ -68,7 +68,7 @@ func TestBothTransportsIsRefused(t *testing.T) {
 	req := urlServer("https://mcp.example.com")
 	req.Command = []string{"npx"}
 
-	if _, err := parse(team, req); err == nil || !strings.Contains(err.Error(), "not both") {
+	if _, err := Parse(team, req); err == nil || !strings.Contains(err.Error(), "not both") {
 		t.Errorf("err = %v, want both transports refused", err)
 	}
 }
@@ -76,7 +76,7 @@ func TestBothTransportsIsRefused(t *testing.T) {
 func TestNeitherTransportIsRefused(t *testing.T) {
 	t.Parallel()
 
-	if _, err := parse(team, serverRequest{Name: "x"}); err == nil || !strings.Contains(err.Error(), "needs a url or a command") {
+	if _, err := Parse(team, Request{Name: "x"}); err == nil || !strings.Contains(err.Error(), "needs a url or a command") {
 		t.Errorf("err = %v, want a missing transport refused", err)
 	}
 }
@@ -97,7 +97,7 @@ func TestNames(t *testing.T) {
 	} {
 		req := urlServer("https://mcp.example.com")
 		req.Name = name
-		_, err := parse(team, req)
+		_, err := Parse(team, req)
 		if ok && err != nil {
 			t.Errorf("name %q refused: %v", name, err)
 		}
@@ -122,7 +122,7 @@ func TestURLsThatAreRefused(t *testing.T) {
 		"https://mcp.example.com/?":       "user, password or query",
 		"https://mcp.example.com/#frag":   "#fragment",
 	} {
-		_, err := parse(team, urlServer(raw))
+		_, err := Parse(team, urlServer(raw))
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("url %q: err = %v, want %q", raw, err, want)
 		}
@@ -135,7 +135,7 @@ func TestURLsThatAreRefused(t *testing.T) {
 func TestPlainHTTPIsAccepted(t *testing.T) {
 	t.Parallel()
 
-	if _, err := parse(team, urlServer("http://localhost:8080/mcp")); err != nil {
+	if _, err := Parse(team, urlServer("http://localhost:8080/mcp")); err != nil {
 		t.Errorf("parse: %v", err)
 	}
 }
@@ -146,7 +146,7 @@ func TestEnvOnAURLServerIsRefused(t *testing.T) {
 	req := urlServer("https://mcp.example.com")
 	req.Env = map[string]string{"TOKEN": root + "x#k"}
 
-	if _, err := parse(team, req); err == nil || !strings.Contains(err.Error(), "env is for a command server") {
+	if _, err := Parse(team, req); err == nil || !strings.Contains(err.Error(), "env is for a command server") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -157,7 +157,7 @@ func TestAnEmptyEnvOnAURLServerIsNotAnEnv(t *testing.T) {
 	req := urlServer("https://mcp.example.com")
 	req.Env = map[string]string{}
 
-	if _, err := parse(team, req); err != nil {
+	if _, err := Parse(team, req); err != nil {
 		t.Errorf("parse: %v", err)
 	}
 }
@@ -168,7 +168,7 @@ func TestAuthSecretRefOnACommandServerIsRefused(t *testing.T) {
 	req := commandServer(nil)
 	req.AuthSecretRef = ptr(root + "x#k")
 
-	if _, err := parse(team, req); err == nil || !strings.Contains(err.Error(), "auth_secret_ref is for a url server") {
+	if _, err := Parse(team, req); err == nil || !strings.Contains(err.Error(), "auth_secret_ref is for a url server") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -177,8 +177,8 @@ func TestACommandMustNameAProgram(t *testing.T) {
 	t.Parallel()
 
 	for _, cmd := range [][]string{{}, {""}, {"", "arg"}} {
-		req := serverRequest{Name: "fs", Command: cmd}
-		if _, err := parse(team, req); err == nil || !strings.Contains(err.Error(), "name a program") {
+		req := Request{Name: "fs", Command: cmd}
+		if _, err := Parse(team, req); err == nil || !strings.Contains(err.Error(), "name a program") {
 			t.Errorf("command %q: err = %v", cmd, err)
 		}
 	}
@@ -188,7 +188,7 @@ func TestEnvKeysMustBeVariableNames(t *testing.T) {
 	t.Parallel()
 
 	for _, key := range []string{"", "1A", "A-B", "A B", "A=B", "É"} {
-		_, err := parse(team, commandServer(map[string]string{key: root + "x#k"}))
+		_, err := Parse(team, commandServer(map[string]string{key: root + "x#k"}))
 		if err == nil || !strings.Contains(err.Error(), "not an environment variable name") {
 			t.Errorf("key %q: err = %v", key, err)
 		}
@@ -199,7 +199,7 @@ func TestAnEnvValueThatIsNotASecretPathIsRefusedAndNotStored(t *testing.T) {
 	t.Parallel()
 
 	const secret = "ghp_abcdef0123456789"
-	got, err := parse(team, commandServer(map[string]string{"GITHUB_TOKEN": secret}))
+	got, err := Parse(team, commandServer(map[string]string{"GITHUB_TOKEN": secret}))
 	if err == nil {
 		t.Fatal("a literal secret was accepted")
 	}
@@ -241,7 +241,7 @@ func TestReferences(t *testing.T) {
 	} {
 		req := urlServer("https://mcp.example.com")
 		req.AuthSecretRef = ptr(ref)
-		_, err := parse(team, req)
+		_, err := Parse(team, req)
 		if ok && err != nil {
 			t.Errorf("ref %q refused: %v", ref, err)
 		}
@@ -255,7 +255,7 @@ func TestASecretPathOfAnotherTeamIsRefused(t *testing.T) {
 	t.Parallel()
 
 	theirs := "teams/" + other.String() + "/mcp/github#token"
-	_, err := parse(team, commandServer(map[string]string{"TOKEN": theirs}))
+	_, err := Parse(team, commandServer(map[string]string{"TOKEN": theirs}))
 	if err == nil {
 		t.Fatal("another team's secret path was accepted")
 	}
@@ -275,7 +275,7 @@ func TestTheFirstBadEnvKeyIsNamedInOrder(t *testing.T) {
 	}
 
 	for range 50 {
-		_, err := parse(team, commandServer(env))
+		_, err := Parse(team, commandServer(env))
 		if err == nil || !strings.HasPrefix(err.Error(), "env A ") {
 			t.Fatalf("err = %v, want env A named first", err)
 		}
