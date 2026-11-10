@@ -159,11 +159,12 @@ the web and read a page. The graph holds the team's agents, MCP servers, tools
 and skills, projected from Postgres into FalkorDB. The dashboard is served at
 `/ui`.
 
-Not built yet: answering a channel — a message that arrives is stored, and
-nothing starts a run from it, so nothing replies. Slack, Discord and Telegram
-adapters are not written; the seam they plug into is, and `custom` is a working
-generic webhook in the meantime. Learnings are not in the graph, and there is
-no sandbox for model-written code.
+A message on a channel starts a hub run, or steers the one already answering
+its conversation, and the answer goes back to the channel: into the chat for
+Telegram, to a signed reply URL for `custom`, a generic webhook.
+
+Not built yet: Slack and Discord adapters; the seam they plug into is.
+Learnings are not in the graph, and there is no sandbox for model-written code.
 
 ## Quick start
 

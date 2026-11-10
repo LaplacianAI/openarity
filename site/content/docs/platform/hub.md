@@ -11,6 +11,12 @@ hand it the work.
 oa runs start platform 'Reconcile payment REF-9 against our open invoices.'
 ```
 
+A message that arrives on a [channel](channels.md) goes to the hub too. From a
+sender who has been let in, a direct message always starts a run, and a message
+in a group only when it mentions the bot. If the conversation already has a run
+going, the message steers that run rather than starting another. The answer is
+posted back to the channel.
+
 ## The built-in orchestrator
 
 A team with no hub of its own gets the orchestrator. It runs on the team's
