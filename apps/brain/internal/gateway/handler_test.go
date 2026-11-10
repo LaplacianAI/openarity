@@ -118,6 +118,11 @@ type fakeStore struct {
 
 	gets    int
 	pending []db.RecordPendingSenderParams
+	// told is every waiting notice asked for; toldBefore is who already was.
+	told       []db.NoteWaitingSenderParams
+	toldBefore map[string]bool
+	noteErr    error
+	kicked     []int64
 
 	// bodyDrained is what the caller's request body reader sets, so a test can
 	// assert the order the handler did things in.
@@ -155,6 +160,26 @@ func (s *fakeStore) RecordPendingSender(_ context.Context, arg db.RecordPendingS
 	}
 	s.pending = append(s.pending, arg)
 	return 1, nil
+}
+
+func (s *fakeStore) NoteWaitingSender(_ context.Context, arg db.NoteWaitingSenderParams) (int64, error) {
+	if s.noteErr != nil {
+		return 0, s.noteErr
+	}
+	if s.toldBefore[arg.SenderRef] {
+		return 0, pgx.ErrNoRows
+	}
+	if s.toldBefore == nil {
+		s.toldBefore = map[string]bool{}
+	}
+	s.toldBefore[arg.SenderRef] = true
+	s.told = append(s.told, arg)
+	return int64(len(s.told)), nil
+}
+
+func (s *fakeStore) KickNotice(_ context.Context, id int64) error {
+	s.kicked = append(s.kicked, id)
+	return nil
 }
 
 type fakeSecrets struct {
@@ -212,6 +237,14 @@ type harness struct {
 	channelID uuid.UUID
 	teamID    uuid.UUID
 	userID    uuid.UUID
+	// notifies mounts the provider as a Notifier, as Telegram is.
+	notifies bool
+}
+
+type notifyingProvider struct{ *hookProvider }
+
+func (notifyingProvider) Notice(Channel, Notice, Credentials) (OutboundRequest, error) {
+	return OutboundRequest{}, nil
 }
 
 func newHarness(t *testing.T) *harness {
@@ -241,14 +274,18 @@ func newHarness(t *testing.T) *harness {
 func (h *harness) mount(t *testing.T) {
 	t.Helper()
 
-	registry, err := NewRegistry(h.provider)
+	var p Provider = h.provider
+	if h.notifies {
+		p = notifyingProvider{h.provider}
+	}
+	registry, err := NewRegistry(p)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
 
 	h.mux = http.NewServeMux()
 	ingest := NewIngest(h.objects, discardLogger())
-	New(discardLogger(), h.store, h.secrets, registry, h.sink, ingest).Register(h.mux, nil)
+	New(discardLogger(), h.store, h.secrets, registry, h.sink, ingest, h.store).Register(h.mux, nil)
 }
 
 func (h *harness) path() string {
@@ -840,7 +877,7 @@ func TestTheGatewayRouterIsPublic(t *testing.T) {
 		t.Fatalf("NewRegistry: %v", err)
 	}
 	ingest := NewIngest(h.objects, discardLogger())
-	if r := New(discardLogger(), h.store, h.secrets, registry, h.sink, ingest); !r.Public() {
+	if r := New(discardLogger(), h.store, h.secrets, registry, h.sink, ingest, nil); !r.Public() {
 		t.Error("the gateway router is not public, so registering it needs a guard it will never have")
 	}
 }
@@ -1012,5 +1049,110 @@ func TestAnInvalidMessagesFileIsNeverFetched(t *testing.T) {
 
 	if len(h.objects.put) != 0 {
 		t.Errorf("stored %d objects for a message that never validated", len(h.objects.put))
+	}
+}
+
+// strangerHarness is a provider that tells strangers, and a stranger writing.
+func strangerHarness(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t)
+	h.notifies = true
+	h.store.senders = nil
+	h.store.channel.NotifyStrangers = true
+	h.mount(t)
+	return h
+}
+
+func TestAStrangerAskingTheBotIsToldOnceAndTheSenderKicked(t *testing.T) {
+	t.Parallel()
+
+	h := strangerHarness(t)
+	for range 2 {
+		if rec := h.send(t, `{}`, true); rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+	}
+
+	if len(h.store.told) != 1 {
+		t.Fatalf("told %d times, want once", len(h.store.told))
+	}
+	got := h.store.told[0]
+	if got.TeamID != h.teamID || got.ChannelID != h.channelID || got.SenderRef != "u-1" ||
+		got.SessionRef != "c-1" || got.SessionKind != "direct" || got.MessageRef != "m-1" {
+		t.Errorf("notice = %+v, want u-1 told in c-1, quoting m-1", got)
+	}
+	if len(h.store.kicked) != 1 || h.store.kicked[0] != 1 {
+		t.Errorf("kicked %v, want notice 1", h.store.kicked)
+	}
+	if len(h.sink.batches) != 0 {
+		t.Error("a stranger's message reached the sink")
+	}
+}
+
+func TestAStrangerIsNotToldWhenNothingWouldSendIt(t *testing.T) {
+	t.Parallel()
+
+	inGroup := validInbound()
+	inGroup.Session.Kind = SessionGroup
+	fromBot := validInbound()
+	fromBot.Author.IsBot = true
+
+	for name, tc := range map[string]struct {
+		notifies, switchedOn bool
+		in                   Inbound
+	}{
+		"a provider that sends no notices": {false, true, validInbound()},
+		"a channel switched off":           {true, false, validInbound()},
+		"a group message not to the bot":   {true, true, inGroup},
+		"a bot":                            {true, true, fromBot},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.notifies = tc.notifies
+			h.store.senders = nil
+			h.store.channel.NotifyStrangers = tc.switchedOn
+			h.provider.result = Result{Messages: []Inbound{tc.in}}
+			h.mount(t)
+
+			if rec := h.send(t, `{}`, true); rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if len(h.store.told) != 0 || len(h.store.kicked) != 0 {
+				t.Errorf("told %v, kicked %v, want neither", h.store.told, h.store.kicked)
+			}
+		})
+	}
+}
+
+func TestAGroupMessageToTheBotTellsTheStranger(t *testing.T) {
+	t.Parallel()
+
+	h := strangerHarness(t)
+	in := validInbound()
+	in.Session.Kind = SessionGroup
+	in.Mentions = []Mention{{SenderRef: "bot", IsUs: true}}
+	h.provider.result = Result{Messages: []Inbound{in}}
+
+	h.send(t, `{}`, true)
+	if len(h.store.told) != 1 || h.store.told[0].SessionKind != "group" {
+		t.Errorf("told %+v, want one group notice", h.store.told)
+	}
+}
+
+// A notice that cannot be written leaves the stranger queued and the webhook
+// answered: the queue is what they came for, and a retry would count them
+// as seen twice.
+func TestANoticeThatCannotBeWrittenStillQueuesTheStranger(t *testing.T) {
+	t.Parallel()
+
+	h := strangerHarness(t)
+	h.store.noteErr = errors.New("disk full")
+
+	if rec := h.send(t, `{}`, true); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if len(h.store.pending) != 1 || len(h.store.kicked) != 0 {
+		t.Errorf("pending %d, kicked %v; want queued and nothing kicked", len(h.store.pending), h.store.kicked)
 	}
 }

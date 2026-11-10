@@ -606,7 +606,7 @@ func approveAs(t *testing.T, s *Store, ch, user uuid.UUID, ref string, expected 
 	if err != nil {
 		t.Fatalf("ApproveSender: %v", err)
 	}
-	return n
+	return n.Linked
 }
 
 func holderOf(t *testing.T, s *Store, ch uuid.UUID, ref string) uuid.UUID {
@@ -702,7 +702,7 @@ func TestABindingMovedWhileTheWriteWaitsIsRefused(t *testing.T) {
 			n, err := s.ApproveSender(t.Context(), db.ApproveSenderParams{
 				ChannelID: ch, SenderRef: "u-1", UserID: approver, ExpectedHolder: &checked,
 			})
-			return n > 0, err
+			return n.Linked > 0, err
 		},
 		"removing": func(s *Store, ch, _, checked uuid.UUID) (bool, error) {
 			return s.RemoveSender(t.Context(), db.RemoveSenderParams{

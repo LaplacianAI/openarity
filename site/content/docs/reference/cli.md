@@ -34,7 +34,7 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa teams settings set <team>` | Change only the settings named by flags              |
 | `oa channels list <team>`      | List a team's channels                                   |
 | `oa channels create <team> <name>` | Connect a channel: `--provider`, and optionally `--reply-url`, `--secret-stdin`, or `--credential-stdin NAME` for a provider's credential such as Telegram's `bot_token` |
-| `oa channels update <team> <channel>` | Set where a channel's replies go (`--reply-url`), or stop them (`--no-reply-url`) |
+| `oa channels update <team> <channel>` | Set where a channel's replies go (`--reply-url`), stop them (`--no-reply-url`), or switch the notices to waiting senders (`--notify-strangers`, `--no-notify-strangers`) |
 | `oa channels delete <team> <channel>` | Disconnect a channel                              |
 | `oa channels senders pending <team> <channel>` | List senders waiting to be approved      |
 | `oa channels senders list <team> <channel>` | List approved senders                       |

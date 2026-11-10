@@ -44,6 +44,8 @@ type senderState struct {
 	rolesErr   error
 	approveErr error
 	removeErr  error
+	// admitted is the "you're in" notice an approval wrote, 0 for none.
+	admitted int64
 }
 
 type approval struct {
@@ -149,17 +151,17 @@ func (f *fakeStore) ListRolePermissions(_ context.Context, role string) ([]strin
 	return shippedRoles[role], nil
 }
 
-func (f *fakeStore) ApproveSender(_ context.Context, arg db.ApproveSenderParams) (int64, error) {
+func (f *fakeStore) ApproveSender(_ context.Context, arg db.ApproveSenderParams) (db.ApproveSenderRow, error) {
 	if f.senders.approveErr != nil {
-		return 0, f.senders.approveErr
+		return db.ApproveSenderRow{}, f.senders.approveErr
 	}
 	if f.senders.moved {
-		return 0, nil
+		return db.ApproveSenderRow{}, nil
 	}
 	f.senders.approvals = append(f.senders.approvals, approval{
 		channelID: arg.ChannelID, senderRef: arg.SenderRef, userID: arg.UserID, expected: arg.ExpectedHolder,
 	})
-	return 1, nil
+	return db.ApproveSenderRow{Linked: 1, Admitted: f.senders.admitted}, nil
 }
 
 func (f *fakeStore) RemoveSender(_ context.Context, arg db.RemoveSenderParams) (bool, error) {
@@ -1219,5 +1221,48 @@ func TestAFailedTeamQueueIsA500ThatLeaksNothing(t *testing.T) {
 	rec := f.teamQueue(t, "")
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "reset by peer") {
 		t.Errorf("status %d %q, want a 500 that says nothing", rec.Code, rec.Body)
+	}
+}
+
+func TestApprovingASenderWhoWasToldTheyWereWaitingKicksTheAdmittedNotice(t *testing.T) {
+	t.Parallel()
+
+	f := newSenderFixture(t)
+	f.store.senders.admitted = 9
+
+	if rec := f.approveUser(t, "U01ABC", f.userID); rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rec.Code, rec.Body)
+	}
+	if len(f.store.kicked) != 1 || f.store.kicked[0] != 9 {
+		t.Errorf("kicked %v, want notice 9", f.store.kicked)
+	}
+}
+
+func TestApprovingWritesNoKickWhenNoNoticeWasWritten(t *testing.T) {
+	t.Parallel()
+
+	f := newSenderFixture(t)
+	if rec := f.approveUser(t, "U01ABC", f.userID); rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	if len(f.store.kicked) != 0 {
+		t.Errorf("kicked %v, want nothing", f.store.kicked)
+	}
+}
+
+// The approval is the person's decision and it is written: a notice that
+// cannot be kicked is only late, since the sweep sends it.
+func TestAFailedKickDoesNotUndoAnApproval(t *testing.T) {
+	t.Parallel()
+
+	f := newSenderFixture(t)
+	f.store.senders.admitted = 9
+	f.store.kickErr = errAny
+
+	if rec := f.approveUser(t, "U01ABC", f.userID); rec.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want 204 even though the kick failed", rec.Code)
+	}
+	if len(f.store.senders.approvals) != 1 {
+		t.Errorf("made %d approvals, want 1", len(f.store.senders.approvals))
 	}
 }

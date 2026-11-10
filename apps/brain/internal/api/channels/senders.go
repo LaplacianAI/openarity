@@ -257,16 +257,22 @@ func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 
 	// The write names the holder that was checked, so a binding moved since
 	// is refused rather than taken from somebody nobody checked.
-	written, err := h.store.ApproveSender(r.Context(), db.ApproveSenderParams{
+	approved, err := h.store.ApproveSender(r.Context(), db.ApproveSenderParams{
 		ChannelID: channel.ID, SenderRef: ref, UserID: req.UserID, ExpectedHolder: holder,
 	})
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to approve sender", err)
 		return
 	}
-	if written == 0 {
+	if approved.Linked == 0 {
 		http.Error(w, errMoved, http.StatusConflict)
 		return
+	}
+	if approved.Admitted != 0 && h.kick != nil {
+		if err := h.kick.KickNotice(r.Context(), approved.Admitted); err != nil {
+			h.logger.Warn("failed to kick the admitted notice; the sweep sends it",
+				"notice", approved.Admitted, "error", err)
+		}
 	}
 
 	h.logger.Info("channel sender approved",

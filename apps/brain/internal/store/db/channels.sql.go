@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createChannel = `-- name: CreateChannel :one
 INSERT INTO channels (team_id, provider, name, reply_url)
 VALUES ($1, $2, $3, $4)
-RETURNING id, team_id, provider, name, created_at, updated_at, reply_url
+RETURNING id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers
 `
 
 type CreateChannelParams struct {
@@ -41,6 +42,7 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReplyUrl,
+		&i.NotifyStrangers,
 	)
 	return i, err
 }
@@ -55,7 +57,7 @@ func (q *Queries) DeleteChannel(ctx context.Context, id uuid.UUID) error {
 }
 
 const getChannel = `-- name: GetChannel :one
-SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url
+SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url, c.notify_strangers
 FROM channels c
 JOIN teams t ON t.id = c.team_id
 WHERE c.id = $1 AND t.deleted_at IS NULL
@@ -74,12 +76,13 @@ func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (Channel, error)
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReplyUrl,
+		&i.NotifyStrangers,
 	)
 	return i, err
 }
 
 const listChannelsByTeam = `-- name: ListChannelsByTeam :many
-SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url,
+SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url, c.notify_strangers,
     latest.last_message_at,
     (SELECT count(*) FROM sessions s
      WHERE s.channel_id = c.id
@@ -150,6 +153,7 @@ func (q *Queries) ListChannelsByTeam(ctx context.Context, arg ListChannelsByTeam
 			&i.Channel.CreatedAt,
 			&i.Channel.UpdatedAt,
 			&i.Channel.ReplyUrl,
+			&i.Channel.NotifyStrangers,
 			&i.LastMessageAt,
 			&i.Sessions24h,
 		); err != nil {
@@ -163,21 +167,32 @@ func (q *Queries) ListChannelsByTeam(ctx context.Context, arg ListChannelsByTeam
 	return items, nil
 }
 
-const setChannelReplyURL = `-- name: SetChannelReplyURL :one
-UPDATE channels SET reply_url = $1
-WHERE id = $2 AND team_id = $3
-RETURNING id, team_id, provider, name, created_at, updated_at, reply_url
+const updateChannel = `-- name: UpdateChannel :one
+UPDATE channels
+SET reply_url = CASE WHEN $1::bool THEN $2 ELSE reply_url END,
+    notify_strangers = COALESCE($3::bool, notify_strangers)
+WHERE id = $4 AND team_id = $5
+RETURNING id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers
 `
 
-type SetChannelReplyURLParams struct {
-	ReplyUrl *string
-	ID       uuid.UUID
-	TeamID   uuid.UUID
+type UpdateChannelParams struct {
+	SetReplyUrl     bool
+	ReplyUrl        *string
+	NotifyStrangers pgtype.Bool
+	ID              uuid.UUID
+	TeamID          uuid.UUID
 }
 
-// Null stops replies from being sent; the ones already waiting fail.
-func (q *Queries) SetChannelReplyURL(ctx context.Context, arg SetChannelReplyURLParams) (Channel, error) {
-	row := q.db.QueryRow(ctx, setChannelReplyURL, arg.ReplyUrl, arg.ID, arg.TeamID)
+// Each field changes only when it was sent. A null reply_url stops replies
+// from being sent; the ones already waiting fail.
+func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (Channel, error) {
+	row := q.db.QueryRow(ctx, updateChannel,
+		arg.SetReplyUrl,
+		arg.ReplyUrl,
+		arg.NotifyStrangers,
+		arg.ID,
+		arg.TeamID,
+	)
 	var i Channel
 	err := row.Scan(
 		&i.ID,
@@ -187,6 +202,7 @@ func (q *Queries) SetChannelReplyURL(ctx context.Context, arg SetChannelReplyURL
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReplyUrl,
+		&i.NotifyStrangers,
 	)
 	return i, err
 }

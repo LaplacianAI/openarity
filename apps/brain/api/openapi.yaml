@@ -583,11 +583,18 @@ paths:
     patch:
       operationId: updateChannel
       tags: [channels]
-      summary: Set where a channel's replies go
+      summary: Change a channel's reply URL or its notices to strangers
       description: |
-        Requires `channel:write` in this team. `reply_url` is required: a URL
-        sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
-        with none fails rather than waiting for one.
+        Requires `channel:write` in this team. Send `reply_url`,
+        `notify_strangers` or both; what is not sent is left as it is.
+
+        `notify_strangers` switches the notices a sender nobody has let in
+        gets (see `Channel`). It is refused with 400 on a channel whose
+        provider sends none (`can_notify` false).
+
+        `reply_url`: a URL sets it, `null` or `""` clears it, and a reply
+        waiting to be sent to a channel with none fails rather than waiting
+        for one.
 
         The URL must be http or https with a host, and carry no credentials,
         query or fragment: every member can read it, and the receiver
@@ -616,8 +623,9 @@ paths:
                 $ref: "#/components/schemas/Channel"
         "400":
           description: |
-            The body is malformed or has no `reply_url`, the URL is refused,
-            or the channel's provider sends no replies.
+            The body is malformed or names nothing to change, the URL is
+            refused, the channel's provider sends no replies, or it sends no
+            notices and `notify_strangers` was sent.
           content:
             text/plain:
               schema:
@@ -3071,7 +3079,7 @@ components:
 
     Channel:
       type: object
-      required: [id, team_id, provider, name, can_reply, takes_reply_url]
+      required: [id, team_id, provider, name, can_reply, takes_reply_url, can_notify, notify_strangers]
       properties:
         id:
           type: string
@@ -3114,6 +3122,22 @@ components:
             posts to `reply_url`; `telegram` replies in the chat a message
             came from and takes none. Offer `reply_url` only when this is
             true; it is refused otherwise.
+        can_notify:
+          type: boolean
+          description: |
+            Whether this channel's provider tells a sender nobody has let in
+            that they are waiting, and later that they are in. `telegram`
+            does; `custom` does not. Offer `notify_strangers` only when this
+            is true; it is refused otherwise.
+        notify_strangers:
+          type: boolean
+          description: |
+            Whether this channel does. On by default where `can_notify`;
+            always false where it is not. A sender is told once per wait,
+            the first time they ask the bot (in a private chat, always; in a
+            group, by naming it, replying to it or sending it a command),
+            and told again when they are let in, if they were told they were
+            waiting. Nothing they wrote is stored.
         reply_url:
           type: string
           format: uri
@@ -3190,8 +3214,11 @@ components:
 
     UpdateChannelRequest:
       type: object
-      required: [reply_url]
+      minProperties: 1
       properties:
+        notify_strangers:
+          type: boolean
+          description: Whether the channel tells a sender nobody has let in that they are waiting, and that they are in
         reply_url:
           type: string
           format: uri

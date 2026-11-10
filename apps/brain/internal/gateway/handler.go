@@ -31,18 +31,26 @@ type Secrets interface {
 	Get(ctx context.Context, path, key string) (string, error)
 }
 
+// Kicker has a notice sent now rather than at the next sweep. A kick that
+// fails is only late: the sweep sends it within a minute.
+type Kicker interface {
+	KickNotice(ctx context.Context, noticeID int64) error
+}
+
 type handler struct {
 	logger  *slog.Logger
 	store   Store
 	secrets Secrets
+	reg     Registry
 	sink    Sink
 	ingest  *Ingest
+	kick    Kicker
 }
 
 func New(
-	logger *slog.Logger, s Store, sec Secrets, reg Registry, sink Sink, ingest *Ingest,
+	logger *slog.Logger, s Store, sec Secrets, reg Registry, sink Sink, ingest *Ingest, kick Kicker,
 ) *api.Router {
-	h := &handler{logger: logger, store: s, secrets: sec, sink: sink, ingest: ingest}
+	h := &handler{logger: logger, store: s, secrets: sec, reg: reg, sink: sink, ingest: ingest, kick: kick}
 
 	r := api.NewPublicRouter("/hooks")
 	for _, name := range reg.Names() {
@@ -97,7 +105,7 @@ func (h *handler) hook(p Provider, rt Route) http.HandlerFunc {
 			return
 		}
 
-		deliveries, err := h.resolve(r.Context(), channel.ID, result.Messages)
+		deliveries, err := h.resolve(r.Context(), p, channel, result.Messages)
 		if err != nil {
 			h.logger.Error("gateway: resolve senders", "channel_id", channel.ID, "error", err)
 			http.Error(w, "try again", http.StatusInternalServerError)
@@ -191,7 +199,9 @@ func (h *handler) credentials(
 	return creds, true
 }
 
-func (h *handler) resolve(ctx context.Context, channelID uuid.UUID, msgs []Inbound) ([]Delivery, error) {
+func (h *handler) resolve(ctx context.Context, p Provider, ch db.Channel, msgs []Inbound) ([]Delivery, error) {
+	channelID := ch.ID
+	_, notifies := h.reg.Notifier(p.Name())
 	deliveries := make([]Delivery, 0, len(msgs))
 	for _, in := range msgs {
 		if err := in.Validate(); err != nil {
@@ -205,6 +215,9 @@ func (h *handler) resolve(ctx context.Context, channelID uuid.UUID, msgs []Inbou
 			return nil, err
 		}
 		if !linked {
+			if notifies {
+				h.tellWaiting(ctx, ch, in)
+			}
 			continue
 		}
 		deliveries = append(deliveries, Delivery{Inbound: in, UserID: userID})
@@ -221,4 +234,23 @@ func ack(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(body)
+}
+
+// tellWaiting is best effort: a notice that could not be written is logged,
+// and the stranger stays queued, which is what they came for.
+func (h *handler) tellWaiting(ctx context.Context, ch db.Channel, in Inbound) {
+	id, ok, err := TellWaiting(ctx, h.store, ch, in)
+	switch {
+	case err != nil:
+		h.logger.Error("gateway: notice for a waiting sender", "channel_id", ch.ID, "error", err)
+		return
+	case !ok:
+		return
+	}
+	if h.kick == nil {
+		return
+	}
+	if err := h.kick.KickNotice(ctx, id); err != nil {
+		h.logger.Warn("gateway: kick a notice; the sweep sends it", "notice", id, "error", err)
+	}
 }

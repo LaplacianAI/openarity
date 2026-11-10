@@ -13,6 +13,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/server"
@@ -88,8 +89,9 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 
 	authorizer := authz.New(dbStore, cfg.SuperAdmins)
 	enqueuer := runtime.NewEnqueuer(runQueue)
-	routers := newRouters(cfg, logger, dbStore, authorizer, secretStore, secretWriter, registry, attachments, newImporter(cfg), newDiscoverer(cfg, secretStore), graphs, enqueuer)
-	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry, attachments, enqueuer)
+	notices := gateway.NewNoticeKicker(runQueue)
+	routers := newRouters(cfg, logger, dbStore, authorizer, secretStore, secretWriter, registry, attachments, newImporter(cfg), newDiscoverer(cfg, secretStore), graphs, enqueuer, notices)
+	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry, attachments, enqueuer, notices)
 
 	guard, err := newGuard(ctx, logger, dbStore, authorizer)
 	if err != nil {

@@ -3,9 +3,12 @@ INSERT INTO channels (team_id, provider, name, reply_url)
 VALUES (sqlc.arg('team_id'), sqlc.arg('provider'), sqlc.arg('name'), sqlc.narg('reply_url'))
 RETURNING *;
 
--- Null stops replies from being sent; the ones already waiting fail.
--- name: SetChannelReplyURL :one
-UPDATE channels SET reply_url = sqlc.narg('reply_url')
+-- Each field changes only when it was sent. A null reply_url stops replies
+-- from being sent; the ones already waiting fail.
+-- name: UpdateChannel :one
+UPDATE channels
+SET reply_url = CASE WHEN sqlc.arg('set_reply_url')::bool THEN sqlc.narg('reply_url') ELSE reply_url END,
+    notify_strangers = COALESCE(sqlc.narg('notify_strangers')::bool, notify_strangers)
 WHERE id = sqlc.arg('id') AND team_id = sqlc.arg('team_id')
 RETURNING *;
 

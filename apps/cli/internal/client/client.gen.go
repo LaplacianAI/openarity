@@ -533,6 +533,12 @@ type AuthConfigEnvironment string
 
 // Channel defines model for Channel.
 type Channel struct {
+	// CanNotify Whether this channel's provider tells a sender nobody has let in
+	// that they are waiting, and later that they are in. `telegram`
+	// does; `custom` does not. Offer `notify_strangers` only when this
+	// is true; it is refused otherwise.
+	CanNotify bool `json:"can_notify" yaml:"can_notify"`
+
 	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
@@ -555,6 +561,14 @@ type Channel struct {
 	//
 	// Examples: support-tickets
 	Name string `json:"name" yaml:"name"`
+
+	// NotifyStrangers Whether this channel does. On by default where `can_notify`;
+	// always false where it is not. A sender is told once per wait,
+	// the first time they ask the bot (in a private chat, always; in a
+	// group, by naming it, replying to it or sending it a command),
+	// and told again when they are let in, if they were told they were
+	// waiting. Nothing they wrote is stored.
+	NotifyStrangers bool `json:"notify_strangers" yaml:"notify_strangers"`
 
 	// Provider The adapter that parses this channel's webhooks, lower case and
 	// matched exactly: `custom` or `telegram`.
@@ -647,6 +661,12 @@ type CreateTeamRequest struct {
 
 // CreatedChannel defines model for CreatedChannel.
 type CreatedChannel struct {
+	// CanNotify Whether this channel's provider tells a sender nobody has let in
+	// that they are waiting, and later that they are in. `telegram`
+	// does; `custom` does not. Offer `notify_strangers` only when this
+	// is true; it is refused otherwise.
+	CanNotify bool `json:"can_notify" yaml:"can_notify"`
+
 	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
@@ -676,6 +696,14 @@ type CreatedChannel struct {
 	//
 	// Examples: support-tickets
 	Name string `json:"name" yaml:"name"`
+
+	// NotifyStrangers Whether this channel does. On by default where `can_notify`;
+	// always false where it is not. A sender is told once per wait,
+	// the first time they ask the bot (in a private chat, always; in a
+	// group, by naming it, replying to it or sending it a command),
+	// and told again when they are let in, if they were told they were
+	// waiting. Nothing they wrote is stored.
+	NotifyStrangers bool `json:"notify_strangers" yaml:"notify_strangers"`
 
 	// Provider The adapter that parses this channel's webhooks, lower case and
 	// matched exactly: `custom` or `telegram`.
@@ -800,6 +828,12 @@ type ListedAgent struct {
 // count only the sessions the caller may open: their own direct
 // sessions, and everyone's with `session:read_all`.
 type ListedChannel struct {
+	// CanNotify Whether this channel's provider tells a sender nobody has let in
+	// that they are waiting, and later that they are in. `telegram`
+	// does; `custom` does not. Offer `notify_strangers` only when this
+	// is true; it is refused otherwise.
+	CanNotify bool `json:"can_notify" yaml:"can_notify"`
+
 	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
@@ -825,6 +859,14 @@ type ListedChannel struct {
 	//
 	// Examples: support-tickets
 	Name string `json:"name" yaml:"name"`
+
+	// NotifyStrangers Whether this channel does. On by default where `can_notify`;
+	// always false where it is not. A sender is told once per wait,
+	// the first time they ask the bot (in a private chat, always; in a
+	// group, by naming it, replying to it or sending it a command),
+	// and told again when they are let in, if they were told they were
+	// waiting. Nothing they wrote is stored.
+	NotifyStrangers bool `json:"notify_strangers" yaml:"notify_strangers"`
 
 	// Provider The adapter that parses this channel's webhooks, lower case and
 	// matched exactly: `custom` or `telegram`.
@@ -1665,8 +1707,11 @@ type TeamSummary struct {
 
 // UpdateChannelRequest defines model for UpdateChannelRequest.
 type UpdateChannelRequest struct {
+	// NotifyStrangers Whether the channel tells a sender nobody has let in that they are waiting, and that they are in
+	NotifyStrangers *bool `json:"notify_strangers,omitempty" yaml:"notify_strangers,omitempty"`
+
 	// ReplyURL The URL replies go to; null or an empty string stops sending them
-	ReplyURL string `json:"reply_url" yaml:"reply_url"`
+	ReplyURL *string `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
 }
 
 // User defines model for User.
@@ -2357,11 +2402,18 @@ type ClientInterface interface {
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateChannelWithBody Set where a channel's replies go
+	// UpdateChannelWithBody Change a channel's reply URL or its notices to strangers
 	//
-	// Requires `channel:write` in this team. `reply_url` is required: a URL
-	// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
-	// with none fails rather than waiting for one.
+	// Requires `channel:write` in this team. Send `reply_url`,
+	// `notify_strangers` or both; what is not sent is left as it is.
+	//
+	// `notify_strangers` switches the notices a sender nobody has let in
+	// gets (see `Channel`). It is refused with 400 on a channel whose
+	// provider sends none (`can_notify` false).
+	//
+	// `reply_url`: a URL sets it, `null` or `""` clears it, and a reply
+	// waiting to be sent to a channel with none fails rather than waiting
+	// for one.
 	//
 	// The URL must be http or https with a host, and carry no credentials,
 	// query or fragment: every member can read it, and the receiver
@@ -2381,11 +2433,18 @@ type ClientInterface interface {
 	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
 	UpdateChannelWithBody(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateChannel Set where a channel's replies go
+	// UpdateChannel Change a channel's reply URL or its notices to strangers
 	//
-	// Requires `channel:write` in this team. `reply_url` is required: a URL
-	// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
-	// with none fails rather than waiting for one.
+	// Requires `channel:write` in this team. Send `reply_url`,
+	// `notify_strangers` or both; what is not sent is left as it is.
+	//
+	// `notify_strangers` switches the notices a sender nobody has let in
+	// gets (see `Channel`). It is refused with 400 on a channel whose
+	// provider sends none (`can_notify` false).
+	//
+	// `reply_url`: a URL sets it, `null` or `""` clears it, and a reply
+	// waiting to be sent to a channel with none fails rather than waiting
+	// for one.
 	//
 	// The URL must be http or https with a host, and carry no credentials,
 	// query or fragment: every member can read it, and the receiver
@@ -3631,11 +3690,18 @@ func (c *Client) DeleteChannel(ctx context.Context, id TeamID, channelID openapi
 	return c.Client.Do(req)
 }
 
-// UpdateChannelWithBody Set where a channel's replies go
+// UpdateChannelWithBody Change a channel's reply URL or its notices to strangers
 //
-// Requires `channel:write` in this team. `reply_url` is required: a URL
-// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
-// with none fails rather than waiting for one.
+// Requires `channel:write` in this team. Send `reply_url`,
+// `notify_strangers` or both; what is not sent is left as it is.
+//
+// `notify_strangers` switches the notices a sender nobody has let in
+// gets (see `Channel`). It is refused with 400 on a channel whose
+// provider sends none (`can_notify` false).
+//
+// `reply_url`: a URL sets it, `null` or `""` clears it, and a reply
+// waiting to be sent to a channel with none fails rather than waiting
+// for one.
 //
 // The URL must be http or https with a host, and carry no credentials,
 // query or fragment: every member can read it, and the receiver
@@ -3665,11 +3731,18 @@ func (c *Client) UpdateChannelWithBody(ctx context.Context, id TeamID, channelID
 	return c.Client.Do(req)
 }
 
-// UpdateChannel Set where a channel's replies go
+// UpdateChannel Change a channel's reply URL or its notices to strangers
 //
-// Requires `channel:write` in this team. `reply_url` is required: a URL
-// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
-// with none fails rather than waiting for one.
+// Requires `channel:write` in this team. Send `reply_url`,
+// `notify_strangers` or both; what is not sent is left as it is.
+//
+// `notify_strangers` switches the notices a sender nobody has let in
+// gets (see `Channel`). It is refused with 400 on a channel whose
+// provider sends none (`can_notify` false).
+//
+// `reply_url`: a URL sets it, `null` or `""` clears it, and a reply
+// waiting to be sent to a channel with none fails rather than waiting
+// for one.
 //
 // The URL must be http or https with a host, and carry no credentials,
 // query or fragment: every member can read it, and the receiver
@@ -8526,11 +8599,18 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteChannelResponse, error)
 
-	// UpdateChannelWithBodyWithResponse Set where a channel's replies go
+	// UpdateChannelWithBodyWithResponse Change a channel's reply URL or its notices to strangers
 	//
-	// Requires `channel:write` in this team. `reply_url` is required: a URL
-	// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
-	// with none fails rather than waiting for one.
+	// Requires `channel:write` in this team. Send `reply_url`,
+	// `notify_strangers` or both; what is not sent is left as it is.
+	//
+	// `notify_strangers` switches the notices a sender nobody has let in
+	// gets (see `Channel`). It is refused with 400 on a channel whose
+	// provider sends none (`can_notify` false).
+	//
+	// `reply_url`: a URL sets it, `null` or `""` clears it, and a reply
+	// waiting to be sent to a channel with none fails rather than waiting
+	// for one.
 	//
 	// The URL must be http or https with a host, and carry no credentials,
 	// query or fragment: every member can read it, and the receiver
@@ -8550,11 +8630,18 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
 	UpdateChannelWithBodyWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateChannelResponse, error)
 
-	// UpdateChannelWithResponse Set where a channel's replies go
+	// UpdateChannelWithResponse Change a channel's reply URL or its notices to strangers
 	//
-	// Requires `channel:write` in this team. `reply_url` is required: a URL
-	// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
-	// with none fails rather than waiting for one.
+	// Requires `channel:write` in this team. Send `reply_url`,
+	// `notify_strangers` or both; what is not sent is left as it is.
+	//
+	// `notify_strangers` switches the notices a sender nobody has let in
+	// gets (see `Channel`). It is refused with 400 on a channel whose
+	// provider sends none (`can_notify` false).
+	//
+	// `reply_url`: a URL sets it, `null` or `""` clears it, and a reply
+	// waiting to be sent to a channel with none fails rather than waiting
+	// for one.
 	//
 	// The URL must be http or https with a host, and carry no credentials,
 	// query or fragment: every member can read it, and the receiver
@@ -12595,11 +12682,18 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, id 
 	return ParseDeleteChannelResponse(rsp)
 }
 
-// UpdateChannelWithBodyWithResponse Set where a channel's replies go
+// UpdateChannelWithBodyWithResponse Change a channel's reply URL or its notices to strangers
 //
-// Requires `channel:write` in this team. `reply_url` is required: a URL
-// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
-// with none fails rather than waiting for one.
+// Requires `channel:write` in this team. Send `reply_url`,
+// `notify_strangers` or both; what is not sent is left as it is.
+//
+// `notify_strangers` switches the notices a sender nobody has let in
+// gets (see `Channel`). It is refused with 400 on a channel whose
+// provider sends none (`can_notify` false).
+//
+// `reply_url`: a URL sets it, `null` or `""` clears it, and a reply
+// waiting to be sent to a channel with none fails rather than waiting
+// for one.
 //
 // The URL must be http or https with a host, and carry no credentials,
 // query or fragment: every member can read it, and the receiver
@@ -12625,11 +12719,18 @@ func (c *ClientWithResponses) UpdateChannelWithBodyWithResponse(ctx context.Cont
 	return ParseUpdateChannelResponse(rsp)
 }
 
-// UpdateChannelWithResponse Set where a channel's replies go
+// UpdateChannelWithResponse Change a channel's reply URL or its notices to strangers
 //
-// Requires `channel:write` in this team. `reply_url` is required: a URL
-// sets it, `null` or `""` clears it, and a reply waiting to be sent to a channel
-// with none fails rather than waiting for one.
+// Requires `channel:write` in this team. Send `reply_url`,
+// `notify_strangers` or both; what is not sent is left as it is.
+//
+// `notify_strangers` switches the notices a sender nobody has let in
+// gets (see `Channel`). It is refused with 400 on a channel whose
+// provider sends none (`can_notify` false).
+//
+// `reply_url`: a URL sets it, `null` or `""` clears it, and a reply
+// waiting to be sent to a channel with none fails rather than waiting
+// for one.
 //
 // The URL must be http or https with a host, and carry no credentials,
 // query or fragment: every member can read it, and the receiver

@@ -122,6 +122,13 @@ channel and drops the message: nothing they wrote is stored, and nothing
 reaches an agent. Their display name is text they chose, so it is shown as
 data.
 
+On a Telegram channel the sender is told so, in the chat: "I can't answer you
+yet: someone on the team has to let you in first. I'll tell you here when they
+have." It is said once, the first time they ask the bot (in a private chat,
+always; in a group, by naming it, replying to it or sending it a command), and
+quotes their message. In a group it tags them by name, so nobody else takes it
+as theirs. Their message is still not stored.
+
 A person with the right to approve binds the sender to a member of the team.
 From then on the sender's messages are theirs, and run as that member.
 
@@ -131,6 +138,13 @@ oa channels senders approve platform support u-17 erik@example.com
 oa channels senders list platform support
 oa channels senders remove platform support u-17
 ```
+
+When they are let in, the bot says so in the same place and asks them to send
+their message again, since the first was never kept. A sender who was never
+told they were waiting is not told they are in. Both messages are retried like
+a reply, and both are off with `oa channels update <team> <channel>
+--no-notify-strangers`, or **Waiting senders** in the channel's sheet. Needs
+`channel:write`. `custom` channels send neither.
 
 In the dashboard this is **Approvals**: the people waiting across every
 channel, the longest first, each with a **Let in** action, and a **Let in** tab

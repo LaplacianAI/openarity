@@ -19,13 +19,29 @@ WITH linked AS (
     ON CONFLICT (channel_id, sender_ref) DO UPDATE SET user_id = EXCLUDED.user_id
     WHERE channel_senders.user_id IS NOT DISTINCT FROM $4::uuid
     RETURNING 1
+), admitted AS (
+    -- Every CTE reads the snapshot the statement started with, so this sees
+    -- the pending row the dequeue below deletes. "You're in" goes only to a
+    -- sender who was told they were waiting, where they were told, and only
+    -- while the channel still sends notices.
+    INSERT INTO notices (team_id, channel_id, sender_ref, sender_name, session_ref, session_kind, kind)
+    SELECT c.team_id, p.channel_id, p.sender_ref, p.sender_name,
+           p.notice_session_ref, p.notice_session_kind, 'admitted'
+    FROM pending_senders p
+    JOIN channels c ON c.id = p.channel_id
+    WHERE p.channel_id = $1
+      AND p.sender_ref = $2
+      AND p.notified_at IS NOT NULL
+      AND c.notify_strangers
+      AND EXISTS (SELECT 1 FROM linked)
+    RETURNING id
 ), dequeued AS (
     DELETE FROM pending_senders
     WHERE pending_senders.channel_id = $1
       AND pending_senders.sender_ref = $2
       AND EXISTS (SELECT 1 FROM linked)
 )
-SELECT count(*) FROM linked
+SELECT (SELECT count(*) FROM linked) AS linked, COALESCE((SELECT id FROM admitted), 0)::bigint AS admitted
 `
 
 type ApproveSenderParams struct {
@@ -33,6 +49,11 @@ type ApproveSenderParams struct {
 	SenderRef      string
 	UserID         uuid.UUID
 	ExpectedHolder *uuid.UUID
+}
+
+type ApproveSenderRow struct {
+	Linked   int64
+	Admitted int64
 }
 
 // ApproveSender links a sender to a user and takes them out of the queue.
@@ -53,17 +74,18 @@ type ApproveSenderParams struct {
 // checked. ON CONFLICT re-reads the row it locked, so a holder changed by a
 // transaction that committed first is seen, and the WHERE refuses the update.
 // The dequeue runs only when the link did, so a refusal changes nothing.
-// Returns how many bindings were written: 0 is a 409, never a success.
-func (q *Queries) ApproveSender(ctx context.Context, arg ApproveSenderParams) (int64, error) {
+// Returns how many bindings were written: 0 is a 409, never a success; and
+// the "you're in" notice it wrote, if any, for the caller to kick.
+func (q *Queries) ApproveSender(ctx context.Context, arg ApproveSenderParams) (ApproveSenderRow, error) {
 	row := q.db.QueryRow(ctx, approveSender,
 		arg.ChannelID,
 		arg.SenderRef,
 		arg.UserID,
 		arg.ExpectedHolder,
 	)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	var i ApproveSenderRow
+	err := row.Scan(&i.Linked, &i.Admitted)
+	return i, err
 }
 
 const countPendingSenders = `-- name: CountPendingSenders :one
@@ -174,7 +196,7 @@ func (q *Queries) ListChannelSenders(ctx context.Context, arg ListChannelSenders
 }
 
 const listPendingSenders = `-- name: ListPendingSenders :many
-SELECT channel_id, sender_ref, sender_name, first_seen, last_seen, seen_count FROM pending_senders
+SELECT channel_id, sender_ref, sender_name, first_seen, last_seen, seen_count, notified_at, notice_session_ref, notice_session_kind, notice_message_ref FROM pending_senders
 WHERE channel_id = $1
   AND (NOT $2::bool
    OR (first_seen, sender_ref) < ($3::timestamptz, $4::text))
@@ -212,6 +234,10 @@ func (q *Queries) ListPendingSenders(ctx context.Context, arg ListPendingSenders
 			&i.FirstSeen,
 			&i.LastSeen,
 			&i.SeenCount,
+			&i.NotifiedAt,
+			&i.NoticeSessionRef,
+			&i.NoticeSessionKind,
+			&i.NoticeMessageRef,
 		); err != nil {
 			return nil, err
 		}
@@ -224,7 +250,7 @@ func (q *Queries) ListPendingSenders(ctx context.Context, arg ListPendingSenders
 }
 
 const listTeamPendingSenders = `-- name: ListTeamPendingSenders :many
-SELECT p.channel_id, p.sender_ref, p.sender_name, p.first_seen, p.last_seen, p.seen_count, c.name AS channel_name, c.provider AS channel_provider
+SELECT p.channel_id, p.sender_ref, p.sender_name, p.first_seen, p.last_seen, p.seen_count, p.notified_at, p.notice_session_ref, p.notice_session_kind, p.notice_message_ref, c.name AS channel_name, c.provider AS channel_provider
 FROM pending_senders p
 JOIN channels c ON c.id = p.channel_id
 WHERE c.team_id = $1
@@ -278,6 +304,10 @@ func (q *Queries) ListTeamPendingSenders(ctx context.Context, arg ListTeamPendin
 			&i.PendingSender.FirstSeen,
 			&i.PendingSender.LastSeen,
 			&i.PendingSender.SeenCount,
+			&i.PendingSender.NotifiedAt,
+			&i.PendingSender.NoticeSessionRef,
+			&i.PendingSender.NoticeSessionKind,
+			&i.PendingSender.NoticeMessageRef,
 			&i.ChannelName,
 			&i.ChannelProvider,
 		); err != nil {
@@ -289,6 +319,55 @@ func (q *Queries) ListTeamPendingSenders(ctx context.Context, arg ListTeamPendin
 		return nil, err
 	}
 	return items, nil
+}
+
+const noteWaitingSender = `-- name: NoteWaitingSender :one
+WITH due AS (
+    UPDATE pending_senders
+    SET notified_at         = now(),
+        notice_session_ref  = $2::text,
+        notice_session_kind = $3::text,
+        notice_message_ref  = $4::text
+    WHERE channel_id = $5::uuid
+      AND sender_ref = $6::text
+      AND notified_at IS NULL
+    RETURNING channel_id, sender_ref, sender_name
+)
+INSERT INTO notices (team_id, channel_id, sender_ref, sender_name, session_ref, session_kind, in_reply_to, kind)
+SELECT $1::uuid, d.channel_id, d.sender_ref, d.sender_name,
+       $2::text, $3::text, $4::text, 'waiting'
+FROM due d
+RETURNING id
+`
+
+type NoteWaitingSenderParams struct {
+	TeamID      uuid.UUID
+	SessionRef  string
+	SessionKind string
+	MessageRef  string
+	ChannelID   uuid.UUID
+	SenderRef   string
+}
+
+// NoteWaitingSender tells a waiting sender once per wait: it marks the pending
+// row and writes the notice in one statement, so two messages arriving at once
+// make one notice. The UPDATE's WHERE is re-checked against the row the first
+// statement committed, and the second finds notified_at set. Where to answer
+// is the provider's ids only. The caller decides the notice is wanted: the
+// message asked the bot, the channel allows notices, its provider sends them.
+// Returns the notice's id, or no rows when the sender was already told.
+func (q *Queries) NoteWaitingSender(ctx context.Context, arg NoteWaitingSenderParams) (int64, error) {
+	row := q.db.QueryRow(ctx, noteWaitingSender,
+		arg.TeamID,
+		arg.SessionRef,
+		arg.SessionKind,
+		arg.MessageRef,
+		arg.ChannelID,
+		arg.SenderRef,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const recordPendingSender = `-- name: RecordPendingSender :execrows

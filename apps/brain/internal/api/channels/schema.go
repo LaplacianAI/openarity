@@ -19,6 +19,11 @@ type channel struct {
 	// TakesReplyURL is whether replies go to an address the channel names.
 	// Telegram replies in the chat itself, so it can reply and takes none.
 	TakesReplyURL bool `json:"takes_reply_url"`
+	// CanNotify is whether the provider tells a sender nobody has let in
+	// that they are waiting, and later that they are in.
+	CanNotify bool `json:"can_notify"`
+	// NotifyStrangers is whether this channel does; false where it cannot.
+	NotifyStrangers bool `json:"notify_strangers"`
 }
 
 // listedChannel is a row of the channels list: the channel, and how recently
@@ -40,8 +45,10 @@ type createRequest struct {
 	Credentials map[string]string `json:"credentials,omitempty"`
 }
 
+// updateRequest changes what it names and nothing else.
 type updateRequest struct {
-	ReplyURL nullableString `json:"reply_url"`
+	ReplyURL        nullableString `json:"reply_url"`
+	NotifyStrangers *bool          `json:"notify_strangers"`
 }
 
 type created struct {

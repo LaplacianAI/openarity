@@ -81,13 +81,14 @@ type Attachment struct {
 }
 
 type Channel struct {
-	ID        uuid.UUID
-	TeamID    uuid.UUID
-	Provider  string
-	Name      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	ReplyUrl  *string
+	ID              uuid.UUID
+	TeamID          uuid.UUID
+	Provider        string
+	Name            string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	ReplyUrl        *string
+	NotifyStrangers bool
 }
 
 type ChannelSender struct {
@@ -162,13 +163,35 @@ type Message struct {
 	SessionID  uuid.UUID
 }
 
+type Notice struct {
+	ID            int64
+	TeamID        uuid.UUID
+	ChannelID     uuid.UUID
+	SenderRef     string
+	SenderName    string
+	SessionRef    string
+	SessionKind   string
+	InReplyTo     string
+	Kind          string
+	Status        string
+	Attempts      int32
+	LastError     *string
+	NextAttemptAt time.Time
+	CreatedAt     time.Time
+	SentAt        *time.Time
+}
+
 type PendingSender struct {
-	ChannelID  uuid.UUID
-	SenderRef  string
-	SenderName string
-	FirstSeen  time.Time
-	LastSeen   time.Time
-	SeenCount  int32
+	ChannelID         uuid.UUID
+	SenderRef         string
+	SenderName        string
+	FirstSeen         time.Time
+	LastSeen          time.Time
+	SeenCount         int32
+	NotifiedAt        *time.Time
+	NoticeSessionRef  *string
+	NoticeSessionKind *string
+	NoticeMessageRef  *string
 }
 
 type Permission struct {
