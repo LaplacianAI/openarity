@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpservers"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -43,12 +44,15 @@ type Proposals interface {
 // and a proposal recorded. It writes nothing to the team; a person applies a
 // proposal, as themselves.
 type Workshop struct {
-	store Store
-	loops []string
+	store      Store
+	discoverer mcpservers.Discoverer
+	loops      []string
 }
 
-func NewWorkshop(s Store, loops []string) *Workshop {
-	return &Workshop{store: s, loops: loops}
+// NewWorkshop takes the discoverer ToolsOf asks; nil, and the builder cannot
+// ask a server for its tools.
+func NewWorkshop(s Store, d mcpservers.Discoverer, loops []string) *Workshop {
+	return &Workshop{store: s, discoverer: d, loops: loops}
 }
 
 // teamView is the team as the builder reads it.
@@ -377,7 +381,7 @@ func (h *handler) applyProposal(w http.ResponseWriter, r *http.Request) {
 	if h.writeFailed(w, u, err) {
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, applied{Changes: p.Changes})
+	api.WriteJSON(w, h.logger, http.StatusOK, h.applied(r.Context(), &p))
 }
 
 // writeFailed answers a failed apply the way the blueprint apply does: a

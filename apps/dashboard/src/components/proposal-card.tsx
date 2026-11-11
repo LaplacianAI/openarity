@@ -5,16 +5,17 @@
  * the new plan is shown and nothing is written.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleCheck, History } from "lucide-react";
+import { CircleCheck, Globe, History, KeyRound } from "lucide-react";
 import { useState } from "react";
 
 import { type Applied, applyProposal, getProposal } from "@/api";
 import { ApiError } from "@/api/client";
-import type { BlueprintChange, BlueprintPlan, Proposal } from "@/api/types";
+import type { BlueprintPlan, Proposal } from "@/api/types";
 import { AppliedView, PlanView } from "@/components/blueprint-plan";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { tally } from "@/lib/blueprint";
+import { type Needs, needsOf } from "@/lib/build";
 
 export function ProposalCard({
   teamId,
@@ -49,7 +50,9 @@ const appliedKey = (teamId: string, id: string) => ["applied", teamId, id];
 
 function AppliedProposal({ teamId, proposal }: { teamId: string; proposal: Proposal }) {
   const qc = useQueryClient();
-  const changes = qc.getQueryData<BlueprintChange[]>(appliedKey(teamId, proposal.id));
+  const out = qc.getQueryData<Extract<Applied, { kind: "applied" }>>(
+    appliedKey(teamId, proposal.id),
+  );
   return (
     <Frame
       label="Proposal · applied"
@@ -57,7 +60,7 @@ function AppliedProposal({ teamId, proposal }: { teamId: string; proposal: Propo
       icon={<CircleCheck aria-hidden className="size-4" />}
     >
       <p className="text-sm">{proposal.summary}</p>
-      {changes ? <AppliedView changes={changes} /> : null}
+      {out ? <AppliedView changes={out.changes} discovered={out.discovered} /> : null}
     </Frame>
   );
 }
@@ -85,7 +88,7 @@ function OpenProposal({
     mutationFn: (digest: string) => applyProposal(teamId, proposal.id, digest),
     onSuccess: (out) => {
       if (out.kind === "applied") {
-        qc.setQueryData(appliedKey(teamId, proposal.id), out.changes);
+        qc.setQueryData(appliedKey(teamId, proposal.id), out);
         setDone(out);
         for (const key of ["agents", "mcp-servers", "skills", "summary", "graph"]) {
           void qc.invalidateQueries({ queryKey: [key, teamId] });
@@ -111,6 +114,7 @@ function OpenProposal({
     ? plan.refusals.length === 0 && (counts?.create ?? 0) + (counts?.update ?? 0) > 0
     : false;
   const gone = apply.error instanceof ApiError && apply.error.status === 409;
+  const needs = plan ? needsOf(read.data?.blueprint, plan) : null;
 
   return (
     <Frame label="Proposal · open" tone="open">
@@ -125,6 +129,7 @@ function OpenProposal({
       ) : plan ? (
         <PlanView plan={plan} note={newer?.why} />
       ) : null}
+      {needs ? <NeedsView needs={needs} /> : null}
       {plan && counts ? (
         <p className="text-xs text-muted-foreground">
           {counts.create} to create, {counts.update} to change
@@ -154,6 +159,55 @@ function OpenProposal({
         ) : null}
       </div>
     </Frame>
+  );
+}
+
+/**
+ * What applying asks of the person besides the click: the secrets the
+ * servers name, and the hosts the team's agents would newly be sent to. A
+ * builder that read a page could have been steered to a host, so each new
+ * one is named for the person to recognise.
+ */
+function NeedsView({ needs }: { needs: Needs }) {
+  if (needs.secrets.length === 0 && needs.addresses.length === 0) return null;
+  return (
+    <section aria-labelledby="needs-heading" className="space-y-2 text-sm">
+      <h3 id="needs-heading" className="font-medium">
+        Needs from you
+      </h3>
+      {needs.secrets.length > 0 ? (
+        <div className="flex gap-2">
+          <KeyRound aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <p>
+            Write {needs.secrets.length === 1 ? "this secret" : "these secrets"} to the team's MCP
+            secrets in the secret store, or the servers that name them get no tools:{" "}
+            {needs.secrets.map((ref, i) => (
+              <span key={ref}>
+                {i > 0 ? ", " : ""}
+                <code className="font-mono text-xs">{ref}</code>
+              </span>
+            ))}
+            .
+          </p>
+        </div>
+      ) : null}
+      {needs.addresses.length > 0 ? (
+        <div className="flex gap-2">
+          <Globe aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div>
+            <p>Agents will be sent to these addresses. Apply only if you recognise them:</p>
+            <ul className="mt-1 space-y-0.5">
+              {needs.addresses.map((a) => (
+                <li key={a.server}>
+                  <span className="font-medium">{a.server}</span>{" "}
+                  <code className="font-mono text-xs">{a.host}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      ) : null}
+    </section>
   );
 }
 

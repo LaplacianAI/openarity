@@ -663,6 +663,11 @@ type BlueprintAgent struct {
 // BlueprintApplied defines model for BlueprintApplied.
 type BlueprintApplied struct {
 	Changes []BlueprintChange `json:"changes" yaml:"changes"`
+
+	// Discovered Each MCP server the apply created or changed, asked for its tools
+	// once the write committed, so an agent granted them can use them at
+	// once. A server that could not be asked says why; the apply stands.
+	Discovered []BlueprintDiscovered `json:"discovered" yaml:"discovered"`
 }
 
 // BlueprintApply defines model for BlueprintApply.
@@ -695,6 +700,14 @@ type BlueprintChangeAction string
 
 // BlueprintChangeKind defines model for BlueprintChange.Kind.
 type BlueprintChangeKind string
+
+// BlueprintDiscovered defines model for BlueprintDiscovered.
+type BlueprintDiscovered struct {
+	// Error Why the server has no tools yet, such as a secret not set; discover it again once fixed
+	Error  *string  `json:"error,omitempty" yaml:"error,omitempty"`
+	Server string   `json:"server" yaml:"server"`
+	Tools  []string `json:"tools" yaml:"tools"`
+}
 
 // BlueprintMCPServer An MCP server as the MCP server API takes it, with each secret reference relative to the team.
 type BlueprintMCPServer struct {

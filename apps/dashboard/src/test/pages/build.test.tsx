@@ -83,7 +83,12 @@ function conversation(
     [RUNS]: { body: { items: [answered, asked] } },
     [PROPOSALS]: { body: { items: [proposal] } },
     [PROPOSAL]: { body: { ...proposal, plan } },
-    [APPLY]: { body: { changes: [{ kind: "agent", name: "triage", action: "create", id: "a9" }] } },
+    [APPLY]: {
+      body: {
+        changes: [{ kind: "agent", name: "triage", action: "create", id: "a9" }],
+        discovered: [],
+      },
+    },
     ...over,
   });
 }
@@ -112,7 +117,13 @@ describe("the builder's conversation", () => {
       [APPLY]: () => {
         applied = true;
         return {
-          body: { changes: [{ kind: "agent", name: "triage", action: "create", id: "a9" }] },
+          body: {
+            changes: [
+              { kind: "agent", name: "triage", action: "create", id: "a9" },
+              { kind: "mcp_server", name: "billing", action: "create", id: "m9" },
+            ],
+            discovered: [{ server: "billing", tools: ["refund", "charge"] }],
+          },
         };
       },
       [PROPOSALS]: () => ({
@@ -129,11 +140,53 @@ describe("the builder's conversation", () => {
     await waitFor(() =>
       expect(seen.filter((s) => s.path.includes("/proposals?")).length).toBeGreaterThan(1),
     );
-    expect(
-      within(screen.getByRole("region", { name: "Proposal · applied" })).getByText("triage"),
-    ).toBeInTheDocument();
+    const kept = screen.getByRole("region", { name: "Proposal · applied" });
+    expect(within(kept).getByText("triage")).toBeInTheDocument();
+    expect(within(kept).getByText("2 tools discovered")).toBeInTheDocument();
     const sent = seen.find((s) => s.method === "POST" && s.path.endsWith("/proposals/p1/apply"));
     expect(JSON.parse(String(sent?.body))).toEqual({ plan_digest: "sha256:mine" });
+  });
+
+  it("names the secrets to set and each new address before Apply", async () => {
+    conversation({
+      [PROPOSAL]: {
+        body: {
+          ...proposal,
+          blueprint: {
+            mcp_servers: [
+              {
+                name: "billing",
+                url: "https://mcp.billing.example/mcp",
+                auth_secret: "billing#token",
+              },
+              { name: "files", command: ["npx", "files-mcp"], env: { KEY: "files#key" } },
+              {
+                name: "helpdesk",
+                url: "https://helpdesk.example/mcp",
+                auth_secret: "helpdesk#token",
+              },
+            ],
+          },
+          plan: {
+            ...plan,
+            changes: [
+              { kind: "mcp_server", name: "billing", action: "create" },
+              { kind: "mcp_server", name: "files", action: "create" },
+              { kind: "mcp_server", name: "helpdesk", action: "unchanged", id: "m1" },
+            ],
+          },
+        },
+      },
+    });
+    at(`/ui/build?session=${SESSION}`);
+
+    const needs = await screen.findByRole("region", { name: "Needs from you" });
+    expect(within(needs).getByText("billing#token")).toBeInTheDocument();
+    expect(within(needs).getByText("files#key")).toBeInTheDocument();
+    expect(within(needs).getByText("mcp.billing.example")).toBeInTheDocument();
+    // A server the plan leaves alone asks nothing new.
+    expect(within(needs).queryByText("helpdesk#token")).not.toBeInTheDocument();
+    expect(within(needs).queryByText("helpdesk.example")).not.toBeInTheDocument();
   });
 
   it("offers no Apply for a plan with a refusal, and shows why", async () => {

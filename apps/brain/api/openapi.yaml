@@ -4708,12 +4708,34 @@ components:
 
     BlueprintApplied:
       type: object
-      required: [changes]
+      required: [changes, discovered]
       properties:
         changes:
           type: array
           items:
             $ref: "#/components/schemas/BlueprintChange"
+        discovered:
+          type: array
+          description: |
+            Each MCP server the apply created or changed, asked for its tools
+            once the write committed, so an agent granted them can use them at
+            once. A server that could not be asked says why; the apply stands.
+          items:
+            $ref: "#/components/schemas/BlueprintDiscovered"
+
+    BlueprintDiscovered:
+      type: object
+      required: [server, tools]
+      properties:
+        server:
+          type: string
+        tools:
+          type: array
+          items:
+            type: string
+        error:
+          type: string
+          description: Why the server has no tools yet, such as a secret not set; discover it again once fixed
 
     AgentPage:
       type: object

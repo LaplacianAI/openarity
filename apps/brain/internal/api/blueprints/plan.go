@@ -58,7 +58,8 @@ type planned struct {
 	servers []serverStep
 	skills  []skillStep
 	agents  []agentStep
-	refused map[Kind]bool // a missing permission, said once per kind
+	refused map[Kind]bool  // a missing permission, said once per kind
+	written []db.McpServer // the servers an apply wrote, as written
 }
 
 type serverStep struct {

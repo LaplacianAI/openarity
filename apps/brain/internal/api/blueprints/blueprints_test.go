@@ -40,6 +40,10 @@ type world struct {
 	failOn string
 	// user is who calls; a fresh id when unset.
 	user uuid.UUID
+	// refresh answers for the servers an apply wrote.
+	refresh fakeRefresher
+	// probe answers the builder's list_mcp_tools.
+	probe fakeDiscoverer
 }
 
 func newWorld(t *testing.T) *world {
@@ -210,7 +214,7 @@ func (w *world) serve(t *testing.T, req *http.Request) *httptest.ResponseRecorde
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mux := http.NewServeMux()
-	New(logger, w, w.authz, &w.objects, loops).Register(mux, api.NewGuard(rs, w.authz, liveTeams{}, logger))
+	New(logger, w, w.authz, &w.objects, &w.refresh, loops).Register(mux, api.NewGuard(rs, w.authz, liveTeams{}, logger))
 
 	req = req.WithContext(auth.WithUser(req.Context(), &auth.User{
 		ID: w.caller(), Issuer: "dev", Subject: "someone",

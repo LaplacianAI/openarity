@@ -52,10 +52,11 @@ type handler struct {
 	authz   api.Authorizer
 	objects skills.Objects
 	loops   []string
+	refresh Refresher
 }
 
-func New(logger *slog.Logger, s Store, a api.Authorizer, o skills.Objects, loops []string) *api.Router {
-	h := &handler{logger: logger, store: s, authz: a, objects: o, loops: loops}
+func New(logger *slog.Logger, s Store, a api.Authorizer, o skills.Objects, rf Refresher, loops []string) *api.Router {
+	h := &handler{logger: logger, store: s, authz: a, objects: o, refresh: rf, loops: loops}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/blueprint", h.export)
@@ -127,7 +128,7 @@ func (h *handler) apply(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to apply blueprint", err)
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, applied{Changes: p.Changes})
+	api.WriteJSON(w, h.logger, http.StatusOK, h.applied(r.Context(), &p))
 }
 
 func withinLimits(w http.ResponseWriter, bp Blueprint) bool {
@@ -182,6 +183,7 @@ func (h *handler) write(ctx context.Context, teamID uuid.UUID, p *planned, also 
 	}
 
 	return h.store.InTx(ctx, func(q Queries) error {
+		p.written = nil
 		if err := writeServers(ctx, q, teamID, p, ids); err != nil {
 			return err
 		}
@@ -218,8 +220,15 @@ func writeServers(ctx context.Context, q Queries, teamID uuid.UUID, p *planned, 
 			return err
 		}
 		p.made(s.change, row.ID, ids)
+		p.written = append(p.written, row)
 	}
 	return nil
+}
+
+// applied is what an apply answers once it has committed: what it changed,
+// and what the servers it wrote said their tools are.
+func (h *handler) applied(ctx context.Context, p *planned) applied {
+	return applied{Changes: p.Changes, Discovered: discoverWritten(ctx, h.logger, h.refresh, p.written)}
 }
 
 func writeSkills(ctx context.Context, q Queries, teamID uuid.UUID, p *planned, keys [][]string, ids map[Kind]map[string]uuid.UUID) error {

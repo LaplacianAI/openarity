@@ -33,13 +33,13 @@ type Store interface {
 }
 
 type handler struct {
-	logger     *slog.Logger
-	store      Store
-	discoverer Discoverer
+	logger    *slog.Logger
+	store     Store
+	refresher *Refresher
 }
 
 func New(logger *slog.Logger, s Store, d Discoverer) *api.Router {
-	h := &handler{logger: logger, store: s, discoverer: d}
+	h := &handler{logger: logger, store: s, refresher: NewRefresher(logger, d, s)}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/mcp-servers", h.list)

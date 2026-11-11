@@ -15,7 +15,7 @@ import {
   planBlueprint,
 } from "@/api";
 import { useCurrentTeam } from "@/api/session";
-import type { Agent, Blueprint, BlueprintChange, BlueprintPlan, MCPServer } from "@/api/types";
+import type { Agent, Blueprint, BlueprintPlan, MCPServer } from "@/api/types";
 import { AgentForm } from "@/components/agent-form";
 import { AppliedView, PlanView } from "@/components/blueprint-plan";
 import { Picker, type SearchResult } from "@/components/picker";
@@ -95,7 +95,7 @@ function Composer({ teamId }: { teamId: string }) {
   const qc = useQueryClient();
   const [items, setItems] = useState<Item[]>([]);
   const [shown, setShown] = useState<Shown | null>(null);
-  const [applied, setApplied] = useState<BlueprintChange[] | null>(null);
+  const [applied, setApplied] = useState<Extract<Applied, { kind: "applied" }> | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [choosing, setChoosing] = useState(false);
@@ -144,7 +144,7 @@ function Composer({ teamId }: { teamId: string }) {
         const t = tally(out.changes);
         setItems([]);
         setShown(null);
-        setApplied(out.changes);
+        setApplied(out);
         for (const key of ["agents", "skills", "servers", "mcp-servers", "summary", "graph"]) {
           void qc.invalidateQueries({ queryKey: [key, teamId] });
         }
@@ -263,7 +263,7 @@ function Composer({ teamId }: { teamId: string }) {
       </section>
 
       {shown ? <PlanView plan={shown.plan} note={shown.note} /> : null}
-      {applied ? <AppliedView changes={applied} /> : null}
+      {applied ? <AppliedView changes={applied.changes} discovered={applied.discovered} /> : null}
 
       <SaveBar
         status={

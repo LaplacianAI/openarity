@@ -51,12 +51,20 @@ type Builder struct {
 	fetch          *FetchDeps
 	delegates      *DelegateDeps
 	workshop       Workshop
+	registry       Registry
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 }
 
 func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps, search *SearchDeps, fetch *FetchDeps) *Builder {
 	return &Builder{store: s, objects: o, mcp: m, graph: g, search: search, fetch: fetch, connectTimeout: connectTimeout}
+}
+
+// WithRegistry lets builder runs look MCP servers up. Without one, they have
+// no find_mcp_servers.
+func (b *Builder) WithRegistry(r Registry) *Builder {
+	b.registry = r
+	return b
 }
 
 // WithWorkshop gives builder runs their reach. Without one, a builder run
@@ -103,7 +111,8 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	built := Built{Spec: specOf(a), Agent: a.Name}
 	built.Spec.Session = session
 
-	web := run.Hub || a.Web
+	// The builder reads the web for servers' docs and a skill's source.
+	web := run.Hub || a.Web || run.Builder
 	if a.ID != uuid.Nil {
 		built.Spec.Tools, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, web, &built)
 		if err != nil {

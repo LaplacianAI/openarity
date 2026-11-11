@@ -757,8 +757,20 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   written, so a second apply leaves no outbox row and no `updated_at` moved.
 - **The builder proposes; only a person applies.** A builder run is the
   team's built-in builder (`runs.builder`), never also the hub, and its tools
-  are `graph`, `team` and `propose`: no write, delegate, web, MCP or skill,
-  so text it reads can change what it proposes but never the team. `propose`
+  are `graph`, `team`, `find_mcp_servers`, `list_mcp_tools`, `propose` and the
+  web tools: no write, delegate, MCP tool call or skill, so text it reads can
+  change what it proposes but never the team. A person reads every proposal,
+  so the web is worth its injection risk here; the card names each new host.
+- **`list_mcp_tools` sends a secret only where the team already does.** It
+  discovers a server that need not be the team's, so a reference is sent only
+  when the team has a server at that exact URL with that exact secret.
+  Otherwise a page the builder read could name a host and a team secret, and
+  the brain would carry the token there itself.
+- **An apply discovers what it wrote, after it commits.** Each created or
+  changed server is asked for its tools through the MCP servers' own
+  `Refresher`, four at a time, on a context the caller cannot cancel. A
+  failure is recorded on the server and reported in `discovered`; it never
+  undoes the apply, which is already the team's. `propose`
   plans without permissions and records the blueprint with that plan; reading
   an open proposal plans it again as the reader, and applying it is the
   blueprint apply as the caller, with the proposal marked applied in the same

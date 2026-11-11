@@ -26,6 +26,19 @@ type fakeWorkshop struct {
 	summaries []string
 	result    Proposal
 	err       error
+	// asked is each list_mcp_tools call: its url and secret.
+	asked    []string
+	tools    []ServerTool
+	toolsErr error
+}
+
+func (w *fakeWorkshop) ToolsOf(_ context.Context, _ uuid.UUID, url string, authSecret *string) ([]ServerTool, error) {
+	ref := ""
+	if authSecret != nil {
+		ref = *authSecret
+	}
+	w.asked = append(w.asked, url+" "+ref)
+	return w.tools, w.toolsErr
 }
 
 func (w *fakeWorkshop) Team(context.Context, uuid.UUID) (string, error) { return w.team, w.teamErr }
@@ -37,7 +50,8 @@ func (w *fakeWorkshop) Propose(_ context.Context, _ db.Run, bp json.RawMessage, 
 }
 
 func (f *fixture) asBuilder() *fakeWorkshop {
-	f.run.Builder, f.run.AgentID, f.run.AgentName = true, nil, BuilderName
+	// Never also the hub, as runs_builder_is_not_the_hub holds.
+	f.run.Builder, f.run.Hub, f.run.AgentID, f.run.AgentName = true, false, nil, BuilderName
 	ws := &fakeWorkshop{team: `{"blueprint":{}}`}
 	f.builder.WithWorkshop(ws)
 	return ws
@@ -52,9 +66,9 @@ func allToolNames(built Built) []string {
 	return out
 }
 
-// The builder's whole reach: the graph, the team and propose. Nothing that
-// writes, delegates, reaches the web or calls an MCP server, whatever the
-// team allows its other agents.
+// The builder's whole reach: the graph, the team, asking a server for its
+// tools, and propose. Nothing that writes, delegates or calls a tool of an MCP
+// server, whatever the team allows its other agents.
 func TestTheBuilderHasOnlyTheToolsThatReadAndPropose(t *testing.T) {
 	f := newFixture()
 	f.asBuilder()
@@ -65,8 +79,8 @@ func TestTheBuilderHasOnlyTheToolsThatReadAndPropose(t *testing.T) {
 
 	built := f.build(t)
 
-	if got := allToolNames(built); !slices.Equal(got, []string{GraphToolName, ProposeToolName, TeamToolName}) {
-		t.Errorf("tools = %v, want graph, propose and team only", got)
+	if got := allToolNames(built); !slices.Equal(got, []string{GraphToolName, ListMCPToolsToolName, ProposeToolName, TeamToolName}) {
+		t.Errorf("tools = %v, want graph, list_mcp_tools, propose and team only", got)
 	}
 	if len(built.Spec.Skills) != 0 || f.store.grantsRead != 0 {
 		t.Errorf("skills %d, grants read %d; the builder holds none", len(built.Spec.Skills), f.store.grantsRead)
@@ -275,7 +289,7 @@ func TestABuilderRunProposesAndWritesNothingToTheTeam(t *testing.T) {
 		t.Error("the run has no proposed event")
 	}
 	req := f.model.requests()[0]
-	if names := toolNamesOf(req.Tools); !slices.Equal(names, []string{GraphToolName, ProposeToolName, TeamToolName}) {
+	if names := toolNamesOf(req.Tools); !slices.Equal(names, []string{GraphToolName, ListMCPToolsToolName, ProposeToolName, TeamToolName}) {
 		t.Errorf("the model was offered %v", names)
 	}
 }
@@ -312,7 +326,7 @@ func TestABuilderRunReadsItsEarlierTurns(t *testing.T) {
 }
 
 func realWorkshop(f *execFixture) Workshop {
-	return workshopAdapter{blueprints.NewWorkshop(storeAdapter{f.store}, Loops())}
+	return workshopAdapter{blueprints.NewWorkshop(storeAdapter{f.store}, nil, Loops())}
 }
 
 // storeAdapter and workshopAdapter are what cmd/brain wires, here for the test.
@@ -323,6 +337,10 @@ func (s storeAdapter) InTx(ctx context.Context, fn func(blueprints.Queries) erro
 }
 
 type workshopAdapter struct{ ws *blueprints.Workshop }
+
+func (workshopAdapter) ToolsOf(context.Context, uuid.UUID, string, *string) ([]ServerTool, error) {
+	return nil, errors.New("not in this test")
+}
 
 func (w workshopAdapter) Team(ctx context.Context, teamID uuid.UUID) (string, error) {
 	return w.ws.Team(ctx, teamID)

@@ -612,13 +612,14 @@ references only.
 
 ### Skills, MCP servers and embeddings
 
-All empty by default, and each can stay that way.
+Each can stay at its default.
 
 | Variable                                  | Default | What it does                                                   |
 | ----------------------------------------- | ------- | -------------------------------------------------------------- |
 | `OPENARITY_SKILL_IMPORT_HOSTS`            | empty   | Hosts a skill zip may be imported from, besides GitHub         |
 | `OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF` | empty   | `path#key` of a GitHub token, to raise the rate limit          |
 | `OPENARITY_MCP_PRIVATE_NETWORKS`          | empty   | CIDRs MCP discovery may reach, besides public addresses        |
+| `OPENARITY_MCP_REGISTRY_URL`              | official | Where a team's builder looks MCP servers up; `none` turns it off |
 | `OPENARITY_EMBEDDING_MODEL`               | empty   | The model that embeds agents, tools and skills for the graph   |
 | `OPENARITY_EMBEDDING_DIMENSIONS`          | `0`     | The width of its vectors, `1` to `4096`; set with the model    |
 | `OPENARITY_EMBEDDING_KEY_REF`             | empty   | `path#key` of the embedding key, when the model router needs it |

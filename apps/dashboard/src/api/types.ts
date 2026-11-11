@@ -547,6 +547,12 @@ export type BlueprintChange = {
   id?: string;
 };
 
+/**
+ * An MCP server an apply wrote, asked for its tools once the write
+ * committed: its tools by name, or why it has none yet.
+ */
+export type BlueprintDiscovered = { server: string; tools: string[]; error?: string };
+
 export type BlueprintRefusal = { kind: BlueprintKind; name: string; message: string };
 
 export type BlueprintPlan = {

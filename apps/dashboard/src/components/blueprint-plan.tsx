@@ -1,6 +1,6 @@
-import { CircleAlert, Minus, PenLine, Plus } from "lucide-react";
+import { CircleAlert, CircleCheck, Minus, PenLine, Plus } from "lucide-react";
 
-import type { BlueprintChange, BlueprintPlan } from "@/api/types";
+import type { BlueprintChange, BlueprintDiscovered, BlueprintPlan } from "@/api/types";
 import { KIND_WORDS } from "@/lib/blueprint";
 
 /**
@@ -68,10 +68,15 @@ function ChangeRow({ change: c }: { change: BlueprintChange }) {
   );
 }
 
-/** What an apply did, with what a new MCP server still needs. */
-export function AppliedView({ changes }: { changes: BlueprintChange[] }) {
+/** What an apply did, and what each MCP server it wrote answered when asked for its tools. */
+export function AppliedView({
+  changes,
+  discovered,
+}: {
+  changes: BlueprintChange[];
+  discovered: BlueprintDiscovered[];
+}) {
   const made = changes.filter((c) => c.action !== "unchanged");
-  const newServers = made.filter((c) => c.kind === "mcp_server" && c.action === "create");
   return (
     <section aria-labelledby="applied-heading" className="space-y-2">
       <h2 id="applied-heading" className="text-sm font-medium">
@@ -82,12 +87,37 @@ export function AppliedView({ changes }: { changes: BlueprintChange[] }) {
           <ChangeRow key={`${c.kind}/${c.name}`} change={c} />
         ))}
       </ul>
-      {newServers.length > 0 ? (
-        <p className="text-xs text-muted-foreground">
-          A new MCP server has no tools until it is discovered: open{" "}
-          {newServers.map((s) => s.name).join(", ")} on MCP servers and discover it.
-        </p>
+      {discovered.length > 0 ? (
+        <ul aria-label="Tools discovered" className="space-y-1 text-sm">
+          {discovered.map((d) => (
+            <DiscoveredRow key={d.server} d={d} />
+          ))}
+        </ul>
       ) : null}
     </section>
+  );
+}
+
+function DiscoveredRow({ d }: { d: BlueprintDiscovered }) {
+  if (!d.error) {
+    return (
+      <li className="flex items-baseline gap-1.5">
+        <CircleCheck aria-hidden className="size-4 self-center text-success" />
+        <span className="font-medium">{d.server}</span>
+        <span className="text-muted-foreground">
+          {d.tools.length === 1 ? "1 tool" : `${d.tools.length} tools`} discovered
+        </span>
+      </li>
+    );
+  }
+  return (
+    <li className="flex flex-wrap items-baseline gap-x-1.5">
+      <CircleAlert aria-hidden className="size-4 self-center text-warning" />
+      <span className="font-medium">{d.server}</span>
+      <span className="text-muted-foreground">has no tools yet: {d.error}</span>
+      <span className="basis-full pl-5.5 text-xs text-muted-foreground">
+        Once that is fixed, open it on MCP servers and discover it.
+      </span>
+    </li>
   );
 }

@@ -105,6 +105,7 @@ apps/brain/
   internal/skill/      a skill as the Agent Skills specification lays it out
     hub/               importing one: GitHub, or a zip from an allowed host
   internal/discovery/  asking an MCP server for its tools, and what it may reach
+  internal/mcpregistry/ looking MCP servers up in a registry with the official registry's API
   internal/graph/      FalkorDB as an index over Postgres
     falkor.go          the client: one graph per team, nodes, edges, indexes
     params.go          query parameters, written here rather than by the library
@@ -123,7 +124,7 @@ apps/brain/
     execute.go         one run: claim, heartbeat, run to the end, finish
     graphtool.go       graph(query, kinds, hops), bound to every run
     hub.go             the hub: the built-in orchestrator, or the team's chosen agent, reaching the whole team
-    builder.go         the builder: team() and propose(), nothing that writes; its prompt and its turns
+    builder.go         the builder: team(), find_mcp_servers(), list_mcp_tools() and propose(), nothing that writes; its prompt and its turns
     job.go             the run queue, the sweep that takes over stale runs, the Enqueuer
     narrow.go          a child built with fewer than its grants, for the outfitter
     plan.go            plan(items), the hub's checklist, each change a run event

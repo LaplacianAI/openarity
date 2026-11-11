@@ -178,6 +178,9 @@ describe("composing a draft", () => {
             { kind: "mcp_server", name: "helpdesk", action: "create", id: "m9" },
             { kind: "agent", name: "triage", action: "create", id: "a9" },
           ],
+          discovered: [
+            { server: "helpdesk", tools: [], error: "the server did not answer in time" },
+          ],
         },
       },
     });
@@ -189,7 +192,10 @@ describe("composing a draft", () => {
     expect(await screen.findByRole("heading", { name: "Applied" })).toBeInTheDocument();
     expect(posted(seen, APPLY)[0]).toMatchObject({ plan_digest: "sha256:shown" });
     expect(screen.getByText(/Nothing drafted yet/)).toBeInTheDocument();
-    expect(screen.getByText(/has no tools until it is discovered/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/has no tools yet: the server did not answer in time/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/open it on MCP servers and discover it/)).toBeInTheDocument();
   });
 
   // Otherwise Apply would send a plan for a draft no longer on the screen.

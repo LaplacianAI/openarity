@@ -16,6 +16,7 @@ import type {
   AuthConfig,
   Blueprint,
   BlueprintChange,
+  BlueprintDiscovered,
   BlueprintPlan,
   Channel,
   CreateChannelRequest,
@@ -582,8 +583,10 @@ export function planBlueprint(teamId: string, blueprint: Blueprint): Promise<Blu
  * team changed since it was shown. Both come back as the new plan to show; a
  * plain-text 409 (a name taken while applying) stays an error.
  */
+type BlueprintApplied = { changes: BlueprintChange[]; discovered: BlueprintDiscovered[] };
+
 export type Applied =
-  | { kind: "applied"; changes: BlueprintChange[] }
+  | { kind: "applied"; changes: BlueprintChange[]; discovered: BlueprintDiscovered[] }
   | { kind: "refused" | "changed"; plan: BlueprintPlan };
 
 export async function applyBlueprint(
@@ -592,11 +595,11 @@ export async function applyBlueprint(
   digest: string,
 ): Promise<Applied> {
   try {
-    const out = await request<{ changes: BlueprintChange[] }>(`/teams/${teamId}/blueprints/apply`, {
+    const out = await request<BlueprintApplied>(`/teams/${teamId}/blueprints/apply`, {
       method: "POST",
       body: { blueprint, plan_digest: digest },
     });
-    return { kind: "applied", changes: out.changes };
+    return { kind: "applied", changes: out.changes, discovered: out.discovered };
   } catch (err) {
     const plan = err instanceof ApiError ? planIn(err) : null;
     if (!plan) throw err;
@@ -627,11 +630,11 @@ export async function applyProposal(
   digest: string,
 ): Promise<Applied> {
   try {
-    const out = await request<{ changes: BlueprintChange[] }>(
-      `/teams/${teamId}/proposals/${proposalId}/apply`,
-      { method: "POST", body: { plan_digest: digest } },
-    );
-    return { kind: "applied", changes: out.changes };
+    const out = await request<BlueprintApplied>(`/teams/${teamId}/proposals/${proposalId}/apply`, {
+      method: "POST",
+      body: { plan_digest: digest },
+    });
+    return { kind: "applied", changes: out.changes, discovered: out.discovered };
   } catch (err) {
     const plan = err instanceof ApiError ? planIn(err) : null;
     if (!plan) throw err;

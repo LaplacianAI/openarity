@@ -55,7 +55,7 @@ func raw(t *testing.T, v any) json.RawMessage {
 // propose is the builder's call, as the runtime makes it.
 func (w *world) propose(t *testing.T, run db.Run, bp any) (Proposed, error) {
 	t.Helper()
-	return NewWorkshop(w, loops).Propose(t.Context(), run, raw(t, bp), "a support team")
+	return NewWorkshop(w, &w.probe, loops).Propose(t.Context(), run, raw(t, bp), "a support team")
 }
 
 func (w *world) proposal(t *testing.T, id uuid.UUID) (proposal, int) {
@@ -324,7 +324,7 @@ func TestTheBuilderReadsTheTeamAsABlueprint(t *testing.T) {
 		t.Fatalf("tool: %v", err)
 	}
 
-	out, err := NewWorkshop(w, loops).Team(t.Context(), w.team)
+	out, err := NewWorkshop(w, &w.probe, loops).Team(t.Context(), w.team)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,5 +335,31 @@ func TestTheBuilderReadsTheTeamAsABlueprint(t *testing.T) {
 	if len(v.Blueprint.Agents) != 2 || len(v.Skills) != 1 || v.Skills[0].Description == "" ||
 		!equalNames(v.Tools["helpdesk"], "create_ticket") {
 		t.Errorf("team = %s, want two agents, the skill described, helpdesk's tool", out)
+	}
+}
+
+func TestAnAppliedProposalAsksItsNewServersForTheirTools(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.refresh.tools = map[string][]string{"billing": {"refund"}}
+	run := w.builderRun(t, "group", nil)
+
+	bp := builtTeam()
+	bp["mcp_servers"] = []any{map[string]any{"name": "billing", "url": "https://billing.example/mcp"}}
+	got, err := w.propose(t, run, bp)
+	if err != nil {
+		t.Fatalf("propose: %v", err)
+	}
+	if n := len(w.refresh.names()); n != 0 {
+		t.Fatalf("proposing asked %d servers; only an apply may", n)
+	}
+	p, _ := w.proposal(t, got.ID)
+	rec := w.applyProposal(t, got.ID, p.Plan.Digest)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply: %d %s", rec.Code, rec.Body)
+	}
+	d := discoveredBy(appliedOf(t, rec.Body.Bytes()))["billing"]
+	if len(d.Tools) != 1 || d.Tools[0] != "refund" {
+		t.Errorf("billing: %+v, want its tool", d)
 	}
 }

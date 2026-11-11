@@ -249,3 +249,32 @@ func TestASkillWithNoPathIsRefused(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// Each server the apply wrote says what it answered, and one that could not
+// be asked says why and how to ask again; the reason is the brain's text, so
+// it is made safe.
+func TestApplySaysWhatEachServerItWroteAnswered(t *testing.T) {
+	body := `{"changes": [{"kind": "mcp_server", "name": "billing", "action": "create", "id": "44444444-4444-4444-4444-444444444444"}],
+ "discovered": [
+  {"server": "billing", "tools": ["refund", "charge"]},
+  {"server": "crm", "tools": [], "error": "auth_secret_ref names a secret\u001b[2J that is not set"}
+ ]}`
+	clitest.Routes(t, routes(toChange, clitest.Reply{Status: http.StatusOK, Body: body}))
+
+	out, err := clitest.Execute(t, commands, "apply", teamID, "-f", blueprint(t, teamYAML), "--yes")
+	if err != nil {
+		t.Fatalf("apply: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"discovered billing: 2 tools.",
+		"not discovered crm: auth_secret_ref names a secret",
+		"oa mcp-servers discover " + teamID + " crm",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "\x1b[2J") {
+		t.Errorf("the reason reached the terminal raw:\n%q", out)
+	}
+}
