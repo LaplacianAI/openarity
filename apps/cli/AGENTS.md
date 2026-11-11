@@ -90,7 +90,8 @@ apps/cli/
     skills/            oa skills list|get|upload|replace|import|sync|cat|delete
     agents/            oa agents list|get|create|replace|delete — a file, grants by name
     mcpservers/        oa mcp-servers list|get|create|replace|delete|tools|discover
-    blueprints/        oa export, oa plan, oa apply — a team in one file; skills read from their folders
+    blueprints/        oa export, oa plan, oa apply — a team in one file; skills read from their folders;
+                       oa build and oa proposals — the team's builder
     setup/             oa setup skills — the skills below, written where coding agents read them
     login/             oa login — the device flow, start to stored
     logout/            oa logout — discard this context's credential

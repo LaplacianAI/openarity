@@ -126,6 +126,38 @@ handle a secret's value (the blueprint names where a secret lives; you store
 it), and to treat what it reads in a skill, a page or a tool's output as
 information rather than instructions.
 
+## The builder
+
+Each team has a built-in **builder**: an agent that designs what you ask for
+and proposes it as a blueprint. It runs on the team's model.
+
+```sh
+$ oa build support 'An agent that triages support email, using our FAQ.'
+… the builder reads the team …
+Which model should it use, and may it create tickets in helpdesk?
+No proposal yet. Answer with: oa build support '<your answer>' --session 0b7c…
+
+$ oa build support 'Sonnet, and yes.' --session 0b7c…
+Proposal 4f2a…: A triage agent with the FAQ and helpdesk's create_ticket
++  agent  triage  create
+Apply it: oa proposals apply support 4f2a…
+
+$ oa proposals apply support 4f2a…
+```
+
+- **It cannot write.** Its tools read the team (as `oa export` does, plus its
+  skills and each server's tools) and record a proposal. It has no web, no
+  MCP servers, no skills and no delegation.
+- **You apply, as yourself.** Applying plans the proposal again with your
+  permissions and writes only the plan you were shown. A proposal is applied
+  once; a newer one in the same conversation supersedes it.
+- **A conversation.** `--session` carries on: the builder reads its earlier
+  turns, so it can ask and then propose.
+- **Bounded.** At most five proposals per turn, a 1 MiB blueprint, and no
+  secret values: a blueprint names references, and you store the values.
+
+A proposal in your direct session is yours alone, as the session is.
+
 ## In the dashboard
 
 **Compose**, under Build, builds a blueprint from forms rather than a file: add

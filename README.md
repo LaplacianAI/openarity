@@ -164,7 +164,9 @@ blueprint: `oa plan` shows what applying it would change and `oa apply` makes
 the team match it, in one transaction, writing only what changed. `oa export`
 prints the team as one, and `oa setup skills` teaches a coding agent (Claude
 Code, Codex, Cursor and others) to build a team that way, showing you the plan
-before it applies anything.
+before it applies anything. Each team also has a built-in builder: `oa build`
+asks it in plain words, it proposes a blueprint and writes nothing, and
+`oa proposals apply` applies the proposal as you.
 
 A message on a channel starts a hub run, or steers the one already answering
 its conversation, and the answer goes back to the channel: into the chat for

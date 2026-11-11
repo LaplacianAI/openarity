@@ -28,6 +28,7 @@ type Store interface {
 	FinishRun(ctx context.Context, arg db.FinishRunParams) (int64, error)
 	FinishRunWithEvent(ctx context.Context, finish db.FinishRunParams, event db.AppendRunEventParams) (int64, uuid.UUID, error)
 	ListSessionTurns(ctx context.Context, arg db.ListSessionTurnsParams) ([]db.ListSessionTurnsRow, error)
+	ListBuilderTurns(ctx context.Context, arg db.ListBuilderTurnsParams) ([]db.ListBuilderTurnsRow, error)
 	StartChildRun(ctx context.Context, arg db.StartChildRunParams) (db.Run, error)
 	ReapChildren(ctx context.Context, arg db.ReapChildrenParams) ([]uuid.UUID, error)
 	GetRun(ctx context.Context, id uuid.UUID) (db.Run, error)
@@ -249,8 +250,13 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		err = appendEvent(ctx, e.store, row.ID, l.Worker, "resumed", resumedPayload{Messages: len(msgs)})
 	} else {
 		input := row.Input
-		if row.ReplyToChannel {
+		switch {
+		case row.ReplyToChannel:
 			if input, err = e.conversation(ctx, row); err != nil {
+				return "", err
+			}
+		case row.Builder:
+			if input, err = e.builderInput(ctx, row); err != nil {
 				return "", err
 			}
 		}
@@ -424,6 +430,6 @@ func runOf(r db.ClaimRunRow) db.Run {
 		OutputTokens: r.OutputTokens, Worker: r.Worker, HeartbeatAt: r.HeartbeatAt,
 		CancelRequestedAt: r.CancelRequestedAt, CreatedAt: r.CreatedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, TokenBudget: r.TokenBudget,
-		Hub: r.Hub, MessageID: r.MessageID, ReplyToChannel: r.ReplyToChannel,
+		Hub: r.Hub, MessageID: r.MessageID, ReplyToChannel: r.ReplyToChannel, Builder: r.Builder,
 	}
 }

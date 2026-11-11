@@ -2,6 +2,8 @@ package blueprints
 
 import (
 	"context"
+	"maps"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -94,4 +96,13 @@ func (t team) loadGrants(ctx context.Context, s Reads, nameOf map[uuid.UUID]stri
 		t.grants[g.AgentID] = h
 	}
 	return nil
+}
+
+// sortedSkills is the team's skills in name order.
+func (t team) sortedSkills() []db.Skill {
+	out := make([]db.Skill, 0, len(t.skills))
+	for _, name := range slices.Sorted(maps.Keys(t.skills)) {
+		out = append(out, t.skills[name])
+	}
+	return out
 }

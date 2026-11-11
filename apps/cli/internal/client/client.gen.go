@@ -198,6 +198,27 @@ func (e ListedSkillSource) Valid() bool {
 	}
 }
 
+// Defines values for ProposalState.
+const (
+	ProposalStateApplied    ProposalState = "applied"
+	ProposalStateOpen       ProposalState = "open"
+	ProposalStateSuperseded ProposalState = "superseded"
+)
+
+// Valid indicates whether the value is a known member of the ProposalState enum.
+func (e ProposalState) Valid() bool {
+	switch e {
+	case ProposalStateApplied:
+		return true
+	case ProposalStateOpen:
+		return true
+	case ProposalStateSuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RunStatus.
 const (
 	Cancelled RunStatus = "cancelled"
@@ -278,16 +299,16 @@ func (e SessionKind) Valid() bool {
 
 // Defines values for SessionStatus.
 const (
-	Closed SessionStatus = "closed"
-	Open   SessionStatus = "open"
+	SessionStatusClosed SessionStatus = "closed"
+	SessionStatusOpen   SessionStatus = "open"
 )
 
 // Valid indicates whether the value is a known member of the SessionStatus enum.
 func (e SessionStatus) Valid() bool {
 	switch e {
-	case Closed:
+	case SessionStatusClosed:
 		return true
-	case Open:
+	case SessionStatusOpen:
 		return true
 	default:
 		return false
@@ -1397,6 +1418,48 @@ type PendingSenderPage struct {
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
+// Proposal defines model for Proposal.
+type Proposal struct {
+	AppliedAt *time.Time `json:"applied_at,omitempty" yaml:"applied_at,omitempty"`
+
+	// Blueprint Present when one proposal is read.
+	Blueprint *Blueprint         `json:"blueprint,omitempty" yaml:"blueprint,omitempty"`
+	CreatedAt time.Time          `json:"created_at" yaml:"created_at"`
+	ID        openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Plan Present when one proposal is read.
+	Plan *BlueprintPlan `json:"plan,omitempty" yaml:"plan,omitempty"`
+
+	// RunID The builder run that proposed it.
+	RunID     openapi_types.UUID `json:"run_id" yaml:"run_id"`
+	SessionID openapi_types.UUID `json:"session_id" yaml:"session_id"`
+
+	// State `open` until a person applies it or the builder proposes again in
+	// the same session, which supersedes it.
+	State ProposalState `json:"state" yaml:"state"`
+
+	// Summary What the proposal does, in the builder's words.
+	Summary string `json:"summary" yaml:"summary"`
+}
+
+// ProposalState `open` until a person applies it or the builder proposes again in
+// the same session, which supersedes it.
+type ProposalState string
+
+// ProposalApply defines model for ProposalApply.
+type ProposalApply struct {
+	// PlanDigest The digest of the plan read from the proposal.
+	PlanDigest string `json:"plan_digest" yaml:"plan_digest"`
+}
+
+// ProposalPage defines model for ProposalPage.
+type ProposalPage struct {
+	Items []Proposal `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
 // Reply A run's reply to its channel, as the outbox holds it. It is sent in
 // order within its conversation and retried for about two and a half
 // hours before it is given up.
@@ -1434,7 +1497,10 @@ type Reply struct {
 // Run defines model for Run.
 type Run struct {
 	// Agent The agent's name when the run started, kept if it is later renamed or deleted
-	Agent     string    `json:"agent" yaml:"agent"`
+	Agent string `json:"agent" yaml:"agent"`
+
+	// Builder Whether the run is the team's builder, which proposes and writes nothing.
+	Builder   bool      `json:"builder" yaml:"builder"`
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
 
 	// Delegates The agents a top-level run handed work to directly, by name, each
@@ -1507,6 +1573,11 @@ type RunRequest struct {
 	//
 	// Examples: triage
 	Agent *string `json:"agent,omitempty" yaml:"agent,omitempty"`
+
+	// Builder Start the team's builder rather than an agent or the hub. It reads
+	// the team and proposes blueprints, and writes nothing; refused with
+	// `agent`. A builder run reads its earlier turns in the session.
+	Builder *bool `json:"builder,omitempty" yaml:"builder,omitempty"`
 
 	// Input What the agent is asked to do. At most 100 KiB, with no NUL character.
 	//
@@ -2139,6 +2210,21 @@ type ListTeamMembersParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
 }
 
+// ListProposalsParams defines parameters for ListProposals.
+type ListProposalsParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Session Only this session's proposals.
+	Session *openapi_types.UUID `form:"session,omitempty" json:"session,omitempty" yaml:"session,omitempty"`
+}
+
 // ListTeamRunsParams defines parameters for ListTeamRuns.
 type ListTeamRunsParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
@@ -2308,6 +2394,9 @@ type UpdateMCPServerJSONRequestBody = MCPServerRequest
 
 // AddTeamMemberJSONRequestBody defines body for AddTeamMember for application/json ContentType.
 type AddTeamMemberJSONRequestBody = AddMemberRequest
+
+// ApplyProposalJSONRequestBody defines body for ApplyProposal for application/json ContentType.
+type ApplyProposalJSONRequestBody = ProposalApply
 
 // StartRunJSONRequestBody defines body for StartRun for application/json ContentType.
 type StartRunJSONRequestBody = RunRequest
@@ -3092,6 +3181,48 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 	GetTeamPermissions(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListProposals The builder's proposals, newest first
+	//
+	// A read, so belonging to the team is enough. A proposal in a direct
+	// session is seen only by that session's person, or with
+	// `session:read_all`, as the session's runs are.
+	//
+	// Corresponds with GET /teams/{id}/proposals (the `ListProposals` operationId).
+	ListProposals(ctx context.Context, id TeamID, params *ListProposalsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetProposal A proposal, its blueprint and its plan
+	//
+	// For an open proposal, the plan is made now, as the caller: what
+	// applying it would do, and a refusal for any write they may not make.
+	// For one applied or superseded, it is the plan the builder had.
+	//
+	// Corresponds with GET /teams/{id}/proposals/{proposalID} (the `GetProposal` operationId).
+	GetProposal(ctx context.Context, id TeamID, proposalID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyProposalWithBody Apply a proposal, as the caller
+	//
+	// As `POST /teams/{id}/blueprints/apply`, for the proposal's blueprint:
+	// planned again with the caller's permissions, written only if its
+	// digest is the one sent, and the proposal marked applied in the same
+	// transaction, so it is applied once.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/proposals/{proposalID}/apply (the `ApplyProposal` operationId).
+	ApplyProposalWithBody(ctx context.Context, id TeamID, proposalID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyProposal Apply a proposal, as the caller
+	//
+	// As `POST /teams/{id}/blueprints/apply`, for the proposal's blueprint:
+	// planned again with the caller's permissions, written only if its
+	// digest is the one sent, and the proposal marked applied in the same
+	// transaction, so it is applied once.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/proposals/{proposalID}/apply (the `ApplyProposal` operationId).
+	ApplyProposal(ctx context.Context, id TeamID, proposalID openapi_types.UUID, body ApplyProposalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RestoreTeam Restore a deleted team
 	//
 	// Super admins only. Everything comes back as it was — members,
@@ -3133,6 +3264,9 @@ type ClientInterface interface {
 	// orchestrator runs on the team's model, so with none set it is
 	// refused with a 409.
 	//
+	// With `builder` the run is the team's builder, on the team's model
+	// too: it reads the team and records proposals, and writes nothing.
+	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
 	// `group` or `thread` session of this team, their own `direct` one, or
@@ -3153,6 +3287,9 @@ type ClientInterface interface {
 	// team's settings, or the built-in orchestrator when none is. The
 	// orchestrator runs on the team's model, so with none set it is
 	// refused with a 409.
+	//
+	// With `builder` the run is the team's builder, on the team's model
+	// too: it reads the team and records proposals, and writes nothing.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -4739,6 +4876,88 @@ func (c *Client) GetTeamPermissions(ctx context.Context, id TeamID, reqEditors .
 	return c.Client.Do(req)
 }
 
+// ListProposals The builder's proposals, newest first
+//
+// A read, so belonging to the team is enough. A proposal in a direct
+// session is seen only by that session's person, or with
+// `session:read_all`, as the session's runs are.
+//
+// Corresponds with GET /teams/{id}/proposals (the `ListProposals` operationId).
+func (c *Client) ListProposals(ctx context.Context, id TeamID, params *ListProposalsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListProposalsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetProposal A proposal, its blueprint and its plan
+//
+// For an open proposal, the plan is made now, as the caller: what
+// applying it would do, and a refusal for any write they may not make.
+// For one applied or superseded, it is the plan the builder had.
+//
+// Corresponds with GET /teams/{id}/proposals/{proposalID} (the `GetProposal` operationId).
+func (c *Client) GetProposal(ctx context.Context, id TeamID, proposalID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetProposalRequest(c.Server, id, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyProposalWithBody Apply a proposal, as the caller
+//
+// As `POST /teams/{id}/blueprints/apply`, for the proposal's blueprint:
+// planned again with the caller's permissions, written only if its
+// digest is the one sent, and the proposal marked applied in the same
+// transaction, so it is applied once.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/proposals/{proposalID}/apply (the `ApplyProposal` operationId).
+func (c *Client) ApplyProposalWithBody(ctx context.Context, id TeamID, proposalID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyProposalRequestWithBody(c.Server, id, proposalID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyProposal Apply a proposal, as the caller
+//
+// As `POST /teams/{id}/blueprints/apply`, for the proposal's blueprint:
+// planned again with the caller's permissions, written only if its
+// digest is the one sent, and the proposal marked applied in the same
+// transaction, so it is applied once.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/proposals/{proposalID}/apply (the `ApplyProposal` operationId).
+func (c *Client) ApplyProposal(ctx context.Context, id TeamID, proposalID openapi_types.UUID, body ApplyProposalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyProposalRequest(c.Server, id, proposalID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RestoreTeam Restore a deleted team
 //
 // Super admins only. Everything comes back as it was — members,
@@ -4800,6 +5019,9 @@ func (c *Client) ListTeamRuns(ctx context.Context, id TeamID, params *ListTeamRu
 // orchestrator runs on the team's model, so with none set it is
 // refused with a 409.
 //
+// With `builder` the run is the team's builder, on the team's model
+// too: it reads the team and records proposals, and writes nothing.
+//
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
 // `group` or `thread` session of this team, their own `direct` one, or
@@ -4830,6 +5052,9 @@ func (c *Client) StartRunWithBody(ctx context.Context, id TeamID, contentType st
 // team's settings, or the built-in orchestrator when none is. The
 // orchestrator runs on the team's model, so with none set it is
 // refused with a 409.
+//
+// With `builder` the run is the team's builder, on the team's model
+// too: it reads the team and records proposals, and writes nothing.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -7416,6 +7641,186 @@ func NewGetTeamPermissionsRequest(server string, id TeamID) (*http.Request, erro
 	return req, nil
 }
 
+// NewListProposalsRequest constructs an http.Request for the ListProposals method
+func NewListProposalsRequest(server string, id TeamID, params *ListProposalsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/proposals", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Session != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "session", *params.Session, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "uuid"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetProposalRequest constructs an http.Request for the GetProposal method
+func NewGetProposalRequest(server string, id TeamID, proposalID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "proposalID", proposalID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/proposals/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewApplyProposalRequest calls the generic ApplyProposal builder with application/json body
+func NewApplyProposalRequest(server string, id TeamID, proposalID openapi_types.UUID, body ApplyProposalJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApplyProposalRequestWithBody(server, id, proposalID, "application/json", bodyReader)
+}
+
+// NewApplyProposalRequestWithBody constructs an http.Request for the ApplyProposal method, with any body, and a specified content type
+func NewApplyProposalRequestWithBody(server string, id TeamID, proposalID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "proposalID", proposalID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/proposals/%s/apply", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRestoreTeamRequest constructs an http.Request for the RestoreTeam method
 func NewRestoreTeamRequest(server string, id TeamID) (*http.Request, error) {
 	var err error
@@ -9674,6 +10079,52 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/permissions (the `GetTeamPermissions` operationId).
 	GetTeamPermissionsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamPermissionsResponse, error)
 
+	// ListProposalsWithResponse The builder's proposals, newest first
+	//
+	// A read, so belonging to the team is enough. A proposal in a direct
+	// session is seen only by that session's person, or with
+	// `session:read_all`, as the session's runs are.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/proposals (the `ListProposals` operationId).
+	ListProposalsWithResponse(ctx context.Context, id TeamID, params *ListProposalsParams, reqEditors ...RequestEditorFn) (*ListProposalsResponse, error)
+
+	// GetProposalWithResponse A proposal, its blueprint and its plan
+	//
+	// For an open proposal, the plan is made now, as the caller: what
+	// applying it would do, and a refusal for any write they may not make.
+	// For one applied or superseded, it is the plan the builder had.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/proposals/{proposalID} (the `GetProposal` operationId).
+	GetProposalWithResponse(ctx context.Context, id TeamID, proposalID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetProposalResponse, error)
+
+	// ApplyProposalWithBodyWithResponse Apply a proposal, as the caller
+	//
+	// As `POST /teams/{id}/blueprints/apply`, for the proposal's blueprint:
+	// planned again with the caller's permissions, written only if its
+	// digest is the one sent, and the proposal marked applied in the same
+	// transaction, so it is applied once.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/proposals/{proposalID}/apply (the `ApplyProposal` operationId).
+	ApplyProposalWithBodyWithResponse(ctx context.Context, id TeamID, proposalID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyProposalResponse, error)
+
+	// ApplyProposalWithResponse Apply a proposal, as the caller
+	//
+	// As `POST /teams/{id}/blueprints/apply`, for the proposal's blueprint:
+	// planned again with the caller's permissions, written only if its
+	// digest is the one sent, and the proposal marked applied in the same
+	// transaction, so it is applied once.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/proposals/{proposalID}/apply (the `ApplyProposal` operationId).
+	ApplyProposalWithResponse(ctx context.Context, id TeamID, proposalID openapi_types.UUID, body ApplyProposalJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProposalResponse, error)
+
 	// RestoreTeamWithResponse Restore a deleted team
 	//
 	// Super admins only. Everything comes back as it was — members,
@@ -9719,6 +10170,9 @@ type ClientWithResponsesInterface interface {
 	// orchestrator runs on the team's model, so with none set it is
 	// refused with a 409.
 	//
+	// With `builder` the run is the team's builder, on the team's model
+	// too: it reads the team and records proposals, and writes nothing.
+	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
 	// `group` or `thread` session of this team, their own `direct` one, or
@@ -9739,6 +10193,9 @@ type ClientWithResponsesInterface interface {
 	// team's settings, or the built-in orchestrator when none is. The
 	// orchestrator runs on the team's model, so with none set it is
 	// refused with a 409.
+	//
+	// With `builder` the run is the team's builder, on the team's model
+	// too: it reads the team and records proposals, and writes nothing.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -11882,6 +12339,164 @@ func (r GetTeamPermissionsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetTeamPermissionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListProposalsResponse401Headers the declared response headers of an HTTP 401 response for ListProposals
+type ListProposalsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListProposalsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ProposalPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListProposalsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListProposalsResponse) GetJSON200() *ProposalPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListProposalsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListProposalsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListProposalsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListProposalsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetProposalResponse401Headers the declared response headers of an HTTP 401 response for GetProposal
+type GetProposalResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetProposalResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Proposal
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetProposalResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetProposalResponse) GetJSON200() *Proposal {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetProposalResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetProposalResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetProposalResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetProposalResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ApplyProposalResponse401Headers the declared response headers of an HTTP 401 response for ApplyProposal
+type ApplyProposalResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ApplyProposalResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BlueprintApplied
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *BlueprintPlan
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *BlueprintPlan
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ApplyProposalResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApplyProposalResponse) GetJSON200() *BlueprintApplied {
+	return r.JSON200
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ApplyProposalResponse) GetJSON409() *BlueprintPlan {
+	return r.JSON409
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r ApplyProposalResponse) GetJSON422() *BlueprintPlan {
+	return r.JSON422
+}
+
+// GetBody returns the raw response body bytes
+func (r ApplyProposalResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApplyProposalResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApplyProposalResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApplyProposalResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -14160,6 +14775,76 @@ func (c *ClientWithResponses) GetTeamPermissionsWithResponse(ctx context.Context
 	return ParseGetTeamPermissionsResponse(rsp)
 }
 
+// ListProposalsWithResponse The builder's proposals, newest first
+//
+// A read, so belonging to the team is enough. A proposal in a direct
+// session is seen only by that session's person, or with
+// `session:read_all`, as the session's runs are.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/proposals (the `ListProposals` operationId).
+func (c *ClientWithResponses) ListProposalsWithResponse(ctx context.Context, id TeamID, params *ListProposalsParams, reqEditors ...RequestEditorFn) (*ListProposalsResponse, error) {
+	rsp, err := c.ListProposals(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListProposalsResponse(rsp)
+}
+
+// GetProposalWithResponse A proposal, its blueprint and its plan
+//
+// For an open proposal, the plan is made now, as the caller: what
+// applying it would do, and a refusal for any write they may not make.
+// For one applied or superseded, it is the plan the builder had.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/proposals/{proposalID} (the `GetProposal` operationId).
+func (c *ClientWithResponses) GetProposalWithResponse(ctx context.Context, id TeamID, proposalID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetProposalResponse, error) {
+	rsp, err := c.GetProposal(ctx, id, proposalID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetProposalResponse(rsp)
+}
+
+// ApplyProposalWithBodyWithResponse Apply a proposal, as the caller
+//
+// As `POST /teams/{id}/blueprints/apply`, for the proposal's blueprint:
+// planned again with the caller's permissions, written only if its
+// digest is the one sent, and the proposal marked applied in the same
+// transaction, so it is applied once.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/proposals/{proposalID}/apply (the `ApplyProposal` operationId).
+func (c *ClientWithResponses) ApplyProposalWithBodyWithResponse(ctx context.Context, id TeamID, proposalID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyProposalResponse, error) {
+	rsp, err := c.ApplyProposalWithBody(ctx, id, proposalID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyProposalResponse(rsp)
+}
+
+// ApplyProposalWithResponse Apply a proposal, as the caller
+//
+// As `POST /teams/{id}/blueprints/apply`, for the proposal's blueprint:
+// planned again with the caller's permissions, written only if its
+// digest is the one sent, and the proposal marked applied in the same
+// transaction, so it is applied once.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/proposals/{proposalID}/apply (the `ApplyProposal` operationId).
+func (c *ClientWithResponses) ApplyProposalWithResponse(ctx context.Context, id TeamID, proposalID openapi_types.UUID, body ApplyProposalJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProposalResponse, error) {
+	rsp, err := c.ApplyProposal(ctx, id, proposalID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyProposalResponse(rsp)
+}
+
 // RestoreTeamWithResponse Restore a deleted team
 //
 // Super admins only. Everything comes back as it was — members,
@@ -14217,6 +14902,9 @@ func (c *ClientWithResponses) ListTeamRunsWithResponse(ctx context.Context, id T
 // orchestrator runs on the team's model, so with none set it is
 // refused with a 409.
 //
+// With `builder` the run is the team's builder, on the team's model
+// too: it reads the team and records proposals, and writes nothing.
+//
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
 // `group` or `thread` session of this team, their own `direct` one, or
@@ -14243,6 +14931,9 @@ func (c *ClientWithResponses) StartRunWithBodyWithResponse(ctx context.Context, 
 // team's settings, or the built-in orchestrator when none is. The
 // orchestrator runs on the team's model, so with none set it is
 // refused with a 409.
+//
+// With `builder` the run is the team's builder, on the team's model
+// too: it reads the team and records proposals, and writes nothing.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -16156,6 +16847,140 @@ func ParseGetTeamPermissionsResponse(rsp *http.Response) (*GetTeamPermissionsRes
 	switch {
 	case rsp.StatusCode == 401:
 		var headers GetTeamPermissionsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListProposalsResponse parses an HTTP response from a ListProposalsWithResponse call
+func ParseListProposalsResponse(rsp *http.Response) (*ListProposalsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListProposalsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ProposalPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListProposalsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetProposalResponse parses an HTTP response from a GetProposalWithResponse call
+func ParseGetProposalResponse(rsp *http.Response) (*GetProposalResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetProposalResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Proposal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetProposalResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseApplyProposalResponse parses an HTTP response from a ApplyProposalWithResponse call
+func ParseApplyProposalResponse(rsp *http.Response) (*ApplyProposalResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApplyProposalResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BlueprintApplied
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest BlueprintPlan
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest BlueprintPlan
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case rsp.StatusCode == 409:
+		// Content-type (text/plain) unsupported
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ApplyProposalResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

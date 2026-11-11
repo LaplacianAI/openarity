@@ -50,12 +50,20 @@ type Builder struct {
 	search         *SearchDeps
 	fetch          *FetchDeps
 	delegates      *DelegateDeps
+	workshop       Workshop
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 }
 
 func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps, search *SearchDeps, fetch *FetchDeps) *Builder {
 	return &Builder{store: s, objects: o, mcp: m, graph: g, search: search, fetch: fetch, connectTimeout: connectTimeout}
+}
+
+// WithWorkshop gives builder runs their reach. Without one, a builder run
+// fails at its start rather than running with no way to propose.
+func (b *Builder) WithWorkshop(ws Workshop) *Builder {
+	b.workshop = ws
+	return b
 }
 
 type Unavailable struct{ Name, Reason string }
@@ -118,6 +126,10 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	}
 	if ok {
 		built.Spec.Tools = append(built.Spec.Tools, delegate)
+	}
+	if run.Builder {
+		built.Spec.Tools = append(built.Spec.Tools, b.builderTools(run, l)...)
+		built.Spec.System = agent.System(BuilderPrompt)
 	}
 	if run.Hub {
 		built.Spec.System = hubSystem(a, b.alone(ok))

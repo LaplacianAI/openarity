@@ -30,6 +30,7 @@ const (
 
 type Store interface {
 	Reads
+	Proposals
 	skills.Reserver
 	InTx(ctx context.Context, fn func(Queries) error) error
 }
@@ -38,6 +39,9 @@ type Store interface {
 type Queries interface {
 	agents.Queries
 	skills.Queries
+	MarkProposalApplied(ctx context.Context, arg db.MarkProposalAppliedParams) (db.Proposal, error)
+	SupersedeProposals(ctx context.Context, sessionID uuid.UUID) error
+	CreateProposal(ctx context.Context, arg db.CreateProposalParams) (db.Proposal, error)
 	CreateMCPServer(ctx context.Context, arg db.CreateMCPServerParams) (db.McpServer, error)
 	UpdateMCPServer(ctx context.Context, arg db.UpdateMCPServerParams) (db.McpServer, error)
 }
@@ -57,6 +61,9 @@ func New(logger *slog.Logger, s Store, a api.Authorizer, o skills.Objects, loops
 	r.Get("/{id}/blueprint", h.export)
 	r.Post("/{id}/blueprints/plan", h.plan)
 	r.Post("/{id}/blueprints/apply", h.apply)
+	r.Get("/{id}/proposals", h.listProposals)
+	r.Get("/{id}/proposals/{proposalID}", h.getProposal)
+	r.Post("/{id}/proposals/{proposalID}/apply", h.applyProposal)
 
 	return r
 }
@@ -110,7 +117,7 @@ func (h *handler) apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.write(r.Context(), teamID, &p)
+	err := h.write(r.Context(), teamID, &p, nil)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == codeUniqueViolation {
 		http.Error(w, "the team changed while this was applied: plan again", http.StatusConflict)
@@ -154,7 +161,10 @@ func (h *handler) planned(w http.ResponseWriter, r *http.Request, u *auth.User, 
 // reaper takes them if nothing commits, then every row in one transaction.
 // Agents are written before any grant, so one may delegate to another the
 // same blueprint creates.
-func (h *handler) write(ctx context.Context, teamID uuid.UUID, p *planned) error {
+//
+// also, when given, runs last in the same transaction: an error from it rolls
+// the whole apply back.
+func (h *handler) write(ctx context.Context, teamID uuid.UUID, p *planned, also func(Queries) error) error {
 	keys := make([][]string, len(p.skills))
 	for i, s := range p.skills {
 		k, err := skills.Reserve(ctx, h.store, h.objects, teamID, s.dir.Files)
@@ -178,7 +188,13 @@ func (h *handler) write(ctx context.Context, teamID uuid.UUID, p *planned) error
 		if err := writeSkills(ctx, q, teamID, p, keys, ids); err != nil {
 			return err
 		}
-		return writeAgents(ctx, q, p, ids)
+		if err := writeAgents(ctx, q, p, ids); err != nil {
+			return err
+		}
+		if also == nil {
+			return nil
+		}
+		return also(q)
 	})
 }
 

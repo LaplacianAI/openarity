@@ -183,6 +183,21 @@
       "scope": "member"
     },
     {
+      "method": "GET",
+      "path": "/teams/{id}/proposals",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/proposals/{proposalID}",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/proposals/{proposalID}/apply",
+      "scope": "member"
+    },
+    {
       "method": "POST",
       "path": "/teams/{id}/blueprints/plan",
       "scope": "member"

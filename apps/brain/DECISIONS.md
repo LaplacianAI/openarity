@@ -755,6 +755,17 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   (409, with the new plan) unless the plan's digest is the one the caller was
   shown, so nobody applies a plan they did not see. Only changed items are
   written, so a second apply leaves no outbox row and no `updated_at` moved.
+- **The builder proposes; only a person applies.** A builder run is the
+  team's built-in builder (`runs.builder`), never also the hub, and its tools
+  are `graph`, `team` and `propose`: no write, delegate, web, MCP or skill,
+  so text it reads can change what it proposes but never the team. `propose`
+  plans without permissions and records the blueprint with that plan; reading
+  an open proposal plans it again as the reader, and applying it is the
+  blueprint apply as the caller, with the proposal marked applied in the same
+  transaction so it is applied once. A newer proposal supersedes the session's
+  open one in the same transaction (a partial unique index keeps one open);
+  one statement cannot do both, since its insert is checked against the row
+  before the update. Proposals follow their session's visibility.
 
 ## Skills, full descriptions
 

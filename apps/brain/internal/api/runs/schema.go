@@ -10,6 +10,9 @@ type startRequest struct {
 	Agent     string     `json:"agent"`
 	Input     string     `json:"input"`
 	SessionID *uuid.UUID `json:"session_id"`
+	// Builder starts the team's builder, which reads the team and proposes
+	// blueprints rather than answering for it.
+	Builder bool `json:"builder"`
 }
 
 type run struct {
@@ -31,6 +34,7 @@ type run struct {
 	ParentRunID *uuid.UUID `json:"parent_run_id"`
 	Depth       int32      `json:"depth"`
 	Hub         bool       `json:"hub"`
+	Builder     bool       `json:"builder"`
 	Delegates   []string   `json:"delegates"`
 	// Reply is what became of the run's answer to its channel; null for a run
 	// that answers none.

@@ -86,7 +86,7 @@ apps/brain/
       schema.go        request and response structs — the wire contract
     runs/              start, read, cancel and follow a run; list a team's runs; events.go is the stream
     loops/             the loops an agent may choose, which are the runner's
-    blueprints/        a team's servers, skills and agents in one document: export, plan (pure), apply in one tx
+    blueprints/        a team's servers, skills and agents in one document: export, plan (pure), apply in one tx; the builder's proposals
     teamsettings/      a team's model, web search, learning and compaction
     teamsummary/       the Home counts: one statement, one snapshot
   internal/gateway/    a provider's webhook in, normalised messages out; replies back out
@@ -123,6 +123,7 @@ apps/brain/
     execute.go         one run: claim, heartbeat, run to the end, finish
     graphtool.go       graph(query, kinds, hops), bound to every run
     hub.go             the hub: the built-in orchestrator, or the team's chosen agent, reaching the whole team
+    builder.go         the builder: team() and propose(), nothing that writes; its prompt and its turns
     job.go             the run queue, the sweep that takes over stale runs, the Enqueuer
     narrow.go          a child built with fewer than its grants, for the outfitter
     plan.go            plan(items), the hub's checklist, each change a run event

@@ -38,6 +38,12 @@ How you reply:
 var ErrNoModel = errors.New("the team has no model set, so its orchestrator cannot run; set one in the team's settings")
 
 func (b *Builder) agentFor(ctx context.Context, run db.Run) (db.Agent, error) {
+	if run.Builder {
+		if b.workshop == nil {
+			return db.Agent{}, errors.New("this brain has no workshop for its builder, so a builder run cannot start")
+		}
+		return b.builderAgent(ctx, run)
+	}
 	if run.Hub {
 		return b.hubAgent(ctx, run)
 	}
@@ -71,7 +77,7 @@ func (b *Builder) hubAgent(ctx context.Context, run db.Run) (db.Agent, error) {
 }
 
 func (b *Builder) reach(run db.Run, a db.Agent) ReachSource {
-	if run.Hub {
+	if run.Hub || run.Builder {
 		return teamReach(b.graph.Store, run.TeamID, self(a))
 	}
 	return agentReach(b.graph.Store, run.TeamID, a.ID)

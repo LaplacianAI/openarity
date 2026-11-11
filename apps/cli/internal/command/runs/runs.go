@@ -446,3 +446,6 @@ func status(opts *cli.Options, s string) string {
 		return cli.Safe(s)
 	}
 }
+
+// ReadInput is an input argument, or stdin for -, refused when empty.
+func ReadInput(in io.Reader, arg string) (string, error) { return readInput(in, arg) }

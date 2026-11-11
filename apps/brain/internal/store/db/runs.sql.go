@@ -83,7 +83,7 @@ UPDATE runs SET
     started_at   = coalesce(started_at, now())
 WHERE id = $2
   AND (status = 'queued' OR (status = 'running' AND worker = $1::text))
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel,
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder,
     extract(epoch FROM started_at
         + make_interval(secs => $3::float8) - now())::float8
         AS remaining_seconds
@@ -122,6 +122,7 @@ type ClaimRunRow struct {
 	Hub               bool
 	MessageID         *uuid.UUID
 	ReplyToChannel    bool
+	Builder           bool
 	RemainingSeconds  float64
 }
 
@@ -158,6 +159,7 @@ func (q *Queries) ClaimRun(ctx context.Context, arg ClaimRunParams) (ClaimRunRow
 		&i.Hub,
 		&i.MessageID,
 		&i.ReplyToChannel,
+		&i.Builder,
 		&i.RemainingSeconds,
 	)
 	return i, err
@@ -176,7 +178,7 @@ WHERE t.id = $6::uuid
   AND ($5::uuid IS NULL OR EXISTS (
         SELECT 1 FROM messages m
         WHERE m.id = $5::uuid AND m.session_id = $2::uuid))
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder
 `
 
 type CreateChannelRunParams struct {
@@ -229,6 +231,7 @@ func (q *Queries) CreateChannelRun(ctx context.Context, arg CreateChannelRunPara
 		&i.Hub,
 		&i.MessageID,
 		&i.ReplyToChannel,
+		&i.Builder,
 	)
 	return i, err
 }
@@ -242,7 +245,7 @@ FROM teams t
 LEFT JOIN team_settings s ON s.team_id = t.id
 LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = t.id
 WHERE t.id = $5::uuid
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder
 `
 
 type CreateHubRunParams struct {
@@ -292,6 +295,7 @@ func (q *Queries) CreateHubRun(ctx context.Context, arg CreateHubRunParams) (Run
 		&i.Hub,
 		&i.MessageID,
 		&i.ReplyToChannel,
+		&i.Builder,
 	)
 	return i, err
 }
@@ -302,7 +306,7 @@ SELECT $1::uuid, a.team_id, $2::uuid, $1::uuid,
        a.id, a.name, $3::uuid, $4::text, a.token_budget
 FROM agents a
 WHERE a.id = $5 AND a.team_id = $6
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder
 `
 
 type CreateRunParams struct {
@@ -353,6 +357,7 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 		&i.Hub,
 		&i.MessageID,
 		&i.ReplyToChannel,
+		&i.Builder,
 	)
 	return i, err
 }
@@ -389,7 +394,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel FROM runs WHERE id = $1
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder FROM runs WHERE id = $1
 `
 
 func (q *Queries) GetRun(ctx context.Context, id uuid.UUID) (Run, error) {
@@ -422,12 +427,13 @@ func (q *Queries) GetRun(ctx context.Context, id uuid.UUID) (Run, error) {
 		&i.Hub,
 		&i.MessageID,
 		&i.ReplyToChannel,
+		&i.Builder,
 	)
 	return i, err
 }
 
 const getRunVisible = `-- name: GetRunVisible :one
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel FROM runs r
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder FROM runs r
 WHERE r.id = $1 AND r.team_id = $2
   AND EXISTS (
     SELECT 1 FROM sessions s
@@ -480,6 +486,7 @@ func (q *Queries) GetRunVisible(ctx context.Context, arg GetRunVisibleParams) (R
 		&i.Hub,
 		&i.MessageID,
 		&i.ReplyToChannel,
+		&i.Builder,
 	)
 	return i, err
 }
@@ -561,7 +568,7 @@ func (q *Queries) ListRunDelegates(ctx context.Context, runIds []uuid.UUID) ([]L
 }
 
 const listRunsBySession = `-- name: ListRunsBySession :many
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel FROM runs
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder FROM runs
 WHERE session_id = $1
   AND id = root_run_id
   AND (NOT $2::bool
@@ -621,6 +628,7 @@ func (q *Queries) ListRunsBySession(ctx context.Context, arg ListRunsBySessionPa
 			&i.Hub,
 			&i.MessageID,
 			&i.ReplyToChannel,
+			&i.Builder,
 		); err != nil {
 			return nil, err
 		}
@@ -633,7 +641,7 @@ func (q *Queries) ListRunsBySession(ctx context.Context, arg ListRunsBySessionPa
 }
 
 const listRunsByTeam = `-- name: ListRunsByTeam :many
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel FROM runs r
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder FROM runs r
 WHERE r.team_id = $1
   AND r.id = r.root_run_id
   AND EXISTS (
@@ -718,6 +726,7 @@ func (q *Queries) ListRunsByTeam(ctx context.Context, arg ListRunsByTeamParams) 
 			&i.Hub,
 			&i.MessageID,
 			&i.ReplyToChannel,
+			&i.Builder,
 		); err != nil {
 			return nil, err
 		}
@@ -839,7 +848,7 @@ UPDATE runs SET
     status      = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
     finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END
 WHERE runs.id = $1::uuid AND runs.status IN ('queued', 'running')
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder
 `
 
 // Queued: cancelled now, since no worker holds it. Running: flagged for the
@@ -877,6 +886,7 @@ func (q *Queries) RequestRunCancel(ctx context.Context, id uuid.UUID) (Run, erro
 		&i.Hub,
 		&i.MessageID,
 		&i.ReplyToChannel,
+		&i.Builder,
 	)
 	return i, err
 }
@@ -892,7 +902,7 @@ SELECT $1::uuid, p.team_id, p.session_id, p.id, p.root_run_id,
 FROM runs p
 JOIN agents a ON a.id = $6::uuid AND a.team_id = p.team_id
 WHERE p.id = $7::uuid AND p.team_id = $8::uuid
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder
 `
 
 type StartChildRunParams struct {
@@ -949,6 +959,7 @@ func (q *Queries) StartChildRun(ctx context.Context, arg StartChildRunParams) (R
 		&i.Hub,
 		&i.MessageID,
 		&i.ReplyToChannel,
+		&i.Builder,
 	)
 	return i, err
 }

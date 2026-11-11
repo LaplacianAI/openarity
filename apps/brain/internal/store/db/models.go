@@ -199,6 +199,20 @@ type Permission struct {
 	Description string
 }
 
+type Proposal struct {
+	ID        uuid.UUID
+	TeamID    uuid.UUID
+	SessionID uuid.UUID
+	RunID     uuid.UUID
+	Summary   string
+	Blueprint []byte
+	Plan      []byte
+	State     string
+	AppliedBy *uuid.UUID
+	CreatedAt time.Time
+	AppliedAt *time.Time
+}
+
 type Reply struct {
 	ID            int64
 	TeamID        uuid.UUID
@@ -261,6 +275,7 @@ type Run struct {
 	Hub               bool
 	MessageID         *uuid.UUID
 	ReplyToChannel    bool
+	Builder           bool
 }
 
 type RunEvent struct {

@@ -566,9 +566,12 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// handler checks for what the plan writes: one permission on the route
 		// would either let a blueprint write what its holder could not, or
 		// refuse one that writes only what they can.
-		"GET /teams/{id}/blueprint":         "member",
-		"POST /teams/{id}/blueprints/plan":  "member",
-		"POST /teams/{id}/blueprints/apply": "member",
+		"GET /teams/{id}/blueprint":                     "member",
+		"GET /teams/{id}/proposals":                     "member",
+		"GET /teams/{id}/proposals/{proposalID}":        "member",
+		"POST /teams/{id}/proposals/{proposalID}/apply": "member",
+		"POST /teams/{id}/blueprints/plan":              "member",
+		"POST /teams/{id}/blueprints/apply":             "member",
 
 		// The loops are the values an agent's pattern takes, so anyone who
 		// can read an agent can read what its pattern may be.
