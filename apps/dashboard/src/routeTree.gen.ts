@@ -14,6 +14,7 @@ import { Route as UiRouteImport } from './routes/ui'
 import { Route as UiIndexRouteImport } from './routes/ui.index'
 import { Route as UiGalleryRouteImport } from './routes/ui.[_]gallery'
 import { Route as UiApprovalsRouteImport } from './routes/ui.approvals'
+import { Route as UiBuildRouteImport } from './routes/ui.build'
 import { Route as UiCallbackRouteImport } from './routes/ui.callback'
 import { Route as UiComposeRouteImport } from './routes/ui.compose'
 import { Route as UiGraphRouteImport } from './routes/ui.graph'
@@ -53,6 +54,11 @@ const UiGalleryRoute = UiGalleryRouteImport.update({
 const UiApprovalsRoute = UiApprovalsRouteImport.update({
   id: '/approvals',
   path: '/approvals',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiBuildRoute = UiBuildRouteImport.update({
+  id: '/build',
+  path: '/build',
   getParentRoute: () => UiRoute,
 } as any)
 const UiCallbackRoute = UiCallbackRouteImport.update({
@@ -136,6 +142,7 @@ export interface FileRoutesByFullPath {
   '/ui': typeof UiRouteWithChildren
   '/ui/_gallery': typeof UiGalleryRoute
   '/ui/approvals': typeof UiApprovalsRoute
+  '/ui/build': typeof UiBuildRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/compose': typeof UiComposeRoute
   '/ui/graph': typeof UiGraphRoute
@@ -157,6 +164,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ui/_gallery': typeof UiGalleryRoute
   '/ui/approvals': typeof UiApprovalsRoute
+  '/ui/build': typeof UiBuildRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/compose': typeof UiComposeRoute
   '/ui/graph': typeof UiGraphRoute
@@ -180,6 +188,7 @@ export interface FileRoutesById {
   '/ui': typeof UiRouteWithChildren
   '/ui/_gallery': typeof UiGalleryRoute
   '/ui/approvals': typeof UiApprovalsRoute
+  '/ui/build': typeof UiBuildRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/compose': typeof UiComposeRoute
   '/ui/graph': typeof UiGraphRoute
@@ -204,6 +213,7 @@ export interface FileRouteTypes {
     | '/ui'
     | '/ui/_gallery'
     | '/ui/approvals'
+    | '/ui/build'
     | '/ui/callback'
     | '/ui/compose'
     | '/ui/graph'
@@ -225,6 +235,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ui/_gallery'
     | '/ui/approvals'
+    | '/ui/build'
     | '/ui/callback'
     | '/ui/compose'
     | '/ui/graph'
@@ -247,6 +258,7 @@ export interface FileRouteTypes {
     | '/ui'
     | '/ui/_gallery'
     | '/ui/approvals'
+    | '/ui/build'
     | '/ui/callback'
     | '/ui/compose'
     | '/ui/graph'
@@ -305,6 +317,13 @@ declare module '@tanstack/react-router' {
       path: '/approvals'
       fullPath: '/ui/approvals'
       preLoaderRoute: typeof UiApprovalsRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/build': {
+      id: '/ui/build'
+      path: '/build'
+      fullPath: '/ui/build'
+      preLoaderRoute: typeof UiBuildRouteImport
       parentRoute: typeof UiRoute
     }
     '/ui/callback': {
@@ -418,6 +437,7 @@ declare module '@tanstack/react-router' {
 interface UiRouteChildren {
   UiGalleryRoute: typeof UiGalleryRoute
   UiApprovalsRoute: typeof UiApprovalsRoute
+  UiBuildRoute: typeof UiBuildRoute
   UiCallbackRoute: typeof UiCallbackRoute
   UiComposeRoute: typeof UiComposeRoute
   UiGraphRoute: typeof UiGraphRoute
@@ -439,6 +459,7 @@ interface UiRouteChildren {
 const UiRouteChildren: UiRouteChildren = {
   UiGalleryRoute: UiGalleryRoute,
   UiApprovalsRoute: UiApprovalsRoute,
+  UiBuildRoute: UiBuildRoute,
   UiCallbackRoute: UiCallbackRoute,
   UiComposeRoute: UiComposeRoute,
   UiGraphRoute: UiGraphRoute,

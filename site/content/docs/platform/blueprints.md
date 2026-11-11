@@ -158,6 +158,12 @@ $ oa proposals apply support 4f2a…
 
 A proposal in your direct session is yours alone, as the session is.
 
+In the dashboard, **Builder** under Build is the same conversation: say what
+you want, answer its questions, and each proposal appears as a card with its
+plan, as it would apply for you. **Apply** applies that plan; **Change
+something** is your next message. The conversation is in the page's address,
+so a reload or a link brings it back.
+
 ## In the dashboard
 
 **Compose**, under Build, builds a blueprint from forms rather than a file: add

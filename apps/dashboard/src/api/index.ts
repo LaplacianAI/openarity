@@ -31,6 +31,7 @@ import type {
   Message,
   Page,
   PendingSender,
+  Proposal,
   Run,
   RunEvent,
   RunRequest,
@@ -595,6 +596,41 @@ export async function applyBlueprint(
       method: "POST",
       body: { blueprint, plan_digest: digest },
     });
+    return { kind: "applied", changes: out.changes };
+  } catch (err) {
+    const plan = err instanceof ApiError ? planIn(err) : null;
+    if (!plan) throw err;
+    return { kind: (err as ApiError).status === 422 ? "refused" : "changed", plan };
+  }
+}
+
+/** The builder's proposals in one conversation, newest first. */
+export function listProposals(teamId: string, sessionId: string): Promise<Page<Proposal>> {
+  return request<Page<Proposal>>(
+    `/teams/${teamId}/proposals?session=${encodeURIComponent(sessionId)}&limit=100`,
+  );
+}
+
+/** One proposal; an open one's plan is made now, as the caller. */
+export function getProposal(teamId: string, proposalId: string): Promise<Proposal> {
+  return request<Proposal>(`/teams/${teamId}/proposals/${proposalId}`);
+}
+
+/**
+ * Applies a proposal as the caller, exactly the plan with that digest, as
+ * applyBlueprint does. A plain-text 409 (applied or superseded meanwhile)
+ * stays an error, with the brain's sentence.
+ */
+export async function applyProposal(
+  teamId: string,
+  proposalId: string,
+  digest: string,
+): Promise<Applied> {
+  try {
+    const out = await request<{ changes: BlueprintChange[] }>(
+      `/teams/${teamId}/proposals/${proposalId}/apply`,
+      { method: "POST", body: { plan_digest: digest } },
+    );
     return { kind: "applied", changes: out.changes };
   } catch (err) {
     const plan = err instanceof ApiError ? planIn(err) : null;

@@ -66,7 +66,7 @@ describe("the navigation on a wide screen", () => {
       ]);
     expect(groups).toEqual([
       ["Work", ["Home", "Runs", "Sessions", "Approvals"]],
-      ["Build", ["Agents", "Skills", "MCP servers", "Channels", "Compose"]],
+      ["Build", ["Agents", "Skills", "MCP servers", "Channels", "Builder", "Compose"]],
       ["Understand", ["Graph"]],
       ["Team", ["Team settings", "Teams"]],
     ]);
