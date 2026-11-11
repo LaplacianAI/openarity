@@ -1805,7 +1805,9 @@ describe("the hub in the trace", () => {
 
     await open("?tab=runs");
     await within(pane()).findByRole("heading", { name: "triage" });
-    expect(within(pane()).queryByRole("link", { name: /Continue in Builder/ })).not.toBeInTheDocument();
+    expect(
+      within(pane()).queryByRole("link", { name: /Continue in Builder/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("does not mark a run that is not the hub's", async () => {
