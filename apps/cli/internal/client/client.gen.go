@@ -2041,6 +2041,15 @@ type ListAgentsParams struct {
 	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
 }
 
+// ExportBlueprintParams defines parameters for ExportBlueprint.
+type ExportBlueprintParams struct {
+	// Agent An agent to export, by name; repeat for more.
+	Agent *[]string `form:"agent,omitempty" json:"agent,omitempty" yaml:"agent,omitempty"`
+
+	// McpServer An MCP server to export, by name; repeat for more.
+	McpServer *[]string `form:"mcp_server,omitempty" json:"mcp_server,omitempty" yaml:"mcp_server,omitempty"`
+}
+
 // ListChannelsParams defines parameters for ListChannels.
 type ListChannelsParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
@@ -2554,6 +2563,19 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
 	ReplaceAgent(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExportBlueprint The team as a blueprint
+	//
+	// A read, so belonging to the team is enough. Says the team's MCP
+	// servers and custom agents as a blueprint, grants by name and secret
+	// references relative to the team, so planning it changes nothing and
+	// an edit starts from the agent whole. Skills are left out: a skill is
+	// its files, and one a blueprint does not name is left alone; agents
+	// still grant them by name. Built-in agents are never in it. With
+	// `agent` or `mcp_server`, only those are.
+	//
+	// Corresponds with GET /teams/{id}/blueprint (the `ExportBlueprint` operationId).
+	ExportBlueprint(ctx context.Context, id TeamID, params *ExportBlueprintParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ApplyBlueprintWithBody Apply a blueprint
 	//
@@ -3849,6 +3871,29 @@ func (c *Client) ReplaceAgentWithBody(ctx context.Context, id TeamID, agentID Ag
 // Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
 func (c *Client) ReplaceAgent(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReplaceAgentRequest(c.Server, id, agentID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExportBlueprint The team as a blueprint
+//
+// A read, so belonging to the team is enough. Says the team's MCP
+// servers and custom agents as a blueprint, grants by name and secret
+// references relative to the team, so planning it changes nothing and
+// an edit starts from the agent whole. Skills are left out: a skill is
+// its files, and one a blueprint does not name is left alone; agents
+// still grant them by name. Built-in agents are never in it. With
+// `agent` or `mcp_server`, only those are.
+//
+// Corresponds with GET /teams/{id}/blueprint (the `ExportBlueprint` operationId).
+func (c *Client) ExportBlueprint(ctx context.Context, id TeamID, params *ExportBlueprintParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExportBlueprintRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -5987,6 +6032,79 @@ func NewReplaceAgentRequestWithBody(server string, id TeamID, agentID AgentID, c
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewExportBlueprintRequest constructs an http.Request for the ExportBlueprint method
+func NewExportBlueprintRequest(server string, id TeamID, params *ExportBlueprintParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/blueprint", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Agent != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent", *params.Agent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.McpServer != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "mcp_server", *params.McpServer, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -8994,6 +9112,21 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
 	ReplaceAgentWithResponse(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentResponse, error)
 
+	// ExportBlueprintWithResponse The team as a blueprint
+	//
+	// A read, so belonging to the team is enough. Says the team's MCP
+	// servers and custom agents as a blueprint, grants by name and secret
+	// references relative to the team, so planning it changes nothing and
+	// an edit starts from the agent whole. Skills are left out: a skill is
+	// its files, and one a blueprint does not name is left alone; agents
+	// still grant them by name. Built-in agents are never in it. With
+	// `agent` or `mcp_server`, only those are.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/blueprint (the `ExportBlueprint` operationId).
+	ExportBlueprintWithResponse(ctx context.Context, id TeamID, params *ExportBlueprintParams, reqEditors ...RequestEditorFn) (*ExportBlueprintResponse, error)
+
 	// ApplyBlueprintWithBodyWithResponse Apply a blueprint
 	//
 	// Plans again and applies only the plan whose digest is the one sent.
@@ -10577,6 +10710,54 @@ func (r ReplaceAgentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ReplaceAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ExportBlueprintResponse401Headers the declared response headers of an HTTP 401 response for ExportBlueprint
+type ExportBlueprintResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ExportBlueprintResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Blueprint
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ExportBlueprintResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExportBlueprintResponse) GetJSON200() *Blueprint {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ExportBlueprintResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExportBlueprintResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExportBlueprintResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExportBlueprintResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -13219,6 +13400,27 @@ func (c *ClientWithResponses) ReplaceAgentWithResponse(ctx context.Context, id T
 	return ParseReplaceAgentResponse(rsp)
 }
 
+// ExportBlueprintWithResponse The team as a blueprint
+//
+// A read, so belonging to the team is enough. Says the team's MCP
+// servers and custom agents as a blueprint, grants by name and secret
+// references relative to the team, so planning it changes nothing and
+// an edit starts from the agent whole. Skills are left out: a skill is
+// its files, and one a blueprint does not name is left alone; agents
+// still grant them by name. Built-in agents are never in it. With
+// `agent` or `mcp_server`, only those are.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/blueprint (the `ExportBlueprint` operationId).
+func (c *ClientWithResponses) ExportBlueprintWithResponse(ctx context.Context, id TeamID, params *ExportBlueprintParams, reqEditors ...RequestEditorFn) (*ExportBlueprintResponse, error) {
+	rsp, err := c.ExportBlueprint(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExportBlueprintResponse(rsp)
+}
+
 // ApplyBlueprintWithBodyWithResponse Apply a blueprint
 //
 // Plans again and applies only the plan whose digest is the one sent.
@@ -15022,6 +15224,45 @@ func ParseReplaceAgentResponse(rsp *http.Response) (*ReplaceAgentResponse, error
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ReplaceAgentResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseExportBlueprintResponse parses an HTTP response from a ExportBlueprintWithResponse call
+func ParseExportBlueprintResponse(rsp *http.Response) (*ExportBlueprintResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExportBlueprintResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Blueprint
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ExportBlueprintResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

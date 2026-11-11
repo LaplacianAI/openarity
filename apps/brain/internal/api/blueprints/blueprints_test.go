@@ -156,9 +156,24 @@ func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return 
 func (w *world) call(t *testing.T, verb string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req := httptest.NewRequestWithContext(t.Context(), "POST", "/teams/"+w.team.String()+"/blueprints/"+verb, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	return w.serve(t, req)
+}
+
+// serve sends a request as a member of the team, through the guard.
+func (w *world) serve(t *testing.T, req *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
+
 	rs := authz.NewRoutes()
-	for _, p := range []string{"/teams/{id}/blueprints/plan", "/teams/{id}/blueprints/apply"} {
-		if err := rs.Add("POST", p, "member", nil); err != nil {
+	for _, r := range []struct{ method, path string }{
+		{"POST", "/teams/{id}/blueprints/plan"}, {"POST", "/teams/{id}/blueprints/apply"}, {"GET", "/teams/{id}/blueprint"},
+	} {
+		if err := rs.Add(r.method, r.path, "member", nil); err != nil {
 			t.Fatalf("route: %v", err)
 		}
 	}
@@ -166,12 +181,6 @@ func (w *world) call(t *testing.T, verb string, body any) *httptest.ResponseReco
 	mux := http.NewServeMux()
 	New(logger, w, w.authz, &w.objects, loops).Register(mux, api.NewGuard(rs, w.authz, liveTeams{}, logger))
 
-	raw, err := json.Marshal(body)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	req := httptest.NewRequestWithContext(t.Context(), "POST", "/teams/"+w.team.String()+"/blueprints/"+verb, bytes.NewReader(raw))
-	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(auth.WithUser(req.Context(), &auth.User{
 		ID: uuid.New(), Issuer: "dev", Subject: "someone",
 		Teams: []auth.Membership{{TeamID: w.team, Name: "support", Role: "member"}},
