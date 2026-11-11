@@ -1,6 +1,6 @@
 module github.com/LaplacianAI/openarity/apps/brain
 
-go 1.26.10
+go 1.26.11
 
 require (
 	codeberg.org/readeck/go-readability/v2 v2.1.3
