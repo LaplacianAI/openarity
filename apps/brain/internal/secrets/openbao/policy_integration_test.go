@@ -224,8 +224,8 @@ func TestTheShippedPolicyRefusesEverythingElse(t *testing.T) {
 		"the MCP root itself, which is not under mcp/*": {
 			http.MethodGet, secret + "/data/teams/" + team + "/mcp",
 		},
-		"writing an MCP secret, which is the team's to do": {
-			http.MethodPut, secret + "/data/teams/" + team + "/mcp/github",
+		"writing a nested MCP secret, which the brain's route never names": {
+			http.MethodPut, secret + "/data/teams/" + team + "/mcp/github/prod",
 		},
 		"soft-deleting an MCP secret": {
 			http.MethodDelete, secret + "/data/teams/" + team + "/mcp/github",
@@ -414,6 +414,28 @@ func TestTheShippedPolicyReadsAnMCPServersSecret(t *testing.T) {
 	}
 }
 
+// PUT /teams/{id}/mcp-secrets/{name} writes one segment under mcp/, every
+// key at once. Staging answered 503 here while the policy granted read only.
+func TestTheShippedPolicyWritesAnMCPSecretWhole(t *testing.T) {
+	t.Parallel()
+
+	reader, writer, _, _ := brainStore(t)
+	path := secrets.TeamPath(uuid.New(), secrets.KindMCP) + "/github"
+
+	if err := writer.PutAll(t.Context(), path, map[string]string{"token": "one", "org": "acme"}); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	if err := writer.PutAll(t.Context(), path, map[string]string{"token": "two"}); err != nil {
+		t.Fatalf("a second write, which replaces the first: %v", err)
+	}
+	if got, err := reader.Get(t.Context(), path, "token"); err != nil || got != "two" {
+		t.Errorf("token = %q, %v; want the second write's", got, err)
+	}
+	if _, err := reader.Get(t.Context(), path, "org"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Errorf("org after a write without it: %v; want it gone, as a whole write leaves it", err)
+	}
+}
+
 // A glob sounds like it can be walked out of with `..`. Each traversal here
 // aims at a secret that really exists, so a policy that let one through would
 // answer 200 rather than an ambiguous 404. OpenBao redirects a literal `..` to
@@ -460,6 +482,7 @@ func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
 		`path "secret/data/teams/+/attachments"`,
 		`path "secret/metadata/teams/+/attachments"`,
 		`path "secret/data/teams/+/mcp/*"`,
+		`path "secret/data/teams/+/mcp/+"`,
 		`path "secret/data/teams/+/search/+"`,
 		`path "secret/metadata/teams/+/search/+"`,
 	} {
