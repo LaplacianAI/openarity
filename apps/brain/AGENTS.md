@@ -86,7 +86,7 @@ apps/brain/
       schema.go        request and response structs — the wire contract
     runs/              start, read, cancel and follow a run; list a team's runs; events.go is the stream
     loops/             the loops an agent may choose, which are the runner's
-    blueprints/        a team's servers, skills and agents in one document: plan (pure), apply in one tx
+    blueprints/        a team's servers, skills and agents in one document: export, plan (pure), apply in one tx
     teamsettings/      a team's model, web search, learning and compaction
     teamsummary/       the Home counts: one statement, one snapshot
   internal/gateway/    a provider's webhook in, normalised messages out; replies back out

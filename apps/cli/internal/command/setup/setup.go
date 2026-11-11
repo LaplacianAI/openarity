@@ -106,7 +106,7 @@ func install(opts *cli.Options, roots []string, force bool) error {
 	for _, root := range roots {
 		for _, f := range names {
 			want := files[f]
-			got, err := os.ReadFile(filepath.Join(root, f))
+			got, err := os.ReadFile(filepath.Join(root, f)) //nolint:gosec // a folder the user chose, or their own skills folder
 			if err == nil && !bytes.Equal(got, want) {
 				changed = append(changed, filepath.Join(root, f))
 			}

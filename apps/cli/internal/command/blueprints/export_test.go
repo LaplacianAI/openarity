@@ -19,7 +19,7 @@ const exportPath = "/teams/" + teamID + "/blueprint"
 const exportBody = `{
   "mcp_servers": [
     {"name": "helpdesk", "url": "https://helpdesk.example/mcp", "auth_secret": "helpdesk#token", "bare": false},
-    {"name": "local", "command": ["helpdesk-mcp", "--stdio"], "env": {"KEY": "helpdesk#key"}, "bare": true}
+    {"name": "local", "url": null, "command": ["helpdesk-mcp", "--stdio"], "env": {"KEY": "helpdesk#key"}, "auth_secret": null, "bare": true}
   ],
   "agents": [
     {"name": "triage", "description": "Sorts email.", "kind": "custom", "instructions": "Sort it.",
@@ -48,8 +48,11 @@ func TestAnExportPlansBackAsTheBlueprintTheBrainSaid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export: %v\n%s", err, out)
 	}
-	if strings.HasPrefix(strings.TrimSpace(out), "{") {
-		t.Fatalf("export printed JSON by default, want YAML:\n%s", out)
+	if strings.HasPrefix(strings.TrimSpace(out), "{") || strings.Contains(out, "null") || !strings.Contains(out, "url: https://helpdesk.example/mcp\n") {
+		t.Fatalf("export printed JSON, a null or a needless quote, want plain YAML:\n%s", out)
+	}
+	if !strings.HasPrefix(out, "mcp_servers:\n  - name: helpdesk\n") {
+		t.Errorf("export does not keep the brain's order, name first:\n%s", out)
 	}
 	file := filepath.Join(t.TempDir(), "team.yaml")
 	if err := os.WriteFile(file, []byte(out), 0o600); err != nil {
@@ -66,7 +69,7 @@ func TestAnExportPlansBackAsTheBlueprintTheBrainSaid(t *testing.T) {
 	if err := json.Unmarshal([]byte(script.All()[1].Body), &planned); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(said, planned) {
+	if !reflect.DeepEqual(withoutNulls(said), planned) {
 		t.Errorf("planned:\n%s\nwant what export said:\n%s", script.All()[1].Body, exportBody)
 	}
 }
@@ -109,4 +112,23 @@ func TestAnExportOfANameTheTeamLacksSaysSo(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "nobody") {
 		t.Errorf("err = %v, want the brain's sentence", err)
 	}
+}
+
+// withoutNulls is a document as it means: a null field is a field left out.
+func withoutNulls(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for k, x := range v {
+			if x != nil {
+				out[k] = withoutNulls(x)
+			}
+		}
+		return out
+	case []any:
+		for i := range v {
+			v[i] = withoutNulls(v[i])
+		}
+	}
+	return v
 }
