@@ -329,6 +329,15 @@ func (h *handler) listByTeam(w http.ResponseWriter, r *http.Request) {
 		params.FilterHub, params.Hub = true, hub
 	}
 
+	if raw := r.URL.Query().Get("builder"); raw != "" {
+		builder, err := strconv.ParseBool(raw)
+		if err != nil {
+			http.Error(w, "builder must be true or false", http.StatusBadRequest)
+			return
+		}
+		params.FilterBuilder, params.Builder = true, builder
+	}
+
 	if raw := r.URL.Query().Get("cursor"); raw != "" {
 		var c runCursor
 		if !api.DecodeCursor(w, raw, &c) {

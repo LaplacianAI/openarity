@@ -304,6 +304,55 @@ describe("the builder's conversation", () => {
   });
 });
 
+describe("finding a conversation again", () => {
+  it("lists recent conversations, one per session, newest first, and opens one", async () => {
+    const OTHER = "1d2e3f40-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+    brain({
+      ...team(["run:write"]),
+      "GET /teams/{id}/runs": {
+        body: {
+          items: [
+            run("r9", "Add a deploy agent", {
+              status: "running",
+              created_at: "2026-10-02T00:00:00Z",
+            }),
+            run("r8", "Older turn, same session", { created_at: "2026-10-01T12:00:00Z" }),
+            run("r7", "Billing agents", { session_id: OTHER, created_at: "2026-10-01T00:00:00Z" }),
+            run("r6", "Not the builder's", { builder: false, session_id: "x" }),
+          ],
+        },
+      },
+    });
+    at("/ui/build");
+
+    const recent = await screen.findByRole("region", { name: "Recent conversations" });
+    const links = within(recent).getAllByRole("link");
+    expect(links.map((l) => l.textContent)).toEqual([
+      expect.stringContaining("Add a deploy agent"),
+      expect.stringContaining("Billing agents"),
+    ]);
+    expect(links[0]?.getAttribute("href")).toBe(`/ui/build?session=${SESSION}`);
+    expect(links[1]?.getAttribute("href")).toBe(`/ui/build?session=${OTHER}`);
+    expect(within(recent).queryByText("Not the builder's")).not.toBeInTheDocument();
+  });
+
+  it("asks for builder runs only", async () => {
+    const seen = brain({ ...team(["run:write"]), "GET /teams/{id}/runs": { body: { items: [] } } });
+    at("/ui/build");
+
+    await waitFor(() => expect(seen.some((s) => s.path.includes("/runs?"))).toBe(true));
+    expect(seen.find((s) => s.path.includes("/runs?"))?.path).toContain("builder=true");
+    expect(screen.queryByRole("region", { name: "Recent conversations" })).not.toBeInTheDocument();
+  });
+
+  it("shows no list inside a conversation", async () => {
+    conversation();
+    at(`/ui/build?session=${SESSION}`);
+    await screen.findByRole("list", { name: "Conversation" });
+    expect(screen.queryByRole("region", { name: "Recent conversations" })).not.toBeInTheDocument();
+  });
+});
+
 describe("asking the builder", () => {
   it("starts a builder run, and a first message opens its conversation", async () => {
     const seen = brain({

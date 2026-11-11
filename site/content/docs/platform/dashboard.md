@@ -13,7 +13,7 @@ The sidebar is grouped by the job a screen is for:
 | Group | Screens | What they are for |
 | ----- | ------- | ----------------- |
 | Work | Home, Runs, Sessions, Approvals | Is the team working, what did it do, who is waiting |
-| Build | Agents, Skills, MCP servers, Channels, Builder, Compose | Defining what the team can do and where it hears from |
+| Build | Agents, Skills, MCP servers, Channels, Builder, Blueprint | Defining what the team can do and where it hears from |
 | Understand | Graph | The team's agents, servers, tools and skills as the graph holds them |
 | Team | Team settings, Teams, Deleted teams | The team's model, hub, web search and learning; its members; and, for super admins only, deleted teams and restoring one |
 
@@ -75,10 +75,14 @@ secret store, never the secret. A channel's sheet shows its webhook address and
 **Builder** is a conversation with the team's builder: say what agents, MCP
 servers or skills you want, answer what it asks, and apply what it proposes.
 Each proposal is a card with its plan as it would apply for you; a refusal,
-including a permission you lack, is shown and Apply is not offered. See
-[Blueprints](blueprints.md#the-builder).
+including a permission you lack, is shown and Apply is not offered. Opened
+with no conversation, it lists your **Recent conversations**, so one is found
+again after you leave it, and a builder run's trace links back with
+**Continue in Builder**. See [Blueprints](blueprints.md#the-builder).
 
-**Compose** gathers new and changed MCP servers, skills and agents into one
+**Blueprint** (once called Compose; old links still land there) lists what the
+builder proposed that nobody has applied yet, each opening its conversation to
+review and apply, then gathers new and changed MCP servers, skills and agents into one
 draft, through the same forms the other screens use, and writes nothing until
 **Apply**. An agent may be granted a server or skill the draft creates, and
 **Change an existing one** opens one of the team's own agents or servers.

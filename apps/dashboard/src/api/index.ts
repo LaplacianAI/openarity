@@ -285,6 +285,8 @@ export type RunFilter = {
   since?: Date | null;
   /** true for the hub's runs only, false for a named agent's only. */
   hub?: boolean | null;
+  /** Only the team's builder's runs, or only the others. */
+  builder?: boolean | null;
   limit?: number;
 };
 
@@ -298,6 +300,7 @@ export function listTeamRuns(
   for (const s of filter.status ?? []) q.append("status", s);
   if (filter.since) q.set("since", filter.since.toISOString());
   if (filter.hub != null) q.set("hub", String(filter.hub));
+  if (filter.builder != null) q.set("builder", String(filter.builder));
   return request<Page<Run>>(`/teams/${teamId}/runs${queryOf(q)}`);
 }
 
@@ -612,6 +615,11 @@ export function listProposals(teamId: string, sessionId: string): Promise<Page<P
   return request<Page<Proposal>>(
     `/teams/${teamId}/proposals?session=${encodeURIComponent(sessionId)}&limit=100`,
   );
+}
+
+/** The team's newest proposals, every conversation the caller can see. */
+export function listTeamProposals(teamId: string): Promise<Page<Proposal>> {
+  return request<Page<Proposal>>(`/teams/${teamId}/proposals?limit=50`);
 }
 
 /** One proposal; an open one's plan is made now, as the caller. */

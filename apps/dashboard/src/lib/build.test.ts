@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import { ApiError } from "@/api/client";
 import type { BlueprintPlan, Proposal, Run, RunEvent } from "@/api/types";
-import { buildRefusal, isLive, liveOf, NO_BUILDER_MODEL, needsOf, turnsOf } from "@/lib/build";
+import {
+  buildRefusal,
+  conversationsOf,
+  isLive,
+  liveOf,
+  NO_BUILDER_MODEL,
+  needsOf,
+  turnsOf,
+} from "@/lib/build";
 
 const run = (id: string, at: string, extra: Partial<Run> = {}) =>
   ({ id, created_at: at, builder: true, status: "succeeded", ...extra }) as Run;
@@ -122,5 +130,15 @@ describe("liveOf", () => {
       ev("step", null),
     ]);
     expect(text).toBe("Here it is.");
+  });
+});
+
+describe("conversationsOf", () => {
+  it("keeps each session's newest builder run, newest first, at most as many as asked", () => {
+    const r = (id: string, session: string, builder = true) =>
+      ({ id, session_id: session, builder, created_at: id }) as Run;
+    const runs = [r("5", "a"), r("4", "b"), r("3", "a"), r("2", "c", false), r("1", "d")];
+    expect(conversationsOf(runs).map((x) => x.id)).toEqual(["5", "4", "1"]);
+    expect(conversationsOf(runs, 2).map((x) => x.id)).toEqual(["5", "4"]);
   });
 });

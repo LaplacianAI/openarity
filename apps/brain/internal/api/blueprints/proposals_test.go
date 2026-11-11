@@ -363,3 +363,22 @@ func TestAnAppliedProposalAsksItsNewServersForTheirTools(t *testing.T) {
 		t.Errorf("billing: %+v, want its tool", d)
 	}
 }
+
+// As a model did on staging: a reason inside an agent, a name on a skill.
+// The refusal names every field each kind takes, so one retry can fix all.
+func TestAFieldTheBlueprintDoesNotTakeIsRefusedNamingThoseItDoes(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	run := w.builderRun(t, "group", nil)
+
+	for name, bp := range map[string]any{
+		"a reason on an agent": map[string]any{"agents": []any{map[string]any{"name": "a", "reason": "why"}}},
+		"a name on a skill":    map[string]any{"skills": []any{map[string]any{"name": "s", "files": []any{}}}},
+	} {
+		_, err := w.propose(t, run, bp)
+		if !errors.Is(err, ErrProposal) || !strings.Contains(err.Error(), "its name and description go in SKILL.md") ||
+			!strings.Contains(err.Error(), "No other field, such as a reason") {
+			t.Errorf("%s: %v; want the fields each kind takes", name, err)
+		}
+	}
+}

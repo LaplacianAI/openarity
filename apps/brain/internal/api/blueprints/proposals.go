@@ -177,6 +177,13 @@ type proposalSkill struct {
 	} `json:"files"`
 }
 
+// blueprintFields is every field a proposal's items may hold, said when one
+// holds another, so the model fixes it in one go rather than one field a try.
+const blueprintFields = "Write only these fields. An MCP server: name, url, auth_secret, command, env, bare. " +
+	"A skill: files [{path, text}] and nothing else; its name and description go in SKILL.md's front matter. " +
+	"An agent: name, description, instructions, model {name, max_tokens}, pattern, max_steps, mcp_servers " +
+	"[{name, allow}], skills, delegation, delegates, web, token_budget, output_schema. No other field, such as a reason, anywhere."
+
 func fromProposal(raw json.RawMessage) (Blueprint, error) {
 	var in struct {
 		MCPServers []serverSpec    `json:"mcp_servers"`
@@ -186,7 +193,7 @@ func fromProposal(raw json.RawMessage) (Blueprint, error) {
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
-		return Blueprint{}, fmt.Errorf("the blueprint does not read: %w", err)
+		return Blueprint{}, fmt.Errorf("the blueprint does not read: %w. %s", err, blueprintFields)
 	}
 	bp := Blueprint{MCPServers: in.MCPServers, Agents: in.Agents}
 	for _, s := range in.Skills {

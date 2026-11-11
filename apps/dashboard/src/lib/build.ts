@@ -87,6 +87,23 @@ function hostOf(url: string): string | null {
   }
 }
 
+/**
+ * The conversations to carry on: one per session, from its newest builder
+ * run, newest first. The runs arrive newest first, so the first seen of a
+ * session is its latest.
+ */
+export function conversationsOf(runs: Run[], atMost = 10): Run[] {
+  const seen = new Set<string>();
+  const out: Run[] = [];
+  for (const r of runs) {
+    if (!r.builder || seen.has(r.session_id)) continue;
+    seen.add(r.session_id);
+    out.push(r);
+    if (out.length === atMost) break;
+  }
+  return out;
+}
+
 /** One thing the builder is doing, or did, in plain words. */
 export type Activity = { id: string; label: string; state: "running" | "done" | "failed" };
 

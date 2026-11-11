@@ -1343,6 +1343,10 @@ func TestTheRunHistoryPassesEachFilterAsAsked(t *testing.T) {
 		}},
 		"the hub's":     {"?hub=true", func(p db.ListRunsByTeamParams) bool { return p.FilterHub && p.Hub }},
 		"not the hub's": {"?hub=false", func(p db.ListRunsByTeamParams) bool { return p.FilterHub && !p.Hub }},
+		"the builder's": {"?builder=true", func(p db.ListRunsByTeamParams) bool { return p.FilterBuilder && p.Builder }},
+		"not the builder's": {"?builder=false", func(p db.ListRunsByTeamParams) bool {
+			return p.FilterBuilder && !p.Builder && !p.FilterHub
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t)
@@ -1366,6 +1370,7 @@ func TestABadRunHistoryFilterIsRefused(t *testing.T) {
 		"a date with no time":  {"?since=2026-11-04", "since must be an RFC 3339 time"},
 		"a word for a time":    {"?since=yesterday", "since must be an RFC 3339 time"},
 		"a word for hub":       {"?hub=maybe", "hub must be true or false"},
+		"a word for builder":   {"?builder=maybe", "builder must be true or false"},
 		"a bad limit":          {"?limit=0", "limit must be a positive integer"},
 		"a bad cursor":         {"?cursor=%21%21", "cursor"},
 	} {

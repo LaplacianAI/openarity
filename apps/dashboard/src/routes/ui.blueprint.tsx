@@ -1,6 +1,6 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { Bot, FolderPlus, Pencil, Server, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { ArrowRight, Bot, FolderPlus, Pencil, Server, X } from "lucide-react";
 import { type ChangeEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -12,6 +12,7 @@ import {
   getSkill,
   listAgents,
   listMCPServers,
+  listTeamProposals,
   planBlueprint,
 } from "@/api";
 import { useCurrentTeam } from "@/api/session";
@@ -50,6 +51,7 @@ import {
   put,
   skillName,
 } from "@/lib/compose";
+import { relativeTime } from "@/lib/format";
 import {
   EMPTY_SERVER,
   editRequest,
@@ -58,28 +60,70 @@ import {
   serverRequest,
 } from "@/lib/server-draft";
 
-export const Route = createFileRoute("/ui/compose")({
-  component: Compose,
+export const Route = createFileRoute("/ui/blueprint")({
+  component: BlueprintPage,
 });
 
 const ABOUT =
-  "Compose gathers new and changed MCP servers, skills and agents into one draft. Nothing is written while you build it. Plan shows what applying it would change, and Apply makes exactly that change, all at once. It is a blueprint, the same thing oa plan and oa apply take from a file.";
+  "Blueprint gathers new and changed MCP servers, skills and agents into one draft. Nothing is written while you build it. Plan shows what applying it would change, and Apply makes exactly that change, all at once. It is a blueprint, the same thing oa plan and oa apply take from a file.";
 
-function Compose() {
+function BlueprintPage() {
   const { teamId } = useCurrentTeam();
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Compose"
+        title="Blueprint"
         finding="Draft servers, skills and agents together, see the plan, then apply it at once."
         description={ABOUT}
       />
       {teamId ? (
-        <Composer teamId={teamId} />
+        <>
+          <BuilderProposals teamId={teamId} />
+          <Composer teamId={teamId} />
+        </>
       ) : (
         <EmptyState title="No team" body="Join or create a team to compose changes to it." />
       )}
     </div>
+  );
+}
+
+/**
+ * What the team's builder has proposed and nobody has applied yet. Each is
+ * read and applied in its conversation, where its plan is made for the
+ * reader; here it is only found.
+ */
+function BuilderProposals({ teamId }: { teamId: string }) {
+  const proposals = useQuery({
+    queryKey: ["proposals", teamId, "open"],
+    queryFn: () => listTeamProposals(teamId),
+  });
+  const open = (proposals.data?.items ?? []).filter((p) => p.state === "open");
+  if (proposals.isPending || proposals.isError || open.length === 0) return null;
+  return (
+    <section aria-labelledby="proposed-heading" className="space-y-2">
+      <h2 id="proposed-heading" className="text-sm font-medium">
+        Proposed by the builder
+      </h2>
+      <ul className="divide-y divide-rule rounded-lg border border-border">
+        {open.map((p) => (
+          <li key={p.id}>
+            <Link
+              to="/ui/build"
+              search={{ session: p.session_id }}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm hover:bg-muted"
+            >
+              <span className="min-w-0 flex-1">{p.summary}</span>
+              <span className="text-xs text-muted-foreground">{relativeTime(p.created_at)}</span>
+              <span className="inline-flex items-center gap-1 text-xs underline underline-offset-4">
+                Review and apply
+                <ArrowRight aria-hidden className="size-3" />
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

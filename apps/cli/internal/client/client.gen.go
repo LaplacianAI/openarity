@@ -2258,6 +2258,11 @@ type ListTeamRunsParams struct {
 	// Hub `true` for only the hub's runs, `false` for only those started
 	// for a named agent; absent for both.
 	Hub *bool `form:"hub,omitempty" json:"hub,omitempty" yaml:"hub,omitempty"`
+
+	// Builder `true` for only the team's builder's runs, which is how a client
+	// finds the builder conversations it can carry on; `false` for
+	// every other run; absent for both.
+	Builder *bool `form:"builder,omitempty" json:"builder,omitempty" yaml:"builder,omitempty"`
 }
 
 // StreamRunEventsParams defines parameters for StreamRunEvents.
@@ -7964,6 +7969,18 @@ func NewListTeamRunsRequest(server string, id TeamID, params *ListTeamRunsParams
 		if params.Hub != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "hub", *params.Hub, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Builder != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "builder", *params.Builder, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {

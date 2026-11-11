@@ -3,7 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowUpRight, Check, CircleAlert, LoaderCircle, Plus } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
-import { listProposals, listSessionRuns, startRun } from "@/api";
+import { listProposals, listSessionRuns, listTeamRuns, startRun } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type { Run } from "@/api/types";
@@ -13,13 +13,15 @@ import { ProposalCard } from "@/components/proposal-card";
 import { useRunEvents } from "@/components/run-detail";
 import { runLink } from "@/components/run-table";
 import { ErrorState } from "@/components/states";
+import { StatusPill as RunStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
 import { askProblem } from "@/lib/ask";
-import { buildRefusal, isLive, liveOf, type Turn, turnsOf } from "@/lib/build";
+import { buildRefusal, conversationsOf, isLive, liveOf, type Turn, turnsOf } from "@/lib/build";
+import { relativeTime } from "@/lib/format";
 
 type BuildSearch = { session?: string };
 
@@ -153,7 +155,51 @@ function Conversation({ teamId, session }: { teamId: string; session?: string })
           Asking the builder needs {RUN_WRITE} in this team. An admin can grant it.
         </p>
       )}
+      {session ? null : <RecentConversations teamId={teamId} />}
     </div>
+  );
+}
+
+/**
+ * The builder conversations the caller can carry on, so one is found again
+ * after leaving it: by the sidebar, a new tab, another day.
+ */
+function RecentConversations({ teamId }: { teamId: string }) {
+  const recent = useQuery({
+    queryKey: ["build", teamId, "recent"],
+    queryFn: () => listTeamRuns(teamId, null, { builder: true, limit: 50 }),
+  });
+  const conversations = conversationsOf(recent.data?.items ?? []);
+  if (recent.isPending || (recent.isSuccess && conversations.length === 0)) return null;
+  return (
+    <section aria-labelledby="recent-heading" className="space-y-2">
+      <h2 id="recent-heading" className="text-sm font-medium">
+        Recent conversations
+      </h2>
+      {recent.isError ? (
+        <ErrorState
+          what="recent conversations"
+          error={recent.error}
+          onRetry={() => void recent.refetch()}
+        />
+      ) : (
+        <ul className="divide-y divide-rule rounded-lg border border-border">
+          {conversations.map((r) => (
+            <li key={r.session_id}>
+              <Link
+                to="/ui/build"
+                search={{ session: r.session_id }}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm hover:bg-muted"
+              >
+                <span className="min-w-0 flex-1 truncate">{r.input}</span>
+                <RunStatus status={r.status} />
+                <span className="text-xs text-muted-foreground">{relativeTime(r.created_at)}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

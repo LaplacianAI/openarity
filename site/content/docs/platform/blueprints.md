@@ -191,11 +191,16 @@ for you. **Needs from you** names each secret to set and each address the
 team's agents would newly be sent to, so you can spot a host you do not
 recognise. **Apply** applies that plan and shows what each new server
 answered; **Change something** is your next message. The conversation is in the page's address,
-so a reload or a link brings it back.
+so a reload or a link brings it back, and **Builder** with no conversation open
+lists your recent ones. `oa build <team>` with no message does the same, with
+each session id for `--session`.
+
+The builder asks by replying: a question ends its turn, and your next message
+in the conversation is the answer, read with the turns before it.
 
 ## In the dashboard
 
-**Compose**, under Build, builds a blueprint from forms rather than a file: add
+**Blueprint**, under Build, lists the builder's open proposals, then builds a blueprint from forms rather than a file: add
 MCP servers, skill folders and agents to a draft, or change the team's own,
 then **Plan** and **Apply**. An agent in the draft may be granted a server or
 skill the same draft creates.

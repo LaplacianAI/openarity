@@ -5,7 +5,7 @@ import type { ServerDraft } from "@/lib/server-draft";
 
 /**
  * An MCP server's fields, as the Servers screen registers and edits one and
- * Compose drafts one. What they become is the caller's: a request now, or an
+ * Blueprint drafts one. What they become is the caller's: a request now, or an
  * item in a draft.
  */
 export function ServerFields({

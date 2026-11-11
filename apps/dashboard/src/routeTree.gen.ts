@@ -14,6 +14,7 @@ import { Route as UiRouteImport } from './routes/ui'
 import { Route as UiIndexRouteImport } from './routes/ui.index'
 import { Route as UiGalleryRouteImport } from './routes/ui.[_]gallery'
 import { Route as UiApprovalsRouteImport } from './routes/ui.approvals'
+import { Route as UiBlueprintRouteImport } from './routes/ui.blueprint'
 import { Route as UiBuildRouteImport } from './routes/ui.build'
 import { Route as UiCallbackRouteImport } from './routes/ui.callback'
 import { Route as UiComposeRouteImport } from './routes/ui.compose'
@@ -54,6 +55,11 @@ const UiGalleryRoute = UiGalleryRouteImport.update({
 const UiApprovalsRoute = UiApprovalsRouteImport.update({
   id: '/approvals',
   path: '/approvals',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiBlueprintRoute = UiBlueprintRouteImport.update({
+  id: '/blueprint',
+  path: '/blueprint',
   getParentRoute: () => UiRoute,
 } as any)
 const UiBuildRoute = UiBuildRouteImport.update({
@@ -142,6 +148,7 @@ export interface FileRoutesByFullPath {
   '/ui': typeof UiRouteWithChildren
   '/ui/_gallery': typeof UiGalleryRoute
   '/ui/approvals': typeof UiApprovalsRoute
+  '/ui/blueprint': typeof UiBlueprintRoute
   '/ui/build': typeof UiBuildRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/compose': typeof UiComposeRoute
@@ -164,6 +171,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ui/_gallery': typeof UiGalleryRoute
   '/ui/approvals': typeof UiApprovalsRoute
+  '/ui/blueprint': typeof UiBlueprintRoute
   '/ui/build': typeof UiBuildRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/compose': typeof UiComposeRoute
@@ -188,6 +196,7 @@ export interface FileRoutesById {
   '/ui': typeof UiRouteWithChildren
   '/ui/_gallery': typeof UiGalleryRoute
   '/ui/approvals': typeof UiApprovalsRoute
+  '/ui/blueprint': typeof UiBlueprintRoute
   '/ui/build': typeof UiBuildRoute
   '/ui/callback': typeof UiCallbackRoute
   '/ui/compose': typeof UiComposeRoute
@@ -213,6 +222,7 @@ export interface FileRouteTypes {
     | '/ui'
     | '/ui/_gallery'
     | '/ui/approvals'
+    | '/ui/blueprint'
     | '/ui/build'
     | '/ui/callback'
     | '/ui/compose'
@@ -235,6 +245,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ui/_gallery'
     | '/ui/approvals'
+    | '/ui/blueprint'
     | '/ui/build'
     | '/ui/callback'
     | '/ui/compose'
@@ -258,6 +269,7 @@ export interface FileRouteTypes {
     | '/ui'
     | '/ui/_gallery'
     | '/ui/approvals'
+    | '/ui/blueprint'
     | '/ui/build'
     | '/ui/callback'
     | '/ui/compose'
@@ -317,6 +329,13 @@ declare module '@tanstack/react-router' {
       path: '/approvals'
       fullPath: '/ui/approvals'
       preLoaderRoute: typeof UiApprovalsRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/blueprint': {
+      id: '/ui/blueprint'
+      path: '/blueprint'
+      fullPath: '/ui/blueprint'
+      preLoaderRoute: typeof UiBlueprintRouteImport
       parentRoute: typeof UiRoute
     }
     '/ui/build': {
@@ -437,6 +456,7 @@ declare module '@tanstack/react-router' {
 interface UiRouteChildren {
   UiGalleryRoute: typeof UiGalleryRoute
   UiApprovalsRoute: typeof UiApprovalsRoute
+  UiBlueprintRoute: typeof UiBlueprintRoute
   UiBuildRoute: typeof UiBuildRoute
   UiCallbackRoute: typeof UiCallbackRoute
   UiComposeRoute: typeof UiComposeRoute
@@ -459,6 +479,7 @@ interface UiRouteChildren {
 const UiRouteChildren: UiRouteChildren = {
   UiGalleryRoute: UiGalleryRoute,
   UiApprovalsRoute: UiApprovalsRoute,
+  UiBlueprintRoute: UiBlueprintRoute,
   UiBuildRoute: UiBuildRoute,
   UiCallbackRoute: UiCallbackRoute,
   UiComposeRoute: UiComposeRoute,

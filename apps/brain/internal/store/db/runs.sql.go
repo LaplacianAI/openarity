@@ -654,10 +654,11 @@ WHERE r.team_id = $1
    OR r.status = ANY($4::text[]))
   AND ($5::timestamptz IS NULL OR r.created_at >= $5::timestamptz)
   AND (NOT $6::bool OR r.hub = $7::bool)
-  AND (NOT $8::bool
-   OR (r.created_at, r.id) < ($9::timestamptz, $10::uuid))
+  AND (NOT $8::bool OR r.builder = $9::bool)
+  AND (NOT $10::bool
+   OR (r.created_at, r.id) < ($11::timestamptz, $12::uuid))
 ORDER BY r.created_at DESC, r.id DESC
-LIMIT $11
+LIMIT $13
 `
 
 type ListRunsByTeamParams struct {
@@ -668,6 +669,8 @@ type ListRunsByTeamParams struct {
 	Since          *time.Time
 	FilterHub      bool
 	Hub            bool
+	FilterBuilder  bool
+	Builder        bool
 	UseCursor      bool
 	AfterCreatedAt time.Time
 	AfterID        uuid.UUID
@@ -687,6 +690,8 @@ func (q *Queries) ListRunsByTeam(ctx context.Context, arg ListRunsByTeamParams) 
 		arg.Since,
 		arg.FilterHub,
 		arg.Hub,
+		arg.FilterBuilder,
+		arg.Builder,
 		arg.UseCursor,
 		arg.AfterCreatedAt,
 		arg.AfterID,

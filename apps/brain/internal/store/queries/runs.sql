@@ -147,6 +147,7 @@ WHERE r.team_id = sqlc.arg('team_id')
    OR r.status = ANY(sqlc.arg('statuses')::text[]))
   AND (sqlc.narg('since')::timestamptz IS NULL OR r.created_at >= sqlc.narg('since')::timestamptz)
   AND (NOT sqlc.arg('filter_hub')::bool OR r.hub = sqlc.arg('hub')::bool)
+  AND (NOT sqlc.arg('filter_builder')::bool OR r.builder = sqlc.arg('builder')::bool)
   AND (NOT sqlc.arg('use_cursor')::bool
    OR (r.created_at, r.id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
 ORDER BY r.created_at DESC, r.id DESC

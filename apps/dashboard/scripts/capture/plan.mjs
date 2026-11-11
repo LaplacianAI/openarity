@@ -51,7 +51,7 @@ export const SCREENS = [
   { name: "agent", path: "/ui/agents", follow: "/ui/agents/", followName: "log-reader" },
   { name: "servers", path: "/ui/servers", open: "Register server" },
   { name: "build", path: "/ui/build" },
-  { name: "compose", path: "/ui/compose", open: "Agent" },
+  { name: "blueprint", path: "/ui/blueprint", open: "Agent" },
   { name: "skills", path: "/ui/skills" },
   { name: "graph", path: "/ui/graph" },
   { name: "settings", path: "/ui/settings" },

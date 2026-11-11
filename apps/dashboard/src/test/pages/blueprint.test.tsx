@@ -6,7 +6,7 @@ import { setToken } from "@/api/token";
 import type { BlueprintPlan } from "@/api/types";
 import { brain, pageOf, type Seen, STAMP, showAt, TEAM, team } from "@/test/brain";
 
-const { Route } = await import("@/routes/ui.compose");
+const { Route } = await import("@/routes/ui.blueprint");
 await pageOf(Route);
 
 afterEach(() => {
@@ -84,7 +84,7 @@ const registry = {
 
 function open(extra: Record<string, unknown> = {}) {
   const seen = brain({ ...team(["agent:write"]), ...registry, ...extra });
-  showAt("/ui/compose", [["/ui/compose", Route]]);
+  showAt("/ui/blueprint", [["/ui/blueprint", Route]]);
   return seen;
 }
 
@@ -357,5 +357,63 @@ describe("editing the draft", () => {
     expect(posted(seen, PLAN)[0]).toMatchObject({
       skills: [{ files: [{ path: "faq-folder/SKILL.md" }] }],
     });
+  });
+});
+
+describe("what the builder proposed", () => {
+  it("lists open proposals, each opening its conversation", async () => {
+    open({
+      "GET /teams/{id}/proposals": {
+        body: {
+          items: [
+            {
+              id: "p2",
+              session_id: "0b7c3e52-8a41-4f6d-9e2b-5c1a7d3f8e60",
+              run_id: "r2",
+              summary: "Coding, review and deploy agents for manimvox",
+              state: "open",
+              created_at: STAMP,
+            },
+            {
+              id: "p1",
+              session_id: "1d2e3f40-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+              run_id: "r1",
+              summary: "Applied already",
+              state: "applied",
+              created_at: STAMP,
+            },
+          ],
+        },
+      },
+    });
+
+    const list = await screen.findByRole("region", { name: "Proposed by the builder" });
+    const link = within(list).getByRole("link", { name: /Coding, review and deploy agents/ });
+    expect(link.getAttribute("href")).toBe(
+      "/ui/build?session=0b7c3e52-8a41-4f6d-9e2b-5c1a7d3f8e60",
+    );
+    expect(within(list).queryByText("Applied already")).not.toBeInTheDocument();
+  });
+
+  it("shows nothing when nothing is open", async () => {
+    open({ "GET /teams/{id}/proposals": { body: { items: [] } } });
+    await screen.findByRole("heading", { name: "Blueprint" });
+    expect(
+      screen.queryByRole("region", { name: "Proposed by the builder" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("the old name", () => {
+  it("takes a Compose link or bookmark to Blueprint", async () => {
+    const { Route: Old } = await import("@/routes/ui.compose");
+    brain({ ...team(["agent:write"]), ...registry });
+    const router = showAt("/ui/compose", [
+      ["/ui/compose", Old],
+      ["/ui/blueprint", Route],
+    ]);
+
+    expect(await screen.findByRole("heading", { name: "Blueprint" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/ui/blueprint");
   });
 });

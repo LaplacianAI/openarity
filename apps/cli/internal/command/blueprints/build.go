@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -22,7 +23,7 @@ func NewBuild(opts *cli.Options) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "build <team> <ask>",
+		Use:   "build <team> [<ask>]",
 		Short: "Ask the team's builder for agents, MCP servers or skills",
 		Long: "The builder reads the team, asks what it cannot know, and proposes a\n" +
 			"blueprint. It writes nothing: you apply a proposal, as yourself, with\n" +
@@ -30,9 +31,15 @@ func NewBuild(opts *cli.Options) *cobra.Command {
 			"--session, which the first build prints. It runs on the team's model\n" +
 			"and needs run:write. - reads the ask from stdin.\n\n" +
 			"    oa build support 'An agent that triages support email, using our FAQ.'\n" +
-			"    oa build support 'Sonnet, and yes to the helpdesk server.' --session <id>",
-		Args: cobra.ExactArgs(2),
+			"    oa build support 'Sonnet, and yes to the helpdesk server.' --session <id>\n\n" +
+			"With no ask, it lists your recent conversations with the builder, each\n" +
+			"with the session id to carry it on.\n\n" +
+			"    oa build support",
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				return conversations(cmd, opts, args[0])
+			}
 			input, err := runs.ReadInput(cmd.InOrStdin(), args[1])
 			if err != nil {
 				return err
@@ -73,6 +80,66 @@ func NewBuild(opts *cli.Options) *cobra.Command {
 	cmd.Flags().StringVar(&session, "session", "", "carry on the conversation the first build started, by id")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "also show each step and its tokens, and every tool result whole")
 	return cmd
+}
+
+// conversationView is a builder conversation as a script reads it: its
+// session, and its newest turn.
+type conversationView struct {
+	Session   uuid.UUID        `json:"session" yaml:"session"`
+	Status    client.RunStatus `json:"status" yaml:"status"`
+	LastAsked string           `json:"last_asked" yaml:"last_asked"`
+	At        time.Time        `json:"at" yaml:"at"`
+}
+
+// conversations lists the builder conversations the caller can carry on,
+// one per session, from its newest run.
+func conversations(cmd *cobra.Command, opts *cli.Options, teamRef string) error {
+	api, err := opts.API(cmd.Context())
+	if err != nil {
+		return err
+	}
+	team, err := cli.ResolveTeam(cmd.Context(), api, teamRef)
+	if err != nil {
+		return err
+	}
+	builder, limit := true, client.Limit(100)
+	page, err := cli.Result(api.ListTeamRunsWithResponse(cmd.Context(), team,
+		&client.ListTeamRunsParams{Builder: &builder, Limit: &limit}))
+	if err != nil {
+		return err
+	}
+	seen := map[uuid.UUID]bool{}
+	views := make([]conversationView, 0, len(page.Items))
+	for _, r := range page.Items {
+		if seen[r.SessionID] {
+			continue
+		}
+		seen[r.SessionID] = true
+		views = append(views, conversationView{Session: r.SessionID, Status: r.Status, LastAsked: r.Input, At: r.CreatedAt})
+	}
+	if len(views) == 0 {
+		opts.Out.Note(opts.Styles.Muted.Render("No conversations with the builder yet. Start one: oa build " +
+			cli.Line(teamRef) + " '<what you want>'"))
+	}
+	err = opts.Out.Print(views, printer.Options{Table: func(t *printer.Table) {
+		for _, v := range views {
+			t.Row(opts.Styles.Value.Render(v.Session.String()), string(v.Status),
+				opts.Styles.Muted.Render(v.At.Format("2006-01-02 15:04")), cli.Safe(clipAsk(v.LastAsked)))
+		}
+	}})
+	if err != nil || len(views) == 0 {
+		return err
+	}
+	opts.Out.Note(opts.Styles.Muted.Render("Carry one on: oa build " + cli.Line(teamRef) + " '<your message>' --session <session>"))
+	return nil
+}
+
+func clipAsk(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > 60 {
+		return string(r[:59]) + "…"
+	}
+	return s
 }
 
 // proposed shows what the run proposed, if anything, as the plan applying it

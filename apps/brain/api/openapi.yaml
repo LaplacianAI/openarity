@@ -2106,6 +2106,14 @@ paths:
             for a named agent; absent for both.
           schema:
             type: boolean
+        - name: builder
+          in: query
+          description: |
+            `true` for only the team's builder's runs, which is how a client
+            finds the builder conversations it can carry on; `false` for
+            every other run; absent for both.
+          schema:
+            type: boolean
       responses:
         "200":
           description: A page of runs, newest first

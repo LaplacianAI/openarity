@@ -188,3 +188,54 @@ func TestProposalsAreListedAndReadByID(t *testing.T) {
 		t.Error("a proposal that is not an id was taken")
 	}
 }
+
+// With no ask, oa build lists the conversations to carry on: one per session,
+// from its newest builder run, and how to go on.
+func TestBuildWithNoAskListsTheConversations(t *testing.T) {
+	const other = "12121212-3434-5656-7878-909090909090"
+	run := func(id, session, status, input, at string) string {
+		return `{"id":"` + id + `","session_id":"` + session + `","agent":"builder","status":"` + status + `",
+  "input":"` + input + `","input_tokens":1,"output_tokens":1,"created_at":"` + at + `","depth":0,"hub":false,"builder":true,"delegates":[],"reply":null}`
+	}
+	script := clitest.Routes(t, map[string]clitest.Reply{
+		"GET /teams/{id}/runs": {Status: http.StatusOK, Body: `{"items":[` +
+			run(runID, sessionID, "running", "Add a deploy agent\\u001b[2J", "2026-11-11T10:02:00Z") + "," +
+			run(otherRun, sessionID, "succeeded", "Older turn", "2026-11-11T10:01:00Z") + "," +
+			run(aProposal, other, "failed", "Billing agents", "2026-11-11T10:00:00Z") + `]}`},
+	})
+
+	out, err := clitest.Execute(t, buildCommands, "build", teamID)
+	if err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	if q := script.All()[0].Query; !strings.Contains(q, "builder=true") {
+		t.Errorf("query = %q, want builder runs only", q)
+	}
+	for _, want := range []string{sessionID, other, "Add a deploy agent", "Billing agents", "--session <session>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, sessionID) != 1 || strings.Contains(out, "Older turn") {
+		t.Errorf("a session is listed more than once:\n%s", out)
+	}
+	if strings.Contains(out, "\x1b[2J") {
+		t.Errorf("an ask reached the terminal raw:\n%q", out)
+	}
+	if n := script.Calls(http.MethodPost, "/teams/{id}/runs"); n != 0 {
+		t.Errorf("listing started %d runs", n)
+	}
+}
+
+func TestBuildWithNoAskAndNoConversationsSaysHowToStart(t *testing.T) {
+	clitest.Routes(t, map[string]clitest.Reply{"GET /teams/{id}/runs": {Status: http.StatusOK, Body: `{"items":[]}`}})
+
+	out, err := clitest.Execute(t, buildCommands, "build", teamID)
+	if err != nil || !strings.Contains(out, "No conversations with the builder yet") {
+		t.Errorf("out %q, err %v", out, err)
+	}
+	jsonOut, err := clitest.Execute(t, buildCommands, "build", teamID, "-o", "json")
+	if err != nil || strings.TrimSpace(jsonOut) != "[]" {
+		t.Errorf("json = %q, err %v; want an empty array", jsonOut, err)
+	}
+}

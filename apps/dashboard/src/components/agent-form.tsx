@@ -138,7 +138,7 @@ export function AgentForm({
   /** The agent being edited, which is never offered as its own delegate. */
   self?: string;
   /**
-   * What a Compose draft will create, offered beside the team's own so an
+   * What a Blueprint draft will create, offered beside the team's own so an
    * agent can be granted a server or skill that does not exist yet.
    */
   drafted?: Drafted;
