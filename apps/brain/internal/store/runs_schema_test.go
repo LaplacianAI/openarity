@@ -506,7 +506,7 @@ func TestARunEventMustBeOneTheRuntimeWrites(t *testing.T) {
 	f := newRunFixture(t, s, "platform")
 	id := mustInsertRun(t, s, f.root())
 
-	wantConstraint(t, insertEvent(t, s, id, 1, "text", `{}`), "23514", "run_events_kind_known")
+	wantConstraint(t, insertEvent(t, s, id, 1, "thinking", `{}`), "23514", "run_events_kind_known")
 	wantConstraint(t, insertEvent(t, s, id, 0, "step", `{}`), "23514", "run_events_seq_positive")
 	wantConstraint(t, insertEvent(t, s, id, 1, "step", `[]`), "23514", "run_events_payload_object")
 

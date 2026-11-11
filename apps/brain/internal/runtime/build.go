@@ -50,12 +50,28 @@ type Builder struct {
 	search         *SearchDeps
 	fetch          *FetchDeps
 	delegates      *DelegateDeps
+	workshop       Workshop
+	registry       Registry
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 }
 
 func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps, search *SearchDeps, fetch *FetchDeps) *Builder {
 	return &Builder{store: s, objects: o, mcp: m, graph: g, search: search, fetch: fetch, connectTimeout: connectTimeout}
+}
+
+// WithRegistry lets builder runs look MCP servers up. Without one, they have
+// no find_mcp_servers.
+func (b *Builder) WithRegistry(r Registry) *Builder {
+	b.registry = r
+	return b
+}
+
+// WithWorkshop gives builder runs their reach. Without one, a builder run
+// fails at its start rather than running with no way to propose.
+func (b *Builder) WithWorkshop(ws Workshop) *Builder {
+	b.workshop = ws
+	return b
 }
 
 type Unavailable struct{ Name, Reason string }
@@ -77,6 +93,12 @@ func Patterns() []agent.Pattern {
 	return []agent.Pattern{patterns.ReAct(), patterns.Plan(), patterns.ReWOO(), patterns.Reflection(1)}
 }
 
+// StreamingPatterns are the loops builder runs take: the builder's own,
+// streaming the model's text.
+func StreamingPatterns() []agent.Pattern {
+	return []agent.Pattern{patterns.ReActStreaming()}
+}
+
 func Loops() []string {
 	names := make([]string, 0, len(Patterns()))
 	for _, p := range Patterns() {
@@ -95,7 +117,8 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	built := Built{Spec: specOf(a), Agent: a.Name}
 	built.Spec.Session = session
 
-	web := run.Hub || a.Web
+	// The builder reads the web for servers' docs and a skill's source.
+	web := run.Hub || a.Web || run.Builder
 	if a.ID != uuid.Nil {
 		built.Spec.Tools, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, web, &built)
 		if err != nil {
@@ -118,6 +141,10 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	}
 	if ok {
 		built.Spec.Tools = append(built.Spec.Tools, delegate)
+	}
+	if run.Builder {
+		built.Spec.Tools = append(built.Spec.Tools, b.builderTools(run, l)...)
+		built.Spec.System = agent.System(BuilderPrompt)
 	}
 	if run.Hub {
 		built.Spec.System = hubSystem(a, b.alone(ok))

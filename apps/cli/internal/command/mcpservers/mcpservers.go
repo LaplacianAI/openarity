@@ -22,8 +22,9 @@ func New(opts *cli.Options) *cobra.Command {
 		Short:   "Register the MCP servers a team's agents can be granted, and list their tools",
 		Long: "A server is a URL spoken to over streamable HTTP, or a command started\n" +
 			"and spoken to over stdio. Its credentials are references into the\n" +
-			"secret store, teams/<team_id>/mcp/<name>#<key>, never the secret: the\n" +
-			"team writes the secret there and the brain reads it when it connects.\n\n" +
+			"secret store, teams/<team_id>/mcp/<name>#<key>, never the secret: write\n" +
+			"it there with oa mcp-servers secret, and the brain reads it when it\n" +
+			"connects.\n\n" +
 			"Seeing a team's servers and their tools needs only to be in the team.\n" +
 			"Registering, replacing, discovering or deleting one needs tool:write.",
 	}
@@ -36,6 +37,7 @@ func New(opts *cli.Options) *cobra.Command {
 		newDeleteCmd(opts),
 		newToolsCmd(opts),
 		newDiscoverCmd(opts),
+		newSecretCmd(opts),
 	)
 	return cmd
 }

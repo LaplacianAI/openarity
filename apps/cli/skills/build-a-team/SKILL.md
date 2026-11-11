@@ -100,6 +100,14 @@ oa teams list        # which team; ask if more than one could be meant
   only some; give `web: true`, `delegation: team` or a large `max_steps` only
   when the task needs it, and say why.
 
+## The team's own builder
+
+The brain has a builder of its own (`oa build <team> "<ask>"`), which proposes
+and writes nothing. You do not need it: you are building through blueprints
+directly. Mention it when the person would rather ask in plain words without a
+coding agent, or wants a proposal they can apply later with
+`oa proposals apply`.
+
 ## Skills
 
 A skill in a blueprint is its folder: `- path: ./skills/<name>`, beside

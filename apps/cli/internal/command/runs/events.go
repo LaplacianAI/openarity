@@ -57,6 +57,7 @@ type payload struct {
 	CachedInputTokens int64    `json:"cached_input_tokens"`
 	Spent             int64    `json:"spent"`
 	Status            string   `json:"status"`
+	Text              string   `json:"text"`
 
 	Items []planEntry `json:"items"`
 }
@@ -227,4 +228,10 @@ func decode(data string) any {
 
 func clip(s string) string {
 	return clipRunes(s, maxCell)
+}
+
+// Follow prints a run's events until it ends, as oa runs events does, for a
+// command that started the run itself.
+func Follow(ctx context.Context, opts *cli.Options, team, run uuid.UUID, teamRef string, verbose bool) error {
+	return followRun(ctx, opts, team, run, teamRef, follow{verbose: verbose})
 }

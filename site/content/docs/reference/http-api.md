@@ -90,6 +90,9 @@ and response field this table leaves out.
 | GET    | `/teams/{id}/mcp-servers/{serverID}/tools`                    | List the tools a server offers                     |
 | POST   | `/teams/{id}/mcp-servers/{serverID}/discover`                 | Ask a server which tools it offers, and store them |
 | GET    | `/teams/{id}/blueprint`                                       | The team as a blueprint                            |
+| GET    | `/teams/{id}/proposals`                                       | The builder's proposals, newest first              |
+| GET    | `/teams/{id}/proposals/{proposalID}`                          | A proposal, and the plan applying it would make    |
+| POST   | `/teams/{id}/proposals/{proposalID}/apply`                    | Apply a proposal, as the caller                    |
 | POST   | `/teams/{id}/blueprints/plan`                                 | Compare a blueprint with the team                  |
 | POST   | `/teams/{id}/blueprints/apply`                                | Apply the plan a blueprint was shown               |
 | GET    | `/teams/{id}/summary`                                         | The team at a glance: counts for its home          |

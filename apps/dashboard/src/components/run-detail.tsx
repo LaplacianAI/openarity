@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
+  ArrowRight,
   ArrowUpLeft,
   CheckCircle2,
   ChevronRight,
@@ -130,7 +131,7 @@ type Followed = { events: RunEvent[]; ended: boolean };
  * is shown from the cache and not followed again, and one still going is
  * followed on from the last event seen.
  */
-function useRunEvents(teamId: string, runId: string, onEnded: () => void) {
+export function useRunEvents(teamId: string, runId: string, onEnded: () => void) {
   const qc = useQueryClient();
   const key = useMemo(() => ["run-events", teamId, runId], [teamId, runId]);
   const [events, setEvents] = useState<RunEvent[]>(
@@ -281,6 +282,16 @@ export function RunView({
             ) : null}
             {run.parent_run_id ? (
               <ParentLink teamId={teamId} sessionId={run.session_id} parentId={run.parent_run_id} />
+            ) : null}
+            {run.builder ? (
+              <Link
+                to="/ui/build"
+                search={{ session: run.session_id }}
+                className="inline-flex items-center gap-1 text-sm underline underline-offset-4"
+              >
+                Continue in Builder
+                <ArrowRight aria-hidden className="size-3.5" />
+              </Link>
             ) : null}
             <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
               <Meta label="Model">{reading ? "…" : trace.started?.model || "—"}</Meta>

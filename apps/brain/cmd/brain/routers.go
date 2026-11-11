@@ -63,9 +63,10 @@ func newRouters(
 		channels.New(logger, dbStore, authorizer, channelSecrets{secretStore, secretWriter}, registry, cfg.WebhookPublicURL,
 			reachable(cfg.MCPPrivateNetworks), replyClient(reachable(cfg.MCPPrivateNetworks)), notices),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
-		mcpservers.New(logger, mcpStore{dbStore}, discoverer),
+		mcpservers.New(logger, mcpStore{dbStore}, discoverer, secretWriter),
 		agents.New(logger, agentStore{dbStore}, runtime.Loops()),
-		blueprints.New(logger, blueprintStore{dbStore}, authorizer, attachments, runtime.Loops()),
+		blueprints.New(logger, blueprintStore{dbStore}, authorizer, attachments,
+			mcpservers.NewRefresher(logger, discoverer, mcpStore{dbStore}), runtime.Loops()),
 		loops.New(logger, runtime.Loops()),
 		runs.New(logger, runStore{dbStore}, authorizer, starter),
 		teamgraph.New(logger, graphs),
@@ -153,6 +154,12 @@ func (s runStore) StartRun(ctx context.Context, arg runs.StartArgs) (db.Run, err
 		}
 
 		var err error
+		if arg.Builder {
+			run, err = q.CreateBuilderRun(ctx, db.CreateBuilderRunParams{
+				ID: arg.ID, SessionID: *sessionID, UserID: &arg.UserID, Input: arg.Input, TeamID: arg.TeamID,
+			})
+			return err
+		}
 		if arg.Hub {
 			run, err = q.CreateHubRun(ctx, db.CreateHubRunParams{
 				ID: arg.ID, SessionID: *sessionID, UserID: &arg.UserID, Input: arg.Input, TeamID: arg.TeamID,

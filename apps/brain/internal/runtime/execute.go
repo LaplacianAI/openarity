@@ -28,6 +28,7 @@ type Store interface {
 	FinishRun(ctx context.Context, arg db.FinishRunParams) (int64, error)
 	FinishRunWithEvent(ctx context.Context, finish db.FinishRunParams, event db.AppendRunEventParams) (int64, uuid.UUID, error)
 	ListSessionTurns(ctx context.Context, arg db.ListSessionTurnsParams) ([]db.ListSessionTurnsRow, error)
+	ListBuilderTurns(ctx context.Context, arg db.ListBuilderTurnsParams) ([]db.ListBuilderTurnsRow, error)
 	StartChildRun(ctx context.Context, arg db.StartChildRunParams) (db.Run, error)
 	ReapChildren(ctx context.Context, arg db.ReapChildrenParams) ([]uuid.UUID, error)
 	GetRun(ctx context.Context, id uuid.UUID) (db.Run, error)
@@ -67,9 +68,12 @@ type Delegation struct {
 }
 
 type Executor struct {
-	store     Store
-	builder   *Builder
-	runner    *agent.Runner
+	store   Store
+	builder *Builder
+	runner  *agent.Runner
+	// streamer runs builder runs, so their text reaches the person as it is
+	// written. Nil, and they run as any other.
+	streamer  *agent.Runner
 	endpoint  agent.Endpoint
 	sessions  agent.Store
 	logger    *slog.Logger
@@ -99,6 +103,13 @@ func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
 	}
 	b.delegates = &DelegateDeps{Store: s, Run: e}
 	b.note = e.note
+	return e
+}
+
+// WithStreaming has builder runs run on r, whose loops stream the model's
+// text, recorded as it comes as text events.
+func (e *Executor) WithStreaming(r *agent.Runner) *Executor {
+	e.streamer = r
 	return e
 }
 
@@ -249,8 +260,13 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		err = appendEvent(ctx, e.store, row.ID, l.Worker, "resumed", resumedPayload{Messages: len(msgs)})
 	} else {
 		input := row.Input
-		if row.ReplyToChannel {
+		switch {
+		case row.ReplyToChannel:
 			if input, err = e.conversation(ctx, row); err != nil {
+				return "", err
+			}
+		case row.Builder:
+			if input, err = e.builderInput(ctx, row); err != nil {
 				return "", err
 			}
 		}
@@ -277,8 +293,13 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	notes := make(chan note)
 	e.notes.Store(row.ID, notes)
 	defer e.notes.Delete(row.ID)
-	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, budgetOf(row.TokenBudget), events, notes, stop)
-	result, err := e.runner.Run(ctx, built.Spec, msgs, e.endpoint, events)
+	runner, streams := e.runner, false
+	if row.Builder && e.streamer != nil {
+		runner, streams = e.streamer, true
+	}
+	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, budgetOf(row.TokenBudget),
+		streams, events, notes, stop)
+	result, err := runner.Run(ctx, built.Spec, msgs, e.endpoint, events)
 	close(events)
 	<-recorded
 
@@ -424,6 +445,6 @@ func runOf(r db.ClaimRunRow) db.Run {
 		OutputTokens: r.OutputTokens, Worker: r.Worker, HeartbeatAt: r.HeartbeatAt,
 		CancelRequestedAt: r.CancelRequestedAt, CreatedAt: r.CreatedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, TokenBudget: r.TokenBudget,
-		Hub: r.Hub, MessageID: r.MessageID, ReplyToChannel: r.ReplyToChannel,
+		Hub: r.Hub, MessageID: r.MessageID, ReplyToChannel: r.ReplyToChannel, Builder: r.Builder,
 	}
 }

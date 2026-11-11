@@ -71,6 +71,10 @@ type Config struct {
 
 	/* MCP Configuration */
 	MCPPrivateNetworks []netip.Prefix `env:"MCP_PRIVATE_NETWORKS" envDefault:""`
+	// MCPRegistryURL is where a team's builder looks MCP servers up: the
+	// official registry, or one of the operator's. NoMCPRegistry, and it looks
+	// nothing up; empty is unset, so it cannot say that.
+	MCPRegistryURL string `env:"MCP_REGISTRY_URL" envDefault:"https://registry.modelcontextprotocol.io"`
 
 	/* Embedding Configuration */
 	EmbeddingBaseURL    string `env:"EMBEDDING_BASE_URL" envDefault:""`
@@ -82,13 +86,16 @@ type Config struct {
 	TeamPurgeAfter time.Duration `env:"TEAM_PURGE_AFTER" envDefault:"168h"`
 }
 
+// NoMCPRegistry is the MCP_REGISTRY_URL that turns the builder's look-up off.
+const NoMCPRegistry = "none"
+
 func (c *Config) String() string {
 	return fmt.Sprintf(
 		"Config{Environment:%s LogLevel:%s APIBind:%s WebhookBind:%s WebhookPublicURL:%s "+
 			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s "+
 			"SecretsBackend:%s SecretsAddr:%s "+
 			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
-			"LLMBaseURL:%s SkillImportHosts:%v MCPPrivateNetworks:%v "+
+			"LLMBaseURL:%s SkillImportHosts:%v MCPPrivateNetworks:%v MCPRegistryURL:%s "+
 			"EmbeddingBaseURL:%s EmbeddingModel:%s EmbeddingDimensions:%d TeamPurgeAfter:%s}",
 		c.Environment,
 		c.LogLevel,
@@ -107,6 +114,7 @@ func (c *Config) String() string {
 		redactURL(c.LLMBaseURL),
 		c.SkillImportHosts,
 		c.MCPPrivateNetworks,
+		redactURL(c.MCPRegistryURL),
 		redactURL(c.EmbeddingBaseURL),
 		c.EmbeddingModel,
 		c.EmbeddingDimensions,

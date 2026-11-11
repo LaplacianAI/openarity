@@ -1778,6 +1778,38 @@ describe("the hub in the trace", () => {
     expect(header.parentElement).toHaveTextContent("hub");
   });
 
+  it("takes a builder run back to its conversation, and no other run", async () => {
+    listed({
+      [RUNS]: {
+        body: {
+          items: [
+            run("r1", "builder", "succeeded", { builder: true }),
+            run("r2", "triage", "succeeded", { builder: false }),
+          ],
+        },
+      },
+      [EVENTS]: () => ({ stream: chunks(END) }),
+    });
+
+    await open("?tab=runs");
+    await within(pane()).findByRole("heading", { name: "builder" });
+    const back = within(pane()).getByRole("link", { name: /Continue in Builder/ });
+    expect(back.getAttribute("href")).toMatch(/\/ui\/build\?session=/);
+  });
+
+  it("offers no way back to Builder from another run", async () => {
+    listed({
+      [RUNS]: { body: { items: [run("r2", "triage", "succeeded", { builder: false })] } },
+      [EVENTS]: () => ({ stream: chunks(END) }),
+    });
+
+    await open("?tab=runs");
+    await within(pane()).findByRole("heading", { name: "triage" });
+    expect(
+      within(pane()).queryByRole("link", { name: /Continue in Builder/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("does not mark a run that is not the hub's", async () => {
     listed({
       [RUNS]: { body: { items: [run("r1", "triage", "succeeded", { hub: false })] } },

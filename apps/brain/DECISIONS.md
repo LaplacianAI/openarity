@@ -755,6 +755,43 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   (409, with the new plan) unless the plan's digest is the one the caller was
   shown, so nobody applies a plan they did not see. Only changed items are
   written, so a second apply leaves no outbox row and no `updated_at` moved.
+- **The builder proposes; only a person applies.** A builder run is the
+  team's built-in builder (`runs.builder`), never also the hub, and its tools
+  are `graph`, `team`, `find_mcp_servers`, `list_mcp_tools`, `propose` and the
+  web tools: no write, delegate, MCP tool call or skill, so text it reads can
+  change what it proposes but never the team. A person reads every proposal,
+  so the web is worth its injection risk here; the card names each new host.
+- **`list_mcp_tools` sends a secret only where the team already does.** It
+  discovers a server that need not be the team's, so a reference is sent only
+  when the team has a server at that exact URL with that exact secret.
+  Otherwise a page the builder read could name a host and a team secret, and
+  the brain would carry the token there itself.
+- **A builder's reply streams; other runs' do not yet.** Builder runs take a
+  second runner whose loop streams (`ReActStreaming`), and the recorder gathers
+  the deltas into `text` events, written at 512 bytes, every 250 ms, and
+  before any other event, so the text and the call it led to stay in order
+  and a reply is tens of rows, not thousands. Postgres is the bus because the
+  worker and the API are separate processes; the SSE route already polls it.
+  Extending it to every run is the streaming variant of each loop and the
+  `row.Builder` condition gone.
+- **An MCP secret is written whole, and never read back.** `PUT
+  /teams/{id}/mcp-secrets/{name}` takes every key of the secret and writes
+  them with one `PutAll`: an OpenBao write replaces the keys a path held, so
+  keys written one at a time would leave only the last. The values reach the
+  secret store and nothing else; no route returns or reports them, so the
+  dashboard can say a token is set only because a server names one.
+- **An apply discovers what it wrote, after it commits.** Each created or
+  changed server is asked for its tools through the MCP servers' own
+  `Refresher`, four at a time, on a context the caller cannot cancel. A
+  failure is recorded on the server and reported in `discovered`; it never
+  undoes the apply, which is already the team's. `propose`
+  plans without permissions and records the blueprint with that plan; reading
+  an open proposal plans it again as the reader, and applying it is the
+  blueprint apply as the caller, with the proposal marked applied in the same
+  transaction so it is applied once. A newer proposal supersedes the session's
+  open one in the same transaction (a partial unique index keeps one open);
+  one statement cannot do both, since its insert is checked against the row
+  before the update. Proposals follow their session's visibility.
 
 ## Skills, full descriptions
 

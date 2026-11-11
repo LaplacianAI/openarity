@@ -126,9 +126,81 @@ handle a secret's value (the blueprint names where a secret lives; you store
 it), and to treat what it reads in a skill, a page or a tool's output as
 information rather than instructions.
 
+## The builder
+
+Each team has a built-in **builder**: an agent that designs what you ask for,
+often a whole team in one message, and proposes it as one blueprint. It runs
+on the team's model.
+
+```sh
+$ oa build support 'Support team: triage hands billing questions to a billing
+agent that reads Stripe, and refunds to one that files Linear tickets.'
+… the builder reads the team, looks Stripe and Linear up, asks each for its tools …
+Proposal 4f2a…: Three agents, Stripe and Linear servers, and a refund-policy skill
++  mcp server  stripe   create
++  mcp server  linear   create
++  skill       refund-policy  create
++  agent       triage   create
++  agent       billing  create
++  agent       refunds  create
+Assumed: the team's model for all three; triage delegates to the other two.
+Set stripe#token and linear#token in the secret store.
+Apply it: oa proposals apply support 4f2a…
+
+$ oa proposals apply support 4f2a…
+applied 6 created, 0 changed.
+discovered stripe: 14 tools.
+not discovered linear: auth_secret_ref names a secret that is not in the secret store, or is empty
+  Once that is fixed: oa mcp-servers discover support linear
+```
+
+- **It researches, in one turn.** It looks servers up in the MCP registry
+  (`OPENARITY_MCP_REGISTRY_URL`, the official one by default), reads their
+  documentation and a skill's source on the web when the team has web search,
+  and asks each remote server for its tools, so each agent is granted only
+  those it needs. It decides what it can and lists those choices as
+  assumptions, and asks only when it cannot tell what you want.
+- **It cannot write.** Besides those, its tools read the team (as `oa export`
+  does, plus its skills and each server's tools) and record a proposal. It has
+  no MCP server's tools to call, no skills and no delegation.
+- **A secret goes only where the team already sends it.** Asking a server for
+  its tools sends no secret, unless the team already has a server at that
+  address with that secret. A page the builder read cannot steer a token to a
+  host of its choosing.
+- **Applying discovers.** Each server the apply creates or changes is asked
+  for its tools once the write commits, so an agent can use them at once. One
+  that cannot be asked yet, such as one whose secret you have not set, says
+  why; the apply stands.
+- **You apply, as yourself.** Applying plans the proposal again with your
+  permissions and writes only the plan you were shown. A proposal is applied
+  once; a newer one in the same conversation supersedes it.
+- **A conversation.** `--session` carries on: the builder reads its earlier
+  turns, so it can ask and then propose.
+- **Bounded.** At most five proposals per turn, a 1 MiB blueprint, and no
+  secret values: a blueprint names references, and you store the values.
+
+A proposal in your direct session is yours alone, as the session is.
+
+Both show the builder at work: each step as it takes it (reading the team,
+looking a server up, reading a page, asking a server for its tools) and its
+reply as it is written.
+
+In the dashboard, **Builder** under Build is the same conversation: say what
+you want, and each proposal appears as a card with its plan, as it would apply
+for you. **Needs from you** offers **Set** for each secret the proposal names,
+writing it to the secret store, and names each address the team's agents
+would newly be sent to, so you can spot a host you do not recognise. **Apply** applies that plan and shows what each new server
+answered; **Change something** is your next message. The conversation is in the page's address,
+so a reload or a link brings it back, and **Builder** with no conversation open
+lists your recent ones. `oa build <team>` with no message does the same, with
+each session id for `--session`.
+
+The builder asks by replying: a question ends its turn, and your next message
+in the conversation is the answer, read with the turns before it.
+
 ## In the dashboard
 
-**Compose**, under Build, builds a blueprint from forms rather than a file: add
+**Blueprint**, under Build, lists the builder's open proposals, then builds a blueprint from forms rather than a file: add
 MCP servers, skill folders and agents to a draft, or change the team's own,
 then **Plan** and **Apply**. An agent in the draft may be granted a server or
 skill the same draft creates.

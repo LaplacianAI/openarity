@@ -9,6 +9,7 @@ and grants it, whole or tool by tool, to the agents that need it.
 ## Registering one
 
 ```sh
+printf %s "$GITHUB_TOKEN" | oa mcp-servers secret platform github token
 oa mcp-servers create platform github --url https://api.githubcopilot.com/mcp/ \
     --auth-secret-ref teams/<team_id>/mcp/github#token
 oa mcp-servers discover platform github     # ask it for its tools now
@@ -24,9 +25,17 @@ oa mcp-servers create platform files -- npx -y @modelcontextprotocol/server-file
 
 **Credentials are references, never the secret.** `--auth-secret-ref` and
 `--env NAME=…` name a path in the secret store,
-`teams/<team_id>/mcp/<name>#<key>`. The team writes the secret there and the
-brain reads it when it connects, so a credential is never in a request, a row
-or a log.
+`teams/<team_id>/mcp/<name>#<key>`. The brain reads it when it connects, so a
+credential is never in a row or a log, and never comes back out of the API.
+
+**Writing one.** In the dashboard, a server's form has a **Token** field: what
+you type is written to the secret store as `<name>#token`, the server names it,
+and it is asked for its tools at once. `oa mcp-servers secret <team> <name>
+<key>` writes one from stdin, and a builder proposal's card offers **Set** for
+each secret it needs. All three use `PUT /teams/{id}/mcp-secrets/{name}`, which
+needs `tool:write` and writes every key of that secret together, because a
+write replaces the keys it held. A secret you keep in OpenBao yourself still
+works: name it in the reference.
 
 **Discovery connects from the brain**, and only to a public address or a range
 its operator allowed with `OPENARITY_MCP_PRIVATE_NETWORKS`. A command server is not

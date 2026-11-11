@@ -232,6 +232,8 @@ export type Run = {
   depth: number;
   /** Started for the team rather than for an agent: its agent is the team's hub. */
   hub: boolean;
+  /** The team's builder, which proposes blueprints and writes nothing. Optional: older brains send none. */
+  builder?: boolean;
   /**
    * The agents a top-level run handed work to directly, each once, in the
    * order it first did. Optional: a brain from before the field sends none.
@@ -263,6 +265,8 @@ export type RunRequest = {
   input: string;
   agent?: string;
   session_id?: string;
+  /** Start the team's builder instead of an agent or the hub; never with `agent`. */
+  builder?: boolean;
 };
 
 /**
@@ -543,6 +547,12 @@ export type BlueprintChange = {
   id?: string;
 };
 
+/**
+ * An MCP server an apply wrote, asked for its tools once the write
+ * committed: its tools by name, or why it has none yet.
+ */
+export type BlueprintDiscovered = { server: string; tools: string[]; error?: string };
+
 export type BlueprintRefusal = { kind: BlueprintKind; name: string; message: string };
 
 export type BlueprintPlan = {
@@ -550,4 +560,23 @@ export type BlueprintPlan = {
   refusals: BlueprintRefusal[];
   /** Names this plan; apply sends it back. */
   digest: string;
+};
+
+/**
+ * What the team's builder proposed: a blueprint and its plan. Read one by
+ * id and an open proposal's plan is made now, as the reader: what applying it
+ * would do, and a refusal for any write they may not make.
+ */
+export type Proposal = {
+  id: string;
+  session_id: string;
+  run_id: string;
+  summary: string;
+  /** `superseded` once the builder proposes again in the same conversation. */
+  state: "open" | "applied" | "superseded";
+  created_at: string;
+  applied_at?: string | null;
+  /** Present when one proposal is read. */
+  blueprint?: Blueprint;
+  plan?: BlueprintPlan;
 };

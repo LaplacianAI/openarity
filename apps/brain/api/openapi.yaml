@@ -1866,6 +1866,125 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/proposals:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listProposals
+      tags: [blueprints]
+      summary: The builder's proposals, newest first
+      description: |
+        A read, so belonging to the team is enough. A proposal in a direct
+        session is seen only by that session's person, or with
+        `session:read_all`, as the session's runs are.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: session
+          in: query
+          description: Only this session's proposals.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: A page of proposals, without their blueprints and plans
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/proposals/{proposalID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: proposalID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getProposal
+      tags: [blueprints]
+      summary: A proposal, its blueprint and its plan
+      description: |
+        For an open proposal, the plan is made now, as the caller: what
+        applying it would do, and a refusal for any write they may not make.
+        For one applied or superseded, it is the plan the builder had.
+      responses:
+        "200":
+          description: The proposal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Proposal"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/proposals/{proposalID}/apply:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: proposalID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: applyProposal
+      tags: [blueprints]
+      summary: Apply a proposal, as the caller
+      description: |
+        As `POST /teams/{id}/blueprints/apply`, for the proposal's blueprint:
+        planned again with the caller's permissions, written only if its
+        digest is the one sent, and the proposal marked applied in the same
+        transaction, so it is applied once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProposalApply"
+      responses:
+        "200":
+          description: Applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintApplied"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            The team changed since the plan sent (the body is the new plan),
+            or, in plain text, the proposal is applied or superseded. Nothing
+            was written.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintPlan"
+            text/plain:
+              schema:
+                type: string
+        "422":
+          description: The plan has refusals, and nothing was written. The body is the plan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueprintPlan"
+
   /teams/{id}/blueprints/apply:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -1987,6 +2106,14 @@ paths:
             for a named agent; absent for both.
           schema:
             type: boolean
+        - name: builder
+          in: query
+          description: |
+            `true` for only the team's builder's runs, which is how a client
+            finds the builder conversations it can carry on; `false` for
+            every other run; absent for both.
+          schema:
+            type: boolean
       responses:
         "200":
           description: A page of runs, newest first
@@ -2013,6 +2140,9 @@ paths:
         team's settings, or the built-in orchestrator when none is. The
         orchestrator runs on the team's model, so with none set it is
         refused with a 409.
+
+        With `builder` the run is the team's builder, on the team's model
+        too: it reads the team and records proposals, and writes nothing.
 
         With no `session_id` the run gets a direct session of its own, owned
         by the caller. A named session must be one the caller can read: a
@@ -2116,6 +2246,11 @@ paths:
         closes. A run cancelled before any worker took it has no events, and
         its stream is that one frame. A comment, `: keep-alive`, is sent
         every 15 seconds while nothing happens.
+
+        A builder run also streams its reply as it is written: `text` frames,
+        `data: {"text": "I propose…", "truncated": false}`, each a piece of
+        the model's text in order, written before the tool call it led to.
+        Joined, the pieces after the last `tool_result` are the run's output.
       parameters:
         - name: Last-Event-ID
           in: header
@@ -2555,6 +2690,56 @@ paths:
               schema:
                 type: string
                 examples: ["the server did not answer in time"]
+
+  /teams/{id}/mcp-secrets/{name}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: name
+        in: path
+        required: true
+        description: The secret's name, the part before `#` in a reference such as `stripe#token`
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{1,128}$"
+    put:
+      operationId: putMCPSecret
+      tags: [mcp-servers]
+      summary: Write one of the team's MCP secrets
+      description: |
+        Writes `teams/{id}/mcp/{name}` in the secret store with exactly these
+        keys, so a server or a blueprint names one as `{name}#{key}`. Every
+        key the secret holds is written together, because a write replaces
+        the keys it held. The values go to the secret store only: they are
+        never returned, logged or readable through the API. Needs
+        `tool:write`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MCPSecretWrite"
+      responses:
+        "204":
+          description: Written
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "501":
+          description: This brain does not write secrets; write it to the secret store yourself.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "503":
+          description: The secret store did not take the write. Nothing is known to be written.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the secret store is unavailable"]
 
   /teams/{id}/summary:
     parameters:
@@ -4510,6 +4695,64 @@ components:
         message:
           type: string
 
+    Proposal:
+      type: object
+      required: [id, session_id, run_id, summary, state, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+          description: The builder run that proposed it.
+        summary:
+          type: string
+          description: What the proposal does, in the builder's words.
+        state:
+          type: string
+          enum: [open, applied, superseded]
+          description: |
+            `open` until a person applies it or the builder proposes again in
+            the same session, which supersedes it.
+        created_at:
+          type: string
+          format: date-time
+        applied_at:
+          type: string
+          format: date-time
+          nullable: true
+        blueprint:
+          $ref: "#/components/schemas/Blueprint"
+          description: Present when one proposal is read.
+        plan:
+          $ref: "#/components/schemas/BlueprintPlan"
+          description: Present when one proposal is read.
+
+    ProposalPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Proposal"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    ProposalApply:
+      type: object
+      required: [plan_digest]
+      additionalProperties: false
+      properties:
+        plan_digest:
+          type: string
+          description: The digest of the plan read from the proposal.
+
     BlueprintPlan:
       type: object
       required: [changes, refusals, digest]
@@ -4528,12 +4771,49 @@ components:
 
     BlueprintApplied:
       type: object
-      required: [changes]
+      required: [changes, discovered]
       properties:
         changes:
           type: array
           items:
             $ref: "#/components/schemas/BlueprintChange"
+        discovered:
+          type: array
+          description: |
+            Each MCP server the apply created or changed, asked for its tools
+            once the write committed, so an agent granted them can use them at
+            once. A server that could not be asked says why; the apply stands.
+          items:
+            $ref: "#/components/schemas/BlueprintDiscovered"
+
+    MCPSecretWrite:
+      type: object
+      required: [values]
+      additionalProperties: false
+      properties:
+        values:
+          type: object
+          description: Each key and its value; 1 to 20 keys, each value up to 16 KiB
+          minProperties: 1
+          maxProperties: 20
+          additionalProperties:
+            type: string
+            minLength: 1
+            maxLength: 16384
+
+    BlueprintDiscovered:
+      type: object
+      required: [server, tools]
+      properties:
+        server:
+          type: string
+        tools:
+          type: array
+          items:
+            type: string
+        error:
+          type: string
+          description: Why the server has no tools yet, such as a secret not set; discover it again once fixed
 
     AgentPage:
       type: object
@@ -4702,6 +4982,12 @@ components:
           description: |
             The conversation the run belongs to. Leave it out and the run gets
             a direct session of its own.
+        builder:
+          type: boolean
+          description: |
+            Start the team's builder rather than an agent or the hub. It reads
+            the team and proposes blueprints, and writes nothing; refused with
+            `agent`. A builder run reads its earlier turns in the session.
 
     RunStatus:
       type: string
@@ -4723,6 +5009,7 @@ components:
         - created_at
         - depth
         - hub
+        - builder
         - delegates
         - reply
       properties:
@@ -4742,6 +5029,9 @@ components:
           type: integer
           format: int32
           description: 0 for a run a person started, one more for each delegation beneath it
+        builder:
+          type: boolean
+          description: Whether the run is the team's builder, which proposes and writes nothing.
         hub:
           type: boolean
           description: |

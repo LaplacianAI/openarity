@@ -102,6 +102,7 @@ of this file gets `null`.
 | `secret/data/teams/+/attachments` | `read`, `create`, `update` |
 | `secret/metadata/teams/+/attachments` | `delete` |
 | `secret/data/teams/+/mcp/*` | `read` |
+| `secret/data/teams/+/mcp/+` | `read`, `create`, `update` |
 | `auth/token/renew-self` | `update` |
 
 `+` matches exactly one path segment. That is the restriction: the brain
@@ -117,14 +118,18 @@ trailing `+`.
 
 The `mcp/*` rule is where a team keeps the credentials its MCP servers need.
 A server row holds a reference such as `teams/<t>/mcp/github#token`, never the
-value, and the brain only reads it when connecting. The team writes these
-itself, for example:
+value. A person sets one from the dashboard (a server's **Token** field, or
+**Set** on a builder proposal) or with `oa mcp-servers secret`, all through
+`PUT /teams/{id}/mcp-secrets/{name}`, which is what the `mcp/+` rule is for: one
+segment, every key at once. It repeats `read` because OpenBao gives a path the
+rule that does not end in `*` and never sums two. A secret kept by hand still
+works:
 
 ```sh
 bao kv put secret/teams/<team_id>/mcp/github token=<the token>
 ```
 
-It is `*` rather than `+` so a reference can nest, and the glob cannot be
+The read rule is `*` rather than `+` so a reference can nest, and the glob cannot be
 walked out of: a literal `..` is redirected to the cleaned path and checked
 there, and an encoded one is refused as a relative path. These secrets are not
 destroyed when their team is deleted, because their names are the team's

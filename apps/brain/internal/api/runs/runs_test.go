@@ -289,6 +289,9 @@ func (s *fakeStore) StartRun(_ context.Context, arg StartArgs) (db.Run, error) {
 		ID: arg.ID, RootRunID: arg.ID, TeamID: arg.TeamID, SessionID: session, AgentID: &arg.AgentID, AgentName: "triage",
 		UserID: &arg.UserID, Status: "queued", Input: arg.Input, CreatedAt: time.Now(),
 	}
+	if arg.Builder {
+		r.Builder, r.AgentID, r.AgentName = true, nil, "builder"
+	}
 	// CreateHubRun reads the hub as it inserts: the chosen agent, or none.
 	if arg.Hub {
 		r.Hub, r.AgentID, r.AgentName = true, nil, "orchestrator"
@@ -715,14 +718,14 @@ func TestTheRunIsReadAsItIs(t *testing.T) {
 	for _, k := range []string{
 		"id", "session_id", "agent", "status", "input", "output", "error",
 		"input_tokens", "output_tokens", "created_at", "started_at", "finished_at",
-		"parent_run_id", "depth", "hub", "delegates", "reply",
+		"parent_run_id", "depth", "hub", "builder", "delegates", "reply",
 	} {
 		if _, ok := keys[k]; !ok {
 			t.Errorf("the run has no %q", k)
 		}
 	}
-	if len(keys) != 17 {
-		t.Errorf("the run has %d fields, want the 17 in the contract", len(keys))
+	if len(keys) != 18 {
+		t.Errorf("the run has %d fields, want the 18 in the contract", len(keys))
 	}
 	if keys["parent_run_id"] != nil || keys["depth"] != float64(0) {
 		t.Errorf("a top-level run says parent %v depth %v, want null and 0", keys["parent_run_id"], keys["depth"])
@@ -1217,6 +1220,51 @@ func TestARefusedHubBodyNeverReachesTheStore(t *testing.T) {
 	}
 }
 
+// --- the builder ---
+
+func TestABuilderRunIsTheTeamsBuilderOnItsModel(t *testing.T) {
+	w := newWorld(t)
+	w.withModel()
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": "an agent for support", "builder": true})
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d (%s), want 202", rec.Code, rec.Body)
+	}
+	var out struct {
+		Agent   string `json:"agent"`
+		Builder bool   `json:"builder"`
+		Hub     bool   `json:"hub"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Builder || out.Hub || out.Agent != "builder" {
+		t.Errorf("run = %+v, want the builder, not the hub", out)
+	}
+	if a := w.store.started[0]; !a.Builder || a.Hub || a.AgentID != uuid.Nil {
+		t.Errorf("started with %+v, want a builder run and nothing else", a)
+	}
+}
+
+func TestABuilderRunIsRefusedWithAnAgentOrWithoutAModel(t *testing.T) {
+	w := newWorld(t)
+	w.withModel()
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": "hi", "builder": true, "agent": "triage"})
+	if rec.Code != http.StatusBadRequest || w.store.touched() != 0 {
+		t.Errorf("builder with agent: %d, store asked %d; want 400 and nothing asked", rec.Code, w.store.touched())
+	}
+
+	w = newWorld(t)
+	rec = w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": "hi", "builder": true})
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "builder cannot run") {
+		t.Errorf("builder with no model: %d %q, want 409 naming the builder", rec.Code, rec.Body)
+	}
+	if len(w.store.started) != 0 {
+		t.Error("a builder run was started with no model")
+	}
+}
+
 // liveTeams answers that no team is deleted. The guard's read-only rule for a
 // deleted team is tested once, in internal/api; here it must not get in the way.
 type liveTeams struct{}
@@ -1295,6 +1343,10 @@ func TestTheRunHistoryPassesEachFilterAsAsked(t *testing.T) {
 		}},
 		"the hub's":     {"?hub=true", func(p db.ListRunsByTeamParams) bool { return p.FilterHub && p.Hub }},
 		"not the hub's": {"?hub=false", func(p db.ListRunsByTeamParams) bool { return p.FilterHub && !p.Hub }},
+		"the builder's": {"?builder=true", func(p db.ListRunsByTeamParams) bool { return p.FilterBuilder && p.Builder }},
+		"not the builder's": {"?builder=false", func(p db.ListRunsByTeamParams) bool {
+			return p.FilterBuilder && !p.Builder && !p.FilterHub
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t)
@@ -1318,6 +1370,7 @@ func TestABadRunHistoryFilterIsRefused(t *testing.T) {
 		"a date with no time":  {"?since=2026-11-04", "since must be an RFC 3339 time"},
 		"a word for a time":    {"?since=yesterday", "since must be an RFC 3339 time"},
 		"a word for hub":       {"?hub=maybe", "hub must be true or false"},
+		"a word for builder":   {"?builder=maybe", "builder must be true or false"},
 		"a bad limit":          {"?limit=0", "limit must be a positive integer"},
 		"a bad cursor":         {"?cursor=%21%21", "cursor"},
 	} {

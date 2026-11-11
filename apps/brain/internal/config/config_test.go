@@ -53,6 +53,7 @@ func TestLoadDefaults(t *testing.T) {
 		"SkillImportHosts":       "0 entries",
 		"SkillImportGitHubToken": "",
 		"MCPPrivateNetworks":     "0 entries",
+		"MCPRegistryURL":         "https://registry.modelcontextprotocol.io",
 		"EmbeddingBaseURL":       "",
 		"EmbeddingAPIKey":        "",
 		"EmbeddingModel":         "",
@@ -91,6 +92,7 @@ func TestLoadDefaults(t *testing.T) {
 		"SkillImportHosts":       fmt.Sprintf("%d entries", len(cfg.SkillImportHosts)),
 		"SkillImportGitHubToken": cfg.SkillImportGitHubToken,
 		"MCPPrivateNetworks":     fmt.Sprintf("%d entries", len(cfg.MCPPrivateNetworks)),
+		"MCPRegistryURL":         cfg.MCPRegistryURL,
 		"EmbeddingBaseURL":       cfg.EmbeddingBaseURL,
 		"EmbeddingAPIKey":        cfg.EmbeddingAPIKey,
 		"EmbeddingModel":         cfg.EmbeddingModel,
@@ -207,6 +209,7 @@ func TestStringRedactsPasswords(t *testing.T) {
 		"OPENARITY_EMBEDDING_BASE_URL":   "http://user:embedsecret@localhost:11434/v1",
 		"OPENARITY_EMBEDDING_MODEL":      "m",
 		"OPENARITY_EMBEDDING_DIMENSIONS": "3",
+		"OPENARITY_MCP_REGISTRY_URL":     "https://user:registrysecret@registry.example",
 	})
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -214,7 +217,7 @@ func TestStringRedactsPasswords(t *testing.T) {
 
 	s := cfg.String()
 	for _, secret := range []string{
-		"pgsecret", "falkorsecret", "redissecret", "baosecret", "llmsecret", "embedsecret",
+		"pgsecret", "falkorsecret", "redissecret", "baosecret", "llmsecret", "embedsecret", "registrysecret",
 	} {
 		if strings.Contains(s, secret) {
 			t.Errorf("String() leaked %q: %s", secret, s)

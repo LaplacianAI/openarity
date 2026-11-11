@@ -187,12 +187,7 @@ func applied(opts *cli.Options, team string, res *client.ApplyBlueprintResponse)
 			return err
 		}
 		opts.Out.Note(opts.Styles.OK.Render("applied") + " " + fmt.Sprintf("%d created, %d changed.", created, changed))
-		for _, c := range res.JSON200.Changes {
-			if c.Kind == client.BlueprintChangeKindMcpServer && c.Action == client.Create {
-				opts.Out.Note(opts.Styles.Muted.Render("A new MCP server has no tools until it is discovered: oa mcp-servers discover " +
-					cli.Line(team) + " " + cli.Line(c.Name)))
-			}
-		}
+		discovered(opts, team, res.JSON200.Discovered)
 		return nil
 	case res.JSON409 != nil:
 		if err := show(opts, res.JSON409); err != nil {
@@ -208,6 +203,21 @@ func applied(opts *cli.Options, team string, res *client.ApplyBlueprintResponse)
 		return cli.Needs(cli.APIError(res.StatusCode(), res.Body), "the permission for each write")
 	}
 	return cli.APIError(res.StatusCode(), res.Body)
+}
+
+// discovered says what each server the apply wrote answered when asked for
+// its tools, and how to ask again one that could not be.
+func discovered(opts *cli.Options, team string, servers []client.BlueprintDiscovered) {
+	s := opts.Styles
+	for _, d := range servers {
+		name := cli.Line(d.Server)
+		if d.Error == nil {
+			opts.Out.Note(s.OK.Render("discovered") + " " + fmt.Sprintf("%s: %s.", name, count(len(d.Tools), "tool")))
+			continue
+		}
+		opts.Out.Note(s.Warn.Render("not discovered") + " " + name + ": " + cli.Line(*d.Error))
+		opts.Out.Note(s.Muted.Render("  Once that is fixed: oa mcp-servers discover " + cli.Line(team) + " " + name))
+	}
 }
 
 func changes(p *client.BlueprintPlan) bool {

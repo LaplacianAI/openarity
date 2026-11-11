@@ -16,6 +16,7 @@ import type {
   AuthConfig,
   Blueprint,
   BlueprintChange,
+  BlueprintDiscovered,
   BlueprintPlan,
   Channel,
   CreateChannelRequest,
@@ -31,6 +32,7 @@ import type {
   Message,
   Page,
   PendingSender,
+  Proposal,
   Run,
   RunEvent,
   RunRequest,
@@ -283,6 +285,8 @@ export type RunFilter = {
   since?: Date | null;
   /** true for the hub's runs only, false for a named agent's only. */
   hub?: boolean | null;
+  /** Only the team's builder's runs, or only the others. */
+  builder?: boolean | null;
   limit?: number;
 };
 
@@ -296,6 +300,7 @@ export function listTeamRuns(
   for (const s of filter.status ?? []) q.append("status", s);
   if (filter.since) q.set("since", filter.since.toISOString());
   if (filter.hub != null) q.set("hub", String(filter.hub));
+  if (filter.builder != null) q.set("builder", String(filter.builder));
   return request<Page<Run>>(`/teams/${teamId}/runs${queryOf(q)}`);
 }
 
@@ -538,6 +543,22 @@ export function listMCPTools(teamId: string, serverId: string): Promise<{ items:
   return request<{ items: MCPTool[] }>(`/teams/${teamId}/mcp-servers/${serverId}/tools`);
 }
 
+/**
+ * Writes the team's MCP secret <name> with exactly these keys, so a server
+ * names one as name#key. The values go to the secret store and never come
+ * back. A write replaces the keys the secret held: send them all at once.
+ */
+export function putMCPSecret(
+  teamId: string,
+  name: string,
+  values: Record<string, string>,
+): Promise<void> {
+  return request<void>(`/teams/${teamId}/mcp-secrets/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    body: { values },
+  });
+}
+
 export function discoverMCPServer(teamId: string, serverId: string): Promise<{ items: MCPTool[] }> {
   return request<{ items: MCPTool[] }>(`/teams/${teamId}/mcp-servers/${serverId}/discover`, {
     method: "POST",
@@ -581,8 +602,10 @@ export function planBlueprint(teamId: string, blueprint: Blueprint): Promise<Blu
  * team changed since it was shown. Both come back as the new plan to show; a
  * plain-text 409 (a name taken while applying) stays an error.
  */
+type BlueprintApplied = { changes: BlueprintChange[]; discovered: BlueprintDiscovered[] };
+
 export type Applied =
-  | { kind: "applied"; changes: BlueprintChange[] }
+  | { kind: "applied"; changes: BlueprintChange[]; discovered: BlueprintDiscovered[] }
   | { kind: "refused" | "changed"; plan: BlueprintPlan };
 
 export async function applyBlueprint(
@@ -591,11 +614,51 @@ export async function applyBlueprint(
   digest: string,
 ): Promise<Applied> {
   try {
-    const out = await request<{ changes: BlueprintChange[] }>(`/teams/${teamId}/blueprints/apply`, {
+    const out = await request<BlueprintApplied>(`/teams/${teamId}/blueprints/apply`, {
       method: "POST",
       body: { blueprint, plan_digest: digest },
     });
-    return { kind: "applied", changes: out.changes };
+    return { kind: "applied", changes: out.changes, discovered: out.discovered };
+  } catch (err) {
+    const plan = err instanceof ApiError ? planIn(err) : null;
+    if (!plan) throw err;
+    return { kind: (err as ApiError).status === 422 ? "refused" : "changed", plan };
+  }
+}
+
+/** The builder's proposals in one conversation, newest first. */
+export function listProposals(teamId: string, sessionId: string): Promise<Page<Proposal>> {
+  return request<Page<Proposal>>(
+    `/teams/${teamId}/proposals?session=${encodeURIComponent(sessionId)}&limit=100`,
+  );
+}
+
+/** The team's newest proposals, every conversation the caller can see. */
+export function listTeamProposals(teamId: string): Promise<Page<Proposal>> {
+  return request<Page<Proposal>>(`/teams/${teamId}/proposals?limit=50`);
+}
+
+/** One proposal; an open one's plan is made now, as the caller. */
+export function getProposal(teamId: string, proposalId: string): Promise<Proposal> {
+  return request<Proposal>(`/teams/${teamId}/proposals/${proposalId}`);
+}
+
+/**
+ * Applies a proposal as the caller, exactly the plan with that digest, as
+ * applyBlueprint does. A plain-text 409 (applied or superseded meanwhile)
+ * stays an error, with the brain's sentence.
+ */
+export async function applyProposal(
+  teamId: string,
+  proposalId: string,
+  digest: string,
+): Promise<Applied> {
+  try {
+    const out = await request<BlueprintApplied>(`/teams/${teamId}/proposals/${proposalId}/apply`, {
+      method: "POST",
+      body: { plan_digest: digest },
+    });
+    return { kind: "applied", changes: out.changes, discovered: out.discovered };
   } catch (err) {
     const plan = err instanceof ApiError ? planIn(err) : null;
     if (!plan) throw err;

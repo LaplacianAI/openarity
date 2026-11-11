@@ -150,10 +150,21 @@ func feed(t *testing.T, s EventStore, runID uuid.UUID, events ...agent.Event) *s
 // feedWithin is feed for a run with a budget of its own.
 func feedWithin(t *testing.T, s EventStore, runID uuid.UUID, budget int64, events ...agent.Event) *stops {
 	t.Helper()
+	return feedAs(t, s, runID, budget, false, events...)
+}
+
+// feedStreaming is feed for a run whose text is recorded, a builder's.
+func feedStreaming(t *testing.T, s EventStore, runID uuid.UUID, events ...agent.Event) *stops {
+	t.Helper()
+	return feedAs(t, s, runID, maxTokens, true, events...)
+}
+
+func feedAs(t *testing.T, s EventStore, runID uuid.UUID, budget int64, streams bool, events ...agent.Event) *stops {
+	t.Helper()
 
 	st := &stops{}
 	ch := make(chan agent.Event)
-	done := record(t.Context(), s, runID, worker, budget, ch, nil, st.stop)
+	done := record(t.Context(), s, runID, worker, budget, streams, ch, nil, st.stop)
 	for _, e := range events {
 		select {
 		case ch <- e:

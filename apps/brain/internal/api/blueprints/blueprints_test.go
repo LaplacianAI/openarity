@@ -38,6 +38,12 @@ type world struct {
 	// failOn makes that write fail inside the transaction, as a database
 	// that drops the connection halfway would.
 	failOn string
+	// user is who calls; a fresh id when unset.
+	user uuid.UUID
+	// refresh answers for the servers an apply wrote.
+	refresh fakeRefresher
+	// probe answers the builder's list_mcp_tools.
+	probe fakeDiscoverer
 }
 
 func newWorld(t *testing.T) *world {
@@ -67,6 +73,7 @@ func newWorld(t *testing.T) *world {
 	if err := raw.QueryRow(t.Context(), `INSERT INTO teams (name) VALUES ('support') RETURNING id`).Scan(&w.team); err != nil {
 		t.Fatalf("team: %v", err)
 	}
+	w.user = w.newUser(t, "someone")
 	return w
 }
 
@@ -100,6 +107,29 @@ func (w *world) ListTeamMCPServers(ctx context.Context, id uuid.UUID) ([]db.McpS
 
 func (w *world) ListTeamSkills(ctx context.Context, id uuid.UUID) ([]db.Skill, error) {
 	return w.store.ListTeamSkills(ctx, id)
+}
+
+func (w *world) caller() uuid.UUID {
+	if w.user != uuid.Nil {
+		return w.user
+	}
+	return uuid.New()
+}
+
+func (w *world) CountRunProposals(ctx context.Context, id uuid.UUID) (int64, error) {
+	return w.store.CountRunProposals(ctx, id)
+}
+
+func (w *world) GetProposalVisible(ctx context.Context, arg db.GetProposalVisibleParams) (db.Proposal, error) {
+	return w.store.GetProposalVisible(ctx, arg)
+}
+
+func (w *world) ListProposalsVisible(ctx context.Context, arg db.ListProposalsVisibleParams) ([]db.Proposal, error) {
+	return w.store.ListProposalsVisible(ctx, arg)
+}
+
+func (w *world) ListTeamToolNames(ctx context.Context, id uuid.UUID) ([]db.ListTeamToolNamesRow, error) {
+	return w.store.ListTeamToolNames(ctx, id)
 }
 
 func (w *world) ListTeamSkillFiles(ctx context.Context, id uuid.UUID) ([]db.ListTeamSkillFilesRow, error) {
@@ -171,7 +201,12 @@ func (w *world) serve(t *testing.T, req *http.Request) *httptest.ResponseRecorde
 
 	rs := authz.NewRoutes()
 	for _, r := range []struct{ method, path string }{
-		{"POST", "/teams/{id}/blueprints/plan"}, {"POST", "/teams/{id}/blueprints/apply"}, {"GET", "/teams/{id}/blueprint"},
+		{"POST", "/teams/{id}/blueprints/plan"},
+		{"POST", "/teams/{id}/blueprints/apply"},
+		{"GET", "/teams/{id}/blueprint"},
+		{"GET", "/teams/{id}/proposals"},
+		{"GET", "/teams/{id}/proposals/{proposalID}"},
+		{"POST", "/teams/{id}/proposals/{proposalID}/apply"},
 	} {
 		if err := rs.Add(r.method, r.path, "member", nil); err != nil {
 			t.Fatalf("route: %v", err)
@@ -179,10 +214,10 @@ func (w *world) serve(t *testing.T, req *http.Request) *httptest.ResponseRecorde
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mux := http.NewServeMux()
-	New(logger, w, w.authz, &w.objects, loops).Register(mux, api.NewGuard(rs, w.authz, liveTeams{}, logger))
+	New(logger, w, w.authz, &w.objects, &w.refresh, loops).Register(mux, api.NewGuard(rs, w.authz, liveTeams{}, logger))
 
 	req = req.WithContext(auth.WithUser(req.Context(), &auth.User{
-		ID: uuid.New(), Issuer: "dev", Subject: "someone",
+		ID: w.caller(), Issuer: "dev", Subject: "someone",
 		Teams: []auth.Membership{{TeamID: w.team, Name: "support", Role: "member"}},
 	}))
 	rec := httptest.NewRecorder()

@@ -95,5 +95,6 @@ type Plan struct {
 }
 
 type applied struct {
-	Changes []Change `json:"changes"`
+	Changes    []Change     `json:"changes"`
+	Discovered []Discovered `json:"discovered"`
 }

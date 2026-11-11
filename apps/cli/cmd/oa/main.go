@@ -57,6 +57,8 @@ func commands(opts *cli.Options) []*cobra.Command {
 		mcpservers.New(opts),
 		skills.New(opts),
 		blueprints.NewExport(opts),
+		blueprints.NewBuild(opts),
+		blueprints.NewProposals(opts),
 		setup.New(opts),
 		blueprints.NewPlan(opts),
 		blueprints.NewApply(opts),

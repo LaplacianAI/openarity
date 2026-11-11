@@ -40,11 +40,12 @@ func TestValidateRejectsWrongSchemePerField(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"OPENARITY_POSTGRES_DSN":  "redis://127.0.0.1:6379",
-		"OPENARITY_REDIS_URL":     "http://127.0.0.1:6379",
-		"OPENARITY_FALKOR_DB_URL": "postgres://127.0.0.1:6380",
-		"OPENARITY_SECRETS_ADDR":  "redis://127.0.0.1:8200",
-		"OPENARITY_LLM_BASE_URL":  "redis://127.0.0.1:20128",
+		"OPENARITY_POSTGRES_DSN":     "redis://127.0.0.1:6379",
+		"OPENARITY_REDIS_URL":        "http://127.0.0.1:6379",
+		"OPENARITY_FALKOR_DB_URL":    "postgres://127.0.0.1:6380",
+		"OPENARITY_SECRETS_ADDR":     "redis://127.0.0.1:8200",
+		"OPENARITY_LLM_BASE_URL":     "redis://127.0.0.1:20128",
+		"OPENARITY_MCP_REGISTRY_URL": "ftp://registry.example",
 	}
 	for key, bad := range tests {
 		if cfg, err := load(map[string]string{key: bad}); err == nil {
@@ -247,5 +248,18 @@ func TestAURLRefusedForItsShapeIsNotRepeated(t *testing.T) {
 		if strings.Contains(err.Error(), "urlsecret") {
 			t.Errorf("%s: the refusal repeats the password: %v", name, err)
 		}
+	}
+}
+
+// none turns the builder's look-up off; it is not a URL, and not refused as one.
+func TestTheMCPRegistryCanBeTurnedOff(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := load(map[string]string{"OPENARITY_MCP_REGISTRY_URL": NoMCPRegistry})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MCPRegistryURL != NoMCPRegistry {
+		t.Errorf("MCPRegistryURL = %q, want %q", cfg.MCPRegistryURL, NoMCPRegistry)
 	}
 }

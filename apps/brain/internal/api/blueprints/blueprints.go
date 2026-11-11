@@ -30,6 +30,7 @@ const (
 
 type Store interface {
 	Reads
+	Proposals
 	skills.Reserver
 	InTx(ctx context.Context, fn func(Queries) error) error
 }
@@ -38,6 +39,9 @@ type Store interface {
 type Queries interface {
 	agents.Queries
 	skills.Queries
+	MarkProposalApplied(ctx context.Context, arg db.MarkProposalAppliedParams) (db.Proposal, error)
+	SupersedeProposals(ctx context.Context, sessionID uuid.UUID) error
+	CreateProposal(ctx context.Context, arg db.CreateProposalParams) (db.Proposal, error)
 	CreateMCPServer(ctx context.Context, arg db.CreateMCPServerParams) (db.McpServer, error)
 	UpdateMCPServer(ctx context.Context, arg db.UpdateMCPServerParams) (db.McpServer, error)
 }
@@ -48,15 +52,19 @@ type handler struct {
 	authz   api.Authorizer
 	objects skills.Objects
 	loops   []string
+	refresh Refresher
 }
 
-func New(logger *slog.Logger, s Store, a api.Authorizer, o skills.Objects, loops []string) *api.Router {
-	h := &handler{logger: logger, store: s, authz: a, objects: o, loops: loops}
+func New(logger *slog.Logger, s Store, a api.Authorizer, o skills.Objects, rf Refresher, loops []string) *api.Router {
+	h := &handler{logger: logger, store: s, authz: a, objects: o, refresh: rf, loops: loops}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/blueprint", h.export)
 	r.Post("/{id}/blueprints/plan", h.plan)
 	r.Post("/{id}/blueprints/apply", h.apply)
+	r.Get("/{id}/proposals", h.listProposals)
+	r.Get("/{id}/proposals/{proposalID}", h.getProposal)
+	r.Post("/{id}/proposals/{proposalID}/apply", h.applyProposal)
 
 	return r
 }
@@ -110,7 +118,7 @@ func (h *handler) apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.write(r.Context(), teamID, &p)
+	err := h.write(r.Context(), teamID, &p, nil)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == codeUniqueViolation {
 		http.Error(w, "the team changed while this was applied: plan again", http.StatusConflict)
@@ -120,7 +128,7 @@ func (h *handler) apply(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to apply blueprint", err)
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, applied{Changes: p.Changes})
+	api.WriteJSON(w, h.logger, http.StatusOK, h.applied(r.Context(), &p))
 }
 
 func withinLimits(w http.ResponseWriter, bp Blueprint) bool {
@@ -154,7 +162,10 @@ func (h *handler) planned(w http.ResponseWriter, r *http.Request, u *auth.User, 
 // reaper takes them if nothing commits, then every row in one transaction.
 // Agents are written before any grant, so one may delegate to another the
 // same blueprint creates.
-func (h *handler) write(ctx context.Context, teamID uuid.UUID, p *planned) error {
+//
+// also, when given, runs last in the same transaction: an error from it rolls
+// the whole apply back.
+func (h *handler) write(ctx context.Context, teamID uuid.UUID, p *planned, also func(Queries) error) error {
 	keys := make([][]string, len(p.skills))
 	for i, s := range p.skills {
 		k, err := skills.Reserve(ctx, h.store, h.objects, teamID, s.dir.Files)
@@ -172,13 +183,20 @@ func (h *handler) write(ctx context.Context, teamID uuid.UUID, p *planned) error
 	}
 
 	return h.store.InTx(ctx, func(q Queries) error {
+		p.written = nil
 		if err := writeServers(ctx, q, teamID, p, ids); err != nil {
 			return err
 		}
 		if err := writeSkills(ctx, q, teamID, p, keys, ids); err != nil {
 			return err
 		}
-		return writeAgents(ctx, q, p, ids)
+		if err := writeAgents(ctx, q, p, ids); err != nil {
+			return err
+		}
+		if also == nil {
+			return nil
+		}
+		return also(q)
 	})
 }
 
@@ -202,8 +220,15 @@ func writeServers(ctx context.Context, q Queries, teamID uuid.UUID, p *planned, 
 			return err
 		}
 		p.made(s.change, row.ID, ids)
+		p.written = append(p.written, row)
 	}
 	return nil
+}
+
+// applied is what an apply answers once it has committed: what it changed,
+// and what the servers it wrote said their tools are.
+func (h *handler) applied(ctx context.Context, p *planned) applied {
+	return applied{Changes: p.Changes, Discovered: discoverWritten(ctx, h.logger, h.refresh, p.written)}
 }
 
 func writeSkills(ctx context.Context, q Queries, teamID uuid.UUID, p *planned, keys [][]string, ids map[Kind]map[string]uuid.UUID) error {

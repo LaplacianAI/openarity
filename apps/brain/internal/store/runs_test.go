@@ -898,6 +898,9 @@ func TestTheRunHistoryFilters(t *testing.T) {
 	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET hub = true WHERE id = $1`, hub); err != nil {
 		t.Fatalf("mark hub: %v", err)
 	}
+	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET builder = true WHERE id = $1`, succeeded); err != nil {
+		t.Fatalf("mark builder: %v", err)
+	}
 
 	var since time.Time
 	if err := s.pool.QueryRow(t.Context(), `SELECT now() - interval '10 minutes'`).Scan(&since); err != nil {
@@ -920,6 +923,9 @@ func TestTheRunHistoryFilters(t *testing.T) {
 		"the hub's":                   {db.ListRunsByTeamParams{FilterHub: true, Hub: true}, []uuid.UUID{hub}},
 		"not the hub's":               {db.ListRunsByTeamParams{FilterHub: true, Hub: false}, []uuid.UUID{failedNew, succeeded, failedOld}},
 		"hub unset ignores the value": {db.ListRunsByTeamParams{FilterHub: false, Hub: true}, all},
+		"the builder's":               {db.ListRunsByTeamParams{FilterBuilder: true, Builder: true}, []uuid.UUID{succeeded}},
+		"not the builder's":           {db.ListRunsByTeamParams{FilterBuilder: true, Builder: false}, []uuid.UUID{hub, failedNew, failedOld}},
+		"builder unset ignores it":    {db.ListRunsByTeamParams{FilterBuilder: false, Builder: true}, all},
 		"all at once": {
 			db.ListRunsByTeamParams{Statuses: []string{"failed"}, Since: &since, FilterHub: true, Hub: false},
 			[]uuid.UUID{failedNew},

@@ -32,7 +32,10 @@ describe("the capture plan", () => {
   // is a screen nobody compares before and after.
   it("covers every screen the dashboard serves", () => {
     const pages = readdirSync(ROUTES)
-      .filter((f) => f.startsWith("ui.") && f !== "ui.tsx" && f !== "ui.callback.tsx")
+      // ui.compose.tsx only redirects to Blueprint, its new name: nothing to see.
+      .filter(
+        (f) => f.startsWith("ui.") && !["ui.tsx", "ui.callback.tsx", "ui.compose.tsx"].includes(f),
+      )
       .map(pathOf)
       .map((p) => p.replace(/\/\$[^/]+$/, "/$"));
 

@@ -164,7 +164,9 @@ blueprint: `oa plan` shows what applying it would change and `oa apply` makes
 the team match it, in one transaction, writing only what changed. `oa export`
 prints the team as one, and `oa setup skills` teaches a coding agent (Claude
 Code, Codex, Cursor and others) to build a team that way, showing you the plan
-before it applies anything.
+before it applies anything. Each team also has a built-in builder: `oa build`
+asks it in plain words, it proposes a blueprint and writes nothing, and
+`oa proposals apply` applies the proposal as you.
 
 A message on a channel starts a hub run, or steers the one already answering
 its conversation, and the answer goes back to the channel: into the chat for
@@ -610,13 +612,14 @@ references only.
 
 ### Skills, MCP servers and embeddings
 
-All empty by default, and each can stay that way.
+Each can stay at its default.
 
 | Variable                                  | Default | What it does                                                   |
 | ----------------------------------------- | ------- | -------------------------------------------------------------- |
 | `OPENARITY_SKILL_IMPORT_HOSTS`            | empty   | Hosts a skill zip may be imported from, besides GitHub         |
 | `OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF` | empty   | `path#key` of a GitHub token, to raise the rate limit          |
 | `OPENARITY_MCP_PRIVATE_NETWORKS`          | empty   | CIDRs MCP discovery may reach, besides public addresses        |
+| `OPENARITY_MCP_REGISTRY_URL`              | official | Where a team's builder looks MCP servers up; `none` turns it off |
 | `OPENARITY_EMBEDDING_MODEL`               | empty   | The model that embeds agents, tools and skills for the graph   |
 | `OPENARITY_EMBEDDING_DIMENSIONS`          | `0`     | The width of its vectors, `1` to `4096`; set with the model    |
 | `OPENARITY_EMBEDDING_KEY_REF`             | empty   | `path#key` of the embedding key, when the model router needs it |

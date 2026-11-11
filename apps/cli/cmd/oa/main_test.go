@@ -103,7 +103,7 @@ func TestEveryCommandIsRegistered(t *testing.T) {
 
 	for _, want := range []string{
 		"whoami", "config", "context", "teams", "channels", "sessions",
-		"agents", "mcp-servers", "skills", "runs", "export", "plan", "apply", "setup",
+		"agents", "mcp-servers", "skills", "runs", "export", "plan", "apply", "setup", "build", "proposals",
 	} {
 		if !registered[want] {
 			t.Errorf("%q is not on the root: %v", want, registered)

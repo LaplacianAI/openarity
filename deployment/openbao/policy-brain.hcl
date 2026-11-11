@@ -105,8 +105,8 @@ path "secret/metadata/teams/+/attachments" {
 
 # The credentials a team's MCP servers need live under teams/<team_id>/mcp/,
 # and a server row holds only the reference: `teams/<t>/mcp/<name>#<key>`. The
-# brain reads them when it connects to a server and never writes one — the
-# team puts them there — so this rule is read and nothing else.
+# brain reads them when it connects to a server. This rule is read and nothing
+# else; the one below it is the only place the brain writes one.
 #
 # `*` rather than `+` because a reference may nest (`mcp/github/prod#token`).
 # A glob sounds like it can be walked out of with `..`, and cannot. Measured
@@ -130,6 +130,26 @@ path "secret/metadata/teams/+/attachments" {
 # deleted needs `list`, which the note at the bottom refuses for good reason.
 path "secret/data/teams/+/mcp/*" {
   capabilities = ["read"]
+}
+
+# PUT /teams/{id}/mcp-secrets/{name} writes one, so a person sets a server's
+# token from the dashboard rather than with bao: one segment under mcp/, which
+# is all the route names, every key at once. RBAC's tool:write on the route is
+# the authorisation that matters, as for a channel.
+#
+# `read` is repeated here because this rule, not the glob above, is the one a
+# one-segment path meets: OpenBao takes the rule that does not end in `*` over
+# the one that does, and a path never sums two rules. Without it a secret the
+# brain had just written would be unreadable. `update` because a second write
+# replaces the first. Nested names (mcp/github/prod) still meet only the glob,
+# and stay read-only. Verified against this OpenBao in
+# policy_integration_test.go:
+#
+#   PUT data/teams/<t>/mcp/github        200   then read back, the old keys gone
+#   PUT data/teams/<t>/mcp/github/prod   403
+#   delete, metadata, list               403, unchanged
+path "secret/data/teams/+/mcp/+" {
+  capabilities = ["read", "create", "update"]
 }
 
 # A team's web search key lives at teams/<team_id>/search/<key_id>: a path per

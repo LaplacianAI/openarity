@@ -5,15 +5,21 @@ import type { ServerDraft } from "@/lib/server-draft";
 
 /**
  * An MCP server's fields, as the Servers screen registers and edits one and
- * Compose drafts one. What they become is the caller's: a request now, or an
+ * Blueprint drafts one. What they become is the caller's: a request now, or an
  * item in a draft.
  */
 export function ServerFields({
   draft,
   set,
+  withToken = false,
+  tokenSet = false,
 }: {
   draft: ServerDraft;
   set: (patch: Partial<ServerDraft>) => void;
+  /** Offer a token to write to the secret store, as the Servers screen does. */
+  withToken?: boolean;
+  /** The server already names a token. */
+  tokenSet?: boolean;
 }) {
   return (
     <>
@@ -57,14 +63,39 @@ export function ServerFields({
               onChange={(e) => set({ url: e.target.value })}
             />
           </Field>
-          <Field label="Bearer token reference" htmlFor="server-auth" hint="Optional.">
-            <Input
-              id="server-auth"
-              value={draft.authRef}
-              spellCheck={false}
-              onChange={(e) => set({ authRef: e.target.value })}
-            />
-          </Field>
+          {withToken ? (
+            <Field
+              label="Token"
+              htmlFor="server-token"
+              hint={
+                tokenSet
+                  ? "A token is set. Type a new one to replace it; it is never shown again."
+                  : "Optional. Sent as Authorization: Bearer <token>, kept in the secret store, never shown again."
+              }
+            >
+              <Input
+                id="server-token"
+                type="password"
+                value={draft.token}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={tokenSet ? "••••••••" : ""}
+                onChange={(e) => set({ token: e.target.value })}
+              />
+            </Field>
+          ) : null}
+          {withToken ? (
+            <details className="text-sm">
+              <summary className="cursor-pointer text-muted-foreground">
+                Use a secret you manage in the secret store yourself
+              </summary>
+              <div className="pt-2">
+                <AuthRef draft={draft} set={set} />
+              </div>
+            </details>
+          ) : (
+            <AuthRef draft={draft} set={set} />
+          )}
         </>
       ) : (
         <>
@@ -93,5 +124,28 @@ export function ServerFields({
         onCheckedChange={(bare) => set({ bare })}
       />
     </>
+  );
+}
+
+function AuthRef({
+  draft,
+  set,
+}: {
+  draft: ServerDraft;
+  set: (patch: Partial<ServerDraft>) => void;
+}) {
+  return (
+    <Field
+      label="Bearer token reference"
+      htmlFor="server-auth"
+      hint="Optional. teams/<team_id>/mcp/<name>#<key>, a secret already in the store."
+    >
+      <Input
+        id="server-auth"
+        value={draft.authRef}
+        spellCheck={false}
+        onChange={(e) => set({ authRef: e.target.value })}
+      />
+    </Field>
   );
 }

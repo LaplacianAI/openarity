@@ -8,6 +8,8 @@ export type ServerDraft = {
   command: string;
   env: string;
   bare: boolean;
+  /** A bearer token to write to the secret store; never read back, so never filled in. */
+  token: string;
 };
 
 export const EMPTY_SERVER: ServerDraft = {
@@ -18,6 +20,7 @@ export const EMPTY_SERVER: ServerDraft = {
   command: "",
   env: "",
   bare: false,
+  token: "",
 };
 
 /**
@@ -70,7 +73,18 @@ export function draftOf(s: MCPServer): ServerDraft {
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
     bare: s.bare,
+    token: "",
   };
+}
+
+/** Where a token typed into a server's form is written, and what the server then names. */
+export const TOKEN_KEY = "token";
+
+/** A secret's name: letters, digits, _ and -, as the brain takes one. */
+export const SECRET_NAME = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function tokenRef(teamId: string, serverName: string): string {
+  return `teams/${teamId}/mcp/${serverName}#${TOKEN_KEY}`;
 }
 
 /**

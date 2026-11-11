@@ -189,6 +189,12 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
+	if c.MCPRegistryURL != NoMCPRegistry {
+		if err := checkURL("MCP_REGISTRY_URL", c.MCPRegistryURL, httpSchemes...); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
 	if c.FalkorDBURL == c.RedisURL {
 		errs = append(errs, fmt.Errorf("FALKOR_DB_URL and REDIS_URL must differ"))
 	}

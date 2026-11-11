@@ -52,6 +52,7 @@ const base = {
   command: "",
   env: "",
   bare: false,
+  token: "",
 };
 
 /** The row a server's name sits in. */
@@ -403,6 +404,75 @@ describe("registering a server", () => {
     });
   });
 
+  it("keeps a typed token in the secret store, names it, and asks the server for its tools", async () => {
+    const linear = { ...github, id: "m9", name: "linear", url: "https://mcp.linear.app" };
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...servers,
+      "PUT /teams/{id}/mcp-secrets/{name}": { status: 204 },
+      "POST /teams/{id}/mcp-servers": { status: 201, body: linear },
+      "POST /teams/{id}/mcp-servers/{sid}/discover": { body: { items: [] } },
+    });
+    show(Servers);
+
+    await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "linear");
+    await userEvent.type(screen.getByRole("textbox", { name: /^url$/i }), "https://mcp.linear.app");
+    await userEvent.type(screen.getByLabelText(/^token$/i), "lin-secret-value");
+    await userEvent.click(screen.getByRole("button", { name: /^register$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.path.endsWith("/discover"))).toBe(true));
+    const writes = seen.filter((s) => s.method !== "GET");
+    expect(writes.map((s) => `${s.method} ${s.path}`)).toEqual([
+      `PUT /teams/${TEAM}/mcp-secrets/linear`,
+      `POST /teams/${TEAM}/mcp-servers`,
+      `POST /teams/${TEAM}/mcp-servers/m9/discover`,
+    ]);
+    expect(JSON.parse(String(writes[0]?.body))).toEqual({ values: { token: "lin-secret-value" } });
+    const server = String(writes[1]?.body);
+    expect(JSON.parse(server)).toEqual({
+      name: "linear",
+      url: "https://mcp.linear.app",
+      auth_secret_ref: `teams/${TEAM}/mcp/linear#token`,
+    });
+    expect(server).not.toContain("lin-secret-value");
+  });
+
+  it("registers nothing when the secret store does not take the token", async () => {
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...servers,
+      "PUT /teams/{id}/mcp-secrets/{name}": {
+        status: 503,
+        text: "the secret store is unavailable",
+      },
+    });
+    show(Servers);
+
+    await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "linear");
+    await userEvent.type(screen.getByRole("textbox", { name: /^url$/i }), "https://mcp.linear.app");
+    await userEvent.type(screen.getByLabelText(/^token$/i), "x");
+    await userEvent.click(screen.getByRole("button", { name: /^register$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("secret store is unavailable");
+    expect(seen.some((s) => s.method === "POST")).toBe(false);
+  });
+
+  it("refuses a token for a server whose name cannot name a secret", async () => {
+    const seen = brain({ ...team(["tool:write"]), ...servers });
+    show(Servers);
+
+    await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "linear.prod");
+    await userEvent.type(screen.getByRole("textbox", { name: /^url$/i }), "https://mcp.linear.app");
+    await userEvent.type(screen.getByLabelText(/^token$/i), "x");
+    await userEvent.click(screen.getByRole("button", { name: /^register$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/letters, digits/);
+    expect(seen.some((s) => s.method !== "GET")).toBe(false);
+  });
+
   it("refuses an incomplete form without a request", async () => {
     const seen = brain({ ...team(["tool:write"]), ...servers });
     show(Servers);
@@ -461,6 +531,26 @@ describe("editing a server", () => {
     );
     expect(within(dialog).getByRole("switch", { name: /bare/i })).not.toBeChecked();
     expect(within(dialog).getByRole("button", { name: /^save$/i })).toBeInTheDocument();
+  });
+
+  it("says a token is set without showing it, and keeps it unless a new one is typed", async () => {
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...servers,
+      "PUT /teams/{id}/mcp-servers/{sid}": { body: github },
+    });
+    show(Servers);
+
+    const dialog = await editing("github");
+    const token = within(dialog).getByLabelText(/^token$/i);
+    expect(token).toHaveValue("");
+    expect(within(dialog).getByText(/A token is set/)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+    expect(seen.some((s) => s.path.includes("/mcp-secrets/"))).toBe(false);
+    const put = seen.find((s) => s.method === "PUT");
+    expect(JSON.parse(String(put?.body)).auth_secret_ref).toBe(`teams/${TEAM}/mcp/github#token`);
   });
 
   it("opens a command server's form filled with its command and references", async () => {

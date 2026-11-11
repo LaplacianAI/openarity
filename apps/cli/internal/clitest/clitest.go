@@ -160,6 +160,9 @@ func BrainStub(t *testing.T, status int, response string) *Seen {
 type Reply struct {
 	Status int
 	Body   string
+	// ContentType is application/json unless set, as a plain-text error
+	// from the brain is not.
+	ContentType string
 }
 
 // Exchange is one request a routed stub received.
@@ -228,7 +231,11 @@ func Routes(t *testing.T, replies map[string]Reply) *Transcript {
 	for pattern, reply := range replies {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			record(r)
-			w.Header().Set("Content-Type", "application/json")
+			ct := reply.ContentType
+			if ct == "" {
+				ct = "application/json"
+			}
+			w.Header().Set("Content-Type", ct)
 			w.WriteHeader(reply.Status)
 			_, _ = w.Write([]byte(reply.Body))
 		})
