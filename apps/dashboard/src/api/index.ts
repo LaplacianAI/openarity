@@ -543,6 +543,22 @@ export function listMCPTools(teamId: string, serverId: string): Promise<{ items:
   return request<{ items: MCPTool[] }>(`/teams/${teamId}/mcp-servers/${serverId}/tools`);
 }
 
+/**
+ * Writes the team's MCP secret <name> with exactly these keys, so a server
+ * names one as name#key. The values go to the secret store and never come
+ * back. A write replaces the keys the secret held: send them all at once.
+ */
+export function putMCPSecret(
+  teamId: string,
+  name: string,
+  values: Record<string, string>,
+): Promise<void> {
+  return request<void>(`/teams/${teamId}/mcp-secrets/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    body: { values },
+  });
+}
+
 export function discoverMCPServer(teamId: string, serverId: string): Promise<{ items: MCPTool[] }> {
   return request<{ items: MCPTool[] }>(`/teams/${teamId}/mcp-servers/${serverId}/discover`, {
     method: "POST",

@@ -36,10 +36,18 @@ type handler struct {
 	logger    *slog.Logger
 	store     Store
 	refresher *Refresher
+	secrets   SecretWriter
 }
 
-func New(logger *slog.Logger, s Store, d Discoverer) *api.Router {
-	h := &handler{logger: logger, store: s, refresher: NewRefresher(logger, d, s)}
+// SecretWriter is the one write the secrets route makes: a secret, whole.
+type SecretWriter interface {
+	PutAll(ctx context.Context, path string, values map[string]string) error
+}
+
+// New takes the writer its secrets route writes with; nil, and that route
+// says the brain does not write secrets.
+func New(logger *slog.Logger, s Store, d Discoverer, w SecretWriter) *api.Router {
+	h := &handler{logger: logger, store: s, refresher: NewRefresher(logger, d, s), secrets: w}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/mcp-servers", h.list)
@@ -49,6 +57,7 @@ func New(logger *slog.Logger, s Store, d Discoverer) *api.Router {
 	r.Delete("/{id}/mcp-servers/{serverID}", h.delete)
 	r.Get("/{id}/mcp-servers/{serverID}/tools", h.tools)
 	r.Post("/{id}/mcp-servers/{serverID}/discover", h.discover)
+	r.Put("/{id}/mcp-secrets/{name}", h.putSecret)
 
 	return r
 }

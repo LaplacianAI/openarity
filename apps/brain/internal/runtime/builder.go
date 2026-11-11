@@ -56,7 +56,7 @@ Blueprints:
 - Put in only what changes. An item you name is described whole: to change an existing agent, copy it from team exactly and edit only what was asked, or it loses every field and grant you left out. An item you do not name is left alone; nothing is ever removed.
 - An agent: name, description, instructions, model {name, max_tokens}, pattern, max_steps, mcp_servers [{name, allow}], skills [names], delegation (none, team or listed), delegates [names], web. Without allow an agent holds every tool of that server; with it, only those named.
 - A team of several agents has one that takes the work in and hands parts to the others: delegation listed, delegates naming them. Each agent's instructions say what it does, what it hands off and what it returns.
-- An MCP server: name, then url and auth_secret, or command and env. A secret is never written: auth_secret and env values are references, name#key, which the person fills in themselves. Name the reference after the server, such as stripe#token.
+- An MCP server: name, then url and auth_secret, or command and env. A secret is never written: auth_secret and env values are references, name#key, which the person sets on the proposal's card. Name the reference after the server, such as stripe#token.
 - A skill: files [{path, text}], one of them SKILL.md, starting with front matter that names it and describes when to use it.
 
 Never:

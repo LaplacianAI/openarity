@@ -1179,6 +1179,12 @@ type LoopPage struct {
 	Items []Loop `json:"items" yaml:"items"`
 }
 
+// MCPSecretWrite defines model for MCPSecretWrite.
+type MCPSecretWrite struct {
+	// Values Each key and its value; 1 to 20 keys, each value up to 16 KiB
+	Values map[string]string `json:"values" yaml:"values"`
+}
+
 // MCPServer Exactly one of `url` and `command` is present.
 type MCPServer struct {
 	// AuthSecretRef A url server's bearer token. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
@@ -2404,6 +2410,9 @@ type UpdateChannelJSONRequestBody = UpdateChannelRequest
 // ApproveChannelSenderJSONRequestBody defines body for ApproveChannelSender for application/json ContentType.
 type ApproveChannelSenderJSONRequestBody = ApproveSenderRequest
 
+// PutMCPSecretJSONRequestBody defines body for PutMCPSecret for application/json ContentType.
+type PutMCPSecretJSONRequestBody = MCPSecretWrite
+
 // CreateMCPServerJSONRequestBody defines body for CreateMCPServer for application/json ContentType.
 type CreateMCPServerJSONRequestBody = MCPServerRequest
 
@@ -3023,6 +3032,34 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/loops (the `ListLoops` operationId).
 	ListLoops(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutMCPSecretWithBody Write one of the team's MCP secrets
+	//
+	// Writes `teams/{id}/mcp/{name}` in the secret store with exactly these
+	// keys, so a server or a blueprint names one as `{name}#{key}`. Every
+	// key the secret holds is written together, because a write replaces
+	// the keys it held. The values go to the secret store only: they are
+	// never returned, logged or readable through the API. Needs
+	// `tool:write`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /teams/{id}/mcp-secrets/{name} (the `PutMCPSecret` operationId).
+	PutMCPSecretWithBody(ctx context.Context, id TeamID, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutMCPSecret Write one of the team's MCP secrets
+	//
+	// Writes `teams/{id}/mcp/{name}` in the secret store with exactly these
+	// keys, so a server or a blueprint names one as `{name}#{key}`. Every
+	// key the secret holds is written together, because a write replaces
+	// the keys it held. The values go to the secret store only: they are
+	// never returned, logged or readable through the API. Needs
+	// `tool:write`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /teams/{id}/mcp-secrets/{name} (the `PutMCPSecret` operationId).
+	PutMCPSecret(ctx context.Context, id TeamID, name string, body PutMCPSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListMCPServers List a team's MCP servers
 	//
@@ -4574,6 +4611,54 @@ func (c *Client) GetTeamGraph(ctx context.Context, id TeamID, params *GetTeamGra
 // Corresponds with GET /teams/{id}/loops (the `ListLoops` operationId).
 func (c *Client) ListLoops(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListLoopsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutMCPSecretWithBody Write one of the team's MCP secrets
+//
+// Writes `teams/{id}/mcp/{name}` in the secret store with exactly these
+// keys, so a server or a blueprint names one as `{name}#{key}`. Every
+// key the secret holds is written together, because a write replaces
+// the keys it held. The values go to the secret store only: they are
+// never returned, logged or readable through the API. Needs
+// `tool:write`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /teams/{id}/mcp-secrets/{name} (the `PutMCPSecret` operationId).
+func (c *Client) PutMCPSecretWithBody(ctx context.Context, id TeamID, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutMCPSecretRequestWithBody(c.Server, id, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutMCPSecret Write one of the team's MCP secrets
+//
+// Writes `teams/{id}/mcp/{name}` in the secret store with exactly these
+// keys, so a server or a blueprint names one as `{name}#{key}`. Every
+// key the secret holds is written together, because a write replaces
+// the keys it held. The values go to the secret store only: they are
+// never returned, logged or readable through the API. Needs
+// `tool:write`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /teams/{id}/mcp-secrets/{name} (the `PutMCPSecret` operationId).
+func (c *Client) PutMCPSecret(ctx context.Context, id TeamID, name string, body PutMCPSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutMCPSecretRequest(c.Server, id, name, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7120,6 +7205,60 @@ func NewListLoopsRequest(server string, id TeamID) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewPutMCPSecretRequest calls the generic PutMCPSecret builder with application/json body
+func NewPutMCPSecretRequest(server string, id TeamID, name string, body PutMCPSecretJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutMCPSecretRequestWithBody(server, id, name, "application/json", bodyReader)
+}
+
+// NewPutMCPSecretRequestWithBody constructs an http.Request for the PutMCPSecret method, with any body, and a specified content type
+func NewPutMCPSecretRequestWithBody(server string, id TeamID, name string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-secrets/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -9928,6 +10067,34 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/loops (the `ListLoops` operationId).
 	ListLoopsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*ListLoopsResponse, error)
 
+	// PutMCPSecretWithBodyWithResponse Write one of the team's MCP secrets
+	//
+	// Writes `teams/{id}/mcp/{name}` in the secret store with exactly these
+	// keys, so a server or a blueprint names one as `{name}#{key}`. Every
+	// key the secret holds is written together, because a write replaces
+	// the keys it held. The values go to the secret store only: they are
+	// never returned, logged or readable through the API. Needs
+	// `tool:write`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/mcp-secrets/{name} (the `PutMCPSecret` operationId).
+	PutMCPSecretWithBodyWithResponse(ctx context.Context, id TeamID, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutMCPSecretResponse, error)
+
+	// PutMCPSecretWithResponse Write one of the team's MCP secrets
+	//
+	// Writes `teams/{id}/mcp/{name}` in the secret store with exactly these
+	// keys, so a server or a blueprint names one as `{name}#{key}`. Every
+	// key the secret holds is written together, because a write replaces
+	// the keys it held. The values go to the secret store only: they are
+	// never returned, logged or readable through the API. Needs
+	// `tool:write`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/mcp-secrets/{name} (the `PutMCPSecret` operationId).
+	PutMCPSecretWithResponse(ctx context.Context, id TeamID, name string, body PutMCPSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*PutMCPSecretResponse, error)
+
 	// ListMCPServersWithResponse List a team's MCP servers
 	//
 	// A read, so belonging to the team is enough: granting a server to an
@@ -11877,6 +12044,47 @@ func (r ListLoopsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListLoopsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PutMCPSecretResponse401Headers the declared response headers of an HTTP 401 response for PutMCPSecret
+type PutMCPSecretResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type PutMCPSecretResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *PutMCPSecretResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r PutMCPSecretResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PutMCPSecretResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutMCPSecretResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PutMCPSecretResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -14545,6 +14753,46 @@ func (c *ClientWithResponses) ListLoopsWithResponse(ctx context.Context, id Team
 	return ParseListLoopsResponse(rsp)
 }
 
+// PutMCPSecretWithBodyWithResponse Write one of the team's MCP secrets
+//
+// Writes `teams/{id}/mcp/{name}` in the secret store with exactly these
+// keys, so a server or a blueprint names one as `{name}#{key}`. Every
+// key the secret holds is written together, because a write replaces
+// the keys it held. The values go to the secret store only: they are
+// never returned, logged or readable through the API. Needs
+// `tool:write`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/mcp-secrets/{name} (the `PutMCPSecret` operationId).
+func (c *ClientWithResponses) PutMCPSecretWithBodyWithResponse(ctx context.Context, id TeamID, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutMCPSecretResponse, error) {
+	rsp, err := c.PutMCPSecretWithBody(ctx, id, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutMCPSecretResponse(rsp)
+}
+
+// PutMCPSecretWithResponse Write one of the team's MCP secrets
+//
+// Writes `teams/{id}/mcp/{name}` in the secret store with exactly these
+// keys, so a server or a blueprint names one as `{name}#{key}`. Every
+// key the secret holds is written together, because a write replaces
+// the keys it held. The values go to the secret store only: they are
+// never returned, logged or readable through the API. Needs
+// `tool:write`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/mcp-secrets/{name} (the `PutMCPSecret` operationId).
+func (c *ClientWithResponses) PutMCPSecretWithResponse(ctx context.Context, id TeamID, name string, body PutMCPSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*PutMCPSecretResponse, error) {
+	rsp, err := c.PutMCPSecret(ctx, id, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutMCPSecretResponse(rsp)
+}
+
 // ListMCPServersWithResponse List a team's MCP servers
 //
 // A read, so belonging to the team is enough: granting a server to an
@@ -16498,6 +16746,35 @@ func ParseListLoopsResponse(rsp *http.Response) (*ListLoopsResponse, error) {
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ListLoopsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePutMCPSecretResponse parses an HTTP response from a PutMCPSecretWithResponse call
+func ParsePutMCPSecretResponse(rsp *http.Response) (*PutMCPSecretResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutMCPSecretResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers PutMCPSecretResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

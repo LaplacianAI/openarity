@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { BlueprintPlan, Proposal, Run } from "@/api/types";
-import { brain, feed, type Reply, type Seen, STAMP, showAt, team } from "@/test/brain";
+import { brain, feed, type Reply, type Seen, STAMP, showAt, TEAM, team } from "@/test/brain";
 
 const { Route, POLL_MS } = await import("@/routes/ui.build");
 
@@ -188,6 +188,84 @@ describe("the builder's conversation", () => {
     // A server the plan leaves alone asks nothing new.
     expect(within(needs).queryByText("helpdesk#token")).not.toBeInTheDocument();
     expect(within(needs).queryByText("helpdesk.example")).not.toBeInTheDocument();
+  });
+
+  const needing = {
+    [PROPOSAL]: {
+      body: {
+        ...proposal,
+        blueprint: {
+          mcp_servers: [
+            {
+              name: "billing",
+              url: "https://mcp.billing.example/mcp",
+              auth_secret: "billing#token",
+            },
+            { name: "files", command: ["npx", "files-mcp"], env: { A: "files#a", B: "files#b" } },
+            { name: "deep", url: "https://d.example/mcp", auth_secret: "team/deep#token" },
+          ],
+        },
+        plan: {
+          ...plan,
+          changes: [
+            { kind: "mcp_server", name: "billing", action: "create" },
+            { kind: "mcp_server", name: "files", action: "create" },
+            { kind: "mcp_server", name: "deep", action: "create" },
+          ],
+        },
+      },
+    },
+  };
+
+  it("sets a secret the proposal needs, its value going to the store and never shown again", async () => {
+    const seen = conversation(
+      { ...needing, "PUT /teams/{id}/mcp-secrets/{name}": { status: 204 } },
+      ["run:write", "tool:write"],
+    );
+    at(`/ui/build?session=${SESSION}`);
+
+    const form = await screen.findByRole("form", { name: "Secret billing" });
+    const field = within(form).getByLabelText("billing#token");
+    await userEvent.type(field, "bill-secret");
+    await userEvent.click(within(form).getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText(/Set\. Apply, and its server/)).toBeInTheDocument();
+    const put = seen.find((s) => s.method === "PUT");
+    expect(put?.path).toBe(`/teams/${TEAM}/mcp-secrets/billing`);
+    expect(JSON.parse(String(put?.body))).toEqual({ values: { token: "bill-secret" } });
+    expect(field).toHaveValue("");
+  });
+
+  it("writes every key of one secret together, and only once all are filled", async () => {
+    const seen = conversation(
+      { ...needing, "PUT /teams/{id}/mcp-secrets/{name}": { status: 204 } },
+      ["run:write", "tool:write"],
+    );
+    at(`/ui/build?session=${SESSION}`);
+
+    const form = await screen.findByRole("form", { name: "Secret files" });
+    const set = within(form).getByRole("button", { name: "Set" });
+    await userEvent.type(within(form).getByLabelText("files#a"), "one");
+    expect(set).toBeDisabled();
+    await userEvent.type(within(form).getByLabelText("files#b"), "two");
+    await userEvent.click(set);
+
+    await waitFor(() => expect(seen.filter((s) => s.method === "PUT")).toHaveLength(1));
+    expect(JSON.parse(String(seen.find((s) => s.method === "PUT")?.body))).toEqual({
+      values: { a: "one", b: "two" },
+    });
+    // A secret nested deeper is shown, not offered.
+    expect(screen.queryByRole("form", { name: /Secret team\/deep/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/write it to the secret store yourself/)).toBeInTheDocument();
+  });
+
+  it("offers no Set without tool:write, and says what it takes", async () => {
+    conversation(needing, ["run:write"]);
+    at(`/ui/build?session=${SESSION}`);
+
+    const form = await screen.findByRole("form", { name: "Secret billing" });
+    expect(within(form).queryByRole("button", { name: "Set" })).not.toBeInTheDocument();
+    expect((await screen.findAllByText(/Setting it needs tool:write/)).length).toBeGreaterThan(0);
   });
 
   it("offers no Apply for a plan with a refusal, and shows why", async () => {

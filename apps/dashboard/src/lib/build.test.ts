@@ -9,6 +9,7 @@ import {
   liveOf,
   NO_BUILDER_MODEL,
   needsOf,
+  secretGroups,
   turnsOf,
 } from "@/lib/build";
 
@@ -140,5 +141,28 @@ describe("conversationsOf", () => {
     const runs = [r("5", "a"), r("4", "b"), r("3", "a"), r("2", "c", false), r("1", "d")];
     expect(conversationsOf(runs).map((x) => x.id)).toEqual(["5", "4", "1"]);
     expect(conversationsOf(runs, 2).map((x) => x.id)).toEqual(["5", "4"]);
+  });
+});
+
+describe("secretGroups", () => {
+  it("groups a proposal's references by secret, and offers only what the brain can write", () => {
+    expect(
+      secretGroups(
+        [
+          "stripe#token",
+          "teams/T/mcp/stripe#account",
+          "stripe#token",
+          "teams/OTHER/mcp/x#k",
+          "team/deep#k",
+          "nokey",
+        ],
+        "T",
+      ),
+    ).toEqual([
+      { name: "stripe", keys: ["token", "account"], settable: true },
+      { name: "teams/OTHER/mcp/x", keys: ["k"], settable: false },
+      { name: "team/deep", keys: ["k"], settable: false },
+      { name: "nokey", keys: [], settable: false },
+    ]);
   });
 });

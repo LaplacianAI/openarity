@@ -46,3 +46,8 @@ type serverCursor struct {
 	CreatedAt time.Time `json:"c"`
 	ID        uuid.UUID `json:"i"`
 }
+
+// secretRequest is an MCP secret's keys and values, written as one secret.
+type secretRequest struct {
+	Values map[string]string `json:"values"`
+}

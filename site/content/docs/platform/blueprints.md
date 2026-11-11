@@ -187,9 +187,9 @@ reply as it is written.
 
 In the dashboard, **Builder** under Build is the same conversation: say what
 you want, and each proposal appears as a card with its plan, as it would apply
-for you. **Needs from you** names each secret to set and each address the
-team's agents would newly be sent to, so you can spot a host you do not
-recognise. **Apply** applies that plan and shows what each new server
+for you. **Needs from you** offers **Set** for each secret the proposal names,
+writing it to the secret store, and names each address the team's agents
+would newly be sent to, so you can spot a host you do not recognise. **Apply** applies that plan and shows what each new server
 answered; **Change something** is your next message. The conversation is in the page's address,
 so a reload or a link brings it back, and **Builder** with no conversation open
 lists your recent ones. `oa build <team>` with no message does the same, with

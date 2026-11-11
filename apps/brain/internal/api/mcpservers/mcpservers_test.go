@@ -46,6 +46,9 @@ type fakeStore struct {
 	readErr, listErr, createErr, updateErr, deleteErr, toolsErr error
 	markErr, upsertErr, pruneErr, failErr                       error
 
+	// vault is the secret store the secrets route writes to.
+	vault fakeVault
+
 	txOpen    bool
 	committed int
 	marked    []db.MarkMCPServerDiscoveredParams
@@ -344,6 +347,7 @@ func serverRoutes(t *testing.T) authz.Routes {
 	add("DELETE", "/teams/{id}/mcp-servers/{serverID}", "team", &write)
 	add("GET", "/teams/{id}/mcp-servers/{serverID}/tools", "member", nil)
 	add("POST", "/teams/{id}/mcp-servers/{serverID}/discover", "team", &write)
+	add("PUT", "/teams/{id}/mcp-secrets/{name}", "team", &write)
 	return rs
 }
 
@@ -357,7 +361,7 @@ func callWith(t *testing.T, s *fakeStore, d *fakeDiscoverer, logger *slog.Logger
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(logger, s, d).Register(mux, api.NewGuard(serverRoutes(t), a, liveTeams{}, discardLogger()))
+	New(logger, s, d, &s.vault).Register(mux, api.NewGuard(serverRoutes(t), a, liveTeams{}, discardLogger()))
 
 	var in io.Reader = http.NoBody
 	switch b := body.(type) {

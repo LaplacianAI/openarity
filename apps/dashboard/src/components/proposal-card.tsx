@@ -6,16 +6,18 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, Globe, History, KeyRound } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 
-import { type Applied, applyProposal, getProposal } from "@/api";
+import { type Applied, applyProposal, getProposal, putMCPSecret } from "@/api";
 import { ApiError } from "@/api/client";
+import { usePermissions } from "@/api/permissions";
 import type { BlueprintPlan, Proposal } from "@/api/types";
 import { AppliedView, PlanView } from "@/components/blueprint-plan";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { tally } from "@/lib/blueprint";
-import { type Needs, needsOf } from "@/lib/build";
+import { type Needs, needsOf, type SecretGroup, secretGroups } from "@/lib/build";
 
 export function ProposalCard({
   teamId,
@@ -129,7 +131,7 @@ function OpenProposal({
       ) : plan ? (
         <PlanView plan={plan} note={newer?.why} />
       ) : null}
-      {needs ? <NeedsView needs={needs} /> : null}
+      {needs ? <NeedsView teamId={teamId} needs={needs} /> : null}
       {plan && counts ? (
         <p className="text-xs text-muted-foreground">
           {counts.create} to create, {counts.update} to change
@@ -168,27 +170,26 @@ function OpenProposal({
  * builder that read a page could have been steered to a host, so each new
  * one is named for the person to recognise.
  */
-function NeedsView({ needs }: { needs: Needs }) {
+function NeedsView({ teamId, needs }: { teamId: string; needs: Needs }) {
   if (needs.secrets.length === 0 && needs.addresses.length === 0) return null;
+  const groups = secretGroups(needs.secrets, teamId);
   return (
     <section aria-labelledby="needs-heading" className="space-y-2 text-sm">
       <h3 id="needs-heading" className="font-medium">
         Needs from you
       </h3>
-      {needs.secrets.length > 0 ? (
-        <div className="flex gap-2">
-          <KeyRound aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <p>
-            Write {needs.secrets.length === 1 ? "this secret" : "these secrets"} to the team's MCP
-            secrets in the secret store, or the servers that name them get no tools:{" "}
-            {needs.secrets.map((ref, i) => (
-              <span key={ref}>
-                {i > 0 ? ", " : ""}
-                <code className="font-mono text-xs">{ref}</code>
-              </span>
-            ))}
-            .
+      {groups.length > 0 ? (
+        <div className="space-y-2">
+          <p className="flex gap-2">
+            <KeyRound aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            The servers that name these secrets get no tools until each is set. What you type goes
+            to the secret store and is never shown again.
           </p>
+          <ul className="space-y-2 pl-6">
+            {groups.map((g) => (
+              <SecretRow key={g.name} teamId={teamId} group={g} />
+            ))}
+          </ul>
         </div>
       ) : null}
       {needs.addresses.length > 0 ? (
@@ -210,6 +211,86 @@ function NeedsView({ needs }: { needs: Needs }) {
     </section>
   );
 }
+
+/** One secret a proposal names: a field per key, written together. */
+function SecretRow({ teamId, group }: { teamId: string; group: SecretGroup }) {
+  const permissions = usePermissions(teamId);
+  const id = useId();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const write = useMutation({
+    mutationFn: () => putMCPSecret(teamId, group.name, values),
+    onSuccess: () => setValues({}),
+  });
+  const filled = group.keys.length > 0 && group.keys.every((k) => (values[k] ?? "").trim() !== "");
+  const refs = group.keys.map((k) => `${group.name}#${k}`).join(", ");
+
+  if (!group.settable || group.keys.length === 0) {
+    return (
+      <li>
+        <code className="font-mono text-xs">{refs || group.name}</code>{" "}
+        <span className="text-muted-foreground">
+          — write it to the secret store yourself; it is not one this page can set.
+        </span>
+      </li>
+    );
+  }
+  return (
+    <li className="space-y-1.5">
+      <form
+        aria-label={`Secret ${group.name}`}
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (filled) write.mutate();
+        }}
+      >
+        {group.keys.map((k) => (
+          <div key={k} className="flex min-w-48 flex-1 flex-col gap-1">
+            <label htmlFor={`${id}-${k}`} className="font-mono text-xs">
+              {group.name}#{k}
+            </label>
+            <Input
+              id={`${id}-${k}`}
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={values[k] ?? ""}
+              onChange={(e) => {
+                write.reset();
+                setValues((v) => ({ ...v, [k]: e.target.value }));
+              }}
+            />
+          </div>
+        ))}
+        {permissions.can(TOOL_WRITE) ? (
+          <Button
+            type="submit"
+            size="sm"
+            variant="outline"
+            disabled={!filled}
+            loading={write.isPending}
+          >
+            Set
+          </Button>
+        ) : null}
+      </form>
+      {write.isSuccess ? (
+        <p role="status" className="flex items-center gap-1.5 text-success">
+          <CircleCheck aria-hidden className="size-4" /> Set. Apply, and its server is asked for its
+          tools.
+        </p>
+      ) : write.isError ? (
+        <p role="alert" className="text-destructive">
+          Not set: {write.error instanceof ApiError ? write.error.message : String(write.error)}
+        </p>
+      ) : permissions.isPending || permissions.can(TOOL_WRITE) ? null : (
+        <p className="text-muted-foreground">Setting it needs {TOOL_WRITE} in this team.</p>
+      )}
+    </li>
+  );
+}
+
+const TOOL_WRITE = "tool:write";
 
 function Frame({
   label,

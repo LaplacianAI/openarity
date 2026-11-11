@@ -63,7 +63,7 @@ func newRouters(
 		channels.New(logger, dbStore, authorizer, channelSecrets{secretStore, secretWriter}, registry, cfg.WebhookPublicURL,
 			reachable(cfg.MCPPrivateNetworks), replyClient(reachable(cfg.MCPPrivateNetworks)), notices),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
-		mcpservers.New(logger, mcpStore{dbStore}, discoverer),
+		mcpservers.New(logger, mcpStore{dbStore}, discoverer, secretWriter),
 		agents.New(logger, agentStore{dbStore}, runtime.Loops()),
 		blueprints.New(logger, blueprintStore{dbStore}, authorizer, attachments,
 			mcpservers.NewRefresher(logger, discoverer, mcpStore{dbStore}), runtime.Loops()),

@@ -774,6 +774,12 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   worker and the API are separate processes; the SSE route already polls it.
   Extending it to every run is the streaming variant of each loop and the
   `row.Builder` condition gone.
+- **An MCP secret is written whole, and never read back.** `PUT
+  /teams/{id}/mcp-secrets/{name}` takes every key of the secret and writes
+  them with one `PutAll`: an OpenBao write replaces the keys a path held, so
+  keys written one at a time would leave only the last. The values reach the
+  secret store and nothing else; no route returns or reports them, so the
+  dashboard can say a token is set only because a server names one.
 - **An apply discovers what it wrote, after it commits.** Each created or
   changed server is asked for its tools through the MCP servers' own
   `Refresher`, four at a time, on a context the caller cannot cancel. A

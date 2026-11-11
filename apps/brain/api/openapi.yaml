@@ -2691,6 +2691,56 @@ paths:
                 type: string
                 examples: ["the server did not answer in time"]
 
+  /teams/{id}/mcp-secrets/{name}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: name
+        in: path
+        required: true
+        description: The secret's name, the part before `#` in a reference such as `stripe#token`
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{1,128}$"
+    put:
+      operationId: putMCPSecret
+      tags: [mcp-servers]
+      summary: Write one of the team's MCP secrets
+      description: |
+        Writes `teams/{id}/mcp/{name}` in the secret store with exactly these
+        keys, so a server or a blueprint names one as `{name}#{key}`. Every
+        key the secret holds is written together, because a write replaces
+        the keys it held. The values go to the secret store only: they are
+        never returned, logged or readable through the API. Needs
+        `tool:write`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MCPSecretWrite"
+      responses:
+        "204":
+          description: Written
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "501":
+          description: This brain does not write secrets; write it to the secret store yourself.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "503":
+          description: The secret store did not take the write. Nothing is known to be written.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the secret store is unavailable"]
+
   /teams/{id}/summary:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -4735,6 +4785,21 @@ components:
             once. A server that could not be asked says why; the apply stands.
           items:
             $ref: "#/components/schemas/BlueprintDiscovered"
+
+    MCPSecretWrite:
+      type: object
+      required: [values]
+      additionalProperties: false
+      properties:
+        values:
+          type: object
+          description: Each key and its value; 1 to 20 keys, each value up to 16 KiB
+          minProperties: 1
+          maxProperties: 20
+          additionalProperties:
+            type: string
+            minLength: 1
+            maxLength: 16384
 
     BlueprintDiscovered:
       type: object

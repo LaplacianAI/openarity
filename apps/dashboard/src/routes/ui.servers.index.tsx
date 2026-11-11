@@ -9,6 +9,7 @@ import {
   discoverMCPServer,
   listMCPServers,
   listMCPTools,
+  putMCPSecret,
   replaceMCPServer,
 } from "@/api";
 import { nextCursorOf } from "@/api/client";
@@ -53,8 +54,11 @@ import {
   draftOf,
   EMPTY_SERVER,
   editRequest,
+  SECRET_NAME,
   type ServerDraft,
   serverRequest,
+  TOKEN_KEY,
+  tokenRef,
 } from "@/lib/server-draft";
 
 export const Route = createFileRoute("/ui/servers/")({
@@ -563,9 +567,25 @@ function ServerDialog({
   const [problem, setProblem] = useState<string | null>(null);
   const set = (patch: Partial<ServerDraft>) => setDraft((d) => ({ ...d, ...patch }));
 
+  const qc = useQueryClient();
   const save = useMutation({
-    mutationFn: (body: MCPServerRequest) =>
-      server ? replaceMCPServer(teamId, server.id, body) : createMCPServer(teamId, body),
+    // A token is written first and the server then names it: a server saved
+    // before its secret exists would fail its first discovery.
+    mutationFn: async ({ body, token }: { body: MCPServerRequest; token: string }) => {
+      if (token) {
+        await putMCPSecret(teamId, body.name, { [TOKEN_KEY]: token });
+        body.auth_secret_ref = tokenRef(teamId, body.name);
+      }
+      const s = server
+        ? await replaceMCPServer(teamId, server.id, body)
+        : await createMCPServer(teamId, body);
+      // With a new token, or a new server, its tools are asked for at once.
+      if (s.url && (token || !server)) {
+        await discoverMCPServer(teamId, s.id).catch(() => undefined);
+        void qc.invalidateQueries({ queryKey: ["tools", teamId, s.id] });
+      }
+      return s;
+    },
     onSuccess: (s) => {
       setDraft(EMPTY_SERVER);
       onSaved(s);
@@ -581,8 +601,7 @@ function ServerDialog({
         <DialogHeader>
           <DialogTitle>{server ? "Edit server" : "Register an MCP server"}</DialogTitle>
           <DialogDescription>
-            Secrets stay in the secret store. Write them there first, then name them here as
-            teams/&lt;team_id&gt;/mcp/&lt;name&gt;#&lt;key&gt;.
+            A token typed here goes to the secret store and is never shown again.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -594,11 +613,23 @@ function ServerDialog({
               setProblem(body);
               return;
             }
+            const token = draft.transport === "url" ? draft.token.trim() : "";
+            if (token && !SECRET_NAME.test(body.name)) {
+              setProblem(
+                "To keep a token here, the server's name is letters, digits, _ and - only.",
+              );
+              return;
+            }
             setProblem(null);
-            save.mutate(body);
+            save.mutate({ body, token });
           }}
         >
-          <ServerFields draft={draft} set={set} />
+          <ServerFields
+            draft={draft}
+            set={set}
+            withToken
+            tokenSet={Boolean(server?.auth_secret_ref)}
+          />
           {problem ? (
             <p role="alert" className="text-sm text-destructive">
               {problem}

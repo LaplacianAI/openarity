@@ -438,6 +438,12 @@
       "permission": "tool:write"
     },
     {
+      "method": "PUT",
+      "path": "/teams/{id}/mcp-secrets/{name}",
+      "scope": "team",
+      "permission": "tool:write"
+    },
+    {
       "method": "GET",
       "path": "/users",
       "scope": "any_team",

@@ -615,6 +615,7 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// Discovery dials an address the team chose and rewrites what its
 		// agents can call, so it is a write, not a read.
 		"POST /teams/{id}/mcp-servers/{serverID}/discover": "team tool:write",
+		"PUT /teams/{id}/mcp-secrets/{name}":               "team tool:write",
 
 		"GET /users":  "any_team user:read",
 		"GET /whoami": "authenticated",

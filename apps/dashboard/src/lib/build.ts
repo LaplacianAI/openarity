@@ -178,3 +178,31 @@ function labelOf(name: string, args: Record<string, unknown>): string {
       return `Using ${name}`;
   }
 }
+
+/** A secret a proposal names, by its name and the keys it needs; settable when the brain can write it. */
+export type SecretGroup = { name: string; keys: string[]; settable: boolean };
+
+const SEGMENT = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * The secrets a proposal names, grouped by secret: every key of one is
+ * written together, since a write replaces the keys it held. A reference may
+ * be relative (name#key) or whole (teams/<team>/mcp/name#key); one nested
+ * deeper, or another team's, is shown but not offered to set.
+ */
+export function secretGroups(refs: string[], teamId: string): SecretGroup[] {
+  const root = `teams/${teamId}/mcp/`;
+  const groups = new Map<string, SecretGroup>();
+  for (const ref of refs) {
+    const rel = ref.startsWith(root) ? ref.slice(root.length) : ref;
+    const at = rel.lastIndexOf("#");
+    const name = at > 0 ? rel.slice(0, at) : rel;
+    const key = at > 0 ? rel.slice(at + 1) : "";
+    const settable = !rel.startsWith("teams/") && SEGMENT.test(name) && SEGMENT.test(key);
+    const g = groups.get(name) ?? { name, keys: [], settable };
+    if (key && !g.keys.includes(key)) g.keys.push(key);
+    g.settable = g.settable && settable;
+    groups.set(name, g);
+  }
+  return [...groups.values()];
+}
