@@ -337,6 +337,32 @@ func Columns(req Request) (db.CreateAgentParams, error) {
 	return p, nil
 }
 
+// RequestOf is the request Columns would turn into this row, grants aside:
+// what an agent is, said the way it is asked for.
+func RequestOf(row db.Agent) (Request, error) {
+	delegation, web := row.Delegation, row.Web
+	req := Request{
+		Name: row.Name, Description: row.Description, Kind: Kind(row.Kind), Instructions: row.Instructions,
+		Model:   ModelRef{Name: row.ModelName, MaxTokens: row.MaxTokens, Temperature: row.Temperature},
+		Pattern: row.Pattern, MaxSteps: row.MaxSteps, SteerContinuations: row.SteerContinuations,
+		Parser: row.Parser, TokenBudget: row.TokenBudget, Delegation: &delegation, Web: &web,
+	}
+
+	if row.OutputSchema != nil {
+		var o OutputSchema
+		if err := json.Unmarshal(row.OutputSchema, &o); err != nil {
+			return Request{}, err
+		}
+		req.OutputSchema = &o
+	}
+
+	if row.ParserModelName != nil {
+		req.ParserModel = &ParserModel{Name: *row.ParserModelName, MaxTokens: row.ParserMaxTokens, Temperature: row.ParserTemperature}
+	}
+
+	return req, nil
+}
+
 func UpdateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
 	return db.UpdateAgentParams{
 		ID: id, Name: c.Name, Description: c.Description, Instructions: c.Instructions,

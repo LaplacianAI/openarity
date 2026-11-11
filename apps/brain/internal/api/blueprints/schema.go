@@ -9,9 +9,9 @@ import (
 // Blueprint is what a team should hold. Everything in it is named, and it
 // refers to its own items and the team's by name, never by id.
 type Blueprint struct {
-	MCPServers []serverSpec `json:"mcp_servers"`
-	Skills     []skillSpec  `json:"skills"`
-	Agents     []agentSpec  `json:"agents"`
+	MCPServers []serverSpec `json:"mcp_servers,omitempty"`
+	Skills     []skillSpec  `json:"skills,omitempty"`
+	Agents     []agentSpec  `json:"agents,omitempty"`
 }
 
 // serverSpec is an MCP server as the API takes it, with each secret reference

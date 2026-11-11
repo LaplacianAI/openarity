@@ -161,7 +161,10 @@ and skills, projected from Postgres into FalkorDB. The dashboard is served at
 
 A team's MCP servers, skills and agents can be written as one file, a
 blueprint: `oa plan` shows what applying it would change and `oa apply` makes
-the team match it, in one transaction, writing only what changed.
+the team match it, in one transaction, writing only what changed. `oa export`
+prints the team as one, and `oa setup skills` teaches a coding agent (Claude
+Code, Codex, Cursor and others) to build a team that way, showing you the plan
+before it applies anything.
 
 A message on a channel starts a hub run, or steers the one already answering
 its conversation, and the answer goes back to the channel: into the chat for

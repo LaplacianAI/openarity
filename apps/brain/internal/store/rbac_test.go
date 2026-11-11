@@ -566,6 +566,7 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// handler checks for what the plan writes: one permission on the route
 		// would either let a blueprint write what its holder could not, or
 		// refuse one that writes only what they can.
+		"GET /teams/{id}/blueprint":         "member",
 		"POST /teams/{id}/blueprints/plan":  "member",
 		"POST /teams/{id}/blueprints/apply": "member",
 

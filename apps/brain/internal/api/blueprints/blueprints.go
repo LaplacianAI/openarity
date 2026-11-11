@@ -54,6 +54,7 @@ func New(logger *slog.Logger, s Store, a api.Authorizer, o skills.Objects, loops
 	h := &handler{logger: logger, store: s, authz: a, objects: o, loops: loops}
 
 	r := api.NewRouter("/teams")
+	r.Get("/{id}/blueprint", h.export)
 	r.Post("/{id}/blueprints/plan", h.plan)
 	r.Post("/{id}/blueprints/apply", h.apply)
 

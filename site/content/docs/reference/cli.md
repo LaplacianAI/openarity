@@ -68,8 +68,10 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa mcp-servers tools <team> <server>` | List the tools it offered when it was last discovered |
 | `oa mcp-servers replace <team> <server> <name>` | Replace an MCP server's definition       |
 | `oa mcp-servers delete <team> <server>` | Delete an MCP server and its tools              |
+| `oa export <team>`            | Print a team as a blueprint: grants by name, ready to edit and plan; `--agent`, `--mcp-server` for only some |
 | `oa plan <team> -f <file>`    | Show what applying a [blueprint](../platform/blueprints.md) would change |
 | `oa apply <team> -f <file>`   | Make a team what a blueprint says, after showing the plan and asking; `--yes` for a script |
+| `oa setup skills`             | Install oa's [agent skills](../platform/blueprints.md#building-with-a-coding-agent) for Claude Code, Codex, Cursor, Copilot, Gemini CLI and others; `--project`, `--dir` |
 | `oa users list [subject]`      | List users, or find one by subject                       |
 
 `list` accepts `ls`, `delete` and `remove` accept `rm`, and `mcp-servers` accepts `mcp`.

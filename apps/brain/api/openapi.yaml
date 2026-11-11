@@ -1786,6 +1786,52 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/blueprint:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: exportBlueprint
+      tags: [blueprints]
+      summary: The team as a blueprint
+      description: |
+        A read, so belonging to the team is enough. Says the team's MCP
+        servers and custom agents as a blueprint, grants by name and secret
+        references relative to the team, so planning it changes nothing and
+        an edit starts from the agent whole. Skills are left out: a skill is
+        its files, and one a blueprint does not name is left alone; agents
+        still grant them by name. Built-in agents are never in it. With
+        `agent` or `mcp_server`, only those are.
+      parameters:
+        - name: agent
+          in: query
+          description: An agent to export, by name; repeat for more.
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: mcp_server
+          in: query
+          description: An MCP server to export, by name; repeat for more.
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+      responses:
+        "200":
+          description: The blueprint
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Blueprint"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/blueprints/plan:
     parameters:
       - $ref: "#/components/parameters/TeamID"
