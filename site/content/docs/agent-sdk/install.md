@@ -6,7 +6,7 @@ title: Install and first agent
 go get github.com/LaplacianAI/openarity/sdk/agent
 ```
 
-Needs Go 1.26.10. There are two direct dependencies and you build only the ones
+Needs Go 1.26.11. There are two direct dependencies and you build only the ones
 you import: `github.com/openai/openai-go/v3` sits behind
 [`models/openaicompat`](#talking-to-a-real-gateway), and the official MCP SDK
 behind [`tools/mcp`](mcp.md). The core packages and the patterns link neither,
