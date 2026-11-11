@@ -1035,3 +1035,57 @@ func TestEitherCutLineReadsAsCutAndAPagesOwnDoesNot(t *testing.T) {
 		}
 	}
 }
+
+// A builder's reply is printed as it streams, not again at the end; what it
+// said before a call is shown as it went, and stops being the answer.
+func TestAStreamedReplyIsShownAsItComesAndOnce(t *testing.T) {
+	stream := frameOf("1", "text", `{"text":"Let me look"}`) +
+		frameOf("2", "text", `{"text":" at the team."}`) +
+		frameOf("3", "tool_call", `{"id":"c1","name":"team","arguments":"{}","truncated":false}`) +
+		frameOf("4", "tool_result", `{"id":"c1","name":"team","output":"{}","truncated":false,"duration_ms":5}`) +
+		frameOf("5", "text", `{"text":"The agent best suited to this task is **graph-check-clerk**.\nIt holds the "}`) +
+		frameOf("6", "text", `{"text":"`+"`invoice-reconciliation`"+` skill.\u001b[2J"}`) +
+		frameOf("7", "finished", `{"status":"succeeded"}`) +
+		frameOf("", "end", `{"status":"succeeded"}`)
+	routes := sampleRoutes(stream)
+	routes["GET /teams/{id}/runs/{runID}"] = clitest.Reply{Status: http.StatusOK, Body: strings.Replace(sampleRun,
+		"skill.\"", "skill.\\u001b[2J\"", 1)}
+	clitest.Routes(t, routes)
+
+	out, err := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if err != nil {
+		t.Fatalf("runs events: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"⏺ Let me look at the team.\n\n⏺ team(",
+		"⏺ The agent best suited to this task is **graph-check-clerk**.\n  It holds the `invoice-reconciliation` skill.\n",
+		"✓ succeeded",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("transcript lacks %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "graph-check-clerk"); n != 1 {
+		t.Errorf("the answer is printed %d times, want once:\n%s", n, out)
+	}
+	if strings.Contains(out, "\x1b[2J") || strings.Contains(out, `"text"`) {
+		t.Errorf("a frame reached the terminal raw:\n%q", out)
+	}
+}
+
+// Text that is not the answer, such as a reply cut off before it ended, does
+// not hide the answer the run ended with.
+func TestAnAnswerUnlikeTheStreamIsStillPrinted(t *testing.T) {
+	stream := frameOf("1", "text", `{"text":"Something else"}`) +
+		frameOf("2", "finished", `{"status":"succeeded"}`) +
+		frameOf("", "end", `{"status":"succeeded"}`)
+	clitest.Routes(t, sampleRoutes(stream))
+
+	out, err := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if err != nil {
+		t.Fatalf("runs events: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Something else") || !strings.Contains(out, "graph-check-clerk") {
+		t.Errorf("want both the stream and the answer:\n%s", out)
+	}
+}

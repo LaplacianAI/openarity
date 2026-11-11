@@ -2238,6 +2238,11 @@ paths:
         closes. A run cancelled before any worker took it has no events, and
         its stream is that one frame. A comment, `: keep-alive`, is sent
         every 15 seconds while nothing happens.
+
+        A builder run also streams its reply as it is written: `text` frames,
+        `data: {"text": "I propose…", "truncated": false}`, each a piece of
+        the model's text in order, written before the tool call it led to.
+        Joined, the pieces after the last `tool_result` are the run's output.
       parameters:
         - name: Last-Event-ID
           in: header

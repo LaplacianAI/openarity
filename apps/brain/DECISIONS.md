@@ -766,6 +766,14 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   when the team has a server at that exact URL with that exact secret.
   Otherwise a page the builder read could name a host and a team secret, and
   the brain would carry the token there itself.
+- **A builder's reply streams; other runs' do not yet.** Builder runs take a
+  second runner whose loop streams (`ReActStreaming`), and the recorder gathers
+  the deltas into `text` events, written at 512 bytes, every 250 ms, and
+  before any other event, so the text and the call it led to stay in order
+  and a reply is tens of rows, not thousands. Postgres is the bus because the
+  worker and the API are separate processes; the SSE route already polls it.
+  Extending it to every run is the streaming variant of each loop and the
+  `row.Builder` condition gone.
 - **An apply discovers what it wrote, after it commits.** Each created or
   changed server is asked for its tools through the MCP servers' own
   `Refresher`, four at a time, on a context the caller cannot cancel. A

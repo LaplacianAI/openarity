@@ -3351,6 +3351,11 @@ type ClientInterface interface {
 	// its stream is that one frame. A comment, `: keep-alive`, is sent
 	// every 15 seconds while nothing happens.
 	//
+	// A builder run also streams its reply as it is written: `text` frames,
+	// `data: {"text": "I propose…", "truncated": false}`, each a piece of
+	// the model's text in order, written before the tool call it led to.
+	// Joined, the pieces after the last `tool_result` are the run's output.
+	//
 	// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
 	StreamRunEvents(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -5145,6 +5150,11 @@ func (c *Client) CancelRun(ctx context.Context, id TeamID, runID RunID, reqEdito
 // closes. A run cancelled before any worker took it has no events, and
 // its stream is that one frame. A comment, `: keep-alive`, is sent
 // every 15 seconds while nothing happens.
+//
+// A builder run also streams its reply as it is written: `text` frames,
+// `data: {"text": "I propose…", "truncated": false}`, each a piece of
+// the model's text in order, written before the tool call it led to.
+// Joined, the pieces after the last `tool_result` are the run's output.
 //
 // Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
 func (c *Client) StreamRunEvents(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10261,6 +10271,11 @@ type ClientWithResponsesInterface interface {
 	// its stream is that one frame. A comment, `: keep-alive`, is sent
 	// every 15 seconds while nothing happens.
 	//
+	// A builder run also streams its reply as it is written: `text` frames,
+	// `data: {"text": "I propose…", "truncated": false}`, each a piece of
+	// the model's text in order, written before the tool call it led to.
+	// Joined, the pieces after the last `tool_result` are the run's output.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
@@ -15016,6 +15031,11 @@ func (c *ClientWithResponses) CancelRunWithResponse(ctx context.Context, id Team
 // closes. A run cancelled before any worker took it has no events, and
 // its stream is that one frame. A comment, `: keep-alive`, is sent
 // every 15 seconds while nothing happens.
+//
+// A builder run also streams its reply as it is written: `text` frames,
+// `data: {"text": "I propose…", "truncated": false}`, each a piece of
+// the model's text in order, written before the tool call it led to.
+// Joined, the pieces after the last `tool_result` are the run's output.
 //
 // Returns a wrapper object for the known response body format(s).
 //

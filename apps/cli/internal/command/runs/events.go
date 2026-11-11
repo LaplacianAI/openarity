@@ -57,6 +57,7 @@ type payload struct {
 	CachedInputTokens int64    `json:"cached_input_tokens"`
 	Spent             int64    `json:"spent"`
 	Status            string   `json:"status"`
+	Text              string   `json:"text"`
 
 	Items []planEntry `json:"items"`
 }

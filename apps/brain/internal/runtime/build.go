@@ -93,6 +93,12 @@ func Patterns() []agent.Pattern {
 	return []agent.Pattern{patterns.ReAct(), patterns.Plan(), patterns.ReWOO(), patterns.Reflection(1)}
 }
 
+// StreamingPatterns are the loops builder runs take: the builder's own,
+// streaming the model's text.
+func StreamingPatterns() []agent.Pattern {
+	return []agent.Pattern{patterns.ReActStreaming()}
+}
+
 func Loops() []string {
 	names := make([]string, 0, len(Patterns()))
 	for _, p := range Patterns() {

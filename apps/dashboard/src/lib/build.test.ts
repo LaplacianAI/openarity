@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { ApiError } from "@/api/client";
-import type { BlueprintPlan, Proposal, Run } from "@/api/types";
-import { buildRefusal, isLive, NO_BUILDER_MODEL, needsOf, turnsOf } from "@/lib/build";
+import type { BlueprintPlan, Proposal, Run, RunEvent } from "@/api/types";
+import { buildRefusal, isLive, liveOf, NO_BUILDER_MODEL, needsOf, turnsOf } from "@/lib/build";
 
 const run = (id: string, at: string, extra: Partial<Run> = {}) =>
   ({ id, created_at: at, builder: true, status: "succeeded", ...extra }) as Run;
@@ -75,5 +75,52 @@ describe("needsOf", () => {
   it("asks nothing of a proposal with no blueprint or no servers", () => {
     expect(needsOf(undefined, plan([]))).toEqual({ secrets: [], addresses: [] });
     expect(needsOf({ agents: [{ name: "x" }] }, plan([]))).toEqual({ secrets: [], addresses: [] });
+  });
+});
+
+describe("liveOf", () => {
+  const ev = (kind: string, data: unknown): RunEvent => ({ seq: 1, kind, data });
+  const call = (id: string, name: string, args: unknown = {}) =>
+    ev("tool_call", {
+      id,
+      name,
+      arguments: typeof args === "string" ? args : JSON.stringify(args),
+    });
+
+  it("names each call in plain words, and marks it once its result comes", () => {
+    const { activity } = liveOf([
+      call("1", "team"),
+      ev("tool_result", { id: "1" }),
+      call("2", "web_search", { query: "stripe mcp" }),
+      call("3", "web_fetch", { url: "https://docs.stripe.example/mcp" }),
+      ev("tool_result", { id: "3", error: "404" }),
+      call("4", "graph", {}),
+      call("5", "propose"),
+      call("6", "Skill", { name: "x" }),
+      call("7", "list_mcp_tools", "not json"),
+    ]);
+    expect(activity.map((a) => [a.label, a.state])).toEqual([
+      ["Reading the team", "done"],
+      ["Searching the web for \u201cstripe mcp\u201d", "running"],
+      ["Reading docs.stripe.example/mcp", "failed"],
+      ["Searching the team", "running"],
+      ["Writing the proposal", "running"],
+      ["Using Skill", "running"],
+      ["Asking a server for its tools", "running"],
+    ]);
+  });
+
+  it("keeps only the text since the last call as the reply", () => {
+    const { text } = liveOf([
+      ev("text", { text: "On my " }),
+      ev("text", { text: "way." }),
+      call("1", "team"),
+      ev("tool_result", { id: "1" }),
+      ev("text", { text: "Here " }),
+      ev("text", { text: "it is." }),
+      ev("text", { nope: 1 }),
+      ev("step", null),
+    ]);
+    expect(text).toBe("Here it is.");
   });
 });

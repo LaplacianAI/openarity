@@ -181,6 +181,10 @@ not discovered linear: auth_secret_ref names a secret that is not in the secret 
 
 A proposal in your direct session is yours alone, as the session is.
 
+Both show the builder at work: each step as it takes it (reading the team,
+looking a server up, reading a page, asking a server for its tools) and its
+reply as it is written.
+
 In the dashboard, **Builder** under Build is the same conversation: say what
 you want, and each proposal appears as a card with its plan, as it would apply
 for you. **Needs from you** names each secret to set and each address the

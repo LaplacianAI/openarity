@@ -120,7 +120,7 @@ apps/brain/
   internal/runtime/    a run: the agent built from its row, executed, recorded
     build.go           the Spec, its granted MCP tools and skills; Patterns and Loops
     delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run
-    events.go          what a run does, as run_events, within its token budget
+    events.go          what a run does, as run_events, within its token budget; a builder's text, gathered
     execute.go         one run: claim, heartbeat, run to the end, finish
     graphtool.go       graph(query, kinds, hops), bound to every run
     hub.go             the hub: the built-in orchestrator, or the team's chosen agent, reaching the whole team

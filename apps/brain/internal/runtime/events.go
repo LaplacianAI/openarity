@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -66,35 +67,99 @@ type note struct {
 	done    chan error
 }
 
-func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, budget int64,
+const (
+	// textFlushBytes and textFlushEvery are how much of a streamed reply is
+	// held before it is written: often enough to read as it is typed, rarely
+	// enough that a reply is tens of rows, not thousands.
+	textFlushBytes = 512
+	textFlushEvery = 250 * time.Millisecond
+)
+
+// textPayload is a piece of the model's text, in the order it was written.
+type textPayload struct {
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated"`
+}
+
+// record writes a run's events in order, as its only writer. When streams is
+// set, the model's text is written too, gathered into text events; it is
+// flushed before any other event, so text and the call it led to stay in order.
+func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, budget int64, streams bool,
 	events <-chan agent.Event, notes <-chan note, stop context.CancelCauseFunc,
 ) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		lost := false
+		r := &recorder{ctx: ctx, s: s, runID: runID, worker: worker, stop: stop}
+		var tick <-chan time.Time
+		if streams {
+			t := time.NewTicker(textFlushEvery)
+			defer t.Stop()
+			tick = t.C
+		}
 		for {
 			select {
 			case e, ok := <-events:
 				if !ok {
+					r.flush()
 					return
 				}
-				if lost {
+				if t, isText := e.(agent.TextEvent); isText {
+					if streams {
+						r.text.WriteString(t.Delta)
+						if r.text.Len() >= textFlushBytes {
+							r.flush()
+						}
+					}
 					continue
 				}
-				err := recordOne(ctx, s, runID, worker, budget, e)
-				if err == nil {
-					continue
+				r.flush()
+				if !r.lost {
+					r.failed(recordOne(ctx, s, runID, worker, budget, e))
 				}
-				lost = errors.Is(err, ErrLostRun)
-				stop(err)
 			case n := <-notes:
+				r.flush()
 				// A run this worker lost refuses the write itself, with ErrLostRun.
 				n.done <- appendEvent(ctx, s, runID, worker, n.kind, n.payload)
+			case <-tick:
+				r.flush()
 			}
 		}
 	}()
 	return done
+}
+
+type recorder struct {
+	ctx    context.Context
+	s      EventStore
+	runID  uuid.UUID
+	worker string
+	stop   context.CancelCauseFunc
+	text   strings.Builder
+	lost   bool
+}
+
+// flush writes the text gathered so far, if any.
+func (r *recorder) flush() {
+	if r.text.Len() == 0 {
+		return
+	}
+	text, cut := clip(r.text.String())
+	r.text.Reset()
+	if r.lost {
+		return
+	}
+	r.failed(appendEvent(r.ctx, r.s, r.runID, r.worker, "text", textPayload{Text: text, Truncated: cut}))
+}
+
+// failed stops the run on a write that failed; a run another worker holds
+// now is written to no more.
+func (r *recorder) failed(err error) {
+	if err == nil {
+		return
+	}
+	r.lost = errors.Is(err, ErrLostRun)
+	r.stop(err)
 }
 
 func recordOne(ctx context.Context, s EventStore, runID uuid.UUID, worker string, budget int64, e agent.Event) error {

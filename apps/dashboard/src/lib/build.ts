@@ -3,7 +3,14 @@
  * session's builder runs and their proposals. Nothing here decides anything;
  * the brain plans and refuses.
  */
-import type { Blueprint, BlueprintChange, BlueprintPlan, Proposal, Run } from "@/api/types";
+import type {
+  Blueprint,
+  BlueprintChange,
+  BlueprintPlan,
+  Proposal,
+  Run,
+  RunEvent,
+} from "@/api/types";
 import { type AskRefusal, askRefusal } from "@/lib/ask";
 
 /** One exchange: what the person asked, the builder's run, and what it proposed. */
@@ -77,5 +84,80 @@ function hostOf(url: string): string | null {
     return new URL(url).host || null;
   } catch {
     return null;
+  }
+}
+
+/** One thing the builder is doing, or did, in plain words. */
+export type Activity = { id: string; label: string; state: "running" | "done" | "failed" };
+
+/**
+ * A live builder run as the chat shows it: a line per tool it called, done or
+ * failed once its result came, and the text it has written since its last
+ * call, which becomes the answer. What it wrote before a call was on the way
+ * there; the call's line says what it did.
+ */
+export function liveOf(events: RunEvent[]): { activity: Activity[]; text: string } {
+  const activity: Activity[] = [];
+  let text = "";
+  for (const e of events) {
+    const d = (e.data ?? {}) as Record<string, unknown>;
+    const id = typeof d.id === "string" ? d.id : "";
+    if (e.kind === "text" && typeof d.text === "string") {
+      text += d.text;
+    } else if (e.kind === "tool_call") {
+      text = "";
+      activity.push({
+        id,
+        label: labelOf(String(d.name ?? ""), argsOf(d.arguments)),
+        state: "running",
+      });
+    } else if (e.kind === "tool_result") {
+      const a = [...activity].reverse().find((x) => x.id === id && x.state === "running");
+      if (a) a.state = typeof d.error === "string" && d.error !== "" ? "failed" : "done";
+    }
+  }
+  return { activity, text };
+}
+
+function argsOf(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== "string") return {};
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function hostOrSelf(url: unknown): string {
+  if (typeof url !== "string") return "a server";
+  try {
+    const u = new URL(url);
+    return u.host + (u.pathname === "/" ? "" : u.pathname);
+  } catch {
+    return url;
+  }
+}
+
+const quoted = (v: unknown) => (typeof v === "string" && v !== "" ? ` \u201c${v}\u201d` : "");
+
+function labelOf(name: string, args: Record<string, unknown>): string {
+  switch (name) {
+    case "team":
+      return "Reading the team";
+    case "graph":
+      return `Searching the team${quoted(args.query) ? ` for${quoted(args.query)}` : ""}`;
+    case "find_mcp_servers":
+      return `Looking up${quoted(args.query)} in the MCP registry`;
+    case "list_mcp_tools":
+      return `Asking ${hostOrSelf(args.url)} for its tools`;
+    case "web_search":
+      return `Searching the web for${quoted(args.query)}`;
+    case "web_fetch":
+      return `Reading ${hostOrSelf(args.url)}`;
+    case "propose":
+      return "Writing the proposal";
+    default:
+      return `Using ${name}`;
   }
 }

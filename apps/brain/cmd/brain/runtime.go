@@ -49,7 +49,12 @@ func newRunJob(
 		builder.WithRegistry(reg)
 	}
 	endpoint := agent.Endpoint{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
-	executor := runtime.NewExecutor(dbStore, builder, runner, endpoint, postgres.New(dbStore.Pool()), logger)
+	streamer, err := agent.New(openaicompat.Factory(), runtime.StreamingPatterns()...)
+	if err != nil {
+		return nil, fmt.Errorf("building the streaming agent runner: %w", err)
+	}
+	executor := runtime.NewExecutor(dbStore, builder, runner, endpoint, postgres.New(dbStore.Pool()), logger).
+		WithStreaming(streamer)
 
 	return runtime.RunJob(executor, dbStore, logger), nil
 }

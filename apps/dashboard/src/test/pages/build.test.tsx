@@ -4,9 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { BlueprintPlan, Proposal, Run } from "@/api/types";
-import { brain, type Reply, type Seen, STAMP, showAt, team } from "@/test/brain";
+import { brain, feed, type Reply, type Seen, STAMP, showAt, team } from "@/test/brain";
 
-const { Route } = await import("@/routes/ui.build");
+const { Route, POLL_MS } = await import("@/routes/ui.build");
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -18,6 +18,7 @@ const SESSION = "0b7c3e52-8a41-4f6d-9e2b-5c1a7d3f8e60";
 const RUNS = "GET /teams/{id}/sessions/{sid}/runs";
 const START = "POST /teams/{id}/runs";
 const PROPOSALS = "GET /teams/{id}/proposals";
+const EVENTS = "GET /teams/{id}/runs/{rid}/events";
 const PROPOSAL = "GET /teams/{id}/proposals/{pid}";
 const APPLY = "POST /teams/{id}/proposals/{pid}/apply";
 
@@ -237,17 +238,55 @@ describe("the builder's conversation", () => {
     expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
   });
 
-  it("says the builder is working while its run is live, and waits to send", async () => {
-    conversation({
+  it("shows what the builder is doing as it does it, and its reply as it is written", async () => {
+    const live = feed();
+    const seen = conversation({
       [RUNS]: { body: { items: [{ ...answered, status: "running", output: null }, asked] } },
       [PROPOSALS]: { body: { items: [] } },
+      [EVENTS]: { stream: live.stream },
     });
     at(`/ui/build?session=${SESSION}`);
 
-    expect(await screen.findByText("The builder is working…")).toBeInTheDocument();
+    expect(await screen.findByText("The builder is starting…")).toBeInTheDocument();
+    const frame = (seq: number, kind: string, data: unknown) =>
+      live.push(`id: ${seq}\nevent: ${kind}\ndata: ${JSON.stringify(data)}\n\n`);
+    frame(1, "text", { text: "Let me look." });
+    frame(2, "tool_call", { id: "c1", name: "team", arguments: "{}" });
+    frame(3, "tool_result", { id: "c1", name: "team", output: "{}" });
+    frame(4, "tool_call", {
+      id: "c2",
+      name: "find_mcp_servers",
+      arguments: JSON.stringify({ query: "stripe" }),
+    });
+    frame(5, "tool_result", { id: "c2", name: "find_mcp_servers", error: "the registry is down" });
+    frame(6, "tool_call", {
+      id: "c3",
+      name: "list_mcp_tools",
+      arguments: JSON.stringify({ url: "https://mcp.stripe.example/mcp" }),
+    });
+    frame(7, "text", { text: "I propose **three** agents" });
+
+    const doing = await screen.findByRole("list", { name: "What the builder is doing" });
+    expect(await within(doing).findByText("Reading the team")).toBeInTheDocument();
+    expect(
+      within(doing).getByText(/Looking up \u201cstripe\u201d in the MCP registry \(it failed/),
+    ).toBeInTheDocument();
+    expect(
+      within(doing).getByText("Asking mcp.stripe.example/mcp for its tools"),
+    ).toBeInTheDocument();
+    // Only the text since the last call is the reply; the rest led to a call.
+    expect(await screen.findByText("three")).toBeInTheDocument();
+    expect(screen.queryByText("Let me look.")).not.toBeInTheDocument();
+
     expect(await screen.findByText(/still working on the last message/)).toBeInTheDocument();
     await userEvent.type(screen.getByRole("textbox"), "And the FAQ.");
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    // Its stream ending reads the conversation again at once, not at the next poll.
+    const reads = () => seen.filter((x) => x.path.includes("/sessions/")).length;
+    const before = reads();
+    live.push(`event: end\ndata: {"status":"succeeded"}\n\n`);
+    await waitFor(() => expect(reads()).toBeGreaterThan(before), { timeout: POLL_MS / 2 });
   });
 
   it("says why a run failed, with its trace", async () => {

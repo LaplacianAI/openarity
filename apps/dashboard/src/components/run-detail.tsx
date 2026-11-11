@@ -130,7 +130,7 @@ type Followed = { events: RunEvent[]; ended: boolean };
  * is shown from the cache and not followed again, and one still going is
  * followed on from the last event seen.
  */
-function useRunEvents(teamId: string, runId: string, onEnded: () => void) {
+export function useRunEvents(teamId: string, runId: string, onEnded: () => void) {
   const qc = useQueryClient();
   const key = useMemo(() => ["run-events", teamId, runId], [teamId, runId]);
   const [events, setEvents] = useState<RunEvent[]>(

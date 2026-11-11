@@ -21,6 +21,8 @@ import (
 )
 
 const (
+	textEvent = "text"
+
 	fallbackWidth = 100
 	maxArg        = 60
 	maxValue      = 60
@@ -84,6 +86,11 @@ type transcript struct {
 	steps     int
 	stepShown bool
 	tokens    int64
+
+	// speaking is whether streamed text is mid-line on screen; said is the
+	// text since the last call, which is the answer once the run ends.
+	speaking bool
+	said     strings.Builder
 }
 
 // team is the team as it was typed, for the command a delegation's result
@@ -125,7 +132,13 @@ func (t *transcript) block() {
 }
 
 func (t *transcript) event(f frame, p payload) error {
+	if t.speaking && f.event != textEvent {
+		t.line("")
+		t.speaking = false
+	}
 	switch f.event {
+	case textEvent:
+		t.text(p.Text)
 	case "started":
 		t.started(p)
 	case "resumed":
@@ -143,6 +156,8 @@ func (t *transcript) event(f frame, p payload) error {
 			t.line(t.paint.muted(t.clip(t.stepName() + " · " + usageText(p))))
 		}
 	case "tool_call":
+		// What it said before a call was on the way; the answer comes after.
+		t.said.Reset()
 		t.call(p)
 	case "tool_result":
 		t.result(p)
@@ -178,6 +193,18 @@ func (t *transcript) started(p payload) {
 	if len(p.Skills) > 0 {
 		t.line(t.paint.muted(t.clip("  skills " + cli.Line(strings.Join(p.Skills, ", ")))))
 	}
+}
+
+// text writes a piece of a streamed reply as it comes, with what a terminal
+// would obey taken out, as the answer is.
+func (t *transcript) text(s string) {
+	if !t.speaking {
+		t.block()
+		t.write(t.paint.mark(bullet) + " ")
+		t.speaking = true
+	}
+	t.said.WriteString(s)
+	t.write(strings.Join(cli.Lines(s), "\n  "))
 }
 
 func (t *transcript) stepName() string {
@@ -584,7 +611,10 @@ func (t *transcript) finish(status, failure string, run *client.Run, unread stri
 
 	switch client.RunStatus(status) {
 	case client.Succeeded:
-		if run != nil && run.Output != nil {
+		// An answer streamed as it was written is on screen already.
+		streamed := run != nil && run.Output != nil && t.said.Len() > 0 &&
+			strings.TrimSpace(t.said.String()) == strings.TrimSpace(*run.Output)
+		if run != nil && run.Output != nil && !streamed {
 			if lines := answer(t.paint, *run.Output); len(lines) > 0 {
 				t.line(bullet + " " + lines[0])
 				for _, l := range lines[1:] {

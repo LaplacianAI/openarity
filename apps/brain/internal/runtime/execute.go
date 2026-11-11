@@ -68,9 +68,12 @@ type Delegation struct {
 }
 
 type Executor struct {
-	store     Store
-	builder   *Builder
-	runner    *agent.Runner
+	store   Store
+	builder *Builder
+	runner  *agent.Runner
+	// streamer runs builder runs, so their text reaches the person as it is
+	// written. Nil, and they run as any other.
+	streamer  *agent.Runner
 	endpoint  agent.Endpoint
 	sessions  agent.Store
 	logger    *slog.Logger
@@ -100,6 +103,13 @@ func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
 	}
 	b.delegates = &DelegateDeps{Store: s, Run: e}
 	b.note = e.note
+	return e
+}
+
+// WithStreaming has builder runs run on r, whose loops stream the model's
+// text, recorded as it comes as text events.
+func (e *Executor) WithStreaming(r *agent.Runner) *Executor {
+	e.streamer = r
 	return e
 }
 
@@ -283,8 +293,13 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	notes := make(chan note)
 	e.notes.Store(row.ID, notes)
 	defer e.notes.Delete(row.ID)
-	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, budgetOf(row.TokenBudget), events, notes, stop)
-	result, err := e.runner.Run(ctx, built.Spec, msgs, e.endpoint, events)
+	runner, streams := e.runner, false
+	if row.Builder && e.streamer != nil {
+		runner, streams = e.streamer, true
+	}
+	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, budgetOf(row.TokenBudget),
+		streams, events, notes, stop)
+	result, err := runner.Run(ctx, built.Spec, msgs, e.endpoint, events)
 	close(events)
 	<-recorded
 

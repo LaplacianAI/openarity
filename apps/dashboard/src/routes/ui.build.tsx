@@ -1,14 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowUpRight, LoaderCircle, Plus } from "lucide-react";
+import { ArrowUpRight, Check, CircleAlert, LoaderCircle, Plus } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { listProposals, listSessionRuns, startRun } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
+import type { Run } from "@/api/types";
 import { isSend, Refusal, RUN_WRITE } from "@/components/ask-team";
 import { Markdown } from "@/components/markdown";
 import { ProposalCard } from "@/components/proposal-card";
+import { useRunEvents } from "@/components/run-detail";
 import { runLink } from "@/components/run-table";
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
@@ -17,7 +19,7 @@ import { Textarea } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
 import { askProblem } from "@/lib/ask";
-import { buildRefusal, isLive, type Turn, turnsOf } from "@/lib/build";
+import { buildRefusal, isLive, liveOf, type Turn, turnsOf } from "@/lib/build";
 
 type BuildSearch = { session?: string };
 
@@ -171,17 +173,7 @@ function TurnView({
         {run.input}
       </div>
       {isLive(run) ? (
-        <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-          <LoaderCircle aria-hidden className="size-4 animate-spin" />
-          The builder is working…
-          <Link
-            {...runLink(run)}
-            className="inline-flex items-center gap-1 underline underline-offset-4"
-          >
-            View the trace
-            <ArrowUpRight aria-hidden className="size-3" />
-          </Link>
-        </p>
+        <LiveTurn teamId={teamId} run={run} />
       ) : run.status === "succeeded" ? (
         run.output ? (
           <div className="max-w-[85%] text-sm">
@@ -199,6 +191,63 @@ function TurnView({
       )}
       {proposal ? <ProposalCard teamId={teamId} proposal={proposal} onChange={onChange} /> : null}
     </li>
+  );
+}
+
+/**
+ * A run still working: what it is doing, as it does it, and its reply as it
+ * is written. When its stream ends, the conversation is read again for the
+ * run's output and its proposal.
+ */
+function LiveTurn({ teamId, run }: { teamId: string; run: Run }) {
+  const qc = useQueryClient();
+  const { events, failed } = useRunEvents(teamId, run.id, () => {
+    void qc.invalidateQueries({ queryKey: ["build", teamId, run.session_id] });
+    void qc.invalidateQueries({ queryKey: ["proposals", teamId, run.session_id] });
+  });
+  const { activity, text } = liveOf(events);
+  return (
+    <div className="max-w-[85%] space-y-2 text-sm">
+      <ul aria-label="What the builder is doing" aria-live="polite" className="space-y-1">
+        {activity.map((a) => (
+          <li key={a.id} className="flex items-center gap-2 text-muted-foreground">
+            {a.state === "running" ? (
+              <LoaderCircle aria-hidden className="size-4 animate-spin" />
+            ) : a.state === "failed" ? (
+              <CircleAlert aria-hidden className="size-4 text-warning" />
+            ) : (
+              <Check aria-hidden className="size-4 text-success" />
+            )}
+            <span>
+              {a.label}
+              {a.state === "failed" ? " (it failed; the builder carries on)" : ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {text ? (
+        <div aria-busy="true">
+          <Markdown>{text}</Markdown>
+        </div>
+      ) : (
+        <p role="status" className="flex items-center gap-2 text-muted-foreground">
+          {activity.length === 0 ? (
+            <LoaderCircle aria-hidden className="size-4 animate-spin" />
+          ) : null}
+          {activity.length === 0 ? "The builder is starting…" : null}
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        {failed ? `Lost the live view (${failed}); the reply still arrives. ` : null}
+        <Link
+          {...runLink(run)}
+          className="inline-flex items-center gap-1 underline underline-offset-4"
+        >
+          View the trace
+          <ArrowUpRight aria-hidden className="size-3" />
+        </Link>
+      </p>
+    </div>
   );
 }
 
