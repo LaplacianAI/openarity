@@ -35,12 +35,12 @@ CREATE UNIQUE INDEX proposals_one_open_per_session ON proposals (session_id) WHE
 ALTER TABLE run_events DROP CONSTRAINT run_events_kind_known;
 ALTER TABLE run_events ADD CONSTRAINT run_events_kind_known CHECK (kind IN (
     'started', 'resumed', 'step', 'tool_call', 'tool_result', 'usage',
-    'tool_unavailable', 'finished', 'delegated', 'plan', 'proposed', 'text')) NOT VALID;
+    'tool_unavailable', 'finished', 'delegated', 'plan', 'proposed')) NOT VALID;
 
 -- +goose Down
 SET lock_timeout = '3s';
 
-DELETE FROM run_events WHERE kind IN ('proposed', 'text');
+DELETE FROM run_events WHERE kind = 'proposed';
 ALTER TABLE run_events DROP CONSTRAINT run_events_kind_known;
 ALTER TABLE run_events ADD CONSTRAINT run_events_kind_known CHECK (kind IN (
     'started', 'resumed', 'step', 'tool_call', 'tool_result', 'usage',
