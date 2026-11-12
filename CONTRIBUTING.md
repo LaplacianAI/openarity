@@ -408,26 +408,39 @@ Codex and OpenCode still do.
 ## Releasing `sdk/agent`
 
 `sdk/agent` is the only module anyone installs from here, and it is a module in
-a subdirectory, so **the tag carries the path**:
+a subdirectory, so **the tag carries the path**. A bare `v0.2.0` tags the
+repository root, which has no `go.mod` and which nobody imports; `go get` would
+keep resolving a pseudo-version and nothing would say why.
+
+First, a pull request that moves the version everywhere it is stated: the root
+`README.md`, `sdk/agent/README.md`, `site/content/docs/agent-sdk/install.md`,
+and the client version `tools/mcp` sends to every MCP server
+(`sdk/agent/tools/mcp/mcp.go`). Merged later, the docs tell people to pin
+something older than what `@latest` gives them.
+
+Once it has merged and `ci` has passed on main, tag the merge commit with the
+release notes as the tag's message, and push it:
 
 ```sh
 git switch main && git pull
-git tag -a sdk/agent/v0.2.0 -m "sdk/agent v0.2.0"
+git tag -a sdk/agent/v0.2.0 -F notes.md
 git push origin sdk/agent/v0.2.0
 ```
 
-A bare `v0.2.0` tags the repository root, which has no `go.mod` and which
-nobody imports. `go get` would keep resolving a pseudo-version and nothing
-would say why.
+[`release-sdk`](.github/workflows/release-sdk.yml) does the rest. It refuses a
+tag that is not `sdk/agent/vMAJOR.MINOR.PATCH`, is lightweight or has no
+message, is not on main, or names a commit `ci` did not pass on. Then it
+publishes the GitHub release with the tag's message as its notes, and asks the
+Go module proxy for the version, which is what makes `go get` and pkg.go.dev see
+it at once.
 
-The proxy indexes a version only once somebody asks for it, so ask:
+Choose the number with `gorelease`, which compares the module with its last
+tag and says whether anything is incompatible:
 
 ```sh
-GOPROXY=https://proxy.golang.org \
-  go list -m github.com/LaplacianAI/openarity/sdk/agent@v0.2.0
+cd sdk/agent
+go run golang.org/x/exp/cmd/gorelease@latest -base=v0.1.0
 ```
-
-That is also what publishes the pkg.go.dev page.
 
 **A published version is immutable.** Once the proxy has served it, moving the
 tag does not move the module — the original bytes keep being served, and anyone
@@ -437,11 +450,6 @@ number that has been fetched; release the next one.
 While the module is `v0`, nothing about the API is promised. Say what changed in
 the release notes anyway; `v0` is a licence to break things, not to do it
 quietly.
-
-Three places state the current version — the root `README.md`, `sdk/agent/README.md`
-and `site/content/docs/agent-sdk/install.md`. Update all three in the same pull
-request as the tag, or the docs tell people to pin something older than what
-`@latest` gives them.
 
 ## Reporting bugs and security issues
 

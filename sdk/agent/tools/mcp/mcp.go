@@ -39,7 +39,7 @@ func Connect(ctx context.Context, s Server) (*Session, error) {
 	}
 
 	transport := transportFor(s)
-	client := sdk.NewClient(&sdk.Implementation{Name: "openarity", Version: "v0.1.0"}, nil)
+	client := sdk.NewClient(&sdk.Implementation{Name: "openarity", Version: "v0.2.0"}, nil)
 	live, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to %s: %w", s.Name, err)
