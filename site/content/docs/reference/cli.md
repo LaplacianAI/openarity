@@ -44,7 +44,7 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa sessions get <team> <session>` | Show a conversation: its kind, where it came from and when |
 | `oa sessions read <team> <session>` | Read a conversation                                 |
 | `oa runs start <team> [agent] <input>` | Ask the team's hub, or start an agent on a task; `--session` continues a conversation, `--follow` prints its events |
-| `oa runs events <team> <run>`  | Follow what a run does, as it does it                    |
+| `oa runs events <team> <run>`  | Follow what a run does, as it does it: each call and result, `↧ compacted` when it set part of its context aside (`--verbose` adds the summary), and `⚠ wrapping up` when it was asked to finish before a limit |
 | `oa runs get <team> <run>`     | Show a run: its status, input, answer and what it spent  |
 | `oa runs list <team> <session>`| List the runs started in a conversation                  |
 | `oa runs cancel <team> <run>`  | Stop a run                                               |

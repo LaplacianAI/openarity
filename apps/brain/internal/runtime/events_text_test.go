@@ -75,7 +75,7 @@ func TestTextHeldTooLongIsWrittenWithoutWaitingForMore(t *testing.T) {
 
 	st := &stops{}
 	ch := make(chan agent.Event)
-	done := record(t.Context(), h.store, h.id, worker, maxTokens, true, ch, nil, st.stop)
+	done := record(t.Context(), h.store, h.id, worker, newSoftLines(maxTokens, 0), true, ch, nil, st.stop)
 	ch <- agent.TextEvent{Delta: "Thinking"}
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -99,7 +99,7 @@ func TestANoteIsWrittenAfterTheTextBeforeIt(t *testing.T) {
 	st := &stops{}
 	ch := make(chan agent.Event)
 	notes := make(chan note)
-	done := record(t.Context(), h.store, h.id, worker, maxTokens, true, ch, notes, st.stop)
+	done := record(t.Context(), h.store, h.id, worker, newSoftLines(maxTokens, 0), true, ch, notes, st.stop)
 	ch <- agent.TextEvent{Delta: "Proposing"}
 	n := note{kind: "proposed", payload: map[string]any{}, done: make(chan error, 1)}
 	notes <- n

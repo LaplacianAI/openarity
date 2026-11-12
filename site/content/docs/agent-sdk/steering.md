@@ -159,6 +159,15 @@ gets one step to change course, and a run at its limit ends at its limit —
 would also mean the pattern re-reading `MaxSteps` each iteration, which is the
 pattern cooperation this design exists to avoid.
 
+## Asking a run to finish
+
+`run.WrapUp(text)` is a steer with one difference: from the moment it is asked,
+every tool refuses with its text, so the model's next turn is an answer. Its
+text reaches the model as the caller's words, not prefixed as the user's, and it
+is not announced as a `SteerEvent`. Asking twice keeps the first, and asking a
+finished run returns `ErrRunFinished`. A budget is where it is for: see
+[Compaction](compaction.md#finishing-before-the-budget-is-gone).
+
 ## Carrying on for a steer that arrived too late
 
 A run that ends while somebody is still talking to it can take their line as the

@@ -993,6 +993,59 @@ describe("a run's trace", () => {
     expect(stream?.headers.get("Accept")).toBe("text/event-stream");
   });
 
+  it("says when a run compacted and was asked to wrap up, and labels what a stopped run kept", async () => {
+    const wire =
+      frame(1, "step", { step: 1 }) +
+      frame(2, "compacted", {
+        reason: "tokens",
+        folded: 8,
+        cleared: 2,
+        before: 101200,
+        after: 20800,
+        summary: "Goal: review #49.\nFindings: two bugs.",
+      }) +
+      frame(3, "compacted", { reason: "tokens", error: "the summary call failed: 502" }) +
+      frame(4, "wrap_up", { reason: "budget", left: 40000 }) +
+      frame(5, "finished", { status: "failed", error: "the run has spent its token budget" }) +
+      END;
+    listed({
+      [RUNS]: {
+        body: {
+          items: [
+            run("r1", "helper", "failed", {
+              output: "Goal: review #49. Findings: two bugs.",
+              error: "the run has spent its token budget",
+              finished_at: "2026-10-01T00:01:05Z",
+            }),
+          ],
+        },
+      },
+      [EVENTS]: () => ({ stream: chunks(wire) }),
+    });
+
+    await open("?tab=runs");
+    const detail = pane();
+    expect(await within(detail).findByText("Ended: succeeded")).toBeInTheDocument();
+
+    const notes = Array.from(detail.querySelectorAll("li[data-event]")).map(
+      (e) => (e as HTMLElement).dataset.event,
+    );
+    expect(notes).toEqual(["compacted", "compacted", "wrap_up", "finished"]);
+    expect(
+      within(detail).getByText(/8 messages folded, 2 old results cleared \(≈101k → 21k tokens\)/),
+    ).toBeVisible();
+    expect(detail.querySelector("[data-summary]")).toHaveTextContent("Findings: two bugs.");
+    expect(
+      within(detail).getByText(/the request went out whole: the summary call failed: 502/),
+    ).toBeVisible();
+    expect(within(detail).getByText(/token budget nearly spent/)).toBeVisible();
+
+    // A run stopped at its budget kept its summary; it is not shown as an answer.
+    expect(within(detail).getByText("What it had when it stopped")).toBeVisible();
+    expect(within(detail).queryByText("Answer")).toBeNull();
+    expect(detail.querySelector("[data-partial]")).toHaveTextContent("stopped at a limit");
+  });
+
   it("draws the graph tool's matches as ranked rows with their scores and paths", async () => {
     const results = {
       results: [

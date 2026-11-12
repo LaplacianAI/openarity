@@ -118,7 +118,8 @@ apps/brain/
     job.go             the reaper as background work: SweepAll, and its Job
   internal/purge/      erasing deleted teams once TEAM_PURGE_AFTER has passed
   internal/runtime/    a run: the agent built from its row, executed, recorded
-    build.go           the Spec, its granted MCP tools and skills; Patterns and Loops
+    build.go           the Spec, its granted MCP tools and skills, the one settings read; Patterns and Loops
+    compaction.go      when a run compacts, and the budget's soft lines (compact, then wrap up)
     delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run
     events.go          what a run does, as run_events, within its token budget; a builder's text, gathered
     execute.go         one run: claim, heartbeat, run to the end, finish
@@ -129,7 +130,7 @@ apps/brain/
     narrow.go          a child built with fewer than its grants, for the outfitter
     plan.go            plan(items), the hub's checklist, each change a run event
     report.go          a child's answer, wrapped as data for the parent to read
-    websearch.go       web_search(query, limit) and webTools, the one settings read for both web tools
+    websearch.go       web_search(query, limit) and webTools, from the settings Build read
     webfetch.go        web_fetch(url), the page in an envelope, cut at 32 KiB
   internal/websearch/  the port: Provider, Hit, Searcher, and the one guarded client
     <provider>/        searxng, brave, tavily, firecrawl: each exports New

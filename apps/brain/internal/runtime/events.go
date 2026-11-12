@@ -84,7 +84,7 @@ type textPayload struct {
 // record writes a run's events in order, as its only writer. When streams is
 // set, the model's text is written too, gathered into text events; it is
 // flushed before any other event, so text and the call it led to stay in order.
-func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, budget int64, streams bool,
+func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, lines *softLines, streams bool,
 	events <-chan agent.Event, notes <-chan note, stop context.CancelCauseFunc,
 ) <-chan struct{} {
 	done := make(chan struct{})
@@ -115,7 +115,7 @@ func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, b
 				}
 				r.flush()
 				if !r.lost {
-					r.failed(recordOne(ctx, s, runID, worker, budget, e))
+					r.failed(recordOne(ctx, s, runID, worker, lines, e))
 				}
 			case n := <-notes:
 				r.flush()
@@ -162,7 +162,7 @@ func (r *recorder) failed(err error) {
 	r.stop(err)
 }
 
-func recordOne(ctx context.Context, s EventStore, runID uuid.UUID, worker string, budget int64, e agent.Event) error {
+func recordOne(ctx context.Context, s EventStore, runID uuid.UUID, worker string, lines *softLines, e agent.Event) error {
 	switch e := e.(type) {
 	case agent.StepEvent:
 		return appendEvent(ctx, s, runID, worker, "step", stepPayload{Step: e.Step})
@@ -179,12 +179,17 @@ func recordOne(ctx context.Context, s EventStore, runID uuid.UUID, worker string
 			Truncated: cutOutput || cutError, DurationMS: e.Duration.Milliseconds(),
 		})
 	case agent.UsageEvent:
-		return recordUsage(ctx, s, runID, worker, budget, e)
+		return recordUsage(ctx, s, runID, worker, lines, e)
+	case agent.CompactedEvent:
+		return appendEvent(ctx, s, runID, worker, "compacted", compactedPayload{
+			Reason: e.Reason, Cleared: e.Cleared, Folded: e.Folded, Before: e.Before, After: e.After,
+			Summary: e.Summary, Error: e.Err,
+		})
 	}
 	return nil
 }
 
-func recordUsage(ctx context.Context, s EventStore, runID uuid.UUID, worker string, budget int64, e agent.UsageEvent) error {
+func recordUsage(ctx context.Context, s EventStore, runID uuid.UUID, worker string, lines *softLines, e agent.UsageEvent) error {
 	spent, err := s.AddRunUsage(ctx, db.AddRunUsageParams{
 		InputTokens: int64(e.Usage.InputTokens), OutputTokens: int64(e.Usage.OutputTokens),
 		ID: runID, Worker: worker,
@@ -203,8 +208,11 @@ func recordUsage(ctx context.Context, s EventStore, runID uuid.UUID, worker stri
 		return err
 	}
 
-	if spent > budget {
+	if spent > lines.budget {
 		return ErrBudget
+	}
+	if wrap := lines.spent(spent, e); wrap != nil {
+		return appendEvent(ctx, s, runID, worker, "wrap_up", wrap)
 	}
 	return nil
 }

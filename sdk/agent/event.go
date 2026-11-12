@@ -26,6 +26,10 @@ type ToolResultEvent struct {
 type UsageEvent struct {
 	Model string
 	Usage Usage
+	// Summary marks the call a compaction made to write its summary: spent
+	// like any other, but it read the whole context, so it says nothing about
+	// how large the run's next call will be.
+	Summary bool
 }
 
 type StepEvent struct{ Step int }

@@ -139,8 +139,9 @@ func stub(script []Turn) http.Handler {
 		// which would loop until MaxSteps and read as a bug in the pattern rather
 		// than a script that ran out.
 		turn := Turn{Text: "the script ended"}
-		if n := int(calls.Add(1)) - 1; n < len(script) {
-			turn = script[n]
+		n := int(calls.Add(1))
+		if n <= len(script) {
+			turn = script[n-1]
 		}
 
 		// Priced off the request rather than a flat rate, so a comparison
@@ -155,7 +156,7 @@ func stub(script []Turn) http.Handler {
 
 		if !req.Stream {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, completion(turn, spent))
+			fmt.Fprint(w, completion(turn, n, spent))
 			return
 		}
 
@@ -175,11 +176,15 @@ func stub(script []Turn) http.Handler {
 			flusher.Flush()
 		}
 
-		send(turnChunks(turn, spent)...)
+		send(turnChunks(turn, n, spent)...)
 	})
 }
 
-func turnChunks(t Turn, spent usage) []string {
+// callID is unique across the run, as a real provider's is: the turn's
+// number, then the call's place in it.
+func callID(turn, i int) string { return fmt.Sprintf("call_%d_%d", turn, i+1) }
+
+func turnChunks(t Turn, turn int, spent usage) []string {
 	if len(t.Calls) == 0 {
 		return []string{
 			chunk(delta{Role: "assistant", Content: t.Text}, "", nil),
@@ -190,7 +195,7 @@ func turnChunks(t Turn, spent usage) []string {
 	opening := delta{Role: "assistant"}
 	for i, c := range t.Calls {
 		opening.ToolCalls = append(opening.ToolCalls, toolCall{
-			Index: i, ID: fmt.Sprintf("call_%d", i+1), Type: "function",
+			Index: i, ID: callID(turn, i), Type: "function",
 			Function: function{Name: c.Name},
 		})
 	}
@@ -294,7 +299,7 @@ func chunk(d delta, finish string, spent *usage) string {
 // completion renders one turn as a non-streaming response. The wire shape
 // differs from a chunk in exactly one place — "message" rather than "delta" —
 // which is why it reuses the same types.
-func completion(t Turn, spent usage) string {
+func completion(t Turn, turn int, spent usage) string {
 	m := delta{Role: "assistant", Content: t.Text}
 	finish := "stop"
 
@@ -305,7 +310,7 @@ func completion(t Turn, spent usage) string {
 		m = delta{Role: "assistant"}
 		for i, c := range t.Calls {
 			m.ToolCalls = append(m.ToolCalls, toolCall{
-				Index: i, ID: fmt.Sprintf("call_%d", i+1), Type: "function",
+				Index: i, ID: callID(turn, i), Type: "function",
 				Function: function{Name: c.Name, Arguments: c.Args},
 			})
 		}

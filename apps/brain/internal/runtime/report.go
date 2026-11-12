@@ -31,6 +31,10 @@ func report(child db.Run, end string) string {
 		}
 		body = fmt.Sprintf("%s\n[the report was cut at 32 KiB; the whole answer is run %s]", body[:cut], child.ID)
 	}
+	// A run stopped at a limit kept what it had; say it is not a finished answer.
+	if child.Output != nil && child.Status != "succeeded" && child.Error != nil {
+		body = fmt.Sprintf("%s\n[stopped early: %s]", body, reportTag.ReplaceAllString(*child.Error, "&lt;$1"))
+	}
 
 	return fmt.Sprintf("<report agent=\"%s\" run=\"%s\" status=\"%s\" end=\"%s\">\n%s\n</report end=\"%s\">",
 		html.EscapeString(child.AgentName), child.ID, child.Status, end, body, end)

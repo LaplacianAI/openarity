@@ -66,6 +66,14 @@ func clone(msgs []agent.Message) []agent.Message {
 		for j, call := range out[i].ToolCalls {
 			out[i].ToolCalls[j].Arguments = slices.Clone(call.Arguments)
 		}
+
+		if m.Compaction != nil {
+			summary := *m.Compaction
+			summary.User = slices.Clone(summary.User)
+			summary.References = slices.Clone(summary.References)
+			summary.Skills = slices.Clone(summary.Skills)
+			out[i].Compaction = &summary
+		}
 	}
 	return out
 }

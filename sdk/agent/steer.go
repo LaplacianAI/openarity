@@ -17,6 +17,8 @@ func (SteerEvent) event() {}
 type steer struct {
 	text string
 	at   int
+	// wrap is the caller's wrap-up rather than something the user said.
+	wrap bool
 }
 
 type steerBox struct {
@@ -24,6 +26,34 @@ type steerBox struct {
 	pending  []string
 	carried  []steer
 	finished bool
+
+	// wrapUp waits for the next request; wrapped stays set once asked, and
+	// makes every tool refuse with wrapText.
+	wrapUp   string
+	wrapped  bool
+	wrapText string
+}
+
+func (b *steerBox) wrap(text string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.finished {
+		return ErrRunFinished
+	}
+	if b.wrapped {
+		return nil
+	}
+	b.wrapped, b.wrapUp, b.wrapText = true, text, text
+	return nil
+}
+
+// refusal is the wrap-up's text once a wrap-up was asked for, so a tool can
+// refuse with it.
+func (b *steerBox) refusal() (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.wrapText, b.wrapped
 }
 
 func (b *steerBox) add(text string) error {
@@ -57,6 +87,10 @@ func (b *steerBox) take(at int) (fresh []string, carried []steer) {
 	for _, text := range fresh {
 		b.carried = append(b.carried, steer{text: text, at: at})
 	}
+	if b.wrapUp != "" {
+		b.carried = append(b.carried, steer{text: b.wrapUp, at: at, wrap: true})
+		b.wrapUp = ""
+	}
 	return fresh, slices.Clone(b.carried)
 }
 
@@ -82,6 +116,7 @@ func (b *steerBox) close() []string {
 	defer b.mu.Unlock()
 
 	b.finished = true
+	b.wrapUp = ""
 	out := b.pending
 	b.pending = nil
 	return out
@@ -131,11 +166,12 @@ func (c *steeringClient) apply(ctx context.Context, msgs []Message) ([]Message, 
 	return recordSteers(msgs, carried), nil
 }
 
-func steerMessage(text string) Message {
-	return Message{Role: RoleUser, Content: []Content{{
-		Type: ContentText,
-		Text: "The user sent this while you were working:\n" + text,
-	}}}
+func steerMessage(s steer) Message {
+	text := "The user sent this while you were working:\n" + s.text
+	if s.wrap {
+		text = s.text
+	}
+	return Message{Role: RoleUser, Content: []Content{{Type: ContentText, Text: text}}}
 }
 
 func recordSteers(msgs []Message, steers []steer) []Message {
@@ -146,7 +182,7 @@ func recordSteers(msgs []Message, steers []steer) []Message {
 	out := slices.Clone(msgs)
 	for i, s := range steers {
 		at := min(s.at+i, len(out))
-		out = slices.Insert(out, at, steerMessage(s.text))
+		out = slices.Insert(out, at, steerMessage(s))
 	}
 	return out
 }

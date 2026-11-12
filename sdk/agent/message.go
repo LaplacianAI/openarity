@@ -24,6 +24,9 @@ type Message struct {
 	Content    []Content  `json:"content,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+	// Compaction marks a summary a compacting run wrote into its transcript.
+	// It is sent to a model as the user message it reads as.
+	Compaction *CompactionSummary `json:"compaction,omitempty"`
 }
 
 type Content struct {

@@ -428,8 +428,9 @@ func TestAPlainAgentIsOffTheWeb(t *testing.T) {
 	if s, f := len(toolsNamed(got, WebSearchToolName)), len(toolsNamed(got, WebFetchToolName)); s != 0 || f != 0 {
 		t.Errorf("web_search %d, web_fetch %d; want neither", s, f)
 	}
-	if w.search.provider != "" || w.scrape.provider != "" || len(w.secrets.asked) != 0 || w.store.settingsReads != 0 {
-		t.Errorf("built %q and %q, read %v, settings read %d times; want nothing touched",
+	// The settings are read once, for compaction; nothing of the web is.
+	if w.search.provider != "" || w.scrape.provider != "" || len(w.secrets.asked) != 0 || w.store.settingsReads != 1 {
+		t.Errorf("built %q and %q, read %v, settings read %d times; want nothing of the web touched",
 			w.search.provider, w.scrape.provider, w.secrets.asked, w.store.settingsReads)
 	}
 }

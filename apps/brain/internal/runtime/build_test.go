@@ -366,7 +366,12 @@ func TestAnAgentRowBecomesTheSpecItDescribes(t *testing.T) {
 			}
 
 			got := built.Spec
-			got.Tools, got.Skills, got.Session = nil, nil, nil
+			if want := (agent.Compaction{AfterMessages: 100, AfterInputTokens: 100_000}); got.Compaction == nil ||
+				*got.Compaction != want {
+				t.Errorf("compaction = %+v, want %+v: the default team setting and a tenth of the default budget, "+
+					"capped", got.Compaction, want)
+			}
+			got.Tools, got.Skills, got.Session, got.Compaction = nil, nil, nil, nil
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("spec\n got %+v\nwant %+v", got, tc.want)
 			}

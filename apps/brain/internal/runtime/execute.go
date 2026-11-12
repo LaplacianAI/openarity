@@ -197,7 +197,7 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 		e.heartbeat(beatCtx, row.ID, l.Worker, stop)
 	}()
 
-	output, runErr := e.run(runCtx, row, l, stop)
+	output, summary, runErr := e.run(runCtx, row, l, stop)
 
 	stopBeat()
 	<-beating
@@ -211,6 +211,16 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 		return nil
 	}
 	status, failure := outcome(runErr, cause)
+	switch {
+	case status == "succeeded":
+	case stopped(cause) && summary != "":
+		// What it had, rather than nothing: a summary says what was found and
+		// what was left, which the last few words before the cut rarely do.
+		output = summary
+	case stopped(cause):
+	default:
+		output = ""
+	}
 	if err := e.finish(ctx, row.ID, l.Worker, status, output, failure); err != nil {
 		return err
 	}
@@ -236,26 +246,26 @@ func chainOf(agentID *uuid.UUID) []uuid.UUID {
 
 func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	stop context.CancelCauseFunc,
-) (string, error) {
+) (output, summary string, err error) {
 	session, err := agent.Open(row.ID.String(), e.sessions)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	msgs, err := session.Messages(ctx)
 	if err != nil {
-		return "", fmt.Errorf("reading the transcript: %w", err)
+		return "", "", fmt.Errorf("reading the transcript: %w", err)
 	}
 
 	built, err := e.builder.Build(ctx, row, session, l)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer built.Close()
 	built.Spec = forChannel(row, built.Spec)
 
 	if len(msgs) > 0 {
 		if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: row.ID, Reason: reapReason}); err != nil {
-			return "", fmt.Errorf("reaping what the run started before its worker stopped: %w", err)
+			return "", "", fmt.Errorf("reaping what the run started before its worker stopped: %w", err)
 		}
 		err = appendEvent(ctx, e.store, row.ID, l.Worker, "resumed", resumedPayload{Messages: len(msgs)})
 	} else {
@@ -263,11 +273,11 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		switch {
 		case row.ReplyToChannel:
 			if input, err = e.conversation(ctx, row); err != nil {
-				return "", err
+				return "", "", err
 			}
 		case row.Builder:
 			if input, err = e.builderInput(ctx, row); err != nil {
-				return "", err
+				return "", "", err
 			}
 		}
 		msgs = []agent.Message{{
@@ -277,13 +287,13 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		err = appendEvent(ctx, e.store, row.ID, l.Worker, "started", startedOf(built.Agent, built.Spec))
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	for _, u := range built.Unavailable {
 		if err := appendEvent(ctx, e.store, row.ID, l.Worker, "tool_unavailable",
 			unavailablePayload(u)); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 
@@ -297,13 +307,24 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	if row.Builder && e.streamer != nil {
 		runner, streams = e.streamer, true
 	}
-	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, budgetOf(row.TokenBudget),
+	lines := newSoftLines(budgetOf(row.TokenBudget), int64(built.Spec.Model.MaxTokens))
+	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, lines,
 		streams, events, notes, stop)
-	result, err := runner.Run(ctx, built.Spec, msgs, e.endpoint, events)
+	run := runner.Start(ctx, built.Spec, msgs, e.endpoint, events)
+	lines.hold(run)
+	if until, ok := ctx.Deadline(); ok {
+		clock := time.AfterFunc(time.Until(until)-timeWrapBefore, func() {
+			if lines.wrap(timeWrapUp) {
+				_ = e.note(ctx, row.ID, l.Worker, "wrap_up", wrapUpPayload{Reason: "time"})
+			}
+		})
+		defer clock.Stop()
+	}
+	result, err := run.Wait()
 	close(events)
 	<-recorded
 
-	return result.Output, err
+	return result.Output, run.Summary(), err
 }
 
 // note writes one of the brain's own events through the run's recorder, its
@@ -388,7 +409,8 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 	output = strings.ReplaceAll(output, "\x00", "\uFFFD")
 	failure = strings.ReplaceAll(failure, "\x00", "\uFFFD")
 	p := db.FinishRunParams{ID: runID, Worker: worker, Status: status}
-	if status == "succeeded" {
+	// A run stopped at a limit keeps what it had; hold decides which.
+	if status == "succeeded" || output != "" {
 		p.Output = &output
 	}
 	if failure != "" {
