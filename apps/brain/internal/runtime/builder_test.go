@@ -289,7 +289,8 @@ func TestABuilderRunProposesAndWritesNothingToTheTeam(t *testing.T) {
 		t.Error("the run has no proposed event")
 	}
 	req := f.model.requests()[0]
-	if names := toolNamesOf(req.Tools); !slices.Equal(names, []string{GraphToolName, ListMCPToolsToolName, ProposeToolName, TeamToolName}) {
+	// read_output reads the run's own transcript; it writes nothing.
+	if names := toolNamesOf(req.Tools); !slices.Equal(names, []string{GraphToolName, ListMCPToolsToolName, ProposeToolName, agent.ReadOutputToolName, TeamToolName}) {
 		t.Errorf("the model was offered %v", names)
 	}
 }
