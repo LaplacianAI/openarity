@@ -22,7 +22,7 @@ import: `github.com/openai/openai-go/v3` behind the model client, and the
 official MCP SDK behind `tools/mcp`. The core and the patterns link neither —
 a `make check` step fails if they ever do.
 
-`go get` resolves to `v0.1.0`. It is a `v0`, so nothing about the API is
+`go get` resolves to `v0.2.0`. It is a `v0`, so nothing about the API is
 promised yet — pin the version rather than tracking `@latest`, and read what
 changed before moving.
 

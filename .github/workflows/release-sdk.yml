@@ -1,0 +1,70 @@
+name: release-sdk
+
+# A version of sdk/agent is an annotated tag on main, `sdk/agent/vX.Y.Z`, whose
+# message is the release notes. Pushing it publishes the GitHub release and asks
+# the Go module proxy for the version, so `go get` and pkg.go.dev see it at
+# once. Nothing here builds or tests: the tag must point at a commit whose CI
+# run passed, and that run is what proved it.
+on:
+  push:
+    tags: ['sdk/agent/v*']
+
+permissions:
+  contents: write # the release
+  actions: read # the tagged commit's CI run
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # actions/checkout fetches a tag as a lightweight ref; this keeps its
+          # message, which is the release notes.
+          fetch-tags: true
+
+      - name: The tag names a version, carries notes, and is on main
+        run: |
+          VERSION="${TAG#sdk/agent/}"
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$TAG is not sdk/agent/vMAJOR.MINOR.PATCH"; exit 1
+          fi
+          git fetch -q origin "refs/tags/$TAG:refs/tags/$TAG" --force
+          if [ "$(git cat-file -t "$TAG")" != tag ]; then
+            echo "::error::$TAG is a lightweight tag; its message is the release notes, so tag with -a"; exit 1
+          fi
+          git tag -l --format='%(contents)' "$TAG" > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::$TAG has no message to publish as its notes"; exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$TAG points at ${GITHUB_SHA:0:12}, which is not on main"; exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: CI passed on the tagged commit
+        run: |
+          conclusion=$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" --event push \
+            --json conclusion --jq '.[0].conclusion // "none"')
+          if [ "$conclusion" != success ]; then
+            echo "::error::ci on ${GITHUB_SHA:0:12} is '$conclusion', not success; tag a commit CI passed on"; exit 1
+          fi
+
+      - name: Publish the release
+        run: gh release create "$TAG" --verify-tag --title "sdk/agent $VERSION" --notes-file notes.md
+
+      # The proxy fetches a version the first time anyone asks for it; asking
+      # here means the first person to `go get` it does not wait, and
+      # pkg.go.dev lists it. The module path is case-encoded: A becomes !a.
+      - name: Ask the Go module proxy for the version
+        run: |
+          path=$(echo "github.com/LaplacianAI/openarity/sdk/agent" | sed 's/[A-Z]/!\L&/g')
+          curl -fsS "https://proxy.golang.org/$path/@v/$VERSION.info"
