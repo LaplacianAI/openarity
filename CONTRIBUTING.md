@@ -419,7 +419,8 @@ and the client version `tools/mcp` sends to every MCP server
 something older than what `@latest` gives them.
 
 Once it has merged and `ci` has passed on main, tag the merge commit with the
-release notes as the tag's message, and push it:
+release notes as the tag's message, and push it. The message's first line is
+the version (`sdk/agent v0.2.0`); the notes are everything below it:
 
 ```sh
 git switch main && git pull
@@ -429,7 +430,7 @@ git push origin sdk/agent/v0.2.0
 
 [`release-sdk`](.github/workflows/release-sdk.yml) does the rest. It refuses a
 tag that is not `sdk/agent/vMAJOR.MINOR.PATCH`, is lightweight or has no
-message, is not on main, or names a commit `ci` did not pass on. Then it
+notes below its first line, is not on main, or names a commit `ci` did not pass on. Then it
 publishes the GitHub release with the tag's message as its notes, and asks the
 Go module proxy for the version, which is what makes `go get` and pkg.go.dev see
 it at once.
