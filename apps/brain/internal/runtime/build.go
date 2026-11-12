@@ -114,8 +114,13 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		return Built{}, err
 	}
 
+	settings, err := b.teamSettings(ctx, run.TeamID)
+	if err != nil {
+		return Built{}, err
+	}
 	built := Built{Spec: specOf(a), Agent: a.Name}
 	built.Spec.Session = session
+	built.Spec.Compaction = compactionFor(settings.CompactionMessages, budgetOf(run.TokenBudget))
 
 	// The builder reads the web for servers' docs and a skill's source.
 	web := run.Hub || a.Web || run.Builder
@@ -156,11 +161,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	}
 
 	if web {
-		tools, unavailable, err := b.webTools(ctx, run.TeamID)
-		if err != nil {
-			built.Close()
-			return Built{}, err
-		}
+		tools, unavailable := b.webTools(ctx, run.TeamID, settings)
 		built.Unavailable = append(built.Unavailable, unavailable...)
 		built.Spec.Tools = append(built.Spec.Tools, tools...)
 	}

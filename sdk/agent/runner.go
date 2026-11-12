@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -42,11 +43,11 @@ func New(clientFor ClientFactory, patterns ...Pattern) (*Runner, error) {
 func (r *Runner) Start(ctx context.Context, spec Spec, msgs []Message,
 	endpoint Endpoint, events chan<- Event,
 ) *Run {
-	run := &Run{box: &steerBox{}, done: make(chan struct{})}
+	run := &Run{box: &steerBox{}, compact: &compactHandle{}, done: make(chan struct{})}
 
 	go func() {
 		defer close(run.done)
-		result, err := r.run(ctx, spec, msgs, endpoint, events, run.box)
+		result, err := r.run(ctx, spec, msgs, endpoint, events, run.box, run.compact)
 		result.UnappliedSteers = run.box.close()
 		run.result, run.err = result, err
 	}()
@@ -55,14 +56,28 @@ func (r *Runner) Start(ctx context.Context, spec Spec, msgs []Message,
 }
 
 type Run struct {
-	box  *steerBox
-	done chan struct{}
+	box     *steerBox
+	compact *compactHandle
+	done    chan struct{}
 
 	result Result
 	err    error
 }
 
 func (run *Run) Steer(text string) error { return run.box.add(text) }
+
+// WrapUp asks the run to finish: text reaches the model on its next request,
+// as the caller's words rather than the user's, and from now on every tool
+// refuses with it. Asking twice keeps the first.
+func (run *Run) WrapUp(text string) error { return run.box.wrap(text) }
+
+// CompactNow asks a compacting run to compact before its next request,
+// whatever its thresholds. Without Spec.Compaction it does nothing.
+func (run *Run) CompactNow() { run.compact.force.Store(true) }
+
+// Summary is the latest summary the run's compaction wrote, or the one it
+// carried on from, and empty when there is none.
+func (run *Run) Summary() string { return run.compact.current().Summary }
 
 func (run *Run) Wait() (Result, error) {
 	<-run.done
@@ -76,7 +91,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec, msgs []Message,
 }
 
 func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
-	endpoint Endpoint, events chan<- Event, box *steerBox,
+	endpoint Endpoint, events chan<- Event, box *steerBox, compact *compactHandle,
 ) (Result, error) {
 	if spec.Pattern == "" {
 		return Result{}, fmt.Errorf("the spec names no pattern; set Spec.Pattern to one of: %s",
@@ -97,15 +112,33 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 	if err := checkOutput(spec); err != nil {
 		return Result{}, err
 	}
+	if err := checkCompaction(spec.Compaction); err != nil {
+		return Result{}, err
+	}
+	if spec.Compaction != nil {
+		if spec, err = withReadOutput(spec, compact); err != nil {
+			return Result{}, err
+		}
+	}
+	spec.Tools = refusingAfterWrapUp(spec.Tools, box)
 
 	client, err := r.clientFor(endpoint)
 	if err != nil {
 		return Result{}, fmt.Errorf("connecting to %s: %w", endpoint.BaseURL, err)
 	}
 
+	var counter *countingClient
 	sending := client
+	splice := func(msgs []Message) []Message { return msgs }
+	if spec.Compaction != nil {
+		msgs = compact.resume(msgs)
+		splice = compact.splice
+		sending = newCompactingClient(client, *spec.Compaction, compact,
+			func(u Usage) { counter.add(u) },
+			func(e Event) { emit(ctx, events, e) })
+	}
 	if spec.Session != nil {
-		sending = &savingClient{inner: client, session: spec.Session}
+		sending = &savingClient{inner: sending, session: spec.Session, splice: splice}
 	}
 
 	steered := &steeringClient{
@@ -120,7 +153,7 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 		beneath = &outputClient{inner: steered, schema: spec.OutputSchema}
 	}
 
-	counter := &countingClient{inner: beneath}
+	counter = &countingClient{inner: beneath}
 
 	if spec.SteerContinuations < 0 {
 		return Result{}, fmt.Errorf(
@@ -140,7 +173,8 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 		result.Output = this.Output
 		result.Steps += this.Steps
 		result.Usage = counter.spent()
-		result.Messages = recordSteers(this.Messages, box.applied())
+		held := recordSteers(this.Messages, box.applied())
+		result.Messages = splice(held)
 
 		if spec.Session != nil {
 			if err := spec.Session.Save(ctx, result.Messages); err != nil {
@@ -158,7 +192,7 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 		if len(pending) == 0 {
 			return r.finish(ctx, spec, counter, result)
 		}
-		msgs = append(slices.Clone(result.Messages), steerMessages(pending)...)
+		msgs = append(slices.Clone(held), steerMessages(pending)...)
 	}
 }
 
@@ -231,6 +265,39 @@ func withSkills(spec Spec) (Spec, error) {
 	spec.System = append(slices.Clone(spec.System), listing)
 
 	return spec, nil
+}
+
+func withReadOutput(spec Spec, h *compactHandle) (Spec, error) {
+	for _, t := range spec.Tools {
+		if t.Name == ReadOutputToolName {
+			return Spec{}, fmt.Errorf("a tool is already named %q, which is the name a compacting run reads outputs back under", t.Name)
+		}
+	}
+	spec.Tools = append(slices.Clone(spec.Tools), readOutputTool(h))
+	return spec, nil
+}
+
+// refusingAfterWrapUp makes every tool refuse once the run is asked to wrap
+// up. The tools stay listed, because a provider may reject a conversation
+// holding tool calls when no tools are defined.
+func refusingAfterWrapUp(tools []Tool, box *steerBox) []Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	out := make([]Tool, len(tools))
+	for i, t := range tools {
+		invoke := t.Invoke
+		if invoke != nil {
+			t.Invoke = func(ctx context.Context, args json.RawMessage) (string, error) {
+				if text, wrapped := box.refusal(); wrapped {
+					return "", errors.New(text)
+				}
+				return invoke(ctx, args)
+			}
+		}
+		out[i] = t
+	}
+	return out
 }
 
 func (r *Runner) registered() []string {

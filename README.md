@@ -152,7 +152,9 @@ That is an authorisation decision, and a separate Go module is what stops it
 leaking into the library: `sdk/agent` *cannot* import `apps/brain/internal`.
 
 The brain runs agents through it: a run starts from `oa runs start` or the HTTP
-API, and executes inside `sdk/agent` against the team's model.
+API, and executes inside `sdk/agent` against the team's model. A long run
+compacts its context as it goes, reads a large tool result back in parts, and
+is asked to answer with what it has before its token budget is gone.
 Each team has a hub, the built-in orchestrator or an agent it names, which
 plans, finds an agent in the team's graph and delegates to it, and can search
 the web and read a page. The graph holds the team's agents, MCP servers, tools
@@ -174,6 +176,8 @@ Telegram, to a signed reply URL for `custom`, a generic webhook.
 
 Not built yet: Slack and Discord adapters; the seam they plug into is.
 Learnings are not in the graph, and there is no sandbox for model-written code.
+A run still binds every tool its agent is granted: the graph finds tools one by
+one, and loading only those a task needs is the next step.
 
 ## Quick start
 

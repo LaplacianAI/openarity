@@ -1089,3 +1089,61 @@ func TestAnAnswerUnlikeTheStreamIsStillPrinted(t *testing.T) {
 		t.Errorf("want both the stream and the answer:\n%s", out)
 	}
 }
+
+// A compaction says how much was set aside; with --verbose it shows the start
+// of the summary that replaced it.
+func TestACompactionSaysWhatWasSetAside(t *testing.T) {
+	compacted := `{"reason":"tokens","folded":8,"cleared":2,"before":101200,"after":20800,` +
+		`"summary":"Goal: review #49.\nFindings: two bugs.\nDone: delegate.go.\nNext step: events.go."}`
+	stream := frameOf("1", "compacted", compacted) + frameOf("", "end", `{"status":"succeeded"}`)
+	clitest.Routes(t, eventsRoute(http.StatusOK, stream))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if !strings.HasPrefix(out, "↧ compacted · 8 messages folded, 2 old results cleared (≈101k → 21k tokens)\n") ||
+		strings.Contains(out, "Goal") {
+		t.Errorf("out = %q", out)
+	}
+
+	out, _ = clitest.Execute(t, commands, "runs", "events", "platform", runID, "--verbose")
+	if !strings.Contains(out, "  Goal: review #49.\n  Findings: two bugs.\n  Done: delegate.go.\n  …\n") {
+		t.Errorf("verbose out = %q, want the summary's first three lines", out)
+	}
+}
+
+func TestClearingAloneSaysNothingWasFolded(t *testing.T) {
+	stream := frameOf("1", "compacted", `{"reason":"tokens","cleared":1,"before":40000,"after":900}`) +
+		frameOf("", "end", `{"status":"succeeded"}`)
+	clitest.Routes(t, eventsRoute(http.StatusOK, stream))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if !strings.HasPrefix(out, "↧ compacted · 1 old result cleared (≈40k → 900 tokens)\n") {
+		t.Errorf("out = %q", out)
+	}
+}
+
+func TestAFailedCompactionIsAWarning(t *testing.T) {
+	stream := frameOf("1", "compacted", `{"reason":"tokens","error":"the summary call failed: 502"}`) +
+		frameOf("", "end", `{"status":"succeeded"}`)
+	clitest.Routes(t, eventsRoute(http.StatusOK, stream))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if !strings.HasPrefix(out, "⚠ compaction failed, the request went out whole: the summary call failed: 502\n") {
+		t.Errorf("out = %q", out)
+	}
+}
+
+func TestAWrapUpSaysWhichLimit(t *testing.T) {
+	for reason, want := range map[string]string{
+		"budget": "⚠ wrapping up · token budget nearly spent\n",
+		"time":   "⚠ wrapping up · time nearly up\n",
+	} {
+		stream := frameOf("1", "wrap_up", `{"reason":"`+reason+`","left":40000}`) +
+			frameOf("", "end", `{"status":"succeeded"}`)
+		clitest.Routes(t, eventsRoute(http.StatusOK, stream))
+
+		out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+		if !strings.HasPrefix(out, want) {
+			t.Errorf("%s: out = %q", reason, out)
+		}
+	}
+}

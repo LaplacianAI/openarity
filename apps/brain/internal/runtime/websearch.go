@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -138,16 +137,9 @@ func cut(s string, n int, mark string) string {
 	return s[:n] + mark
 }
 
-func (b *Builder) webTools(ctx context.Context, teamID uuid.UUID) ([]agent.Tool, []Unavailable, error) {
+func (b *Builder) webTools(ctx context.Context, teamID uuid.UUID, s db.TeamSetting) ([]agent.Tool, []Unavailable) {
 	if b.search == nil && b.fetch == nil {
-		return nil, nil, nil
-	}
-	s, err := b.store.GetTeamSettings(ctx, teamID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		s, err = db.TeamSetting{SearchProvider: noSearchProvider}, nil
-	}
-	if err != nil {
-		return nil, nil, fmt.Errorf("reading the team's settings: %w", err)
+		return nil, nil
 	}
 
 	provider := websearch.Provider(s.SearchProvider)
@@ -171,7 +163,7 @@ func (b *Builder) webTools(ctx context.Context, teamID uuid.UUID) ([]agent.Tool,
 	if b.fetch != nil {
 		tools = append(tools, b.fetchTool(provider, address, key, keyed))
 	}
-	return tools, unavailable, nil
+	return tools, unavailable
 }
 
 func (b *Builder) searchKey(ctx context.Context, teamID uuid.UUID, s db.TeamSetting) (string, bool, *Unavailable) {

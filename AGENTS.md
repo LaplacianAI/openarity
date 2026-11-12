@@ -1,8 +1,9 @@
 # Openarity
 
 Openarity is an open-source agent platform in which agents, tools, skills and
-learnings form a knowledge graph, and a run selects tools by walking that graph
-rather than ranking a flat list. The repository holds the brain (the Go server
+learnings form a knowledge graph, and selection is a walk over that graph rather
+than a ranking of a flat list: the graph search is built, and a run loading only
+the tools its task needs is next. The repository holds the brain (the Go server
 that runs agents), the `oa` CLI, the dashboard, and the Go agent SDK.
 
 | Where | Instructions | Skills |

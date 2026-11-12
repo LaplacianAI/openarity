@@ -1546,7 +1546,9 @@ type Run struct {
 	Input       string             `json:"input" yaml:"input"`
 	InputTokens int64              `json:"input_tokens" yaml:"input_tokens"`
 
-	// Output The agent's answer, null until it succeeds
+	// Output The agent's answer, null until it succeeds. A run stopped at its
+	// token budget or wall clock keeps what it had, its latest summary
+	// when it compacted, beside its error.
 	Output       *string `json:"output,omitempty" yaml:"output,omitempty"`
 	OutputTokens int64   `json:"output_tokens" yaml:"output_tokens"`
 
@@ -1948,7 +1950,9 @@ type TeamPermissions struct {
 // optional here only so a generated client decodes null as absent
 // rather than as a zero value.
 type TeamSettings struct {
-	// CompactionMessages Messages before a transcript compacts. Stored now; compaction reads it from a later release.
+	// CompactionMessages Messages in a run's request past which it compacts. A run also
+	// compacts when its next request would read more than a tenth of
+	// its token budget, or 100,000 tokens, whichever is less.
 	CompactionMessages int32 `json:"compaction_messages" yaml:"compaction_messages"`
 
 	// Hub The agent that answers a run started for the team rather than
@@ -3397,6 +3401,27 @@ type ClientInterface interface {
 	// `data: {"text": "I propose…", "truncated": false}`, each a piece of
 	// the model's text in order, written before the tool call it led to.
 	// Joined, the pieces after the last `tool_result` are the run's output.
+	//
+	// A long run compacts its context, and is asked to finish before its
+	// budget or its time runs out:
+	//
+	// ```text
+	// event: compacted
+	// data: {"reason": "tokens", "cleared": 2, "folded": 8, "before": 101000, "after": 21000,
+	//        "summary": "Goal: …"}
+	//
+	// event: wrap_up
+	// data: {"reason": "budget", "left": 40000}
+	// ```
+	//
+	// `reason` is `tokens`, `messages`, `asked` (the budget's first line) or
+	// `overflow` (the model refused the request as too long); `folded` is 0
+	// when clearing old tool results was enough. `error` is set when the
+	// summary call failed and the request went out whole. `summary` is the
+	// summary written, absent when clearing was enough; the run's transcript
+	// keeps it too, so a resumed run carries on from it. A `wrap_up` is
+	// `budget` or `time`; after it
+	// the run's tools refuse, and its next answer ends it.
 	//
 	// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
 	StreamRunEvents(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5245,6 +5270,28 @@ func (c *Client) CancelRun(ctx context.Context, id TeamID, runID RunID, reqEdito
 // `data: {"text": "I propose…", "truncated": false}`, each a piece of
 // the model's text in order, written before the tool call it led to.
 // Joined, the pieces after the last `tool_result` are the run's output.
+//
+// A long run compacts its context, and is asked to finish before its
+// budget or its time runs out:
+//
+// ```text
+// event: compacted
+// data: {"reason": "tokens", "cleared": 2, "folded": 8, "before": 101000, "after": 21000,
+//
+//	"summary": "Goal: …"}
+//
+// event: wrap_up
+// data: {"reason": "budget", "left": 40000}
+// ```
+//
+// `reason` is `tokens`, `messages`, `asked` (the budget's first line) or
+// `overflow` (the model refused the request as too long); `folded` is 0
+// when clearing old tool results was enough. `error` is set when the
+// summary call failed and the request went out whole. `summary` is the
+// summary written, absent when clearing was enough; the run's transcript
+// keeps it too, so a resumed run carries on from it. A `wrap_up` is
+// `budget` or `time`; after it
+// the run's tools refuse, and its next answer ends it.
 //
 // Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
 func (c *Client) StreamRunEvents(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10460,6 +10507,27 @@ type ClientWithResponsesInterface interface {
 	// the model's text in order, written before the tool call it led to.
 	// Joined, the pieces after the last `tool_result` are the run's output.
 	//
+	// A long run compacts its context, and is asked to finish before its
+	// budget or its time runs out:
+	//
+	// ```text
+	// event: compacted
+	// data: {"reason": "tokens", "cleared": 2, "folded": 8, "before": 101000, "after": 21000,
+	//        "summary": "Goal: …"}
+	//
+	// event: wrap_up
+	// data: {"reason": "budget", "left": 40000}
+	// ```
+	//
+	// `reason` is `tokens`, `messages`, `asked` (the budget's first line) or
+	// `overflow` (the model refused the request as too long); `folded` is 0
+	// when clearing old tool results was enough. `error` is set when the
+	// summary call failed and the request went out whole. `summary` is the
+	// summary written, absent when clearing was enough; the run's transcript
+	// keeps it too, so a resumed run carries on from it. A `wrap_up` is
+	// `budget` or `time`; after it
+	// the run's tools refuse, and its next answer ends it.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
@@ -15301,6 +15369,28 @@ func (c *ClientWithResponses) CancelRunWithResponse(ctx context.Context, id Team
 // `data: {"text": "I propose…", "truncated": false}`, each a piece of
 // the model's text in order, written before the tool call it led to.
 // Joined, the pieces after the last `tool_result` are the run's output.
+//
+// A long run compacts its context, and is asked to finish before its
+// budget or its time runs out:
+//
+// ```text
+// event: compacted
+// data: {"reason": "tokens", "cleared": 2, "folded": 8, "before": 101000, "after": 21000,
+//
+//	"summary": "Goal: …"}
+//
+// event: wrap_up
+// data: {"reason": "budget", "left": 40000}
+// ```
+//
+// `reason` is `tokens`, `messages`, `asked` (the budget's first line) or
+// `overflow` (the model refused the request as too long); `folded` is 0
+// when clearing old tool results was enough. `error` is set when the
+// summary call failed and the request went out whole. `summary` is the
+// summary written, absent when clearing was enough; the run's transcript
+// keeps it too, so a resumed run carries on from it. A `wrap_up` is
+// `budget` or `time`; after it
+// the run's tools refuse, and its next answer ends it.
 //
 // Returns a wrapper object for the known response body format(s).
 //

@@ -43,6 +43,7 @@ nav = [
     "docs/agent-sdk/steering.md",
     "docs/agent-sdk/structured-output.md",
     "docs/agent-sdk/sessions.md",
+    "docs/agent-sdk/compaction.md",
     "docs/agent-sdk/examples.md",
   ] },
   { "Concepts" = [

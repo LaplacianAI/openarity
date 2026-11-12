@@ -60,6 +60,14 @@ type payload struct {
 	Text              string   `json:"text"`
 
 	Items []planEntry `json:"items"`
+
+	// A compaction and a wrap-up.
+	Cleared int    `json:"cleared"`
+	Folded  int    `json:"folded"`
+	Before  int    `json:"before"`
+	After   int    `json:"after"`
+	Left    int64  `json:"left"`
+	Summary string `json:"summary"`
 }
 
 // planEntry is one step of the hub's plan, as its plan event carries it.

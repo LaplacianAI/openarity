@@ -219,6 +219,27 @@ model's tool arguments and dropping a duplicate key — on those backends only.
 [`sessions`](examples/sessions) runs three replicas over one SQLite file and
 nothing else.
 
+## Compaction
+
+A long run resends every earlier step on every step. `Spec.Compaction` keeps
+the request small: past a message count or an estimated input size, old tool
+results become `read_output` handles, and if that is not enough the older turns
+are folded into a summary the run's own model writes. The transcript keeps
+every message, and the summary is written into it as one more, so a run handed
+the transcript again — through a `Store` or `Result.Messages` — carries on from
+it without summarising again. Only the model sees the shorter form.
+
+```go
+spec.Compaction = &agent.Compaction{AfterMessages: 100, AfterInputTokens: 100_000}
+
+run := runner.Start(ctx, spec, msgs, endpoint, events)
+run.WrapUp("Your token budget is nearly spent. Stop calling tools and answer now with what you have.")
+```
+
+`run.WrapUp` asks a run to finish, and every tool refuses from then on;
+`run.CompactNow` compacts before the next request; `run.Summary` is the latest
+summary. [`compaction`](examples/compaction) runs all of it.
+
 ## Structured output
 
 `Spec.OutputSchema` puts a JSON Schema on every request the run makes, as

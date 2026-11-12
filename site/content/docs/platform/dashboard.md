@@ -93,7 +93,12 @@ plan, and any change to the draft takes the plan away. It is a
 
 **Teams** lists the teams you can see and their members, with each member's
 role: `member`, `approver` or `admin`. **Team settings** has four groups: the
-model, the hub (and when a transcript is compacted), web search, and learning.
+model, the hub (and when a run compacts: past a number of messages, and
+always when its next request would read a tenth of its token budget or
+100,000 tokens), web search, and learning. A run's transcript shows each
+compaction, with the summary that replaced the older turns, and a
+**Wrapping up** line when it was asked to finish before a limit. A run that
+stopped at its budget shows what it had under **What it had when it stopped**.
 
 **Graph** draws the hub, the agents and whom they hand work to, and the servers,
 tools and skills they are granted; it can be shown as a list. A search box

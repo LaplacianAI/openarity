@@ -15,6 +15,7 @@ go run ./examples/steering
 go run ./examples/steering-typed
 go run ./examples/steering-limits
 go run ./examples/sessions
+go run ./examples/compaction
 ```
 
 Or run every one of them:
@@ -36,6 +37,7 @@ make example
 | `steering-limits` | where steering stops: a plan already fixed, and a steer with no request left |
 | `structured` | a schema the model answers in, and a parser model turning prose into one |
 | `sessions`   | a steer that reaches a run nothing is holding, and a resume in a runner that produced none of it |
+| `compaction` | a review that outgrows its budget: a 280 KiB result previewed and read back in parts, old turns cleared and folded into a summary, and a wrap-up that gets an answer before the budget is gone |
 | `gateway`  | not an example: the stub and the printing the others share            |
 
 ## Against a real gateway
@@ -82,6 +84,29 @@ The stub prices a request by its size, so those numbers measure the context each
 turn carried rather than a flat rate. ReWOO pays for its tool catalogue up front
 and still comes out ahead, because ReAct re-sends everything before it on every
 turn.
+
+`compaction` prints what the model was actually sent, measured from the
+requests rather than asserted:
+
+```text
+input per call   405 → 3.8k → 3.9k → 18.6k → 14.9k → 15.0k → 29.3k → 29.4k
+the large result 280 KiB in the transcript; the model was shown 12 KiB of it,
+                 and read back only the line it needed
+compacted        tokens: 0 message(s) folded, 2 result(s) cleared, about 32.5k → 14.4k tokens
+compacted        messages: 8 message(s) folded, 1 result(s) cleared, about 29.1k → 14.6k tokens
+wrap-up          asked at 86.2k tokens spent
+refused          1 tool call(s) after the wrap-up
+in the transcript a summary, at message 9 of 17
+resumed from it  1 model call(s), 0 of them a summary; its first request opened
+                 with the task and the summary it carried: true
+```
+
+Without compaction every call resends every result before it, so the input
+line only climbs. The first compaction needs no model call: clearing two old
+results to `read_output` handles is enough. The second folds eight messages
+into a summary written by the run's own model, with the run's own prefix, so a
+real provider's cache covers all but its instruction. The summary is written
+into the transcript, so a new run handed it carries on from it.
 
 `custom` wraps `patterns.Plan()` in a deployment's own spending rule. The ceiling
 is enforced by watching `UsageEvent` as the run happens rather than by adding

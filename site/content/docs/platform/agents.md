@@ -40,7 +40,7 @@ oa runs start platform triage 'Sort the issues opened today.' --follow
 | `description`   | What it is for. The graph indexes it, so it is how the hub and other agents find this one |
 | `pattern`       | The loop it works through a task with: `react`, `plan`, `rewoo` or `reflection` — `GET /teams/{id}/loops` lists what the brain runs. See [Patterns](../agent-sdk/patterns.md) |
 | `max_steps`     | How many model turns one run may take                           |
-| `token_budget`  | What one run may spend, input and output together; past it the run fails, naming the budget |
+| `token_budget`  | What one run may spend, input and output together. With a tenth left the run compacts its context; when one more call would not fit it is asked to answer with what it has. Past it the run fails, naming the budget, and keeps its latest summary as its output |
 | `output_schema` | A JSON Schema the answer has to fit; `parser: true` has a second model fit it — see [Structured output](../agent-sdk/structured-output.md) |
 | `steer_continuations` | How many times a run may carry on for a message that arrived as it finished |
 | `delegation`    | Whom it may hand work to: `none`, any agent in the `team`, or the `listed` `delegates` |

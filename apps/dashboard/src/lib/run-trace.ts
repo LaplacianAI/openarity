@@ -71,7 +71,21 @@ export type TraceItem =
   | { type: "plan"; items: PlanItem[] }
   | { type: "resumed"; messages: number }
   | { type: "unavailable"; name: string; reason: string }
+  | { type: "compacted"; compaction: Compaction }
+  | { type: "wrap_up"; reason: string }
   | { type: "other"; event: RunEvent };
+
+/** A run setting part of its context aside: old results cleared, turns folded into a summary. */
+export type Compaction = {
+  reason: string;
+  folded: number;
+  cleared: number;
+  before: number;
+  after: number;
+  /** Set when the summary call failed and the request went out whole. */
+  error: string;
+  summary: string;
+};
 
 export type Trace = {
   started: Started | null;
@@ -145,6 +159,23 @@ export function groupTrace(events: readonly RunEvent[]): Trace {
         break;
       case "tool_unavailable":
         trace.items.push({ type: "unavailable", name: text(d.name), reason: text(d.reason) });
+        break;
+      case "compacted":
+        trace.items.push({
+          type: "compacted",
+          compaction: {
+            reason: text(d.reason),
+            folded: count(d.folded),
+            cleared: count(d.cleared),
+            before: count(d.before),
+            after: count(d.after),
+            error: text(d.error),
+            summary: text(d.summary),
+          },
+        });
+        break;
+      case "wrap_up":
+        trace.items.push({ type: "wrap_up", reason: text(d.reason) });
         break;
       case "step": {
         const n = d.step;

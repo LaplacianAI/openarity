@@ -174,12 +174,66 @@ func (t *transcript) event(f frame, p payload) error {
 	case "tool_unavailable":
 		t.block()
 		t.line(t.paint.warn(t.clip("⚠ " + cli.Line(p.Name) + " unavailable: " + cli.Line(p.Reason))))
+	case "compacted":
+		t.compacted(p)
+	case "wrap_up":
+		t.block()
+		why := "token budget nearly spent"
+		if p.Reason == "time" {
+			why = "time nearly up"
+		}
+		t.line(t.paint.warn(t.clip("⚠ wrapping up · " + why)))
 	case finishedEvent, endEvent:
 	default:
 		t.block()
 		t.line(t.paint.muted(t.clip(strings.TrimSpace(cli.Line(f.event) + " " + cli.Line(f.data)))))
 	}
 	return t.err
+}
+
+// compacted says how much of the run's context was set aside, and with -v the
+// start of the summary that replaced it.
+func (t *transcript) compacted(p payload) {
+	t.block()
+	if p.Error != "" {
+		t.line(t.paint.warn(t.clip("⚠ compaction failed, the request went out whole: " + cli.Line(p.Error))))
+		return
+	}
+	var parts []string
+	if p.Folded > 0 {
+		parts = append(parts, plural(p.Folded, "message")+" folded")
+	}
+	if p.Cleared > 0 {
+		parts = append(parts, plural(p.Cleared, "old result")+" cleared")
+	}
+	line := "↧ compacted · " + strings.Join(parts, ", ") +
+		" (≈" + approxTokens(p.Before) + " → " + approxTokens(p.After) + " tokens)"
+	t.line(t.paint.muted(t.clip(line)))
+	if !t.verbose || p.Summary == "" {
+		return
+	}
+	for i, l := range strings.Split(strings.TrimSpace(p.Summary), "\n") {
+		if i == 3 {
+			t.line(t.paint.muted(t.clip("  …")))
+			break
+		}
+		t.line(t.paint.muted(t.clip("  " + cli.Line(l))))
+	}
+}
+
+func plural(n int, what string) string {
+	if n == 1 {
+		return "1 " + what
+	}
+	return strconv.Itoa(n) + " " + what + "s"
+}
+
+// approxTokens is a token estimate as a person reads one: 101k, 950.
+func approxTokens(n int) string {
+	if n >= 1000 {
+		return strconv.Itoa((n+500)/1000) + "k"
+	}
+	return strconv.Itoa(n)
 }
 
 func (t *transcript) started(p payload) {

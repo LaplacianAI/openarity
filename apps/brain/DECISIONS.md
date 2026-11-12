@@ -4,6 +4,22 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
 
 ## Decisions worth not relitigating
 
+- **A budget has two soft lines before its cap, and they measure different
+  things.** With a tenth of the budget left the run compacts; when one more
+  call would not fit (twice the last call's input plus `max_tokens`) it is
+  asked to wrap up, and its tools refuse. One line at a tenth would stay
+  crossed, so the wrap-up would follow on the next call and compacting would
+  buy nothing. The cap still stops a run, which then keeps its latest summary
+  as its output. A summary call's usage counts against the budget and is
+  skipped by the wrap-up check, because it read the whole context.
+- **Compaction is the SDK's; the brain sets its thresholds and records it.**
+  Past `compaction_messages`, or when the next request would read
+  `min(100k, budget/10)` tokens. The summary is a message in the transcript,
+  marked `compaction`, as Claude Code and opencode keep theirs: the runner
+  splices it back into every save, so the Postgres store's rewrite of the whole
+  transcript keeps it, and a resumed run carries on from it with no model call
+  and no query of its own. The `compacted` event is the trace's, not state.
+
 - **A team is deleted in two steps: marked, then purged.** `teams.deleted_at`
   hides it from every reader but `GetTeam`, frees its name through the partial
   unique index, and is undone by a restore; `internal/purge` erases it once

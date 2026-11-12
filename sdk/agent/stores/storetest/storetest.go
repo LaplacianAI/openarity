@@ -325,6 +325,38 @@ func Run(t *testing.T, open func(t *testing.T) agent.Store) {
 		}
 	})
 
+	t.Run("a compaction's summary comes back as a summary", func(t *testing.T) {
+		store := open(t)
+		summary := &agent.CompactionSummary{
+			Summary: "Goal: the review.", User: []string{"only the brain"},
+			References: []string{"#49"}, Skills: []string{"commit-style"}, Prefix: "abc",
+		}
+		msgs := []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "task"}}},
+			{
+				Role: agent.RoleUser, Compaction: summary,
+				Content: []agent.Content{{Type: agent.ContentText, Text: "This run was compacted."}},
+			},
+		}
+		if err := store.Save(t.Context(), "s1", msgs); err != nil {
+			t.Fatalf("Save() = %v", err)
+		}
+		summary.User[0] = "edited"
+
+		back, err := store.Messages(t.Context(), "s1")
+		if err != nil {
+			t.Fatalf("Messages() = %v", err)
+		}
+		got := back[1].Compaction
+		if got == nil {
+			t.Fatalf("the summary came back as a plain message; a resumed run would summarise again")
+		}
+		if got.Summary != "Goal: the review." || got.Prefix != "abc" || len(got.References) != 1 ||
+			len(got.Skills) != 1 || len(got.User) != 1 || got.User[0] != "only the brain" {
+			t.Errorf("the summary came back as %+v; every field is what the next compaction builds on", got)
+		}
+	})
+
 	t.Run("a read transcript is not the store's slice", func(t *testing.T) {
 		store := open(t)
 		saved := []agent.Message{{

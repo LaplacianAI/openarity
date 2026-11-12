@@ -34,6 +34,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { explainRunError } from "@/lib/run-error";
 import {
   argumentPairs,
+  type Compaction,
   delegateReport,
   type FetchedPage,
   fetchedPage,
@@ -336,7 +337,7 @@ export function RunView({
         </Section>
       ) : null}
 
-      {run.output ? <Answer text={run.output} /> : null}
+      {run.output ? <Answer text={run.output} partial={run.status !== "succeeded"} /> : null}
 
       {error ? (
         <div
@@ -372,12 +373,17 @@ export function RunView({
 /** Longer than this, an answer starts folded so the trace stays in reach. */
 const ANSWER_FOLD = 1500;
 
-function Answer({ text }: { text: string }) {
+function Answer({ text, partial = false }: { text: string; partial?: boolean }) {
   const long = text.length > ANSWER_FOLD;
   const [whole, setWhole] = useState(false);
   const folded = long && !whole;
   return (
-    <Section title="Answer">
+    <Section title={partial ? "What it had when it stopped" : "Answer"}>
+      {partial ? (
+        <p data-partial className="mb-2 text-xs text-muted-foreground">
+          It stopped at a limit before it finished. This is its latest summary, or its last words.
+        </p>
+      ) : null}
       <div
         data-answer
         data-folded={String(folded)}
@@ -594,6 +600,15 @@ function TraceView({
                 {item.reason}
               </Note>
             );
+          case "compacted":
+            return <CompactedNote key={key} compaction={item.compaction} />;
+          case "wrap_up":
+            return (
+              <Note key={key} kind="wrap_up" warn>
+                <span className="font-medium text-foreground">Wrapping up</span>:{" "}
+                {item.reason === "time" ? "time nearly up" : "token budget nearly spent"}
+              </Note>
+            );
           default:
             return (
               <Note key={key} kind={item.event.kind}>
@@ -626,6 +641,46 @@ function RunErrorText({ raw }: { raw: string }) {
         </details>
       ) : null}
     </div>
+  );
+}
+
+/** Tokens as a person reads them: 101k, 950. */
+function approxTokens(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+function plural(n: number, what: string): string {
+  return `${n} ${what}${n === 1 ? "" : "s"}`;
+}
+
+function CompactedNote({ compaction: c }: { compaction: Compaction }) {
+  if (c.error) {
+    return (
+      <Note kind="compacted" warn>
+        <span className="font-medium text-foreground">Compaction failed</span>, the request went out
+        whole: {c.error}
+      </Note>
+    );
+  }
+  const parts = [
+    c.folded > 0 ? `${plural(c.folded, "message")} folded` : "",
+    c.cleared > 0 ? `${plural(c.cleared, "old result")} cleared` : "",
+  ].filter(Boolean);
+  return (
+    <Note kind="compacted">
+      <span className="font-medium text-foreground">Compacted</span>: {parts.join(", ")} (≈
+      {approxTokens(c.before)} → {approxTokens(c.after)} tokens)
+      {c.summary ? (
+        <details className="mt-1">
+          <summary className="cursor-pointer select-none underline-offset-4 hover:underline">
+            Show the summary
+          </summary>
+          <p data-summary className="mt-1 whitespace-pre-wrap break-words text-foreground/80">
+            {c.summary}
+          </p>
+        </details>
+      ) : null}
+    </Note>
   );
 }
 

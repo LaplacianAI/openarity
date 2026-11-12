@@ -29,6 +29,8 @@ type Spec struct {
 	Parser             bool
 	ParserModel        ModelRef
 	Session            Session
+	// Compaction keeps a long run's context small; nil leaves it off.
+	Compaction *Compaction
 }
 
 func System(prompt string) []Content {
