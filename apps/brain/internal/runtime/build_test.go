@@ -21,6 +21,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
+	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
 )
 
 // --- fakes ---
@@ -959,6 +960,37 @@ func TestBuildLeavesOutAnMCPToolNamedGraph(t *testing.T) {
 	want := []Unavailable{{Name: "graph", Reason: `the MCP server "web" offers a tool named graph, which is the brain's own`}}
 	if !reflect.DeepEqual(built.Unavailable, want) {
 		t.Errorf("unavailable = %+v, want %+v", built.Unavailable, want)
+	}
+}
+
+// Every run compacts, so the SDK adds read_output and refuses a second tool
+// with that name: a bare server's read_output would stop the run before its
+// first step. It is left out and said so, as graph is.
+func TestBuildLeavesOutAnMCPToolNamedReadOutput(t *testing.T) {
+	f := newFixture()
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", serve(t, agent.ReadOutputToolName, "search").url, true)}
+
+	built := f.build(t)
+
+	if got := toolNames(built); !slices.Equal(got, []string{"search"}) {
+		t.Errorf("MCP tools = %v, want only search", got)
+	}
+	want := []Unavailable{{Name: "read_output", Reason: `the MCP server "web" offers a tool named read_output, which is the brain's own`}}
+	if !reflect.DeepEqual(built.Unavailable, want) {
+		t.Errorf("unavailable = %+v, want %+v", built.Unavailable, want)
+	}
+
+	runner, err := agent.New(func(agent.Endpoint) (agent.ModelClient, error) {
+		return newScripted(answer("done", 10, 5)), nil
+	}, patterns.ReAct())
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "go"}}}}
+	spec := built.Spec
+	spec.Session = nil // the fixture's session is a stand-in; this run needs none
+	if _, err := runner.Run(t.Context(), spec, task, agent.Endpoint{}, nil); err != nil {
+		t.Fatalf("the run did not start: %v", err)
 	}
 }
 
