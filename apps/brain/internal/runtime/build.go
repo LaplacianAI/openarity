@@ -287,7 +287,8 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 
 func reserved(name string, hub, web bool) bool {
 	switch name {
-	case GraphToolName, DelegateToolName:
+	// Every run compacts, and the SDK refuses a second read_output.
+	case GraphToolName, DelegateToolName, agent.ReadOutputToolName:
 		return true
 	case PlanToolName:
 		return hub
