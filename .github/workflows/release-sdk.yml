@@ -41,9 +41,11 @@ jobs:
           if [ "$(git cat-file -t "$TAG")" != tag ]; then
             echo "::error::$TAG is a lightweight tag; its message is the release notes, so tag with -a"; exit 1
           fi
-          git tag -l --format='%(contents)' "$TAG" > notes.md
+          # The message's first line is the release's title already; the
+          # notes are what follows it.
+          git tag -l --format='%(contents:body)' "$TAG" > notes.md
           if ! grep -q '[^[:space:]]' notes.md; then
-            echo "::error::$TAG has no message to publish as its notes"; exit 1
+            echo "::error::$TAG has no notes below its first line"; exit 1
           fi
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::$TAG points at ${GITHUB_SHA:0:12}, which is not on main"; exit 1
