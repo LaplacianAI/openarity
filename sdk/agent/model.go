@@ -47,9 +47,12 @@ type Stream interface {
 	Close() error
 }
 
+// StreamEvent is a piece of a turn as it arrives: some of the model's
+// reasoning, some of its text, or both, and at the end the whole response.
 type StreamEvent struct {
-	Text  string
-	Final *Response
+	Text      string
+	Reasoning string
+	Final     *Response
 }
 
 type Endpoint struct {

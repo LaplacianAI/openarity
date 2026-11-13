@@ -101,8 +101,8 @@ written outside this module gets the right number without knowing to try, and a
 run that failed half way still reports what it spent.
 
 **`events chan<- Event`** is optional; pass `nil` to ignore it. `TextEvent`,
-`ToolCallEvent`, `ToolResultEvent`, `UsageEvent`, `StepEvent` and `SteerEvent`
-arrive as the run happens.
+`ReasoningEvent`, `ToolCallEvent`, `ToolResultEvent`, `UsageEvent`, `StepEvent`
+and `SteerEvent` arrive as the run happens.
 
 ## Steering a run
 
@@ -339,6 +339,30 @@ bucket — is the caller's, as a tool's credentials are.
 `models/openaicompat` speaks OpenAI chat completions, so it reaches LiteLLM,
 OmniRoute, or a provider directly. Anything satisfying `agent.ModelClient` works
 as well; `ClientFactory` is the seam.
+
+### Reasoning
+
+A model's thinking arrives as `ReasoningEvent`, apart from what it says, which
+arrives as `TextEvent`. Each provider puts it somewhere else, and the client
+reads all of them:
+
+| Field               | Sent by                     |
+| ------------------- | --------------------------- |
+| `reasoning_content` | DeepSeek, Qwen, vLLM        |
+| `reasoning`         | OpenRouter, Ollama          |
+| `reasoning_details` | OpenRouter, signed or encrypted, in parts |
+
+A model that sends none, such as OpenAI's over chat completions, sends no
+`ReasoningEvent`. A pattern's own calls — Plan's checklist, ReWOO's plan,
+Reflection's critique — are reasoning too: the pattern's working, not what the
+agent says.
+
+The turn keeps its reasoning in `Message.Reasoning`, the fields exactly as they
+arrived, and the next call sends them back under the same names. That is not
+optional everywhere: DeepSeek refuses a request with tools whose history leaves
+its reasoning out, and an encrypted block only means anything returned
+untouched. They go back only to the model that wrote them, since another
+provider may refuse a field it does not know.
 
 ## Examples
 

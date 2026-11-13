@@ -23,6 +23,15 @@ import (
 type Turn struct {
 	Text  string
 	Calls []Call
+	// Thought is what the model thinks before it acts, sent the way DeepSeek
+	// and Qwen send it, as reasoning_content.
+	Thought string
+}
+
+// Thinking gives a scripted turn some reasoning ahead of it.
+func (t Turn) Thinking(thought string) Turn {
+	t.Thought = thought
+	return t
 }
 
 // A Call is one tool the scripted turn asks for.
@@ -80,11 +89,25 @@ func Resolve(script ...Turn) (agent.Endpoint, func()) {
 // means something different in each pattern. Every pattern emits exactly one
 // UsageEvent per model call.
 func Report(events <-chan agent.Event) (modelCalls, lastInput int) {
+	thinking := false
 	for e := range events {
+		// Every other event starts its own line; text would run on.
+		if _, more := e.(agent.ReasoningEvent); thinking && !more {
+			if _, text := e.(agent.TextEvent); text {
+				fmt.Print("\n")
+			}
+			thinking = false
+		}
 		switch ev := e.(type) {
 		case agent.StepEvent:
 			fmt.Printf("\n[step %d] ", ev.Step)
 		case agent.TextEvent:
+			fmt.Print(ev.Delta)
+		case agent.ReasoningEvent:
+			if !thinking {
+				fmt.Print("(thinking) ")
+				thinking = true
+			}
 			fmt.Print(ev.Delta)
 		case agent.ToolCallEvent:
 			fmt.Printf("\n  → %s(%s)", ev.Name, ev.Arguments)
@@ -185,11 +208,19 @@ func stub(script []Turn) http.Handler {
 func callID(turn, i int) string { return fmt.Sprintf("call_%d_%d", turn, i+1) }
 
 func turnChunks(t Turn, turn int, spent usage) []string {
+	// Reasoning streams ahead of everything else in a turn, in pieces.
+	var thinking []string
+	if t.Thought != "" {
+		for _, part := range split(t.Thought, 3) {
+			thinking = append(thinking, chunk(delta{Role: "assistant", ReasoningContent: part}, "", nil))
+		}
+	}
+
 	if len(t.Calls) == 0 {
-		return []string{
+		return append(thinking,
 			chunk(delta{Role: "assistant", Content: t.Text}, "", nil),
 			chunk(delta{}, "stop", &spent),
-		}
+		)
 	}
 
 	opening := delta{Role: "assistant"}
@@ -199,7 +230,8 @@ func turnChunks(t Turn, turn int, spent usage) []string {
 			Function: function{Name: c.Name},
 		})
 	}
-	out := []string{chunk(opening, "", nil)}
+	out := thinking
+	out = append(out, chunk(opening, "", nil))
 
 	// Arguments arrive in fragments, which is the case the accumulator exists
 	// for: nothing is dispatchable until the last one lands. Splitting them
@@ -248,9 +280,10 @@ type (
 	}
 
 	delta struct {
-		Role      string     `json:"role,omitempty"`
-		Content   string     `json:"content,omitempty"`
-		ToolCalls []toolCall `json:"tool_calls,omitempty"`
+		Role             string     `json:"role,omitempty"`
+		Content          string     `json:"content,omitempty"`
+		ReasoningContent string     `json:"reasoning_content,omitempty"`
+		ToolCalls        []toolCall `json:"tool_calls,omitempty"`
 	}
 
 	toolCall struct {
@@ -300,14 +333,14 @@ func chunk(d delta, finish string, spent *usage) string {
 // differs from a chunk in exactly one place — "message" rather than "delta" —
 // which is why it reuses the same types.
 func completion(t Turn, turn int, spent usage) string {
-	m := delta{Role: "assistant", Content: t.Text}
+	m := delta{Role: "assistant", Content: t.Text, ReasoningContent: t.Thought}
 	finish := "stop"
 
 	if len(t.Calls) > 0 {
 		// Whole, not fragmented: a non-streaming response has no chunks to
 		// split across, and arriving in one piece is the difference the
 		// streaming path exists to handle.
-		m = delta{Role: "assistant"}
+		m = delta{Role: "assistant", ReasoningContent: t.Thought}
 		for i, c := range t.Calls {
 			m.ToolCalls = append(m.ToolCalls, toolCall{
 				Index: i, ID: callID(turn, i), Type: "function",

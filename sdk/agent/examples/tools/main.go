@@ -38,7 +38,7 @@ func attempt() error {
 	defer stop()
 
 	endpoint, shutdown := gateway.Resolve(
-		gateway.ToolCall("count_issues", `{"repo":"openarity"}`),
+		gateway.ToolCall("count_issues", `{"repo":"openarity"}`).Thinking("The tracker knows; I should ask it."),
 		gateway.Answer("openarity has 3 open issues."),
 	)
 	defer shutdown()

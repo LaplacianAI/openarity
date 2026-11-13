@@ -49,7 +49,7 @@ func (c *Client) Complete(ctx context.Context, req agent.Request) (agent.Respons
 		return agent.Response{}, modelError(err)
 	}
 
-	return fromCompletion(*completion)
+	return fromCompletion(*completion, req.Model.Name)
 }
 
 func (c *Client) Stream(ctx context.Context, req agent.Request) (agent.Stream, error) {
@@ -64,7 +64,7 @@ func (c *Client) Stream(ctx context.Context, req agent.Request) (agent.Stream, e
 		IncludeUsage: openai.Bool(true),
 	}
 
-	return &stream{raw: c.oai.Chat.Completions.NewStreaming(ctx, params)}, nil
+	return &stream{raw: c.oai.Chat.Completions.NewStreaming(ctx, params), model: req.Model.Name}, nil
 }
 
 // stream turns chunks into text deltas and one final response.
@@ -82,10 +82,14 @@ type stream struct {
 	// changes mid-stream, and a gateway that renumbers — some do, between the
 	// content and the trailing usage chunk — would otherwise hand back an
 	// empty answer, no tokens, and no sign anything went wrong.
-	text   strings.Builder
-	usage  agent.Usage
-	finish string
-	calls  []fragment
+	text     strings.Builder
+	thoughts thoughts
+	usage    agent.Usage
+	finish   string
+	calls    []fragment
+
+	// model is the one asked, which the turn's reasoning is kept against.
+	model string
 
 	cur  agent.StreamEvent
 	err  error
@@ -100,13 +104,17 @@ func (s *stream) Next() bool {
 	for s.raw.Next() {
 		chunk := s.raw.Current()
 		s.acc.AddChunk(chunk)
-		s.observe(chunk)
+		reasoning := s.observe(chunk)
 
 		// Chunks carrying only tool-call fragments or usage produce no delta.
 		// Skipping them rather than emitting empty events keeps a consumer from
 		// having to filter.
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-			s.cur = agent.StreamEvent{Text: chunk.Choices[0].Delta.Content}
+		var text string
+		if len(chunk.Choices) > 0 {
+			text = chunk.Choices[0].Delta.Content
+		}
+		if text != "" || reasoning != "" {
+			s.cur = agent.StreamEvent{Text: text, Reasoning: reasoning}
 			return true
 		}
 	}
@@ -120,7 +128,7 @@ func (s *stream) Next() bool {
 	// matters only if the chunks had nothing either; when they carried an
 	// answer, that answer is what the caller is owed, and repair rebuilds it
 	// from the zero response fromCompletion returned.
-	final, err := fromCompletion(s.acc.ChatCompletion)
+	final, err := fromCompletion(s.acc.ChatCompletion, s.model)
 	if err != nil && s.text.Len() == 0 && s.finish == "" {
 		s.err = err
 		return false
@@ -142,13 +150,15 @@ func (s *stream) Next() bool {
 }
 
 // observe records what each chunk carried, so nothing depends on the
-// accumulator still holding it at the end.
-func (s *stream) observe(chunk openai.ChatCompletionChunk) {
+// accumulator still holding it at the end, and returns the reasoning it can
+// show. The accumulator keeps no reasoning at all: it is in no field openai-go
+// declares.
+func (s *stream) observe(chunk openai.ChatCompletionChunk) string {
 	if u := usageOf(chunk.Usage); u != (agent.Usage{}) {
 		s.usage = u
 	}
 	if len(chunk.Choices) == 0 {
-		return
+		return ""
 	}
 
 	choice := chunk.Choices[0]
@@ -157,6 +167,8 @@ func (s *stream) observe(chunk openai.ChatCompletionChunk) {
 	if choice.FinishReason != "" {
 		s.finish = choice.FinishReason
 	}
+	extras := choice.Delta.JSON.ExtraFields
+	return s.thoughts.add(extra(extras, fieldContent), extra(extras, fieldPlain), extra(extras, fieldDetails))
 }
 
 // A fragment is one tool call being assembled from the pieces it arrives in.
@@ -216,6 +228,9 @@ func (s *stream) repair(final *agent.Response) {
 	if s.text.Len() > 0 {
 		final.Message.Content = []agent.Content{{Type: agent.ContentText, Text: s.text.String()}}
 	}
+	if r := s.thoughts.reasoning(s.model); r != nil {
+		final.Message.Reasoning = r
+	}
 	if s.usage != (agent.Usage{}) {
 		final.Usage = s.usage
 	}
@@ -262,7 +277,7 @@ func toParams(req agent.Request) (openai.ChatCompletionNewParams, error) {
 	}
 
 	for i, m := range req.Messages {
-		converted, err := toMessage(m)
+		converted, err := toMessage(m, req.Model.Name)
 		if err != nil {
 			return params, fmt.Errorf("message %d: %w", i, err)
 		}
@@ -312,7 +327,9 @@ func markCacheable(part *openai.ChatCompletionContentPartTextParam) {
 	})
 }
 
-func toMessage(m agent.Message) (openai.ChatCompletionMessageParamUnion, error) {
+// toMessage converts one message for the named model, which decides whether
+// an assistant turn's reasoning goes with it.
+func toMessage(m agent.Message, model string) (openai.ChatCompletionMessageParamUnion, error) {
 	switch m.Role {
 	case agent.RoleSystem:
 		parts, err := textParts(m.Content)
@@ -336,7 +353,7 @@ func toMessage(m agent.Message) (openai.ChatCompletionMessageParamUnion, error) 
 		return openai.ToolMessage(parts, m.ToolCallID), nil
 
 	case agent.RoleAssistant:
-		return toAssistant(m)
+		return toAssistant(m, model)
 
 	default:
 		return openai.ChatCompletionMessageParamUnion{}, fmt.Errorf("unknown role %q", m.Role)
@@ -345,9 +362,13 @@ func toMessage(m agent.Message) (openai.ChatCompletionMessageParamUnion, error) 
 
 // toAssistant rebuilds a turn the model produced, tool calls included. Replaying
 // them matters: a tool result whose call is missing from the history is rejected
-// by the provider rather than ignored.
-func toAssistant(m agent.Message) (openai.ChatCompletionMessageParamUnion, error) {
+// by the provider rather than ignored. So does its reasoning, to the model
+// that wrote it: DeepSeek refuses a request with tools that leaves it out.
+func toAssistant(m agent.Message, model string) (openai.ChatCompletionMessageParamUnion, error) {
 	msg := openai.ChatCompletionAssistantMessageParam{}
+	if extras := toExtras(m.Reasoning, model); extras != nil {
+		msg.SetExtraFields(extras)
+	}
 
 	if text := m.Text(); text != "" {
 		msg.Content.OfString = openai.String(text)
@@ -446,7 +467,7 @@ func toTools(tools []agent.Tool) ([]openai.ChatCompletionToolUnionParam, error) 
 	return out, nil
 }
 
-func fromCompletion(c openai.ChatCompletion) (agent.Response, error) {
+func fromCompletion(c openai.ChatCompletion, model string) (agent.Response, error) {
 	if len(c.Choices) == 0 {
 		return agent.Response{}, fmt.Errorf("the response carried no choices")
 	}
@@ -456,6 +477,10 @@ func fromCompletion(c openai.ChatCompletion) (agent.Response, error) {
 	if choice.Message.Content != "" {
 		msg.Content = []agent.Content{{Type: agent.ContentText, Text: choice.Message.Content}}
 	}
+	var t thoughts
+	extras := choice.Message.JSON.ExtraFields
+	t.add(extra(extras, fieldContent), extra(extras, fieldPlain), extra(extras, fieldDetails))
+	msg.Reasoning = t.reasoning(model)
 
 	for _, call := range choice.Message.ToolCalls {
 		msg.ToolCalls = append(msg.ToolCalls, agent.ToolCall{

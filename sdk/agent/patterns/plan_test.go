@@ -333,8 +333,9 @@ func TestPlanStreamingStreamsThePlanToo(t *testing.T) {
 	go func() {
 		defer close(done)
 		for e := range events {
-			if txt, ok := e.(agent.TextEvent); ok {
-				deltas = append(deltas, txt.Delta)
+			// The plan is the loop's working, so it streams as reasoning.
+			if r, ok := e.(agent.ReasoningEvent); ok {
+				deltas = append(deltas, r.Delta)
 			}
 		}
 	}()

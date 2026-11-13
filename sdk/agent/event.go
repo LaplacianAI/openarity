@@ -9,6 +9,11 @@ type Event interface{ event() }
 
 type TextEvent struct{ Delta string }
 
+// ReasoningEvent is thinking rather than talking: the model's own reasoning,
+// when its provider sends it, and the text of the calls a pattern makes for
+// itself, such as a plan or a critique.
+type ReasoningEvent struct{ Delta string }
+
 type ToolCallEvent struct {
 	ID        string
 	Name      string
@@ -35,6 +40,7 @@ type UsageEvent struct {
 type StepEvent struct{ Step int }
 
 func (TextEvent) event()       {}
+func (ReasoningEvent) event()  {}
 func (ToolCallEvent) event()   {}
 func (ToolResultEvent) event() {}
 func (UsageEvent) event()      {}

@@ -38,6 +38,10 @@ type fakeModel struct {
 type turn struct {
 	resp agent.Response
 	err  error
+
+	// thinking and saying, when set, are the reasoning and text this turn
+	// streams, in place of the fake's deltas.
+	thinking, saying []string
 }
 
 func (m *fakeModel) Complete(_ context.Context, req agent.Request) (agent.Response, error) {
@@ -63,8 +67,15 @@ func (m *fakeModel) Stream(_ context.Context, req agent.Request) (agent.Stream, 
 		return nil, t.err
 	}
 
-	events := make([]agent.StreamEvent, 0, len(m.deltas)+1)
-	for _, d := range m.deltas {
+	deltas := m.deltas
+	if t.saying != nil || t.thinking != nil {
+		deltas = t.saying
+	}
+	events := make([]agent.StreamEvent, 0, len(t.thinking)+len(deltas)+1)
+	for _, r := range t.thinking {
+		events = append(events, agent.StreamEvent{Reasoning: r})
+	}
+	for _, d := range deltas {
 		events = append(events, agent.StreamEvent{Text: d})
 	}
 	if !m.noFinal {

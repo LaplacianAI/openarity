@@ -90,7 +90,7 @@ func (l rewoo) plan(ctx context.Context, in agent.Input) ([]step, agent.ToolCall
 	ask.Spec.System = append(slices.Clone(in.Spec.System), catalogue(in.Spec.Tools, in.Spec.MaxSteps))
 	ask.Spec.Tools = []agent.Tool{planTool(in.Spec.Tools)}
 
-	resp, err := (rewoo{}).call(ctx, ask, in.Messages)
+	resp, err := react{aside: true}.call(ctx, ask, in.Messages)
 	if err != nil {
 		return nil, agent.ToolCall{}, resp, fmt.Errorf("planning: %w", err)
 	}

@@ -38,7 +38,7 @@ func (l plan) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 	ask.Spec.System = append(slices.Clone(in.Spec.System), planning)
 	ask.Spec.Tools = nil
 
-	resp, err := react{stream: l.stream}.call(ctx, ask, in.Messages)
+	resp, err := react{stream: l.stream, aside: true}.call(ctx, ask, in.Messages)
 	if err != nil {
 		return agent.Result{}, fmt.Errorf("planning: %w", err)
 	}
