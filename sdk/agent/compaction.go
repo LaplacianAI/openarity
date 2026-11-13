@@ -702,7 +702,7 @@ func size(n int) string {
 func tokensOf(msgs []Message) int {
 	n := 0
 	for _, m := range msgs {
-		n += len(m.Text())
+		n += len(m.Text()) + m.Reasoning.Size()
 		for _, call := range m.ToolCalls {
 			n += len(call.Name) + len(call.Arguments)
 		}

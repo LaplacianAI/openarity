@@ -8,6 +8,7 @@
 package storetest
 
 import (
+	"encoding/json"
 	"slices"
 	"sync"
 	"testing"
@@ -323,6 +324,36 @@ func Run(t *testing.T, open func(t *testing.T) agent.Store) {
 		}
 		if got := string(back[0].ToolCalls[0].Arguments); got != `{"query":"vault"}` {
 			t.Errorf("the stored arguments are %s after the caller edited theirs", got)
+		}
+	})
+
+	t.Run("a turn's reasoning comes back as the provider sent it", func(t *testing.T) {
+		store := open(t)
+		details := []byte(`[{"type":"reasoning.encrypted","data":"gAAA"}]`)
+		msgs := []agent.Message{{
+			Role: agent.RoleAssistant, Content: []agent.Content{{Type: agent.ContentText, Text: "done"}},
+			Reasoning: &agent.Reasoning{
+				Text: "Read the logs.", Model: "probe",
+				Fields: map[string]json.RawMessage{"reasoning_details": details},
+			},
+		}}
+		if err := store.Save(t.Context(), "s1", msgs); err != nil {
+			t.Fatalf("Save() = %v", err)
+		}
+		details[2] = 'X'
+		msgs[0].Reasoning.Fields["reasoning_content"] = json.RawMessage(`"forged"`)
+
+		back, err := store.Messages(t.Context(), "s1")
+		if err != nil {
+			t.Fatalf("Messages() = %v", err)
+		}
+		got := back[0].Reasoning
+		if got == nil || got.Text != "Read the logs." || got.Model != "probe" || len(got.Fields) != 1 {
+			t.Fatalf("the reasoning came back as %+v; a provider that needs it back refuses the next call", got)
+		}
+		if string(got.Fields["reasoning_details"]) != `[{"type":"reasoning.encrypted","data":"gAAA"}]` {
+			t.Errorf("the reasoning's fields are %s after the caller edited theirs; an encrypted block\n"+
+				"means nothing changed by a byte", got.Fields["reasoning_details"])
 		}
 	})
 

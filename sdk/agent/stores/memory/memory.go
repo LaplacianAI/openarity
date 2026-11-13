@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sync"
@@ -88,6 +89,15 @@ func clone(msgs []agent.Message) []agent.Message {
 			summary.References = slices.Clone(summary.References)
 			summary.Skills = slices.Clone(summary.Skills)
 			out[i].Compaction = &summary
+		}
+
+		if m.Reasoning != nil {
+			r := *m.Reasoning
+			r.Fields = make(map[string]json.RawMessage, len(m.Reasoning.Fields))
+			for k, v := range m.Reasoning.Fields {
+				r.Fields[k] = slices.Clone(v)
+			}
+			out[i].Reasoning = &r
 		}
 	}
 	return out

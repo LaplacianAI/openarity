@@ -15,7 +15,9 @@ func ReAct() agent.Pattern { return react{} }
 
 func ReActStreaming() agent.Pattern { return react{stream: true} }
 
-type react struct{ stream bool }
+// aside marks a call a pattern makes for itself, a plan or a critique: what
+// the model writes there is reasoning, not said to the person waiting.
+type react struct{ stream, aside bool }
 
 func (react) Name() agent.PatternName { return agent.PatternReAct }
 
@@ -97,9 +99,10 @@ func (l react) call(ctx context.Context, in agent.Input, msgs []agent.Message) (
 		if err != nil {
 			return agent.Response{}, err
 		}
-		if text := resp.Message.Text(); text != "" {
-			in.Emit(ctx, agent.TextEvent{Delta: text})
+		if r := resp.Message.Reasoning; r != nil && r.Text != "" {
+			in.Emit(ctx, agent.ReasoningEvent{Delta: r.Text})
 		}
+		l.say(ctx, in, resp.Message.Text())
 		return resp, nil
 	}
 
@@ -112,9 +115,10 @@ func (l react) call(ctx context.Context, in agent.Input, msgs []agent.Message) (
 	var final *agent.Response
 	for s.Next() {
 		ev := s.Event()
-		if ev.Text != "" {
-			in.Emit(ctx, agent.TextEvent{Delta: ev.Text})
+		if ev.Reasoning != "" {
+			in.Emit(ctx, agent.ReasoningEvent{Delta: ev.Reasoning})
 		}
+		l.say(ctx, in, ev.Text)
 		if ev.Final != nil {
 			final = ev.Final
 		}
@@ -126,6 +130,17 @@ func (l react) call(ctx context.Context, in agent.Input, msgs []agent.Message) (
 		return agent.Response{}, agent.ErrIncompleteStream
 	}
 	return *final, nil
+}
+
+// say emits what the model wrote: as text, or as reasoning in a call aside.
+func (l react) say(ctx context.Context, in agent.Input, text string) {
+	switch {
+	case text == "":
+	case l.aside:
+		in.Emit(ctx, agent.ReasoningEvent{Delta: text})
+	default:
+		in.Emit(ctx, agent.TextEvent{Delta: text})
+	}
 }
 
 func invoke(ctx context.Context, byName map[string]agent.Tool, call agent.ToolCall) (out, failure string) {

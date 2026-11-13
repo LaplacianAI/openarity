@@ -659,3 +659,14 @@ func (p *callingPattern) Run(ctx context.Context, in Input) (Result, error) {
 	}
 	return Result{Output: resp.Message.Text(), Messages: append(msgs, resp.Message), Steps: 1}, nil
 }
+
+// Reasoning a turn sends back is input the model reads, so it counts towards
+// when a run compacts.
+func TestReasoningSentBackIsCounted(t *testing.T) {
+	t.Parallel()
+
+	r := &Reasoning{Fields: map[string]json.RawMessage{"reasoning_details": json.RawMessage(strings.Repeat("x", 400))}}
+	if got, want := tokensOf([]Message{{Role: RoleAssistant, Reasoning: r}}), 400/charsPerToken; got != want {
+		t.Errorf("counted %d tokens, want %d", got, want)
+	}
+}

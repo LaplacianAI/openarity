@@ -101,7 +101,7 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 	ask.Spec.System = append(slices.Clone(in.Spec.System), reflecting)
 	ask.Spec.Tools = []agent.Tool{critiqueTool()}
 
-	resp, err := (reflection{}).call(ctx, ask, msgs)
+	resp, err := react{aside: true}.call(ctx, ask, msgs)
 	if err != nil {
 		return critique{}, err
 	}
