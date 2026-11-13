@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/LaplacianAI/openarity/sdk/stream/schema.json",
+  "title": "sdk/stream events",
+  "description": "The data of each server-sent event, by its event field. Every object also has the envelope's fields; the frame's id is its sequence number.",
+  "$defs": {
+    "envelope": {
+      "type": "object",
+      "properties": {
+        "at": { "type": "string", "format": "date-time" },
+        "run_id": { "type": "string", "description": "Absent on a message, which belongs to no run." }
+      }
+    },
+    "part": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "description": "text; a type a reader does not know is kept with its type." },
+        "text": { "type": "string" }
+      }
+    },
+    "message": {
+      "type": "object",
+      "required": ["id", "parts"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "parts": { "type": "array", "items": { "$ref": "#/$defs/part" } },
+        "state": { "type": "string", "enum": ["pending"], "description": "Absent on a message that asks for no answer." }
+      }
+    },
+    "message_consumed": {
+      "type": "object",
+      "required": ["message_ids"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "message_ids": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "run_started": {
+      "type": "object",
+      "required": ["agent"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "parent_run_id": { "type": "string" },
+        "agent": { "type": "string" }
+      }
+    },
+    "step_started": {
+      "type": "object",
+      "required": ["step"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "step": { "type": "integer" }
+      }
+    },
+    "text_message_chunk": {
+      "type": "object",
+      "required": ["delta"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "delta": { "type": "string" },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "tool_call_chunk": {
+      "type": "object",
+      "required": ["tool_call_id", "name", "arguments"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "tool_call_id": { "type": "string" },
+        "name": { "type": "string" },
+        "arguments": { "type": "string", "description": "The call's arguments as JSON text." },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "tool_call_result": {
+      "type": "object",
+      "required": ["tool_call_id", "name", "content", "duration_ms"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "tool_call_id": { "type": "string" },
+        "name": { "type": "string" },
+        "content": { "type": "string" },
+        "error": { "type": "string" },
+        "truncated": { "type": "boolean" },
+        "duration_ms": { "type": "integer" }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "required": ["model", "input_tokens", "output_tokens", "cached_input_tokens"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "model": { "type": "string" },
+        "input_tokens": { "type": "integer" },
+        "output_tokens": { "type": "integer" },
+        "cached_input_tokens": { "type": "integer" }
+      }
+    },
+    "compacted": {
+      "type": "object",
+      "required": ["reason", "cleared", "folded", "before", "after"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "reason": { "type": "string" },
+        "cleared": { "type": "integer" },
+        "folded": { "type": "integer" },
+        "before": { "type": "integer" },
+        "after": { "type": "integer" },
+        "summary": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    },
+    "run_finished": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "status": { "type": "string", "enum": ["succeeded", "failed", "cancelled"] },
+        "output": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    },
+    "custom": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "name": { "type": "string" },
+        "value": {}
+      }
+    }
+  }
+}

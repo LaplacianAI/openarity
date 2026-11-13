@@ -4,4 +4,5 @@ use (
 	./apps/brain
 	./apps/cli
 	./sdk/agent
+	./sdk/stream
 )

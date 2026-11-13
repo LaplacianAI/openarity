@@ -337,6 +337,20 @@ Runnable programs are in [`sdk/agent/examples/`](sdk/agent/examples/) — they
 run against a stub gateway with no credentials, or against a real one if you
 set `OPENARITY_MODELS_BASE_URL`.
 
+## Using the stream library
+
+`sdk/stream` is a conversation as a stream of events, served as server-sent
+events, each with a sequence number so a client that loses its connection picks
+up after the last one it saw. Its event names follow AG-UI's. It is a separate
+module too, and its core links only the standard library:
+
+```sh
+go get github.com/LaplacianAI/openarity/sdk/stream
+```
+
+`agentstream` pipes an `sdk/agent` run into it. See
+[`sdk/stream/README.md`](sdk/stream/README.md).
+
 ## The CLI
 
 `oa` talks to a brain over the same HTTP API. Against a development brain it
