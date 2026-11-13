@@ -24,12 +24,13 @@ func (q *Queries) CountRunProposals(ctx context.Context, runID uuid.UUID) (int64
 }
 
 const createBuilderRun = `-- name: CreateBuilderRun :one
-INSERT INTO runs (id, team_id, session_id, root_run_id, agent_name, user_id, input, builder)
+INSERT INTO runs (id, team_id, session_id, root_run_id, agent_name, user_id, input, builder, transcript)
 SELECT $1::uuid, t.id, $2::uuid, $1::uuid,
-       'builder', $3::uuid, $4::text, true
+       'builder', $3::uuid, $4::text, true,
+       'session:' || $2::uuid::text
 FROM teams t
 WHERE t.id = $5::uuid
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from
 `
 
 type CreateBuilderRunParams struct {
@@ -77,6 +78,8 @@ func (q *Queries) CreateBuilderRun(ctx context.Context, arg CreateBuilderRunPara
 		&i.MessageID,
 		&i.ReplyToChannel,
 		&i.Builder,
+		&i.Transcript,
+		&i.TranscriptFrom,
 	)
 	return i, err
 }
@@ -165,47 +168,6 @@ func (q *Queries) GetProposalVisible(ctx context.Context, arg GetProposalVisible
 		&i.AppliedAt,
 	)
 	return i, err
-}
-
-const listBuilderTurns = `-- name: ListBuilderTurns :many
-SELECT input, output FROM runs
-WHERE session_id = $1 AND builder AND parent_run_id IS NULL
-  AND status = 'succeeded' AND created_at < $2
-ORDER BY created_at DESC
-LIMIT $3::int
-`
-
-type ListBuilderTurnsParams struct {
-	SessionID uuid.UUID
-	Before    time.Time
-	Turns     int32
-}
-
-type ListBuilderTurnsRow struct {
-	Input  string
-	Output *string
-}
-
-// A builder run's earlier turns in its session: what was asked and what it
-// answered, newest first.
-func (q *Queries) ListBuilderTurns(ctx context.Context, arg ListBuilderTurnsParams) ([]ListBuilderTurnsRow, error) {
-	rows, err := q.db.Query(ctx, listBuilderTurns, arg.SessionID, arg.Before, arg.Turns)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListBuilderTurnsRow
-	for rows.Next() {
-		var i ListBuilderTurnsRow
-		if err := rows.Scan(&i.Input, &i.Output); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const listProposalsVisible = `-- name: ListProposalsVisible :many

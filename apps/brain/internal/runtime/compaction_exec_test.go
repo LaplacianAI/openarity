@@ -22,9 +22,7 @@ func (f *execFixture) longTranscript(t *testing.T) {
 			agent.Message{Role: agent.RoleAssistant, ToolCalls: []agent.ToolCall{{ID: id, Name: GraphToolName, Arguments: []byte(`{"query":"bugs"}`)}}},
 			agent.Message{Role: agent.RoleTool, ToolCallID: id, Content: []agent.Content{{Type: agent.ContentText, Text: "no matches"}}})
 	}
-	if err := f.sessions.Save(t.Context(), f.run.String(), msgs); err != nil {
-		t.Fatalf("seed transcript: %v", err)
-	}
+	f.resumes(t, msgs)
 	if _, err := f.store.UpsertTeamSettings(t.Context(), db.UpsertTeamSettingsParams{
 		TeamID: f.team, SearchProvider: "none", CompactionMessages: 10,
 	}); err != nil {
@@ -66,7 +64,7 @@ func TestALongRunCompactsAndRecordsWhatItLeft(t *testing.T) {
 		t.Fatalf("compacted = %+v; want the reason, what was folded, and the summary", p)
 	}
 	// The transcript keeps the summary, so a resume carries on from it.
-	saved, err := f.sessions.Messages(t.Context(), f.run.String())
+	saved, err := f.sessions.Messages(t.Context(), transcriptOf(f.row(t)))
 	if err != nil {
 		t.Fatal(err)
 	}

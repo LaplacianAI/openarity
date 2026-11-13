@@ -34,7 +34,7 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 		return outcome{unanswered: "the sender's member may not start runs"}, nil
 	}
 
-	active, err := q.ActiveChannelRun(ctx, s.ID)
+	active, err := q.ActiveSessionRun(ctx, s.ID)
 	switch {
 	case err == nil:
 		if err := q.AddSteer(ctx, db.AddSteerParams{RunID: active, Text: steer(m)}); err != nil {

@@ -27,6 +27,11 @@ const (
 // authorized. It answers as a team that does not exist.
 var ErrTeamDeleted = errors.New("team is deleted")
 
+// ErrChannelSession is StartRun refusing a session a channel owns: its runs
+// answer the chat, and a run from elsewhere would take the chat's messages
+// as steers and answer them where the chat never sees.
+var ErrChannelSession = errors.New("the session belongs to a channel")
+
 type StartArgs struct {
 	ID        uuid.UUID
 	TeamID    uuid.UUID
@@ -48,6 +53,9 @@ type Store interface {
 	ListRunsByTeam(ctx context.Context, arg db.ListRunsByTeamParams) ([]db.Run, error)
 	ListRunDelegates(ctx context.Context, runIDs []uuid.UUID) ([]db.ListRunDelegatesRow, error)
 	ListRunReplies(ctx context.Context, runIDs []uuid.UUID) ([]db.ListRunRepliesRow, error)
+	// StartRun creates the run, or, when a run is already working in the
+	// session, hands it the input as a steer and returns that run: a run whose
+	// id is not arg.ID is one the input went to.
 	StartRun(ctx context.Context, arg StartArgs) (db.Run, error)
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 }
@@ -148,6 +156,10 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such team", http.StatusNotFound)
 		return
 	}
+	if errors.Is(err, ErrChannelSession) {
+		http.Error(w, "this session belongs to a channel; send the message there", http.StatusConflict)
+		return
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		if args.Hub || args.Builder {
 			http.Error(w, "no such team", http.StatusNotFound)
@@ -161,6 +173,11 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if row.ID != args.ID {
+		// A run was already working in the session: the input is its steer.
+		api.WriteJSON(w, h.logger, http.StatusOK, view(row, nil, nil))
+		return
+	}
 	if err := h.starter.Enqueue(r.Context(), row.ID); err != nil {
 		h.logger.WarnContext(r.Context(), "Enqueuing a run failed; the sweep will start it",
 			"run_id", row.ID, "error", err)

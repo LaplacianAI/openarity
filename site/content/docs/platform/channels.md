@@ -202,6 +202,24 @@ A message that arrives after the run has made its last request to the model is
 too late for it. It starts a follow-up run when the first finishes, so it gets
 an answer of its own. Each reply quotes the newest message its own run read.
 
+### A conversation remembers
+
+A conversation is one transcript. Each run in it carries on from where the last
+one stopped: the questions, the answers, and what the tools returned, so a
+follow-up such as "what did that page say about Windows?" reads the page the
+last run fetched rather than fetching it again. As the transcript grows it is
+compacted: older turns are folded into a summary, and recent ones are kept
+word for word.
+
+In a group, most messages are not addressed to the bot and start no run. The
+next run is shown those that came since the last one finished, at most 20 of
+them and 8 KiB, before the message that asked it.
+
+Each chat is its own conversation: a direct message with the bot, a group, and
+each topic of a group that has topics. A run started from the dashboard or
+`oa runs start` cannot join a channel's conversation; its answer would never
+reach the chat.
+
 ## Replies
 
 When a run started from a channel finishes, its answer is written to an outbox

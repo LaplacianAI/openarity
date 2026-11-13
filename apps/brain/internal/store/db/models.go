@@ -276,6 +276,8 @@ type Run struct {
 	MessageID         *uuid.UUID
 	ReplyToChannel    bool
 	Builder           bool
+	Transcript        *string
+	TranscriptFrom    *int32
 }
 
 type RunEvent struct {

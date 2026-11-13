@@ -2148,6 +2148,15 @@ paths:
         by the caller. A named session must be one the caller can read: a
         `group` or `thread` session of this team, their own `direct` one, or
         any with `session:read_all`.
+
+        A session is one conversation with one transcript: each run in it
+        continues what the runs before it did, their tool calls and results
+        included, compacted as it grows. So one run works in a session at a
+        time. When one is already working there, the input is handed to it as
+        a message, as a person's in a chat is, and the answer is that run,
+        with 200 rather than 202. A message that arrives after its last model
+        call starts the next run when it finishes. A session that belongs to
+        a channel takes runs only from its channel.
       requestBody:
         required: true
         content:
@@ -2157,6 +2166,14 @@ paths:
       responses:
         "202":
           description: Queued, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "200":
+          description: |
+            A run was already working in the session, and the input went to
+            it. This is that run; nothing new was queued.
           content:
             application/json:
               schema:
@@ -2188,13 +2205,15 @@ paths:
         "409":
           description: |
             The run names no agent, the team chose no hub, and its settings
-            have no model for the built-in orchestrator. Nothing is written.
+            have no model for the built-in orchestrator; or the session belongs
+            to a channel, whose runs come from its chat. Nothing is written.
           content:
             text/plain:
               schema:
                 type: string
                 examples:
                   - "the team has no model set, so its orchestrator cannot run; set one in the team's settings"
+                  - "this session belongs to a channel; send the message there"
 
   /teams/{id}/runs/{runID}:
     parameters:

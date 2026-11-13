@@ -19,6 +19,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   splices it back into every save, so the Postgres store's rewrite of the whole
   transcript keeps it, and a resumed run carries on from it with no model call
   and no query of its own. The `compacted` event is the trace's, not state.
+- **A session is one conversation with one transcript.** Every top-level run
+  in a session continues the same transcript (`runs.transcript`,
+  `session:<id>`), so a follow-up sees what the last run read and did, as
+  Claude Code and OpenCode carry a conversation; compaction keeps it bounded.
+  A delegate keeps its own. A session has one writer, so one top-level run
+  works in it at a time: a message to a busy session is a steer into that
+  run, from a chat or from `POST /runs` (200 with that run), and one that
+  arrives after its last model call starts the next run when it finishes, of
+  the same kind. A channel's session takes runs only from its chat, so every
+  answer reaches it. A run writes its place, `transcript_from`, before its
+  first message, so a crash between the two writes it once. A channel's run
+  is told, as text, only what was said since the last run: a group's
+  chatter, which reached no run.
 
 - **A team is deleted in two steps: marked, then purged.** `teams.deleted_at`
   hides it from every reader but `GetTeam`, frees its name through the partial

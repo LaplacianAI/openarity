@@ -11,23 +11,23 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
-func said(kind, text string, author *string) db.ListSessionTurnsRow {
-	return db.ListSessionTurnsRow{Kind: kind, Text: text, At: time.Now(), Author: author}
+func said(text string, author *string) db.ListMessagesSinceLastRunRow {
+	return db.ListMessagesSinceLastRunRow{Text: text, At: time.Now(), Author: author}
 }
 
-// The turns arrive newest first; the model reads them oldest first, each
-// with who said it, and the new message after them.
+// What was said arrives newest first; the model reads it oldest first, each
+// with who said it, and the new message after it. The earlier answers are in
+// the transcript the run continues, not here.
 func TestHistoryIsOldestFirstWithWhoSaidIt(t *testing.T) {
 	t.Parallel()
 
 	asha := "asha@example.com"
-	got := withHistory([]db.ListSessionTurnsRow{
-		said("message", "and now?", &asha),
-		said("reply", "Not yet.", nil),
-		said("message", "is the export done?", nil),
+	got := withHistory([]db.ListMessagesSinceLastRunRow{
+		said("and now?", &asha),
+		said("is the export done?", nil),
 	}, "it was the nightly one")
 
-	want := "someone: is the export done?\nyou: Not yet.\nasha@example.com: and now?\n\nThe new message:\n\nit was the nightly one"
+	want := "someone: is the export done?\nasha@example.com: and now?\n\nThe new message:\n\nit was the nightly one"
 	if !strings.HasSuffix(got, want) {
 		t.Errorf("history = %q, want it to end %q", got, want)
 	}
@@ -51,10 +51,10 @@ func TestHistoryKeepsTheNewestWhenItIsTooLong(t *testing.T) {
 	t.Parallel()
 
 	long := strings.Repeat("x", historyBytes/2)
-	got := withHistory([]db.ListSessionTurnsRow{
-		said("message", "NEWEST-TURN "+long, nil),
-		said("message", "MIDDLE-TURN "+long, nil),
-		said("message", "OLDEST-TURN "+long, nil),
+	got := withHistory([]db.ListMessagesSinceLastRunRow{
+		said("NEWEST-TURN "+long, nil),
+		said("MIDDLE-TURN "+long, nil),
+		said("OLDEST-TURN "+long, nil),
 	}, "q")
 
 	if !strings.Contains(got, "NEWEST-TURN") || strings.Contains(got, "OLDEST-TURN") {
@@ -102,10 +102,10 @@ func TestAClaimedRunKeepsItsChannelColumns(t *testing.T) {
 func TestHistoryStopsAtTheFirstTurnThatDoesNotFit(t *testing.T) {
 	t.Parallel()
 
-	got := withHistory([]db.ListSessionTurnsRow{
-		said("message", "RECENT-TURN", nil),
-		said("message", "HUGE-TURN "+strings.Repeat("x", historyBytes), nil),
-		said("message", "EARLY-TURN", nil),
+	got := withHistory([]db.ListMessagesSinceLastRunRow{
+		said("RECENT-TURN", nil),
+		said("HUGE-TURN "+strings.Repeat("x", historyBytes), nil),
+		said("EARLY-TURN", nil),
 	}, "q")
 	if !strings.Contains(got, "RECENT-TURN") || strings.Contains(got, "EARLY-TURN") {
 		t.Errorf("history = %q, want the recent turn only, stopping at the one that does not fit", got)

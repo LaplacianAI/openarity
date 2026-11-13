@@ -27,8 +27,8 @@ type Store interface {
 	HeartbeatRun(ctx context.Context, arg db.HeartbeatRunParams) (*time.Time, error)
 	FinishRun(ctx context.Context, arg db.FinishRunParams) (int64, error)
 	FinishRunWithEvent(ctx context.Context, finish db.FinishRunParams, event db.AppendRunEventParams) (int64, uuid.UUID, error)
-	ListSessionTurns(ctx context.Context, arg db.ListSessionTurnsParams) ([]db.ListSessionTurnsRow, error)
-	ListBuilderTurns(ctx context.Context, arg db.ListBuilderTurnsParams) ([]db.ListBuilderTurnsRow, error)
+	ListMessagesSinceLastRun(ctx context.Context, arg db.ListMessagesSinceLastRunParams) ([]db.ListMessagesSinceLastRunRow, error)
+	SetTranscriptFrom(ctx context.Context, arg db.SetTranscriptFromParams) error
 	StartChildRun(ctx context.Context, arg db.StartChildRunParams) (db.Run, error)
 	ReapChildren(ctx context.Context, arg db.ReapChildrenParams) ([]uuid.UUID, error)
 	GetRun(ctx context.Context, id uuid.UUID) (db.Run, error)
@@ -247,7 +247,7 @@ func chainOf(agentID *uuid.UUID) []uuid.UUID {
 func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	stop context.CancelCauseFunc,
 ) (output, summary string, err error) {
-	session, err := agent.Open(row.ID.String(), e.sessions)
+	session, err := agent.Open(transcriptOf(row), e.sessions)
 	if err != nil {
 		return "", "", err
 	}
@@ -263,27 +263,16 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	defer built.Close()
 	built.Spec = forChannel(row, built.Spec)
 
-	if len(msgs) > 0 {
+	resuming, msgs, err := e.begin(ctx, row, msgs)
+	if err != nil {
+		return "", "", err
+	}
+	if resuming {
 		if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: row.ID, Reason: reapReason}); err != nil {
 			return "", "", fmt.Errorf("reaping what the run started before its worker stopped: %w", err)
 		}
 		err = appendEvent(ctx, e.store, row.ID, l.Worker, "resumed", resumedPayload{Messages: len(msgs)})
 	} else {
-		input := row.Input
-		switch {
-		case row.ReplyToChannel:
-			if input, err = e.conversation(ctx, row); err != nil {
-				return "", "", err
-			}
-		case row.Builder:
-			if input, err = e.builderInput(ctx, row); err != nil {
-				return "", "", err
-			}
-		}
-		msgs = []agent.Message{{
-			Role:    agent.RoleUser,
-			Content: []agent.Content{{Type: agent.ContentText, Text: input}},
-		}}
 		err = appendEvent(ctx, e.store, row.ID, l.Worker, "started", startedOf(built.Agent, built.Spec))
 	}
 	if err != nil {
@@ -468,5 +457,6 @@ func runOf(r db.ClaimRunRow) db.Run {
 		CancelRequestedAt: r.CancelRequestedAt, CreatedAt: r.CreatedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, TokenBudget: r.TokenBudget,
 		Hub: r.Hub, MessageID: r.MessageID, ReplyToChannel: r.ReplyToChannel, Builder: r.Builder,
+		Transcript: r.Transcript, TranscriptFrom: r.TranscriptFrom,
 	}
 }

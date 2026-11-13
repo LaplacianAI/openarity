@@ -33,11 +33,7 @@ const (
 	maxToolsListed     = 200
 	maxToolDescription = 200
 
-	// builderTurns and builderBytes bound what a builder run is told of the
-	// conversation before it: enough to keep the thread of a design.
-	builderTurns = 10
-	builderBytes = 16 << 10
-	maxSummary   = 500
+	maxSummary = 500
 )
 
 const BuilderPrompt = `You are this team's builder. People ask you for agents, MCP servers and skills, often a whole team in one message, and you design all of it and propose it in one go. You never make anything yourself: a person reads your proposal and applies it.
@@ -328,41 +324,4 @@ func ProposeTool(ws Workshop, run db.Run, note Note) agent.Tool {
 			return "Recorded. The person sees this plan and decides.\n" + p.Report, nil
 		},
 	}
-}
-
-// builderInput is a builder run's first message: its earlier turns in the
-// session, then the new one, so a design carries on across messages.
-func (e *Executor) builderInput(ctx context.Context, row db.Run) (string, error) {
-	turns, err := e.store.ListBuilderTurns(ctx, db.ListBuilderTurnsParams{
-		SessionID: row.SessionID, Before: row.CreatedAt, Turns: builderTurns,
-	})
-	if err != nil {
-		return "", fmt.Errorf("reading the conversation of run %s: %w", row.ID, err)
-	}
-	return withBuilderTurns(turns, row.Input), nil
-}
-
-// withBuilderTurns keeps the newest turns that fit, oldest first. What the
-// person wrote is marked as theirs, not instructions.
-func withBuilderTurns(turns []db.ListBuilderTurnsRow, input string) string {
-	var blocks []string
-	size := 0
-	for _, t := range turns {
-		block := "person: " + t.Input
-		if t.Output != nil {
-			block += "\nyou: " + *t.Output
-		}
-		if size+len(block) > builderBytes {
-			break
-		}
-		size += len(block) + 2
-		blocks = append(blocks, block)
-	}
-	if len(blocks) == 0 {
-		return input
-	}
-	for i, j := 0, len(blocks)-1; i < j; i, j = i+1, j-1 {
-		blocks[i], blocks[j] = blocks[j], blocks[i]
-	}
-	return "This conversation so far, oldest first:\n\n" + strings.Join(blocks, "\n\n") + "\n\nThe new message:\n\n" + input
 }

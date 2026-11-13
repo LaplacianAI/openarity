@@ -138,7 +138,9 @@ func TestAChannelMessageIsAnsweredInItsConversation(t *testing.T) {
 		t.Fatalf("the second message was answered %d, want 200", got)
 	}
 	b.waitForReplies(t, 2, 90*time.Second)
-	if !b.llm.saw("The conversation so far") || !b.llm.saw("Why did the export fail?") {
+	// The first run's answer is in no request of its own: only a run that
+	// continues its transcript is sent it.
+	if !b.llm.saw(finalAnswer) {
 		t.Error("the second run was not shown the conversation before it")
 	}
 	if n := b.count(t, `SELECT count(*) FROM runs WHERE reply_to_channel AND status = 'succeeded'`); n != 2 {

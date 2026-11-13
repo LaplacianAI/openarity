@@ -248,6 +248,16 @@ func (f *execFixture) mustExecute(t *testing.T) {
 	}
 }
 
+// resumes makes the fixture's run one that already did work: msgs in its
+// transcript, and its place in it given, as a run's first start leaves it.
+func (f *execFixture) resumes(t *testing.T, msgs []agent.Message) {
+	t.Helper()
+	if err := f.sessions.Save(t.Context(), transcriptOf(f.row(t)), msgs); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
+	f.mustExec(t, `UPDATE runs SET transcript_from = 0 WHERE id = $1`, f.run)
+}
+
 func (f *execFixture) row(t *testing.T) db.Run {
 	t.Helper()
 
@@ -412,12 +422,16 @@ func TestAGrantedSkillCanBeLoaded(t *testing.T) {
 	}
 }
 
-func TestTheTranscriptIsSavedUnderTheRunID(t *testing.T) {
+func TestTheTranscriptIsSavedUnderTheSession(t *testing.T) {
 	f := newExecFixture(t, newScripted(answer("42", 1, 1)))
 
 	f.mustExecute(t)
 
-	msgs, err := f.sessions.Messages(t.Context(), f.run.String())
+	row := f.row(t)
+	if transcriptOf(row) != "session:"+row.SessionID.String() {
+		t.Fatalf("the run's transcript is %q, want its session's", transcriptOf(row))
+	}
+	msgs, err := f.sessions.Messages(t.Context(), transcriptOf(row))
 	if err != nil || len(msgs) != 2 || msgs[0].Text() != runInput || msgs[1].Text() != "42" {
 		t.Errorf("transcript = %q, %v; want the input and the answer", textOf(msgs), err)
 	}
@@ -430,9 +444,7 @@ func TestAResumedRunContinuesFromItsTranscript(t *testing.T) {
 	earlier := []agent.Message{
 		{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "the question asked before"}}},
 	}
-	if err := f.sessions.Save(t.Context(), f.run.String(), earlier); err != nil {
-		t.Fatalf("seed transcript: %v", err)
-	}
+	f.resumes(t, earlier)
 
 	f.mustExecute(t)
 
@@ -1122,11 +1134,9 @@ func TestAResumedParentReapsItsChildren(t *testing.T) {
 	grandchild := start(running.ID, "call_9#b")
 	done := start(f.run, "call_2#c")
 	f.mustExec(t, `UPDATE runs SET status = 'succeeded', output = 'kept', finished_at = now() WHERE id = $1`, done.ID)
-	if err := f.sessions.Save(t.Context(), f.run.String(), []agent.Message{
+	f.resumes(t, []agent.Message{
 		{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: runInput}}},
-	}); err != nil {
-		t.Fatalf("seed transcript: %v", err)
-	}
+	})
 
 	f.mustExecute(t)
 
@@ -1603,11 +1613,9 @@ func TestAFinishedRunIsNeverSeenWithoutItsFinishedEvent(t *testing.T) {
 func TestAResumeThatCannotStartStillEndsItsChildren(t *testing.T) {
 	f := newExecFixture(t, newScripted())
 	child := f.startUnder(t, f.run, "call_1#a", "w-dead")
-	if err := f.sessions.Save(t.Context(), f.run.String(), []agent.Message{
+	f.resumes(t, []agent.Message{
 		{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: runInput}}},
-	}); err != nil {
-		t.Fatalf("seed transcript: %v", err)
-	}
+	})
 	f.mustExec(t, `DELETE FROM agents WHERE id = $1`, f.agent)
 
 	f.mustExecute(t)
