@@ -200,7 +200,7 @@ brain answers, and prints the address and the sign-in. See
 **The brain on its own**, which is what you want while writing code — no
 identity provider to configure, no container to rebuild.
 
-Requires Go 1.26.11 and a Postgres 13 or newer you can reach — 13 is where
+Requires Go 1.27.4 and a Postgres 13 or newer you can reach — 13 is where
 `gen_random_uuid()` became built-in, which the first migration needs. Running
 the *tests* needs 18; see [CONTRIBUTING.md](CONTRIBUTING.md). CI runs against
 Postgres 18.

@@ -22,7 +22,7 @@ COVER_PKGS = $(shell $(GO) list ./... | grep -v -e '/internal/client$$' -e '/int
 
 # Tool versions. CI runs `make tools`, so these are the only place a version
 # is written down.
-GOLANGCI_VERSION     := v2.12.2
+GOLANGCI_VERSION     := v2.15.0
 OAPI_CODEGEN_VERSION := v2.8.0
 GOVULNCHECK_VERSION  := latest
 

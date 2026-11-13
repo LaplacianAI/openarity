@@ -96,6 +96,12 @@ func TestARevokedRefreshTokenIsFatal(t *testing.T) {
 	if !strings.Contains(err.Error(), "token is not valid") {
 		t.Errorf("the error drops the provider's description: %v", err)
 	}
+	// The provider's own error is in the chain, as the type its Error method
+	// is on: wrapping a pointer to it would leave errors.As finding nothing.
+	var named oauthError
+	if !errors.As(err, &named) || named.Code != "invalid_grant" {
+		t.Errorf("errors.As found %+v in %v, want the provider's invalid_grant", named, err)
+	}
 }
 
 // The one that would be quietly wrong for months. A provider having a bad

@@ -11,7 +11,7 @@ about to change.
 
 | Tool     | Version | Notes                                                  |
 | -------- | ------- | ------------------------------------------------------ |
-| Go       | 1.26.11  | pinned by `go.work` and each app's `go.mod`            |
+| Go       | 1.27.4  | pinned by `go.work` and each app's `go.mod`; `sdk/agent` asks its users for 1.26.11 only |
 | make     | any     |                                                        |
 | Node     | 24      | the dashboard only; CI runs 24                         |
 | Postgres | 13+     | optional — database tests skip without one; CI runs 18 |

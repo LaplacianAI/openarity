@@ -14,7 +14,7 @@ GENERATED_DIR   := internal/store/db
 # is written down — pinning one here pins it everywhere. gopls is the
 # exception: it is an editor tool, nothing verifies against it, and a stale
 # one is worse than a floating one.
-GOLANGCI_VERSION    := v2.12.2
+GOLANGCI_VERSION    := v2.15.0
 GOVULNCHECK_VERSION := latest
 GOOSE_VERSION       := v3.27.3
 SQLC_VERSION        := v1.31.1

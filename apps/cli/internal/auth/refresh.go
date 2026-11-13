@@ -25,9 +25,9 @@ func (p *Provider) Refresh(ctx context.Context, refresh string) (*Token, error) 
 	}
 	if oerr != nil {
 		if oerr.Code == "invalid_grant" {
-			return nil, fmt.Errorf("%w: %w", ErrRefreshRejected, oerr)
+			return nil, fmt.Errorf("%w: %w", ErrRefreshRejected, *oerr)
 		}
-		return nil, fmt.Errorf("renew the login: %w", oerr)
+		return nil, fmt.Errorf("renew the login: %w", *oerr)
 	}
 
 	if token.Refresh == "" {

@@ -455,6 +455,11 @@ jobs:
       # retryWrites=false because a standalone mongod rejects retryable writes,
       # and the driver asks for them by default.
       AGENT_TEST_MONGO_URI: mongodb://localhost:27017/?retryWrites=false
+      # The SDK asks its users for an older Go than the apps build with. In
+      # the workspace, go.work's newer version would win and the go command
+      # would switch toolchains, so the SDK would be tested on a Go its users
+      # need not have. Off, the module's own go.mod decides.
+      GOWORK: "off"
 
     steps:
       - uses: actions/checkout@v7
