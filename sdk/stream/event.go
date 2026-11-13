@@ -14,7 +14,10 @@
 // with a database writes its own.
 package stream
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strconv"
+)
 
 // Kind names an event on the wire: an SSE frame's event field.
 type Kind string
@@ -25,6 +28,7 @@ const (
 	KindRunStarted       Kind = "run_started"
 	KindStepStarted      Kind = "step_started"
 	KindTextMessageChunk Kind = "text_message_chunk"
+	KindReasoningChunk   Kind = "reasoning_message_chunk"
 	KindToolCallChunk    Kind = "tool_call_chunk"
 	KindToolCallResult   Kind = "tool_call_result"
 	KindUsage            Kind = "usage"
@@ -37,7 +41,7 @@ const (
 func Kinds() []Kind {
 	return []Kind{
 		KindMessage, KindMessageConsumed, KindRunStarted, KindStepStarted,
-		KindTextMessageChunk, KindToolCallChunk, KindToolCallResult,
+		KindTextMessageChunk, KindReasoningChunk, KindToolCallChunk, KindToolCallResult,
 		KindUsage, KindCompacted, KindRunFinished, KindCustom,
 	}
 }
@@ -91,12 +95,34 @@ type StepStarted struct {
 	Step int `json:"step"`
 }
 
-// TextMessageChunk is a piece of what a run is writing, in order. The pieces
-// of one run joined after its last tool result are its answer, which
-// RunFinished also carries whole.
+// TextMessageChunk is a piece of what a run is saying, in order. Pieces with
+// the same MessageID are one message, a model call's text; the last of a run's
+// is its answer, which RunFinished also carries whole.
 type TextMessageChunk struct {
+	MessageID string `json:"message_id,omitempty"`
 	Delta     string `json:"delta"`
 	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// ReasoningChunk is a piece of what a run is thinking rather than saying: the
+// model's own reasoning, or a pattern's working such as a plan or a critique.
+// Pieces with the same MessageID are one reasoning message.
+type ReasoningChunk struct {
+	MessageID string `json:"message_id,omitempty"`
+	Delta     string `json:"delta"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// Which part of a model call a message holds, in a MessageID.
+const (
+	PartOfText      = "text"
+	PartOfReasoning = "reasoning"
+)
+
+// MessageID names the message one model call of a run says or thinks:
+// unique across a session, and the same whoever writes it.
+func MessageID(runID string, step int, part string) string {
+	return runID + ":" + strconv.Itoa(step) + ":" + part
 }
 
 // ToolCallChunk is a run calling a tool, with all of its arguments.
@@ -171,6 +197,7 @@ func (MessageConsumed) Kind() Kind  { return KindMessageConsumed }
 func (RunStarted) Kind() Kind       { return KindRunStarted }
 func (StepStarted) Kind() Kind      { return KindStepStarted }
 func (TextMessageChunk) Kind() Kind { return KindTextMessageChunk }
+func (ReasoningChunk) Kind() Kind   { return KindReasoningChunk }
 func (ToolCallChunk) Kind() Kind    { return KindToolCallChunk }
 func (ToolCallResult) Kind() Kind   { return KindToolCallResult }
 func (Usage) Kind() Kind            { return KindUsage }

@@ -12,8 +12,8 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
-// streaming is the scripted model, streaming each answer's text in two
-// halves before its final response, as a provider does.
+// streaming is the scripted model, streaming each answer's reasoning, then
+// its text in two halves, before its final response, as a provider does.
 type streaming struct{ *scripted }
 
 func (m streaming) Stream(ctx context.Context, req agent.Request) (agent.Stream, error) {
@@ -21,9 +21,13 @@ func (m streaming) Stream(ctx context.Context, req agent.Request) (agent.Stream,
 	if err != nil {
 		return nil, err
 	}
+	var events []agent.StreamEvent
+	if r := resp.Message.Reasoning; r != nil {
+		events = append(events, agent.StreamEvent{Reasoning: r.Text})
+	}
 	text := resp.Message.Text()
 	half := len(text) / 2
-	events := []agent.StreamEvent{{Text: text[:half]}, {Text: text[half:]}, {Final: &resp}}
+	events = append(events, agent.StreamEvent{Text: text[:half]}, agent.StreamEvent{Text: text[half:]}, agent.StreamEvent{Final: &resp})
 	return &replayed{events: events}, nil
 }
 
@@ -105,16 +109,15 @@ func TestATopLevelRunStreamsItsAnswer(t *testing.T) {
 func TestWhichRunsStreamTheirText(t *testing.T) {
 	parent := uuid.New()
 	for name, c := range map[string]struct {
-		row     db.Run
-		pattern agent.PatternName
-		want    bool
+		row  db.Run
+		want bool
 	}{
-		"a top-level react run":           {db.Run{}, agent.PatternReAct, true},
-		"a top-level run on another loop": {db.Run{}, agent.PatternPlan, false},
-		"a delegated react run":           {db.Run{ParentRunID: &parent}, agent.PatternReAct, false},
-		"the builder":                     {db.Run{Builder: true}, agent.PatternReAct, true},
+		"a top-level run":   {db.Run{}, true},
+		"a delegated run":   {db.Run{ParentRunID: &parent}, false},
+		"the builder":       {db.Run{Builder: true}, true},
+		"a builder's child": {db.Run{Builder: true, ParentRunID: &parent}, true},
 	} {
-		if got := streamsText(c.row, agent.Spec{Pattern: c.pattern}); got != c.want {
+		if got := streamsText(c.row); got != c.want {
 			t.Errorf("%s: streams %v, want %v", name, got, c.want)
 		}
 	}

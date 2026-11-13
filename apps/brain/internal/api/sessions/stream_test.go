@@ -47,7 +47,16 @@ func TestEveryRecordedKindBecomesItsEvent(t *testing.T) {
 			return r
 		}(), stream.RunStarted{Agent: agent, ParentRunID: parent.String()}},
 		{eventRow(4, "step", &run, `{"step":2}`), stream.StepStarted{Step: 2}},
+		// A row recorded before writing kept its step names no message.
 		{eventRow(5, "text", &run, `{"text":"The ","truncated":true}`), stream.TextMessageChunk{Delta: "The ", Truncated: true}},
+		{
+			eventRow(15, "text", &run, `{"text":"It timed out.","step":2}`),
+			stream.TextMessageChunk{MessageID: run.String() + ":2:text", Delta: "It timed out."},
+		},
+		{
+			eventRow(16, "reasoning", &run, `{"text":"Logs first.","truncated":true,"step":1}`),
+			stream.ReasoningChunk{MessageID: run.String() + ":1:reasoning", Delta: "Logs first.", Truncated: true},
+		},
 		{
 			eventRow(6, "tool_call", &run, `{"id":"c1","name":"search","arguments":"{\"q\":1}","truncated":false}`),
 			stream.ToolCallChunk{ToolCallID: "c1", Name: "search", Arguments: `{"q":1}`},
@@ -106,6 +115,7 @@ func TestARowThatCannotBeReadIsAnError(t *testing.T) {
 		"a broken tool call": eventRow(3, "tool_call", &run, `[`),
 		"a broken result":    eventRow(4, "tool_result", &run, `[`),
 		"a broken text":      eventRow(5, "text", &run, `[`),
+		"a broken reasoning": eventRow(7, "reasoning", &run, `[`),
 		"a broken finish":    eventRow(6, "finished", &run, `[`),
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -730,8 +730,15 @@ func TestTheSessionStreamMigrationRollsBackWithDataInIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.Rollback(t.Context()); err != nil {
-		t.Fatalf("Rollback: %v", err)
+	// Back to before the stream's migration, through any applied after it.
+	streamColumns := `SELECT count(*) FROM information_schema.columns WHERE table_name = 'messages' AND column_name IN ('session_seq', 'asks', 'consumed_by')`
+	for rolled := 0; count(t, s, streamColumns) > 0; rolled++ {
+		if rolled == 10 {
+			t.Fatal("rolled back ten migrations and the stream's is still applied")
+		}
+		if err := s.Rollback(t.Context()); err != nil {
+			t.Fatalf("Rollback: %v", err)
+		}
 	}
 	if n := count(t, s, `SELECT count(*) FROM channels WHERE provider = 'dashboard'`); n != 0 {
 		t.Errorf("%d dashboard channels after the rollback", n)
@@ -742,14 +749,41 @@ func TestTheSessionStreamMigrationRollsBackWithDataInIt(t *testing.T) {
 	if n := count(t, s, `SELECT count(*) FROM runs WHERE id = $1`, r.ID); n != 0 {
 		t.Errorf("the dashboard conversation's run survived its channel")
 	}
-	if n := count(t, s, `SELECT count(*) FROM information_schema.columns WHERE table_name = 'messages' AND column_name IN ('session_seq', 'asks', 'consumed_by')`); n != 0 {
-		t.Errorf("%d of the stream's columns survived the rollback", n)
-	}
 
 	if _, err := s.Migrate(t.Context()); err != nil {
 		t.Fatalf("Migrate after Rollback: %v", err)
 	}
 	if _, err := s.DashboardChannel(t.Context(), f.team); err != nil {
 		t.Fatalf("the team has no dashboard after the migration again: %v", err)
+	}
+}
+
+// Reasoning is a run event like text, and rolls back with the rows it holds.
+func TestTheReasoningKindRollsBack(t *testing.T) {
+	s := migrationStore(t)
+	if _, err := s.Migrate(t.Context()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	f := newStreamFixture(t, s)
+	r := createRun(t, s, f.runFixture)
+	claim(t, s, r.ID, "w1")
+	if _, err := appendEvent(t, s, r.ID, "w1", "reasoning"); err != nil {
+		t.Fatalf("a reasoning event was refused: %v", err)
+	}
+
+	if err := s.Rollback(t.Context()); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM run_events WHERE kind = 'reasoning'`); n != 0 {
+		t.Errorf("%d reasoning events survived the rollback", n)
+	}
+	if _, err := appendEvent(t, s, r.ID, "w1", "reasoning"); err == nil {
+		t.Error("rolled back, a reasoning event is still accepted")
+	}
+	if _, err := s.Migrate(t.Context()); err != nil {
+		t.Fatalf("Migrate after Rollback: %v", err)
+	}
+	if _, err := appendEvent(t, s, r.ID, "w1", "reasoning"); err != nil {
+		t.Fatalf("applied again, a reasoning event was refused: %v", err)
 	}
 }

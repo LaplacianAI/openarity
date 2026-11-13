@@ -293,7 +293,7 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	e.notes.Store(row.ID, notes)
 	defer e.notes.Delete(row.ID)
 	runner, streams := e.runner, false
-	if e.streamer != nil && streamsText(row, built.Spec) {
+	if e.streamer != nil && streamsText(row) {
 		runner, streams = e.streamer, true
 	}
 	lines := newSoftLines(budgetOf(row.TokenBudget), int64(built.Spec.Model.MaxTokens))
@@ -461,12 +461,9 @@ func runOf(r db.ClaimRunRow) db.Run {
 	}
 }
 
-// streamsText is whether a run's text is recorded as it is written: a run a
-// person is waiting on, the builder or any top-level run, when its loop can
-// stream. A delegated run's text is its parent's to report.
-func streamsText(row db.Run, spec agent.Spec) bool {
-	if row.Builder {
-		return true
-	}
-	return row.ParentRunID == nil && spec.Pattern == agent.PatternReAct
+// streamsText is whether a run's text and reasoning are recorded as they are
+// written: a run a person is waiting on, the builder or any top-level run. A
+// delegated run's are its parent's to report.
+func streamsText(row db.Run) bool {
+	return row.Builder || row.ParentRunID == nil
 }

@@ -110,15 +110,19 @@ func eventOf(row db.ListSessionEventsRow) (stream.Event, error) {
 		return e, nil
 	case "step":
 		return decode[stream.StepStarted](row.Payload)
-	case "text":
+	case "text", "reasoning":
 		var p struct {
 			Text      string `json:"text"`
 			Truncated bool   `json:"truncated"`
+			Step      int    `json:"step"`
 		}
 		if err := json.Unmarshal(row.Payload, &p); err != nil {
 			return nil, err
 		}
-		return stream.TextMessageChunk{Delta: p.Text, Truncated: p.Truncated}, nil
+		if row.Kind == "reasoning" {
+			return stream.ReasoningChunk{MessageID: messageID(row, p.Step, stream.PartOfReasoning), Delta: p.Text, Truncated: p.Truncated}, nil
+		}
+		return stream.TextMessageChunk{MessageID: messageID(row, p.Step, stream.PartOfText), Delta: p.Text, Truncated: p.Truncated}, nil
 	case "tool_call":
 		var p struct {
 			ID        string `json:"id"`
@@ -163,6 +167,16 @@ func eventOf(row db.ListSessionEventsRow) (stream.Event, error) {
 		return decode[stream.MessageConsumed](row.Payload)
 	}
 	return stream.Custom{Name: row.Kind, Value: row.Payload}, nil
+}
+
+// messageID names the model call a piece of writing came from. A row recorded
+// before writing kept its step has none, and a reader groups it by the
+// step_started before it instead.
+func messageID(row db.ListSessionEventsRow, step int, part string) string {
+	if step == 0 || row.RunID == nil {
+		return ""
+	}
+	return stream.MessageID(row.RunID.String(), step, part)
 }
 
 // decode reads a payload the runtime wrote with the same field names as the

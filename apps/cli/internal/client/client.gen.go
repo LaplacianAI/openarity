@@ -3452,10 +3452,13 @@ type ClientInterface interface {
 	// its stream is that one frame. A comment, `: keep-alive`, is sent
 	// every 15 seconds while nothing happens.
 	//
-	// A builder run also streams its reply as it is written: `text` frames,
-	// `data: {"text": "I propose…", "truncated": false}`, each a piece of
-	// the model's text in order, written before the tool call it led to.
-	// Joined, the pieces after the last `tool_result` are the run's output.
+	// A top-level run, and a builder run, also stream their writing as it
+	// happens: `text` frames, `data: {"text": "I propose…", "truncated":
+	// false, "step": 2}`, each a piece of the model's text in order, written
+	// before the tool call it led to, and `reasoning` frames of the same
+	// shape for what it thinks rather than says: the model's reasoning, or
+	// a loop's plan or critique. `step` is the model call that wrote it.
+	// Joined, the text after the last `tool_result` is the run's output.
 	//
 	// A long run compacts its context, and is asked to finish before its
 	// budget or its time runs out:
@@ -3630,7 +3633,9 @@ type ClientInterface interface {
 	//
 	// Each run's events carry its `run_id`; a run another run handed work
 	// to says which in `run_started`. Text arrives as
-	// `text_message_chunk`, and `run_finished` carries the whole answer.
+	// `text_message_chunk` and thinking as `reasoning_message_chunk`, each
+	// named by the model call it came from in `message_id`, and
+	// `run_finished` carries the whole answer.
 	// Events the catalog has no kind for are `custom`, named by the kind
 	// the run recorded. The stream does not end: it follows the
 	// conversation until the client leaves, with a `: keep-alive` comment
@@ -5451,10 +5456,13 @@ func (c *Client) CancelRun(ctx context.Context, id TeamID, runID RunID, reqEdito
 // its stream is that one frame. A comment, `: keep-alive`, is sent
 // every 15 seconds while nothing happens.
 //
-// A builder run also streams its reply as it is written: `text` frames,
-// `data: {"text": "I propose…", "truncated": false}`, each a piece of
-// the model's text in order, written before the tool call it led to.
-// Joined, the pieces after the last `tool_result` are the run's output.
+// A top-level run, and a builder run, also stream their writing as it
+// happens: `text` frames, `data: {"text": "I propose…", "truncated":
+// false, "step": 2}`, each a piece of the model's text in order, written
+// before the tool call it led to, and `reasoning` frames of the same
+// shape for what it thinks rather than says: the model's reasoning, or
+// a loop's plan or critique. `step` is the model call that wrote it.
+// Joined, the text after the last `tool_result` is the run's output.
 //
 // A long run compacts its context, and is asked to finish before its
 // budget or its time runs out:
@@ -5710,7 +5718,9 @@ func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID 
 //
 // Each run's events carry its `run_id`; a run another run handed work
 // to says which in `run_started`. Text arrives as
-// `text_message_chunk`, and `run_finished` carries the whole answer.
+// `text_message_chunk` and thinking as `reasoning_message_chunk`, each
+// named by the model call it came from in `message_id`, and
+// `run_finished` carries the whole answer.
 // Events the catalog has no kind for are `custom`, named by the kind
 // the run recorded. The stream does not end: it follows the
 // conversation until the client leaves, with a `: keep-alive` comment
@@ -11036,10 +11046,13 @@ type ClientWithResponsesInterface interface {
 	// its stream is that one frame. A comment, `: keep-alive`, is sent
 	// every 15 seconds while nothing happens.
 	//
-	// A builder run also streams its reply as it is written: `text` frames,
-	// `data: {"text": "I propose…", "truncated": false}`, each a piece of
-	// the model's text in order, written before the tool call it led to.
-	// Joined, the pieces after the last `tool_result` are the run's output.
+	// A top-level run, and a builder run, also stream their writing as it
+	// happens: `text` frames, `data: {"text": "I propose…", "truncated":
+	// false, "step": 2}`, each a piece of the model's text in order, written
+	// before the tool call it led to, and `reasoning` frames of the same
+	// shape for what it thinks rather than says: the model's reasoning, or
+	// a loop's plan or critique. `step` is the model call that wrote it.
+	// Joined, the text after the last `tool_result` is the run's output.
 	//
 	// A long run compacts its context, and is asked to finish before its
 	// budget or its time runs out:
@@ -11226,7 +11239,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Each run's events carry its `run_id`; a run another run handed work
 	// to says which in `run_started`. Text arrives as
-	// `text_message_chunk`, and `run_finished` carries the whole answer.
+	// `text_message_chunk` and thinking as `reasoning_message_chunk`, each
+	// named by the model call it came from in `message_id`, and
+	// `run_finished` carries the whole answer.
 	// Events the catalog has no kind for are `custom`, named by the kind
 	// the run recorded. The stream does not end: it follows the
 	// conversation until the client leaves, with a `: keep-alive` comment
@@ -16189,10 +16204,13 @@ func (c *ClientWithResponses) CancelRunWithResponse(ctx context.Context, id Team
 // its stream is that one frame. A comment, `: keep-alive`, is sent
 // every 15 seconds while nothing happens.
 //
-// A builder run also streams its reply as it is written: `text` frames,
-// `data: {"text": "I propose…", "truncated": false}`, each a piece of
-// the model's text in order, written before the tool call it led to.
-// Joined, the pieces after the last `tool_result` are the run's output.
+// A top-level run, and a builder run, also stream their writing as it
+// happens: `text` frames, `data: {"text": "I propose…", "truncated":
+// false, "step": 2}`, each a piece of the model's text in order, written
+// before the tool call it led to, and `reasoning` frames of the same
+// shape for what it thinks rather than says: the model's reasoning, or
+// a loop's plan or critique. `step` is the model call that wrote it.
+// Joined, the text after the last `tool_result` is the run's output.
 //
 // A long run compacts its context, and is asked to finish before its
 // budget or its time runs out:
@@ -16428,7 +16446,9 @@ func (c *ClientWithResponses) GetSessionAttachmentWithResponse(ctx context.Conte
 //
 // Each run's events carry its `run_id`; a run another run handed work
 // to says which in `run_started`. Text arrives as
-// `text_message_chunk`, and `run_finished` carries the whole answer.
+// `text_message_chunk` and thinking as `reasoning_message_chunk`, each
+// named by the model call it came from in `message_id`, and
+// `run_finished` carries the whole answer.
 // Events the catalog has no kind for are `custom`, named by the kind
 // the run recorded. The stream does not end: it follows the
 // conversation until the client leaves, with a `: keep-alive` comment

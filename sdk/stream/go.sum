@@ -1,5 +1,5 @@
-github.com/LaplacianAI/openarity/sdk/agent v0.3.0 h1:Wk1mK1Z0ydmYr6IdNtK2JJE/N+8lsgP6XvnQA+fSM0c=
-github.com/LaplacianAI/openarity/sdk/agent v0.3.0/go.mod h1:owTiIIxDVL7C3FdfT8o47vO8J6YHljCf4A69IYrUZNA=
+github.com/LaplacianAI/openarity/sdk/agent v0.4.0 h1:N2YL79cQStrKN1lNBeCBYEiBtHaW1y1b9Szhq4BW0AU=
+github.com/LaplacianAI/openarity/sdk/agent v0.4.0/go.mod h1:owTiIIxDVL7C3FdfT8o47vO8J6YHljCf4A69IYrUZNA=
 github.com/openai/openai-go/v3 v3.54.0 h1:qeNvIpFB/wzX7pI8USN1eruvzCS+XqOZ8mx73lGF6Lg=
 github.com/openai/openai-go/v3 v3.54.0/go.mod h1:ufI1+K+t0ijRB3gk8eztiw1crcDpsBuxRQL4sbLIrts=
 github.com/tidwall/gjson v1.19.0 h1:xwxm7n691Uf3u5OFjzngavjGTh55KX5q/9w9xHW88JU=

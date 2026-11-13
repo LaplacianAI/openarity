@@ -248,6 +248,14 @@ frame's `id` is its place in the conversation; reconnect with it as
 `Last-Event-ID` and nothing is missed. A message that asks is `pending` until a
 run takes it, which `message_consumed` says.
 
+A run's writing arrives as it happens, in two kinds. `text_message_chunk` is
+what it says; `reasoning_message_chunk` is what it thinks: the model's own
+reasoning, when its provider sends it, and a loop's plan or critique. Each
+names the model call it came from in `message_id`. Show the reasoning folded
+away, the text as it arrives, and `run_finished`'s output as the answer once the
+run ends. A run another run handed work to reports through its parent, so its
+writing is not streamed.
+
 After upgrading, run `brain backfill session-seq` once to number what
 conversations held before, so their streams replay from the start. Until then
 a conversation's stream starts at what was said after the upgrade.

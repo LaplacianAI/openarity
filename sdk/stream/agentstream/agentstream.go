@@ -15,6 +15,8 @@ func Convert(e agent.Event) (stream.Event, bool) {
 	switch e := e.(type) {
 	case agent.TextEvent:
 		return stream.TextMessageChunk{Delta: e.Delta}, true
+	case agent.ReasoningEvent:
+		return stream.ReasoningChunk{Delta: e.Delta}, true
 	case agent.ToolCallEvent:
 		return stream.ToolCallChunk{ToolCallID: e.ID, Name: e.Name, Arguments: string(e.Arguments)}, true
 	case agent.ToolResultEvent:
@@ -46,10 +48,29 @@ type Appender interface {
 // Pipe appends each event the run reports that the stream has an event for,
 // under runID, until events is closed. Hand Runner.Run the same channel and
 // close it when Run returns.
+//
+// Text and reasoning are stamped with the message they belong to, the step
+// they follow, which a single event cannot know.
 func Pipe(events <-chan agent.Event, runID string, to Appender) {
+	step := 0
 	for e := range events {
+		if s, ok := e.(agent.StepEvent); ok {
+			step = s.Step
+		}
 		if s, ok := Convert(e); ok {
-			to.Append(runID, s)
+			to.Append(runID, stamp(s, runID, step))
 		}
 	}
+}
+
+func stamp(e stream.Event, runID string, step int) stream.Event {
+	switch c := e.(type) {
+	case stream.TextMessageChunk:
+		c.MessageID = stream.MessageID(runID, step, stream.PartOfText)
+		return c
+	case stream.ReasoningChunk:
+		c.MessageID = stream.MessageID(runID, step, stream.PartOfReasoning)
+		return c
+	}
+	return e
 }
