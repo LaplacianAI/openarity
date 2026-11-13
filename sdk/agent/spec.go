@@ -31,6 +31,9 @@ type Spec struct {
 	Session            Session
 	// Compaction keeps a long run's context small; nil leaves it off.
 	Compaction *Compaction
+	// Discovery holds tools found by search rather than sent up front; nil
+	// sends every tool.
+	Discovery *Discovery
 }
 
 func System(prompt string) []Content {

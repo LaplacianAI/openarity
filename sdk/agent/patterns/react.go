@@ -61,7 +61,9 @@ func (l react) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 
 		attached := map[string][]agent.Content{}
 		for _, call := range resp.Message.ToolCalls {
-			in.Emit(ctx, agent.ToolCallEvent{ID: call.ID, Name: call.Name, Arguments: call.Arguments})
+			// Events name the tool the model meant, not the call_tool it went through.
+			shown := agent.Inner(call)
+			in.Emit(ctx, agent.ToolCallEvent{ID: call.ID, Name: shown.Name, Arguments: shown.Arguments})
 
 			started := time.Now()
 			out, failure, attach := invoke(ctx, byName, call)
@@ -72,7 +74,7 @@ func (l react) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 			}
 
 			in.Emit(ctx, agent.ToolResultEvent{
-				ID: call.ID, Name: call.Name, Output: out,
+				ID: call.ID, Name: shown.Name, Output: out,
 				Err: failure, Duration: time.Since(started),
 			})
 

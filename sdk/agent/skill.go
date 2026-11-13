@@ -25,7 +25,10 @@ const (
 	descriptionLimit = 1536
 )
 
-func skillTool(skills []Skill, loaded *loadedSkills) (Tool, Content, error) {
+// skillTool is the Skill tool and the listing of what it opens. When search
+// names the tool skills are found with, the names are not enumerated, since
+// they are many: the model opens one by the name the search returned.
+func skillTool(skills []Skill, loaded *loadedSkills, search string) (Tool, Content, error) {
 	byName := make(map[string]Skill, len(skills))
 	names := make([]string, 0, len(skills))
 
@@ -43,24 +46,39 @@ func skillTool(skills []Skill, loaded *loadedSkills) (Tool, Content, error) {
 		names = append(names, s.Name)
 	}
 
+	name := map[string]any{
+		"type":        "string",
+		"enum":        names,
+		"description": "The name of the skill to load, exactly as listed.",
+	}
+	description := "Load the instructions for one of the available skills. " +
+		"Call this when a skill's description matches what you are about to do."
+	unknown := func(asked string) error {
+		return fmt.Errorf("there is no skill named %q; the ones offered are: %s", asked, strings.Join(names, ", "))
+	}
+	if search != "" {
+		name = map[string]any{
+			"type":        "string",
+			"description": "The name of the skill to load, exactly as " + search + " returned it.",
+		}
+		description = "Load the instructions for a skill found with " + search + ". " +
+			"Call this when a skill's description matches what you are about to do."
+		unknown = func(asked string) error {
+			return fmt.Errorf("there is no skill named %q; find one with %s", asked, search)
+		}
+	}
+
 	schema, _ := json.Marshal(map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"name": map[string]any{
-				"type":        "string",
-				"enum":        names,
-				"description": "The name of the skill to load, exactly as listed.",
-			},
-		},
+		"type":                 "object",
+		"properties":           map[string]any{"name": name},
 		"required":             []string{"name"},
 		"additionalProperties": false,
 	})
 
 	tool := Tool{
-		Name: SkillToolName,
-		Description: "Load the instructions for one of the available skills. " +
-			"Call this when a skill's description matches what you are about to do.",
-		Schema: json.RawMessage(schema),
+		Name:        SkillToolName,
+		Description: description,
+		Schema:      json.RawMessage(schema),
 		Invoke: func(ctx context.Context, args json.RawMessage) (string, error) {
 			var call struct {
 				Name string `json:"name"`
@@ -71,8 +89,7 @@ func skillTool(skills []Skill, loaded *loadedSkills) (Tool, Content, error) {
 
 			s, ok := byName[call.Name]
 			if !ok {
-				return "", fmt.Errorf("there is no skill named %q; the ones offered are: %s",
-					call.Name, strings.Join(names, ", "))
+				return "", unknown(call.Name)
 			}
 			if s.Body == nil {
 				return "", fmt.Errorf("the skill %q has no body", s.Name)

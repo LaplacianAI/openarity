@@ -59,7 +59,7 @@ func Attached(results map[string][]Content, order []ToolCall) (Message, bool) {
 		}
 		parts = append(parts, Content{
 			Type: ContentText,
-			Text: "Attached by " + call.Name + " for call " + call.ID + ":",
+			Text: "Attached by " + Inner(call).Name + " for call " + call.ID + ":",
 		})
 		parts = append(parts, files...)
 	}

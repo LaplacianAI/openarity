@@ -104,7 +104,11 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 			spec.Pattern, strings.Join(r.registered(), ", "))
 	}
 
-	spec, err := withSkills(spec)
+	spec, search, err := withDiscovery(spec)
+	if err != nil {
+		return Result{}, err
+	}
+	spec, err = withSkills(spec, search)
 	if err != nil {
 		return Result{}, err
 	}
@@ -240,7 +244,9 @@ func transcript(msgs []Message) string {
 	return b.String()
 }
 
-func withSkills(spec Spec) (Spec, error) {
+// withSkills offers the skills through the Skill tool: listed in the prompt,
+// or, when search names the tool a run finds them with, found through it.
+func withSkills(spec Spec, search string) (Spec, error) {
 	if len(spec.Skills) == 0 {
 		return spec, nil
 	}
@@ -253,7 +259,7 @@ func withSkills(spec Spec) (Spec, error) {
 
 	loaded := newLoadedSkills()
 
-	tool, listing, err := skillTool(spec.Skills, loaded)
+	tool, listing, err := skillTool(spec.Skills, loaded, search)
 	if err != nil {
 		return Spec{}, err
 	}
@@ -262,7 +268,9 @@ func withSkills(spec Spec) (Spec, error) {
 	if rt, ok := resourceTool(spec.Skills, loaded); ok {
 		spec.Tools = append(spec.Tools, rt)
 	}
-	spec.System = append(slices.Clone(spec.System), listing)
+	if search == "" {
+		spec.System = append(slices.Clone(spec.System), listing)
+	}
 
 	return spec, nil
 }
