@@ -174,7 +174,6 @@ The reference screen, the session and its run trace, carries the system's signat
 **Open, not decided.** The finish review shipped the reference screen with these left open; they are not rules to copy:
 - The token bar can read as a progress bar.
 - Section heads are body size (16px, and 14px inside a run), so the hierarchy leans on weight alone.
-- The conversation is a card per message, and an outlined card per run between them: its agent, what it was asked, its answer or why there is none, and the way into its trace.
 
 ## Motion
 
@@ -303,6 +302,15 @@ Quiet, compact, one filled button at most per view.
 - **Sidebar:** 36px rows, 14px Muted Slate text and a 16px icon, 8px radius. Hover lays the sheet at 60%. The current item becomes a small piece of sheet (Paper fill, inset sheet-edge ring, 500 Graphite text) with its icon in teal.
 - **Phone:** a bar fixed to the bottom holds Home, Runs, Approvals and More; More opens the rest of the list in a sheet that rises from the bottom, up to 85% of the screen's height.
 - **Tabs (narrow screens):** a line of tabs over a rule; the current tab is Graphite with a 2px Graphite underline, the rest Muted Slate. A count sits in a small Stone pill.
+
+### Conversation
+Read off the session's stream, in the brain's order.
+- **A person's message:** a Stone card, its sender (or "You") and time, the text held to 75ch. Under it, while no run has taken it, an Ochre clock and "Waiting"; once one has, a muted check and "Read by <agent>".
+- **A run:** its agent at 14/500, the hub tag, the Live badge while it works or its status and duration once it has ended, then three parts: the working, the answer, and "Open its trace".
+- **The working** folds to one line ("Working · step 2 · 1 tool" while running; "2 steps · 1 tool · handed to billing" after). Open, it hangs off a 1px rule like the trace's rail: the model's reasoning in muted body text, each tool call on one line as in the trace, a message the run read while working, and each run it handed work to with its status and a link. It is open while the run works and folds when it ends, unless the reader opened it; the fold is the height through `grid-template-rows`, 200 ms on `--ease-out`, and changes without travel under reduced motion.
+- **The answer** is the text being written while the run works, ending in a static 2px teal caret (teal is what is running; it does not blink, as nothing loops but the Live dot), then the run's output as Markdown, cut and faded past 1200 characters. A failure is said in the dashboard's words on the 8% Brick wash.
+- **Streamed text does not animate**, piece by piece or as a block: it arrives many times a second.
+- **The composer** sits at the foot of the view, above the phone's bar: a one-line field that grows with what is typed, up to 160px, and Send, the view's one filled button. Elsewhere it is a line saying where replies go and an outline "Start one on the dashboard". The page follows what arrives while the reader is at its end; scrolled up, they get an outline "New activity" button instead.
 
 ### Run row
 A list of a session's runs in one Stone card, divided by rules: agent name, status, tokens and time, which wraps to two lines on a phone. The chosen run becomes Paper with a 1px inset teal ring.

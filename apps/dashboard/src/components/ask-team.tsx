@@ -1,7 +1,8 @@
 /**
  * Asking the team something: one of the four jobs the dashboard is for. The
- * question goes to the team's hub, which answers or hands the work on, and
- * the asker lands on the run's trace to watch it work.
+ * question starts a conversation on the dashboard channel, the team's hub
+ * answers it or hands the work on, and the asker lands on the conversation to
+ * watch it work and to reply.
  *
  * Offered on Home and in ⌘K, and only to someone who may start runs.
  */
@@ -10,31 +11,41 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowRight, TriangleAlert } from "lucide-react";
 import { useId, useState } from "react";
 
-import { startRun } from "@/api";
-import { runLink } from "@/components/run-table";
+import { startConversation } from "@/api";
+import { useSendKeys } from "@/components/send-key";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/input";
-import { type AskRefusal, askProblem, askRefusal } from "@/lib/ask";
+import { type AskRefusal, askProblem, askRefusal, Unanswered } from "@/lib/ask";
 
 /** What starting a run takes in a team. */
 export const RUN_WRITE = "run:write";
 
 /**
- * Starts a hub run with what was asked, and opens its trace once the brain
- * has queued it. Every list a new run or session would appear in is read
- * again.
+ * Starts a conversation with what was asked, and opens it once the brain has
+ * stored it. Every list a new run or session would appear in is read again.
  */
 export function useAsk(teamId: string) {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const keys = useSendKeys();
   return useMutation({
-    mutationFn: (input: string) => startRun(teamId, { input }),
-    onSuccess: (run) => {
+    mutationFn: async (input: string) => {
+      const said = await startConversation(teamId, { text: input, key: keys.keyFor(input) });
+      // Stored, and nothing will answer it: say why here rather than open a
+      // conversation that will stay silent. Asked again, it is a new message.
+      if (said.unanswered) {
+        keys.done();
+        throw new Unanswered(said.unanswered);
+      }
+      return said;
+    },
+    onSuccess: (said) => {
+      keys.done();
       void qc.invalidateQueries({ queryKey: ["runs", teamId] });
       void qc.invalidateQueries({ queryKey: ["summary", teamId] });
       void qc.invalidateQueries({ queryKey: ["sessions", teamId] });
-      void navigate(runLink(run));
+      void navigate({ to: "/ui/sessions/$sessionId", params: { sessionId: said.session_id } });
     },
   });
 }
@@ -93,7 +104,7 @@ export function AskTeam({ teamId }: { teamId: string }) {
       <Field
         label="Ask the team"
         htmlFor={id}
-        hint="The hub answers, or hands the work to the agent that fits. You'll watch the run as it works. Ctrl+Enter or ⌘+Enter sends it."
+        hint="The hub answers, or hands the work to the agent that fits. You'll watch it work in the conversation, and can reply there. Ctrl+Enter or ⌘+Enter sends it."
         error={problem}
       >
         <Textarea

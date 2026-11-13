@@ -373,6 +373,31 @@ describe("a channel's sheet", () => {
     expect(within(sheet).queryByRole("button", { name: /disconnect/i })).not.toBeInTheDocument();
   });
 
+  // Every team has the dashboard's channel, made with the team: there is
+  // nothing to disconnect, and no webhook reaches it.
+  it("shows the dashboard's channel as built in, with no disconnect and no webhook", async () => {
+    const dashboard = {
+      ...support,
+      id: "dash",
+      name: "Dashboard",
+      provider: "dashboard",
+      hook_url: undefined,
+    };
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [dashboard] } },
+    });
+    at();
+
+    const sheet = await opened("Dashboard");
+    expect(
+      within(sheet).getByText("Built in: every team has this channel, so it cannot be deleted."),
+    ).toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: /disconnect/i })).not.toBeInTheDocument();
+    expect(within(sheet).queryByText(/Webhook/)).not.toBeInTheDocument();
+    expect(within(sheet).queryByText(/Signing secret/)).not.toBeInTheDocument();
+  });
+
   it("disconnects once it is confirmed, and shows the brain's refusal", async () => {
     let refused = true;
     const seen = brain({

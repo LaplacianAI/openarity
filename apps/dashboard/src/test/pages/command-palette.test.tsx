@@ -21,7 +21,7 @@ function open(actions: string[] = [], started: Reply = { status: 404 }) {
   })) as unknown as typeof window.matchMedia;
   seen = brain({
     ...team(actions),
-    "POST /teams/{id}/runs": started,
+    "POST /teams/{id}/sessions": started,
     "GET /whoami": { body: { subject: "ann" } },
     "GET /teams/{id}/channels": { body: { items: [] } },
     "GET /teams/{id}/agents": {
@@ -112,15 +112,10 @@ describe("the command palette", () => {
 });
 
 describe("asking the team from the palette", () => {
-  const queued = {
-    id: "r-9",
-    session_id: "s-9",
-    agent: "orchestrator",
-    status: "queued",
-    input: "why did the deploy fail",
-    hub: true,
-  };
-  const posts = () => seen.filter((s) => s.method === "POST" && s.path === `/teams/${TEAM}/runs`);
+  const queued = { session_id: "s-9", message_id: "m-9", run_id: "r-9" };
+  const posts = () =>
+    seen.filter((s) => s.method === "POST" && s.path === `/teams/${TEAM}/sessions`);
+  const text = (i: number) => (JSON.parse(String(posts()[i]?.body)) as { text: string }).text;
 
   async function typed(text: string) {
     await screen.findByRole("navigation", { name: "Main" });
@@ -130,8 +125,8 @@ describe("asking the team from the palette", () => {
     return palette;
   }
 
-  it("asks what was typed when nothing has that name, and opens the run's trace", async () => {
-    const router = open(["run:write"], { status: 202, body: queued });
+  it("asks what was typed when nothing has that name, and opens the conversation", async () => {
+    const router = open(["run:write"], { status: 201, body: queued });
     const palette = await typed("why did the deploy fail");
 
     const option = await within(palette).findByRole("option", { name: /Ask the team/ });
@@ -141,25 +136,25 @@ describe("asking the team from the palette", () => {
 
     await userEvent.keyboard("{Enter}");
     await waitFor(() => expect(router.state.location.pathname).toBe("/ui/sessions/s-9"));
-    expect(router.state.location.search).toEqual({ tab: "runs", run: "r-9" });
-    expect(JSON.parse(String(posts()[0]?.body))).toEqual({ input: "why did the deploy fail" });
+    expect(router.state.location.search).toEqual({});
+    expect(text(0)).toBe("why did the deploy fail");
     expect(screen.queryByRole("dialog", { name: "Go to" })).toBeNull();
   });
 
   // Asking comes last, so Enter on a name still goes where it always went.
   it("opens a name that matched on Enter, and asks only on Ctrl+Enter", async () => {
-    const router = open(["run:write"], { status: 202, body: queued });
+    const router = open(["run:write"], { status: 201, body: queued });
     const palette = await typed("log");
     const options = await within(palette).findAllByRole("option");
     expect(options.at(-1)).toHaveTextContent("Ask the team");
 
     await userEvent.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(router.state.location.pathname).toBe("/ui/sessions/s-9"));
-    expect(JSON.parse(String(posts()[0]?.body))).toEqual({ input: "log" });
+    expect(text(0)).toBe("log");
   });
 
   it("goes to the name on plain Enter, asking nothing", async () => {
-    const router = open(["run:write"], { status: 202, body: queued });
+    const router = open(["run:write"], { status: 201, body: queued });
     await typed("log");
     await userEvent.keyboard("{Enter}");
     await waitFor(() => expect(router.state.location.pathname).toBe("/ui/agents/a-1"));
@@ -174,7 +169,14 @@ describe("asking the team from the palette", () => {
   });
 
   it("stays open on a refusal and says why, with the question still typed", async () => {
-    const router = open(["run:write"], { status: 409, text: "the team has no model set" });
+    const router = open(["run:write"], {
+      status: 201,
+      body: {
+        ...queued,
+        run_id: undefined,
+        unanswered: "the team has no model set, so its hub cannot run",
+      },
+    });
     const palette = await typed("anyone there");
     await within(palette).findByRole("option", { name: /Ask the team/ });
     await userEvent.keyboard("{Enter}");

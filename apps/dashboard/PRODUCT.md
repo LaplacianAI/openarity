@@ -70,14 +70,16 @@ above the others, so Home serves all four:
    is still going.
 2. **Change an agent.** Its instructions, model, pattern, and its grants of
    MCP servers and skills; then try it.
-3. **Ask the team something.** Start a run and watch it work. The question
-   goes to the hub (`POST /runs` with no agent), from the box on Home or from
-   ⌘K, and the asker lands on the run's live trace.
+3. **Ask the team something.** Start a conversation and watch it work. The
+   question goes to the dashboard's own channel (`POST /sessions`), from the
+   box on Home or from ⌘K; the hub answers it or hands the work on, and the
+   asker lands on the conversation, which shows the run thinking, calling
+   tools and writing as it happens, and takes their reply.
 4. **Let people in.** Approve senders waiting on a channel and bind each to a
    user, add members to a team, connect a channel.
 
-Live things are part of the scene: a run streams its events while it works, a
-session gains messages, a sender appears in the queue.
+Live things are part of the scene: a conversation streams what is said and
+what its runs do while they work, a sender appears in the queue.
 
 ## Capabilities and Constraints
 
@@ -86,16 +88,26 @@ What the dashboard does today, and must keep doing through any redesign:
 - **Teams:** list, create, add and remove members, delete; a super admin
   restores or waits out a deleted team from Deleted teams.
 - **Channels:** connect (custom webhook and others), delete; approve or
-  remove senders.
-- **Sessions:** list, read the conversation (messages and each run's answer)
-  and attachments, read the session's runs,
-  follow a run's event stream, cancel a run.
+  remove senders. The dashboard's own channel is built into every team and
+  cannot be deleted.
+- **Sessions:** list, read the conversation live off its stream (what people
+  said, and each run's thinking, tool calls, handed work and answer) and its
+  attachments, read the session's runs, follow a run's event stream, cancel a
+  run. Write in your own conversation on the dashboard; start a new one from
+  any conversation.
 - **Agents:** define, replace (a whole PUT), delete; grant MCP servers and
   skills from the same team.
 - **MCP servers:** register, replace, delete, run discovery, list tools.
 - **Skills:** upload, import from GitHub, sync, replace, delete, read the body.
 - **Graph:** read the team's graph.
 - **Team settings:** the built-in hub's model and settings.
+
+Known gaps, not yet built:
+
+- **No group conversations on the dashboard.** A conversation there is between
+  one person and the team; a second member can read it but not write in it.
+- **Other channels do not stream.** A person on Telegram or behind a webhook
+  gets the finished answer only; the dashboard shows their conversation live.
 
 Constraints:
 

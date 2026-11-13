@@ -49,12 +49,9 @@ function at(path: string, strict = false) {
   );
 }
 
-function message(id: string, user: string, text: string, at: string) {
-  return { id, external_id: `x-${id}`, user_id: user, text, received_at: at };
-}
-
 const SESSION = `GET /teams/{id}/sessions/{sid}`;
-const MESSAGES = `GET /teams/{id}/sessions/{sid}/messages`;
+/** The session's own stream: what was said, and what its runs did. */
+const CONVO = `GET /teams/{id}/sessions/{sid}/events`;
 const ATTACHMENTS = `GET /teams/{id}/sessions/{sid}/attachments`;
 const RUNS = `GET /teams/{id}/sessions/{sid}/runs`;
 const RUN = `GET /teams/{id}/runs/{rid}`;
@@ -76,7 +73,7 @@ function listed(extra: Parameters<typeof brain>[0]) {
       },
     },
     [SESSION]: { body: session },
-    [MESSAGES]: { body: { items: [] } },
+    [CONVO]: () => conversation(),
     [ATTACHMENTS]: { body: { items: [] } },
     [RUNS]: { body: { items: [] } },
     ...extra,
@@ -94,8 +91,29 @@ function tabPanel(name: "Conversation" | "Runs"): HTMLElement {
   return screen.getByRole("tabpanel", { name: new RegExp(name) });
 }
 
+/**
+ * A session's stream holding these frames and staying open, as a live one
+ * does: it never ends by itself.
+ */
+function conversation(...frames: string[]) {
+  const f = feed();
+  for (const x of frames) f.push(x);
+  return { stream: f.stream };
+}
+
+let seqs = 0;
+/** A message on the session's stream. */
+function said(id: string, user: string, text: string, extra: Record<string, unknown> = {}): string {
+  return sf("message", { id, user_id: user, parts: [{ type: "text", text }], ...extra });
+}
+/** One frame of the session's stream, numbered in the order written. */
+function sf(kind: string, data: Record<string, unknown>): string {
+  seqs += 1;
+  return `id: ${seqs}\nevent: ${kind}\ndata: ${JSON.stringify({ at: STAMP, ...data })}\n\n`;
+}
+
 /** The texts of the messages, top to bottom, as the reader sees them. */
-function said(): string[] {
+function texts(): string[] {
   return Array.from(document.querySelectorAll("[data-message] [data-text]")).map(
     (e) => e.textContent ?? "",
   );
@@ -378,22 +396,15 @@ describe("a session's page", () => {
 /* --------------------------------------------------------------- messages */
 
 describe("the messages", () => {
-  it("reads oldest first, with who said it", async () => {
-    // The brain answers newest first.
+  it("reads in the order they were said, with who said it", async () => {
     listed({
-      [MESSAGES]: {
-        body: {
-          items: [
-            message("m2", "user-bob", "second", "2026-10-01T00:02:00Z"),
-            message("m1", "user-ann", "first", "2026-10-01T00:01:00Z"),
-          ],
-        },
-      },
+      [CONVO]: () =>
+        conversation(said("m1", "user-ann", "first"), said("m2", "user-bob", "second")),
     });
 
     await open();
     await screen.findByText("second");
-    expect(said()).toEqual(["first", "second"]);
+    expect(texts()).toEqual(["first", "second"]);
     expect(screen.getByText("user-ann")).toBeInTheDocument();
     expect(screen.getByText("user-bob")).toBeInTheDocument();
   });
@@ -403,14 +414,8 @@ describe("the messages", () => {
   // the id, which still says that someone did.
   it("names who said it from the team's members, and keeps the id of anyone else", async () => {
     listed({
-      [MESSAGES]: {
-        body: {
-          items: [
-            message("m2", "user-bob", "second", "2026-10-01T00:02:00Z"),
-            message("m1", "user-ann", "first", "2026-10-01T00:01:00Z"),
-          ],
-        },
-      },
+      [CONVO]: () =>
+        conversation(said("m1", "user-ann", "first"), said("m2", "user-bob", "second")),
       "GET /teams/{id}/members": {
         body: {
           items: [
@@ -426,41 +431,26 @@ describe("the messages", () => {
     expect(screen.getByText("user-bob")).toBeInTheDocument();
   });
 
-  it("loads earlier messages with the cursor and keeps chat order", async () => {
+  it("reads the conversation from its start, and follows it again from the last frame after a drop", async () => {
+    const one = said("m1", "user-ann", "one");
+    const two = said("m2", "user-ann", "two");
+    const last = seqs;
+    const three = said("m3", "user-bob", "three");
+    let reads = 0;
     const seen = listed({
-      [MESSAGES]: (s) =>
-        s.path.includes("cursor=older")
-          ? {
-              body: {
-                items: [
-                  message("m2", "user-ann", "two", "2026-10-01T00:02:00Z"),
-                  message("m1", "user-ann", "one", "2026-10-01T00:01:00Z"),
-                ],
-              },
-            }
-          : {
-              body: {
-                items: [
-                  message("m4", "user-bob", "four", "2026-10-01T00:04:00Z"),
-                  message("m3", "user-bob", "three", "2026-10-01T00:03:00Z"),
-                ],
-                next_cursor: "older",
-              },
-            },
+      [CONVO]: () => {
+        reads += 1;
+        // The first connection drops after two frames.
+        return reads === 1 ? { stream: chunks(one, two) } : conversation(three);
+      },
     });
 
     await open();
-    await screen.findByText("four");
-    expect(said()).toEqual(["three", "four"]);
-
-    await userEvent.click(
-      within(tabPanel("Conversation")).getByRole("button", { name: /load more/i }),
-    );
-    await screen.findByText("one");
-    expect(said()).toEqual(["one", "two", "three", "four"]);
-    expect(
-      seen.some((s) => s.path === `/teams/${TEAM}/sessions/${SID}/messages?cursor=older`),
-    ).toBe(true);
+    expect(await screen.findByText("three", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(texts()).toEqual(["one", "two", "three"]);
+    const followed = seen.filter((x) => x.path.startsWith(`/teams/${TEAM}/sessions/${SID}/events`));
+    expect(followed[0]?.path).toBe(`/teams/${TEAM}/sessions/${SID}/events`);
+    expect(followed[1]?.path).toBe(`/teams/${TEAM}/sessions/${SID}/events?after=${last}`);
   });
 
   it("says so when nothing has been said", async () => {
@@ -470,7 +460,7 @@ describe("the messages", () => {
   });
 
   it("shows what someone typed as text, never as markup", async () => {
-    listed({ [MESSAGES]: { body: { items: [message("m1", "user-ann", "<b>hi</b>", STAMP)] } } });
+    listed({ [CONVO]: () => conversation(said("m1", "user-ann", "<b>hi</b>")) });
 
     await open();
     expect(await screen.findByText("<b>hi</b>")).toBeInTheDocument();
@@ -479,7 +469,7 @@ describe("the messages", () => {
 
   it("lists the session's attachments by name", async () => {
     listed({
-      [MESSAGES]: { body: { items: [message("m1", "user-ann", "see attached", STAMP)] } },
+      [CONVO]: () => conversation(said("m1", "user-ann", "see attached")),
       [ATTACHMENTS]: {
         body: { items: [attachment("a1", "invoice.pdf", "application/pdf", 2048)] },
       },
@@ -491,18 +481,19 @@ describe("the messages", () => {
     expect(screen.getByText(/2 KB/)).toBeInTheDocument();
   });
 
-  it("shows the brain's reason when the session cannot be read", async () => {
+  it("shows the brain's reason when the conversation cannot be read", async () => {
     listed({
-      [MESSAGES]: { status: 403, text: "you are not part of this conversation" },
+      [CONVO]: { status: 403, text: "you are not part of this conversation" },
       [ATTACHMENTS]: { status: 403, text: "you are not part of this conversation" },
     });
 
     await open();
     // A refusal is not a failure to retry: it says so, in the brain's words.
     const panel = tabPanel("Conversation");
-    expect(await within(panel).findByText("You can't see the messages.")).toBeInTheDocument();
-    expect(within(panel).getByText("You are not part of this conversation.")).toBeInTheDocument();
-    expect(within(panel).queryByRole("button", { name: /try again/i })).toBeNull();
+    expect(await within(panel).findByText("You can't see the conversation.")).toBeInTheDocument();
+    expect(
+      within(panel).getAllByText("You are not part of this conversation.").length,
+    ).toBeGreaterThan(0);
   });
 
   // The token is not a cookie, so a bare link could not fetch the file. And a
@@ -510,7 +501,6 @@ describe("the messages", () => {
   // so it is handed to the browser as a download of bytes, whatever its type.
   it("downloads an attachment with the token, as bytes to save", async () => {
     const seen = listed({
-      [MESSAGES]: { body: { items: [message("m1", "user-ann", "see attached", STAMP)] } },
       [ATTACHMENTS]: { body: { items: [attachment("a1", "page.html", "text/html", 20)] } },
       "GET /teams/{id}/sessions/{sid}/attachments/{aid}": { text: "<script>x</script>" },
     });
@@ -541,7 +531,6 @@ describe("the messages", () => {
 
   it("shows why an attachment could not be downloaded", async () => {
     listed({
-      [MESSAGES]: { body: { items: [message("m1", "user-ann", "see attached", STAMP)] } },
       [ATTACHMENTS]: {
         body: { items: [attachment("a1", "invoice.pdf", "application/pdf", 2048)] },
       },
@@ -833,9 +822,7 @@ describe("a run's trace", () => {
 
     it("shows the conversation beside the run, and follows the run's trace", async () => {
       listed({
-        [MESSAGES]: {
-          body: { items: [message("m1", "user-ann", "hello", "2026-10-01T00:01:00Z")] },
-        },
+        [CONVO]: () => conversation(said("m1", "user-ann", "hello")),
         [RUNS]: { body: { items: [run("r1", "helper", "succeeded")] } },
         [EVENTS]: () => ({
           stream: chunks(
@@ -2103,183 +2090,247 @@ describe("a failed run's error", () => {
 
 describe("the conversation", () => {
   const CONVERSATION = "?tab=messages";
-  const turns = () =>
-    Array.from(
-      document.querySelectorAll("[data-message] [data-text], [data-turn] [data-asked]"),
-    ).map((e) => e.textContent?.replace("Asked: ", "") ?? "");
-
-  it("puts each run between the messages it came between, with its answer and its trace", async () => {
-    listed({
-      [MESSAGES]: {
-        body: {
-          items: [
-            message("m2", "user-ann", "thanks", "2026-10-01T00:03:00Z"),
-            message("m1", "user-ann", "is billing down?", "2026-10-01T00:01:00Z"),
-          ],
-        },
-      },
-      [RUNS]: {
-        body: {
-          items: [
-            run("r1", "orchestrator", "succeeded", {
-              hub: true,
-              input: "is billing down?",
-              output: "Billing is **up**; the export job failed.",
-              created_at: "2026-10-01T00:02:00Z",
-            }),
-          ],
-        },
-      },
+  const turnOf = (id: string) =>
+    waitFor(() => {
+      const el = document.querySelector(`[data-turn="${id}"]`);
+      if (!el) throw new Error(`no turn ${id}`);
+      return el as HTMLElement;
     });
+  it("shows a run as it works: its thinking and tools open, its text as written, then the answer", async () => {
+    const f = feed();
+    f.push(said("m1", "user-ann", "why did the deploy fail?", { state: "pending" }));
+    listed({ [CONVO]: () => ({ stream: f.stream }) });
     await open(CONVERSATION);
-    await screen.findByText("thanks");
+    await screen.findByText("why did the deploy fail?");
 
-    expect(turns()).toEqual(["is billing down?", "is billing down?", "thanks"]);
-    const turn = document.querySelector('[data-turn="r1"]') as HTMLElement;
-    // The answer is the agent's markdown, drawn as such.
-    expect(within(turn).getByText("up").tagName).toBe("STRONG");
-    expect(within(turn).getByText("hub")).toBeInTheDocument();
-    expect(within(turn).getByRole("link", { name: /Open the run/ })).toHaveAttribute(
+    f.push(sf("run_started", { run_id: "r1", agent: "hub" }));
+    f.push(sf("message_consumed", { run_id: "r1", message_ids: ["m1"] }));
+    f.push(sf("step_started", { run_id: "r1", step: 1 }));
+    f.push(
+      sf("reasoning_message_chunk", {
+        run_id: "r1",
+        message_id: "r1:1:reasoning",
+        delta: "Need the logs.",
+      }),
+    );
+    f.push(
+      sf("tool_call_chunk", {
+        run_id: "r1",
+        tool_call_id: "c1",
+        name: "read_logs",
+        arguments: '{"service":"deploy"}',
+      }),
+    );
+    f.push(
+      sf("tool_call_result", {
+        run_id: "r1",
+        tool_call_id: "c1",
+        name: "read_logs",
+        content: "timeout",
+        duration_ms: 40,
+      }),
+    );
+    // A kind the conversation does not show is passed over.
+    f.push(sf("usage", { run_id: "r1", model: "m", input_tokens: 10, output_tokens: 2 }));
+    f.push(sf("step_started", { run_id: "r1", step: 2 }));
+    f.push(sf("text_message_chunk", { run_id: "r1", message_id: "r1:2:text", delta: "It timed " }));
+
+    const turn = await turnOf("r1");
+    await waitFor(() => expect(turn.querySelector("[data-live]")).toHaveTextContent("It timed"));
+    expect(within(turn).getByText("Live")).toBeInTheDocument();
+    expect(within(turn).getByRole("button", { name: /Working · step 2 · 1 tool/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(within(turn).getByText("Need the logs.")).toBeInTheDocument();
+    expect(turn.querySelector('[data-tool="read_logs"]')).toHaveTextContent("40 ms");
+    expect(screen.getByText("Read by hub")).toBeInTheDocument();
+
+    f.push(sf("text_message_chunk", { run_id: "r1", message_id: "r1:2:text", delta: "out." }));
+    f.push(
+      sf("run_finished", {
+        run_id: "r1",
+        status: "succeeded",
+        output: "It **timed out** after 30 s.",
+      }),
+    );
+    await waitFor(() => expect(within(turn).getByText("timed out").tagName).toBe("STRONG"));
+    // Ended, the working folds to one line and the answer stands alone.
+    expect(within(turn).getByRole("button", { name: /^2 steps · 1 tool$/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(turn.querySelector("[data-live]")).toBeNull();
+    // Opened, the working holds the thinking and the call, not the answer again.
+    await userEvent.click(within(turn).getByRole("button", { name: /^2 steps · 1 tool$/ }));
+    const working = turn.querySelector("#working-r1") as HTMLElement;
+    expect(within(working).getByText("Need the logs.")).toBeInTheDocument();
+    expect(working).not.toHaveTextContent("It timed out.");
+    expect(within(turn).getByRole("link", { name: /Open its trace/ })).toHaveAttribute(
       "href",
       `${PAGE}?tab=runs&run=r1`,
     );
   });
 
-  it("says a failed run's error in the dashboard's words, and a working one that it is working", async () => {
-    listed({
-      [RUNS]: {
-        body: {
-          items: [
-            run("r2", "triage", "running", { created_at: "2026-10-01T00:02:00Z" }),
-            run("r1", "billing", "failed", {
-              error: "the run exceeded its token budget of 20000",
-              created_at: "2026-10-01T00:01:00Z",
-            }),
-          ],
-        },
-      },
-    });
+  it("follows on from the last frame seen when the reader comes back to it", async () => {
+    const first = said("m1", "user-ann", "hello");
+    const last = seqs;
+    const seen = listed({ [CONVO]: () => conversation(first) });
     await open(CONVERSATION);
-    const failed = await waitFor(() => document.querySelector('[data-turn="r1"]') as HTMLElement);
-    expect(within(failed).getByText("It ran out of its token budget.")).toBeInTheDocument();
-    expect(failed).not.toHaveTextContent("20000");
-    const working = document.querySelector('[data-turn="r2"]') as HTMLElement;
-    expect(within(working).getByText("Working on it…")).toBeInTheDocument();
+    await screen.findByText("hello");
+
+    await userEvent.click(screen.getByRole("tab", { name: /Runs/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Conversation" }));
+    expect(await screen.findByText("hello")).toBeInTheDocument();
+    await waitFor(() => {
+      const followed = seen.filter((x) =>
+        x.path.startsWith(`/teams/${TEAM}/sessions/${SID}/events`),
+      );
+      expect(followed.map((x) => x.path)).toEqual([
+        `/teams/${TEAM}/sessions/${SID}/events`,
+        `/teams/${TEAM}/sessions/${SID}/events?after=${last}`,
+      ]);
+    });
   });
 
-  it("reads a working run again until its answer lands, with no trace open", async () => {
+  it("keeps the working open once the reader opened it, whatever arrives after", async () => {
+    const f = feed();
+    f.push(sf("run_started", { run_id: "r1", agent: "hub" }));
+    f.push(sf("step_started", { run_id: "r1", step: 1 }));
+    f.push(sf("run_finished", { run_id: "r1", status: "succeeded", output: "Done." }));
+    listed({ [CONVO]: () => ({ stream: f.stream }) });
+    await open(CONVERSATION);
+    const turn = await turnOf("r1");
+    const toggle = within(turn).getByRole("button", { name: "1 step" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    f.push(said("m2", "user-ann", "thanks"));
+    await screen.findByText("thanks");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("says a failed run's error in the dashboard's words", async () => {
+    listed({
+      [CONVO]: () =>
+        conversation(
+          sf("run_started", { run_id: "r1", agent: "billing" }),
+          sf("run_finished", {
+            run_id: "r1",
+            status: "failed",
+            error: "the run exceeded its token budget of 20000",
+          }),
+        ),
+    });
+    await open(CONVERSATION);
+    const turn = await turnOf("r1");
+    expect(within(turn).getByText("It ran out of its token budget.")).toBeInTheDocument();
+    expect(turn).not.toHaveTextContent("20000");
+  });
+
+  it("says a message is waiting while a run works, and shows where the run read it", async () => {
+    const f = feed();
+    f.push(sf("run_started", { run_id: "r1", agent: "hub" }));
+    f.push(sf("step_started", { run_id: "r1", step: 1 }));
+    f.push(said("m2", "user-ann", "also check staging", { state: "pending" }));
+    listed({ [CONVO]: () => ({ stream: f.stream }) });
+    await open(CONVERSATION);
+
+    const waiting = await waitFor(() => {
+      const el = document.querySelector('[data-message="m2"] [data-state="pending"]');
+      if (!el) throw new Error("not waiting");
+      return el as HTMLElement;
+    });
+    expect(waiting).toHaveTextContent("Waiting · read before the run's next step");
+
+    f.push(sf("step_started", { run_id: "r1", step: 2 }));
+    f.push(sf("message_consumed", { run_id: "r1", message_ids: ["m2"] }));
+    const turn = await turnOf("r1");
+    await waitFor(() => expect(within(turn).getByText(/Read a message/)).toBeInTheDocument());
+    expect(within(turn).getByRole("button", { name: /read 1 message/ })).toBeInTheDocument();
+    expect(document.querySelector('[data-message="m2"] [data-state="read"]')).toHaveTextContent(
+      "Read by hub",
+    );
+  });
+
+  it("puts a run handed work inside its parent's working, with the way to its run", async () => {
+    listed({
+      [CONVO]: () =>
+        conversation(
+          sf("run_started", { run_id: "r1", agent: "ops-lead" }),
+          sf("step_started", { run_id: "r1", step: 1 }),
+          sf("run_started", { run_id: "r2", agent: "log-reader", parent_run_id: "r1" }),
+          sf("run_finished", { run_id: "r2", status: "succeeded", output: "found it" }),
+        ),
+    });
+    await open(CONVERSATION);
+    const turn = await turnOf("r1");
+    expect(document.querySelector('[data-turn="r2"]')).toBeNull();
+    expect(within(turn).getByRole("button", { name: /handed to log-reader/ })).toBeInTheDocument();
+    const handed = turn.querySelector('[data-handed="log-reader"]') as HTMLElement;
+    expect(within(handed).getByText("succeeded")).toBeInTheDocument();
+    expect(within(handed).getByRole("link", { name: /Open its run/ })).toHaveAttribute(
+      "href",
+      `${PAGE}?tab=runs&run=r2`,
+    );
+  });
+
+  it("cuts a long answer and sends the reader to its trace for the rest", async () => {
+    listed({
+      [CONVO]: () =>
+        conversation(
+          sf("run_started", { run_id: "r1", agent: "triage" }),
+          sf("run_finished", { run_id: "r1", status: "succeeded", output: "word ".repeat(400) }),
+        ),
+    });
+    await open(CONVERSATION);
+    expect(
+      await screen.findByRole("link", { name: /Read the whole answer in its trace/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("marks the hub's run, from the session's runs", async () => {
+    listed({
+      [RUNS]: { body: { items: [run("r1", "orchestrator", "succeeded", { hub: true })] } },
+      [CONVO]: () =>
+        conversation(
+          sf("run_started", { run_id: "r1", agent: "orchestrator" }),
+          sf("run_finished", { run_id: "r1", status: "succeeded", output: "ok" }),
+        ),
+    });
+    await open(CONVERSATION);
+    const turn = await turnOf("r1");
+    await waitFor(() => expect(within(turn).getByText("hub")).toBeInTheDocument());
+  });
+
+  it("still shows the conversation when the runs can't be read", async () => {
+    listed({
+      [RUNS]: { status: 500, text: "boom" },
+      [CONVO]: () => conversation(said("m1", "user-ann", "hello")),
+    });
+    await open(CONVERSATION);
+    expect(await screen.findByText("hello")).toBeInTheDocument();
+  });
+
+  it("says so, and follows on, when the connection drops", async () => {
     let reads = 0;
     listed({
-      [RUNS]: () => {
+      [CONVO]: () => {
         reads += 1;
-        return {
-          body: {
-            items: [
-              reads === 1
-                ? run("r1", "triage", "running")
-                : run("r1", "triage", "succeeded", { output: "All clear." }),
-            ],
-          },
-        };
-      },
-    });
-    await open(CONVERSATION);
-    expect(await screen.findByText("Working on it…")).toBeInTheDocument();
-    expect(await screen.findByText("All clear.", {}, { timeout: 5000 })).toBeInTheDocument();
-  });
-
-  it("cuts a long answer and sends the reader to the run for the rest", async () => {
-    listed({
-      [RUNS]: {
-        body: { items: [run("r1", "triage", "succeeded", { output: "word ".repeat(400) })] },
+        return reads === 1 ? { stream: chunks(said("m1", "user-ann", "hello")) } : conversation();
       },
     });
     await open(CONVERSATION);
     expect(
-      await screen.findByRole("link", { name: /Read the whole answer in its run/ }),
+      await screen.findByText("The connection dropped. Following the conversation again…"),
     ).toBeInTheDocument();
-  });
-
-  it("holds back messages older than the runs read so far, and reads the runs further for them", async () => {
-    const seen = listed({
-      [MESSAGES]: {
-        body: {
-          items: [
-            message("m2", "user-ann", "newer", "2026-10-01T00:05:00Z"),
-            message("m1", "user-ann", "older", "2026-10-01T00:01:00Z"),
-          ],
-        },
-      },
-      [RUNS]: (s) =>
-        s.path.includes("cursor=earlier")
-          ? {
-              body: {
-                items: [
-                  run("r1", "triage", "succeeded", {
-                    input: "first ask",
-                    created_at: "2026-10-01T00:02:00Z",
-                  }),
-                ],
-              },
-            }
-          : {
-              body: {
-                items: [
-                  run("r2", "triage", "succeeded", {
-                    input: "second ask",
-                    created_at: "2026-10-01T00:04:00Z",
-                  }),
-                ],
-                next_cursor: "earlier",
-              },
-            },
-    });
-    await open(CONVERSATION);
-    await screen.findByText("newer");
-    expect(turns()).toEqual(["second ask", "newer"]);
-
-    await userEvent.click(
-      within(tabPanel("Conversation")).getByRole("button", { name: /load more/i }),
+    await waitFor(() => expect(reads).toBe(2), { timeout: 4000 });
+    await waitFor(() =>
+      expect(
+        screen.queryByText("The connection dropped. Following the conversation again…"),
+      ).toBeNull(),
     );
-    await screen.findByText("older");
-    expect(turns()).toEqual(["older", "first ask", "second ask", "newer"]);
-    // Only the list that stopped short was read further.
-    expect(seen.some((s) => s.path.includes("/messages?cursor="))).toBe(false);
-  });
-
-  // Drawn before the runs arrive, the messages would move under the reader
-  // as the runs landed between them.
-  it("waits for the runs before drawing anything", async () => {
-    listed({
-      [MESSAGES]: { body: { items: [message("m1", "user-ann", "hello", STAMP)] } },
-      [RUNS]: { body: { items: [run("r1", "triage", "succeeded", { output: "hi there" })] } },
-    });
-    const answer = globalThis.fetch;
-    let release = () => {};
-    const held = new Promise<void>((r) => {
-      release = r;
-    });
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).includes("/runs")) await held;
-      return answer(input, init);
-    });
-
-    await open(CONVERSATION);
-    expect(await screen.findByRole("status", { name: "Loading messages" })).toBeInTheDocument();
-    expect(screen.queryByText("hello")).toBeNull();
-
-    release();
-    expect(await screen.findByText("hi there")).toBeInTheDocument();
-    expect(screen.getByText("hello")).toBeInTheDocument();
-  });
-
-  it("still shows what people said when the runs can't be read", async () => {
-    listed({
-      [MESSAGES]: { body: { items: [message("m1", "user-ann", "hello", STAMP)] } },
-      [RUNS]: { status: 500, text: "boom" },
-    });
-    await open(CONVERSATION);
-    expect(await screen.findByText("hello")).toBeInTheDocument();
   });
 });
 
@@ -2297,13 +2348,21 @@ describe("whom a session's runs handed work to", () => {
           ],
         },
       },
+      [CONVO]: () =>
+        conversation(
+          sf("run_started", { run_id: "r1", agent: "ops-lead" }),
+          sf("step_started", { run_id: "r1", step: 1 }),
+          sf("run_started", { run_id: "r2", agent: "log-reader", parent_run_id: "r1" }),
+          sf("run_finished", { run_id: "r2", status: "succeeded" }),
+          sf("run_finished", { run_id: "r1", status: "succeeded", output: "Done." }),
+        ),
     });
     await open("?tab=runs");
     expect(await within(runList()).findByText("→ log-reader")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("tab", { name: "Conversation" }));
     const turn = await waitFor(() => document.querySelector('[data-turn="r1"]') as HTMLElement);
-    expect(within(turn).getByText("→ log-reader")).toBeInTheDocument();
+    expect(within(turn).getByRole("button", { name: /handed to log-reader/ })).toBeInTheDocument();
   });
 });
 
@@ -2324,9 +2383,17 @@ describe("whether an answer reached the channel", () => {
       if (!el) throw new Error(`no reply status on ${id}`);
       return el as HTMLElement;
     });
+  const ran = (...ids: string[]) =>
+    conversation(
+      ...ids.flatMap((id) => [
+        sf("run_started", { run_id: id, agent: "orchestrator" }),
+        sf("run_finished", { run_id: id, status: "succeeded", output: `answer ${id}` }),
+      ]),
+    );
 
   it("says under each answer whether it was sent, is on its way, or was given up", async () => {
     listed({
+      [CONVO]: () => ran("r1", "r2", "r3"),
       [RUNS]: {
         body: {
           items: [
@@ -2385,6 +2452,7 @@ describe("whether an answer reached the channel", () => {
   // about a channel, and a brain from before the field says nothing either.
   it("says nothing under a run that answers no channel", async () => {
     listed({
+      [CONVO]: () => ran("r1", "r2"),
       [RUNS]: {
         body: {
           items: [
@@ -2395,7 +2463,7 @@ describe("whether an answer reached the channel", () => {
       },
     });
     await open(CONVERSATION);
-    await screen.findByText("From the dashboard.");
+    await screen.findByText("answer r2");
     expect(document.querySelector("[data-reply-status]")).toBeNull();
   });
 
@@ -2406,6 +2474,7 @@ describe("whether an answer reached the channel", () => {
     });
     let reads = 0;
     listed({
+      [CONVO]: () => ran("r1"),
       [RUNS]: () => {
         reads += 1;
         return {
@@ -2436,5 +2505,179 @@ describe("whether an answer reached the channel", () => {
     const after = reads;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(reads).toBe(after);
+  });
+});
+
+describe("writing in a conversation", () => {
+  const ME = "user-me";
+  const MINE = {
+    ...session,
+    channel_id: "dash",
+    kind: "direct",
+    provider_ref: "",
+    user_id: ME,
+    first_asked: "ticket-42",
+  };
+  const writer = (extra: Parameters<typeof brain>[0] = {}) =>
+    listed({
+      ...team(["run:write"]),
+      "GET /whoami": { body: { id: ME, subject: "me" } },
+      "GET /teams/{id}/channels": {
+        body: {
+          items: [
+            { id: "c1", name: "support", provider: "slack" },
+            { id: "dash", name: "Dashboard", provider: "dashboard" },
+          ],
+        },
+      },
+      ...extra,
+    });
+  const sends = (seen: Seen[], path: string) =>
+    seen
+      .filter((x) => x.method === "POST" && x.path === path)
+      .map((x) => JSON.parse(String(x.body)) as { text: string; key: string });
+
+  it("replies in your own conversation on the dashboard", async () => {
+    const seen = writer({
+      [SESSION]: { body: MINE },
+      "POST /teams/{id}/sessions/{sid}/messages": {
+        status: 202,
+        body: { session_id: SID, message_id: "m9", run_id: "r9", steered: true },
+      },
+    });
+    await open("?tab=messages");
+    const box = await screen.findByRole("textbox", { name: "Reply" });
+    await userEvent.type(box, "also check staging");
+    await userEvent.keyboard("{Control>}{Enter}{/Control}");
+
+    await waitFor(() =>
+      expect(sends(seen, `/teams/${TEAM}/sessions/${SID}/messages`)).toHaveLength(1),
+    );
+    expect(sends(seen, `/teams/${TEAM}/sessions/${SID}/messages`)[0]?.text).toBe(
+      "also check staging",
+    );
+    await waitFor(() => expect(box).toHaveValue(""));
+  });
+
+  // The brain treats one key as one message: a retry is the same send, and
+  // an edited retry under the old key would be answered with the old words.
+  it("sends a retry under the same key, and edited words under a new one", async () => {
+    let posts = 0;
+    const seen = writer({
+      [SESSION]: { body: MINE },
+      "POST /teams/{id}/sessions/{sid}/messages": () => {
+        posts += 1;
+        return posts < 3
+          ? { status: 503, text: "the database is busy" }
+          : { status: 202, body: { session_id: SID, message_id: "m9" } };
+      },
+    });
+    await open("?tab=messages");
+    const box = await screen.findByRole("textbox", { name: "Reply" });
+    const send = () => userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await userEvent.type(box, "check staging");
+    await send();
+    await within(screen.getByRole("form", { name: "Reply" })).findByRole("alert");
+    await send();
+    await waitFor(() => expect(posts).toBe(2));
+    await userEvent.type(box, " too");
+    await send();
+    await waitFor(() => expect(posts).toBe(3));
+
+    const [first, retry, edited] = sends(seen, `/teams/${TEAM}/sessions/${SID}/messages`);
+    expect(retry?.key).toBe(first?.key);
+    expect(edited?.text).toBe("check staging too");
+    expect(edited?.key).not.toBe(first?.key);
+  });
+
+  it("sends the same words again as a new message once the first went through", async () => {
+    const seen = writer({
+      [SESSION]: { body: MINE },
+      "POST /teams/{id}/sessions/{sid}/messages": {
+        status: 202,
+        body: { session_id: SID, message_id: "m9" },
+      },
+    });
+    await open("?tab=messages");
+    const box = await screen.findByRole("textbox", { name: "Reply" });
+    for (let i = 0; i < 2; i++) {
+      await userEvent.type(box, "ok");
+      await userEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(box).toHaveValue(""));
+    }
+    const [one, two] = sends(seen, `/teams/${TEAM}/sessions/${SID}/messages`);
+    expect(two?.text).toBe(one?.text);
+    expect(two?.key).not.toBe(one?.key);
+  });
+
+  it("offers no reply on another channel, says where replies go, and starts one on the dashboard", async () => {
+    const seen = writer({
+      "POST /teams/{id}/sessions": {
+        status: 201,
+        body: { session_id: "new-session", message_id: "m1", run_id: "r1" },
+      },
+      "GET /teams/{id}/sessions/{sid}": (x) =>
+        x.path.includes("new-session")
+          ? { body: { ...MINE, id: "new-session" } }
+          : { body: session },
+    });
+    const router = await open("?tab=messages");
+    expect(
+      await screen.findByText("Replies to this conversation go through support."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Reply" })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Start one on the dashboard" }));
+    const box = screen.getByRole("textbox", { name: "Start a conversation" });
+    expect(box).toHaveFocus();
+    await userEvent.type(box, "is staging up?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/ui/sessions/new-session"));
+    expect(sends(seen, `/teams/${TEAM}/sessions`)[0]?.text).toBe("is staging up?");
+  });
+
+  // A reply is in the conversation once sent; when no run will take it, the
+  // box says why rather than leaving it waiting with no reason.
+  it("says why no run will take a reply", async () => {
+    writer({
+      [SESSION]: { body: MINE },
+      "POST /teams/{id}/sessions/{sid}/messages": {
+        status: 202,
+        body: {
+          session_id: SID,
+          message_id: "m9",
+          unanswered: "the team has no model set, so its hub cannot run",
+        },
+      },
+    });
+    await open("?tab=messages");
+    const box = await screen.findByRole("textbox", { name: "Reply" });
+    await userEvent.type(box, "anyone?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const form = screen.getByRole("form", { name: "Reply" });
+    expect(await within(form).findByRole("alert")).toHaveTextContent(
+      "The hub can't run until a model is set.",
+    );
+    expect(within(form).getByRole("link", { name: /Open team settings/ })).toBeInTheDocument();
+    expect(box).toHaveValue("");
+  });
+
+  it("offers no reply in someone else's conversation on the dashboard", async () => {
+    writer({ [SESSION]: { body: { ...MINE, user_id: "user-other" } } });
+    await open("?tab=messages");
+    expect(
+      await screen.findByText("Only the person this conversation is with writes in it."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Reply" })).toBeNull();
+  });
+
+  it("offers nothing to write to someone who may not start runs", async () => {
+    writer({ ...team([]), [SESSION]: { body: MINE } });
+    await open("?tab=messages");
+    expect(await screen.findByText("Replying takes run:write.")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start one on the dashboard" })).toBeNull();
   });
 });

@@ -6,34 +6,37 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRight, Check, ChevronRight, Clock, Paperclip, X } from "lucide-react";
-import { useState } from "react";
+import { ArrowDown, ChevronRight, Loader2, Paperclip } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   downloadAttachment,
+  fetchWhoami,
   getRun,
   getSession,
   listAttachments,
+  listChannels,
   listMembers,
-  listMessages,
   listSessionRuns,
 } from "@/api";
 import { ApiError, nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type { Attachment, Page, Run, Session } from "@/api/types";
+import { Composer } from "@/components/composer";
+import { ConversationView } from "@/components/conversation-view";
 import { Time } from "@/components/facts";
-import { Markdown } from "@/components/markdown";
 import { isLive, RunDetail, RunStatus } from "@/components/run-detail";
-import { HandedTo, HubTag } from "@/components/run-table";
+import { HandedTo } from "@/components/run-table";
+import { useSessionStream } from "@/components/session-stream";
 import { ErrorState } from "@/components/states";
 import { StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { EmptyState, LoadMore, Mono } from "@/components/ui-bits";
-import { awaitsReply, conversation, noAnswer, replyLine } from "@/lib/conversation";
-import { absoluteTime, fileSize } from "@/lib/format";
+import { EmptyState, LoadMore } from "@/components/ui-bits";
+import { awaitsReply } from "@/lib/conversation";
+import { fileSize } from "@/lib/format";
 import { useMediaQuery } from "@/lib/media";
 import { sessionName } from "@/lib/sessions";
 import { cn } from "@/lib/utils";
@@ -191,7 +194,7 @@ function SessionPage() {
             <h2 id="conversation" className="text-base font-medium">
               Conversation
             </h2>
-            <Conversation teamId={teamId} sessionId={sessionId} runs={runs} />
+            <Conversation teamId={teamId} sessionId={sessionId} session={s} runs={runs} />
           </section>
           <section aria-labelledby="runs" className="space-y-3">
             <h2 id="runs" className="flex items-center gap-2 text-base font-medium">
@@ -225,7 +228,7 @@ function SessionPage() {
             </TabsTrigger>
           </TabsList>
           <TabsContent value="messages">
-            <Conversation teamId={teamId} sessionId={sessionId} runs={runs} />
+            <Conversation teamId={teamId} sessionId={sessionId} session={s} runs={runs} />
           </TabsContent>
           <TabsContent value="runs">{runsPanel}</TabsContent>
         </Tabs>
@@ -263,18 +266,16 @@ const REPLY_EVERY_MS = 15_000;
 function Conversation({
   teamId,
   sessionId,
+  session,
   runs,
 }: {
   teamId: string;
   sessionId: string;
+  session: Session | null;
   runs: RunsQuery;
 }) {
-  const messages = useInfiniteQuery({
-    queryKey: ["sessions", teamId, sessionId, "messages"],
-    queryFn: ({ pageParam }) => listMessages(teamId, sessionId, pageParam),
-    initialPageParam: null as string | null,
-    getNextPageParam: nextCursorOf,
-  });
+  const stream = useSessionStream(teamId, sessionId);
+  const c = stream.conversation;
   const attachments = useInfiniteQuery({
     queryKey: ["sessions", teamId, sessionId, "attachments"],
     queryFn: ({ pageParam }) => listAttachments(teamId, sessionId, pageParam),
@@ -292,6 +293,7 @@ function Conversation({
     const m = members.data?.items.find((x) => x.user_id === userId);
     return m ? m.email || m.subject : null;
   };
+  const me = useMe();
 
   const [failed, setFailed] = useState<string | null>(null);
   const download = async (f: Attachment) => {
@@ -302,212 +304,220 @@ function Conversation({
       setFailed(`${f.filename}: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
-
-  const talk = conversation(
-    { items: messages.data?.pages.flatMap((p) => p.items) ?? [], more: messages.hasNextPage },
-    // A run list that failed to read has none, and the messages stand alone.
-    { items: runs.data?.pages.flatMap((p) => p.items) ?? [], more: runs.hasNextPage },
-  );
-  const saidCount = talk.turns.filter((t) => t.kind === "message").length;
-  const readFurther = () => {
-    if (talk.readFurther.messages) void messages.fetchNextPage();
-    if (talk.readFurther.runs) void runs.fetchNextPage();
-  };
   const files = attachments.data?.pages.flatMap((p) => p.items) ?? [];
+  const follow = useFollowBottom(c);
 
   return (
     <section aria-label="Messages" className="space-y-4">
-      {messages.isPending || runs.isPending ? (
+      {stream.failed !== null ? (
+        <ErrorState
+          what="the conversation"
+          error={stream.failed}
+          onRetry={stream.retry}
+          retrying={false}
+        />
+      ) : stream.loading ? (
         <div className="space-y-3" role="status" aria-label="Loading messages">
           <Skeleton className="h-14 w-full" />
           <Skeleton className="h-14 w-4/5" />
         </div>
-      ) : messages.isError ? (
-        <ErrorState
-          what="the messages"
-          error={messages.error}
-          onRetry={() => messages.refetch()}
-          retrying={messages.isRefetching}
-        />
-      ) : talk.turns.length === 0 && !messages.hasNextPage && !runs.hasNextPage ? (
+      ) : c.order.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nothing has been said here.</p>
       ) : (
-        <>
-          {messages.hasNextPage || runs.hasNextPage ? (
-            <LoadMore
-              hasMore
-              loading={messages.isFetchingNextPage || runs.isFetchingNextPage}
-              onClick={readFurther}
-              loadedLabel={`${saidCount} message${saidCount === 1 ? "" : "s"} loaded`}
-            />
-          ) : null}
-          <ol className="space-y-2">
-            {talk.turns.map((t) => {
-              if (t.kind === "run") {
-                return <AgentTurn key={`run-${t.run.id}`} sessionId={sessionId} run={t.run} />;
-              }
-              const m = t.message;
-              const name = nameOf(m.user_id);
-              return (
-                <li key={m.id} data-message className="rounded-lg bg-card px-4 py-3">
-                  <div className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
-                    {name ? (
-                      <span className="truncate text-sm font-medium text-foreground">{name}</span>
-                    ) : (
-                      <Mono className="truncate">{m.user_id}</Mono>
-                    )}
-                    <time dateTime={m.received_at} className="shrink-0">
-                      {absoluteTime(m.received_at)}
-                    </time>
-                  </div>
-                  {/* A person typed this: it is shown as text, never parsed. */}
-                  <p
-                    data-text
-                    className="mt-1 max-w-[75ch] whitespace-pre-wrap break-words text-sm"
-                  >
-                    {m.text}
-                  </p>
-                </li>
-              );
-            })}
-          </ol>
-        </>
+        <ConversationView
+          conversation={c}
+          sessionId={sessionId}
+          rows={runs.data?.pages.flatMap((p) => p.items) ?? []}
+          people={{ nameOf, me }}
+        />
       )}
-
-      {messages.isSuccess ? (
-        attachments.isError ? (
-          <ErrorState
-            what="the attachments"
-            error={attachments.error}
-            onRetry={() => attachments.refetch()}
-            retrying={attachments.isRefetching}
-          />
-        ) : files.length > 0 ? (
-          <section aria-label="Attachments" className="space-y-2 pt-2">
-            <h3 className="text-sm font-medium">Attachments</h3>
-            <ul className="divide-y divide-rule rounded-lg bg-card text-sm">
-              {files.map((f) => (
-                <li key={f.id} className="flex items-center justify-between gap-3 px-3 py-2">
-                  <button
-                    type="button"
-                    className="inline-flex min-w-0 items-center gap-2 truncate rounded text-left underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-                    aria-label={`Download ${f.filename}`}
-                    onClick={() => void download(f)}
-                  >
-                    <Paperclip aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{f.filename}</span>
-                  </button>
-                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                    {f.media_type} · {fileSize(f.size_bytes)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            {failed ? (
-              <p role="alert" className="text-xs text-destructive">
-                {failed}
-              </p>
-            ) : null}
-            {attachments.hasNextPage ? (
-              <Button
-                variant="outline"
-                size="sm"
-                loading={attachments.isFetchingNextPage}
-                onClick={() => attachments.fetchNextPage()}
-              >
-                More attachments
-              </Button>
-            ) : null}
-          </section>
-        ) : null
+      {stream.reconnecting ? (
+        <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Loader2 aria-hidden className="size-3 animate-spin" />
+          The connection dropped. Following the conversation again…
+        </p>
       ) : null}
+
+      {attachments.isError ? (
+        <ErrorState
+          what="the attachments"
+          error={attachments.error}
+          onRetry={() => attachments.refetch()}
+          retrying={attachments.isRefetching}
+        />
+      ) : files.length > 0 ? (
+        <section aria-label="Attachments" className="space-y-2 pt-2">
+          <h3 className="text-sm font-medium">Attachments</h3>
+          <ul className="divide-y divide-rule rounded-lg bg-card text-sm">
+            {files.map((f) => (
+              <li key={f.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                <button
+                  type="button"
+                  className="inline-flex min-w-0 items-center gap-2 truncate rounded text-left underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                  aria-label={`Download ${f.filename}`}
+                  onClick={() => void download(f)}
+                >
+                  <Paperclip aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{f.filename}</span>
+                </button>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {f.media_type} · {fileSize(f.size_bytes)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {failed ? (
+            <p role="alert" className="text-xs text-destructive">
+              {failed}
+            </p>
+          ) : null}
+          {attachments.hasNextPage ? (
+            <Button
+              variant="outline"
+              size="sm"
+              loading={attachments.isFetchingNextPage}
+              onClick={() => attachments.fetchNextPage()}
+            >
+              More attachments
+            </Button>
+          ) : null}
+        </section>
+      ) : null}
+
+      <Writing
+        teamId={teamId}
+        sessionId={sessionId}
+        session={session}
+        me={me}
+        behind={follow.behind}
+        onJump={follow.jump}
+      />
     </section>
   );
 }
 
-/** Longer than this, an answer in the conversation is cut, and read whole in its run. */
-const REPLY_FOLD = 1200;
+/** The signed-in user's id, from /whoami, which the shell reads already. */
+function useMe(): string | null {
+  const whoami = useQuery({ queryKey: ["whoami"], queryFn: ({ signal }) => fetchWhoami(signal) });
+  const id = (whoami.data as { id?: unknown } | undefined)?.id;
+  return typeof id === "string" ? id : null;
+}
+
+const pageEnd = () => document.documentElement.scrollHeight;
+
+/** How close to the end of the page still counts as reading the end. */
+const AT_END_PX = 96;
 
 /**
- * A run as the conversation reads it: which agent was asked what, and what
- * came back (its answer, why there is none, or that it is still working)
- * with the way into its trace.
+ * Keeps the end of the conversation in view while the reader is at it: what
+ * arrives scrolls into sight, at once, since it arrives many times a minute.
+ * A reader who scrolled up to read is left where they are, and told there is
+ * more below.
  */
-function AgentTurn({ sessionId, run }: { sessionId: string; run: Run }) {
-  const output = run.output?.trim() ?? "";
-  const folded = output.length > REPLY_FOLD;
+function useFollowBottom(changed: unknown) {
+  const atEnd = useRef(true);
+  const [behind, setBehind] = useState(false);
+  useEffect(() => {
+    const read = () => {
+      atEnd.current = window.innerHeight + window.scrollY >= pageEnd() - AT_END_PX;
+      if (atEnd.current) setBehind(false);
+    };
+    window.addEventListener("scroll", read, { passive: true });
+    return () => window.removeEventListener("scroll", read);
+  }, []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs for each change to what is shown
+  useLayoutEffect(() => {
+    if (atEnd.current) window.scrollTo({ top: pageEnd() });
+    else setBehind(true);
+  }, [changed]);
+  return {
+    behind,
+    jump: () => {
+      window.scrollTo({ top: pageEnd() });
+      setBehind(false);
+    },
+  };
+}
+
+/**
+ * Where the reader writes: a reply in their own conversation on the
+ * dashboard, or, anywhere else, why not and a way to start one of their own.
+ * Pinned to the bottom of the view, above the phone's bar.
+ */
+function Writing({
+  teamId,
+  sessionId,
+  session,
+  me,
+  behind,
+  onJump,
+}: {
+  teamId: string;
+  sessionId: string;
+  session: Session | null;
+  me: string | null;
+  behind: boolean;
+  onJump: () => void;
+}) {
+  const canWrite = usePermissions(teamId).can(RUN_WRITE);
+  const channels = useQuery({
+    queryKey: ["channels", teamId, "all"],
+    queryFn: () => listChannels(teamId),
+    enabled: Boolean(session?.channel_id),
+  });
+  const [starting, setStarting] = useState(false);
+  const channel = channels.data?.items.find((ch) => ch.id === session?.channel_id);
+  if (!session || !channel || me === null) return null;
+  const onDashboard = channel.provider === DASHBOARD;
+  const mine = onDashboard && session.user_id === me;
+
   return (
-    <li data-turn={run.id} className="rounded-lg border border-rule px-4 py-3">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <span className="min-w-0 truncate text-sm font-medium text-foreground">{run.agent}</span>
-        {run.hub ? <HubTag /> : null}
-        <RunStatus status={run.status} />
-        <time dateTime={run.created_at} className="ml-auto shrink-0">
-          {absoluteTime(run.created_at)}
-        </time>
-      </div>
-      <HandedTo run={run} className="mt-0.5" />
-      {/* What it was asked, as typed: text, cut to a few lines. */}
-      <p data-asked className="mt-1 line-clamp-3 text-sm whitespace-pre-wrap text-muted-foreground">
-        <span className="sr-only">Asked: </span>
-        {run.input}
-      </p>
-      <div data-reply className="mt-2 max-w-[75ch] text-sm">
-        {output ? (
-          <div
-            className={cn(
-              folded &&
-                "max-h-60 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]", // taste-skill-ignore: a mask fade on a fold, not a fill
-            )}
-          >
-            <Markdown>{output}</Markdown>
-          </div>
-        ) : (
-          <p className={run.status === "failed" ? "text-failed" : "text-muted-foreground"}>
-            {noAnswer(run)}
+    <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-10 -mx-4 space-y-2 border-t border-rule bg-sheet px-4 pt-3 pb-3 md:bottom-0 md:-mx-0 md:px-0">
+      {behind ? (
+        <div className="flex justify-center">
+          <Button variant="outline" size="sm" onClick={onJump}>
+            New activity
+            <ArrowDown aria-hidden className="size-3.5" />
+          </Button>
+        </div>
+      ) : null}
+      {mine && canWrite ? (
+        <Composer
+          teamId={teamId}
+          writes={{ kind: "reply", sessionId }}
+          label="Reply"
+          placeholder="Write a reply…"
+        />
+      ) : starting ? (
+        <Composer
+          teamId={teamId}
+          writes={{ kind: "start" }}
+          label="Start a conversation"
+          placeholder="Ask the team something…"
+          autoFocus
+        />
+      ) : (
+        <div className="flex flex-col gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            {onDashboard
+              ? mine
+                ? `Replying takes ${RUN_WRITE}.`
+                : "Only the person this conversation is with writes in it."
+              : `Replies to this conversation go through ${channel.name}.`}
           </p>
-        )}
-      </div>
-      <ReplyStatus run={run} />
-      <Link
-        to="/ui/sessions/$sessionId"
-        params={{ sessionId }}
-        search={{ tab: "runs", run: run.id }}
-        className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-      >
-        {folded ? "Read the whole answer in its run" : "Open the run"}
-        <ArrowRight aria-hidden className="size-3" />
-      </Link>
-    </li>
+          {canWrite ? (
+            <Button variant="outline" size="sm" onClick={() => setStarting(true)}>
+              Start one on the dashboard
+            </Button>
+          ) : null}
+        </div>
+      )}
+    </div>
   );
 }
 
-/** Whether the answer reached the person on the channel; nothing for a run that answers none. */
-function ReplyStatus({ run }: { run: Run }) {
-  const line = replyLine(run.reply);
-  if (!line) return null;
-  const Icon = line.tone === "sent" ? Check : line.tone === "failed" ? X : Clock;
-  return (
-    <p
-      data-reply-status={line.tone}
-      className={cn(
-        "mt-2 flex items-start gap-1.5 text-xs",
-        line.tone === "failed" ? "text-failed" : "text-muted-foreground",
-      )}
-    >
-      <Icon aria-hidden className="mt-px size-3.5 shrink-0" />
-      <span>
-        {line.text}
-        {line.when ? (
-          <>
-            {line.when.lead}
-            <time dateTime={line.when.iso}>{absoluteTime(line.when.iso)}</time>
-          </>
-        ) : null}
-      </span>
-    </p>
-  );
-}
+/** The dashboard's own channel: every team has one, made with the team. */
+const DASHBOARD = "dashboard";
 
 /* ------------------------------------------------------------------- runs */
 

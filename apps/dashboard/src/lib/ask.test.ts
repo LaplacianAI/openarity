@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { ApiError } from "@/api/client";
 
-import { ASK_LIMIT_BYTES, askProblem, askRefusal, NO_MODEL } from "./ask";
+import {
+  ASK_LIMIT_BYTES,
+  askProblem,
+  askRefusal,
+  NO_MODEL,
+  Unanswered,
+  unansweredRefusal,
+} from "./ask";
 
 describe("askProblem", () => {
   it("has nothing to say about an ordinary question", () => {
@@ -56,5 +63,31 @@ describe("askRefusal", () => {
         "Couldn't reach the brain, so nothing was asked. Try again.",
       );
     }
+  });
+});
+
+describe("unansweredRefusal", () => {
+  // The brain stored the message and started no run; each of its reasons is
+  // said in the dashboard's words, and only a missing model points at settings.
+  it("says each reason the brain gives in the dashboard's words", () => {
+    expect(unansweredRefusal("the team has no model set, so its hub cannot run")).toEqual({
+      text: NO_MODEL,
+      settings: true,
+    });
+    expect(unansweredRefusal("the sender's member may not start runs")).toEqual({
+      text: "You can't start runs in this team. An admin can grant it.",
+      settings: false,
+    });
+    expect(unansweredRefusal("the message has no text")).toEqual({
+      text: "No run will answer it: the message has no text.",
+      settings: false,
+    });
+  });
+
+  it("is what asking says when the brain stored the question and started nothing", () => {
+    expect(askRefusal(new Unanswered("the team has no model set, so its hub cannot run"))).toEqual({
+      text: NO_MODEL,
+      settings: true,
+    });
   });
 });

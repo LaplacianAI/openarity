@@ -30,7 +30,28 @@ export function askProblem(input: string): string | null {
 /** Why asking failed, and whether the remedy is on Team settings. */
 export type AskRefusal = { text: string; settings: boolean };
 
+/**
+ * The brain stored what was asked and started nothing: no run will answer.
+ * The words are the brain's reason.
+ */
+export class Unanswered extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "Unanswered";
+  }
+}
+
+/** Why a message the brain stored gets no answer, in the dashboard's words. */
+export function unansweredRefusal(reason: string): AskRefusal {
+  if (/no model/i.test(reason)) return { text: NO_MODEL, settings: true };
+  if (/may not start runs/i.test(reason)) {
+    return { text: "You can't start runs in this team. An admin can grant it.", settings: false };
+  }
+  return { text: `No run will answer it: ${reason}.`, settings: false };
+}
+
 export function askRefusal(err: unknown): AskRefusal {
+  if (err instanceof Unanswered) return unansweredRefusal(err.reason);
   if (err instanceof ApiError) {
     if (err.status === 409) return { text: NO_MODEL, settings: true };
     if (err.status === 403) {

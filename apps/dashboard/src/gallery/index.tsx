@@ -6,8 +6,10 @@
  */
 import { type ReactNode, useId, useState } from "react";
 
-import type { Run, RunEvent } from "@/api/types";
+import type { Run, RunEvent, SessionEnvelope, SessionEvent } from "@/api/types";
 import { CodeBlock, JsonView } from "@/components/code";
+import { Composer } from "@/components/composer";
+import { ConversationView } from "@/components/conversation-view";
 import { CopyId, KeyValue, KeyValues, Time } from "@/components/facts";
 import { Markdown } from "@/components/markdown";
 import { Field, ReadOnlyNote, Tag, TextArea } from "@/components/registry-bits";
@@ -45,6 +47,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Avatar, EmptyState, LoadMore, Mono, PageHeader, StatusDot } from "@/components/ui-bits";
+import { empty, fold } from "@/lib/session-stream";
 import { useTheme } from "@/lib/theme";
 
 const VARIANTS = ["default", "outline", "ghost", "destructive"] as const;
@@ -173,6 +176,189 @@ function RunDemo() {
         events={events}
         failed={null}
       />
+    </div>
+  );
+}
+
+/** A conversation as its stream would build it, in every state a turn can be in. */
+function conversationOf(...events: SessionEvent[]) {
+  return events.map((e, i) => ({ ...e, seq: i + 1 }) as SessionEnvelope).reduce(fold, empty);
+}
+
+const AT = (s: number) => new Date(Date.UTC(2026, 10, 13, 10, 0, s)).toISOString();
+const ME = "user-me";
+
+const finishedTalk = conversationOf(
+  {
+    kind: "message",
+    data: {
+      at: AT(0),
+      id: "m1",
+      user_id: ME,
+      parts: [{ type: "text", text: "Why did last night's deploy fail?" }],
+      state: "pending",
+    },
+  },
+  { kind: "run_started", data: { at: AT(1), run_id: "r1", agent: "ops-lead" } },
+  { kind: "message_consumed", data: { at: AT(1), run_id: "r1", message_ids: ["m1"] } },
+  { kind: "step_started", data: { at: AT(2), run_id: "r1", step: 1 } },
+  {
+    kind: "reasoning_message_chunk",
+    data: {
+      at: AT(2),
+      run_id: "r1",
+      message_id: "r1:1:reasoning",
+      delta: "The deploy log will say which stage failed; read it before guessing.",
+    },
+  },
+  {
+    kind: "tool_call_chunk",
+    data: {
+      at: AT(3),
+      run_id: "r1",
+      tool_call_id: "c1",
+      name: "read_logs",
+      arguments: '{"service":"deploy","since":"24h"}',
+    },
+  },
+  {
+    kind: "tool_call_result",
+    data: {
+      at: AT(4),
+      run_id: "r1",
+      tool_call_id: "c1",
+      name: "read_logs",
+      content: "migration 0042 timed out",
+      duration_ms: 412,
+    },
+  },
+  {
+    kind: "run_started",
+    data: { at: AT(5), run_id: "r2", agent: "db-reviewer", parent_run_id: "r1" },
+  },
+  {
+    kind: "run_finished",
+    data: {
+      at: AT(9),
+      run_id: "r2",
+      status: "succeeded",
+      output: "The migration locks the invoices table.",
+    },
+  },
+  { kind: "step_started", data: { at: AT(10), run_id: "r1", step: 2 } },
+  {
+    kind: "run_finished",
+    data: {
+      at: AT(18),
+      run_id: "r1",
+      status: "succeeded",
+      output:
+        "The deploy failed because **migration 0042 timed out** after 30 seconds: it takes a lock on `invoices` that the nightly export already held.\n\nRun the migration outside the export's window, or split the backfill into batches.",
+    },
+  },
+  {
+    kind: "message",
+    data: {
+      at: AT(30),
+      id: "m2",
+      user_id: "user-ann",
+      parts: [{ type: "text", text: "Can we move the export to 03:00?" }],
+    },
+  },
+  { kind: "run_started", data: { at: AT(31), run_id: "r3", agent: "ops-lead" } },
+  {
+    kind: "run_finished",
+    data: {
+      at: AT(33),
+      run_id: "r3",
+      status: "failed",
+      error: "the run exceeded its token budget of 20000",
+    },
+  },
+);
+
+const liveTalk = conversationOf(
+  {
+    kind: "message",
+    data: {
+      at: AT(0),
+      id: "m1",
+      user_id: ME,
+      parts: [{ type: "text", text: "Is staging healthy?" }],
+      state: "pending",
+    },
+  },
+  { kind: "run_started", data: { at: AT(1), run_id: "r1", agent: "ops-lead" } },
+  { kind: "message_consumed", data: { at: AT(1), run_id: "r1", message_ids: ["m1"] } },
+  { kind: "step_started", data: { at: AT(2), run_id: "r1", step: 1 } },
+  {
+    kind: "reasoning_message_chunk",
+    data: {
+      at: AT(2),
+      run_id: "r1",
+      message_id: "r1:1:reasoning",
+      delta: "Check the health endpoint, then the last deploy.",
+    },
+  },
+  {
+    kind: "tool_call_chunk",
+    data: {
+      at: AT(3),
+      run_id: "r1",
+      tool_call_id: "c1",
+      name: "http_get",
+      arguments: '{"url":"https://staging.example/health"}',
+    },
+  },
+  {
+    kind: "message",
+    data: {
+      at: AT(4),
+      id: "m2",
+      user_id: ME,
+      parts: [{ type: "text", text: "Also check the queue depth." }],
+      state: "pending",
+    },
+  },
+  { kind: "step_started", data: { at: AT(5), run_id: "r1", step: 2 } },
+  {
+    kind: "text_message_chunk",
+    data: {
+      at: AT(6),
+      run_id: "r1",
+      message_id: "r1:2:text",
+      delta: "Staging answers its health check in 80 ms, and the last deploy",
+    },
+  },
+);
+
+const people = {
+  nameOf: (id: string) => (id === "user-ann" ? "ann@team.test" : null),
+  me: ME,
+};
+
+function ConversationDemo() {
+  return (
+    <div className="grid gap-8 lg:grid-cols-2">
+      <State label="Finished: folded working, the answer, a handed run, a failure">
+        <ConversationView
+          conversation={finishedTalk}
+          sessionId="s-demo"
+          rows={[]}
+          people={people}
+        />
+      </State>
+      <State label="Live: thinking open, a tool running, text as it is written, a message waiting">
+        <ConversationView conversation={liveTalk} sessionId="s-demo" rows={[]} people={people} />
+        <div className="mt-4 border-t border-rule pt-3">
+          <Composer
+            teamId="t-demo"
+            writes={{ kind: "reply", sessionId: "s-demo" }}
+            label="Reply"
+            placeholder="Write a reply…"
+          />
+        </div>
+      </State>
     </div>
   );
 }
@@ -595,6 +781,10 @@ export default function Gallery() {
 
       <Section title="Run">
         <RunDemo />
+      </Section>
+
+      <Section title="Conversation">
+        <ConversationDemo />
       </Section>
     </div>
   );
