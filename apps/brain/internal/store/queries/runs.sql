@@ -91,13 +91,14 @@ WITH RECURSIVE below AS (
     UPDATE runs SET status = 'cancelled', finished_at = now(),
                     cancel_requested_at = coalesce(cancel_requested_at, now())
     WHERE runs.id IN (SELECT below.id FROM below) AND runs.status = 'running'
+    RETURNING runs.id
 )
 UPDATE runs SET
     cancel_requested_at = coalesce(cancel_requested_at, now()),
     status      = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
     finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END
 WHERE runs.id = sqlc.arg('id')::uuid AND runs.status IN ('queued', 'running')
-RETURNING *;
+RETURNING *, (SELECT coalesce(array_agg(ended.id), '{}') FROM ended)::uuid[] AS ended_children;
 
 -- name: ListUnstartedRuns :many
 SELECT id FROM runs
@@ -215,9 +216,13 @@ INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, us
                   token_budget, hub, message_id, reply_to_channel, transcript)
 SELECT sqlc.arg('id')::uuid, t.id, sqlc.arg('session_id')::uuid, sqlc.arg('id')::uuid,
        a.id, coalesce(a.name, 'orchestrator'), sqlc.narg('user_id')::uuid, sqlc.arg('input')::text,
-       a.token_budget, true, sqlc.narg('message_id')::uuid, true,
+       a.token_budget, true, sqlc.narg('message_id')::uuid,
+       -- The dashboard's answer is its stream: there is nothing to post it to.
+       ch.provider <> 'dashboard',
        'session:' || sqlc.arg('session_id')::uuid::text
 FROM teams t
+JOIN sessions ss ON ss.id = sqlc.arg('session_id')::uuid
+JOIN channels ch ON ch.id = ss.channel_id
 LEFT JOIN team_settings s ON s.team_id = t.id
 LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = t.id
 WHERE t.id = sqlc.arg('team_id')::uuid

@@ -997,3 +997,22 @@ func TestNoPublicAddressMeansNoHookURLAtAll(t *testing.T) {
 type liveTeams struct{}
 
 func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }
+
+// The dashboard channel is every team's: its conversations are the ones
+// people hold there, and nothing would make another.
+func TestTheDashboardChannelCannotBeDeleted(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	ch := db.Channel{ID: uuid.New(), TeamID: teamID, Provider: "dashboard", Name: "Dashboard"}
+	s := &fakeStore{channels: []db.Channel{ch}}
+
+	rec := call(t, s, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+		http.MethodDelete, "/teams/"+teamID.String()+"/channels/"+ch.ID.String(), "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("DELETE = %d, want 409 (%s)", rec.Code, rec.Body)
+	}
+	if len(s.deleted) != 0 {
+		t.Errorf("deleted %v", s.deleted)
+	}
+}

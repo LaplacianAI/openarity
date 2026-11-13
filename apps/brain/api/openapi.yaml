@@ -977,6 +977,52 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+    post:
+      operationId: startConversation
+      tags: [sessions]
+      summary: Start a conversation on the dashboard
+      description: |
+        A new conversation with the team, held on the team's dashboard
+        channel, and its first message. The conversation is a `direct`
+        session that only the caller writes in; the team's hub answers it,
+        as it answers a message on any channel.
+
+        `key` is the caller's for this send, and a retry of it is the same
+        send: the message is stored once, and a second request with the key
+        answers `200` with what was stored the first time rather than
+        starting another conversation.
+
+        A message the hub cannot answer, because the team has no model set or
+        the caller may not start runs, is still stored, and `unanswered` says
+        why.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SayRequest"
+      responses:
+        "201":
+          description: The conversation began, with this message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Said"
+        "200":
+          description: A retry of a send already stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Said"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/sessions/{sessionID}:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -1054,6 +1100,123 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MessagePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      operationId: sendSessionMessage
+      tags: [sessions]
+      summary: Write in a conversation on the dashboard
+      description: |
+        A message in a dashboard conversation, from the person it is with.
+        Nobody else writes in it, a moderator who may read it included, and a
+        conversation on another channel is written in on that channel.
+
+        With no run working in the conversation, the hub starts on it. With
+        one working, the message is sent to that run, which reads it before
+        its next step: `steered` says so, and `run_id` is that run. Either
+        way the message is pending until a run takes it, which the session's
+        stream reports as `message_consumed`.
+
+        `key` makes a retry the same send, as for `startConversation`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SayRequest"
+      responses:
+        "202":
+          description: Stored, and started or sent to a run, or `unanswered`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Said"
+        "200":
+          description: A retry of a send already stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Said"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: The conversation is someone else's, or the caller may not start runs
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The conversation is not one on the dashboard; write in it on its channel
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /teams/{id}/sessions/{sessionID}/events:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: sessionID
+        in: path
+        required: true
+        description: The conversation
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: streamSessionEvents
+      tags: [sessions]
+      summary: Follow a conversation
+      description: |
+        A server-sent event stream of the conversation: what people said, and
+        what every run in it did, in one order. Each frame is one event, in
+        the catalog `sdk/stream` defines, with AG-UI's names:
+
+        ```text
+        id: 41
+        event: message
+        data: {"at":"2026-11-13T10:01:00Z","id":"…","user_id":"…","parts":[{"type":"text","text":"also check staging"}],"state":"pending"}
+        ```
+
+        `id` is the event's sequence in the conversation. A client that
+        reconnects sends the last one it saw as `Last-Event-ID`, or `after`,
+        and misses nothing. With neither, the stream starts from the
+        beginning. History from before the stream was kept is numbered at or
+        below 0 once `brain backfill session-seq` has run, so it replays
+        first.
+
+        Each run's events carry its `run_id`; a run another run handed work
+        to says which in `run_started`. Text arrives as
+        `text_message_chunk`, and `run_finished` carries the whole answer.
+        Events the catalog has no kind for are `custom`, named by the kind
+        the run recorded. The stream does not end: it follows the
+        conversation until the client leaves, with a `: keep-alive` comment
+        every 15 seconds while nothing happens.
+
+        Visible where the conversation is.
+      parameters:
+        - name: after
+          in: query
+          required: false
+          description: Resume after this sequence number, when Last-Event-ID is not sent.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: The stream, until the client leaves
+          content:
+            text/event-stream:
+              schema:
+                type: string
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3891,6 +4054,262 @@ components:
           type: string
           format: date-time
           description: When it reached us. This is the order.
+
+    SayRequest:
+      type: object
+      required: [text, key]
+      properties:
+        text:
+          type: string
+          maxLength: 102400
+          description: What the person says. At most 100 KiB, with no NUL character, and not blank.
+        key:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{1,64}$"
+          description: |
+            The caller's own name for this send. A retry carries the same key
+            and is the same send.
+
+    Said:
+      type: object
+      required: [session_id, message_id]
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+          description: The run that answers it, absent when none does.
+        steered:
+          type: boolean
+          description: The run was already working, and the message was sent to it.
+        unanswered:
+          type: string
+          description: Why no run answers the message, which is stored all the same.
+
+    SessionEventPart:
+      type: object
+      description: |
+        One piece of what a message carries. A part of a type a reader does not know is kept with its type.
+      required: [type]
+      properties:
+        type:
+          type: string
+        text:
+          type: string
+    SessionEventMessage:
+      type: object
+      description: |
+        The data of a `message` frame on a session's stream. Something a person said. `state` is `pending` while it waits for a run; a message that asks nothing, one said in a group without addressing the bot, has none.
+      required: [id, parts]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        id:
+          type: string
+        user_id:
+          type: string
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionEventPart"
+        state:
+          type: string
+          enum: [pending]
+    SessionEventMessageConsumed:
+      type: object
+      description: |
+        The data of a `message_consumed` frame on a session's stream. A run taking messages: the one it started from, or ones sent while it worked.
+      required: [message_ids]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        message_ids:
+          type: array
+          items:
+            type: string
+    SessionEventRunStarted:
+      type: object
+      description: |
+        The data of a `run_started` frame on a session's stream. A run beginning; `parent_run_id` names the run that handed it the work.
+      required: [agent]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        parent_run_id:
+          type: string
+        agent:
+          type: string
+    SessionEventStepStarted:
+      type: object
+      description: |
+        The data of a `step_started` frame on a session's stream. A run making its next model call.
+      required: [step]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        step:
+          type: integer
+    SessionEventTextMessageChunk:
+      type: object
+      description: |
+        The data of a `text_message_chunk` frame on a session's stream. A piece of what a run is writing, in order.
+      required: [delta]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        delta:
+          type: string
+        truncated:
+          type: boolean
+    SessionEventToolCallChunk:
+      type: object
+      description: |
+        The data of a `tool_call_chunk` frame on a session's stream. A run calling a tool, with all of its arguments as JSON text.
+      required: [tool_call_id, name, arguments]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        tool_call_id:
+          type: string
+        name:
+          type: string
+        arguments:
+          type: string
+        truncated:
+          type: boolean
+    SessionEventToolCallResult:
+      type: object
+      description: |
+        The data of a `tool_call_result` frame on a session's stream. What a tool call returned, or why it failed.
+      required: [tool_call_id, name, content, duration_ms]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        tool_call_id:
+          type: string
+        name:
+          type: string
+        content:
+          type: string
+        error:
+          type: string
+        truncated:
+          type: boolean
+        duration_ms:
+          type: integer
+    SessionEventUsage:
+      type: object
+      description: |
+        The data of a `usage` frame on a session's stream. What one model call spent.
+      required: [model, input_tokens, output_tokens, cached_input_tokens]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        model:
+          type: string
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        cached_input_tokens:
+          type: integer
+    SessionEventCompacted:
+      type: object
+      description: |
+        The data of a `compacted` frame on a session's stream. A run shrinking its context to carry on.
+      required: [reason, cleared, folded, before, after]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        cleared:
+          type: integer
+        folded:
+          type: integer
+        before:
+          type: integer
+        after:
+          type: integer
+        summary:
+          type: string
+        error:
+          type: string
+    SessionEventRunFinished:
+      type: object
+      description: |
+        The data of a `run_finished` frame on a session's stream. A run ending, with its whole answer when it has one.
+      required: [status]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [succeeded, failed, cancelled]
+        output:
+          type: string
+        error:
+          type: string
+    SessionEventCustom:
+      type: object
+      description: |
+        The data of a `custom` frame on a session's stream. An event the catalog has no kind for, named by the kind the run recorded: `delegated`, `plan`, `wrap_up` and the like.
+      required: [name]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        value: {}
 
     MessagePage:
       type: object

@@ -15,6 +15,8 @@ const (
 	commandReap    commandName = "reap"
 	commandWorker  commandName = "worker"
 	commandGraph   commandName = "graph"
+	// commandBackfill numbers what sessions held before they had a stream.
+	commandBackfill commandName = "backfill"
 )
 
 type direction string
@@ -31,8 +33,9 @@ type command struct {
 }
 
 var (
-	errMigrateUsage = errors.New("usage: brain migrate up|down")
-	errGraphUsage   = errors.New("usage: brain graph rebuild [--team <id>]")
+	errMigrateUsage  = errors.New("usage: brain migrate up|down")
+	errGraphUsage    = errors.New("usage: brain graph rebuild [--team <id>]")
+	errBackfillUsage = errors.New("usage: brain backfill session-seq")
 )
 
 func parse(args []string) (command, error) {
@@ -51,9 +54,14 @@ func parse(args []string) (command, error) {
 		return command{name: commandWorker}, nil
 	case commandGraph:
 		return parseGraph(args[1:])
+	case commandBackfill:
+		if len(args) != 2 || args[1] != "session-seq" {
+			return command{}, errBackfillUsage
+		}
+		return command{name: commandBackfill}, nil
 	default:
 		return command{}, fmt.Errorf(
-			"unknown command %q, want serve, migrate, reap, worker or graph", args[0])
+			"unknown command %q, want serve, migrate, reap, worker, graph or backfill", args[0])
 	}
 }
 

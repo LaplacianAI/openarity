@@ -71,6 +71,8 @@ func execute(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbSto
 		return runWorker(ctx, cfg, logger, dbStore)
 	case commandGraph:
 		return rebuildGraph(ctx, cfg, logger, dbStore, cmd.team)
+	case commandBackfill:
+		return backfillSessionSeq(ctx, logger, dbStore)
 	default:
 		return fmt.Errorf("unhandled command %q", cmd.name)
 	}

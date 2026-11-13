@@ -9,6 +9,8 @@ on:
     paths:
       - 'apps/brain/**'
       - 'apps/dashboard/**'
+      - 'sdk/agent/**'
+      - 'sdk/stream/**'
       - 'deployment/Dockerfile'
       - 'deployment/Dockerfile.dockerignore'
       - '.github/workflows/publish-image.yml'

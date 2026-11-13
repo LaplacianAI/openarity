@@ -271,3 +271,17 @@ func TestTheUnknownCommandErrorNamesEveryCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestParseBackfill(t *testing.T) {
+	t.Parallel()
+
+	cmd, err := parse([]string{"backfill", "session-seq"})
+	if err != nil || cmd.name != commandBackfill {
+		t.Fatalf("backfill session-seq parsed as %+v, %v", cmd, err)
+	}
+	for _, args := range [][]string{{"backfill"}, {"backfill", "everything"}, {"backfill", "session-seq", "--now"}} {
+		if _, err := parse(args); !errors.Is(err, errBackfillUsage) {
+			t.Errorf("%v: err = %v, want the usage", args, err)
+		}
+	}
+}

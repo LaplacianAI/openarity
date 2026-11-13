@@ -161,6 +161,9 @@ type Message struct {
 	SentAt     *time.Time
 	ReceivedAt time.Time
 	SessionID  uuid.UUID
+	SessionSeq *int64
+	Asks       bool
+	ConsumedBy *uuid.UUID
 }
 
 type Notice struct {
@@ -281,11 +284,13 @@ type Run struct {
 }
 
 type RunEvent struct {
-	RunID     uuid.UUID
-	Seq       int32
-	Kind      string
-	Payload   []byte
-	CreatedAt time.Time
+	RunID      uuid.UUID
+	Seq        int32
+	Kind       string
+	Payload    []byte
+	CreatedAt  time.Time
+	SessionID  *uuid.UUID
+	SessionSeq *int64
 }
 
 type Session struct {
@@ -298,6 +303,7 @@ type Session struct {
 	StartedAt     time.Time
 	LastMessageAt time.Time
 	UserID        *uuid.UUID
+	EventSeq      int64
 }
 
 type Skill struct {

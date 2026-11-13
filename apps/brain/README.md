@@ -37,6 +37,7 @@ make testdb db=openarity_test    # create the local test database, once per mach
 
 go run ./cmd/brain migrate up    # apply migrations
 go run ./cmd/brain migrate down  # roll the last one back
+go run ./cmd/brain backfill session-seq  # number sessions' history for their streams; once, after upgrading
 ```
 
 Migrations are embedded in the binary and applied by it, never by the `goose`

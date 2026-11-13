@@ -12,6 +12,8 @@ type session struct {
 	ProviderRef string     `json:"provider_ref"`
 	Kind        string     `json:"kind"`
 	Status      string     `json:"status"`
+	// UserID is who a direct session is with; absent for anything else.
+	UserID *uuid.UUID `json:"user_id,omitempty"`
 
 	StartedAt     time.Time `json:"started_at"`
 	LastMessageAt time.Time `json:"last_message_at"`
@@ -62,4 +64,21 @@ type messageCursor struct {
 type attachmentCursor struct {
 	CreatedAt time.Time `json:"c"`
 	ID        uuid.UUID `json:"i"`
+}
+
+// sayRequest is what a person types on the dashboard, with the key a retry of
+// the same send carries.
+type sayRequest struct {
+	Text string `json:"text"`
+	Key  string `json:"key"`
+}
+
+// said is what became of it: the conversation, the message, and the run that
+// answers it, which is the one already working when Steered.
+type said struct {
+	SessionID  uuid.UUID  `json:"session_id"`
+	MessageID  uuid.UUID  `json:"message_id"`
+	RunID      *uuid.UUID `json:"run_id,omitempty"`
+	Steered    bool       `json:"steered,omitempty"`
+	Unanswered string     `json:"unanswered,omitempty"`
 }

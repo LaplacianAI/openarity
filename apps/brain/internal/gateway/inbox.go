@@ -41,6 +41,8 @@ type Runs interface {
 	AddSteer(ctx context.Context, arg db.AddSteerParams) error
 	HubCanRun(ctx context.Context, teamID uuid.UUID) (bool, error)
 	CreateChannelRun(ctx context.Context, arg db.CreateChannelRunParams) (db.Run, error)
+	MarkMessageAsks(ctx context.Context, id uuid.UUID) error
+	ConsumeMessages(ctx context.Context, arg db.ConsumeMessagesParams) (int64, error)
 }
 
 type Queries interface {
@@ -76,6 +78,45 @@ func NewInbox(s InboxStore, runs Enqueuer, logger *slog.Logger) *Inbox {
 	return &Inbox{store: s, runs: runs, logger: logger}
 }
 
+// Delivered is what became of one message: the conversation it is in, and
+// the run it started or was sent to, or why it got no answer. Message is
+// uuid.Nil for one already stored under the same ExternalID, which is
+// dropped as the retry it is.
+type Delivered struct {
+	Session    uuid.UUID
+	Message    uuid.UUID
+	Run        uuid.UUID
+	Steered    uuid.UUID
+	Unanswered string
+}
+
+// DeliverOne writes one message as Deliver does, and says what became of it,
+// for a caller that answers the sender itself: the dashboard.
+func (i *Inbox) DeliverOne(ctx context.Context, ch Channel, m Delivery) (Delivered, error) {
+	var out outcome
+	var d Delivered
+	refused := false
+	if err := i.store.InTx(ctx, func(q Queries) error {
+		if _, err := q.LockLiveTeam(ctx, ch.TeamID); err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("lock team %s: %w", ch.TeamID, err)
+			}
+			refused = true
+			return tombstone(ctx, q, ch.TeamID, []Delivery{m})
+		}
+		var err error
+		d, out, err = deliverOne(ctx, q, ch, m)
+		return err
+	}); err != nil {
+		return Delivered{}, err
+	}
+	if refused {
+		return Delivered{}, ErrTeamDeleted
+	}
+	i.follow(ctx, ch, m, out)
+	return d, nil
+}
+
 // Deliver writes each message in a transaction of its own, which starts by
 // locking the channel's team. A team deleted since the channel was read
 // refuses the message and every one after it, and the objects already
@@ -94,7 +135,7 @@ func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error 
 				return tombstone(ctx, q, ch.TeamID, msgs[n:])
 			}
 			var err error
-			out, err = deliverOne(ctx, q, ch, m)
+			_, out, err = deliverOne(ctx, q, ch, m)
 			return err
 		}); err != nil {
 			return err
@@ -145,7 +186,7 @@ func tombstone(ctx context.Context, q Queries, teamID uuid.UUID, msgs []Delivery
 	return nil
 }
 
-func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) (outcome, error) {
+func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) (Delivered, outcome, error) {
 	session, err := q.EnsureSession(ctx, db.EnsureSessionParams{
 		TeamID:      ch.TeamID,
 		ChannelID:   ch.ID,
@@ -154,8 +195,9 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) (outcome
 		UserID:      participant(m),
 	})
 	if err != nil {
-		return outcome{}, fmt.Errorf("resolve session %q: %w", m.Session.Ref, err)
+		return Delivered{}, outcome{}, fmt.Errorf("resolve session %q: %w", m.Session.Ref, err)
 	}
+	d := Delivered{Session: session.ID}
 
 	var sentAt *time.Time
 	if !m.SentAt.IsZero() {
@@ -173,9 +215,9 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) (outcome
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return outcome{}, nil
+			return d, outcome{}, nil
 		}
-		return outcome{}, fmt.Errorf("store message %q: %w", m.ExternalID, err)
+		return Delivered{}, outcome{}, fmt.Errorf("store message %q: %w", m.ExternalID, err)
 	}
 
 	for _, f := range m.Files {
@@ -189,12 +231,18 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) (outcome
 			SizeBytes:  f.SizeBytes,
 			Filename:   f.Filename,
 		}); err != nil {
-			return outcome{}, fmt.Errorf("store attachment %q of %q: %w",
+			return Delivered{}, outcome{}, fmt.Errorf("store attachment %q of %q: %w",
 				f.ObjectKey, m.ExternalID, err)
 		}
 	}
 
-	return answer(ctx, q, ch, session, m, messageID)
+	d.Message = messageID
+	out, err := answer(ctx, q, ch, session, m, messageID)
+	if err != nil {
+		return Delivered{}, outcome{}, err
+	}
+	d.Run, d.Steered, d.Unanswered = out.run, out.steered, out.unanswered
+	return d, out, nil
 }
 
 func participant(m Delivery) *uuid.UUID {

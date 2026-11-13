@@ -69,7 +69,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (u
 }
 
 const listMessagesBySession = `-- name: ListMessagesBySession :many
-SELECT id, channel_id, user_id, external_id, text, sent_at, received_at, session_id FROM messages
+SELECT id, channel_id, user_id, external_id, text, sent_at, received_at, session_id, session_seq, asks, consumed_by FROM messages
 WHERE session_id = $1
   AND (NOT $2::bool
    OR (received_at, id) < ($3::timestamptz, $4::uuid))
@@ -109,6 +109,9 @@ func (q *Queries) ListMessagesBySession(ctx context.Context, arg ListMessagesByS
 			&i.SentAt,
 			&i.ReceivedAt,
 			&i.SessionID,
+			&i.SessionSeq,
+			&i.Asks,
+			&i.ConsumedBy,
 		); err != nil {
 			return nil, err
 		}

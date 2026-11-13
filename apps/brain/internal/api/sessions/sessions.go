@@ -24,6 +24,9 @@ type Store interface {
 	ListMessagesBySession(ctx context.Context, arg db.ListMessagesBySessionParams) ([]db.Message, error)
 	ListAttachmentsBySession(ctx context.Context, arg db.ListAttachmentsBySessionParams) ([]db.Attachment, error)
 	GetAttachmentInSession(ctx context.Context, arg db.GetAttachmentInSessionParams) (db.Attachment, error)
+	DashboardChannel(ctx context.Context, teamID uuid.UUID) (db.Channel, error)
+	GetMessageByExternalID(ctx context.Context, arg db.GetMessageByExternalIDParams) (db.Message, error)
+	ListSessionEvents(ctx context.Context, arg db.ListSessionEventsParams) ([]db.ListSessionEventsRow, error)
 }
 
 const readEveryConversation = authz.Action("session:read_all")
@@ -45,16 +48,20 @@ type handler struct {
 	store   Store
 	authz   api.Authorizer
 	objects Objects
+	inbox   Deliverer
 }
 
-func New(logger *slog.Logger, s Store, a api.Authorizer, o Objects) *api.Router {
-	h := &handler{logger: logger, store: s, authz: a, objects: o}
+func New(logger *slog.Logger, s Store, a api.Authorizer, o Objects, inbox Deliverer) *api.Router {
+	h := &handler{logger: logger, store: s, authz: a, objects: o, inbox: inbox}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/channels/{channelID}/sessions", h.listByChannel)
 	r.Get("/{id}/sessions", h.listByTeam)
+	r.Post("/{id}/sessions", h.startConversation)
 	r.Get("/{id}/sessions/{sessionID}", h.get)
 	r.Get("/{id}/sessions/{sessionID}/messages", h.listMessages)
+	r.Post("/{id}/sessions/{sessionID}/messages", h.sendMessage)
+	r.Get("/{id}/sessions/{sessionID}/events", h.events)
 
 	r.Get("/{id}/sessions/{sessionID}/attachments", h.listAttachments)
 	r.Get("/{id}/sessions/{sessionID}/attachments/{attachmentID}", h.getAttachment)
@@ -307,6 +314,9 @@ func sessionView(row db.Session) session {
 	out := session{
 		ID: row.ID, ChannelID: row.ChannelID, Kind: row.Kind, Status: row.Status,
 		StartedAt: row.StartedAt, LastMessageAt: row.LastMessageAt,
+	}
+	if row.Kind == "direct" {
+		out.UserID = row.UserID
 	}
 	if row.ProviderRef != nil {
 		out.ProviderRef = *row.ProviderRef

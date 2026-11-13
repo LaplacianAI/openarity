@@ -38,6 +38,10 @@ const (
 	setupReadLimit = 64 << 10
 )
 
+// dashboardProvider is the channel every team has for the conversations people
+// hold on the dashboard. No adapter serves it: nothing posts to it from outside.
+const dashboardProvider = "dashboard"
+
 type Store interface {
 	CreateChannel(ctx context.Context, arg db.CreateChannelParams) (db.Channel, error)
 	UpdateChannel(ctx context.Context, arg db.UpdateChannelParams) (db.Channel, error)
@@ -548,6 +552,12 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 
 	if row.TeamID != teamID {
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	// Every team has its dashboard channel for as long as it has a dashboard:
+	// the conversations people have there are its sessions.
+	if row.Provider == dashboardProvider {
+		http.Error(w, "the dashboard channel is every team's, and cannot be deleted", http.StatusConflict)
 		return
 	}
 

@@ -74,7 +74,7 @@ func newRouters(
 		teamsummary.New(logger, dbStore, authorizer),
 		teamsettings.New(logger, dbStore, secretWriter, reachable(cfg.MCPPrivateNetworks)),
 		users.New(logger, dbStore),
-		sessions.New(logger, dbStore, authorizer, attachments),
+		sessions.New(logger, dbStore, authorizer, attachments, gateway.NewInbox(inbox{dbStore}, starter, logger)),
 		authconfig.New(logger, cfg),
 		ui.New(logger),
 	}
