@@ -1,8 +1,36 @@
 {#- The tab icon is the theme's favicon setting, the SVG that follows the
     reader's theme. These are what an SVG cannot be: a home-screen icon for
-    iOS, and the web manifest. assets/mark/raster.py writes the PNGs. -#}
+    iOS, and the web manifest. assets/mark/raster.py writes the PNGs.
+
+    The Open Graph and Twitter tags are what a link preview reads (Slack,
+    Discord, LinkedIn, X); without them a pasted link shows nothing. The image
+    URL must be absolute and the image a PNG, never the SVG. -#}
 {% extends "base.html" %}
 {% block extrahead %}
   <link rel="apple-touch-icon" href="{{ 'assets/apple-touch-icon.png' | url }}">
   <link rel="manifest" href="{{ 'assets/site.webmanifest' | url }}">
+  {#- The title follows the theme's own <title>: front matter, then the page. #}
+  {%- if page.meta and page.meta.title %}
+    {%- set title = page.meta.title ~ " - " ~ config.site_name %}
+  {%- elif page.title and not page.is_homepage %}
+    {%- set title = (page.title | striptags) ~ " - " ~ config.site_name %}
+  {%- else %}
+    {%- set title = config.site_name %}
+  {%- endif %}
+  {%- set description = page.meta.description if page.meta and page.meta.description else config.site_description %}
+  {%- set image = config.site_url ~ "assets/social-card.png" %}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ config.site_name }}">
+  <meta property="og:title" content="{{ title }}">
+  <meta property="og:description" content="{{ description }}">
+  <meta property="og:url" content="{{ page.canonical_url }}">
+  <meta property="og:image" content="{{ image }}">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="The openarity mark and name, with the tagline: {{ config.site_description }}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ title }}">
+  <meta name="twitter:description" content="{{ description }}">
+  <meta name="twitter:image" content="{{ image }}">
 {% endblock %}
