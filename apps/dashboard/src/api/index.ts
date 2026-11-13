@@ -37,7 +37,10 @@ import type {
   RunEvent,
   RunRequest,
   RunStatus,
+  Said,
+  SayRequest,
   Session,
+  SessionEnvelope,
   SessionStatus,
   Skill,
   Team,
@@ -309,6 +312,89 @@ export function listTeamRuns(
  * anything; its events say what it does. With no agent, the team's hub
  * answers.
  */
+/** Starts a conversation on the dashboard: the hub answers what was typed. */
+export function startConversation(teamId: string, say: SayRequest): Promise<Said> {
+  return request<Said>(`/teams/${teamId}/sessions`, { method: "POST", body: say });
+}
+
+/** Writes in the caller's own dashboard conversation. */
+export function sendSessionMessage(
+  teamId: string,
+  sessionId: string,
+  say: SayRequest,
+): Promise<Said> {
+  return request<Said>(`/teams/${teamId}/sessions/${sessionId}/messages`, {
+    method: "POST",
+    body: say,
+  });
+}
+
+/** The kinds a session's stream sends that the dashboard reads; anything else is "other". */
+const SESSION_KINDS = new Set([
+  "message",
+  "message_consumed",
+  "run_started",
+  "step_started",
+  "text_message_chunk",
+  "reasoning_message_chunk",
+  "tool_call_chunk",
+  "tool_call_result",
+  "run_finished",
+]);
+
+/**
+ * Follows a session's stream from after `from` (every frame when null), as
+ * long as signal lasts: the stream never ends by itself. A dropped
+ * connection or a 5xx is followed again from the last frame seen, waiting
+ * twice as long each time nothing was read in between, and given up on after
+ * FOLLOW_ATTEMPTS; a refusal (4xx) ends it at once. onWaiting says when it is
+ * waiting to reconnect, and when it is reading again.
+ */
+export async function followSessionEvents(
+  teamId: string,
+  sessionId: string,
+  onEvent: (event: SessionEnvelope) => void,
+  signal: AbortSignal,
+  from: number | null = null,
+  onWaiting: (waiting: boolean) => void = () => {},
+): Promise<void> {
+  let after: number | null = from;
+  let failures = 0;
+  while (!signal.aborted) {
+    const query: string = after === null ? "" : `?after=${after}`;
+    try {
+      const body: ReadableStream<Uint8Array> = await request(
+        `/teams/${teamId}/sessions/${sessionId}/events${query}`,
+        { stream: true, signal },
+      );
+      onWaiting(false);
+      for await (const frame of readFrames(body, signal)) {
+        failures = 0;
+        const seq = Number(frame.id);
+        if (frame.id === null || !Number.isInteger(seq)) continue;
+        after = seq;
+        onEvent(sessionEnvelope(seq, frame.event, parseData(frame.data)));
+      }
+    } catch (err) {
+      if (signal.aborted) return;
+      if (err instanceof ApiError && err.status < 500) throw err;
+      failures += 1;
+      if (failures >= FOLLOW_ATTEMPTS) throw err;
+    }
+    if (signal.aborted) return;
+    onWaiting(true);
+    const wait = RESUME_AFTER_MS * 2 ** Math.max(failures - 1, 0);
+    await pause(Math.min(wait, RESUME_AT_MOST_MS), signal);
+  }
+}
+
+function sessionEnvelope(seq: number, kind: string, data: unknown): SessionEnvelope {
+  if (SESSION_KINDS.has(kind) && data !== null && typeof data === "object") {
+    return { seq, kind, data } as SessionEnvelope;
+  }
+  return { seq, kind: "other", name: kind, data };
+}
+
 export function startRun(teamId: string, run: RunRequest): Promise<Run> {
   return request<Run>(`/teams/${teamId}/runs`, { method: "POST", body: run });
 }

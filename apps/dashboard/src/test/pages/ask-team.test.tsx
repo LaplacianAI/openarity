@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import { NO_MODEL } from "@/lib/ask";
-import { brain, pageOf, type Reply, type Seen, STAMP, showAt, TEAM, team } from "@/test/brain";
+import { brain, pageOf, type Reply, type Seen, showAt, TEAM, team } from "@/test/brain";
 
 const { Route: HomeRoute } = await import("@/routes/ui.index");
 await pageOf(HomeRoute);
@@ -15,25 +15,10 @@ afterEach(() => {
   setToken(null);
 });
 
-const queued = {
-  id: "r-new",
-  session_id: "s-new",
-  agent: "orchestrator",
-  status: "queued",
-  input: "What failed in last night's deploy?",
-  output: null,
-  error: null,
-  input_tokens: 0,
-  output_tokens: 0,
-  created_at: STAMP,
-  started_at: null,
-  finished_at: null,
-  parent_run_id: null,
-  depth: 0,
-  hub: true,
-};
+/** A conversation started and the hub taking it. */
+const started = { session_id: "s-new", message_id: "m-new", run_id: "r-new" };
 
-function home(actions: string[], started: Reply = { status: 202, body: queued }) {
+function home(actions: string[], answer: Reply = { status: 201, body: started }) {
   const seen = brain({
     ...team(actions),
     "GET /teams/{id}/summary": {
@@ -45,29 +30,29 @@ function home(actions: string[], started: Reply = { status: 202, body: queued })
       },
     },
     "GET /teams/{id}/runs": { body: { items: [] } },
-    "POST /teams/{id}/runs": started,
+    "POST /teams/{id}/sessions": answer,
   });
   const router = showAt("/ui/", [["/ui/", HomeRoute]]);
   return { seen, router };
 }
 
 const posts = (seen: Seen[]) =>
-  seen.filter((s) => s.method === "POST" && s.path === `/teams/${TEAM}/runs`);
+  seen.filter((s) => s.method === "POST" && s.path === `/teams/${TEAM}/sessions`);
+const sent = (s: Seen | undefined) => JSON.parse(String(s?.body)) as { text: string; key: string };
 
 describe("asking the team from Home", () => {
-  it("asks the hub, naming no agent and no session, and lands on the run's live trace", async () => {
+  it("starts a conversation on the dashboard, and lands on it to watch and reply", async () => {
     const { seen, router } = home(["run:write"]);
     const box = await screen.findByRole("textbox", { name: "Ask the team" });
     await userEvent.type(box, "  What failed in last night's deploy?  ");
     await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/ui/sessions/s-new"));
-    expect(router.state.location.search).toEqual({ tab: "runs", run: "r-new" });
-    const sent = posts(seen);
-    expect(sent).toHaveLength(1);
-    expect(JSON.parse(String(sent[0]?.body))).toEqual({
-      input: "What failed in last night's deploy?",
-    });
+    expect(router.state.location.search).toEqual({});
+    expect(posts(seen)).toHaveLength(1);
+    const body = sent(posts(seen)[0]);
+    expect(body.text).toBe("What failed in last night's deploy?");
+    expect(body.key).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
   });
 
   it("sends on Ctrl+Enter, and Enter alone is a new line", async () => {
@@ -79,7 +64,7 @@ describe("asking the team from Home", () => {
 
     await userEvent.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(router.state.location.pathname).toBe("/ui/sessions/s-new"));
-    expect(JSON.parse(String(posts(seen)[0]?.body))).toEqual({ input: "first line\nsecond" });
+    expect(sent(posts(seen)[0]).text).toBe("first line\nsecond");
   });
 
   it("offers no send for a blank question", async () => {
@@ -99,10 +84,16 @@ describe("asking the team from Home", () => {
     expect(screen.queryByRole("form", { name: "Ask the team" })).toBeNull();
   });
 
+  // The brain stores the message and starts nothing; a conversation that
+  // would stay silent is not opened.
   it("says a team with no model can't be asked, points at its settings, and keeps the question", async () => {
-    const { router } = home(["run:write"], {
-      status: 409,
-      text: "the team has no model set, so its orchestrator cannot run; set one in the team's settings",
+    const { router, seen } = home(["run:write"], {
+      status: 201,
+      body: {
+        ...started,
+        run_id: undefined,
+        unanswered: "the team has no model set, so its hub cannot run",
+      },
     });
     const box = await screen.findByRole("textbox", { name: "Ask the team" });
     await userEvent.type(box, "Anyone there?");
@@ -121,5 +112,10 @@ describe("asking the team from Home", () => {
     // Editing the question clears what was said about the last try.
     await userEvent.type(box, "!");
     expect(screen.queryByRole("alert")).toBeNull();
+
+    // Asked again once a model is set, it is a new message, not the stored one.
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    await waitFor(() => expect(posts(seen)).toHaveLength(2));
+    expect(sent(posts(seen)[1]).key).not.toBe(sent(posts(seen)[0]).key);
   });
 });

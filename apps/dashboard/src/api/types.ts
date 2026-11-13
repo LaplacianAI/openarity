@@ -173,6 +173,8 @@ export type Session = {
    * Read through sessionName, never on its own.
    */
   first_asked?: string | null;
+  /** Who a direct session is with; absent for anything else. */
+  user_id?: string;
 };
 
 export type SessionStatus = "open" | "closed";
@@ -261,6 +263,92 @@ export type Reply = {
 };
 
 /** POST /teams/{id}/runs. No `agent` asks the team's hub; no `session_id` gives the run a session of its own. */
+/** POST /teams/{id}/sessions and POST …/sessions/{sessionID}/messages: what a person typed on the dashboard. */
+export type SayRequest = {
+  text: string;
+  /** The same for a retry of the same send, so it is one message. */
+  key: string;
+};
+
+/** What became of a message typed on the dashboard. */
+export type Said = {
+  session_id: string;
+  message_id: string;
+  /** The run answering it: a new one, or the one already working when steered. */
+  run_id?: string;
+  /** Sent to a run already working, which reads it before its next step. */
+  steered?: boolean;
+  /** Why no run took it, when none did. */
+  unanswered?: string;
+};
+
+/** One part of a message on the session stream. */
+export type SessionEventPart = { type: string; text?: string };
+
+/**
+ * A frame of a session's stream, GET /teams/{id}/sessions/{sessionID}/events:
+ * sdk/stream's catalog. `seq` is the frame's id, its place in the conversation.
+ * Every kind carries `at`, and a run's carry `run_id`.
+ */
+export type SessionEnvelope = { seq: number } & SessionEvent;
+
+export type SessionEvent =
+  | {
+      kind: "message";
+      data: {
+        at: string;
+        id: string;
+        user_id: string;
+        parts: SessionEventPart[];
+        state?: "pending";
+      };
+    }
+  | { kind: "message_consumed"; data: { at: string; run_id: string; message_ids: string[] } }
+  | {
+      kind: "run_started";
+      data: { at: string; run_id: string; agent: string; parent_run_id?: string };
+    }
+  | { kind: "step_started"; data: { at: string; run_id: string; step: number } }
+  | {
+      kind: "text_message_chunk" | "reasoning_message_chunk";
+      data: { at: string; run_id: string; message_id?: string; delta: string; truncated?: boolean };
+    }
+  | {
+      kind: "tool_call_chunk";
+      data: {
+        at: string;
+        run_id: string;
+        tool_call_id: string;
+        name: string;
+        arguments: string;
+        truncated?: boolean;
+      };
+    }
+  | {
+      kind: "tool_call_result";
+      data: {
+        at: string;
+        run_id: string;
+        tool_call_id: string;
+        name: string;
+        content: string;
+        error?: string;
+        truncated?: boolean;
+        duration_ms: number;
+      };
+    }
+  | {
+      kind: "run_finished";
+      data: {
+        at: string;
+        run_id: string;
+        status: "succeeded" | "failed" | "cancelled";
+        output?: string;
+        error?: string;
+      };
+    }
+  | { kind: "other"; name: string; data: unknown };
+
 export type RunRequest = {
   input: string;
   agent?: string;

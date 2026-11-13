@@ -64,6 +64,8 @@ const PROVIDERS: [value: string, word: string][] = [
 ];
 
 const TELEGRAM = "telegram";
+/** The dashboard's own channel: made with the team, written to from the dashboard, never deleted. */
+const DASHBOARD = "dashboard";
 
 /** The brain's own limit on a channel's name. */
 const MAX_NAME = 200;
@@ -248,6 +250,7 @@ function ChannelDetail({
   onChanged: () => void;
   onDeleted: () => void;
 }) {
+  const builtIn = channel.provider === DASHBOARD;
   return (
     <>
       <SheetHeader>
@@ -260,12 +263,21 @@ function ChannelDetail({
           {channel.last_message_at ? <Time iso={channel.last_message_at} /> : "Never"}
         </KeyValue>
         <KeyValue label="Last 24 hours">{count(channel.sessions_24h, "session")}</KeyValue>
-        <KeyValue label={channel.hook_url ? "Webhook URL" : "Webhook path"}>
-          <Mono className="break-all text-foreground">POST {hookAddress(channel)}</Mono>
-        </KeyValue>
-        <KeyValue label="Signing secret">
-          In the secret store. It was shown once, when the channel was connected.
-        </KeyValue>
+        {builtIn ? (
+          <KeyValue label="Messages">
+            Typed here, on the dashboard: asking the team starts a conversation on this channel, and
+            the answer is read in the conversation as it is written.
+          </KeyValue>
+        ) : (
+          <>
+            <KeyValue label={channel.hook_url ? "Webhook URL" : "Webhook path"}>
+              <Mono className="break-all text-foreground">POST {hookAddress(channel)}</Mono>
+            </KeyValue>
+            <KeyValue label="Signing secret">
+              In the secret store. It was shown once, when the channel was connected.
+            </KeyValue>
+          </>
+        )}
         {channel.provider === TELEGRAM && channel.can_reply ? (
           <KeyValue label="Replies to">
             Back into the Telegram chat each message came from.
@@ -301,7 +313,11 @@ function ChannelDetail({
             Open its sessions
           </Link>
         </Button>
-        {canWrite ? (
+        {builtIn ? (
+          <p className="text-xs text-muted-foreground">
+            Built in: every team has this channel, so it cannot be deleted.
+          </p>
+        ) : canWrite ? (
           <DeleteChannel teamId={teamId} channel={channel} onDeleted={onDeleted} />
         ) : null}
       </div>
