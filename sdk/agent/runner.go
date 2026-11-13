@@ -112,7 +112,7 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 	if err := checkOutput(spec); err != nil {
 		return Result{}, err
 	}
-	if err := checkCompaction(spec.Compaction); err != nil {
+	if err := checkCompaction(spec.Compaction, spec.Tools); err != nil {
 		return Result{}, err
 	}
 	if spec.Compaction != nil {

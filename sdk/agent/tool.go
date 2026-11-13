@@ -10,6 +10,9 @@ type Tool struct {
 	Description string
 	Schema      json.RawMessage
 	Invoke      InvokeFunc
+	// Preview is how a large result of this tool is shown on a compacting
+	// run; zero fields take Spec.Compaction's.
+	Preview Preview
 }
 
 type InvokeFunc func(ctx context.Context, args json.RawMessage) (string, error)

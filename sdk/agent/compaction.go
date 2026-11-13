@@ -36,6 +36,51 @@ type Compaction struct {
 	// KeepTokens is roughly how much of the latest conversation is kept word
 	// for word; 15,000 when zero.
 	KeepTokens int
+	// Preview is how a large tool result is shown, for a tool that sets none
+	// of its own; zero fields take the defaults.
+	Preview Preview
+}
+
+// Preview is how a large tool result is shown to the model: whole up to
+// Over bytes, and past it its first Head and last Tail bytes with a
+// read_output handle for the rest. The transcript keeps the result whole. A
+// zero field takes the run's value, and the run's takes the default: 100 KiB,
+// 8 KiB and 4 KiB. It applies only to a run with Spec.Compaction, which is
+// what offers read_output.
+type Preview struct {
+	Over int
+	Head int
+	Tail int
+}
+
+var defaultPreview = Preview{Over: 100 << 10, Head: 8 << 10, Tail: 4 << 10}
+
+// or fills each zero field of p from q.
+func (p Preview) or(q Preview) Preview {
+	if p.Over == 0 {
+		p.Over = q.Over
+	}
+	if p.Head == 0 {
+		p.Head = q.Head
+	}
+	if p.Tail == 0 {
+		p.Tail = q.Tail
+	}
+	return p
+}
+
+// check is whether a resolved preview can stand in for a result: a head and
+// a tail that together fit under the size it starts at.
+func (p Preview) check() error {
+	switch {
+	case p.Over < 0 || p.Head < 0 || p.Tail < 0:
+		return errors.New("has a negative size")
+	case p.Head == 0 || p.Tail == 0:
+		return errors.New("shows no head or no tail")
+	case p.Head+p.Tail > p.Over:
+		return fmt.Errorf("shows %d bytes of head and tail, more than the %d it starts at", p.Head+p.Tail, p.Over)
+	}
+	return nil
 }
 
 // CompactionSummary marks a transcript message as a compaction's summary of
@@ -79,10 +124,6 @@ func (CompactedEvent) event() {}
 const (
 	defaultKeepTokens = 15_000
 	charsPerToken     = 4
-	// A tool result larger than this is shown as a preview with a handle.
-	previewOver = 100 << 10
-	previewHead = 8 << 10
-	previewTail = 4 << 10
 	// An older tool result smaller than this is left alone by clearing.
 	clearOver = 1 << 10
 	// Clearing alone is enough when it brings the estimate this far under the
@@ -207,7 +248,7 @@ func (h *compactHandle) splice(msgs []Message) []Message {
 	return out
 }
 
-func checkCompaction(c *Compaction) error {
+func checkCompaction(c *Compaction, tools []Tool) error {
 	if c == nil {
 		return nil
 	}
@@ -216,6 +257,15 @@ func checkCompaction(c *Compaction) error {
 	}
 	if c.AfterMessages == 0 && c.AfterInputTokens == 0 {
 		return errors.New("Spec.Compaction sets neither AfterMessages nor AfterInputTokens, so it would never compact")
+	}
+	run := c.Preview.or(defaultPreview)
+	if err := run.check(); err != nil {
+		return fmt.Errorf("Spec.Compaction.Preview %w", err)
+	}
+	for _, t := range tools {
+		if err := t.Preview.or(run).check(); err != nil {
+			return fmt.Errorf("the preview of tool %q %w", t.Name, err)
+		}
 	}
 	return nil
 }
@@ -229,10 +279,11 @@ type compactingClient struct {
 	count  func(Usage)
 	emit   func(Event)
 
-	state   compactionState
-	base    int // input tokens the last call read
-	baseLen int // messages in the view that call sent
-	retryAt int
+	state    compactionState
+	previews map[string]Preview // by tool name, resolved; from the request's tools
+	base     int                // input tokens the last call read
+	baseLen  int                // messages in the view that call sent
+	retryAt  int
 }
 
 func newCompactingClient(inner ModelClient, cfg Compaction, h *compactHandle,
@@ -281,6 +332,7 @@ func overflowed(err error) bool {
 func (c *compactingClient) prepare(ctx context.Context, req Request) Request {
 	msgs := req.Messages
 	c.handle.setFull(msgs)
+	c.previews = previewsOf(req.Tools, c.cfg.Preview.or(defaultPreview))
 
 	if c.state.cleared > 0 && (c.state.cleared > len(msgs) || digest(msgs[:c.state.cleared]) != c.state.prefix) {
 		c.state = compactionState{}
@@ -475,10 +527,11 @@ func (c *compactingClient) keepFrom(msgs []Message) int {
 	if c.cfg.AfterMessages > 0 {
 		most = max(c.cfg.AfterMessages/2, 2)
 	}
+	names := toolNames(msgs)
 	i, kept := len(msgs), 0
 	for i > 1 && kept < c.cfg.KeepTokens && len(msgs)-i < most {
 		i--
-		kept += tokensOf([]Message{shown(msgs[i])})
+		kept += tokensOf([]Message{c.shown(msgs[i], names[msgs[i].ToolCallID])})
 	}
 	for i > 1 && msgs[i].Role == RoleTool {
 		i--
@@ -504,7 +557,7 @@ func (c *compactingClient) view(msgs []Message) []Message {
 			case i < s.cleared && clearable(m, names):
 				m = stub(m, names[m.ToolCallID])
 			default:
-				m = shownNamed(m, names[m.ToolCallID])
+				m = c.shown(m, names[m.ToolCallID])
 			}
 		}
 		out = append(out, m)
@@ -580,22 +633,42 @@ func stub(m Message, name string) Message {
 	return m
 }
 
-func shown(m Message) Message { return shownNamed(m, "") }
+// previewsOf resolves each tool's preview against the run's.
+func previewsOf(tools []Tool, run Preview) map[string]Preview {
+	out := make(map[string]Preview, len(tools))
+	for _, t := range tools {
+		out[t.Name] = t.Preview.or(run)
+	}
+	return out
+}
 
-func shownNamed(m Message, name string) Message {
-	if m.Role != RoleTool {
+// preview is how a result of the named tool is shown; a name the request's
+// tools do not hold, such as a result from before a tool was dropped, takes
+// the run's.
+func (c *compactingClient) preview(name string) Preview {
+	if p, ok := c.previews[name]; ok {
+		return p
+	}
+	return c.cfg.Preview.or(defaultPreview)
+}
+
+func (c *compactingClient) shown(m Message, name string) Message {
+	// A read_output result is already capped, and previewing it would only
+	// send the model back to read its own read; a skill is kept word for word.
+	if m.Role != RoleTool || name == ReadOutputToolName || isSkill(name) {
 		return m
 	}
+	p := c.preview(name)
 	text := m.Text()
-	if len(text) <= previewOver {
+	if len(text) <= p.Over {
 		return m
 	}
 	// Cut on rune boundaries, as report.go does: at most three bytes either way.
-	end := previewHead
+	end := p.Head
 	for end > 0 && !utf8.RuneStart(text[end]) {
 		end--
 	}
-	from := len(text) - previewTail
+	from := len(text) - p.Tail
 	for from < len(text) && !utf8.RuneStart(text[from]) {
 		from++
 	}

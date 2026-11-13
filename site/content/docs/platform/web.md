@@ -40,8 +40,10 @@ every other team has them read by the brain itself:
 - **HTML, XHTML, plain text, markdown and JSON.** A type it cannot read, such as
   a PDF, is refused before the body is read. HTML is reduced to its article
   before it becomes markdown, so menus and banners stay out.
-- **At most 2 MiB is read, and 32 KiB reaches the model**, cut at a character
-  boundary with a line saying where it was cut.
+- **At most 2 MiB is read, and kept whole.** A page up to 32 KiB reaches the
+  model whole; a longer one as its first 24 KiB and last 8 KiB, so both ends
+  of its envelope, and the model reads the rest with `read_output`, by line or
+  by match. A page the fetch stopped at 2 MiB says so.
 
 Through Firecrawl, the brain checks the host before asking and the address the
 page actually ended at afterwards, and refuses a page that ended somewhere

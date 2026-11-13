@@ -241,6 +241,10 @@ run := runner.Start(ctx, spec, msgs, endpoint, events)
 run.WrapUp("Your token budget is nearly spent. Stop calling tools and answer now with what you have.")
 ```
 
+A tool result past 100 KiB is shown as its first 8 KiB and last 4 KiB, with
+`read_output` for the rest; `Compaction.Preview` sets the run's sizes, and a
+tool's own `Preview` sets its.
+
 `run.WrapUp` asks a run to finish, and every tool refuses from then on;
 `run.CompactNow` compacts before the next request; `run.Summary` is the latest
 summary. [`compaction`](examples/compaction) runs all of it.
