@@ -9,8 +9,9 @@
 # than seconds. Go cross-compiles natively, so emulating it buys nothing.
 FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS build
 
-# The repository's layout, not a flat /src: go.mod replaces the agent SDK with
-# ../../sdk/agent, and that path has to resolve inside the image too.
+# The repository's layout, not a flat /src: go.mod replaces the SDKs with
+# ../../sdk/agent and ../../sdk/stream, and those paths have to resolve inside
+# the image too.
 WORKDIR /src/apps/brain
 
 # Set by buildx for each platform it is asked for: arm64, amd64. Declaring the
@@ -28,9 +29,10 @@ ARG TARGETOS
 ENV GOWORK=off CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH
 
 # Dependencies first: they change far less often than the code, so this layer
-# survives most rebuilds. The SDK is a dependency the replace points at, so it
-# has to be in place before the download resolves the graph.
+# survives most rebuilds. The SDKs are dependencies the replaces point at, so
+# they have to be in place before the download resolves the graph.
 COPY sdk/agent/ /src/sdk/agent/
+COPY sdk/stream/ /src/sdk/stream/
 COPY apps/brain/go.mod apps/brain/go.sum ./
 RUN go mod download
 

@@ -68,6 +68,7 @@ func (m *scriptedLLM) serve(w http.ResponseWriter, r *http.Request) {
 		Messages []struct {
 			Role string `json:"role"`
 		} `json:"messages"`
+		Stream bool `json:"stream"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil || !strings.HasSuffix(r.URL.Path, "/chat/completions") {
 		http.Error(w, "not a chat completion", http.StatusBadRequest)
@@ -82,9 +83,9 @@ func (m *scriptedLLM) serve(w http.ResponseWriter, r *http.Request) {
 
 	switch results {
 	case 0:
-		writeCompletion(w, "", "Skill", fmt.Sprintf(`{"name":%q}`, skillName))
+		writeCompletion(w, req.Stream, "", "Skill", fmt.Sprintf(`{"name":%q}`, skillName))
 	case 1:
-		writeCompletion(w, "", lookupTool, `{}`)
+		writeCompletion(w, req.Stream, "", lookupTool, `{}`)
 	default:
 		if m.holdAnswer != nil {
 			m.heldOnce.Do(func() { close(m.held) })
@@ -94,11 +95,17 @@ func (m *scriptedLLM) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		writeCompletion(w, finalAnswer, "", "")
+		writeCompletion(w, req.Stream, finalAnswer, "", "")
 	}
 }
 
-func writeCompletion(w http.ResponseWriter, content, tool, args string) {
+// writeCompletion answers as a gateway does: one JSON completion, or, for a
+// run that streams its text, the same turn as server-sent chunks.
+func writeCompletion(w http.ResponseWriter, stream bool, content, tool, args string) {
+	if stream {
+		writeChunks(w, content, tool, args)
+		return
+	}
 	msg := map[string]any{"role": "assistant", "content": content}
 	finish := "stop"
 	if tool != "" {
@@ -114,6 +121,36 @@ func writeCompletion(w http.ResponseWriter, content, tool, args string) {
 		"choices": []any{map[string]any{"index": 0, "message": msg, "finish_reason": finish}},
 		"usage":   map[string]any{"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
 	})
+}
+
+// writeChunks is one turn as OpenAI's streaming chunks: the delta, the
+// finish, the usage on a chunk of its own, then [DONE].
+func writeChunks(w http.ResponseWriter, content, tool, args string) {
+	delta := map[string]any{"role": "assistant"}
+	if content != "" {
+		delta["content"] = content
+	}
+	finish := "stop"
+	if tool != "" {
+		delta["tool_calls"] = []map[string]any{{
+			"index": 0, "id": "call_" + strings.ToLower(tool), "type": "function",
+			"function": map[string]any{"name": tool, "arguments": args},
+		}}
+		finish = "tool_calls"
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	chunk := func(choices []any, usage any) {
+		body := map[string]any{"id": "chatcmpl-1", "object": "chat.completion.chunk", "model": "test/model", "choices": choices}
+		if usage != nil {
+			body["usage"] = usage
+		}
+		raw, _ := json.Marshal(body)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", raw)
+	}
+	chunk([]any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}, nil)
+	chunk([]any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": finish}}, nil)
+	chunk([]any{}, map[string]any{"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120})
+	_, _ = io.WriteString(w, "data: [DONE]\n\n")
 }
 
 func (m *scriptedLLM) saw(s string) bool {

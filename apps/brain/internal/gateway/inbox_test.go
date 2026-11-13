@@ -46,13 +46,17 @@ type inboxStore struct {
 	// answering each session; steers are what was added to a run; created is
 	// every run started. mayNot and noModel make the sender or the team unable
 	// to start one; runErr fails starting it.
-	active  map[uuid.UUID]uuid.UUID
-	steers  map[uuid.UUID][]string
-	created []db.CreateChannelRunParams
-	mayNot  bool
-	noModel bool
-	runErr  error
-	inTx    bool
+	active map[uuid.UUID]uuid.UUID
+	steers map[uuid.UUID][]string
+	// asked is every message marked as asking; consumed every run taking
+	// messages, as the store was asked.
+	asked    []uuid.UUID
+	consumed []db.ConsumeMessagesParams
+	created  []db.CreateChannelRunParams
+	mayNot   bool
+	noModel  bool
+	runErr   error
+	inTx     bool
 }
 
 func newInboxStore() *inboxStore {
@@ -117,6 +121,16 @@ func (f *inboxStore) CreateChannelRun(_ context.Context, arg db.CreateChannelRun
 	f.created = append(f.created, arg)
 	f.active[arg.SessionID] = arg.ID
 	return db.Run{ID: arg.ID, SessionID: arg.SessionID, MessageID: arg.MessageID, Hub: true, ReplyToChannel: true}, nil
+}
+
+func (f *inboxStore) MarkMessageAsks(_ context.Context, id uuid.UUID) error {
+	f.asked = append(f.asked, id)
+	return nil
+}
+
+func (f *inboxStore) ConsumeMessages(_ context.Context, arg db.ConsumeMessagesParams) (int64, error) {
+	f.consumed = append(f.consumed, arg)
+	return 1, nil
 }
 
 // enqueued records the runs handed to the workers, and whether any was handed

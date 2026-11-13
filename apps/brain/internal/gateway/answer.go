@@ -15,6 +15,7 @@ import (
 
 type outcome struct {
 	run        uuid.UUID // a run started for this message, to hand to the workers
+	steered    uuid.UUID // the run already working, which this message was sent to
 	unanswered string    // why a message that asked for an answer gets none
 }
 
@@ -37,10 +38,13 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 	active, err := q.ActiveSessionRun(ctx, s.ID)
 	switch {
 	case err == nil:
+		if err := q.MarkMessageAsks(ctx, messageID); err != nil {
+			return outcome{}, fmt.Errorf("mark message %s as asking: %w", messageID, err)
+		}
 		if err := q.AddSteer(ctx, db.AddSteerParams{RunID: active, Text: steer(m)}); err != nil {
 			return outcome{}, fmt.Errorf("steer run %s: %w", active, err)
 		}
-		return outcome{}, nil
+		return outcome{steered: active}, nil
 	case !errors.Is(err, pgx.ErrNoRows):
 		return outcome{}, fmt.Errorf("active run in session %s: %w", s.ID, err)
 	}
@@ -60,6 +64,12 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 		Input: m.Text, MessageID: &messageID,
 	}); err != nil {
 		return outcome{}, fmt.Errorf("start a run for %q: %w", m.ExternalID, err)
+	}
+	if err := q.MarkMessageAsks(ctx, messageID); err != nil {
+		return outcome{}, fmt.Errorf("mark message %s as asking: %w", messageID, err)
+	}
+	if _, err := q.ConsumeMessages(ctx, db.ConsumeMessagesParams{RunID: id, Only: &messageID}); err != nil {
+		return outcome{}, fmt.Errorf("hand run %s the message it answers: %w", id, err)
 	}
 	return outcome{run: id}, nil
 }

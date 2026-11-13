@@ -2,9 +2,13 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
@@ -74,17 +78,44 @@ func TestABuilderRunStreamsItsReply(t *testing.T) {
 	}
 }
 
-// Every other run keeps the loop it had: nothing streams, nothing changes.
-func TestAnAgentRunDoesNotStream(t *testing.T) {
-	model := streaming{newScripted(answer("Hello.", 10, 5))}
+// A top-level run streams its answer too: the hub's, or an agent's asked
+// directly, so whoever asked reads it as it is written.
+func TestATopLevelRunStreamsItsAnswer(t *testing.T) {
+	model := streaming{newScripted(answer("Hello there.", 10, 5))}
 	f := newExecFixture(t, model.scripted)
 	f.streams(t, model)
 
 	f.mustExecute(t)
 
+	var text strings.Builder
 	for _, e := range f.events(t) {
 		if e.Kind == "text" {
-			t.Fatalf("an agent run wrote a text event: %s", e.Payload)
+			var p struct{ Text string }
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				t.Fatal(err)
+			}
+			text.WriteString(p.Text)
+		}
+	}
+	if text.String() != "Hello there." {
+		t.Fatalf("streamed %q, want the answer", text.String())
+	}
+}
+
+func TestWhichRunsStreamTheirText(t *testing.T) {
+	parent := uuid.New()
+	for name, c := range map[string]struct {
+		row     db.Run
+		pattern agent.PatternName
+		want    bool
+	}{
+		"a top-level react run":           {db.Run{}, agent.PatternReAct, true},
+		"a top-level run on another loop": {db.Run{}, agent.PatternPlan, false},
+		"a delegated react run":           {db.Run{ParentRunID: &parent}, agent.PatternReAct, false},
+		"the builder":                     {db.Run{Builder: true}, agent.PatternReAct, true},
+	} {
+		if got := streamsText(c.row, agent.Spec{Pattern: c.pattern}); got != c.want {
+			t.Errorf("%s: streams %v, want %v", name, got, c.want)
 		}
 	}
 }

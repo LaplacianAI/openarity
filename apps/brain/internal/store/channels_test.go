@@ -180,6 +180,7 @@ func TestListChannelsByTeamShowsOnlyThatTeam(t *testing.T) {
 	s := queryStore(t)
 	platform := mustCreate(t, s, "platform")
 	finance := mustCreate(t, s, "finance")
+	dropDashboard(t, s, platform.ID)
 
 	mine := mustCreateChannel(t, s, platform.ID, "custom", "support")
 	mustCreateChannel(t, s, finance.ID, "custom", "billing")
@@ -203,6 +204,7 @@ func TestListChannelsByTeamReturnsNewestFirst(t *testing.T) {
 
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
+	dropDashboard(t, s, team.ID)
 
 	now := time.Now()
 	oldest := mustCreateChannel(t, s, team.ID, "custom", "oldest")
@@ -241,6 +243,7 @@ func TestListChannelsByTeamPagesFromACursor(t *testing.T) {
 
 	s := queryStore(t)
 	team := mustCreate(t, s, "platform")
+	dropDashboard(t, s, team.ID)
 
 	now := time.Now()
 	for i, name := range []string{"oldest", "middle", "newest"} {
@@ -381,4 +384,11 @@ func TestAListedChannelCountsOnlyWhatTheCallerMayOpen(t *testing.T) {
 			t.Errorf("%s: last used %.0f minutes ago, want %v", name, got, tc.minutes)
 		}
 	}
+}
+
+// dropDashboard takes away the channel every team is made with, for a test
+// about the channels people connect.
+func dropDashboard(t *testing.T, s *Store, teamID uuid.UUID) {
+	t.Helper()
+	exec(t, s, "DELETE FROM channels WHERE team_id = '"+teamID.String()+"' AND provider = 'dashboard'")
 }

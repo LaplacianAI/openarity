@@ -43,11 +43,12 @@ func (s *Store) FinishRunWithEvent(
 		if err != nil {
 			return fmt.Errorf("read run %s: %w", finish.ID, err)
 		}
+		// Every run's end takes the session first, a child's too: its finished
+		// event is numbered from the session's counter, and the session is
+		// taken before any run (session_stream.go).
 		top := run.ParentRunID == nil
-		if top {
-			if _, err := q.LockSession(ctx, run.SessionID); err != nil {
-				return fmt.Errorf("lock session %s: %w", run.SessionID, err)
-			}
+		if _, err := q.LockSession(ctx, run.SessionID); err != nil {
+			return fmt.Errorf("lock session %s: %w", run.SessionID, err)
 		}
 
 		if n, err = q.FinishRun(ctx, finish); err != nil || n == 0 {
@@ -64,7 +65,14 @@ func (s *Store) FinishRunWithEvent(
 		default:
 			followUp, err = carryOn(ctx, q, run)
 		}
-		return err
+		if err != nil || followUp == uuid.Nil {
+			return err
+		}
+		// The messages behind those steers are the follow-up's now.
+		if _, err := q.ConsumeMessages(ctx, db.ConsumeMessagesParams{RunID: followUp}); err != nil {
+			return fmt.Errorf("hand run %s the messages it answers: %w", followUp, err)
+		}
+		return nil
 	})
 	if err != nil {
 		return 0, uuid.Nil, err

@@ -57,6 +57,11 @@ type fakeStore struct {
 	teamListArgs       []db.ListSessionsByTeamParams
 	attachmentListArgs []db.ListAttachmentsBySessionParams
 	getAttachmentArgs  []db.GetAttachmentInSessionParams
+
+	// events is a session's stream, as ListSessionEvents reads it.
+	events    []db.ListSessionEventsRow
+	eventsErr error
+	eventArgs []db.ListSessionEventsParams
 }
 
 func (f *fakeStore) ListAttachmentsBySession(
@@ -82,6 +87,41 @@ func (f *fakeStore) ListAttachmentsBySession(
 
 // Scoped on both, like the SQL. A fake that matched on the id alone would let
 // a handler that forgot the session pass.
+func (f *fakeStore) DashboardChannel(_ context.Context, teamID uuid.UUID) (db.Channel, error) {
+	if f.channelErr != nil {
+		return db.Channel{}, f.channelErr
+	}
+	for _, c := range f.channels {
+		if c.TeamID == teamID && c.Provider == "dashboard" {
+			return c, nil
+		}
+	}
+	return db.Channel{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetMessageByExternalID(_ context.Context, arg db.GetMessageByExternalIDParams) (db.Message, error) {
+	for _, m := range f.messages {
+		if m.ChannelID == arg.ChannelID && m.ExternalID == arg.ExternalID {
+			return m, nil
+		}
+	}
+	return db.Message{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListSessionEvents(_ context.Context, arg db.ListSessionEventsParams) ([]db.ListSessionEventsRow, error) {
+	f.eventArgs = append(f.eventArgs, arg)
+	if f.eventsErr != nil {
+		return nil, f.eventsErr
+	}
+	var out []db.ListSessionEventsRow
+	for _, e := range f.events {
+		if e.Seq != nil && *e.Seq > arg.After && len(out) < int(arg.PageSize) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) GetAttachmentInSession(
 	_ context.Context, arg db.GetAttachmentInSessionParams,
 ) (db.Attachment, error) {
@@ -229,7 +269,10 @@ func trim[T any](rows []T, size int32) []T {
 type fakeAuthz struct {
 	super     bool
 	moderator bool
-	err       error
+	// noRunWrite is a member who may not start runs; run:write is otherwise
+	// held, as members hold it.
+	noRunWrite bool
+	err        error
 
 	asked authz.Action
 	scope authz.Resource
@@ -244,6 +287,9 @@ func (f *fakeAuthz) Can(_ context.Context, _ *auth.User, a authz.Action, r authz
 	// let a test pass against production behaviour it does not have.
 	if f.super {
 		return true, nil
+	}
+	if a == "run:write" {
+		return !f.noRunWrite, f.err
 	}
 	return f.moderator, f.err
 }
@@ -262,7 +308,10 @@ type fixture struct {
 	store     *fakeStore
 	authz     *fakeAuthz
 	objects   *fakeObjects
+	inbox     *fakeInbox
 	caller    *auth.User
+	// dashboardID is the team's dashboard channel.
+	dashboardID uuid.UUID
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -289,6 +338,11 @@ func newFixture(t *testing.T) *fixture {
 			ReceivedAt: time.Unix(1755412345, 0).UTC(),
 		}},
 	}
+	f.dashboardID = uuid.New()
+	f.store.channels = append(f.store.channels, db.Channel{
+		ID: f.dashboardID, TeamID: f.teamID, Provider: "dashboard", Name: "Dashboard",
+	})
+	f.inbox = &fakeInbox{}
 	f.objects = &fakeObjects{bodies: map[string][]byte{}}
 	f.authz = &fakeAuthz{}
 	f.caller = memberOf(f.teamID, "member")
@@ -326,7 +380,7 @@ func (f *fixture) get(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store, f.authz, f.objects).
+	New(discardLogger(), f.store, f.authz, f.objects, f.inbox).
 		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
@@ -352,9 +406,17 @@ func routes(t *testing.T) authz.Routes {
 		"/teams/{id}/sessions/{sessionID}/messages",
 		"/teams/{id}/sessions/{sessionID}/attachments",
 		"/teams/{id}/sessions/{sessionID}/attachments/{attachmentID}",
+		"/teams/{id}/sessions/{sessionID}/events",
 	} {
 		if err := rs.Add("GET", path, "member", nil); err != nil {
 			t.Fatalf("Add %s: %v", path, err)
+		}
+	}
+	// As rbac.json maps them: saying something on the dashboard starts runs.
+	write := "run:write"
+	for _, path := range []string{"/teams/{id}/sessions", "/teams/{id}/sessions/{sessionID}/messages"} {
+		if err := rs.Add("POST", path, "team", &write); err != nil {
+			t.Fatalf("Add POST %s: %v", path, err)
 		}
 	}
 	return rs

@@ -535,6 +535,8 @@ func (f failing) AddRunUsage(context.Context, db.AddRunUsageParams) (int64, erro
 	return 0, f.err
 }
 
+func (f failing) ConsumeSteer(context.Context, uuid.UUID) error { return f.err }
+
 // A run whose history cannot be written is stopped with the reason, which is
 // not a lost run: nothing else holds it.
 func TestAFailedWriteStopsTheRunWithItsReason(t *testing.T) {
@@ -566,5 +568,45 @@ func TestTheRecorderDrainsEverythingBeforeItSaysDone(t *testing.T) {
 
 	if got := len(h.events(t)); got != 50 {
 		t.Errorf("%d events stored when done closed, want 50", got)
+	}
+}
+
+// steering records which runs took a steer, and nothing else.
+type steering struct {
+	failing
+	mu   sync.Mutex
+	took []uuid.UUID
+}
+
+func (s *steering) ConsumeSteer(_ context.Context, runID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.took = append(s.took, runID)
+	return s.err
+}
+
+// A steer the run reads is the message behind it taken: one per steer, and
+// nothing written for it beside.
+func TestASteerTheRunReadsTakesItsMessage(t *testing.T) {
+	t.Parallel()
+
+	s := &steering{}
+	run := uuid.New()
+	st := feed(t, s, run, agent.SteerEvent{Text: "Asha: also check staging"}, agent.SteerEvent{Text: "Ben: and prod"})
+	if got := st.all(); len(got) != 0 {
+		t.Fatalf("stopped: %v", got)
+	}
+	if len(s.took) != 2 || s.took[0] != run || s.took[1] != run {
+		t.Fatalf("took %v, want the run twice", s.took)
+	}
+}
+
+func TestASteerThatCannotBeRecordedStopsTheRun(t *testing.T) {
+	t.Parallel()
+
+	down := errors.New("connection reset by peer")
+	st := feed(t, &steering{failing: failing{err: down}}, uuid.New(), agent.SteerEvent{Text: "hi"})
+	if got := st.all(); len(got) != 1 || !errors.Is(got[0], down) {
+		t.Fatalf("stops = %v, want the failure", got)
 	}
 }

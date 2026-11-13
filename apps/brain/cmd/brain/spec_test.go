@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	apispec "github.com/LaplacianAI/openarity/apps/brain/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
+	"github.com/LaplacianAI/openarity/sdk/stream"
 )
 
 // The spec is a hand-written contract, so nothing stops it drifting from the
@@ -292,4 +294,66 @@ func TestOnlyARestOfPathWildcardIsTranslated(t *testing.T) {
 			t.Errorf("asOpenAPI(%q) = %q, want %q", pattern, got, want)
 		}
 	}
+}
+
+// The session stream's events are sdk/stream's catalog, and the spec says what
+// each frame holds. The two are written separately, so each kind's schema in
+// the spec must name exactly the fields the catalog does, and require the same.
+func TestTheSpecDescribesTheStreamCatalog(t *testing.T) {
+	type schema struct {
+		Required   []string                  `yaml:"required" json:"required"`
+		Properties map[string]map[string]any `yaml:"properties" json:"properties"`
+	}
+	var spec struct {
+		Components struct {
+			Schemas map[string]schema `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	if err := yaml.Unmarshal(apispec.Spec, &spec); err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Defs map[string]schema `json:"$defs"`
+	}
+	if err := json.Unmarshal(stream.Schema, &catalog); err != nil {
+		t.Fatal(err)
+	}
+
+	names := func(s schema) []string {
+		var out []string
+		for p := range s.Properties {
+			out = append(out, p)
+		}
+		sort.Strings(out)
+		return out
+	}
+	pascal := func(kind string) string {
+		var b strings.Builder
+		for _, w := range strings.Split(kind, "_") {
+			b.WriteString(strings.ToUpper(w[:1]) + w[1:])
+		}
+		return b.String()
+	}
+
+	check := func(specName, kind string) {
+		got, ok := spec.Components.Schemas[specName]
+		if !ok {
+			t.Errorf("the spec has no %s for the %s kind", specName, kind)
+			return
+		}
+		want := catalog.Defs[kind]
+		if !slices.Equal(names(got), names(want)) {
+			t.Errorf("%s has %v, the catalog's %s has %v", specName, names(got), kind, names(want))
+		}
+		gotReq, wantReq := slices.Clone(got.Required), slices.Clone(want.Required)
+		sort.Strings(gotReq)
+		sort.Strings(wantReq)
+		if !slices.Equal(gotReq, wantReq) {
+			t.Errorf("%s requires %v, the catalog's %s requires %v", specName, gotReq, kind, wantReq)
+		}
+	}
+	for _, k := range stream.Kinds() {
+		check("SessionEvent"+pascal(string(k)), string(k))
+	}
+	check("SessionEventPart", "part")
 }

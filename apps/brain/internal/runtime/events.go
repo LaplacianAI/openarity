@@ -19,6 +19,8 @@ import (
 type EventStore interface {
 	AppendRunEvent(ctx context.Context, arg db.AppendRunEventParams) (int32, error)
 	AddRunUsage(ctx context.Context, arg db.AddRunUsageParams) (int64, error)
+	// ConsumeSteer records the run taking the message behind a steer it read.
+	ConsumeSteer(ctx context.Context, runID uuid.UUID) error
 }
 
 const (
@@ -180,6 +182,11 @@ func recordOne(ctx context.Context, s EventStore, runID uuid.UUID, worker string
 		})
 	case agent.UsageEvent:
 		return recordUsage(ctx, s, runID, worker, lines, e)
+	case agent.SteerEvent:
+		if err := s.ConsumeSteer(ctx, runID); err != nil {
+			return fmt.Errorf("recording the message behind a steer: %w", err)
+		}
+		return nil
 	case agent.CompactedEvent:
 		return appendEvent(ctx, s, runID, worker, "compacted", compactedPayload{
 			Reason: e.Reason, Cleared: e.Cleared, Folded: e.Folded, Before: e.Before, After: e.After,

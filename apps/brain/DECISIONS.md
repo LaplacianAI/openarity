@@ -33,6 +33,36 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   is told, as text, only what was said since the last run: a group's
   chatter, which reached no run.
 
+- **A session is one stream, numbered in commit order.** A session's messages
+  and the events of every run in it share one count, `session_seq`, taken
+  from `sessions.event_seq` by a trigger on each insert, so `GET
+  /sessions/{id}/events` replays a whole conversation and a client resumes
+  after the last number it saw (`sdk/stream`). The count is taken under the
+  session's row lock and held to commit, so a number is never visible before
+  one below it, and a resuming reader never skips one. That makes **the
+  session the first lock, always**: every write of a run's events, and every
+  ending of a run, takes the session before any run row (`store/session_stream.go`
+  shadows `AppendRunEvent`, `RequestRunCancel` and `ReapChildren` to do it, and
+  `FinishRunWithEvent` does it for a delegate too). Two writers then wait on
+  each other and never deadlock; `TestARunsEndTakesTheSessionBeforeTheRun`
+  holds the order. Every way a run ends writes its `finished` event, the ones
+  no worker writes included (a queued run cancelled, a delegate cancelled or
+  reaped), so no run is left looking as if it works. Rows from before the
+  stream are numbered by `brain backfill session-seq`, down to 0, in time
+  order, a session at a time under its lock: rerunnable, and safe to stop.
+
+- **The dashboard is a channel.** Every team has one dashboard channel, made
+  with the team and never deleted, and what a person types there is a message
+  on it, delivered through the same inbox as a webhook's (`Inbox.DeliverOne`,
+  from `POST /sessions` and `/sessions/{id}/messages`). Its conversations are
+  direct sessions; only the person one is with writes in it, a moderator who
+  may read it included. It has no adapter, so nothing posts to it from
+  outside, and its runs queue no reply: the answer is the stream. A message
+  that asks is pending until a run takes it, which the run records as a
+  `consumed` event: the one it started from, at once; a steer, when the run
+  reads it, oldest first, since steers are applied in the order sent and only
+  messages steer a channel's session; leftovers, by the follow-up.
+
 - **A team is deleted in two steps: marked, then purged.** `teams.deleted_at`
   hides it from every reader but `GetTeam`, frees its name through the partial
   unique index, and is undone by a restore; `internal/purge` erases it once

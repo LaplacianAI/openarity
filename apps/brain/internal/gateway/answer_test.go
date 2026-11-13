@@ -294,3 +294,125 @@ func TestARunTheWorkersMissedIsStillStored(t *testing.T) {
 		t.Errorf("log = %q, want the missed hand-over named", a.log)
 	}
 }
+
+func (a *answering) deliverOne(t *testing.T, d Delivery) Delivered {
+	t.Helper()
+	got, err := a.inbox.DeliverOne(t.Context(), a.ch, d)
+	if err != nil {
+		t.Fatalf("DeliverOne: %v", err)
+	}
+	return got
+}
+
+// A message that starts a run asks, and the run it started takes it at once:
+// the stream shows it pending and taken before the run has begun.
+func TestAMessageThatStartsARunIsTakenByIt(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	got := a.deliverOne(t, delivery("m-1", "why did the export fail?"))
+	msg := a.store.ids[a.ch.ID.String()+"/m-1"]
+	run := a.store.created[0].ID
+
+	if got.Message != msg || got.Run != run || got.Steered != uuid.Nil || got.Session == uuid.Nil {
+		t.Fatalf("delivered %+v, want message %s and run %s", got, msg, run)
+	}
+	if len(a.store.asked) != 1 || a.store.asked[0] != msg {
+		t.Errorf("asked %v, want the message", a.store.asked)
+	}
+	if len(a.store.consumed) != 1 || a.store.consumed[0].RunID != run ||
+		a.store.consumed[0].Only == nil || *a.store.consumed[0].Only != msg || a.store.consumed[0].FirstOnly {
+		t.Errorf("consumed %+v, want run %s taking exactly the message", a.store.consumed, run)
+	}
+}
+
+// A message sent while a run works asks, and waits: the run takes it when it
+// reads the steer, which is the runtime's to record.
+func TestASteeredMessageWaitsForTheRunToReadIt(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	a.deliverOne(t, delivery("m-1", "why did the export fail?"))
+	running := a.store.created[0].ID
+
+	got := a.deliverOne(t, delivery("m-2", "it was the nightly one"))
+	msg := a.store.ids[a.ch.ID.String()+"/m-2"]
+	if got.Steered != running || got.Run != uuid.Nil || got.Message != msg {
+		t.Fatalf("delivered %+v, want it steered into %s", got, running)
+	}
+	if len(a.store.asked) != 2 || a.store.asked[1] != msg {
+		t.Errorf("asked %v, want both messages", a.store.asked)
+	}
+	if len(a.store.consumed) != 1 {
+		t.Errorf("consumed %+v, want only the first message taken now", a.store.consumed)
+	}
+}
+
+// A message that asks nothing, or asks and gets no answer, is never pending:
+// no run is coming for it.
+func TestAMessageNoRunIsComingForIsNotPending(t *testing.T) {
+	t.Parallel()
+
+	for name, setup := range map[string]func(a *answering) Delivery{
+		"said in a group to someone else": func(*answering) Delivery { return inGroup(delivery("m-1", "lunch?"), false) },
+		"to a team with no model": func(a *answering) Delivery {
+			a.store.noModel = true
+			return delivery("m-1", "hello")
+		},
+		"from a member who may not start runs": func(a *answering) Delivery {
+			a.store.mayNot = true
+			return delivery("m-1", "hello")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			a := newAnswering()
+			got := a.deliverOne(t, setup(a))
+			if got.Message == uuid.Nil || got.Run != uuid.Nil || got.Steered != uuid.Nil {
+				t.Fatalf("delivered %+v", got)
+			}
+			if len(a.store.asked) != 0 || len(a.store.consumed) != 0 {
+				t.Errorf("asked %v, consumed %v; want neither", a.store.asked, a.store.consumed)
+			}
+		})
+	}
+}
+
+func TestDeliverOneSaysWhyAMessageGetsNoAnswer(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	a.store.noModel = true
+	if got := a.deliverOne(t, delivery("m-1", "hello")); !strings.Contains(got.Unanswered, "no model") {
+		t.Fatalf("unanswered %q", got.Unanswered)
+	}
+}
+
+// A replay is stored once; DeliverOne says which conversation it is in and
+// that it stored nothing new.
+func TestDeliverOneOnAReplayStoresNothingNew(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	first := a.deliverOne(t, delivery("m-1", "hello"))
+	again := a.deliverOne(t, delivery("m-1", "hello"))
+	if again.Message != uuid.Nil || again.Run != uuid.Nil || again.Session != first.Session {
+		t.Fatalf("again %+v, first %+v", again, first)
+	}
+	if len(a.runs.runs) != 1 {
+		t.Errorf("enqueued %d runs, want 1", len(a.runs.runs))
+	}
+}
+
+func TestDeliverOneToADeletedTeamIsRefused(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	a.store.deleted = true
+	if _, err := a.inbox.DeliverOne(t.Context(), a.ch, delivery("m-1", "hello")); !errors.Is(err, ErrTeamDeleted) {
+		t.Fatalf("err = %v, want ErrTeamDeleted", err)
+	}
+	if len(a.store.calls) != 0 {
+		t.Errorf("stored %d messages for a deleted team", len(a.store.calls))
+	}
+}

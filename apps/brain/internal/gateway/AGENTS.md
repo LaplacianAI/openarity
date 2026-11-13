@@ -182,6 +182,14 @@ same person, at the same time, with the same misunderstandings as the thing it
 validates, so it agrees with the suite by construction. A real second
 implementation with users is what proves the abstraction rather than the code.
 
+## The dashboard channel
+
+Every team has one channel with provider `dashboard`, made with the team. It
+has no adapter, so its hook path is a 404 like any unknown provider's: what a
+person types on the dashboard reaches the inbox from the API, through
+`Inbox.DeliverOne`, which delivers as `Deliver` does and says what became of
+the message. Its runs queue no reply; the session's stream is the answer.
+
 ## Not here
 
 Reading a session back, or an attachment. `internal/api/sessions` serves both;

@@ -530,6 +530,13 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// What a person asked in a conversation, and what each run did: the
 		// session's own visibility rule decides, as it does for its messages.
 		"GET /teams/{id}/sessions/{sessionID}/runs": "member",
+		// Following a conversation is reading it, under the same rule.
+		"GET /teams/{id}/sessions/{sessionID}/events": "member",
+		// Saying something on the dashboard asks the hub, so it takes what
+		// starting a run takes. Whose conversation it is, the handler decides:
+		// only the person it is with writes in it.
+		"POST /teams/{id}/sessions":                      "team run:write",
+		"POST /teams/{id}/sessions/{sessionID}/messages": "team run:write",
 
 		// Attachments are the session's, on purpose. There is deliberately no
 		// attachment:read permission: a role holding one without session:read
