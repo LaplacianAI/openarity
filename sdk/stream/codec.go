@@ -151,8 +151,9 @@ func join(a, b []byte) []byte {
 	case string(b) == "{}":
 		return a
 	}
-	out := make([]byte, 0, len(a)+len(b))
-	out = append(out, a[:len(a)-1]...)
+	// Grown by append rather than sized up front: no length is computed from
+	// the two, so none can overflow.
+	out := append([]byte(nil), a[:len(a)-1]...)
 	out = append(out, ',')
 	return append(out, b[1:]...)
 }
