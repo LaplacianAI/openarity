@@ -334,6 +334,40 @@ agent.Skill{
 Nothing runs a skill's scripts. Where a resource comes from — a file, a row, a
 bucket — is the caller's, as a tool's credentials are.
 
+### Tools found by search
+
+Forty tools' schemas can cost more than the task. `Spec.Discovery` holds tools
+the model finds rather than is sent, with the tool it finds them with:
+
+```go
+spec.Tools = []agent.Tool{graph}
+spec.Discovery = &agent.Discovery{
+	Search: "graph",
+	Tools:  githubTools,
+	Groups: []agent.Group{{Name: "github", About: "issues and pull requests", Tools: githubNames}},
+}
+```
+
+While the deferred schemas and the skills' descriptions come to
+`DiscoverAbove` tokens or less, they are all sent as usual. Past it the run
+gets two tools in their place, and the prompt says what there is to search:
+
+| Tool             | What it does |
+| ---------------- | ------------ |
+| `describe_tools` | a found tool's description and argument schema, at most five at a time |
+| `call_tool`      | runs one by name, once its arguments match its schema |
+
+The tools list never changes during the run, so a provider's cached prefix
+survives every tool the model finds; a tool loaded into the list instead would
+end it. Arguments are checked against the tool's schema before it runs, and a
+schema that does not compile, such as one with a remote `$ref`, which is never
+fetched, is left to the tool's server to check. Events name the tool the model
+meant, not `call_tool`; the transcript keeps the call as the model made it.
+
+Skills are found the same way: no listing in the prompt, no enumeration of
+names in `Skill`'s schema, and the model opens one by the name the search
+returned. ReWOO plans every call before making one, so it is sent everything.
+
 ### Tools that return files
 
 A tool that hands the model a file, such as an image it read, sets `Result`

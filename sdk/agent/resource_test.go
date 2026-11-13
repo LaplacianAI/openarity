@@ -35,7 +35,7 @@ func tools(t *testing.T, skills ...Skill) (skill, resource Tool, ok bool) {
 	t.Helper()
 
 	loaded := newLoadedSkills()
-	skill, _, err := skillTool(skills, loaded)
+	skill, _, err := skillTool(skills, loaded, "")
 	if err != nil {
 		t.Fatalf("skillTool: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestAResourceThatCannotBeReadIsRefused(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := withSkills(Spec{Skills: []Skill{reviewSkill(tc.resources...)}})
+			_, err := withSkills(Spec{Skills: []Skill{reviewSkill(tc.resources...)}}, "")
 			if err == nil {
 				t.Fatal("the spec was accepted")
 			}
@@ -115,7 +115,7 @@ func TestTwoSkillsMayEachHaveAResourceOfTheSameName(t *testing.T) {
 func TestSkillsWithNoResourcesAddNoSecondTool(t *testing.T) {
 	t.Parallel()
 
-	spec, err := withSkills(Spec{Skills: []Skill{{Name: "review", Description: "Review", Body: body("a")}}})
+	spec, err := withSkills(Spec{Skills: []Skill{{Name: "review", Description: "Review", Body: body("a")}}}, "")
 	if err != nil {
 		t.Fatalf("withSkills: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestSkillsWithNoResourcesAddNoSecondTool(t *testing.T) {
 func TestTheListingNamesTheToolTheRunnerRegisters(t *testing.T) {
 	t.Parallel()
 
-	spec, err := withSkills(Spec{Skills: []Skill{reviewSkill(Resource{Name: "checklist", Read: body("a")})}})
+	spec, err := withSkills(Spec{Skills: []Skill{reviewSkill(Resource{Name: "checklist", Read: body("a")})}}, "")
 	if err != nil {
 		t.Fatalf("withSkills: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestACallersToolNamedSkillResourceIsRefused(t *testing.T) {
 	_, err := withSkills(Spec{
 		Tools:  []Tool{{Name: SkillResourceToolName}},
 		Skills: []Skill{reviewSkill(Resource{Name: "checklist", Read: body("a")})},
-	})
+	}, "")
 	if err == nil {
 		t.Fatal("a caller's tool shadowed the resource tool")
 	}
@@ -326,11 +326,11 @@ func TestEachRunStartsWithNothingLoaded(t *testing.T) {
 		return Tool{}
 	}
 
-	first, err := withSkills(spec)
+	first, err := withSkills(spec, "")
 	if err != nil {
 		t.Fatalf("withSkills: %v", err)
 	}
-	second, err := withSkills(spec)
+	second, err := withSkills(spec, "")
 	if err != nil {
 		t.Fatalf("withSkills: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestEachRunStartsWithNothingLoaded(t *testing.T) {
 func TestALoadThroughTheRunnersToolsUnlocksTheResource(t *testing.T) {
 	t.Parallel()
 
-	spec, err := withSkills(Spec{Skills: []Skill{reviewSkill(Resource{Name: "checklist", Read: body("- tests")})}})
+	spec, err := withSkills(Spec{Skills: []Skill{reviewSkill(Resource{Name: "checklist", Read: body("- tests")})}}, "")
 	if err != nil {
 		t.Fatalf("withSkills: %v", err)
 	}

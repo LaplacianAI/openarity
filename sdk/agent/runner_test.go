@@ -430,7 +430,7 @@ func TestSkillsReachTheLoopAsAToolAndAListing(t *testing.T) {
 			Description: "Fill in the fields of a PDF form",
 			Body:        func(context.Context) (string, error) { return "instructions", nil },
 		}},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("withSkills: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestTheListingGoesAfterTheCallersSystemPrompt(t *testing.T) {
 			Name: "pdf-forms", Description: "Fill PDFs",
 			Body: func(context.Context) (string, error) { return "x", nil },
 		}},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("withSkills: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestARunDoesNotEditTheSpecItWasGiven(t *testing.T) {
 		}},
 	}
 
-	if _, err := withSkills(original); err != nil {
+	if _, err := withSkills(original, ""); err != nil {
 		t.Fatalf("withSkills: %v", err)
 	}
 
@@ -519,7 +519,7 @@ func TestARunWithNoSkillsIsLeftUntouched(t *testing.T) {
 	spec, err := withSkills(Spec{
 		System: System("You are a terse assistant."),
 		Tools:  []Tool{{Name: "count_issues"}},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("withSkills: %v", err)
 	}
@@ -540,7 +540,8 @@ func TestACallersToolNamedSkillIsRefused(t *testing.T) {
 			Name: "pdf-forms", Description: "Fill PDFs",
 			Body: func(context.Context) (string, error) { return "x", nil },
 		}},
-	})
+	}, "")
+
 	if err == nil {
 		t.Fatal("a tool clashing with the skill tool was accepted")
 	}
