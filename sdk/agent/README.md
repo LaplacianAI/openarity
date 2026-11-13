@@ -211,6 +211,11 @@ in subpackages so the core cannot link them, so importing `agent` still costs
 you no database driver. `stores/postgres` and `stores/mysql` export their DDL
 and run none of it; migrating a shared database is the caller's decision.
 
+A save writes only what changed since the last one: a session hashes what it
+saved or read, and every shipped store implements `agent.SavingFrom`, so the
+store keeps the unchanged messages and writes the rest. A store of your own
+needs only `Save`.
+
 Every store passes the same conformance suite, `stores/storetest`, which is
 what caught MySQL's `JSON` column and Postgres's `jsonb` silently reordering a
 model's tool arguments and dropping a duplicate key — on those backends only.

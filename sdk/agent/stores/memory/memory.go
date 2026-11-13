@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 
@@ -21,10 +22,24 @@ type store struct {
 	steers map[string][]string
 }
 
-func (s *store) Save(_ context.Context, session string, msgs []agent.Message) error {
+func (s *store) Save(ctx context.Context, session string, msgs []agent.Message) error {
+	return s.SaveFrom(ctx, session, 0, msgs)
+}
+
+// SaveFrom keeps the first from messages as they are held and replaces the
+// rest. Copying everything would do as well here; it is what storetest
+// exercises the path through.
+func (s *store) SaveFrom(_ context.Context, session string, from int, msgs []agent.Message) error {
+	if from < 0 || from > len(msgs) {
+		return fmt.Errorf("saving session %s: from %d is outside its %d messages", session, from, len(msgs))
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.msgs[session] = clone(msgs)
+	kept := s.msgs[session]
+	if from > len(kept) {
+		from = 0 // what is kept must be whole: anything else is written again
+	}
+	s.msgs[session] = append(kept[:from:from], clone(msgs[from:])...)
 	return nil
 }
 
