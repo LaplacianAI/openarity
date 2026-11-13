@@ -31,12 +31,16 @@ make check
 cd ../../sdk/agent
 make tools
 make check
+
+cd ../stream
+make tools
+make check
 ```
 
 Each module installs its own tooling, because each pins its own versions. The
 brain needs `golangci-lint`, `govulncheck`, `gopls` and `goose`; the CLI needs
-`golangci-lint`, `govulncheck` and `oapi-codegen`; `sdk/agent` needs the first
-two and nothing else. Rerun `make tools` after a Go
+`golangci-lint`, `govulncheck` and `oapi-codegen`; `sdk/agent` and `sdk/stream`
+need the first two and nothing else. Rerun `make tools` after a Go
 upgrade — anything installed with `go install` is compiled against the Go
 present at the time, and breaks with a version-mismatch error until reinstalled.
 
@@ -50,6 +54,7 @@ apps/cli/          oa, the command-line client
 apps/dashboard/    the web dashboard, built into the brain and served at /ui
 sdk/agent/         the agent loop, as a library
   examples/        runnable agents; `make example` runs every one of them
+sdk/stream/        a conversation as resumable server-sent events, as a library
 site/              the documentation site, built with Zensical and published
                    to https://laplacianai.github.io/openarity
 deployment/        manifests
@@ -74,6 +79,7 @@ cd apps/brain && make check db=postgres
 cd apps/cli   && make check
 cd apps/dashboard && make deps && make check
 cd sdk/agent  && make check
+cd sdk/stream && make check
 cd site       && make check
 ```
 
@@ -90,7 +96,9 @@ any high or critical advisory, dev dependencies included.
 or the core package links a provider SDK. Everything outside that module
 arrives through an interface, and nothing but this check stops somebody
 importing `openai-go` for one convenient type and making `ModelClient`
-decorative.
+decorative. `sdk/stream` has a `boundary` of its own: the `stream` package links
+only the standard library, so a client that reads the stream never gets the
+agent SDK with it. Its checks run as the last step of the `sdk` job.
 
 Adding a reasoning pattern or a runnable example there has a skill each:
 `sdk/agent/.agents/skills/add-a-pattern` and `.../add-an-example`. Both record
@@ -405,10 +413,11 @@ On Windows, git checks symlinks out as plain files unless Developer Mode is on
 and `core.symlinks` is true. Without that, Claude Code does not see the skills;
 Codex and OpenCode still do.
 
-## Releasing `sdk/agent`
+## Releasing `sdk/agent` and `sdk/stream`
 
-`sdk/agent` is the only module anyone installs from here, and it is a module in
-a subdirectory, so **the tag carries the path**. A bare `v0.2.0` tags the
+`sdk/agent` and `sdk/stream` are the modules anyone installs from here. Each is
+released on its own, and each is a module in a subdirectory, so **the tag
+carries the path**: `sdk/agent/v0.3.0`, `sdk/stream/v0.1.0`. A bare `v0.2.0` tags the
 repository root, which has no `go.mod` and which nobody imports; `go get` would
 keep resolving a pseudo-version and nothing would say why.
 
@@ -428,8 +437,10 @@ git tag -a sdk/agent/v0.2.0 -F notes.md
 git push origin sdk/agent/v0.2.0
 ```
 
+`sdk/stream` is tagged the same way.
+
 [`release-sdk`](.github/workflows/release-sdk.yml) does the rest. It refuses a
-tag that is not `sdk/agent/vMAJOR.MINOR.PATCH`, is lightweight or has no
+tag that is not `sdk/agent/vMAJOR.MINOR.PATCH` or `sdk/stream/vMAJOR.MINOR.PATCH`, is lightweight or has no
 notes below its first line, is not on main, or names a commit `ci` did not pass on. Then it
 publishes the GitHub release with the tag's message as its notes, and asks the
 Go module proxy for the version, which is what makes `go get` and pkg.go.dev see
