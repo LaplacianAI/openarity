@@ -15,7 +15,7 @@ import (
 const createDirectSession = `-- name: CreateDirectSession :one
 INSERT INTO sessions (team_id, kind, user_id)
 VALUES ($1, 'direct', $2::uuid)
-RETURNING id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id
+RETURNING id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq
 `
 
 type CreateDirectSessionParams struct {
@@ -40,6 +40,7 @@ func (q *Queries) CreateDirectSession(ctx context.Context, arg CreateDirectSessi
 		&i.StartedAt,
 		&i.LastMessageAt,
 		&i.UserID,
+		&i.EventSeq,
 	)
 	return i, err
 }
@@ -55,7 +56,7 @@ VALUES (
 )
 ON CONFLICT (channel_id, provider_ref) WHERE status = 'open'
 DO UPDATE SET last_message_at = now()
-RETURNING id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id
+RETURNING id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq
 `
 
 type EnsureSessionParams struct {
@@ -100,12 +101,13 @@ func (q *Queries) EnsureSession(ctx context.Context, arg EnsureSessionParams) (S
 		&i.StartedAt,
 		&i.LastMessageAt,
 		&i.UserID,
+		&i.EventSeq,
 	)
 	return i, err
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id FROM sessions WHERE id = $1
+SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq FROM sessions WHERE id = $1
 `
 
 func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (Session, error) {
@@ -121,6 +123,7 @@ func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (Session, error)
 		&i.StartedAt,
 		&i.LastMessageAt,
 		&i.UserID,
+		&i.EventSeq,
 	)
 	return i, err
 }
@@ -144,7 +147,7 @@ func (q *Queries) GetSessionFirstAsked(ctx context.Context, sessionID uuid.UUID)
 }
 
 const getSessionVisible = `-- name: GetSessionVisible :one
-SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id FROM sessions
+SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq FROM sessions
 WHERE id = $1 AND team_id = $2
   AND (kind <> 'direct'
    OR $3::bool
@@ -179,12 +182,13 @@ func (q *Queries) GetSessionVisible(ctx context.Context, arg GetSessionVisiblePa
 		&i.StartedAt,
 		&i.LastMessageAt,
 		&i.UserID,
+		&i.EventSeq,
 	)
 	return i, err
 }
 
 const listSessionsByChannel = `-- name: ListSessionsByChannel :many
-SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.started_at, s.last_message_at, s.user_id,
+SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.started_at, s.last_message_at, s.user_id, s.event_seq,
        c.name     AS channel_name,
        pu.email   AS participant_email,
        pu.subject AS participant_subject,
@@ -279,6 +283,7 @@ func (q *Queries) ListSessionsByChannel(ctx context.Context, arg ListSessionsByC
 			&i.Session.StartedAt,
 			&i.Session.LastMessageAt,
 			&i.Session.UserID,
+			&i.Session.EventSeq,
 			&i.ChannelName,
 			&i.ParticipantEmail,
 			&i.ParticipantSubject,
@@ -297,7 +302,7 @@ func (q *Queries) ListSessionsByChannel(ctx context.Context, arg ListSessionsByC
 }
 
 const listSessionsByTeam = `-- name: ListSessionsByTeam :many
-SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.started_at, s.last_message_at, s.user_id,
+SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.started_at, s.last_message_at, s.user_id, s.event_seq,
        c.name     AS channel_name,
        pu.email   AS participant_email,
        pu.subject AS participant_subject,
@@ -402,6 +407,7 @@ func (q *Queries) ListSessionsByTeam(ctx context.Context, arg ListSessionsByTeam
 			&i.Session.StartedAt,
 			&i.Session.LastMessageAt,
 			&i.Session.UserID,
+			&i.Session.EventSeq,
 			&i.ChannelName,
 			&i.ParticipantEmail,
 			&i.ParticipantSubject,

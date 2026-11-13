@@ -177,9 +177,13 @@ INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, us
                   token_budget, hub, message_id, reply_to_channel, transcript)
 SELECT $1::uuid, t.id, $2::uuid, $1::uuid,
        a.id, coalesce(a.name, 'orchestrator'), $3::uuid, $4::text,
-       a.token_budget, true, $5::uuid, true,
+       a.token_budget, true, $5::uuid,
+       -- The dashboard's answer is its stream: there is nothing to post it to.
+       ch.provider <> 'dashboard',
        'session:' || $2::uuid::text
 FROM teams t
+JOIN sessions ss ON ss.id = $2::uuid
+JOIN channels ch ON ch.id = ss.channel_id
 LEFT JOIN team_settings s ON s.team_id = t.id
 LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = t.id
 WHERE t.id = $6::uuid
@@ -986,23 +990,57 @@ WITH RECURSIVE below AS (
     UPDATE runs SET status = 'cancelled', finished_at = now(),
                     cancel_requested_at = coalesce(cancel_requested_at, now())
     WHERE runs.id IN (SELECT below.id FROM below) AND runs.status = 'running'
+    RETURNING runs.id
 )
 UPDATE runs SET
     cancel_requested_at = coalesce(cancel_requested_at, now()),
     status      = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
     finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END
 WHERE runs.id = $1::uuid AND runs.status IN ('queued', 'running')
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, (SELECT coalesce(array_agg(ended.id), '{}') FROM ended)::uuid[] AS ended_children
 `
+
+type RequestRunCancelRow struct {
+	ID                uuid.UUID
+	TeamID            uuid.UUID
+	SessionID         uuid.UUID
+	ParentRunID       *uuid.UUID
+	RootRunID         uuid.UUID
+	ParentToolCall    *string
+	Depth             int32
+	AgentID           *uuid.UUID
+	AgentName         string
+	UserID            *uuid.UUID
+	Status            string
+	Input             string
+	Output            *string
+	Error             *string
+	InputTokens       int64
+	OutputTokens      int64
+	Worker            *string
+	HeartbeatAt       *time.Time
+	CancelRequestedAt *time.Time
+	CreatedAt         time.Time
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
+	TokenBudget       *int64
+	Hub               bool
+	MessageID         *uuid.UUID
+	ReplyToChannel    bool
+	Builder           bool
+	Transcript        *string
+	TranscriptFrom    *int32
+	EndedChildren     []uuid.UUID
+}
 
 // Queued: cancelled now, since no worker holds it. Running: flagged for the
 // worker's next heartbeat. Finished: no row, which the handler answers 409.
 // A queued run can still have children running, left by a worker that
 // stopped mid-delegation; it will never run again to end them, so they are
 // cancelled with it, at any depth. A running run's children are its own to end.
-func (q *Queries) RequestRunCancel(ctx context.Context, id uuid.UUID) (Run, error) {
+func (q *Queries) RequestRunCancel(ctx context.Context, id uuid.UUID) (RequestRunCancelRow, error) {
 	row := q.db.QueryRow(ctx, requestRunCancel, id)
-	var i Run
+	var i RequestRunCancelRow
 	err := row.Scan(
 		&i.ID,
 		&i.TeamID,
@@ -1033,6 +1071,7 @@ func (q *Queries) RequestRunCancel(ctx context.Context, id uuid.UUID) (Run, erro
 		&i.Builder,
 		&i.Transcript,
 		&i.TranscriptFrom,
+		&i.EndedChildren,
 	)
 	return i, err
 }

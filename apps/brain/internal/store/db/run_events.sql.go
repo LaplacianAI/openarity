@@ -46,7 +46,7 @@ func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) 
 }
 
 const listRunEvents = `-- name: ListRunEvents :many
-SELECT run_id, seq, kind, payload, created_at FROM run_events
+SELECT run_id, seq, kind, payload, created_at, session_id, session_seq FROM run_events
 WHERE run_id = $1 AND seq > $2::int
 ORDER BY seq
 LIMIT $3
@@ -73,6 +73,8 @@ func (q *Queries) ListRunEvents(ctx context.Context, arg ListRunEventsParams) ([
 			&i.Kind,
 			&i.Payload,
 			&i.CreatedAt,
+			&i.SessionID,
+			&i.SessionSeq,
 		); err != nil {
 			return nil, err
 		}

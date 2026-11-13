@@ -216,9 +216,41 @@ next run is shown those that came since the last one finished, at most 20 of
 them and 8 KiB, before the message that asked it.
 
 Each chat is its own conversation: a direct message with the bot, a group, and
-each topic of a group that has topics. A run started from the dashboard or
-`oa runs start` cannot join a channel's conversation; its answer would never
-reach the chat.
+each topic of a group that has topics. A run started with `oa runs start` or
+`POST /runs` cannot join a channel's conversation; its answer would never reach
+the chat.
+
+### The dashboard is a channel
+
+Every team has a **Dashboard** channel, made with the team. A conversation
+started on the dashboard is a direct session on it, and what you type there is
+a message, stored and answered as a message on any channel is: the hub answers
+it, and a message sent while a run works is sent to that run. Only the person a
+dashboard conversation is with writes in it. The channel cannot be deleted, and
+it takes no reply URL: its answers are read where they are asked.
+
+```sh
+curl -X POST "$BRAIN/teams/$TEAM/sessions" -H "Authorization: Bearer $TOKEN" \
+  -d '{"text": "Why did the deploy fail last night?", "key": "k-1"}'
+curl -X POST "$BRAIN/teams/$TEAM/sessions/$SESSION/messages" -H "Authorization: Bearer $TOKEN" \
+  -d '{"text": "Check staging too.", "key": "k-2"}'
+```
+
+`key` is yours for each send: a retry with the same key is the same message,
+stored once.
+
+### Following a conversation
+
+`GET /teams/{id}/sessions/{sessionID}/events` streams a conversation, on any
+channel, as server-sent events: what people said, and what every run in it
+did, in one order. The events are `sdk/stream`'s, with AG-UI's names. Each
+frame's `id` is its place in the conversation; reconnect with it as
+`Last-Event-ID` and nothing is missed. A message that asks is `pending` until a
+run takes it, which `message_consumed` says.
+
+After upgrading, run `brain backfill session-seq` once to number what
+conversations held before, so their streams replay from the start. Until then
+a conversation's stream starts at what was said after the upgrade.
 
 ## Replies
 

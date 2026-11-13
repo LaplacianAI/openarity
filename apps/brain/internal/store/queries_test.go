@@ -326,6 +326,8 @@ func TestListTeamsReportsAScanFailure(t *testing.T) {
 	// table to break this test by referencing teams, and a test that needs
 	// editing for every new one is a test people start deleting.
 	dropReferencesTo(t, s, "teams")
+	// A new team is given its dashboard channel, and channels has just gone.
+	exec(t, s, "DROP TRIGGER teams_dashboard_channel ON teams")
 	exec(t, s, "ALTER TABLE teams ALTER COLUMN id TYPE text USING id::text")
 	exec(t, s, "INSERT INTO teams (id, name) VALUES ('not-a-uuid', 'broken')")
 

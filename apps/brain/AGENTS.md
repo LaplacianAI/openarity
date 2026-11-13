@@ -66,6 +66,7 @@ apps/brain/
     reap.go            the reap role, and newEffects for both it and the worker
     worker.go          the worker role, and newJobs: every job it runs
     graph.go           the graph role: rebuild one team, or every team
+    backfill.go        the backfill role: number what sessions held before they had a stream
     projector.go       newProjector, for the worker and the graph role
     importer.go        newImporter: where a skill may be imported from
     discoverer.go      newDiscoverer: what MCP discovery may reach
@@ -85,6 +86,7 @@ apps/brain/
       <domain>.go      handler, New, the handlers
       schema.go        request and response structs — the wire contract
     runs/              start, read, cancel and follow a run; list a team's runs; events.go is the stream
+    sessions/          read a conversation; start one and write in it on the dashboard; follow its stream
     loops/             the loops an agent may choose, which are the runner's
     blueprints/        a team's servers, skills and agents in one document: export, plan (pure), apply in one tx; the builder's proposals
     teamsettings/      a team's model, web search, learning and compaction

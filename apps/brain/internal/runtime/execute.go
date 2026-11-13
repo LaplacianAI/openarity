@@ -71,8 +71,8 @@ type Executor struct {
 	store   Store
 	builder *Builder
 	runner  *agent.Runner
-	// streamer runs builder runs, so their text reaches the person as it is
-	// written. Nil, and they run as any other.
+	// streamer runs the runs a person is waiting on, so their text reaches
+	// them as it is written. Nil, and they run as any other.
 	streamer  *agent.Runner
 	endpoint  agent.Endpoint
 	sessions  agent.Store
@@ -293,7 +293,7 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	e.notes.Store(row.ID, notes)
 	defer e.notes.Delete(row.ID)
 	runner, streams := e.runner, false
-	if row.Builder && e.streamer != nil {
+	if e.streamer != nil && streamsText(row, built.Spec) {
 		runner, streams = e.streamer, true
 	}
 	lines := newSoftLines(budgetOf(row.TokenBudget), int64(built.Spec.Model.MaxTokens))
@@ -459,4 +459,14 @@ func runOf(r db.ClaimRunRow) db.Run {
 		Hub: r.Hub, MessageID: r.MessageID, ReplyToChannel: r.ReplyToChannel, Builder: r.Builder,
 		Transcript: r.Transcript, TranscriptFrom: r.TranscriptFrom,
 	}
+}
+
+// streamsText is whether a run's text is recorded as it is written: a run a
+// person is waiting on, the builder or any top-level run, when its loop can
+// stream. A delegated run's text is its parent's to report.
+func streamsText(row db.Run, spec agent.Spec) bool {
+	if row.Builder {
+		return true
+	}
+	return row.ParentRunID == nil && spec.Pattern == agent.PatternReAct
 }

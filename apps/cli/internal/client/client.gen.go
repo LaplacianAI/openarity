@@ -1614,6 +1614,31 @@ type RunRequest struct {
 // are final.
 type RunStatus string
 
+// Said defines model for Said.
+type Said struct {
+	MessageID openapi_types.UUID `json:"message_id" yaml:"message_id"`
+
+	// RunID The run that answers it, absent when none does.
+	RunID     *openapi_types.UUID `json:"run_id,omitempty" yaml:"run_id,omitempty"`
+	SessionID openapi_types.UUID  `json:"session_id" yaml:"session_id"`
+
+	// Steered The run was already working, and the message was sent to it.
+	Steered *bool `json:"steered,omitempty" yaml:"steered,omitempty"`
+
+	// Unanswered Why no run answers the message, which is stored all the same.
+	Unanswered *string `json:"unanswered,omitempty" yaml:"unanswered,omitempty"`
+}
+
+// SayRequest defines model for SayRequest.
+type SayRequest struct {
+	// Key The caller's own name for this send. A retry carries the same key
+	// and is the same send.
+	Key string `json:"key" yaml:"key"`
+
+	// Text What the person says. At most 100 KiB, with no NUL character, and not blank.
+	Text string `json:"text" yaml:"text"`
+}
+
 // SearchProvider `searxng` and `firecrawl-oss` are self-hosted and take a `url`;
 // `brave`, `tavily` and `firecrawl-cloud` take a key and no url.
 // `firecrawl-oss` takes a key only if the instance requires one.
@@ -2332,6 +2357,12 @@ type ListSessionAttachmentsParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
 }
 
+// StreamSessionEventsParams defines parameters for StreamSessionEvents.
+type StreamSessionEventsParams struct {
+	// After Resume after this sequence number, when Last-Event-ID is not sent.
+	After *int64 `form:"after,omitempty" json:"after,omitempty" yaml:"after,omitempty"`
+}
+
 // ListSessionMessagesParams defines parameters for ListSessionMessages.
 type ListSessionMessagesParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
@@ -2431,6 +2462,12 @@ type ApplyProposalJSONRequestBody = ProposalApply
 
 // StartRunJSONRequestBody defines body for StartRun for application/json ContentType.
 type StartRunJSONRequestBody = RunRequest
+
+// StartConversationJSONRequestBody defines body for StartConversation for application/json ContentType.
+type StartConversationJSONRequestBody = SayRequest
+
+// SendSessionMessageJSONRequestBody defines body for SendSessionMessage for application/json ContentType.
+type SendSessionMessageJSONRequestBody = SayRequest
 
 // SaveTeamSettingsJSONRequestBody defines body for SaveTeamSettings for application/json ContentType.
 type SaveTeamSettingsJSONRequestBody = TeamSettingsRequest
@@ -3478,6 +3515,48 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
 	ListSessions(ctx context.Context, id TeamID, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// StartConversationWithBody Start a conversation on the dashboard
+	//
+	// A new conversation with the team, held on the team's dashboard
+	// channel, and its first message. The conversation is a `direct`
+	// session that only the caller writes in; the team's hub answers it,
+	// as it answers a message on any channel.
+	//
+	// `key` is the caller's for this send, and a retry of it is the same
+	// send: the message is stored once, and a second request with the key
+	// answers `200` with what was stored the first time rather than
+	// starting another conversation.
+	//
+	// A message the hub cannot answer, because the team has no model set or
+	// the caller may not start runs, is still stored, and `unanswered` says
+	// why.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/sessions (the `StartConversation` operationId).
+	StartConversationWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartConversation Start a conversation on the dashboard
+	//
+	// A new conversation with the team, held on the team's dashboard
+	// channel, and its first message. The conversation is a `direct`
+	// session that only the caller writes in; the team's hub answers it,
+	// as it answers a message on any channel.
+	//
+	// `key` is the caller's for this send, and a retry of it is the same
+	// send: the message is stored once, and a second request with the key
+	// answers `200` with what was stored the first time rather than
+	// starting another conversation.
+	//
+	// A message the hub cannot answer, because the team has no model set or
+	// the caller may not start runs, is still stored, and `unanswered` says
+	// why.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/sessions (the `StartConversation` operationId).
+	StartConversation(ctx context.Context, id TeamID, body StartConversationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetSession Read a conversation's details
 	//
 	// The session as the lists return it. Visible exactly where its
@@ -3530,6 +3609,38 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID} (the `GetSessionAttachment` operationId).
 	GetSessionAttachment(ctx context.Context, id TeamID, sessionID openapi_types.UUID, attachmentID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// StreamSessionEvents Follow a conversation
+	//
+	// A server-sent event stream of the conversation: what people said, and
+	// what every run in it did, in one order. Each frame is one event, in
+	// the catalog `sdk/stream` defines, with AG-UI's names:
+	//
+	// ```text
+	// id: 41
+	// event: message
+	// data: {"at":"2026-11-13T10:01:00Z","id":"…","user_id":"…","parts":[{"type":"text","text":"also check staging"}],"state":"pending"}
+	// ```
+	//
+	// `id` is the event's sequence in the conversation. A client that
+	// reconnects sends the last one it saw as `Last-Event-ID`, or `after`,
+	// and misses nothing. With neither, the stream starts from the
+	// beginning. History from before the stream was kept is numbered at or
+	// below 0 once `brain backfill session-seq` has run, so it replays
+	// first.
+	//
+	// Each run's events carry its `run_id`; a run another run handed work
+	// to says which in `run_started`. Text arrives as
+	// `text_message_chunk`, and `run_finished` carries the whole answer.
+	// Events the catalog has no kind for are `custom`, named by the kind
+	// the run recorded. The stream does not end: it follows the
+	// conversation until the client leaves, with a `: keep-alive` comment
+	// every 15 seconds while nothing happens.
+	//
+	// Visible where the conversation is.
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID}/events (the `StreamSessionEvents` operationId).
+	StreamSessionEvents(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *StreamSessionEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListSessionMessages Read a conversation
 	//
 	// Every message here came from a sender somebody approved. A message
@@ -3554,6 +3665,44 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 	ListSessionMessages(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SendSessionMessageWithBody Write in a conversation on the dashboard
+	//
+	// A message in a dashboard conversation, from the person it is with.
+	// Nobody else writes in it, a moderator who may read it included, and a
+	// conversation on another channel is written in on that channel.
+	//
+	// With no run working in the conversation, the hub starts on it. With
+	// one working, the message is sent to that run, which reads it before
+	// its next step: `steered` says so, and `run_id` is that run. Either
+	// way the message is pending until a run takes it, which the session's
+	// stream reports as `message_consumed`.
+	//
+	// `key` makes a retry the same send, as for `startConversation`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/sessions/{sessionID}/messages (the `SendSessionMessage` operationId).
+	SendSessionMessageWithBody(ctx context.Context, id TeamID, sessionID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SendSessionMessage Write in a conversation on the dashboard
+	//
+	// A message in a dashboard conversation, from the person it is with.
+	// Nobody else writes in it, a moderator who may read it included, and a
+	// conversation on another channel is written in on that channel.
+	//
+	// With no run working in the conversation, the hub starts on it. With
+	// one working, the message is sent to that run, which reads it before
+	// its next step: `steered` says so, and `run_id` is that run. Either
+	// way the message is pending until a run takes it, which the session's
+	// stream reports as `message_consumed`.
+	//
+	// `key` makes a retry the same send, as for `startConversation`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/sessions/{sessionID}/messages (the `SendSessionMessage` operationId).
+	SendSessionMessage(ctx context.Context, id TeamID, sessionID openapi_types.UUID, body SendSessionMessageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSessionRuns List the runs in a conversation
 	//
@@ -5396,6 +5545,68 @@ func (c *Client) ListSessions(ctx context.Context, id TeamID, params *ListSessio
 	return c.Client.Do(req)
 }
 
+// StartConversationWithBody Start a conversation on the dashboard
+//
+// A new conversation with the team, held on the team's dashboard
+// channel, and its first message. The conversation is a `direct`
+// session that only the caller writes in; the team's hub answers it,
+// as it answers a message on any channel.
+//
+// `key` is the caller's for this send, and a retry of it is the same
+// send: the message is stored once, and a second request with the key
+// answers `200` with what was stored the first time rather than
+// starting another conversation.
+//
+// A message the hub cannot answer, because the team has no model set or
+// the caller may not start runs, is still stored, and `unanswered` says
+// why.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/sessions (the `StartConversation` operationId).
+func (c *Client) StartConversationWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartConversationRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartConversation Start a conversation on the dashboard
+//
+// A new conversation with the team, held on the team's dashboard
+// channel, and its first message. The conversation is a `direct`
+// session that only the caller writes in; the team's hub answers it,
+// as it answers a message on any channel.
+//
+// `key` is the caller's for this send, and a retry of it is the same
+// send: the message is stored once, and a second request with the key
+// answers `200` with what was stored the first time rather than
+// starting another conversation.
+//
+// A message the hub cannot answer, because the team has no model set or
+// the caller may not start runs, is still stored, and `unanswered` says
+// why.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/sessions (the `StartConversation` operationId).
+func (c *Client) StartConversation(ctx context.Context, id TeamID, body StartConversationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartConversationRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetSession Read a conversation's details
 //
 // The session as the lists return it. Visible exactly where its
@@ -5478,6 +5689,48 @@ func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID 
 	return c.Client.Do(req)
 }
 
+// StreamSessionEvents Follow a conversation
+//
+// A server-sent event stream of the conversation: what people said, and
+// what every run in it did, in one order. Each frame is one event, in
+// the catalog `sdk/stream` defines, with AG-UI's names:
+//
+// ```text
+// id: 41
+// event: message
+// data: {"at":"2026-11-13T10:01:00Z","id":"…","user_id":"…","parts":[{"type":"text","text":"also check staging"}],"state":"pending"}
+// ```
+//
+// `id` is the event's sequence in the conversation. A client that
+// reconnects sends the last one it saw as `Last-Event-ID`, or `after`,
+// and misses nothing. With neither, the stream starts from the
+// beginning. History from before the stream was kept is numbered at or
+// below 0 once `brain backfill session-seq` has run, so it replays
+// first.
+//
+// Each run's events carry its `run_id`; a run another run handed work
+// to says which in `run_started`. Text arrives as
+// `text_message_chunk`, and `run_finished` carries the whole answer.
+// Events the catalog has no kind for are `custom`, named by the kind
+// the run recorded. The stream does not end: it follows the
+// conversation until the client leaves, with a `: keep-alive` comment
+// every 15 seconds while nothing happens.
+//
+// Visible where the conversation is.
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID}/events (the `StreamSessionEvents` operationId).
+func (c *Client) StreamSessionEvents(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *StreamSessionEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamSessionEventsRequest(c.Server, id, sessionID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListSessionMessages Read a conversation
 //
 // Every message here came from a sender somebody approved. A message
@@ -5503,6 +5756,64 @@ func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID 
 // Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 func (c *Client) ListSessionMessages(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSessionMessagesRequest(c.Server, id, sessionID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SendSessionMessageWithBody Write in a conversation on the dashboard
+//
+// A message in a dashboard conversation, from the person it is with.
+// Nobody else writes in it, a moderator who may read it included, and a
+// conversation on another channel is written in on that channel.
+//
+// With no run working in the conversation, the hub starts on it. With
+// one working, the message is sent to that run, which reads it before
+// its next step: `steered` says so, and `run_id` is that run. Either
+// way the message is pending until a run takes it, which the session's
+// stream reports as `message_consumed`.
+//
+// `key` makes a retry the same send, as for `startConversation`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/sessions/{sessionID}/messages (the `SendSessionMessage` operationId).
+func (c *Client) SendSessionMessageWithBody(ctx context.Context, id TeamID, sessionID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSendSessionMessageRequestWithBody(c.Server, id, sessionID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SendSessionMessage Write in a conversation on the dashboard
+//
+// A message in a dashboard conversation, from the person it is with.
+// Nobody else writes in it, a moderator who may read it included, and a
+// conversation on another channel is written in on that channel.
+//
+// With no run working in the conversation, the hub starts on it. With
+// one working, the message is sent to that run, which reads it before
+// its next step: `steered` says so, and `run_id` is that run. Either
+// way the message is pending until a run takes it, which the session's
+// stream reports as `message_consumed`.
+//
+// `key` makes a retry the same send, as for `startConversation`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/sessions/{sessionID}/messages (the `SendSessionMessage` operationId).
+func (c *Client) SendSessionMessage(ctx context.Context, id TeamID, sessionID openapi_types.UUID, body SendSessionMessageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSendSessionMessageRequest(c.Server, id, sessionID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8620,6 +8931,53 @@ func NewListSessionsRequest(server string, id TeamID, params *ListSessionsParams
 	return req, nil
 }
 
+// NewStartConversationRequest calls the generic StartConversation builder with application/json body
+func NewStartConversationRequest(server string, id TeamID, body StartConversationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewStartConversationRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewStartConversationRequestWithBody constructs an http.Request for the StartConversation method, with any body, and a specified content type
+func NewStartConversationRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/sessions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetSessionRequest constructs an http.Request for the GetSession method
 func NewGetSessionRequest(server string, id TeamID, sessionID openapi_types.UUID) (*http.Request, error) {
 	var err error
@@ -8789,6 +9147,74 @@ func NewGetSessionAttachmentRequest(server string, id TeamID, sessionID openapi_
 	return req, nil
 }
 
+// NewStreamSessionEventsRequest constructs an http.Request for the StreamSessionEvents method
+func NewStreamSessionEventsRequest(server string, id TeamID, sessionID openapi_types.UUID, params *StreamSessionEventsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "sessionID", sessionID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/sessions/%s/events", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSessionMessagesRequest constructs an http.Request for the ListSessionMessages method
 func NewListSessionMessagesRequest(server string, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams) (*http.Request, error) {
 	var err error
@@ -8865,6 +9291,60 @@ func NewListSessionMessagesRequest(server string, id TeamID, sessionID openapi_t
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewSendSessionMessageRequest calls the generic SendSessionMessage builder with application/json body
+func NewSendSessionMessageRequest(server string, id TeamID, sessionID openapi_types.UUID, body SendSessionMessageJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSendSessionMessageRequestWithBody(server, id, sessionID, "application/json", bodyReader)
+}
+
+// NewSendSessionMessageRequestWithBody constructs an http.Request for the SendSessionMessage method, with any body, and a specified content type
+func NewSendSessionMessageRequestWithBody(server string, id TeamID, sessionID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "sessionID", sessionID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/sessions/%s/messages", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -10625,6 +11105,48 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/sessions (the `ListSessions` operationId).
 	ListSessionsWithResponse(ctx context.Context, id TeamID, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*ListSessionsResponse, error)
 
+	// StartConversationWithBodyWithResponse Start a conversation on the dashboard
+	//
+	// A new conversation with the team, held on the team's dashboard
+	// channel, and its first message. The conversation is a `direct`
+	// session that only the caller writes in; the team's hub answers it,
+	// as it answers a message on any channel.
+	//
+	// `key` is the caller's for this send, and a retry of it is the same
+	// send: the message is stored once, and a second request with the key
+	// answers `200` with what was stored the first time rather than
+	// starting another conversation.
+	//
+	// A message the hub cannot answer, because the team has no model set or
+	// the caller may not start runs, is still stored, and `unanswered` says
+	// why.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/sessions (the `StartConversation` operationId).
+	StartConversationWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartConversationResponse, error)
+
+	// StartConversationWithResponse Start a conversation on the dashboard
+	//
+	// A new conversation with the team, held on the team's dashboard
+	// channel, and its first message. The conversation is a `direct`
+	// session that only the caller writes in; the team's hub answers it,
+	// as it answers a message on any channel.
+	//
+	// `key` is the caller's for this send, and a retry of it is the same
+	// send: the message is stored once, and a second request with the key
+	// answers `200` with what was stored the first time rather than
+	// starting another conversation.
+	//
+	// A message the hub cannot answer, because the team has no model set or
+	// the caller may not start runs, is still stored, and `unanswered` says
+	// why.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/sessions (the `StartConversation` operationId).
+	StartConversationWithResponse(ctx context.Context, id TeamID, body StartConversationJSONRequestBody, reqEditors ...RequestEditorFn) (*StartConversationResponse, error)
+
 	// GetSessionWithResponse Read a conversation's details
 	//
 	// The session as the lists return it. Visible exactly where its
@@ -10683,6 +11205,40 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID} (the `GetSessionAttachment` operationId).
 	GetSessionAttachmentWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, attachmentID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetSessionAttachmentResponse, error)
 
+	// StreamSessionEventsWithResponse Follow a conversation
+	//
+	// A server-sent event stream of the conversation: what people said, and
+	// what every run in it did, in one order. Each frame is one event, in
+	// the catalog `sdk/stream` defines, with AG-UI's names:
+	//
+	// ```text
+	// id: 41
+	// event: message
+	// data: {"at":"2026-11-13T10:01:00Z","id":"…","user_id":"…","parts":[{"type":"text","text":"also check staging"}],"state":"pending"}
+	// ```
+	//
+	// `id` is the event's sequence in the conversation. A client that
+	// reconnects sends the last one it saw as `Last-Event-ID`, or `after`,
+	// and misses nothing. With neither, the stream starts from the
+	// beginning. History from before the stream was kept is numbered at or
+	// below 0 once `brain backfill session-seq` has run, so it replays
+	// first.
+	//
+	// Each run's events carry its `run_id`; a run another run handed work
+	// to says which in `run_started`. Text arrives as
+	// `text_message_chunk`, and `run_finished` carries the whole answer.
+	// Events the catalog has no kind for are `custom`, named by the kind
+	// the run recorded. The stream does not end: it follows the
+	// conversation until the client leaves, with a `: keep-alive` comment
+	// every 15 seconds while nothing happens.
+	//
+	// Visible where the conversation is.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID}/events (the `StreamSessionEvents` operationId).
+	StreamSessionEventsWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *StreamSessionEventsParams, reqEditors ...RequestEditorFn) (*StreamSessionEventsResponse, error)
+
 	// ListSessionMessagesWithResponse Read a conversation
 	//
 	// Every message here came from a sender somebody approved. A message
@@ -10709,6 +11265,44 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/messages (the `ListSessionMessages` operationId).
 	ListSessionMessagesWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *ListSessionMessagesParams, reqEditors ...RequestEditorFn) (*ListSessionMessagesResponse, error)
+
+	// SendSessionMessageWithBodyWithResponse Write in a conversation on the dashboard
+	//
+	// A message in a dashboard conversation, from the person it is with.
+	// Nobody else writes in it, a moderator who may read it included, and a
+	// conversation on another channel is written in on that channel.
+	//
+	// With no run working in the conversation, the hub starts on it. With
+	// one working, the message is sent to that run, which reads it before
+	// its next step: `steered` says so, and `run_id` is that run. Either
+	// way the message is pending until a run takes it, which the session's
+	// stream reports as `message_consumed`.
+	//
+	// `key` makes a retry the same send, as for `startConversation`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/sessions/{sessionID}/messages (the `SendSessionMessage` operationId).
+	SendSessionMessageWithBodyWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SendSessionMessageResponse, error)
+
+	// SendSessionMessageWithResponse Write in a conversation on the dashboard
+	//
+	// A message in a dashboard conversation, from the person it is with.
+	// Nobody else writes in it, a moderator who may read it included, and a
+	// conversation on another channel is written in on that channel.
+	//
+	// With no run working in the conversation, the hub starts on it. With
+	// one working, the message is sent to that run, which reads it before
+	// its next step: `steered` says so, and `run_id` is that run. Either
+	// way the message is pending until a run takes it, which the session's
+	// stream reports as `message_consumed`.
+	//
+	// `key` makes a retry the same send, as for `startConversation`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/sessions/{sessionID}/messages (the `SendSessionMessage` operationId).
+	SendSessionMessageWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, body SendSessionMessageJSONRequestBody, reqEditors ...RequestEditorFn) (*SendSessionMessageResponse, error)
 
 	// ListSessionRunsWithResponse List the runs in a conversation
 	//
@@ -13262,6 +13856,61 @@ func (r ListSessionsResponse) ContentType() string {
 	return ""
 }
 
+// StartConversationResponse401Headers the declared response headers of an HTTP 401 response for StartConversation
+type StartConversationResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type StartConversationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Said
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Said
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *StartConversationResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StartConversationResponse) GetJSON200() *Said {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r StartConversationResponse) GetJSON201() *Said {
+	return r.JSON201
+}
+
+// GetBody returns the raw response body bytes
+func (r StartConversationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartConversationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartConversationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartConversationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetSessionResponse401Headers the declared response headers of an HTTP 401 response for GetSession
 type GetSessionResponse401Headers struct {
 	WWWAuthenticate *string
@@ -13408,6 +14057,47 @@ func (r GetSessionAttachmentResponse) ContentType() string {
 	return ""
 }
 
+// StreamSessionEventsResponse401Headers the declared response headers of an HTTP 401 response for StreamSessionEvents
+type StreamSessionEventsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type StreamSessionEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *StreamSessionEventsResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r StreamSessionEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StreamSessionEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StreamSessionEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StreamSessionEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListSessionMessagesResponse401Headers the declared response headers of an HTTP 401 response for ListSessionMessages
 type ListSessionMessagesResponse401Headers struct {
 	WWWAuthenticate *string
@@ -13450,6 +14140,61 @@ func (r ListSessionMessagesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListSessionMessagesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SendSessionMessageResponse401Headers the declared response headers of an HTTP 401 response for SendSessionMessage
+type SendSessionMessageResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type SendSessionMessageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Said
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *Said
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *SendSessionMessageResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SendSessionMessageResponse) GetJSON200() *Said {
+	return r.JSON200
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r SendSessionMessageResponse) GetJSON202() *Said {
+	return r.JSON202
+}
+
+// GetBody returns the raw response body bytes
+func (r SendSessionMessageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SendSessionMessageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SendSessionMessageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SendSessionMessageResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -15532,6 +16277,60 @@ func (c *ClientWithResponses) ListSessionsWithResponse(ctx context.Context, id T
 	return ParseListSessionsResponse(rsp)
 }
 
+// StartConversationWithBodyWithResponse Start a conversation on the dashboard
+//
+// A new conversation with the team, held on the team's dashboard
+// channel, and its first message. The conversation is a `direct`
+// session that only the caller writes in; the team's hub answers it,
+// as it answers a message on any channel.
+//
+// `key` is the caller's for this send, and a retry of it is the same
+// send: the message is stored once, and a second request with the key
+// answers `200` with what was stored the first time rather than
+// starting another conversation.
+//
+// A message the hub cannot answer, because the team has no model set or
+// the caller may not start runs, is still stored, and `unanswered` says
+// why.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/sessions (the `StartConversation` operationId).
+func (c *ClientWithResponses) StartConversationWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartConversationResponse, error) {
+	rsp, err := c.StartConversationWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartConversationResponse(rsp)
+}
+
+// StartConversationWithResponse Start a conversation on the dashboard
+//
+// A new conversation with the team, held on the team's dashboard
+// channel, and its first message. The conversation is a `direct`
+// session that only the caller writes in; the team's hub answers it,
+// as it answers a message on any channel.
+//
+// `key` is the caller's for this send, and a retry of it is the same
+// send: the message is stored once, and a second request with the key
+// answers `200` with what was stored the first time rather than
+// starting another conversation.
+//
+// A message the hub cannot answer, because the team has no model set or
+// the caller may not start runs, is still stored, and `unanswered` says
+// why.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/sessions (the `StartConversation` operationId).
+func (c *ClientWithResponses) StartConversationWithResponse(ctx context.Context, id TeamID, body StartConversationJSONRequestBody, reqEditors ...RequestEditorFn) (*StartConversationResponse, error) {
+	rsp, err := c.StartConversation(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartConversationResponse(rsp)
+}
+
 // GetSessionWithResponse Read a conversation's details
 //
 // The session as the lists return it. Visible exactly where its
@@ -15608,6 +16407,46 @@ func (c *ClientWithResponses) GetSessionAttachmentWithResponse(ctx context.Conte
 	return ParseGetSessionAttachmentResponse(rsp)
 }
 
+// StreamSessionEventsWithResponse Follow a conversation
+//
+// A server-sent event stream of the conversation: what people said, and
+// what every run in it did, in one order. Each frame is one event, in
+// the catalog `sdk/stream` defines, with AG-UI's names:
+//
+// ```text
+// id: 41
+// event: message
+// data: {"at":"2026-11-13T10:01:00Z","id":"…","user_id":"…","parts":[{"type":"text","text":"also check staging"}],"state":"pending"}
+// ```
+//
+// `id` is the event's sequence in the conversation. A client that
+// reconnects sends the last one it saw as `Last-Event-ID`, or `after`,
+// and misses nothing. With neither, the stream starts from the
+// beginning. History from before the stream was kept is numbered at or
+// below 0 once `brain backfill session-seq` has run, so it replays
+// first.
+//
+// Each run's events carry its `run_id`; a run another run handed work
+// to says which in `run_started`. Text arrives as
+// `text_message_chunk`, and `run_finished` carries the whole answer.
+// Events the catalog has no kind for are `custom`, named by the kind
+// the run recorded. The stream does not end: it follows the
+// conversation until the client leaves, with a `: keep-alive` comment
+// every 15 seconds while nothing happens.
+//
+// Visible where the conversation is.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID}/events (the `StreamSessionEvents` operationId).
+func (c *ClientWithResponses) StreamSessionEventsWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *StreamSessionEventsParams, reqEditors ...RequestEditorFn) (*StreamSessionEventsResponse, error) {
+	rsp, err := c.StreamSessionEvents(ctx, id, sessionID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamSessionEventsResponse(rsp)
+}
+
 // ListSessionMessagesWithResponse Read a conversation
 //
 // Every message here came from a sender somebody approved. A message
@@ -15639,6 +16478,56 @@ func (c *ClientWithResponses) ListSessionMessagesWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseListSessionMessagesResponse(rsp)
+}
+
+// SendSessionMessageWithBodyWithResponse Write in a conversation on the dashboard
+//
+// A message in a dashboard conversation, from the person it is with.
+// Nobody else writes in it, a moderator who may read it included, and a
+// conversation on another channel is written in on that channel.
+//
+// With no run working in the conversation, the hub starts on it. With
+// one working, the message is sent to that run, which reads it before
+// its next step: `steered` says so, and `run_id` is that run. Either
+// way the message is pending until a run takes it, which the session's
+// stream reports as `message_consumed`.
+//
+// `key` makes a retry the same send, as for `startConversation`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/sessions/{sessionID}/messages (the `SendSessionMessage` operationId).
+func (c *ClientWithResponses) SendSessionMessageWithBodyWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SendSessionMessageResponse, error) {
+	rsp, err := c.SendSessionMessageWithBody(ctx, id, sessionID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSendSessionMessageResponse(rsp)
+}
+
+// SendSessionMessageWithResponse Write in a conversation on the dashboard
+//
+// A message in a dashboard conversation, from the person it is with.
+// Nobody else writes in it, a moderator who may read it included, and a
+// conversation on another channel is written in on that channel.
+//
+// With no run working in the conversation, the hub starts on it. With
+// one working, the message is sent to that run, which reads it before
+// its next step: `steered` says so, and `run_id` is that run. Either
+// way the message is pending until a run takes it, which the session's
+// stream reports as `message_consumed`.
+//
+// `key` makes a retry the same send, as for `startConversation`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/sessions/{sessionID}/messages (the `SendSessionMessage` operationId).
+func (c *ClientWithResponses) SendSessionMessageWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, body SendSessionMessageJSONRequestBody, reqEditors ...RequestEditorFn) (*SendSessionMessageResponse, error) {
+	rsp, err := c.SendSessionMessage(ctx, id, sessionID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSendSessionMessageResponse(rsp)
 }
 
 // ListSessionRunsWithResponse List the runs in a conversation
@@ -17799,6 +18688,52 @@ func ParseListSessionsResponse(rsp *http.Response) (*ListSessionsResponse, error
 	return response, nil
 }
 
+// ParseStartConversationResponse parses an HTTP response from a StartConversationWithResponse call
+func ParseStartConversationResponse(rsp *http.Response) (*StartConversationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartConversationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Said
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Said
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers StartConversationResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseGetSessionResponse parses an HTTP response from a GetSessionWithResponse call
 func ParseGetSessionResponse(rsp *http.Response) (*GetSessionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17930,6 +18865,35 @@ func ParseGetSessionAttachmentResponse(rsp *http.Response) (*GetSessionAttachmen
 	return response, nil
 }
 
+// ParseStreamSessionEventsResponse parses an HTTP response from a StreamSessionEventsWithResponse call
+func ParseStreamSessionEventsResponse(rsp *http.Response) (*StreamSessionEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StreamSessionEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers StreamSessionEventsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseListSessionMessagesResponse parses an HTTP response from a ListSessionMessagesWithResponse call
 func ParseListSessionMessagesResponse(rsp *http.Response) (*ListSessionMessagesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17956,6 +18920,52 @@ func ParseListSessionMessagesResponse(rsp *http.Response) (*ListSessionMessagesR
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ListSessionMessagesResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSendSessionMessageResponse parses an HTTP response from a SendSessionMessageWithResponse call
+func ParseSendSessionMessageResponse(rsp *http.Response) (*SendSessionMessageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SendSessionMessageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Said
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Said
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers SendSessionMessageResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
