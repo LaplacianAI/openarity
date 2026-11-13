@@ -47,18 +47,38 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Save(ctx context.Context, session string, msgs []agent.Message) error {
+	return s.SaveFrom(ctx, session, 0, msgs)
+}
+
+// SaveFrom keeps the first from messages as they are stored and writes the
+// rest, so a save that only added messages writes only those.
+func (s *Store) SaveFrom(ctx context.Context, session string, from int, msgs []agent.Message) error {
+	if from < 0 || from > len(msgs) {
+		return fmt.Errorf("saving session %s: from %d is outside its %d messages", session, from, len(msgs))
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("saving session %s: %w", session, err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	// What is kept must be whole: anything else is written again.
+	var kept int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM agent_messages WHERE session = ? AND position < ?`, session, from).Scan(&kept); err != nil {
+		return fmt.Errorf("saving session %s: counting what is kept: %w", session, err)
+	}
+	if kept != from {
+		from = 0
+	}
+
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM agent_messages WHERE session = ?`, session); err != nil {
+		`DELETE FROM agent_messages WHERE session = ? AND position >= ?`, session, from); err != nil {
 		return fmt.Errorf("clearing session %s: %w", session, err)
 	}
 
-	for i, m := range msgs {
+	for i := from; i < len(msgs); i++ {
+		m := msgs[i]
 		body, err := json.Marshal(m)
 		if err != nil {
 			return fmt.Errorf("encoding message %d of session %s: %w", i, session, err)

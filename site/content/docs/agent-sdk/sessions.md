@@ -182,6 +182,31 @@ day do it during an incident. `stores/sqlite` is the exception and creates its
 tables on open — one file and one process means there is nothing to coordinate
 with.
 
+### A save writes only what changed
+
+A run saves its transcript before every model call, and most saves only add a
+message or two. A session remembers a hash of each message it last saved or
+read, finds the first one that differs, and hands the store only what follows:
+
+```go
+type SavingFrom interface {
+	// SaveFrom keeps the first from messages stored for session and replaces
+	// what follows with msgs[from:]. A store that does not hold from messages
+	// writes them all.
+	SaveFrom(ctx context.Context, session string, from int, msgs []Message) error
+}
+```
+
+Every shipped store has it. Three 2 MiB tool results over 23 saves wrote about
+144 MiB of Postgres's write-ahead log when every save rewrote the transcript,
+and about 6 MiB with `SaveFrom`: each result is written once. A compaction
+splices its summary into the middle, so the save after it writes from there.
+
+A store of your own needs only `Save`. Without `SaveFrom` it is handed the
+whole transcript, every time, as before. One with it must keep the first
+`from` messages only when it holds that many, and write everything otherwise.
+`storetest` checks that.
+
 ### They behave the same, and that is tested
 
 Every store runs the same conformance suite, `stores/storetest`. A store

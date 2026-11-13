@@ -8,6 +8,7 @@
 package storetest
 
 import (
+	"slices"
 	"sync"
 	"testing"
 
@@ -357,6 +358,80 @@ func Run(t *testing.T, open func(t *testing.T) agent.Store) {
 		}
 	})
 
+	t.Run("saving from a position keeps what is before it and replaces the rest", func(t *testing.T) {
+		store := open(t)
+		partial, ok := store.(agent.SavingFrom)
+		if !ok {
+			t.Skip("this store writes the whole transcript on every save")
+		}
+		ctx := t.Context()
+
+		if err := store.Save(ctx, "s1", said("one", "two", "three")); err != nil {
+			t.Fatalf("Save() = %v", err)
+		}
+		// Appending: what is kept stays, the new one is added.
+		if err := partial.SaveFrom(ctx, "s1", 3, said("one", "two", "three", "four")); err != nil {
+			t.Fatalf("SaveFrom(3) = %v", err)
+		}
+		wantTexts(t, store, "s1", "one", "two", "three", "four")
+
+		// A change in the middle: from there on is replaced, and a shorter
+		// transcript loses its old tail.
+		if err := partial.SaveFrom(ctx, "s1", 1, said("one", "summary", "four")); err != nil {
+			t.Fatalf("SaveFrom(1) = %v", err)
+		}
+		wantTexts(t, store, "s1", "one", "summary", "four")
+
+		// From 0 is a whole rewrite.
+		if err := partial.SaveFrom(ctx, "s1", 0, said("again")); err != nil {
+			t.Fatalf("SaveFrom(0) = %v", err)
+		}
+		wantTexts(t, store, "s1", "again")
+	})
+
+	t.Run("saving from past what is stored writes everything", func(t *testing.T) {
+		store := open(t)
+		partial, ok := store.(agent.SavingFrom)
+		if !ok {
+			t.Skip("this store writes the whole transcript on every save")
+		}
+		ctx := t.Context()
+
+		if err := store.Save(ctx, "s1", said("one")); err != nil {
+			t.Fatalf("Save() = %v", err)
+		}
+		// The caller thought three were stored; only one is. Keeping "three"
+		// would leave a hole where two and three should be.
+		if err := partial.SaveFrom(ctx, "s1", 3, said("one", "two", "three", "four")); err != nil {
+			t.Fatalf("SaveFrom(3) = %v", err)
+		}
+		wantTexts(t, store, "s1", "one", "two", "three", "four")
+
+		if err := partial.SaveFrom(ctx, "nobody", 2, said("a", "b", "c")); err != nil {
+			t.Fatalf("SaveFrom on an empty session = %v", err)
+		}
+		wantTexts(t, store, "nobody", "a", "b", "c")
+	})
+
+	t.Run("saving from outside the transcript is refused and changes nothing", func(t *testing.T) {
+		store := open(t)
+		partial, ok := store.(agent.SavingFrom)
+		if !ok {
+			t.Skip("this store writes the whole transcript on every save")
+		}
+		ctx := t.Context()
+
+		if err := store.Save(ctx, "s1", said("one", "two")); err != nil {
+			t.Fatalf("Save() = %v", err)
+		}
+		for _, from := range []int{-1, 3} {
+			if err := partial.SaveFrom(ctx, "s1", from, said("x", "y")); err == nil {
+				t.Errorf("SaveFrom(%d) of two messages was accepted", from)
+			}
+		}
+		wantTexts(t, store, "s1", "one", "two")
+	})
+
 	t.Run("a read transcript is not the store's slice", func(t *testing.T) {
 		store := open(t)
 		saved := []agent.Message{{
@@ -385,4 +460,27 @@ func Run(t *testing.T, open func(t *testing.T) agent.Store) {
 				"resuming a session is exactly read it, then work on it", second[0].Role)
 		}
 	})
+}
+
+func said(texts ...string) []agent.Message {
+	out := make([]agent.Message, 0, len(texts))
+	for _, text := range texts {
+		out = append(out, agent.Message{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: text}}})
+	}
+	return out
+}
+
+func wantTexts(t *testing.T, store agent.Store, session string, want ...string) {
+	t.Helper()
+	back, err := store.Messages(t.Context(), session)
+	if err != nil {
+		t.Fatalf("Messages() = %v", err)
+	}
+	got := make([]string, 0, len(back))
+	for _, m := range back {
+		got = append(got, m.Text())
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the store holds %q, want %q", got, want)
+	}
 }
