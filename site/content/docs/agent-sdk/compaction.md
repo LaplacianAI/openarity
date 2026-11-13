@@ -82,7 +82,26 @@ never starts on a tool result.
 ## Large results
 
 A tool result over 100 KiB is shown as its first 8 KiB, its last 4 KiB, and a
-line saying how to read the rest. A compacting run has one more tool for it:
+line saying how to read the rest. The transcript keeps it whole. Those three
+sizes are the defaults; a run sets its own, and a tool its own over that:
+
+```go
+spec.Compaction = &agent.Compaction{
+	AfterMessages: 100,
+	Preview:       agent.Preview{Over: 64 << 10}, // every tool: past 64 KiB, its first 8 KiB and last 4 KiB
+}
+fetch := agent.Tool{
+	Name:    "web_fetch",
+	Preview: agent.Preview{Over: 32 << 10, Head: 24 << 10, Tail: 8 << 10}, // a page: past 32 KiB, its two ends
+	// …
+}
+```
+
+A zero field takes the run's value, and the run's takes the default. A
+preview whose head and tail do not fit under where it starts is refused when
+the run starts, naming the tool. Neither a `read_output` result nor a skill is
+ever previewed: the first is already capped, and the second is kept word for
+word. A compacting run has one more tool for the rest:
 
 ```json
 {"call": "call_7", "from_line": 1200, "lines": 200}
@@ -91,9 +110,9 @@ line saying how to read the rest. A compacting run has one more tool for it:
 
 `read_output` reads the whole result from the run's own transcript, by its call
 id: a line range, or the lines a regular expression (RE2) matches, with their
-numbers. One read returns at most about 25,000 tokens, and a line longer than
-4 KiB, a minified file's, is read in parts. It works after a compaction and
-after a resume.
+numbers, under a line naming the tool they came from. One read returns at most
+about 25,000 tokens, and a line longer than 4 KiB, a minified file's, is read in
+parts. It works after a compaction and after a resume.
 
 ## Finishing before the budget is gone
 

@@ -63,15 +63,17 @@ func readOutputTool(h *compactHandle) Tool {
 				return "", fmt.Errorf("from_line must be 1 or more, and lines between 1 and %d", maxLines)
 			}
 
-			text, ok := resultOf(h.messages(), a.Call)
+			msgs := h.messages()
+			text, ok := resultOf(msgs, a.Call)
 			if !ok {
 				return "", fmt.Errorf("no tool result in this run has the call id %q", a.Call)
 			}
 			lines := splitLines(text)
+			head := header(a.Call, toolNames(msgs)[a.Call], text, lines)
 			if a.Match != "" {
-				return matching(a.Call, text, lines, a.Match)
+				return matching(head, lines, a.Match)
 			}
-			return lineRange(a.Call, text, lines, a.FromLine, a.Lines), nil
+			return lineRange(head, lines, a.FromLine, a.Lines), nil
 		},
 	}
 }
@@ -105,11 +107,13 @@ func splitLines(text string) []string {
 	return out
 }
 
-func header(call, text string, lines []string) string {
-	return fmt.Sprintf("%s: %s, %d lines.", call, size(len(text)), len(lines))
+// header says whose output the lines are, so a range from the middle of a
+// web page still arrives as that page's.
+func header(call, name, text string, lines []string) string {
+	return fmt.Sprintf("%s%s: %s, %d lines, the tool's output.", call, nameNote(name), size(len(text)), len(lines))
 }
 
-func lineRange(call, text string, lines []string, from, n int) string {
+func lineRange(head string, lines []string, from, n int) string {
 	if from == 0 {
 		from = 1
 	}
@@ -117,7 +121,7 @@ func lineRange(call, text string, lines []string, from, n int) string {
 		n = defaultLines
 	}
 	if from > len(lines) {
-		return fmt.Sprintf("%s It has no line %d.", header(call, text, lines), from)
+		return fmt.Sprintf("%s It has no line %d.", head, from)
 	}
 	last := min(from+n-1, len(lines))
 
@@ -131,10 +135,10 @@ func lineRange(call, text string, lines []string, from, n int) string {
 		}
 		b.WriteString(line)
 	}
-	return fmt.Sprintf("%s Lines %d to %d:\n%s", header(call, text, lines), from, last, b.String())
+	return fmt.Sprintf("%s Lines %d to %d:\n%s", head, from, last, b.String())
 }
 
-func matching(call, text string, lines []string, pattern string) (string, error) {
+func matching(head string, lines []string, pattern string) (string, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return "", fmt.Errorf("match is not a regular expression: %w", err)
@@ -155,7 +159,7 @@ func matching(call, text string, lines []string, pattern string) (string, error)
 		b.WriteString(out)
 	}
 	if found == 0 {
-		return fmt.Sprintf("%s No line matches %q.", header(call, text, lines), pattern), nil
+		return fmt.Sprintf("%s No line matches %q.", head, pattern), nil
 	}
-	return fmt.Sprintf("%s Lines matching %q:\n%s", header(call, text, lines), pattern, b.String()), nil
+	return fmt.Sprintf("%s Lines matching %q:\n%s", head, pattern, b.String()), nil
 }

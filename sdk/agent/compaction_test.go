@@ -312,9 +312,8 @@ func TestALargeResultIsPreviewedWithAHandle(t *testing.T) {
 }
 
 func TestAPreviewCutsOnRuneBoundaries(t *testing.T) {
-	// "a" first and "b" last put both cuts in the middle of a two-byte rune.
 	big := "a" + strings.Repeat("é", 120<<10) + "b"
-	got := shownNamed(result("c", big), "t")
+	got := rig(Compaction{AfterMessages: 10}).client.shown(result("c", big), "t")
 
 	if !utf8.ValidString(text(got)) {
 		t.Fatalf("the preview cut a rune in half")
@@ -588,7 +587,7 @@ func TestReadOutputRefusesWhatItCannotRead(t *testing.T) {
 
 func TestACompactionThatCouldNeverTriggerIsRefused(t *testing.T) {
 	for _, c := range []Compaction{{}, {AfterMessages: -1}, {AfterInputTokens: 10, KeepTokens: -1}} {
-		if checkCompaction(&c) == nil {
+		if checkCompaction(&c, nil) == nil {
 			t.Errorf("checkCompaction(%+v) = nil", c)
 		}
 	}
