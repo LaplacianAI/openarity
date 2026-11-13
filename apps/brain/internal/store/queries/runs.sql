@@ -1,9 +1,10 @@
 -- The agent's team is checked by the SELECT: an agent of another team inserts
 -- nothing, and the caller gets pgx.ErrNoRows.
 -- name: CreateRun :one
-INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input, token_budget)
+INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input, token_budget, transcript)
 SELECT sqlc.arg('id')::uuid, a.team_id, sqlc.arg('session_id')::uuid, sqlc.arg('id')::uuid,
-       a.id, a.name, sqlc.narg('user_id')::uuid, sqlc.arg('input')::text, a.token_budget
+       a.id, a.name, sqlc.narg('user_id')::uuid, sqlc.arg('input')::text, a.token_budget,
+       'session:' || sqlc.arg('session_id')::uuid::text
 FROM agents a
 WHERE a.id = sqlc.arg('agent_id') AND a.team_id = sqlc.arg('team_id')
 RETURNING *;
@@ -12,10 +13,10 @@ RETURNING *;
 -- when none is set. The agent is read in this statement, so a hub deleted a
 -- moment before is already the orchestrator. No team, no row.
 -- name: CreateHubRun :one
-INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input, token_budget, hub)
+INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input, token_budget, hub, transcript)
 SELECT sqlc.arg('id')::uuid, t.id, sqlc.arg('session_id')::uuid, sqlc.arg('id')::uuid,
        a.id, coalesce(a.name, 'orchestrator'), sqlc.narg('user_id')::uuid, sqlc.arg('input')::text,
-       a.token_budget, true
+       a.token_budget, true, 'session:' || sqlc.arg('session_id')::uuid::text
 FROM teams t
 LEFT JOIN team_settings s ON s.team_id = t.id
 LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = t.id
@@ -211,10 +212,11 @@ RETURNING id;
 -- late for the run they were meant for has no message, and passes null.
 -- name: CreateChannelRun :one
 INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input,
-                  token_budget, hub, message_id, reply_to_channel)
+                  token_budget, hub, message_id, reply_to_channel, transcript)
 SELECT sqlc.arg('id')::uuid, t.id, sqlc.arg('session_id')::uuid, sqlc.arg('id')::uuid,
        a.id, coalesce(a.name, 'orchestrator'), sqlc.narg('user_id')::uuid, sqlc.arg('input')::text,
-       a.token_budget, true, sqlc.narg('message_id')::uuid, true
+       a.token_budget, true, sqlc.narg('message_id')::uuid, true,
+       'session:' || sqlc.arg('session_id')::uuid::text
 FROM teams t
 LEFT JOIN team_settings s ON s.team_id = t.id
 LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = t.id
@@ -224,29 +226,73 @@ WHERE t.id = sqlc.arg('team_id')::uuid
         WHERE m.id = sqlc.narg('message_id')::uuid AND m.session_id = sqlc.arg('session_id')::uuid))
 RETURNING *;
 
--- The run answering this conversation now. Read it only while holding the
+-- The top-level run working in this conversation now, of any kind: a session
+-- has one transcript, so it has one writer. Read it only while holding the
 -- session's lock (EnsureSession or LockSession): every path that makes a
--- channel run terminal takes that lock first, so what this returns cannot
+-- top-level run terminal takes that lock first, so what this returns cannot
 -- finish, and no follow-up can appear, before the caller commits. No run, no
 -- row.
--- name: ActiveChannelRun :one
+-- name: ActiveSessionRun :one
 SELECT id FROM runs
-WHERE session_id = $1 AND reply_to_channel AND status IN ('queued', 'running')
+WHERE session_id = $1 AND parent_run_id IS NULL AND status IN ('queued', 'running')
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
 
--- A message for a run that is already working: the run's SDK session is keyed
--- by the run's id, and its loop takes whatever is here before every request.
+-- A message for a run that is already working, under the transcript its loop
+-- takes steers from before every request: the session's, or a run from before
+-- shared transcripts its own id.
 -- name: AddSteer :exec
-INSERT INTO agent_steers (session, text) VALUES (sqlc.arg('run_id')::uuid::text, sqlc.arg('text'));
+INSERT INTO agent_steers (session, text)
+SELECT coalesce(r.transcript, r.id::text), sqlc.arg('text') FROM runs r WHERE r.id = sqlc.arg('run_id')::uuid;
 
 -- Steers written after the run's last request, which nothing will ever read.
--- Deleted as they are returned, oldest first, so they are answered once.
+-- Deleted as they are returned, oldest first, so they are answered once. Only
+-- one top-level run of a session works at a time, so its transcript's steers
+-- are its own.
 -- name: TakeLeftoverSteers :many
 WITH gone AS (
-    DELETE FROM agent_steers WHERE session = sqlc.arg('run_id')::uuid::text RETURNING id, text, created_at
+    DELETE FROM agent_steers
+    WHERE session = (SELECT coalesce(r.transcript, r.id::text) FROM runs r WHERE r.id = sqlc.arg('run_id')::uuid)
+    RETURNING id, text, created_at
 )
 SELECT text, created_at FROM gone ORDER BY id;
+
+-- A run started for steers that arrived too late for a run that was not a
+-- channel's: the same kind of run, the same agent and budget, in the same
+-- transcript. A channel's has CreateChannelRun, which also answers.
+-- name: CreateFollowUpRun :one
+INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input,
+                  token_budget, hub, builder, transcript)
+SELECT sqlc.arg('id')::uuid, p.team_id, p.session_id, sqlc.arg('id')::uuid, p.agent_id, p.agent_name,
+       p.user_id, sqlc.arg('input')::text, p.token_budget, p.hub, p.builder, p.transcript
+FROM runs p
+WHERE p.id = sqlc.arg('after')::uuid
+RETURNING *;
+
+-- Where a run's first message sits in its transcript, written before the
+-- message is. Once only: a resumed run keeps the place it was given.
+-- name: SetTranscriptFrom :exec
+UPDATE runs SET transcript_from = sqlc.arg('position')::int
+WHERE id = sqlc.arg('id')::uuid AND transcript_from IS NULL;
+
+-- What a session's people said since its previous top-level run finished, for
+-- the next one: messages that started no run of their own, as a group's are.
+-- Newest first, at most turns; with no previous run, the latest. A run's own
+-- message is its input, not part of this.
+-- name: ListMessagesSinceLastRun :many
+SELECT m.text, m.received_at AS at, u.email AS author
+FROM messages m
+LEFT JOIN users u ON u.id = m.user_id
+WHERE m.session_id = sqlc.arg('session_id')::uuid
+  AND m.received_at < sqlc.arg('before')::timestamptz
+  AND m.id IS DISTINCT FROM sqlc.narg('own_message')::uuid
+  AND m.received_at > coalesce((
+        SELECT coalesce(p.finished_at, p.created_at) FROM runs p
+        WHERE p.session_id = sqlc.arg('session_id')::uuid AND p.parent_run_id IS NULL
+          AND p.id <> sqlc.arg('run_id')::uuid AND p.created_at < sqlc.arg('before')::timestamptz
+        ORDER BY p.created_at DESC LIMIT 1), '-infinity'::timestamptz)
+ORDER BY m.received_at DESC
+LIMIT sqlc.arg('turns')::int;
 
 -- Whether the team's hub can run: a hub agent that still exists, or a model
 -- for the built-in orchestrator. The same rule the runtime fails a run on, so

@@ -132,17 +132,22 @@ func newStartCmd(opts *cli.Options) *cobra.Command {
 				return err
 			}
 
-			run, err := cli.Accepted(api.StartRunWithResponse(cmd.Context(), team, body))
+			run, steered, err := cli.Started(api.StartRunWithResponse(cmd.Context(), team, body))
 			if err != nil {
 				return cli.Needs(err, writePermission)
 			}
+			// A run already working in the session took the input as a message.
+			verb := "started"
+			if steered {
+				verb = "steered"
+			}
 			if !following {
-				return printRun(opts, run, "started", args[0])
+				return printRun(opts, run, verb, args[0])
 			}
 
 			err = opts.Out.Line(viewOf(run), printer.Options{
 				Table: func(table *printer.Table) {
-					table.Row(opts.Styles.OK.Render("started"),
+					table.Row(opts.Styles.OK.Render(verb),
 						opts.Styles.Value.Render(cli.Safe(run.Agent)),
 						opts.Styles.Muted.Render(run.ID.String()))
 				},

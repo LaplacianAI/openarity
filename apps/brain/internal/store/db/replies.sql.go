@@ -231,63 +231,6 @@ func (q *Queries) ListRunReplies(ctx context.Context, runIds []uuid.UUID) ([]Lis
 	return items, nil
 }
 
-const listSessionTurns = `-- name: ListSessionTurns :many
-SELECT kind, text, at, author FROM (
-    SELECT 'message'::text AS kind, m.text, m.received_at AS at, u.email AS author
-    FROM messages m
-    LEFT JOIN users u ON u.id = m.user_id
-    WHERE m.session_id = $1::uuid
-    UNION ALL
-    SELECT 'reply'::text, rp.text, rp.created_at, NULL::text
-    FROM replies rp
-    WHERE rp.session_id = $1::uuid AND rp.kind = 'answer'
-) turns
-WHERE at < $2::timestamptz
-ORDER BY at DESC
-LIMIT $3::int
-`
-
-type ListSessionTurnsParams struct {
-	SessionID uuid.UUID
-	Before    time.Time
-	Turns     int32
-}
-
-type ListSessionTurnsRow struct {
-	Kind   string
-	Text   string
-	At     time.Time
-	Author *string
-}
-
-// What was said in a conversation before a moment, newest first: the messages
-// and the answers sent back. An apology is left out; it says nothing the model
-// needs. Who wrote a message is the bound user's email, the only name stored.
-func (q *Queries) ListSessionTurns(ctx context.Context, arg ListSessionTurnsParams) ([]ListSessionTurnsRow, error) {
-	rows, err := q.db.Query(ctx, listSessionTurns, arg.SessionID, arg.Before, arg.Turns)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListSessionTurnsRow
-	for rows.Next() {
-		var i ListSessionTurnsRow
-		if err := rows.Scan(
-			&i.Kind,
-			&i.Text,
-			&i.At,
-			&i.Author,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const replyPartSent = `-- name: ReplyPartSent :execrows
 UPDATE replies SET parts_sent = $1
 WHERE id = $2 AND status = 'pending' AND attempts = $3

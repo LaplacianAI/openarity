@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5"
@@ -151,6 +152,29 @@ func (s runStore) StartRun(ctx context.Context, arg runs.StartArgs) (db.Run, err
 				return err
 			}
 			sessionID = &created.ID
+		} else {
+			// A session has one transcript, so one run works in it at a time:
+			// the lock orders this against delivery and a run's finish.
+			s, err := q.LockSession(ctx, *sessionID)
+			if err != nil {
+				return err
+			}
+			if session, err := q.GetSession(ctx, s); err != nil {
+				return err
+			} else if session.ChannelID != nil {
+				return runs.ErrChannelSession
+			}
+			active, err := q.ActiveSessionRun(ctx, *sessionID)
+			switch {
+			case err == nil:
+				if err := q.AddSteer(ctx, db.AddSteerParams{RunID: active, Text: arg.Input}); err != nil {
+					return fmt.Errorf("steer run %s: %w", active, err)
+				}
+				run, err = q.GetRun(ctx, active)
+				return err
+			case !errors.Is(err, pgx.ErrNoRows):
+				return err
+			}
 		}
 
 		var err error

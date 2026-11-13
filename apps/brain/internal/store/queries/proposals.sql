@@ -48,19 +48,11 @@ UPDATE proposals SET state = 'applied', applied_by = sqlc.narg('applied_by'), ap
 WHERE id = sqlc.arg('id') AND state = 'open'
 RETURNING *;
 
--- A builder run's earlier turns in its session: what was asked and what it
--- answered, newest first.
--- name: ListBuilderTurns :many
-SELECT input, output FROM runs
-WHERE session_id = sqlc.arg('session_id') AND builder AND parent_run_id IS NULL
-  AND status = 'succeeded' AND created_at < sqlc.arg('before')
-ORDER BY created_at DESC
-LIMIT sqlc.arg('turns')::int;
-
 -- name: CreateBuilderRun :one
-INSERT INTO runs (id, team_id, session_id, root_run_id, agent_name, user_id, input, builder)
+INSERT INTO runs (id, team_id, session_id, root_run_id, agent_name, user_id, input, builder, transcript)
 SELECT sqlc.arg('id')::uuid, t.id, sqlc.arg('session_id')::uuid, sqlc.arg('id')::uuid,
-       'builder', sqlc.narg('user_id')::uuid, sqlc.arg('input')::text, true
+       'builder', sqlc.narg('user_id')::uuid, sqlc.arg('input')::text, true,
+       'session:' || sqlc.arg('session_id')::uuid::text
 FROM teams t
 WHERE t.id = sqlc.arg('team_id')::uuid
 RETURNING *;

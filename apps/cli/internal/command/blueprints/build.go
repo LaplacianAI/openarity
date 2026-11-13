@@ -62,7 +62,9 @@ func NewBuild(opts *cli.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			run, err := cli.Accepted(api.StartRunWithResponse(cmd.Context(), team, body))
+			// A builder already working in the session takes the message as it
+			// works; either way, this follows the run that answers it.
+			run, _, err := cli.Started(api.StartRunWithResponse(cmd.Context(), team, body))
 			if err != nil {
 				return cli.Needs(err, "run:write")
 			}

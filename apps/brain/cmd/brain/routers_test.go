@@ -343,3 +343,76 @@ func TestADeliveryToADeletedTeamLeavesClaimableTombstones(t *testing.T) {
 		t.Errorf("%d attachments written", n)
 	}
 }
+
+// A session has one transcript, so one run works in it: a run started while
+// another is working there goes to that run as a steer, under its transcript,
+// and no second run is made.
+func TestARunStartedInABusySessionSteersTheOneWorkingThere(t *testing.T) {
+	w := newRunWorld(t)
+	session := w.teamSession
+
+	first, err := w.store.StartRun(t.Context(), runs.StartArgs{
+		ID: uuid.New(), TeamID: w.team, AgentID: w.agent, UserID: w.user, SessionID: &session, Input: "audit the exports",
+	})
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	asked := uuid.New()
+	got, err := w.store.StartRun(t.Context(), runs.StartArgs{
+		ID: asked, TeamID: w.team, Hub: true, UserID: w.user, SessionID: &session, Input: "and the imports",
+	})
+	if err != nil {
+		t.Fatalf("StartRun into the busy session: %v", err)
+	}
+
+	if got.ID != first.ID || got.ID == asked {
+		t.Fatalf("StartRun returned %s; want the run already working, %s", got.ID, first.ID)
+	}
+	if n := w.count(t, "runs"); n != 1 {
+		t.Errorf("%d runs, want the one: a steer makes none", n)
+	}
+	var key, text string
+	if err := w.raw.QueryRow(t.Context(), `SELECT session, text FROM agent_steers`).Scan(&key, &text); err != nil {
+		t.Fatalf("reading the steer: %v", err)
+	}
+	if key != "session:"+session.String() || text != "and the imports" {
+		t.Errorf("steer = %q under %q; want the input under the session's transcript", text, key)
+	}
+
+	// Once it has finished, the session takes a new run.
+	if _, err := w.raw.Exec(t.Context(), `UPDATE runs SET status = 'succeeded', finished_at = now() WHERE id = $1`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	next, err := w.store.StartRun(t.Context(), runs.StartArgs{
+		ID: asked, TeamID: w.team, Hub: true, UserID: w.user, SessionID: &session, Input: "now the reports",
+	})
+	if err != nil || next.ID != asked {
+		t.Errorf("after the first finished, StartRun = %s, %v; want a new run %s", next.ID, err, asked)
+	}
+}
+
+// A channel's session answers its chat; a run from the API would take the
+// chat's messages as steers and answer them where the chat never sees.
+func TestARunCannotStartInAChannelsSession(t *testing.T) {
+	w := newRunWorld(t)
+	ch, err := w.store.CreateChannel(t.Context(), db.CreateChannelParams{TeamID: w.team, Provider: "custom", Name: "support"})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	chat, err := w.store.EnsureSession(t.Context(), db.EnsureSessionParams{
+		TeamID: w.team, ChannelID: ch.ID, ProviderRef: "D01", Kind: "direct",
+	})
+	if err != nil {
+		t.Fatalf("EnsureSession: %v", err)
+	}
+
+	_, err = w.store.StartRun(t.Context(), runs.StartArgs{
+		ID: uuid.New(), TeamID: w.team, AgentID: w.agent, UserID: w.user, SessionID: &chat.ID, Input: "hello",
+	})
+	if !errors.Is(err, runs.ErrChannelSession) {
+		t.Fatalf("StartRun in a channel's session = %v, want ErrChannelSession", err)
+	}
+	if n := w.count(t, "runs"); n != 0 {
+		t.Errorf("%d runs after the refusal, want none", n)
+	}
+}

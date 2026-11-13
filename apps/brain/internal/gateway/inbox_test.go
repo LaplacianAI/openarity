@@ -94,7 +94,7 @@ func (f *inboxStore) MemberMay(context.Context, db.MemberMayParams) (bool, error
 	return !f.mayNot, nil
 }
 
-func (f *inboxStore) ActiveChannelRun(_ context.Context, sessionID uuid.UUID) (uuid.UUID, error) {
+func (f *inboxStore) ActiveSessionRun(_ context.Context, sessionID uuid.UUID) (uuid.UUID, error) {
 	if id, ok := f.active[sessionID]; ok {
 		return id, nil
 	}

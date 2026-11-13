@@ -428,12 +428,14 @@ func TestTheWorkerRunsAtMostFourRunsAtOnce(t *testing.T) {
 	}
 }
 
+// anotherRun is a run in a session of its own: a session has one transcript,
+// so runs working at once are in different conversations.
 func (f *execFixture) anotherRun(t *testing.T) uuid.UUID {
 	t.Helper()
 
 	var session uuid.UUID
 	if err := f.raw.QueryRow(t.Context(),
-		`SELECT session_id FROM runs WHERE id = $1`, f.run).Scan(&session); err != nil {
+		`INSERT INTO sessions (team_id, kind) VALUES ($1, 'group') RETURNING id`, f.team).Scan(&session); err != nil {
 		t.Fatalf("session: %v", err)
 	}
 	r, err := f.store.CreateRun(t.Context(), db.CreateRunParams{

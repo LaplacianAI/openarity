@@ -37,7 +37,7 @@ type Teams interface {
 // already answering the conversation, and starting one.
 type Runs interface {
 	MemberMay(ctx context.Context, arg db.MemberMayParams) (bool, error)
-	ActiveChannelRun(ctx context.Context, sessionID uuid.UUID) (uuid.UUID, error)
+	ActiveSessionRun(ctx context.Context, sessionID uuid.UUID) (uuid.UUID, error)
 	AddSteer(ctx context.Context, arg db.AddSteerParams) error
 	HubCanRun(ctx context.Context, teamID uuid.UUID) (bool, error)
 	CreateChannelRun(ctx context.Context, arg db.CreateChannelRunParams) (db.Run, error)

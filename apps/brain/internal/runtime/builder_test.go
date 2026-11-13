@@ -212,28 +212,6 @@ func TestTheTeamIsHandedToTheModelAsData(t *testing.T) {
 	}
 }
 
-func TestEarlierTurnsComeFirstAndTheNewestAreKept(t *testing.T) {
-	out := func(s string) *string { return &s }
-	turns := []db.ListBuilderTurnsRow{ // newest first, as the query reads them
-		{Input: "sonnet, yes", Output: out("Here is the proposal.")},
-		{Input: "a triage agent", Output: out("Which model?")},
-	}
-	got := withBuilderTurns(turns, "now apply it")
-	first, second := strings.Index(got, "a triage agent"), strings.Index(got, "sonnet, yes")
-	if first < 0 || second < first || !strings.HasSuffix(got, "The new message:\n\nnow apply it") {
-		t.Errorf("got %q, want the turns oldest first, then the new message", got)
-	}
-	if withBuilderTurns(nil, "hello") != "hello" {
-		t.Error("with no turns, the input is not the message alone")
-	}
-
-	big := strings.Repeat("x", builderBytes)
-	kept := withBuilderTurns([]db.ListBuilderTurnsRow{{Input: "newest"}, {Input: big}}, "m")
-	if !strings.Contains(kept, "newest") || strings.Contains(kept, big) {
-		t.Error("the newest turn was dropped, or an oversized older one kept")
-	}
-}
-
 // --- a builder run, end to end, with the real workshop ---
 
 func (f *execFixture) builderRun(t *testing.T) uuid.UUID {
@@ -304,7 +282,8 @@ func toolNamesOf(tools []agent.Tool) []string {
 	return out
 }
 
-// A second message in the session reaches the builder with the first turn.
+// A second message in the session reaches the builder with the first turn:
+// it continues the session's transcript, the earlier ask and answer included.
 func TestABuilderRunReadsItsEarlierTurns(t *testing.T) {
 	f := newExecFixture(t, newScripted(answer("Which model?", 10, 5), answer("Noted.", 10, 5)))
 	session := f.builderRun(t)
@@ -320,9 +299,10 @@ func TestABuilderRunReadsItsEarlierTurns(t *testing.T) {
 	f.run = r.ID
 	f.mustExecute(t)
 
-	got := textOf(f.model.requests()[1].Messages[:1])
-	if !strings.Contains(got, "person: an agent that writes replies\nyou: Which model?") || !strings.HasSuffix(strings.TrimSpace(got), "sonnet") {
-		t.Errorf("the second run was told %q, want the first turn then the new message", got)
+	sent := f.model.requests()[1].Messages
+	if got := textOf(sent); !strings.Contains(got, "an agent that writes replies\nWhich model?") ||
+		strings.TrimSpace(sent[len(sent)-1].Text()) != "sonnet" {
+		t.Errorf("the second run was sent %q, want the first turn then the new message", got)
 	}
 }
 

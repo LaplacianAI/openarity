@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -140,40 +141,45 @@ func TestOnlyARootRunRepliesToAChannel(t *testing.T) {
 	}
 }
 
-// The run a new message is steered into is the one answering the conversation
-// now: queued or running, and started from the channel. A run someone started
-// from the dashboard in the same session is not it, and a finished run is not.
-func TestTheActiveChannelRunIsTheQueuedOrRunningOneThatReplies(t *testing.T) {
+// The run a new message is steered into is the one working in the session
+// now, of any kind: queued or running, and top-level. A session has one
+// transcript, so a dashboard's run in it is the one; a delegate is not, and a
+// finished run is not.
+func TestTheActiveSessionRunIsTheQueuedOrRunningTopLevelOne(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
 	c := newConversation(t, s, "active")
 	agent := insertAgent(t, s, c.team, "triage")
 
-	if _, err := s.ActiveChannelRun(t.Context(), c.session.ID); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := s.ActiveSessionRun(t.Context(), c.session.ID); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("with no run, err = %v, want pgx.ErrNoRows", err)
 	}
 
-	ranIn(t, s, c.team, c.session.ID, agent, "running", 5) // the dashboard's, not the channel's
-	if _, err := s.ActiveChannelRun(t.Context(), c.session.ID); !errors.Is(err, pgx.ErrNoRows) {
-		t.Errorf("with only a dashboard run, err = %v, want pgx.ErrNoRows", err)
+	dashboard := ranIn(t, s, c.team, c.session.ID, agent, "running", 5)
+	if got, err := s.ActiveSessionRun(t.Context(), c.session.ID); err != nil || got != dashboard {
+		t.Fatalf("with a dashboard run, ActiveSessionRun = %s, %v; want it", got, err)
+	}
+	if _, err := s.pool.Exec(t.Context(),
+		`UPDATE runs SET status = 'succeeded', finished_at = now() WHERE id = $1`, dashboard); err != nil {
+		t.Fatalf("finishing: %v", err)
+	}
+
+	child := ranIn(t, s, c.team, c.session.ID, agent, "running", 4)
+	if _, err := s.pool.Exec(t.Context(),
+		`UPDATE runs SET parent_run_id = $2, root_run_id = $2, depth = 1, parent_tool_call = 'call_1' WHERE id = $1`, child, dashboard); err != nil {
+		t.Fatalf("making a delegate: %v", err)
+	}
+	if _, err := s.ActiveSessionRun(t.Context(), c.session.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("with only a delegate running, err = %v, want pgx.ErrNoRows", err)
 	}
 
 	r, err := c.startRun(t, s.Queries, nil, "hello")
 	if err != nil {
 		t.Fatalf("CreateChannelRun: %v", err)
 	}
-	got, err := s.ActiveChannelRun(t.Context(), c.session.ID)
-	if err != nil || got != r.ID {
-		t.Fatalf("ActiveChannelRun = %s, %v; want %s", got, err, r.ID)
-	}
-
-	if _, err := s.pool.Exec(t.Context(),
-		`UPDATE runs SET status = 'succeeded', finished_at = now() WHERE id = $1`, r.ID); err != nil {
-		t.Fatalf("finishing: %v", err)
-	}
-	if _, err := s.ActiveChannelRun(t.Context(), c.session.ID); !errors.Is(err, pgx.ErrNoRows) {
-		t.Errorf("after it finished, err = %v, want pgx.ErrNoRows", err)
+	if got, err := s.ActiveSessionRun(t.Context(), c.session.ID); err != nil || got != r.ID {
+		t.Fatalf("ActiveSessionRun = %s, %v; want %s", got, err, r.ID)
 	}
 }
 
@@ -188,7 +194,9 @@ func TestLeftoverSteersAreTakenOnceOldestFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChannelRun: %v", err)
 	}
-	other, err := c.startRun(t, s.Queries, nil, "another")
+	// Another conversation's run: one session has one run working at a time.
+	elsewhere := newConversation(t, s, "steers-elsewhere")
+	other, err := elsewhere.startRun(t, s.Queries, nil, "another")
 	if err != nil {
 		t.Fatalf("CreateChannelRun: %v", err)
 	}
@@ -306,67 +314,79 @@ func TestTheHubCanRunWithAModelOrAHubAgent(t *testing.T) {
 	}
 }
 
-// History is what was said before the run's message, newest first, with the
-// answers sent back and without apologies, which tell the model nothing.
-func TestSessionTurnsAreWhatWasSaidBeforeNewestFirst(t *testing.T) {
+// A channel run is told what people said since the session's previous run
+// finished: what reached no run. Not what the previous run read, not its own
+// message, newest first, as many as asked.
+func TestMessagesSinceTheLastRunAreWhatReachedNoRun(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	c := newConversation(t, s, "history")
+	c := newConversation(t, s, "since")
+	clock := func() time.Time {
+		t.Helper()
+		var now time.Time
+		// The database's clock: received_at is stamped there.
+		if err := s.pool.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&now); err != nil {
+			t.Fatalf("reading the database's clock: %v", err)
+		}
+		return now
+	}
 
 	first := c.says(t, s, "m-1", "is the export done?")
-	r, err := c.startRun(t, s.Queries, &first, "is the export done?")
+	r1, err := c.startRun(t, s.Queries, &first, "is the export done?")
 	if err != nil {
 		t.Fatalf("CreateChannelRun: %v", err)
 	}
-	if _, err := s.InsertReply(t.Context(), db.InsertReplyParams{RunID: r.ID, Kind: "answer", Text: "Not yet."}); err != nil {
-		t.Fatalf("InsertReply: %v", err)
+	if _, err := s.pool.Exec(t.Context(),
+		`UPDATE runs SET status = 'succeeded', finished_at = clock_timestamp() WHERE id = $1`, r1.ID); err != nil {
+		t.Fatalf("finishing: %v", err)
 	}
-	failed, err := c.startRun(t, s.Queries, nil, "and now?")
+	c.says(t, s, "m-2", "the export is late again")
+	c.says(t, s, "m-3", "it was the cron")
+	own := c.says(t, s, "m-4", "@bot why?")
+	r2, err := c.startRun(t, s.Queries, &own, "@bot why?")
 	if err != nil {
 		t.Fatalf("CreateChannelRun: %v", err)
 	}
-	if _, err := s.InsertReply(t.Context(), db.InsertReplyParams{RunID: failed.ID, Kind: "apology", Text: "Sorry."}); err != nil {
-		t.Fatalf("InsertReply: %v", err)
-	}
-	c.says(t, s, "m-2", "and now?")
-	// The database's clock, not this process's: received_at is stamped there,
-	// and a container's clock can trail the host's by more than a statement.
-	var cutoff time.Time
-	if err := s.pool.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&cutoff); err != nil {
-		t.Fatalf("reading the database's clock: %v", err)
-	}
-	c.says(t, s, "m-3", "after the cutoff")
+	before := clock()
 
-	turns, err := s.ListSessionTurns(t.Context(), db.ListSessionTurnsParams{
-		SessionID: c.session.ID, Before: cutoff, Turns: 10,
+	said, err := s.ListMessagesSinceLastRun(t.Context(), db.ListMessagesSinceLastRunParams{
+		SessionID: c.session.ID, Before: before, OwnMessage: &own, RunID: r2.ID, Turns: 10,
 	})
 	if err != nil {
-		t.Fatalf("ListSessionTurns: %v", err)
+		t.Fatalf("ListMessagesSinceLastRun: %v", err)
 	}
 	var got []string
-	for _, turn := range turns {
-		got = append(got, turn.Kind+": "+turn.Text)
+	for _, m := range said {
+		got = append(got, m.Text)
 	}
-	want := []string{"message: and now?", "reply: Not yet.", "message: is the export done?"}
-	if len(got) != len(want) {
-		t.Fatalf("turns = %q, want %q", got, want)
+	if want := []string{"it was the cron", "the export is late again"}; !slices.Equal(got, want) {
+		t.Fatalf("said = %q, want %q: only what came after the last run finished, and not this run's own", got, want)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("turns = %q, want %q", got, want)
-			break
-		}
-	}
-	if turns[0].Author == nil || *turns[0].Author == "" {
+	if said[0].Author == nil || *said[0].Author == "" {
 		t.Error("a message's author is empty; the model cannot tell who said it")
 	}
 
-	limited, err := s.ListSessionTurns(t.Context(), db.ListSessionTurnsParams{
-		SessionID: c.session.ID, Before: cutoff, Turns: 1,
+	limited, err := s.ListMessagesSinceLastRun(t.Context(), db.ListMessagesSinceLastRunParams{
+		SessionID: c.session.ID, Before: before, OwnMessage: &own, RunID: r2.ID, Turns: 1,
 	})
-	if err != nil || len(limited) != 1 || limited[0].Text != "and now?" {
-		t.Errorf("one turn = %+v, %v; want only the newest", limited, err)
+	if err != nil || len(limited) != 1 || limited[0].Text != "it was the cron" {
+		t.Errorf("one message = %+v, %v; want only the newest", limited, err)
+	}
+
+	// The first run of a session has no run before it: what was said is the latest.
+	fresh := newConversation(t, s, "fresh")
+	fresh.says(t, s, "f-1", "morning")
+	mine := fresh.says(t, s, "f-2", "@bot status?")
+	r, err := fresh.startRun(t, s.Queries, &mine, "@bot status?")
+	if err != nil {
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	said, err = s.ListMessagesSinceLastRun(t.Context(), db.ListMessagesSinceLastRunParams{
+		SessionID: fresh.session.ID, Before: clock(), OwnMessage: &mine, RunID: r.ID, Turns: 10,
+	})
+	if err != nil || len(said) != 1 || said[0].Text != "morning" {
+		t.Errorf("the first run was told %+v, %v; want what was said before it", said, err)
 	}
 }
 
@@ -436,7 +456,7 @@ func TestASteerIsNeverLostToAFinish(t *testing.T) {
 			if _, err := q.LockSession(t.Context(), c.session.ID); err != nil {
 				return err
 			}
-			id, err := q.ActiveChannelRun(t.Context(), c.session.ID)
+			id, err := q.ActiveSessionRun(t.Context(), c.session.ID)
 			if err != nil {
 				return err
 			}
@@ -507,9 +527,9 @@ func TestAFinishWaitingOnASteerTakesItAsALeftover(t *testing.T) {
 	if _, err := dq.LockSession(t.Context(), c.session.ID); err != nil {
 		t.Fatalf("deliver LockSession: %v", err)
 	}
-	id, err := dq.ActiveChannelRun(t.Context(), c.session.ID)
+	id, err := dq.ActiveSessionRun(t.Context(), c.session.ID)
 	if err != nil || id != r.ID {
-		t.Fatalf("ActiveChannelRun = %s, %v; want %s", id, err, r.ID)
+		t.Fatalf("ActiveSessionRun = %s, %v; want %s", id, err, r.ID)
 	}
 	if err := dq.AddSteer(t.Context(), db.AddSteerParams{RunID: r.ID, Text: "late"}); err != nil {
 		t.Fatalf("AddSteer: %v", err)
@@ -581,7 +601,7 @@ func TestAFollowUpAndANewMessageNeverMakeTwoActiveRuns(t *testing.T) {
 			if _, err := q.LockSession(t.Context(), c.session.ID); err != nil {
 				return err
 			}
-			id, err := q.ActiveChannelRun(t.Context(), c.session.ID)
+			id, err := q.ActiveSessionRun(t.Context(), c.session.ID)
 			if err != nil {
 				return err
 			}
@@ -825,29 +845,59 @@ func TestSteersLeftOverStartOneRunToAnswerThem(t *testing.T) {
 	}
 }
 
-// A run someone started from the dashboard finishes as it always did: no
-// reply, no lock it does not need.
-func TestARunFromTheDashboardFinishesAsBefore(t *testing.T) {
+// A run someone started from the dashboard sends no reply, but a message
+// steered into it after its last request is not lost: a run of the same kind,
+// the same agent and the same transcript is started to answer it.
+func TestARunFromTheDashboardCarriesOnForALateMessageWithoutAReply(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
 	c := newConversation(t, s, "dashboard-finish")
 	agent := insertAgent(t, s, c.team, "triage")
-	id := ranIn(t, s, c.team, c.session.ID, agent, "running", 1)
-	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET worker = 'w-1' WHERE id = $1`, id); err != nil {
+	r, err := s.CreateRun(t.Context(), db.CreateRunParams{
+		ID: uuid.New(), TeamID: c.team, SessionID: c.session.ID, AgentID: agent, Input: "audit the exports",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET status = 'running', worker = 'w-1', heartbeat_at = now() WHERE id = $1`, r.ID); err != nil {
 		t.Fatalf("assigning the worker: %v", err)
 	}
-	// Nothing steers a dashboard run, but if a steer were there, the finish
-	// still must not take it as a channel's leftover and start a run for it.
-	if err := s.AddSteer(t.Context(), db.AddSteerParams{RunID: id, Text: "stray"}); err != nil {
+	if err := s.AddSteer(t.Context(), db.AddSteerParams{RunID: r.ID, Text: "and the imports"}); err != nil {
 		t.Fatalf("AddSteer: %v", err)
 	}
 
-	if followUp := endChannelRun(t, s, id, "succeeded", "Done.", ""); followUp != uuid.Nil {
-		t.Errorf("a dashboard run started %s", followUp)
+	followUp := endChannelRun(t, s, r.ID, "succeeded", "Done.", "")
+	if followUp == uuid.Nil {
+		t.Fatal("the late message started no run")
 	}
-	if got := repliesTo(t, s, id); len(got) != 0 {
+	next, err := s.GetRun(t.Context(), followUp)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if next.Input != "and the imports" || next.AgentID == nil || *next.AgentID != agent || next.ReplyToChannel ||
+		next.Transcript == nil || r.Transcript == nil || *next.Transcript != *r.Transcript {
+		t.Errorf("the follow-up is %+v; want the same agent and transcript, the late message as its input, no reply", next)
+	}
+	if got := repliesTo(t, s, r.ID); len(got) != 0 {
 		t.Errorf("replies = %+v, want none", got)
+	}
+
+	// Cancelled on purpose: nothing carries on.
+	c2 := newConversation(t, s, "dashboard-cancel")
+	agent2 := insertAgent(t, s, c2.team, "triage")
+	r2, err := s.CreateRun(t.Context(), db.CreateRunParams{
+		ID: uuid.New(), TeamID: c2.team, SessionID: c2.session.ID, AgentID: agent2, Input: "x",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET status = 'running', worker = 'w-1', heartbeat_at = now() WHERE id = $1`, r2.ID); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.AddSteer(t.Context(), db.AddSteerParams{RunID: r2.ID, Text: "stray"})
+	if followUp := endChannelRun(t, s, r2.ID, "cancelled", "", ""); followUp != uuid.Nil {
+		t.Errorf("a cancelled run started %s", followUp)
 	}
 }
 
@@ -921,7 +971,7 @@ func TestAReplyQuotesTheNewestMessageItsRunRead(t *testing.T) {
 	}
 	// Read mid-run: the SDK takes a steer before its next request.
 	read := steered("m-2", "only this week")
-	if _, err := s.pool.Exec(t.Context(), `DELETE FROM agent_steers WHERE session = $1`, r.ID.String()); err != nil {
+	if _, err := s.pool.Exec(t.Context(), `DELETE FROM agent_steers WHERE session = $1`, *r.Transcript); err != nil {
 		t.Fatal(err)
 	}
 	// Too late: after the last request, so nothing reads it.
@@ -937,5 +987,54 @@ func TestAReplyQuotesTheNewestMessageItsRunRead(t *testing.T) {
 	}
 	if quoted == nil || *quoted != read {
 		t.Errorf("the reply quotes %v, want %s, the newest message the run read (not %s)", quoted, read, late)
+	}
+}
+
+// A session's transcript has no foreign key: it goes when the last run that
+// continues it goes, and not before, so deleting one run keeps the
+// conversation the others still read.
+func TestASessionsTranscriptGoesWithItsLastRun(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	c := newConversation(t, s, "forget")
+	first, err := c.startRun(t, s.Queries, nil, "one")
+	if err != nil {
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	second, err := c.startRun(t, s.Queries, nil, "two")
+	if err != nil {
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	key := *first.Transcript
+	if _, err := s.pool.Exec(t.Context(),
+		`INSERT INTO agent_messages (session, position, body) VALUES ($1, 0, '{"role":"user"}')`, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddSteer(t.Context(), db.AddSteerParams{RunID: second.ID, Text: "later"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := func() int {
+		t.Helper()
+		var n int
+		if err := s.pool.QueryRow(t.Context(),
+			`SELECT (SELECT count(*) FROM agent_messages WHERE session = $1) + (SELECT count(*) FROM agent_steers WHERE session = $1)`,
+			key).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	if _, err := s.pool.Exec(t.Context(), `DELETE FROM runs WHERE id = $1`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := rows(); n != 2 {
+		t.Fatalf("%d rows of the transcript after one of its two runs went; want both kept", n)
+	}
+	if _, err := s.pool.Exec(t.Context(), `DELETE FROM runs WHERE id = $1`, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := rows(); n != 0 {
+		t.Errorf("%d rows of the transcript left after its last run went", n)
 	}
 }

@@ -123,6 +123,7 @@ apps/brain/
     delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run
     events.go          what a run does, as run_events, within its token budget; a builder's text, gathered
     execute.go         one run: claim, heartbeat, run to the end, finish
+    transcript.go      where a run starts in its session's transcript, or resumes, and its open calls closed
     graphtool.go       graph(query, kinds, hops), bound to every run
     hub.go             the hub: the built-in orchestrator, or the team's chosen agent, reaching the whole team
     builder.go         the builder: team(), find_mcp_servers(), list_mcp_tools() and propose(), nothing that writes; its prompt and its turns

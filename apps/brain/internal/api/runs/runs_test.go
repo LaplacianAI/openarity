@@ -37,6 +37,7 @@ type fakeStore struct {
 	mu sync.Mutex
 
 	agents   map[string]db.Agent
+	working  *db.Run // a run already working in the session a start names
 	sessions map[uuid.UUID]db.Session
 	runs     map[uuid.UUID]db.Run
 	events   map[uuid.UUID][]db.RunEvent
@@ -280,6 +281,10 @@ func (s *fakeStore) StartRun(_ context.Context, arg StartArgs) (db.Run, error) {
 	s.started = append(s.started, arg)
 	if s.startErr != nil {
 		return db.Run{}, s.startErr
+	}
+	// A run already working in the session takes the input as a steer.
+	if s.working != nil {
+		return *s.working, nil
 	}
 	session := uuid.New()
 	if arg.SessionID != nil {
@@ -1703,5 +1708,39 @@ func TestARunPageWhoseRepliesCannotBeReadFails(t *testing.T) {
 
 	if rec := w.call(t, w.me, http.MethodGet, w.runs(), nil); rec.Code != http.StatusInternalServerError {
 		t.Errorf("status %d, want 500", rec.Code)
+	}
+}
+
+// A message to a busy session goes to the run working there: 200 with that
+// run, not 202 with a new one, and nothing more is queued.
+func TestStartingARunInABusySessionAnswersWithTheRunItSteered(t *testing.T) {
+	w := newWorld(t)
+	group := w.session("group", nil)
+	working := db.Run{
+		ID: uuid.New(), RootRunID: uuid.New(), TeamID: w.team, SessionID: group, AgentName: "triage",
+		Status: "running", Input: "audit the exports", CreatedAt: time.Now(),
+	}
+	working.RootRunID = working.ID
+	w.store.working = &working
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), start("and the imports", &group))
+
+	if rec.Code != http.StatusOK || decodeRun(t, rec).ID != working.ID {
+		t.Fatalf("status %d (%s), want 200 with the run already working", rec.Code, rec.Body)
+	}
+	if len(w.starter.ids) != 0 {
+		t.Errorf("enqueued %v; a steer starts nothing", w.starter.ids)
+	}
+}
+
+func TestARunCannotBeStartedInAChannelsSession(t *testing.T) {
+	w := newWorld(t)
+	group := w.session("group", nil)
+	w.store.startErr = ErrChannelSession
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), start("hello", &group))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "channel") {
+		t.Fatalf("status %d (%s), want 409 naming the channel", rec.Code, rec.Body)
 	}
 }

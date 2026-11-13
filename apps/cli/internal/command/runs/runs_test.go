@@ -141,6 +141,21 @@ func TestStartWithASessionRunsInIt(t *testing.T) {
 	}
 }
 
+// A run already working in the session takes the input as a message: the
+// brain answers 200 with that run, and oa says it was steered, not started.
+func TestStartInABusySessionSaysTheInputWentToTheRunWorkingThere(t *testing.T) {
+	clitest.Routes(t, with("POST /teams/{id}/runs", clitest.Reply{Status: http.StatusOK, Body: queuedRun}))
+
+	out, err := clitest.Execute(t, commands, "runs", "start", "platform", "triage", "and the imports",
+		"--session", sessionID)
+	if err != nil {
+		t.Fatalf("runs start into a busy session: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "steered") || strings.Contains(out, "started") {
+		t.Errorf("the output says %q; want it steered into the run, not started", out)
+	}
+}
+
 // A long task lives in a file, and argv is the wrong place for one.
 func TestStartReadsTheInputFromStdin(t *testing.T) {
 	script := clitest.Routes(t, with("POST /teams/{id}/runs", clitest.Reply{Status: http.StatusAccepted, Body: queuedRun}))

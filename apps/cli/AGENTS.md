@@ -70,7 +70,7 @@ apps/cli/
   internal/cli/
     root.go            the root command and its persistent flags
     options.go         Options — the whole surface a command may reach
-    response.go        Result, Created, Accepted, NoContent, Needs, APIError: a call becomes a value
+    response.go        Result, Created, Accepted, Started, NoContent, Needs, APIError: a call becomes a value
     page.go            Paging and PrintPage: a page becomes a table
     lookup.go          ResolveTeam, ResolveDeletedTeam, ResolveMember, ResolveChannel,
                        ResolveSkill, ResolveAgent, ResolveMCPServer: a name becomes an id

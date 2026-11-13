@@ -18,24 +18,6 @@ JOIN sessions s ON s.id = r.session_id
 WHERE r.id = sqlc.arg('run_id')::uuid AND r.reply_to_channel AND s.channel_id IS NOT NULL
 RETURNING *;
 
--- What was said in a conversation before a moment, newest first: the messages
--- and the answers sent back. An apology is left out; it says nothing the model
--- needs. Who wrote a message is the bound user's email, the only name stored.
--- name: ListSessionTurns :many
-SELECT kind, text, at, author FROM (
-    SELECT 'message'::text AS kind, m.text, m.received_at AS at, u.email AS author
-    FROM messages m
-    LEFT JOIN users u ON u.id = m.user_id
-    WHERE m.session_id = sqlc.arg('session_id')::uuid
-    UNION ALL
-    SELECT 'reply'::text, rp.text, rp.created_at, NULL::text
-    FROM replies rp
-    WHERE rp.session_id = sqlc.arg('session_id')::uuid AND rp.kind = 'answer'
-) turns
-WHERE at < sqlc.arg('before')::timestamptz
-ORDER BY at DESC
-LIMIT sqlc.arg('turns')::int;
-
 -- The replies due now, at most one per conversation: the oldest still pending.
 -- A conversation is read in order, so a reply waiting to be retried holds back
 -- the ones after it, and only those.

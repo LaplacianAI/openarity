@@ -505,7 +505,7 @@ func TestARunStartedThroughTheAPIIsExecutedAndStreamed(t *testing.T) {
 	// Deleting the team takes everything the run left, including the
 	// transcript, which the SDK keys by a string no foreign key can follow.
 	stopWorker()
-	transcript := b.count(t, `SELECT count(*) FROM agent_messages WHERE session = $1`, r.ID.String())
+	transcript := b.count(t, `SELECT count(*) FROM agent_messages WHERE session = (SELECT transcript FROM runs WHERE id = $1)`, r.ID)
 	if transcript == 0 {
 		t.Fatal("the run left no transcript, so its deletion proves nothing")
 	}

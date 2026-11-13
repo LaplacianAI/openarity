@@ -3331,6 +3331,15 @@ type ClientInterface interface {
 	// `group` or `thread` session of this team, their own `direct` one, or
 	// any with `session:read_all`.
 	//
+	// A session is one conversation with one transcript: each run in it
+	// continues what the runs before it did, their tool calls and results
+	// included, compacted as it grows. So one run works in a session at a
+	// time. When one is already working there, the input is handed to it as
+	// a message, as a person's in a chat is, and the answer is that run,
+	// with 200 rather than 202. A message that arrives after its last model
+	// call starts the next run when it finishes. A session that belongs to
+	// a channel takes runs only from its channel.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
@@ -3354,6 +3363,15 @@ type ClientInterface interface {
 	// by the caller. A named session must be one the caller can read: a
 	// `group` or `thread` session of this team, their own `direct` one, or
 	// any with `session:read_all`.
+	//
+	// A session is one conversation with one transcript: each run in it
+	// continues what the runs before it did, their tool calls and results
+	// included, compacted as it grows. So one run works in a session at a
+	// time. When one is already working there, the input is handed to it as
+	// a message, as a person's in a chat is, and the answer is that run,
+	// with 200 rather than 202. A message that arrives after its last model
+	// call starts the next run when it finishes. A session that belongs to
+	// a channel takes runs only from its channel.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5160,6 +5178,15 @@ func (c *Client) ListTeamRuns(ctx context.Context, id TeamID, params *ListTeamRu
 // `group` or `thread` session of this team, their own `direct` one, or
 // any with `session:read_all`.
 //
+// A session is one conversation with one transcript: each run in it
+// continues what the runs before it did, their tool calls and results
+// included, compacted as it grows. So one run works in a session at a
+// time. When one is already working there, the input is handed to it as
+// a message, as a person's in a chat is, and the answer is that run,
+// with 200 rather than 202. A message that arrives after its last model
+// call starts the next run when it finishes. A session that belongs to
+// a channel takes runs only from its channel.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
@@ -5193,6 +5220,15 @@ func (c *Client) StartRunWithBody(ctx context.Context, id TeamID, contentType st
 // by the caller. A named session must be one the caller can read: a
 // `group` or `thread` session of this team, their own `direct` one, or
 // any with `session:read_all`.
+//
+// A session is one conversation with one transcript: each run in it
+// continues what the runs before it did, their tool calls and results
+// included, compacted as it grows. So one run works in a session at a
+// time. When one is already working there, the input is handed to it as
+// a message, as a person's in a chat is, and the answer is that run,
+// with 200 rather than 202. A message that arrives after its last model
+// call starts the next run when it finishes. A session that belongs to
+// a channel takes runs only from its channel.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10432,6 +10468,15 @@ type ClientWithResponsesInterface interface {
 	// `group` or `thread` session of this team, their own `direct` one, or
 	// any with `session:read_all`.
 	//
+	// A session is one conversation with one transcript: each run in it
+	// continues what the runs before it did, their tool calls and results
+	// included, compacted as it grows. So one run works in a session at a
+	// time. When one is already working there, the input is handed to it as
+	// a message, as a person's in a chat is, and the answer is that run,
+	// with 200 rather than 202. A message that arrives after its last model
+	// call starts the next run when it finishes. A session that belongs to
+	// a channel takes runs only from its channel.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
@@ -10455,6 +10500,15 @@ type ClientWithResponsesInterface interface {
 	// by the caller. A named session must be one the caller can read: a
 	// `group` or `thread` session of this team, their own `direct` one, or
 	// any with `session:read_all`.
+	//
+	// A session is one conversation with one transcript: each run in it
+	// continues what the runs before it did, their tool calls and results
+	// included, compacted as it grows. So one run works in a session at a
+	// time. When one is already working there, the input is handed to it as
+	// a message, as a person's in a chat is, and the answer is that run,
+	// with 200 rather than 202. A message that arrives after its last model
+	// call starts the next run when it finishes. A session that belongs to
+	// a channel takes runs only from its channel.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12928,10 +12982,17 @@ type StartRunResponse401Headers struct {
 type StartRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Run
 	// JSON202 the response for an HTTP 202 `application/json` response
 	JSON202 *Run
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *StartRunResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StartRunResponse) GetJSON200() *Run {
+	return r.JSON200
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -15271,6 +15332,15 @@ func (c *ClientWithResponses) ListTeamRunsWithResponse(ctx context.Context, id T
 // `group` or `thread` session of this team, their own `direct` one, or
 // any with `session:read_all`.
 //
+// A session is one conversation with one transcript: each run in it
+// continues what the runs before it did, their tool calls and results
+// included, compacted as it grows. So one run works in a session at a
+// time. When one is already working there, the input is handed to it as
+// a message, as a person's in a chat is, and the answer is that run,
+// with 200 rather than 202. A message that arrives after its last model
+// call starts the next run when it finishes. A session that belongs to
+// a channel takes runs only from its channel.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /teams/{id}/runs (the `StartRun` operationId).
@@ -15300,6 +15370,15 @@ func (c *ClientWithResponses) StartRunWithBodyWithResponse(ctx context.Context, 
 // by the caller. A named session must be one the caller can read: a
 // `group` or `thread` session of this team, their own `direct` one, or
 // any with `session:read_all`.
+//
+// A session is one conversation with one transcript: each run in it
+// continues what the runs before it did, their tool calls and results
+// included, compacted as it grows. So one run works in a session at a
+// time. When one is already working there, the input is handed to it as
+// a message, as a person's in a chat is, and the answer is that run,
+// with 200 rather than 202. A message that arrives after its last model
+// call starts the next run when it finishes. A session that belongs to
+// a channel takes runs only from its channel.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -17503,6 +17582,13 @@ func ParseStartRunResponse(rsp *http.Response) (*StartRunResponse, error) {
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Run
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
 		var dest Run
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

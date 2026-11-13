@@ -43,6 +43,12 @@ type (
 		GetBody() []byte
 		StatusCode() int
 	}
+	startedResponse[T any] interface {
+		GetJSON200() *T
+		GetJSON202() *T
+		GetBody() []byte
+		StatusCode() int
+	}
 	emptyResponse interface {
 		GetBody() []byte
 		StatusCode() int
@@ -77,6 +83,21 @@ func Accepted[T any](res acceptedResponse[T], err error) (*T, error) {
 		return body, nil
 	}
 	return nil, APIError(res.StatusCode(), res.GetBody())
+}
+
+// Started unwraps a start that either queued a new run (202) or handed its
+// input to the run already working in the session (200); steered says which.
+func Started[T any](res startedResponse[T], err error) (body *T, steered bool, _ error) {
+	if err != nil {
+		return nil, false, err
+	}
+	if body := res.GetJSON202(); body != nil {
+		return body, false, nil
+	}
+	if body := res.GetJSON200(); body != nil {
+		return body, true, nil
+	}
+	return nil, false, APIError(res.StatusCode(), res.GetBody())
 }
 
 func NoContent(res emptyResponse, err error) error {
