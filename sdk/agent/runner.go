@@ -286,13 +286,21 @@ func refusingAfterWrapUp(tools []Tool, box *steerBox) []Tool {
 	}
 	out := make([]Tool, len(tools))
 	for i, t := range tools {
-		invoke := t.Invoke
+		invoke, result := t.Invoke, t.Result
 		if invoke != nil {
 			t.Invoke = func(ctx context.Context, args json.RawMessage) (string, error) {
 				if text, wrapped := box.refusal(); wrapped {
 					return "", errors.New(text)
 				}
 				return invoke(ctx, args)
+			}
+		}
+		if result != nil {
+			t.Result = func(ctx context.Context, args json.RawMessage) (ToolResult, error) {
+				if text, wrapped := box.refusal(); wrapped {
+					return ToolResult{}, errors.New(text)
+				}
+				return result(ctx, args)
 			}
 		}
 		out[i] = t

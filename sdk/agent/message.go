@@ -70,6 +70,13 @@ type Blob struct {
 	MediaType string `json:"media_type"`
 	Name      string `json:"name,omitempty"`
 	Data      []byte `json:"data,omitempty"`
+	// Ref names bytes the caller keeps elsewhere, such as an encrypted
+	// object store, so a saved transcript holds the name rather than the
+	// bytes. The caller fills Data before each request, typically with a
+	// ModelClient that wraps the real one; a model client refuses a blob that
+	// still has no Data, so an unresolved file never reaches a model as an
+	// empty one.
+	Ref string `json:"ref,omitempty"`
 }
 
 type ToolCall struct {

@@ -307,3 +307,36 @@ func TestAChunkCarryingBothSaysBoth(t *testing.T) {
 		t.Errorf("text %q, reasoning %q", text, reasoning)
 	}
 }
+
+// A file named by a reference and never loaded is refused before the request,
+// rather than sent to the model as an empty file.
+func TestAFileThatWasNeverLoadedIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for name, blob := range map[string]*agent.Blob{
+		"a reference":    {MediaType: "image/png", Name: "screen.png", Ref: "attachment:a2"},
+		"nothing at all": {MediaType: "application/pdf", Name: "report.pdf"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			c, sent := serve(t, answer(t, completion("ok", nil, "stop")))
+			kind := agent.ContentImage
+			if blob.MediaType == "application/pdf" {
+				kind = agent.ContentFile
+			}
+			_, err := c.Complete(t.Context(), agent.Request{
+				Model:    agent.ModelRef{Name: "probe"},
+				Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: kind, Blob: blob}}}},
+			})
+			if err == nil || !strings.Contains(err.Error(), blob.Name) {
+				t.Fatalf("Complete = %v, want a refusal naming the file", err)
+			}
+			if blob.Ref != "" && !strings.Contains(err.Error(), blob.Ref) {
+				t.Errorf("the refusal does not name the reference: %v", err)
+			}
+			if len(sent()) != 0 {
+				t.Error("the request was sent anyway")
+			}
+		})
+	}
+}

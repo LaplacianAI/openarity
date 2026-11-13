@@ -264,6 +264,29 @@ func Run(t *testing.T, open func(t *testing.T) agent.Store) {
 	// Content and ToolCalls are slices inside a Message, and Blob.Data and
 	// Arguments are slices inside those. A store that copies one level down
 	// protects a sentence and silently shares an attachment.
+	t.Run("a file named by reference comes back as its reference, with no bytes", func(t *testing.T) {
+		store := open(t)
+		msgs := []agent.Message{{
+			Role: agent.RoleUser,
+			Content: []agent.Content{{
+				Type: agent.ContentImage,
+				Blob: &agent.Blob{MediaType: "image/png", Name: "screen.png", Ref: "attachment:a2"},
+			}},
+		}}
+		if err := store.Save(t.Context(), "s1", msgs); err != nil {
+			t.Fatalf("Save() = %v", err)
+		}
+		back, err := store.Messages(t.Context(), "s1")
+		if err != nil {
+			t.Fatalf("Messages() = %v", err)
+		}
+		blob := back[0].Content[0].Blob
+		if blob == nil || blob.Ref != "attachment:a2" || blob.Name != "screen.png" || len(blob.Data) != 0 {
+			t.Fatalf("the reference came back as %+v; a caller that keeps its files elsewhere\n"+
+				"resolves them by it on every request", blob)
+		}
+	})
+
 	t.Run("an attachment is not shared with the caller", func(t *testing.T) {
 		store := open(t)
 		data := []byte{0x25, 0x50, 0x44, 0x46}

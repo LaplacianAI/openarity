@@ -405,6 +405,9 @@ func userParts(blocks []agent.Content) ([]openai.ChatCompletionContentPartUnionP
 			if b.Blob == nil {
 				return nil, fmt.Errorf("an image block carried no blob")
 			}
+			if err := loaded(b.Blob); err != nil {
+				return nil, err
+			}
 			parts = append(parts, openai.ChatCompletionContentPartUnionParam{
 				OfImageURL: &openai.ChatCompletionContentPartImageParam{
 					ImageURL: openai.ChatCompletionContentPartImageImageURLParam{URL: dataURI(b.Blob)},
@@ -414,6 +417,9 @@ func userParts(blocks []agent.Content) ([]openai.ChatCompletionContentPartUnionP
 		case agent.ContentFile:
 			if b.Blob == nil {
 				return nil, fmt.Errorf("a file block carried no blob")
+			}
+			if err := loaded(b.Blob); err != nil {
+				return nil, err
 			}
 			parts = append(parts, openai.ChatCompletionContentPartUnionParam{
 				OfFile: &openai.ChatCompletionContentPartFileParam{
@@ -430,6 +436,18 @@ func userParts(blocks []agent.Content) ([]openai.ChatCompletionContentPartUnionP
 	}
 
 	return parts, nil
+}
+
+// loaded refuses a blob with no bytes: one whose Ref was never resolved, sent
+// as it is, would reach the model as an empty file and say nothing about why.
+func loaded(b *agent.Blob) error {
+	if len(b.Data) > 0 {
+		return nil
+	}
+	if b.Ref != "" {
+		return fmt.Errorf("the file %q (%s) was never loaded: fill its Data before the request", b.Name, b.Ref)
+	}
+	return fmt.Errorf("the file %q has no bytes", b.Name)
 }
 
 // dataURI is how bytes reach a provider that only accepts addresses. Base64
