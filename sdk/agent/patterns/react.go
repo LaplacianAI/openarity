@@ -59,11 +59,13 @@ func (l react) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 			return result, nil
 		}
 
+		attached := map[string][]agent.Content{}
 		for _, call := range resp.Message.ToolCalls {
 			in.Emit(ctx, agent.ToolCallEvent{ID: call.ID, Name: call.Name, Arguments: call.Arguments})
 
 			started := time.Now()
-			out, failure := invoke(ctx, byName, call)
+			out, failure, attach := invoke(ctx, byName, call)
+			attached[call.ID] = attach
 
 			if ctx.Err() != nil {
 				return result, ctx.Err()
@@ -79,6 +81,12 @@ func (l react) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 				ToolCallID: call.ID,
 				Content:    []agent.Content{{Type: agent.ContentText, Text: out}},
 			})
+			result.Messages = msgs
+		}
+		// After every result: a provider wants each call answered before
+		// anything else is said.
+		if files, ok := agent.Attached(attached, resp.Message.ToolCalls); ok {
+			msgs = append(msgs, files)
 			result.Messages = msgs
 		}
 	}
@@ -143,21 +151,21 @@ func (l react) say(ctx context.Context, in agent.Input, text string) {
 	}
 }
 
-func invoke(ctx context.Context, byName map[string]agent.Tool, call agent.ToolCall) (out, failure string) {
+func invoke(ctx context.Context, byName map[string]agent.Tool, call agent.ToolCall) (out, failure string, attach []agent.Content) {
 	t, ok := byName[call.Name]
 	if !ok {
-		return fmt.Sprintf("there is no tool named %q available in this step", call.Name), "unknown tool"
+		return fmt.Sprintf("there is no tool named %q available in this step", call.Name), "unknown tool", nil
 	}
 	if !json.Valid(call.Arguments) {
-		return "the arguments were not valid JSON; call the tool again with corrected arguments", "invalid arguments"
-	}
-	if t.Invoke == nil {
-		return fmt.Sprintf("the tool %q cannot be called here", call.Name), "tool has no implementation"
+		return "the arguments were not valid JSON; call the tool again with corrected arguments", "invalid arguments", nil
 	}
 
-	result, err := t.Invoke(agent.WithToolCallID(ctx, call.ID), call.Arguments)
-	if err != nil {
-		return err.Error(), err.Error()
+	result, callable, err := t.Call(agent.WithToolCallID(ctx, call.ID), call.Arguments)
+	if !callable {
+		return fmt.Sprintf("the tool %q cannot be called here", call.Name), "tool has no implementation", nil
 	}
-	return result, ""
+	if err != nil {
+		return err.Error(), err.Error(), nil
+	}
+	return result.Output, "", result.Attach
 }

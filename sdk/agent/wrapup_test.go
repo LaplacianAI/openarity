@@ -121,3 +121,24 @@ func TestWrappingUpAFinishedRunSaysSo(t *testing.T) {
 		t.Fatalf("WrapUp() = %v, want ErrRunFinished", err)
 	}
 }
+
+// A tool that hands back files is stopped as surely as one that returns text.
+func TestAToolWithFilesRefusesOnceAWrapUpIsAsked(t *testing.T) {
+	box := &steerBox{}
+	ran := 0
+	tools := refusingAfterWrapUp([]Tool{{Name: "read_attachment", Result: func(context.Context, json.RawMessage) (ToolResult, error) {
+		ran++
+		return ToolResult{Output: "screen.png"}, nil
+	}}}, box)
+
+	if r, _, err := tools[0].Call(t.Context(), nil); err != nil || r.Output != "screen.png" {
+		t.Fatalf("before a wrap-up the tool returned %+v, %v", r, err)
+	}
+	_ = box.wrap(wrapText)
+	if _, _, err := tools[0].Call(t.Context(), nil); err == nil || err.Error() != wrapText {
+		t.Fatalf("after a wrap-up the tool returned %v, want the wrap-up's words", err)
+	}
+	if ran != 1 {
+		t.Fatalf("the tool ran %d times; after a wrap-up it must not run", ran)
+	}
+}

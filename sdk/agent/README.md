@@ -334,6 +334,33 @@ agent.Skill{
 Nothing runs a skill's scripts. Where a resource comes from — a file, a row, a
 bucket — is the caller's, as a tool's credentials are.
 
+### Tools that return files
+
+A tool that hands the model a file, such as an image it read, sets `Result`
+instead of `Invoke`:
+
+```go
+agent.Tool{
+	Name:   "read_attachment",
+	Result: func(ctx context.Context, args json.RawMessage) (agent.ToolResult, error) {
+		return agent.ToolResult{Output: "screen.png, 300 KB", Attach: []agent.Content{shot}}, nil
+	},
+}
+```
+
+`Output` answers the call. `Attach` reaches the model in a user message right
+after the turn's tool results, each file named by the call that attached it:
+the chat completions API takes only text in a tool message, and a provider
+wants every call answered before anything else is said.
+
+### Files kept elsewhere
+
+A `Blob` may carry a `Ref` in place of its bytes, so a saved transcript holds a
+name rather than the file: an attachment encrypted in an object store stays
+there. Fill `Data` before each request, typically with a `ModelClient` that
+wraps the real one and resolves each `Ref`. The model client refuses a blob
+with no bytes, so a file nobody loaded never reaches a model as an empty one.
+
 ## Models
 
 `models/openaicompat` speaks OpenAI chat completions, so it reaches LiteLLM,

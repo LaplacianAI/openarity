@@ -49,7 +49,7 @@ func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 
 	msgs := append(slices.Clone(in.Messages), resp.Message)
 
-	evidence, err := l.execute(ctx, in, plan)
+	evidence, files, err := l.execute(ctx, in, plan)
 	if err != nil {
 		result.Messages = msgs
 		return result, err
@@ -60,6 +60,11 @@ func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 		ToolCallID: call.ID,
 		Content:    []agent.Content{{Type: agent.ContentText, Text: evidence}},
 	})
+	// What the steps attached reaches the solver after the evidence, as a
+	// turn's files do in ReAct.
+	if attached, ok := agent.Attached(files.byCall, files.order); ok {
+		msgs = append(msgs, attached)
+	}
 
 	in.Emit(ctx, agent.StepEvent{Step: 2})
 	answer, err := l.solve(ctx, in, msgs)
@@ -128,7 +133,14 @@ func (l rewoo) plan(ctx context.Context, in agent.Input) ([]step, agent.ToolCall
 	return submitted.Steps, call, resp, nil
 }
 
-func (l rewoo) execute(ctx context.Context, in agent.Input, plan []step) (string, error) {
+// stepFiles are the files a plan's steps attached, by step.
+type stepFiles struct {
+	byCall map[string][]agent.Content
+	order  []agent.ToolCall
+}
+
+func (l rewoo) execute(ctx context.Context, in agent.Input, plan []step) (string, stepFiles, error) {
+	files := stepFiles{byCall: map[string][]agent.Content{}}
 	byName := make(map[string]agent.Tool, len(in.Spec.Tools))
 	for _, t := range in.Spec.Tools {
 		byName[t.Name] = t
@@ -155,10 +167,14 @@ func (l rewoo) execute(ctx context.Context, in agent.Input, plan []step) (string
 		in.Emit(ctx, agent.ToolCallEvent{ID: id, Name: s.Tool, Arguments: args})
 
 		started := time.Now()
-		out, failure := invoke(ctx, byName, call)
+		out, failure, attach := invoke(ctx, byName, call)
+		if len(attach) > 0 {
+			files.byCall[id] = attach
+			files.order = append(files.order, agent.ToolCall{ID: id, Name: s.Tool})
+		}
 
 		if ctx.Err() != nil {
-			return "", ctx.Err()
+			return "", files, ctx.Err()
 		}
 
 		in.Emit(ctx, agent.ToolResultEvent{
@@ -170,7 +186,7 @@ func (l rewoo) execute(ctx context.Context, in agent.Input, plan []step) (string
 		record(&b, id, s.Tool, args, out)
 	}
 
-	return b.String(), nil
+	return b.String(), files, nil
 }
 
 func record(b *strings.Builder, id, name string, args json.RawMessage, out string) {
