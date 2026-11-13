@@ -55,9 +55,9 @@ func (p *Provider) StartDevice(ctx context.Context) (*DeviceAuth, error) {
 		if oerr.Code == "invalid_scope" {
 			return nil, fmt.Errorf(
 				"the identity provider will not grant %q to this client — "+
-					"check the scopes it allows: %w", deviceScope, oerr)
+					"check the scopes it allows: %w", deviceScope, *oerr)
 		}
-		return nil, fmt.Errorf("the identity provider refused the login request: %w", oerr)
+		return nil, fmt.Errorf("the identity provider refused the login request: %w", *oerr)
 	}
 
 	if body.DeviceCode == "" || body.UserCode == "" || body.VerificationURI == "" {
@@ -114,7 +114,7 @@ func (p *Provider) WaitForToken(ctx context.Context, device *DeviceAuth) (*Token
 		case "expired_token":
 			return nil, errors.New("the code expired before it was approved — run `oa login` again")
 		default:
-			return nil, fmt.Errorf("the identity provider ended the login: %w", oerr)
+			return nil, fmt.Errorf("the identity provider ended the login: %w", *oerr)
 		}
 	}
 }

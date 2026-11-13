@@ -390,7 +390,10 @@ func TestReadinessFollowsTheSecretStore(t *testing.T) {
 
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Errorf("run after a clean shutdown = %v, want nil", err)
+		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("run never returned after the context was cancelled")
 	}

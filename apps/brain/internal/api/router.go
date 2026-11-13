@@ -61,10 +61,11 @@ func (r *Router) Patterns() []string {
 	return out
 }
 
-func (r *Router) Get(pattern string, h http.HandlerFunc)    { r.handle(http.MethodGet, pattern, h) }
-func (r *Router) Post(pattern string, h http.HandlerFunc)   { r.handle(http.MethodPost, pattern, h) }
-func (r *Router) Put(pattern string, h http.HandlerFunc)    { r.handle(http.MethodPut, pattern, h) }
-func (r *Router) Patch(pattern string, h http.HandlerFunc)  { r.handle(http.MethodPatch, pattern, h) }
+func (r *Router) Get(pattern string, h http.HandlerFunc)   { r.handle(http.MethodGet, pattern, h) }
+func (r *Router) Post(pattern string, h http.HandlerFunc)  { r.handle(http.MethodPost, pattern, h) }
+func (r *Router) Put(pattern string, h http.HandlerFunc)   { r.handle(http.MethodPut, pattern, h) }
+func (r *Router) Patch(pattern string, h http.HandlerFunc) { r.handle(http.MethodPatch, pattern, h) }
+
 func (r *Router) Delete(pattern string, h http.HandlerFunc) { r.handle(http.MethodDelete, pattern, h) }
 
 func (r *Router) handle(method, pattern string, h http.HandlerFunc) {

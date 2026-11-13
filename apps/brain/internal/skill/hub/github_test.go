@@ -657,7 +657,16 @@ func TestARepositoryTooLargeToUnpackIsRefusedByName(t *testing.T) {
 
 	f := newFakeGitHub(t, nil)
 	f.serve = streamBig(gzip.BestSpeed, maxScannedBytes+(8<<20))
-	_, _, err := f.fetch(t, "github:acme/skills/skills/pdf@main", "")
+	src, err := ParseGitHub("github:acme/skills/skills/pdf@main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deflating and inflating 264 MiB under the race detector takes about
+	// 20s alone and more beside the rest of the suite; the cap is what is
+	// under test, not the fetch timeout, which client_test pins at 30s.
+	g := f.client("")
+	g.Client.Timeout = 3 * time.Minute
+	_, _, err = g.Fetch(t.Context(), src)
 	if err == nil || !strings.Contains(err.Error(), "over 256 MiB unpacked") {
 		t.Errorf("err = %v", err)
 	}

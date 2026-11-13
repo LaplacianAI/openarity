@@ -1,6 +1,6 @@
 module github.com/LaplacianAI/openarity/apps/cli
 
-go 1.26.11
+go 1.27.4
 
 require (
 	github.com/charmbracelet/lipgloss v1.1.0

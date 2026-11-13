@@ -15,7 +15,7 @@ COVER_MIN     := 95
 
 # Tool versions, matching apps/brain. CI runs `make tools`, so these are the
 # only place a version is written down.
-GOLANGCI_VERSION    := v2.12.2
+GOLANGCI_VERSION    := v2.15.0
 GOVULNCHECK_VERSION := latest
 
 # examples is demonstration code, not library code. Counting it measures how

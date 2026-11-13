@@ -70,7 +70,10 @@ formatters:
     - gci # deterministic import grouping and order
   settings:
     gofumpt:
-      extra-rules: true
+      # What extra-rules meant before it was split: adjacent parameters of
+      # one type share it. clothe-returns, the other half, is not taken up.
+      extra:
+        group-params: true
     gci:
       sections:
         - standard # stdlib

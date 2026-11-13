@@ -122,9 +122,11 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-ctx.Done():
 	}
 
+	// The listener still running when the other failed, or when the context
+	// ended, returns nil once shut down; anything else it says is kept.
 	err := errors.Join(first, s.shutdown())
 	for range pending {
-		<-errs
+		err = errors.Join(err, <-errs)
 	}
 	return err
 }
