@@ -327,7 +327,7 @@ result, err := runner.Run(ctx, spec, msgs, endpoint, nil)
 memory is the caller's slice — the library persists nothing. The last argument
 is a `chan<- agent.Event`; pass `nil` if you do not want to watch the run.
 
-`go get` resolves to `v0.2.0`. It is a `v0`, so nothing about the API is
+`go get` resolves to `v0.3.0`. It is a `v0`, so nothing about the API is
 promised yet — pin the version rather than tracking `@latest`, and read what
 changed before moving.
 

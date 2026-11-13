@@ -14,7 +14,7 @@ which a `make check` step enforces rather than assumes.
 
 !!! warning
 
-    `go get` resolves to `v0.2.0`. It is a `v0`, so nothing about the API is
+    `go get` resolves to `v0.3.0`. It is a `v0`, so nothing about the API is
     promised yet — pin the version rather than tracking `@latest`, and read what
     changed before moving.
 
