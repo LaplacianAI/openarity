@@ -6,7 +6,7 @@ require (
 	codeberg.org/readeck/go-readability/v2 v2.1.3
 	github.com/FalkorDB/falkordb-go/v2 v2.1.0
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
-	github.com/LaplacianAI/openarity/sdk/agent v0.3.0
+	github.com/LaplacianAI/openarity/sdk/agent v0.4.0
 	github.com/LaplacianAI/openarity/sdk/stream v0.0.0-00010101000000-000000000000
 	github.com/aws/aws-sdk-go-v2 v1.44.0
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.39

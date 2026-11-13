@@ -77,15 +77,25 @@ const (
 	textFlushEvery = 250 * time.Millisecond
 )
 
-// textPayload is a piece of the model's text, in the order it was written.
+// textPayload is a piece of the model's text or reasoning, in the order it
+// was written, and the step whose model call wrote it.
 type textPayload struct {
 	Text      string `json:"text"`
 	Truncated bool   `json:"truncated"`
+	Step      int    `json:"step,omitempty"`
 }
 
+// The kinds a run's gathered writing is recorded as.
+const (
+	kindText      = "text"
+	kindReasoning = "reasoning"
+)
+
 // record writes a run's events in order, as its only writer. When streams is
-// set, the model's text is written too, gathered into text events; it is
-// flushed before any other event, so text and the call it led to stay in order.
+// set, the model's text and reasoning are written too, each gathered into
+// events of its own kind; what is gathered is flushed before any other event,
+// and before the other kind, so the two never share a row and each stays in
+// order with the call it led to.
 func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, lines *softLines, streams bool,
 	events <-chan agent.Event, notes <-chan note, stop context.CancelCauseFunc,
 ) <-chan struct{} {
@@ -106,16 +116,16 @@ func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, l
 					r.flush()
 					return
 				}
-				if t, isText := e.(agent.TextEvent); isText {
+				if kind, delta, writing := writingOf(e); writing {
 					if streams {
-						r.text.WriteString(t.Delta)
-						if r.text.Len() >= textFlushBytes {
-							r.flush()
-						}
+						r.gather(kind, delta)
 					}
 					continue
 				}
 				r.flush()
+				if s, isStep := e.(agent.StepEvent); isStep {
+					r.step = s.Step
+				}
 				if !r.lost {
 					r.failed(recordOne(ctx, s, runID, worker, lines, e))
 				}
@@ -138,10 +148,34 @@ type recorder struct {
 	worker string
 	stop   context.CancelCauseFunc
 	text   strings.Builder
+	kind   string // what text holds: kindText or kindReasoning
+	step   int    // the step the model call writing is in
 	lost   bool
 }
 
-// flush writes the text gathered so far, if any.
+// writingOf is the kind and piece of an event that is the model writing.
+func writingOf(e agent.Event) (kind, delta string, ok bool) {
+	switch e := e.(type) {
+	case agent.TextEvent:
+		return kindText, e.Delta, true
+	case agent.ReasoningEvent:
+		return kindReasoning, e.Delta, true
+	}
+	return "", "", false
+}
+
+func (r *recorder) gather(kind, delta string) {
+	if kind != r.kind {
+		r.flush()
+		r.kind = kind
+	}
+	r.text.WriteString(delta)
+	if r.text.Len() >= textFlushBytes {
+		r.flush()
+	}
+}
+
+// flush writes what is gathered so far, if anything.
 func (r *recorder) flush() {
 	if r.text.Len() == 0 {
 		return
@@ -151,7 +185,7 @@ func (r *recorder) flush() {
 	if r.lost {
 		return
 	}
-	r.failed(appendEvent(r.ctx, r.s, r.runID, r.worker, "text", textPayload{Text: text, Truncated: cut}))
+	r.failed(appendEvent(r.ctx, r.s, r.runID, r.worker, r.kind, textPayload{Text: text, Truncated: cut, Step: r.step}))
 }
 
 // failed stops the run on a write that failed; a run another worker holds

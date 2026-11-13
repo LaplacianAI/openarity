@@ -123,7 +123,7 @@ apps/brain/
     build.go           the Spec, its granted MCP tools and skills, the one settings read; Patterns and Loops
     compaction.go      when a run compacts, and the budget's soft lines (compact, then wrap up)
     delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run
-    events.go          what a run does, as run_events, within its token budget; a builder's text, gathered
+    events.go          what a run does, as run_events, within its token budget; its text and reasoning, gathered
     execute.go         one run: claim, heartbeat, run to the end, finish
     transcript.go      where a run starts in its session's transcript, or resumes, and its open calls closed
     graphtool.go       graph(query, kinds, hops), bound to every run

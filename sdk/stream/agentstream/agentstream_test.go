@@ -16,6 +16,7 @@ func TestConvert(t *testing.T) {
 		want stream.Event
 	}{
 		{agent.TextEvent{Delta: "Hel"}, stream.TextMessageChunk{Delta: "Hel"}},
+		{agent.ReasoningEvent{Delta: "Hmm"}, stream.ReasoningChunk{Delta: "Hmm"}},
 		{
 			agent.ToolCallEvent{ID: "c1", Name: "search", Arguments: json.RawMessage(`{"q":"x"}`)},
 			stream.ToolCallChunk{ToolCallID: "c1", Name: "search", Arguments: `{"q":"x"}`},
@@ -62,5 +63,36 @@ func TestPipeAppendsInOrderUntilClosed(t *testing.T) {
 	if len(got) != 2 || got[0].RunID != "r1" || got[0].Event.Kind() != stream.KindStepStarted ||
 		got[1].Event.Kind() != stream.KindTextMessageChunk {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+// A model call's text and reasoning are each one message, named by the run and
+// the step they follow, so a reader never has to infer where one ends.
+func TestPipeNamesEachCallsMessages(t *testing.T) {
+	events := make(chan agent.Event, 8)
+	events <- agent.StepEvent{Step: 1}
+	events <- agent.ReasoningEvent{Delta: "Need "}
+	events <- agent.ReasoningEvent{Delta: "logs."}
+	events <- agent.TextEvent{Delta: "Checking."}
+	events <- agent.StepEvent{Step: 2}
+	events <- agent.TextEvent{Delta: "Timed out."}
+	close(events)
+
+	var log stream.Memory
+	Pipe(events, "r1", &log)
+
+	got, _ := log.Since(t.Context(), stream.Start, 0)
+	var ids []string
+	for _, env := range got {
+		switch e := env.Event.(type) {
+		case stream.TextMessageChunk:
+			ids = append(ids, e.MessageID)
+		case stream.ReasoningChunk:
+			ids = append(ids, e.MessageID)
+		}
+	}
+	want := []string{"r1:1:reasoning", "r1:1:reasoning", "r1:1:text", "r1:2:text"}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("ids %v, want %v", ids, want)
 	}
 }

@@ -100,6 +100,8 @@ func decodeEvent(kind Kind, data []byte) (Event, error) {
 		return as[StepStarted](data)
 	case KindTextMessageChunk:
 		return as[TextMessageChunk](data)
+	case KindReasoningChunk:
+		return as[ReasoningChunk](data)
 	case KindToolCallChunk:
 		return as[ToolCallChunk](data)
 	case KindToolCallResult:

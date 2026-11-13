@@ -68,7 +68,8 @@ with the envelope's `at` and `run_id` beside the event's own fields.
 | `message_consumed` | a run taking messages: the one it started from, or ones sent while it worked |
 | `run_started` | a run beginning, with its parent when another run handed it the work |
 | `step_started` | a run making its next model call |
-| `text_message_chunk` | a piece of what a run is writing |
+| `text_message_chunk` | a piece of what a run is saying |
+| `reasoning_message_chunk` | a piece of what a run is thinking: the model's reasoning, or a pattern's plan or critique |
 | `tool_call_chunk` | a run calling a tool, with all of its arguments |
 | `tool_call_result` | what the call returned, or why it failed |
 | `usage` | what one model call spent |
@@ -82,6 +83,13 @@ chunks, AG-UI's stateless form: a client that joins mid-answer needs no start
 event it never saw, and `run_finished` carries the whole answer. A kind this
 version does not know decodes as `Unknown` and is written back unchanged, so an
 old client reads a newer stream.
+
+Text and reasoning carry a `message_id`, `<run_id>:<step>:text` or
+`<run_id>:<step>:reasoning`: one message per model call, as AG-UI and the
+Vercel AI SDK give every block an id. `stream.MessageID` builds it, and
+`agentstream.Pipe` stamps it, so a reader never infers where one message ends.
+Show reasoning folded away, text as it arrives, and `run_finished`'s output as
+the answer once the run ends.
 
 Sequence numbers may be negative: a server that numbers history it had before
 it kept a stream counts it down to 0, and `stream.Start` is the cursor before

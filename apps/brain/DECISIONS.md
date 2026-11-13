@@ -827,14 +827,24 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   when the team has a server at that exact URL with that exact secret.
   Otherwise a page the builder read could name a host and a team secret, and
   the brain would carry the token there itself.
-- **A builder's reply streams; other runs' do not yet.** Builder runs take a
-  second runner whose loop streams (`ReActStreaming`), and the recorder gathers
-  the deltas into `text` events, written at 512 bytes, every 250 ms, and
-  before any other event, so the text and the call it led to stay in order
-  and a reply is tens of rows, not thousands. Postgres is the bus because the
-  worker and the API are separate processes; the SSE route already polls it.
-  Extending it to every run is the streaming variant of each loop and the
-  `row.Builder` condition gone.
+- **A run a person is waiting on streams; a delegated one does not.** The
+  builder and every top-level run take a second runner whose loops stream
+  (each loop's streaming variant), and the recorder gathers the deltas into
+  `text` events, written at 512 bytes, every 250 ms, and before any other
+  event, so the text and the call it led to stay in order and a reply is tens
+  of rows, not thousands. Postgres is the bus because the worker and the API
+  are separate processes; the SSE route already polls it. A delegated run's
+  writing is its parent's to report.
+- **Thinking is recorded apart from talking.** What the SDK reports as
+  reasoning, the model's own and a loop's plan or critique, is gathered into
+  `reasoning` events the same way, and a switch between the two flushes, so
+  no row holds both. Each row keeps its `step`, which is what names its
+  message on the session stream (`<run_id>:<step>:text`). Splitting on the
+  pattern instead would teach the stream every loop; splitting on what the
+  provider labels keeps it in the SDK, where each provider's field names
+  already are. The reasoning itself stays in the transcript through the SDK's
+  store, and goes back to the model that wrote it: DeepSeek refuses a request
+  with tools whose history leaves it out.
 - **An MCP secret is written whole, and never read back.** `PUT
   /teams/{id}/mcp-secrets/{name}` takes every key of the secret and writes
   them with one `PutAll`: an OpenBao write replaces the keys a path held, so

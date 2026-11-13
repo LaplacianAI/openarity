@@ -65,6 +65,18 @@
       "properties": {
         "at": { "$ref": "#/$defs/envelope/properties/at" },
         "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "message_id": { "type": "string" },
+        "delta": { "type": "string" },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "reasoning_message_chunk": {
+      "type": "object",
+      "required": ["delta"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "message_id": { "type": "string" },
         "delta": { "type": "string" },
         "truncated": { "type": "boolean" }
       }
