@@ -53,19 +53,18 @@ func TestARunInAConversationWithFilesCanReadThem(t *testing.T) {
 	tool(t, built, ReadAttachmentToolName)
 }
 
-// The builder keeps the tool set it was given.
-func TestTheBuilderIsGivenNoFileTools(t *testing.T) {
+// The builder reads a conversation's files as any run does: a screenshot of
+// a server's settings is something it can set up from.
+func TestTheBuilderCanReadTheConversationsFiles(t *testing.T) {
 	f := newFixture()
 	f.asBuilder()
 	f.teamModel()
 	f.run.SessionID = uuid.New()
 	f.store.attached = []db.Attachment{attachedFile(f.run.SessionID, "screen.png", "image/png", 10)}
 
-	for _, tl := range f.build(t).Spec.Tools {
-		if tl.Name == ReadAttachmentToolName {
-			t.Fatal("the builder can read files")
-		}
-	}
+	built := f.build(t)
+	tool(t, built, AttachmentsToolName)
+	tool(t, built, ReadAttachmentToolName)
 }
 
 func TestAConversationsFilesThatCannotBeReadFailTheBuild(t *testing.T) {

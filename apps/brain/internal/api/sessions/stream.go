@@ -86,15 +86,23 @@ func eventOf(row db.ListSessionEventsRow) (stream.Event, error) {
 	switch row.Kind {
 	case "message":
 		var p struct {
-			ID     string `json:"id"`
-			UserID string `json:"user_id"`
-			Text   string `json:"text"`
-			Asks   bool   `json:"asks"`
+			ID     string        `json:"id"`
+			UserID string        `json:"user_id"`
+			Text   string        `json:"text"`
+			Asks   bool          `json:"asks"`
+			Files  []stream.File `json:"files"`
 		}
 		if err := json.Unmarshal(row.Payload, &p); err != nil {
 			return nil, err
 		}
-		m := stream.Message{ID: p.ID, UserID: p.UserID, Parts: []stream.Part{{Type: stream.PartText, Text: p.Text}}}
+		m := stream.Message{ID: p.ID, UserID: p.UserID}
+		// A message of files alone says nothing in text.
+		if p.Text != "" || len(p.Files) == 0 {
+			m.Parts = append(m.Parts, stream.Part{Type: stream.PartText, Text: p.Text})
+		}
+		for _, f := range p.Files {
+			m.Parts = append(m.Parts, stream.Part{Type: stream.PartFile, File: &f})
+		}
 		if p.Asks {
 			m.State = stream.StatePending
 		}

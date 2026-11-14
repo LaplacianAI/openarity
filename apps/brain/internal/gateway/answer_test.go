@@ -206,8 +206,9 @@ func TestAMessageToATeamWithNoModelIsNotAnswered(t *testing.T) {
 	}
 }
 
-// A message that is only a file has no question in it, and a run needs input.
-func TestAMessageWithNoTextIsNotAnswered(t *testing.T) {
+// A message of files alone asks that they be looked at, and a run can: its
+// first message names them and its tools read them.
+func TestAMessageOfFilesAloneIsAnswered(t *testing.T) {
 	t.Parallel()
 
 	a := newAnswering()
@@ -216,8 +217,41 @@ func TestAMessageWithNoTextIsNotAnswered(t *testing.T) {
 	if err := a.deliver(t, d); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
+	if len(a.store.created) != 1 || a.store.created[0].Input != "The message is the files sent with it." {
+		t.Fatalf("started %+v", a.store.created)
+	}
+}
+
+// With neither text nor a file there is nothing to answer.
+func TestAMessageWithNothingInItIsNotAnswered(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	if err := a.deliver(t, delivery("m-1", "  \n ")); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
 	if len(a.store.created) != 0 {
-		t.Errorf("started %d runs for a message with no text", len(a.store.created))
+		t.Errorf("started %d runs for a message with nothing in it", len(a.store.created))
+	}
+}
+
+// A steer is text alone, so the files sent with it are named in it, for the
+// run to find with attachments().
+func TestASteerNamesTheFilesSentWithIt(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	if err := a.deliver(t, delivery("m-1", "why did the export fail?")); err != nil {
+		t.Fatal(err)
+	}
+	running := a.store.created[0].ID
+	d := delivery("m-2", "here is the log")
+	d.Files = []Stored{{Filename: "export.log"}, {Filename: ""}}
+	if err := a.deliver(t, d); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.store.steers[running]; len(got) != 1 || got[0] != "Asha: here is the log\n[sent with export.log, a file with no name]" {
+		t.Fatalf("steers = %q", got)
 	}
 }
 

@@ -992,6 +992,13 @@ paths:
         answers `200` with what was stored the first time rather than
         starting another conversation.
 
+        A message with files is sent as `multipart/form-data`: its `text`,
+        its `key`, and up to eight `files` parts of at most 25 MB each. Each
+        file's type is read from its bytes, not its name, and one of a type
+        not accepted is refused with `400` naming it. A message of files
+        alone needs no text. The session's stream carries each file as a
+        `file` part of the message, and the hub reads them with its tools.
+
         A message the hub cannot answer, because the team has no model set or
         the caller may not start runs, is still stored, and `unanswered` says
         why.
@@ -1001,6 +1008,12 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/SayRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/SayUpload"
+            encoding:
+              files:
+                contentType: application/octet-stream
       responses:
         "201":
           description: The conversation began, with this message
@@ -1016,6 +1029,12 @@ paths:
                 $ref: "#/components/schemas/Said"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "413":
+          description: A message with its files is over 201 MB
+          content:
+            text/plain:
+              schema:
+                type: string
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -1122,13 +1141,20 @@ paths:
         way the message is pending until a run takes it, which the session's
         stream reports as `message_consumed`.
 
-        `key` makes a retry the same send, as for `startConversation`.
+        `key` makes a retry the same send, and files are sent as
+        `multipart/form-data`, both as for `startConversation`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/SayRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/SayUpload"
+            encoding:
+              files:
+                contentType: application/octet-stream
       responses:
         "202":
           description: Stored, and started or sent to a run, or `unanswered`
@@ -1144,6 +1170,12 @@ paths:
                 $ref: "#/components/schemas/Said"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "413":
+          description: A message with its files is over 201 MB
+          content:
+            text/plain:
+              schema:
+                type: string
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -4075,6 +4107,29 @@ components:
             The caller's own name for this send. A retry carries the same key
             and is the same send.
 
+    SayUpload:
+      type: object
+      required: [key]
+      properties:
+        text:
+          type: string
+          maxLength: 102400
+          description: What the person says, as in `SayRequest`. It may be empty when a file is sent.
+        key:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{1,64}$"
+          description: As in `SayRequest`.
+        files:
+          type: array
+          maxItems: 8
+          description: |
+            The files sent with the message, each at most 25 MB: images (png,
+            jpeg, gif, webp), PDF, plain text, zip, mp3 or wav, as their bytes
+            say. The part's filename is kept, cleaned, as the file's name.
+          items:
+            type: string
+            format: binary
+
     Said:
       type: object
       required: [session_id, message_id]
@@ -4099,13 +4154,33 @@ components:
     SessionEventPart:
       type: object
       description: |
-        One piece of what a message carries. A part of a type a reader does not know is kept with its type.
+        One piece of what a message carries: its text, or a file sent with
+        it. A part of a type a reader does not know is kept with its type.
       required: [type]
       properties:
         type:
           type: string
+          description: "`text` or `file`."
         text:
           type: string
+        file:
+          type: object
+          description: |
+            A file sent with the message, named by its id; its bytes are read
+            with `getSessionAttachment`.
+          required: [id, filename, media_type, size]
+          properties:
+            id:
+              type: string
+              format: uuid
+            filename:
+              type: string
+            media_type:
+              type: string
+            size:
+              type: integer
+              format: int64
+              minimum: 0
     SessionEventMessage:
       type: object
       description: |

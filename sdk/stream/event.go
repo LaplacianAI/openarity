@@ -65,17 +65,31 @@ type State string
 // nothing, one said in a group without addressing the agent, has no state.
 const StatePending State = "pending"
 
-// Part is one piece of what a message carries.
+// Part is one piece of what a message carries: some text, or a file sent
+// with it.
 type Part struct {
 	Type PartType `json:"type"`
 	Text string   `json:"text,omitempty"`
+	File *File    `json:"file,omitempty"`
 }
 
 // PartType says what a Part holds. A part of a type this version does not
 // know is kept, with its type and nothing else.
 type PartType string
 
-const PartText PartType = "text"
+const (
+	PartText PartType = "text"
+	PartFile PartType = "file"
+)
+
+// File is a file sent with a message, named rather than carried: a reader
+// fetches its bytes from the server by its id.
+type File struct {
+	ID        string `json:"id"`
+	Filename  string `json:"filename"`
+	MediaType string `json:"media_type"`
+	Size      int64  `json:"size"`
+}
 
 // MessageConsumed is a run taking messages: the one it started from, or ones
 // sent to it while it worked.

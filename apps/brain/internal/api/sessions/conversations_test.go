@@ -35,7 +35,7 @@ func (f *fakeInbox) DeliverOne(_ context.Context, ch gateway.Channel, m gateway.
 func (f *fixture) do(t *testing.T, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store, f.authz, f.objects, f.inbox).
+	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, discardLogger())).
 		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 
 	var raw []byte

@@ -69,8 +69,7 @@ func (e *Executor) firstMessage(ctx context.Context, row db.Run) (agent.Message,
 		}
 	}
 	msg := agent.Message{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: input}}}
-	// The builder holds no tool to read files with.
-	if row.MessageID != nil && !row.Builder {
+	if row.MessageID != nil {
 		files, err := e.store.ListAttachmentsByMessage(ctx, *row.MessageID)
 		if err != nil {
 			return agent.Message{}, fmt.Errorf("reading the files sent with run %s: %w", row.ID, err)

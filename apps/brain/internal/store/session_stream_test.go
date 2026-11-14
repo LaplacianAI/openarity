@@ -787,3 +787,57 @@ func TestTheReasoningKindRollsBack(t *testing.T) {
 		t.Fatalf("applied again, a reasoning event was refused: %v", err)
 	}
 }
+
+// A message's event names its files, oldest first, and a message with none
+// names an empty list rather than nothing.
+func TestAMessagesEventNamesItsFiles(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	f := newStreamFixture(t, s)
+	plain := f.say(t, s, "hello", false)
+	withFiles := f.say(t, s, "look", true)
+	first := mustCreateAttachment(t, s, attachment(t, s, withFiles, f.session, "teams/x/objects/1"))
+	second := attachment(t, s, withFiles, f.session, "teams/x/objects/2")
+	second.Filename, second.MediaType, second.SizeBytes = "crash.log", "text/plain", 40
+	later := mustCreateAttachment(t, s, second)
+
+	rows := sessionEvents(t, s, f.session, -1<<62)
+	files := map[string][]struct {
+		ID        uuid.UUID `json:"id"`
+		Filename  string    `json:"filename"`
+		MediaType string    `json:"media_type"`
+		Size      int64     `json:"size"`
+	}{}
+	for _, r := range rows {
+		if r.Kind != "message" {
+			continue
+		}
+		var p struct {
+			ID    string `json:"id"`
+			Files []struct {
+				ID        uuid.UUID `json:"id"`
+				Filename  string    `json:"filename"`
+				MediaType string    `json:"media_type"`
+				Size      int64     `json:"size"`
+			} `json:"files"`
+		}
+		if err := json.Unmarshal(r.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		files[p.ID] = append(files[p.ID][:0:0], p.Files...)
+		if p.Files == nil {
+			t.Errorf("message %s has no files list: %s", p.ID, r.Payload)
+		}
+	}
+	if got := files[plain.String()]; len(got) != 0 {
+		t.Errorf("the plain message names %+v", got)
+	}
+	got := files[withFiles.String()]
+	if len(got) != 2 || got[0].ID != first.ID || got[1].ID != later.ID {
+		t.Fatalf("files = %+v, want the two in the order they were sent", got)
+	}
+	if got[1].Filename != "crash.log" || got[1].MediaType != "text/plain" || got[1].Size != 40 {
+		t.Errorf("the log is named as %+v", got[1])
+	}
+}

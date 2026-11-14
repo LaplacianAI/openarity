@@ -175,16 +175,15 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		}
 	}
 
-	if !run.Builder {
-		files, err := b.store.ListAttachmentsBySession(ctx, db.ListAttachmentsBySessionParams{SessionID: run.SessionID, PageSize: 1})
-		if err != nil {
-			built.Close()
-			return Built{}, fmt.Errorf("reading whether the conversation holds files: %w", err)
-		}
-		// Bound only where there is something to read.
-		if len(files) > 0 {
-			built.Spec.Tools = append(built.Spec.Tools, attachmentTools(b.store, run.SessionID)...)
-		}
+	// Bound only where there is something to read. The builder too: the tools
+	// read and write nothing.
+	files, err := b.store.ListAttachmentsBySession(ctx, db.ListAttachmentsBySessionParams{SessionID: run.SessionID, PageSize: 1})
+	if err != nil {
+		built.Close()
+		return Built{}, fmt.Errorf("reading whether the conversation holds files: %w", err)
+	}
+	if len(files) > 0 {
+		built.Spec.Tools = append(built.Spec.Tools, attachmentTools(b.store, run.SessionID)...)
 	}
 
 	if web {
