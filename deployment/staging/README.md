@@ -170,6 +170,32 @@ To turn it off, run `make searxng-down` first and then remove the secret.
 The overlay needs the secret even to stop the container. Deploys check for
 the secret on every run, so the next one leaves SearXNG out.
 
+### Logs in Grafana
+
+Optional, as everywhere: leave it off if the logs go to a stack of your own
+(see Logs in `deployment/README.md`). To keep them on the server, in
+`deployment/.env`:
+
+```sh
+GRAFANA_ADMIN_PASSWORD=<openssl rand -hex 32>
+```
+
+and run `make grafana`. From then on `make staging` and every deploy include
+`docker-compose.logs.yml`; a deploy starts the four if they are not running
+and otherwise leaves them alone. Grafana is on the private network at
+`GRAFANA_PORT` (13000), like the dashboard.
+
+To give it an HTTPS name like the dashboard's and authentik's, add a DNS-only
+A record for it pointing at `BIND_ADDR`, then a site block for it, and run
+step 4 of the HTTPS setup above again, as for a gateway's console:
+
+```sh
+printf '%s\n' '<grafana name> {' '	reverse_proxy grafana:3000' '}' > caddy/sites/grafana.caddy
+```
+
+With that, `GRAFANA_BIND=127.0.0.1` in `.env` takes the plain-HTTP port off
+the network. The name, like every other, stays in `caddy/sites/` and `.env`.
+
 ### 2. Keep the checkout on main
 
 `deploy.sh` and the compose files are read from this checkout, never from a

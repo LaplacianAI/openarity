@@ -74,6 +74,7 @@ make staging    # image plus authentik: OIDC only, no development token
 make objects    # add SeaweedFS and create the bucket — for the object store tests
 make ollama     # add a local embedding model, for the graph
 make searxng    # add SearXNG, a search engine for the hub's web_search
+make grafana    # add Loki, Alloy and Grafana for the stack's logs (optional)
 make ps         # what is running, and on which ports
 make logs       # follow the brain; make logs service=authentik-server
 make down       # stop everything, keeping the data
@@ -627,6 +628,39 @@ SearXNG asks the public engines from this machine's address, so a busy team
 can be rate-limited by them; Brave and Tavily are the answer then. `make dev`
 and `make image` recreate the worker without the search network, and `make
 searxng` again puts it back.
+
+## Logs
+
+The brain, the worker and a migration each log JSON lines to stdout (text in
+development), one object a line with `time`, `level` and `msg`, and the fields
+the line is about: `run`, `channel`, `team_id`, `err`.
+
+**With a logging stack of your own,** leave this repository's out. Point your
+collector at the containers' stdout, as it would for any container, and label
+each line with its compose service (or pod). The dashboard
+`logs/grafana/dashboards/brain.json` imports into any Grafana with a Loki
+data source, chosen when it is imported; it expects a `service` label naming
+the service (`brain`, `worker`, `migrate`) and, on those, `level` from the
+line's JSON.
+
+**With none,** `make grafana` runs one on this machine:
+
+```sh
+openssl rand -hex 32                      # GRAFANA_ADMIN_PASSWORD in .env
+make grafana
+```
+
+Grafana is at `http://<BIND_ADDR>:13000`, signed in as `admin`, with the
+**Openarity brain** dashboard: replies and notices given up, kicks left to the
+sweep, files not kept, webhooks refused, warnings and errors by service, and
+every line, searchable by a run's id. Loki keeps seven days.
+
+Alloy reads the containers through the Docker API, and the Docker socket is
+root on the machine, so Alloy never holds it: a socket proxy does, and
+answers only reads of containers, their logs and networks. The logs stay on
+the machine: they hold addresses and ids. `make grafana-down` stops the four
+and keeps what they hold; removing the password from `.env` keeps them out
+of `make staging` and deploys.
 
 ## Kubernetes
 

@@ -61,6 +61,13 @@ SEARXNG   := -f docker-compose.searxng.yml
 # staging takes SearXNG when .env opts into it, as deploy.sh does, so a stack
 # brought up by hand matches a deployed one.
 STAGING_SEARXNG := $(if $(shell grep -Eq "^SEARXNG_SECRET=[^\"'[:space:]]" .env 2>/dev/null && echo y),$(SEARXNG))
+#   GRAFANA is the stack's logs: Loki, Alloy and Grafana, kept on this
+#   machine. Optional, and only for a deployment with no logging of its own:
+#   the brain logs JSON to stdout, which any collector can read. Its :? guard
+#   on the admin password keeps it out of down, ps and destroy, as SearXNG's
+#   does; `make grafana-down` stops it.
+GRAFANA   := -f docker-compose.logs.yml
+STAGING_GRAFANA := $(if $(shell grep -Eq "^GRAFANA_ADMIN_PASSWORD=[^\"'[:space:]]" .env 2>/dev/null && echo y),$(GRAFANA))
 OIDC    := -f docker-compose.authentik.yml
 DEX     := -f docker-compose.dex.yml
 BAO     := -f docker-compose.openbao.yml
@@ -223,6 +230,23 @@ searxng-down:
 	$(COMPOSE) $(SEARXNG) stop searxng
 
 # ---------------------------------------------------------------------------
+# The stack's logs in Grafana, kept on this machine for seven days. Alloy
+# reads every container of the project through a read-only socket proxy; see
+# docker-compose.logs.yml. A deployment with logging of its own leaves this
+# off and points its collector at the containers' stdout instead.
+
+## grafana: add Loki, Alloy and Grafana for the stack's logs — needs GRAFANA_ADMIN_PASSWORD in .env
+grafana:
+	$(COMPOSE) $(GRAFANA) up -d --wait grafana alloy
+	@printf '\n%s\n%s\n\n' \
+	  "grafana    http://$${GRAFANA_BIND:-$${BIND_ADDR:-127.0.0.1}}:$${GRAFANA_PORT:-13000}  (admin, GRAFANA_ADMIN_PASSWORD)" \
+	  "dashboard  Openarity / Openarity brain"
+
+## grafana-down: stop Loki, Alloy and Grafana, keeping the logs
+grafana-down:
+	$(COMPOSE) $(GRAFANA) stop grafana alloy loki socket-proxy
+
+# ---------------------------------------------------------------------------
 
 ## dev: dependencies and the brain, built from your working tree
 dev:
@@ -243,7 +267,7 @@ image:
 # is the point. See OPENBAO.md; `make bao-approle` prints them.
 ## staging: published image, authentik, real OpenBao and SeaweedFS — needs .env
 staging:
-	$(COMPOSE) $(OIDC) $(IMAGE) $(BAO) $(OBJECTS) $(STAGING_SEARXNG) $(PROFILE) up -d
+	$(COMPOSE) $(OIDC) $(IMAGE) $(BAO) $(OBJECTS) $(STAGING_SEARXNG) $(STAGING_GRAFANA) $(PROFILE) up -d
 
 ## restart: recreate every running container, keeping volumes
 restart:
@@ -340,6 +364,6 @@ bao:
 	$(COMPOSE) $(BAO) $(PROFILE) up -d --build
 
 .PHONY: help up objects dex dex-hash dex-down litellm litellm-down \
-        omniroute omniroute-down ollama ollama-down searxng searxng-down dev image staging restart \
+        omniroute omniroute-down ollama ollama-down searxng searxng-down grafana grafana-down dev image staging restart \
         pull ps logs down destroy bao-up bao-init bao-status bao-approle \
         bao-policy bao

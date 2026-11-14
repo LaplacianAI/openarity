@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: openarity
+    folder: Openarity
+    type: file
+    # Edited in the repository, not in Grafana: a change made there is lost
+    # when the file is read again.
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
