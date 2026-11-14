@@ -47,17 +47,147 @@ const private = `{
   }
 }`
 
+// A photo in three sizes with a caption, and a document, as Telegram posts
+// them: one update each, so this is the photo.
+const photo = `{
+  "update_id": 912345002,
+  "message": {
+    "message_id": 18,
+    "from": {"id": 4242, "is_bot": false, "first_name": "Asha", "username": "asha"},
+    "chat": {"id": 4242, "first_name": "Asha", "type": "private"},
+    "date": 1762594260,
+    "photo": [
+      {"file_id": "AgAD-small", "file_unique_id": "s1", "width": 90, "height": 60, "file_size": 1200},
+      {"file_id": "AgAD-medium", "file_unique_id": "s2", "width": 320, "height": 213, "file_size": 18000},
+      {"file_id": "AgAD-large", "file_unique_id": "s3", "width": 1280, "height": 853, "file_size": 210000}
+    ],
+    "caption": "what is wrong here?"
+  }
+}`
+
+const document = `{
+  "update_id": 912345003,
+  "message": {
+    "message_id": 19,
+    "from": {"id": 4242, "is_bot": false, "first_name": "Asha", "username": "asha"},
+    "chat": {"id": 4242, "first_name": "Asha", "type": "private"},
+    "date": 1762594320,
+    "document": {"file_id": "BQAD-doc", "file_unique_id": "d1", "file_name": "report.pdf", "mime_type": "application/pdf", "file_size": 48210}
+  }
+}`
+
 // Telegram echoes a shared secret, signing neither the body nor a timestamp,
 // so the suite asks for neither a tampered body nor a stale delivery to be
-// refused; v1 reads no attachments.
+// refused. Its files are downloaded, so it names them by their file_id.
 func TestTelegramPassesTheConformanceSuite(t *testing.T) {
 	providertest.Run(t, telegram.New(), providertest.Fixtures{
-		Creds:                creds(),
-		Request:              request(private),
-		WantExternalID:       "4242:17",
-		SignsNoBody:          true,
-		CarriesNoAttachments: true,
+		Creds:             creds(),
+		Request:           request(private),
+		WantExternalID:    "4242:17",
+		SignsNoBody:       true,
+		AttachmentRequest: request(photo),
 	})
+}
+
+// A photo is kept at its largest size a bot may download, named for its
+// message since it has no name; its caption is the text.
+func TestAPhotoIsNamedAtItsLargestSize(t *testing.T) {
+	in := one(t, photo)
+	if in.Text != "what is wrong here?" {
+		t.Errorf("text %q, want the caption", in.Text)
+	}
+	if len(in.Attachments) != 1 {
+		t.Fatalf("attachments %+v, want the one photo", in.Attachments)
+	}
+	if a := in.Attachments[0]; a.Ref != "AgAD-large" || a.ClaimedFilename != "photo-18.jpg" || a.ClaimedSize != 210000 {
+		t.Errorf("attachment %+v, want the largest size, named for its message", a)
+	}
+}
+
+// A size past what a bot may download is passed over for the next one down.
+func TestAPhotoTooLargeToDownloadFallsBackToASmallerSize(t *testing.T) {
+	big := strings.Replace(photo, `"file_size": 210000`, `"file_size": 30000000`, 1)
+	if a := one(t, big).Attachments; len(a) != 1 || a[0].Ref != "AgAD-medium" {
+		t.Errorf("attachments %+v, want the medium size", a)
+	}
+}
+
+func TestADocumentKeepsItsName(t *testing.T) {
+	in := one(t, document)
+	if len(in.Attachments) != 1 {
+		t.Fatalf("attachments %+v", in.Attachments)
+	}
+	a := in.Attachments[0]
+	if a.Ref != "BQAD-doc" || a.ClaimedFilename != "report.pdf" || a.ClaimedMediaType != "application/pdf" || a.ClaimedSize != 48210 {
+		t.Errorf("attachment %+v", a)
+	}
+	if in.Text != "" {
+		t.Errorf("text %q, want none", in.Text)
+	}
+}
+
+// A voice note or a video is not a file the brain keeps.
+func TestAVoiceNoteOrAVideoNamesNoFile(t *testing.T) {
+	for _, field := range []string{"voice", "video", "sticker"} {
+		body := strings.Replace(document, `"document"`, `"`+field+`"`, 1)
+		if a := one(t, body).Attachments; len(a) != 0 {
+			t.Errorf("a %s named %+v, want nothing", field, a)
+		}
+	}
+}
+
+func downloader(t *testing.T) gateway.Downloader {
+	t.Helper()
+	d, ok := telegram.New().(gateway.Downloader)
+	if !ok {
+		t.Fatal("Telegram does not download its files")
+	}
+	return d
+}
+
+// A file is two requests: getFile for its path, then the path under the
+// token. Only the second is final.
+func TestAFileIsDownloadedInTwoRequests(t *testing.T) {
+	d := downloader(t)
+	first, final, err := d.DownloadRequest("AgAD-large", nil, creds())
+	if err != nil || final {
+		t.Fatalf("first request final %v, err %v", final, err)
+	}
+	if first.URL != "https://api.telegram.org/bot"+creds().Get(telegram.KeyBotToken)+"/getFile" ||
+		string(first.Body) != `{"file_id":"AgAD-large"}` || first.Method != "" {
+		t.Errorf("first request %s %s", first.URL, first.Body)
+	}
+
+	second, final, err := d.DownloadRequest("AgAD-large",
+		[]byte(`{"ok":true,"result":{"file_id":"AgAD-large","file_path":"photos/file_7.jpg"}}`), creds())
+	if err != nil || !final {
+		t.Fatalf("second request final %v, err %v", final, err)
+	}
+	if second.Method != http.MethodGet ||
+		second.URL != "https://api.telegram.org/file/bot"+creds().Get(telegram.KeyBotToken)+"/photos/file_7.jpg" {
+		t.Errorf("second request %s %s", second.Method, second.URL)
+	}
+}
+
+// getFile refusing, or giving a path that leads anywhere but under the
+// token, ends the download; no request is built from it.
+func TestADownloadEndsOnARefusalOrAPathThatLeadsAway(t *testing.T) {
+	d := downloader(t)
+	for name, answer := range map[string]string{
+		"refused":  `{"ok":false,"description":"Bad Request: file is too big","result":{"file_path":"photos/a.jpg"}}`,
+		"no path":  `{"ok":true,"result":{}}`,
+		"absolute": `{"ok":true,"result":{"file_path":"/etc/passwd"}}`,
+		"climbs":   `{"ok":true,"result":{"file_path":"photos/../../x"}}`,
+		"query":    `{"ok":true,"result":{"file_path":"photos/a.jpg?x=1"}}`,
+		"not json": `<html>`,
+	} {
+		if req, _, err := d.DownloadRequest("x", []byte(answer), creds()); err == nil {
+			t.Errorf("%s: built %s, want refused", name, req.URL)
+		}
+	}
+	if _, _, err := d.DownloadRequest("x", nil, gateway.Credentials{}); err == nil {
+		t.Error("a channel with no token built a request")
+	}
 }
 
 func parse(t *testing.T, body string) gateway.Result {

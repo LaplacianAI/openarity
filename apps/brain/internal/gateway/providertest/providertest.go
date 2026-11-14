@@ -292,7 +292,9 @@ func produces(t *testing.T, p gateway.Provider, f Fixtures) {
 func attachments(t *testing.T, p gateway.Provider, f Fixtures) {
 	t.Helper()
 
-	_, fetches := p.(gateway.Fetcher)
+	_, fetcher := p.(gateway.Fetcher)
+	_, downloader := p.(gateway.Downloader)
+	fetches := fetcher || downloader
 
 	if f.CarriesNoAttachments {
 		if len(f.AttachmentRequest.Body) > 0 {
@@ -300,12 +302,12 @@ func attachments(t *testing.T, p gateway.Provider, f Fixtures) {
 				"one of them is wrong")
 		}
 
-		// Implementing Fetcher while claiming to have no attachments is dead
-		// code that reads as a working feature — the shape this whole suite
-		// exists to catch.
+		// Implementing Fetcher or Downloader while claiming to have no
+		// attachments is dead code that reads as a working feature — the
+		// shape this whole suite exists to catch.
 		if fetches {
-			t.Error("the provider implements gateway.Fetcher but declares that it " +
-				"carries no attachments, so nothing can ever call it")
+			t.Error("the provider implements gateway.Fetcher or gateway.Downloader but " +
+				"declares that it carries no attachments, so nothing can ever call it")
 		}
 		return
 	}
@@ -358,7 +360,7 @@ func attachments(t *testing.T, p gateway.Provider, f Fixtures) {
 	// Refs with no way to resolve them is broken by construction: it compiles,
 	// it parses, and it fails on the first real message.
 	if !fetches {
-		t.Error("the provider produces attachments but does not implement " +
-			"gateway.Fetcher, so their refs can never be resolved")
+		t.Error("the provider produces attachments but implements neither " +
+			"gateway.Fetcher nor gateway.Downloader, so their refs can never be resolved")
 	}
 }

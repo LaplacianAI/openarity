@@ -151,7 +151,7 @@ func TestARowThatCannotBeReadIsAnError(t *testing.T) {
 func (f *fixture) follow(t *testing.T, after string, want int) []stream.Envelope {
 	t.Helper()
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, discardLogger())).
+	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, nil, discardLogger())).
 		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, r.WithContext(auth.WithUser(r.Context(), f.caller)))
@@ -227,7 +227,7 @@ func TestFollowingIsRefused(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
 			mux := http.NewServeMux()
-			New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, discardLogger())).
+			New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, nil, discardLogger())).
 				Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 			// Bounded: a refusal that let the stream through would follow it
 			// for good, and should fail by name rather than by timeout.
@@ -254,7 +254,7 @@ func TestALogThatFailsEndsTheStream(t *testing.T) {
 	f := newFixture(t)
 	f.store.eventsErr = errors.New("connection reset")
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, discardLogger())).
+	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, nil, discardLogger())).
 		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, f.session()+"/events", nil)
 	req = req.WithContext(auth.WithUser(req.Context(), f.caller))

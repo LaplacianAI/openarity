@@ -113,7 +113,7 @@ func (h *handler) hook(p Provider, rt Route) http.HandlerFunc {
 		}
 
 		for i := range deliveries {
-			deliveries[i].Files = h.ingest.Fetch(r.Context(),
+			deliveries[i].Files, deliveries[i].Missed = h.ingest.Fetch(r.Context(),
 				p, req, creds, channel.TeamID, deliveries[i].Attachments)
 		}
 

@@ -502,3 +502,37 @@ func TestABuilderConversationOnATeamWithNoModelIsNotAnswered(t *testing.T) {
 		t.Errorf("started %d runs in the hub's conversation, want 1", len(a.store.created))
 	}
 }
+
+// A file sent and not kept is said in the run's input, so the agent tells the
+// person rather than answer as if it had seen it.
+func TestAFileNotKeptIsSaidToTheRun(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	d := delivery("m-1", "what is in this?")
+	d.Missed = []string{"film.mov is video/quicktime, which is not accepted"}
+	if err := a.deliver(t, d); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	want := "what is in this?\n[Not received: film.mov is video/quicktime, which is not accepted.]"
+	if len(a.store.created) != 1 || a.store.created[0].Input != want {
+		t.Fatalf("started %+v, want input %q", a.store.created, want)
+	}
+}
+
+// A message whose only file was not kept is still answered: the person sent
+// something, and should hear that it did not arrive.
+func TestAMessageWhoseFilesAllMissedIsAnswered(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	d := delivery("m-1", "")
+	d.Missed = []string{"report.pdf could not be fetched", "b.png is empty"}
+	if err := a.deliver(t, d); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	want := "[Not received: report.pdf could not be fetched; b.png is empty.]"
+	if len(a.store.created) != 1 || a.store.created[0].Input != want {
+		t.Fatalf("started %+v, want input %q", a.store.created, want)
+	}
+}

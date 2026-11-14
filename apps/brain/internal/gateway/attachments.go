@@ -1,9 +1,14 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode"
@@ -51,13 +56,21 @@ type Stored struct {
 type Ingest struct {
 	objects  Objects
 	reserver Reserver
-	logger   *slog.Logger
+	// client sends a Downloader's requests; nil where nothing downloads, as
+	// on the dashboard, whose files arrive in the request.
+	client *http.Client
+	logger *slog.Logger
 }
 
-func NewIngest(o Objects, r Reserver, logger *slog.Logger) *Ingest {
-	return &Ingest{objects: o, reserver: r, logger: logger}
+func NewIngest(o Objects, r Reserver, client *http.Client, logger *slog.Logger) *Ingest {
+	return &Ingest{objects: o, reserver: r, client: client, logger: logger}
 }
 
+// downloadSteps bounds a Downloader's chain of requests: Telegram's is two.
+const downloadSteps = 4
+
+// Fetch keeps the files a delivery named. Each one not kept is said in
+// missed, a sentence naming it, for the run to tell the person.
 func (g *Ingest) Fetch(
 	ctx context.Context,
 	p Provider,
@@ -65,60 +78,147 @@ func (g *Ingest) Fetch(
 	creds Credentials,
 	teamID uuid.UUID,
 	claimed []Attachment,
-) []Stored {
+) (stored []Stored, missed []string) {
 	if len(claimed) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	fetcher, ok := p.(Fetcher)
-	if !ok {
+	fetcher, fetches := p.(Fetcher)
+	downloader, downloads := p.(Downloader)
+	if !fetches && !downloads {
 		g.logger.Error("gateway: attachments with no fetcher",
 			"provider", p.Name(), "count", len(claimed))
-		return nil
+		return nil, nil
+	}
+	get := func(ctx context.Context, a Attachment) ([]byte, error) {
+		if fetches {
+			return fetcher.FetchAttachment(ctx, req, a.Ref, creds)
+		}
+		return g.download(ctx, downloader, a.Ref, creds)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, fetchBudget)
+	perFile, total := fetchTimeout, fetchBudget
+	if b, ok := p.(Budgeted); ok {
+		perFile, total = b.FetchBudget()
+	}
+	ctx, cancel := context.WithTimeout(ctx, total)
 	defer cancel()
 
-	var stored []Stored
-	for _, a := range claimed {
-		s, err := g.one(ctx, fetcher, req, creds, teamID, a)
-		if err != nil {
-			g.logger.Warn("gateway: attachment dropped",
-				"provider", p.Name(), "team_id", teamID, "ref", a.Ref, "error", err)
-			if ctx.Err() != nil {
-				g.logger.Warn("gateway: attachment budget exhausted",
-					"provider", p.Name(), "team_id", teamID, "budget", fetchBudget)
-				break
-			}
+	for i, a := range claimed {
+		s, err := g.one(ctx, get, perFile, teamID, a)
+		if err == nil {
+			stored = append(stored, s)
 			continue
 		}
-		stored = append(stored, s)
+		missed = append(missed, missedOf(a, err))
+		g.logger.Warn("gateway: attachment dropped",
+			"provider", p.Name(), "team_id", teamID, "ref", a.Ref, "error", err)
+		if ctx.Err() != nil {
+			g.logger.Warn("gateway: attachment budget exhausted",
+				"provider", p.Name(), "team_id", teamID, "budget", total)
+			for _, rest := range claimed[i+1:] {
+				missed = append(missed, labelOf(rest.ClaimedFilename)+" could not be fetched in time")
+			}
+			break
+		}
 	}
-	return stored
+	return stored, missed
 }
 
 func (g *Ingest) one(
 	ctx context.Context,
-	f Fetcher,
-	req WebhookRequest,
-	creds Credentials,
+	get func(context.Context, Attachment) ([]byte, error),
+	perFile time.Duration,
 	teamID uuid.UUID,
 	a Attachment,
 ) (Stored, error) {
 	if a.ClaimedSize > objects.MaxAttachment {
-		return Stored{}, fmt.Errorf("claims %d bytes, over the %d limit",
-			a.ClaimedSize, objects.MaxAttachment)
+		return Stored{}, &Refused{Reason: labelOf(a.ClaimedFilename) + " is over the 25 MB a file may be"}
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	ctx, cancel := context.WithTimeout(ctx, perFile)
 	defer cancel()
 
-	body, err := f.FetchAttachment(ctx, req, a.Ref, creds)
+	body, err := get(ctx, a)
 	if err != nil {
 		return Stored{}, fmt.Errorf("fetch: %w", err)
 	}
 	return g.Store(ctx, teamID, a.ClaimedFilename, body)
+}
+
+// missedOf says why a file was not kept, in words the person can act on: a
+// refusal as it was given, anything else as a file that could not be fetched.
+func missedOf(a Attachment, err error) string {
+	var refused *Refused
+	if errors.As(err, &refused) {
+		return refused.Reason
+	}
+	return labelOf(a.ClaimedFilename) + " could not be fetched"
+}
+
+// download follows a Downloader's requests to the file. No error quotes a
+// request's URL: a provider's carries its token.
+func (g *Ingest) download(ctx context.Context, d Downloader, ref string, creds Credentials) ([]byte, error) {
+	if g.client == nil {
+		return nil, errors.New("nothing here downloads files")
+	}
+	var prev []byte
+	for range downloadSteps {
+		out, final, err := d.DownloadRequest(ref, prev, creds)
+		if err != nil {
+			return nil, err
+		}
+		body, err := g.send(ctx, out)
+		if err != nil {
+			return nil, err
+		}
+		if final {
+			return body, nil
+		}
+		prev = body
+	}
+	return nil, fmt.Errorf("the download took more than %d requests", downloadSteps)
+}
+
+// send makes one request and reads at most one byte past the largest file,
+// so an answer too big is refused when it is stored, never read whole.
+func (g *Ingest) send(ctx context.Context, out OutboundRequest) ([]byte, error) {
+	method := out.Method
+	if method == "" {
+		method = http.MethodPost
+	}
+	var body io.Reader
+	if out.Body != nil {
+		body = bytes.NewReader(out.Body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, out.URL, body)
+	if err != nil {
+		return nil, errors.New("the download request could not be made")
+	}
+	req.Header = out.Header.Clone()
+
+	resp, err := g.client.Do(req) //nolint:gosec // G704: the client's dialer refuses what the team may not reach
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return nil, fmt.Errorf("downloading: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("the provider answered %d", resp.StatusCode)
+	}
+	got, err := io.ReadAll(io.LimitReader(resp.Body, objects.MaxAttachment+1))
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return nil, fmt.Errorf("reading the download: %w", err)
+	}
+	return got, nil
 }
 
 // Store keeps one file a person sent: its type read from its bytes, under a
@@ -126,10 +226,7 @@ func (g *Ingest) one(
 // large or of a type not accepted is Refused.
 func (g *Ingest) Store(ctx context.Context, teamID uuid.UUID, filename string, body []byte) (Stored, error) {
 	name := cleanFilename(filename)
-	label := name
-	if label == "" {
-		label = "a file with no name"
-	}
+	label := labelOf(filename)
 	if len(body) == 0 {
 		return Stored{}, &Refused{Reason: label + " is empty"}
 	}
@@ -177,4 +274,13 @@ func cleanFilename(raw string) string {
 		cleaned = string([]rune(cleaned)[:filenameMax])
 	}
 	return cleaned
+}
+
+// labelOf is how a file is named to a person: its cleaned name, or that it
+// had none.
+func labelOf(filename string) string {
+	if name := cleanFilename(filename); name != "" {
+		return name
+	}
+	return "a file with no name"
 }

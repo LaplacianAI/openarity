@@ -127,7 +127,7 @@ func fetchFixture(t *testing.T) (*Ingest, *fetchProvider, *fakeObjects, uuid.UUI
 
 	store := newFakeObjects()
 	p := &fetchProvider{bodies: map[string][]byte{"a": pngBytes}}
-	return NewIngest(store, store, discardLogger()), p, store, uuid.New()
+	return NewIngest(store, store, nil, discardLogger()), p, store, uuid.New()
 }
 
 func TestFetchStoresWhatItMeasured(t *testing.T) {
@@ -135,7 +135,7 @@ func TestFetchStoresWhatItMeasured(t *testing.T) {
 
 	g, p, store, team := fetchFixture(t)
 
-	got := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
+	got, _ := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
 		[]Attachment{{
 			Ref:              "a",
 			ClaimedFilename:  "holiday.png",
@@ -177,7 +177,7 @@ func TestTwoIdenticalFilesGetDifferentKeys(t *testing.T) {
 	g, p, store, team := fetchFixture(t)
 	p.bodies["b"] = pngBytes
 
-	got := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
+	got, _ := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
 		[]Attachment{claim("a", "one.png"), claim("b", "two.png")})
 
 	if len(got) != 2 {
@@ -196,7 +196,7 @@ func TestFetchWithNothingToFetchAsksForNothing(t *testing.T) {
 
 	g, p, store, team := fetchFixture(t)
 
-	if got := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team, nil); got != nil {
+	if got, _ := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team, nil); got != nil {
 		t.Errorf("Fetch returned %v for no attachments", got)
 	}
 	if len(p.refs) != 0 || len(store.put) != 0 {
@@ -211,7 +211,7 @@ func TestAnAdapterThatCannotFetchStoresNothing(t *testing.T) {
 
 	g, _, store, team := fetchFixture(t)
 
-	got := g.Fetch(t.Context(), noFetch{&fetchProvider{}}, WebhookRequest{}, nil, team,
+	got, _ := g.Fetch(t.Context(), noFetch{&fetchProvider{}}, WebhookRequest{}, nil, team,
 		[]Attachment{claim("a", "holiday.png")})
 
 	if got != nil {
@@ -242,7 +242,7 @@ func TestAFileThatFailsIsDroppedAndTheRestSurvive(t *testing.T) {
 			g, p, _, team := fetchFixture(t)
 			p.bodies["bad"] = tc.body
 
-			got := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
+			got, _ := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
 				[]Attachment{claim("bad", "bad.dat"), claim("a", "good.png")})
 
 			if len(got) != 1 {
@@ -262,7 +262,7 @@ func TestAnImpossibleClaimIsNotEvenFetched(t *testing.T) {
 
 	g, p, store, team := fetchFixture(t)
 
-	got := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
+	got, _ := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
 		[]Attachment{{Ref: "a", ClaimedSize: objects.MaxAttachment + 1}})
 
 	if len(got) != 0 {
@@ -284,7 +284,7 @@ func TestARefusedFileIsNeverWritten(t *testing.T) {
 	g, p, store, team := fetchFixture(t)
 	p.bodies["exe"] = []byte("MZ\x90\x00\x03\x00\x00\x00executable")
 
-	got := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
+	got, _ := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
 		[]Attachment{claim("exe", "setup.exe")})
 
 	if len(got) != 0 {
@@ -306,7 +306,7 @@ func TestAScriptedSVGIsRecordedAsText(t *testing.T) {
 	p.bodies["svg"] = []byte(
 		`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
 
-	got := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
+	got, _ := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
 		[]Attachment{claim("svg", "logo.svg")})
 
 	if len(got) != 1 {
@@ -324,7 +324,7 @@ func TestAFailedWriteDropsTheAttachment(t *testing.T) {
 	g, p, store, team := fetchFixture(t)
 	store.err = errors.New("bucket is on fire")
 
-	if got := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
+	if got, _ := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
 		[]Attachment{claim("a", "holiday.png")}); len(got) != 0 {
 		t.Errorf("Fetch reported %+v as stored after Put failed", got)
 	}
@@ -336,7 +336,7 @@ func TestAFetchErrorDropsTheAttachment(t *testing.T) {
 	g, p, _, team := fetchFixture(t)
 	p.err = errors.New("provider said no")
 
-	if got := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
+	if got, _ := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
 		[]Attachment{claim("a", "holiday.png")}); len(got) != 0 {
 		t.Errorf("Fetch reported %+v as stored", got)
 	}
@@ -354,7 +354,7 @@ func TestTheBudgetStopsTheWholeDelivery(t *testing.T) {
 	}
 
 	start := time.Now()
-	got := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
+	got, _ := g.Fetch(t.Context(), p, WebhookRequest{}, nil, team,
 		[]Attachment{
 			claim("a", "1.png"), claim("b", "2.png"), claim("c", "3.png"),
 			claim("d", "4.png"), claim("e", "5.png"), claim("f", "6.png"),
@@ -438,7 +438,7 @@ func TestAFileIsReservedBeforeItIsWritten(t *testing.T) {
 	t.Parallel()
 
 	store := newFakeObjects()
-	ingest := NewIngest(store, store, discardLogger())
+	ingest := NewIngest(store, store, nil, discardLogger())
 
 	s, err := ingest.Store(t.Context(), uuid.New(), "../shot.png", []byte("\x89PNG\r\n\x1a\nrest"))
 	if err != nil {
@@ -471,7 +471,7 @@ func TestAFileThatIsNotAcceptedIsRefused(t *testing.T) {
 		{"page.html", []byte("<html><script>x</script></html>"), "page.html is text/html; charset=utf-8, which is not accepted"},
 	} {
 		store := newFakeObjects()
-		_, err := NewIngest(store, store, discardLogger()).Store(t.Context(), uuid.New(), tc.name, tc.body)
+		_, err := NewIngest(store, store, nil, discardLogger()).Store(t.Context(), uuid.New(), tc.name, tc.body)
 		var refused *Refused
 		if !errors.As(err, &refused) || refused.Reason != tc.want {
 			t.Errorf("%q: err = %v, want %q", tc.name, err, tc.want)
@@ -489,7 +489,7 @@ func TestAFileWhoseKeyCannotBeReservedIsNotWritten(t *testing.T) {
 
 	store := newFakeObjects()
 	store.reserveErr = errors.New("connection refused")
-	_, err := NewIngest(store, store, discardLogger()).Store(t.Context(), uuid.New(), "a.txt", []byte("hello"))
+	_, err := NewIngest(store, store, nil, discardLogger()).Store(t.Context(), uuid.New(), "a.txt", []byte("hello"))
 	var refused *Refused
 	if err == nil || errors.As(err, &refused) || len(store.put) != 0 {
 		t.Fatalf("err = %v, put %d; want a failure, not a refusal, and nothing written", err, len(store.put))

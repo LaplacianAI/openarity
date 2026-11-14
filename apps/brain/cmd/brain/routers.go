@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"github.com/jackc/pgx/v5"
 
@@ -75,7 +76,8 @@ func newRouters(
 		teamsettings.New(logger, dbStore, secretWriter, reachable(cfg.MCPPrivateNetworks)),
 		users.New(logger, dbStore),
 		sessions.New(logger, dbStore, authorizer, attachments, gateway.NewInbox(inbox{dbStore}, starter, logger),
-			gateway.NewIngest(attachments, dbStore, logger)),
+			// The dashboard's files arrive in the request: nothing to download.
+			gateway.NewIngest(attachments, dbStore, nil, logger)),
 		authconfig.New(logger, cfg),
 		ui.New(logger),
 	}
@@ -95,9 +97,10 @@ func newWebhookRouters(
 	attachments gateway.Objects,
 	runs gateway.Enqueuer,
 	notices gateway.Kicker,
+	downloads *http.Client,
 ) []server.Router {
 	sink := gateway.NewInbox(inbox{dbStore}, runs, logger)
-	ingest := gateway.NewIngest(attachments, dbStore, logger)
+	ingest := gateway.NewIngest(attachments, dbStore, downloads, logger)
 
 	return []server.Router{
 		gateway.New(logger, dbStore, secretStore, registry, sink, ingest, notices),

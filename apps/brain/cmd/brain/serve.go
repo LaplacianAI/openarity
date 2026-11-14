@@ -91,7 +91,10 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	enqueuer := runtime.NewEnqueuer(runQueue)
 	notices := gateway.NewNoticeKicker(runQueue)
 	routers := newRouters(cfg, logger, dbStore, authorizer, secretStore, secretWriter, registry, attachments, newImporter(cfg), newDiscoverer(cfg, secretStore), graphs, enqueuer, notices)
-	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry, attachments, enqueuer, notices)
+	// A provider's files are fetched with the reply client: the same public
+	// addresses only, and no redirect followed somewhere unchecked.
+	downloads := replyClient(reachable(cfg.MCPPrivateNetworks))
+	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry, attachments, enqueuer, notices, downloads)
 
 	guard, err := newGuard(ctx, logger, dbStore, authorizer)
 	if err != nil {

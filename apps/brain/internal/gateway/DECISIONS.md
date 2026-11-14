@@ -162,6 +162,15 @@ before it lets a stranger who was never approved for the channel make us
 download and store bytes under a team's key, objects no row will ever name.
 *Before* the write, because a download must not hold a row lock open.
 
+**A file the provider holds is downloaded, and the adapter still holds no
+client.** `Downloader` builds each request (the first from the ref, each next
+from the answer before) and the ingest sends them with the client that dials
+public addresses only and follows no redirect, as replies are sent. Telegram
+is two requests: `getFile` for a path, then the path under the bot's token.
+No error quotes a request's URL, since a provider's carries its token.
+Considered: `Fetcher` doing the network itself, which hands every adapter a
+client; and one request per file, which Telegram's API does not allow.
+
 It is bounded by `fetchBudget`, two seconds for the whole delivery and one for
 a single file. Those numbers come from the ack window rather than from what a
 download needs: Slack allows three seconds. Sized this way, inline fetching
@@ -169,6 +178,18 @@ cannot blow an ack — and a file that does not fit is dropped with a log line,
 which is the signal that the provider needs a queue rather than a bigger
 constant. Raising them past the ack window trades a lost file for a lost
 message and an endpoint the provider eventually disables.
+
+A provider whose webhook waits for its answer may say so (`Budgeted`):
+Telegram gives its files six seconds each and eight in all, since a slow
+answer only holds back the bot's next update. Considered: a queue that
+fetches after the message is stored, which needs the run to wait for it;
+"attachment budget exhausted" in the logs is when that becomes worth it.
+
+**A file not kept is said to the run.** Each is a sentence in
+`Delivery.Missed` ("film.mov is video/quicktime, which is not accepted",
+"report.pdf could not be fetched"), and the run's input ends with them, so the
+agent tells the person rather than answer as if it had seen the file. A
+message whose every file was missed is still answered for that reason.
 
 **A failed fetch is a log line; a failed row is an error.** They look
 symmetrical and are not. A file that 404s would 404 on every retry, so the
@@ -233,6 +254,12 @@ A long answer is split between blocks, never inside a code block unless one
 block is itself too big, and then the fence is closed and reopened around each
 cut. Considered: one request a reply, cut at the limit. Refused because the
 user wants the whole answer; the cost is `parts_sent` and resuming.
+
+A photo is kept at its largest size a bot may download (20 MB, the Bot API's
+limit), named `photo-<message_id>.jpg`; a document and audio keep their names;
+a caption is the text. A voice note, a video or a sticker names no file. An
+album arrives as one update per photo, so the first starts a run and the rest
+steer it; merging them would mean holding a message back to wait for the next.
 
 `Parse` receives the credentials, because "addressed to us" in a group needs
 the bot's id and username. Considered: answering only private chats. Refused
