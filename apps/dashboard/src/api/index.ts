@@ -313,8 +313,16 @@ export function listTeamRuns(
  * answers.
  */
 /** Starts a conversation on the dashboard: the hub answers what was typed. */
-export function startConversation(teamId: string, say: SayRequest): Promise<Said> {
-  return request<Said>(`/teams/${teamId}/sessions`, { method: "POST", body: say });
+export function startConversation(
+  teamId: string,
+  say: SayRequest,
+  files: File[] = [],
+  onProgress?: Progress,
+): Promise<Said> {
+  return request<Said>(`/teams/${teamId}/sessions`, {
+    method: "POST",
+    ...sayBody(say, files, onProgress),
+  });
 }
 
 /** Writes in the caller's own dashboard conversation. */
@@ -322,11 +330,35 @@ export function sendSessionMessage(
   teamId: string,
   sessionId: string,
   say: SayRequest,
+  files: File[] = [],
+  onProgress?: Progress,
 ): Promise<Said> {
   return request<Said>(`/teams/${teamId}/sessions/${sessionId}/messages`, {
     method: "POST",
-    body: say,
+    ...sayBody(say, files, onProgress),
   });
+}
+
+/** How much of an upload has gone: bytes sent of the body's total. */
+export type Progress = (sent: number, total: number) => void;
+
+/**
+ * A message as JSON, or as a form when files go with it. The brain reads a
+ * form's parts in order, so the text and key come first: words it refuses are
+ * refused before any file has been stored.
+ */
+function sayBody(
+  say: SayRequest,
+  files: File[],
+  onProgress?: Progress,
+): { body: SayRequest } | { upload: FormData; onProgress?: Progress } {
+  if (files.length === 0) return { body: say };
+  const form = new FormData();
+  form.append("text", say.text);
+  form.append("key", say.key);
+  if (say.builder) form.append("builder", "true");
+  for (const f of files) form.append("files", f, f.name);
+  return onProgress ? { upload: form, onProgress } : { upload: form };
 }
 
 /** The kinds a session's stream sends that the dashboard reads; anything else is "other". */

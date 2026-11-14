@@ -41,6 +41,7 @@ type Runs interface {
 	AddSteer(ctx context.Context, arg db.AddSteerParams) error
 	HubCanRun(ctx context.Context, teamID uuid.UUID) (bool, error)
 	CreateChannelRun(ctx context.Context, arg db.CreateChannelRunParams) (db.Run, error)
+	BuilderCanRun(ctx context.Context, teamID uuid.UUID) (bool, error)
 	MarkMessageAsks(ctx context.Context, id uuid.UUID) error
 	ConsumeMessages(ctx context.Context, arg db.ConsumeMessagesParams) (int64, error)
 }
@@ -193,6 +194,7 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) (Deliver
 		ProviderRef: m.Session.Ref,
 		Kind:        string(m.Session.Kind),
 		UserID:      participant(m),
+		Builder:     m.Session.Builder,
 	})
 	if err != nil {
 		return Delivered{}, outcome{}, fmt.Errorf("resolve session %q: %w", m.Session.Ref, err)

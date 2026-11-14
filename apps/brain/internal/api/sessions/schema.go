@@ -16,6 +16,8 @@ type session struct {
 	Status      string     `json:"status"`
 	// UserID is who a direct session is with; absent for anything else.
 	UserID *uuid.UUID `json:"user_id,omitempty"`
+	// Builder is a conversation the team's builder answers, not its hub.
+	Builder bool `json:"builder"`
 
 	StartedAt     time.Time `json:"started_at"`
 	LastMessageAt time.Time `json:"last_message_at"`
@@ -73,6 +75,9 @@ type attachmentCursor struct {
 type sayRequest struct {
 	Text string `json:"text"`
 	Key  string `json:"key"`
+	// Builder starts the conversation as the builder's. Only a start may say
+	// it: who answers a conversation is decided when it begins.
+	Builder bool `json:"builder"`
 	// files arrive in a multipart body only, stored as they are read.
 	files []gateway.Stored
 }

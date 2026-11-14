@@ -314,7 +314,7 @@ func (h *handler) writeSessions(w http.ResponseWriter, u *auth.User, rows []list
 func sessionView(row db.Session) session {
 	out := session{
 		ID: row.ID, ChannelID: row.ChannelID, Kind: row.Kind, Status: row.Status,
-		StartedAt: row.StartedAt, LastMessageAt: row.LastMessageAt,
+		StartedAt: row.StartedAt, LastMessageAt: row.LastMessageAt, Builder: row.Builder,
 	}
 	if row.Kind == "direct" {
 		out.UserID = row.UserID

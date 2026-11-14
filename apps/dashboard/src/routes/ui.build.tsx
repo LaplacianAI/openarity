@@ -1,13 +1,22 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowUpRight, Check, CircleAlert, LoaderCircle, Plus } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef } from "react";
 
-import { listProposals, listSessionRuns, listTeamRuns, startRun } from "@/api";
+import {
+  downloadAttachment,
+  listAttachments,
+  listProposals,
+  listSessionRuns,
+  listTeamRuns,
+} from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
-import type { Run } from "@/api/types";
-import { isSend, Refusal, RUN_WRITE } from "@/components/ask-team";
+import type { Run, SessionEventFile } from "@/api/types";
+import { RUN_WRITE } from "@/components/ask-team";
+import { Composer } from "@/components/composer";
+import { type SentFiles, SentFilesView } from "@/components/conversation-view";
+import { saveDownload } from "@/components/file-chip";
 import { Markdown } from "@/components/markdown";
 import { ProposalCard } from "@/components/proposal-card";
 import { useRunEvents } from "@/components/run-detail";
@@ -15,12 +24,9 @@ import { runLink } from "@/components/run-table";
 import { ErrorState } from "@/components/states";
 import { StatusPill as RunStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/field";
-import { Textarea } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
-import { askProblem } from "@/lib/ask";
-import { buildRefusal, conversationsOf, isLive, liveOf, type Turn, turnsOf } from "@/lib/build";
+import { conversationsOf, isLive, liveOf, saidOf, type Turn, turnsOf } from "@/lib/build";
 import { relativeTime } from "@/lib/format";
 
 type BuildSearch = { session?: string };
@@ -73,9 +79,8 @@ function Build() {
 
 function Conversation({ teamId, session }: { teamId: string; session?: string }) {
   const qc = useQueryClient();
-  const navigate = Route.useNavigate();
   const permissions = usePermissions(teamId);
-  const box = useRef<HTMLTextAreaElement>(null);
+  const composerId = useId();
 
   const runs = useQuery({
     queryKey: ["build", teamId, session, "runs"],
@@ -99,15 +104,28 @@ function Conversation({ teamId, session }: { teamId: string; session?: string })
     wasLive.current = live;
   }, [live, qc, teamId, session]);
 
-  const send = useMutation({
-    mutationFn: (input: string) => startRun(teamId, { input, builder: true, session_id: session }),
-    onSuccess: (run) => {
-      void qc.invalidateQueries({ queryKey: ["build", teamId, run.session_id] });
-      void qc.invalidateQueries({ queryKey: ["sessions", teamId] });
-      void qc.invalidateQueries({ queryKey: ["runs", teamId] });
-      if (run.session_id !== session) void navigate({ search: { session: run.session_id } });
-    },
+  // What was sent with each message, by the message: a turn shows its own.
+  const attachments = useQuery({
+    queryKey: ["build", teamId, session, "attachments"],
+    queryFn: () => listAttachments(teamId, session as string),
+    enabled: Boolean(session),
   });
+  const sentWith = (messageId: string | null | undefined): SessionEventFile[] =>
+    (attachments.data?.items ?? [])
+      .filter((a) => messageId && a.message_id === messageId)
+      .map((a) => ({
+        id: a.id,
+        filename: a.filename,
+        media_type: a.media_type,
+        size: a.size_bytes,
+      }));
+  const files: SentFiles | undefined = session
+    ? {
+        open: (f) =>
+          void downloadAttachment(teamId, session, f.id).then((b) => saveDownload(b, f.filename)),
+        load: (f) => downloadAttachment(teamId, session, f.id),
+      }
+    : undefined;
 
   const turns: Turn[] = turnsOf(runs.data?.items ?? [], proposals.data?.items ?? []);
   const loading = Boolean(session) && (runs.isPending || proposals.isPending);
@@ -134,7 +152,9 @@ function Conversation({ teamId, session }: { teamId: string; session?: string })
               key={t.run.id}
               teamId={teamId}
               turn={t}
-              onChange={() => box.current?.focus()}
+              sent={sentWith(t.run.message_id)}
+              files={files}
+              onChange={() => document.getElementById(composerId)?.focus()}
             />
           ))}
         </ol>
@@ -142,13 +162,18 @@ function Conversation({ teamId, session }: { teamId: string; session?: string })
 
       {permissions.isPending ? null : permissions.can(RUN_WRITE) ? (
         <Composer
-          box={box}
-          busy={send.isPending || live}
-          sending={send.isPending}
-          error={send.isError ? send.error : null}
-          onType={() => send.isError && send.reset()}
-          onSend={(text) => send.mutate(text)}
-          first={!session}
+          teamId={teamId}
+          writes={
+            session ? { kind: "reply", sessionId: session } : { kind: "start", builder: true }
+          }
+          label={session ? "Reply to the builder" : "What do you want?"}
+          placeholder={
+            session
+              ? "Sonnet, and yes to the helpdesk server."
+              : "An agent that triages support email, using our FAQ."
+          }
+          className="rounded-lg bg-card p-4"
+          id={composerId}
         />
       ) : (
         <p className="text-sm text-muted-foreground">
@@ -206,17 +231,24 @@ function RecentConversations({ teamId }: { teamId: string }) {
 function TurnView({
   teamId,
   turn,
+  sent,
+  files,
   onChange,
 }: {
   teamId: string;
   turn: Turn;
+  /** The files sent with the message the run answers. */
+  sent: SessionEventFile[];
+  files?: SentFiles;
   onChange: () => void;
 }) {
   const { run, proposal } = turn;
+  const said = saidOf(run, sent);
   return (
     <li className="space-y-3">
-      <div className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-lg bg-muted px-3 py-2 text-sm">
-        {run.input}
+      <div className="ml-auto w-fit max-w-[85%] rounded-lg bg-muted px-3 py-2 text-sm">
+        {said ? <p className="whitespace-pre-wrap break-words">{said}</p> : null}
+        <SentFilesView sent={sent} files={files} />
       </div>
       {isLive(run) ? (
         <LiveTurn teamId={teamId} run={run} />
@@ -294,88 +326,5 @@ function LiveTurn({ teamId, run }: { teamId: string; run: Run }) {
         </Link>
       </p>
     </div>
-  );
-}
-
-function Composer({
-  box,
-  busy,
-  sending,
-  error,
-  onType,
-  onSend,
-  first,
-}: {
-  box: React.RefObject<HTMLTextAreaElement | null>;
-  busy: boolean;
-  sending: boolean;
-  error: unknown;
-  onType: () => void;
-  onSend: (text: string) => void;
-  first: boolean;
-}) {
-  const [input, setInput] = useState("");
-  const id = useId();
-  const text = input.trim();
-  const problem = askProblem(text);
-  const send = () => {
-    if (text === "" || problem || busy) return;
-    onSend(text);
-    setInput("");
-  };
-  return (
-    <form
-      aria-label="Message the builder"
-      onSubmit={(e) => {
-        e.preventDefault();
-        send();
-      }}
-      className="space-y-3 rounded-lg bg-card p-4"
-    >
-      <Field
-        label={first ? "What do you want?" : "Reply to the builder"}
-        htmlFor={id}
-        hint={
-          busy && !sending
-            ? "The builder is still working on the last message."
-            : "Ctrl+Enter or ⌘+Enter sends it."
-        }
-        error={problem}
-      >
-        <Textarea
-          id={id}
-          ref={box}
-          value={input}
-          rows={2}
-          placeholder={
-            first
-              ? "An agent that triages support email, using our FAQ."
-              : "Sonnet, and yes to the helpdesk server."
-          }
-          onChange={(e) => {
-            setInput(e.target.value);
-            onType();
-          }}
-          onKeyDown={(e) => {
-            if (isSend(e)) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          className="bg-background"
-        />
-      </Field>
-      <div className="flex flex-col-reverse items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">{error ? <Refusal refusal={buildRefusal(error)} /> : null}</div>
-        <Button
-          type="submit"
-          size="sm"
-          loading={sending}
-          disabled={text === "" || problem !== null || busy}
-        >
-          Send
-        </Button>
-      </div>
-    </form>
   );
 }

@@ -222,16 +222,22 @@ func (f *execFixture) builderRun(t *testing.T) uuid.UUID {
 	}); err != nil {
 		t.Fatalf("UpsertTeamSettings: %v", err)
 	}
+	// A conversation with the builder, on the team's dashboard channel.
 	var session uuid.UUID
 	if err := f.raw.QueryRow(t.Context(),
-		`INSERT INTO sessions (team_id, kind) VALUES ($1, 'group') RETURNING id`, f.team).Scan(&session); err != nil {
+		`INSERT INTO sessions (team_id, kind, channel_id, provider_ref, builder)
+		 SELECT $1, 'group', c.id, gen_random_uuid()::text, true FROM channels c
+		 WHERE c.team_id = $1 AND c.provider = 'dashboard' RETURNING id`, f.team).Scan(&session); err != nil {
 		t.Fatalf("insert session: %v", err)
 	}
-	r, err := f.store.CreateBuilderRun(t.Context(), db.CreateBuilderRunParams{
+	r, err := f.store.CreateChannelRun(t.Context(), db.CreateChannelRunParams{
 		ID: uuid.New(), TeamID: f.team, SessionID: session, Input: "an agent that writes replies",
 	})
 	if err != nil {
-		t.Fatalf("CreateBuilderRun: %v", err)
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	if !r.Builder || r.Hub {
+		t.Fatalf("a builder conversation's run is builder %v, hub %v; want the builder", r.Builder, r.Hub)
 	}
 	f.run = r.ID
 	return session
@@ -290,7 +296,7 @@ func TestABuilderRunReadsItsEarlierTurns(t *testing.T) {
 	f.exec.builder.WithWorkshop(realWorkshop(f))
 	f.mustExecute(t)
 
-	r, err := f.store.CreateBuilderRun(t.Context(), db.CreateBuilderRunParams{
+	r, err := f.store.CreateChannelRun(t.Context(), db.CreateChannelRunParams{
 		ID: uuid.New(), TeamID: f.team, SessionID: session, Input: "sonnet",
 	})
 	if err != nil {

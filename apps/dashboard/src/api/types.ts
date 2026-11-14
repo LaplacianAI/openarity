@@ -162,6 +162,8 @@ export type ApprovedSender = {
 export type Session = {
   id: string;
   channel_id: string | null;
+  /** A dashboard conversation the team's builder answers, rather than its hub. */
+  builder?: boolean;
   provider_ref: string;
   kind: string;
   status: SessionStatus;
@@ -236,6 +238,8 @@ export type Run = {
   hub: boolean;
   /** The team's builder, which proposes blueprints and writes nothing. Optional: older brains send none. */
   builder?: boolean;
+  /** The message the run was started to answer; its files are the session's attachments with this message_id. */
+  message_id?: string | null;
   /**
    * The agents a top-level run handed work to directly, each once, in the
    * order it first did. Optional: a brain from before the field sends none.
@@ -268,6 +272,8 @@ export type SayRequest = {
   text: string;
   /** The same for a retry of the same send, so it is one message. */
   key: string;
+  /** On a new conversation only: the team's builder answers it, not the hub. */
+  builder?: boolean;
 };
 
 /** What became of a message typed on the dashboard. */
@@ -283,7 +289,11 @@ export type Said = {
 };
 
 /** One part of a message on the session stream. */
-export type SessionEventPart = { type: string; text?: string };
+/** A part of a message: its text, or a file sent with it. */
+export type SessionEventPart = { type: string; text?: string; file?: SessionEventFile };
+
+/** A file a person sent: its attachment id, which downloads it. */
+export type SessionEventFile = { id: string; filename: string; media_type: string; size: number };
 
 /**
  * A frame of a session's stream, GET /teams/{id}/sessions/{sessionID}/events:

@@ -78,6 +78,23 @@ func (q *Queries) AddSteer(ctx context.Context, arg AddSteerParams) error {
 	return err
 }
 
+const builderCanRun = `-- name: BuilderCanRun :one
+SELECT EXISTS (
+    SELECT 1 FROM team_settings s WHERE s.team_id = $1 AND s.model_name IS NOT NULL
+)::bool AS can_run
+`
+
+// Whether the team's hub can run: a hub agent that still exists, or a model
+// for the built-in orchestrator. The same rule the runtime fails a run on, so
+// a channel never starts a run that is bound to fail with ErrNoModel.
+// The builder runs on the team's model, and only on it.
+func (q *Queries) BuilderCanRun(ctx context.Context, teamID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, builderCanRun, teamID)
+	var can_run bool
+	err := row.Scan(&can_run)
+	return can_run, err
+}
+
 const claimRun = `-- name: ClaimRun :one
 UPDATE runs SET
     status       = 'running',
@@ -174,10 +191,13 @@ func (q *Queries) ClaimRun(ctx context.Context, arg ClaimRunParams) (ClaimRunRow
 
 const createChannelRun = `-- name: CreateChannelRun :one
 INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input,
-                  token_budget, hub, message_id, reply_to_channel, transcript)
+                  token_budget, hub, builder, message_id, reply_to_channel, transcript)
 SELECT $1::uuid, t.id, $2::uuid, $1::uuid,
-       a.id, coalesce(a.name, 'orchestrator'), $3::uuid, $4::text,
-       a.token_budget, true, $5::uuid,
+       CASE WHEN ss.builder THEN NULL ELSE a.id END,
+       CASE WHEN ss.builder THEN 'builder' ELSE coalesce(a.name, 'orchestrator') END,
+       $3::uuid, $4::text,
+       CASE WHEN ss.builder THEN NULL ELSE a.token_budget END,
+       NOT ss.builder, ss.builder, $5::uuid,
        -- The dashboard's answer is its stream: there is nothing to post it to.
        ch.provider <> 'dashboard',
        'session:' || $2::uuid::text
@@ -202,7 +222,8 @@ type CreateChannelRunParams struct {
 	TeamID    uuid.UUID
 }
 
-// A message starts a hub run that answers its conversation. The message has to
+// A message starts the run that answers its conversation: the builder's in a
+// builder conversation, the hub's in any other. The message has to
 // be in the run's session: a message from another conversation inserts nothing
 // and the caller gets pgx.ErrNoRows. A run started for steers that arrived too
 // late for the run they were meant for has no message, and passes null.
@@ -597,9 +618,6 @@ SELECT EXISTS (
 )::bool AS can_run
 `
 
-// Whether the team's hub can run: a hub agent that still exists, or a model
-// for the built-in orchestrator. The same rule the runtime fails a run on, so
-// a channel never starts a run that is bound to fail with ErrNoModel.
 func (q *Queries) HubCanRun(ctx context.Context, teamID uuid.UUID) (bool, error) {
 	row := q.db.QueryRow(ctx, hubCanRun, teamID)
 	var can_run bool

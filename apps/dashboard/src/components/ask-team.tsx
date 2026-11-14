@@ -11,12 +11,22 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowRight, TriangleAlert } from "lucide-react";
 import { useId, useState } from "react";
 
-import { startConversation } from "@/api";
+import { type Progress, startConversation } from "@/api";
+import {
+  AttachButton,
+  AttachedList,
+  dropTarget,
+  RefusedFiles,
+  useAttachments,
+  useProgress,
+} from "@/components/attachments";
 import { useSendKeys } from "@/components/send-key";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/input";
 import { type AskRefusal, askProblem, askRefusal, Unanswered } from "@/lib/ask";
+import { sendContent } from "@/lib/attach";
+import { cn } from "@/lib/utils";
 
 /** What starting a run takes in a team. */
 export const RUN_WRITE = "run:write";
@@ -25,13 +35,14 @@ export const RUN_WRITE = "run:write";
  * Starts a conversation with what was asked, and opens it once the brain has
  * stored it. Every list a new run or session would appear in is read again.
  */
-export function useAsk(teamId: string) {
+export function useAsk(teamId: string, onProgress?: Progress) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const keys = useSendKeys();
   return useMutation({
-    mutationFn: async (input: string) => {
-      const said = await startConversation(teamId, { text: input, key: keys.keyFor(input) });
+    mutationFn: async ({ text, files = [] }: { text: string; files?: File[] }) => {
+      const key = keys.keyFor(sendContent(text, files));
+      const said = await startConversation(teamId, { text, key }, files, onProgress);
       // Stored, and nothing will answer it: say why here rather than open a
       // conversation that will stay silent. Asked again, it is a new message.
       if (said.unanswered) {
@@ -82,14 +93,20 @@ export function Refusal({ refusal }: { refusal: AskRefusal }) {
 /** The box on Home. */
 export function AskTeam({ teamId }: { teamId: string }) {
   const [input, setInput] = useState("");
-  const ask = useAsk(teamId);
+  const progress = useProgress();
+  const ask = useAsk(teamId, progress.report);
+  const a = useAttachments({ busy: ask.isPending, changed: () => ask.isError && ask.reset() });
   const id = useId();
 
   const question = input.trim();
   const problem = askProblem(question);
+  const sendable =
+    (question !== "" || a.files.length > 0) && problem === null && a.refused.length === 0;
   const send = () => {
-    if (question === "" || problem || ask.isPending) return;
-    ask.mutate(question);
+    if (!sendable || ask.isPending) return;
+    progress.reset();
+    // Opened on success, so the box is not cleared: it goes with the page.
+    ask.mutate({ text: question, files: a.files });
   };
 
   return (
@@ -99,7 +116,8 @@ export function AskTeam({ teamId }: { teamId: string }) {
         e.preventDefault();
         send();
       }}
-      className="space-y-3 rounded-lg bg-card p-4"
+      {...a.dropProps}
+      className={cn("space-y-3 bg-card p-4", dropTarget(a.dragging))}
     >
       <Field
         label="Ask the team"
@@ -116,6 +134,7 @@ export function AskTeam({ teamId }: { teamId: string }) {
             setInput(e.target.value);
             if (ask.isError) ask.reset();
           }}
+          onPaste={a.onPaste}
           onKeyDown={(e) => {
             if (isSend(e)) {
               e.preventDefault();
@@ -125,18 +144,21 @@ export function AskTeam({ teamId }: { teamId: string }) {
           className="bg-background"
         />
       </Field>
+      <AttachedList a={a} sending={ask.isPending} sent={progress.sent} />
       <div className="flex flex-col-reverse items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          {ask.isError ? <Refusal refusal={askRefusal(ask.error)} /> : null}
+        <div className="min-w-0 text-xs">
+          {a.refused.length > 0 ? (
+            <RefusedFiles a={a} />
+          ) : ask.isError ? (
+            <Refusal refusal={askRefusal(ask.error)} />
+          ) : null}
         </div>
-        <Button
-          type="submit"
-          size="sm"
-          loading={ask.isPending}
-          disabled={question === "" || problem !== null}
-        >
-          Ask
-        </Button>
+        <div className="flex items-center gap-2 self-end sm:self-auto">
+          <AttachButton onPick={a.add} disabled={ask.isPending} size="icon-sm" />
+          <Button type="submit" size="sm" loading={ask.isPending} disabled={!sendable}>
+            Ask
+          </Button>
+        </div>
       </div>
     </form>
   );

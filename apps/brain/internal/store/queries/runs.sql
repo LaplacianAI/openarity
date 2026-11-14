@@ -207,16 +207,20 @@ UPDATE runs SET status = 'failed', error = sqlc.arg('reason')::text, finished_at
 WHERE id IN (SELECT id FROM below) AND status = 'running'
 RETURNING id;
 
--- A message starts a hub run that answers its conversation. The message has to
+-- A message starts the run that answers its conversation: the builder's in a
+-- builder conversation, the hub's in any other. The message has to
 -- be in the run's session: a message from another conversation inserts nothing
 -- and the caller gets pgx.ErrNoRows. A run started for steers that arrived too
 -- late for the run they were meant for has no message, and passes null.
 -- name: CreateChannelRun :one
 INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input,
-                  token_budget, hub, message_id, reply_to_channel, transcript)
+                  token_budget, hub, builder, message_id, reply_to_channel, transcript)
 SELECT sqlc.arg('id')::uuid, t.id, sqlc.arg('session_id')::uuid, sqlc.arg('id')::uuid,
-       a.id, coalesce(a.name, 'orchestrator'), sqlc.narg('user_id')::uuid, sqlc.arg('input')::text,
-       a.token_budget, true, sqlc.narg('message_id')::uuid,
+       CASE WHEN ss.builder THEN NULL ELSE a.id END,
+       CASE WHEN ss.builder THEN 'builder' ELSE coalesce(a.name, 'orchestrator') END,
+       sqlc.narg('user_id')::uuid, sqlc.arg('input')::text,
+       CASE WHEN ss.builder THEN NULL ELSE a.token_budget END,
+       NOT ss.builder, ss.builder, sqlc.narg('message_id')::uuid,
        -- The dashboard's answer is its stream: there is nothing to post it to.
        ch.provider <> 'dashboard',
        'session:' || sqlc.arg('session_id')::uuid::text
@@ -302,6 +306,12 @@ LIMIT sqlc.arg('turns')::int;
 -- Whether the team's hub can run: a hub agent that still exists, or a model
 -- for the built-in orchestrator. The same rule the runtime fails a run on, so
 -- a channel never starts a run that is bound to fail with ErrNoModel.
+-- The builder runs on the team's model, and only on it.
+-- name: BuilderCanRun :one
+SELECT EXISTS (
+    SELECT 1 FROM team_settings s WHERE s.team_id = $1 AND s.model_name IS NOT NULL
+)::bool AS can_run;
+
 -- name: HubCanRun :one
 SELECT EXISTS (
     SELECT 1 FROM team_settings s

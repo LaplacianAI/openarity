@@ -5,7 +5,7 @@
  * Pure, and idempotent on a frame already seen, so a stream followed again
  * after a drop never shows anything twice.
  */
-import type { SessionEnvelope } from "@/api/types";
+import type { SessionEnvelope, SessionEventFile } from "@/api/types";
 
 export type RunState = "running" | "succeeded" | "failed" | "cancelled";
 
@@ -14,6 +14,8 @@ export type Said = {
   id: string;
   userId: string;
   text: string;
+  /** The files sent with it, in the order they were sent. */
+  files: SessionEventFile[];
   at: string;
   /** Waiting for a run to take it. */
   pending: boolean;
@@ -88,6 +90,7 @@ export function fold(c: Conversation, env: SessionEnvelope): Conversation {
             id: d.id,
             userId: d.user_id,
             text,
+            files: d.parts.flatMap((p) => (p.type === "file" && p.file ? [p.file] : [])),
             at: d.at,
             pending: d.state === "pending",
             readBy: known?.readBy ?? null,

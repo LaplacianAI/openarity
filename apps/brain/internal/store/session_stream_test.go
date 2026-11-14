@@ -758,6 +758,10 @@ func TestTheSessionStreamMigrationRollsBackWithDataInIt(t *testing.T) {
 	}
 }
 
+// beforeReasoning is 20261113180000_session_stream.sql, the migration before
+// the reasoning kind.
+const beforeReasoning = 20261113180000
+
 // Reasoning is a run event like text, and rolls back with the rows it holds.
 func TestTheReasoningKindRollsBack(t *testing.T) {
 	s := migrationStore(t)
@@ -771,9 +775,8 @@ func TestTheReasoningKindRollsBack(t *testing.T) {
 		t.Fatalf("a reasoning event was refused: %v", err)
 	}
 
-	if err := s.Rollback(t.Context()); err != nil {
-		t.Fatalf("Rollback: %v", err)
-	}
+	// To just before the reasoning kind, whatever came after it.
+	downTo(t, s, beforeReasoning)
 	if n := count(t, s, `SELECT count(*) FROM run_events WHERE kind = 'reasoning'`); n != 0 {
 		t.Errorf("%d reasoning events survived the rollback", n)
 	}

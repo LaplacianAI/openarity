@@ -44,14 +44,13 @@ func NewBuild(opts *cli.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			builder := true
-			body := client.StartRunJSONRequestBody{Input: input, Builder: &builder}
+			var sessionID *uuid.UUID
 			if session != "" {
 				id, err := uuid.Parse(strings.TrimSpace(session))
 				if err != nil {
 					return fmt.Errorf("%q is not a session id — the first oa build prints it", session)
 				}
-				body.SessionID = &id
+				sessionID = &id
 			}
 
 			api, err := opts.API(cmd.Context())
@@ -62,11 +61,23 @@ func NewBuild(opts *cli.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// A builder already working in the session takes the message as it
-			// works; either way, this follows the run that answers it.
-			run, _, err := cli.Started(api.StartRunWithResponse(cmd.Context(), team, body))
+			// The builder answers on the dashboard channel: the first message
+			// starts a conversation with it, and the rest are written in it.
+			// A builder already working takes the message as it works; either
+			// way, this follows the run that answers it.
+			said, err := say(cmd, api, team, sessionID, input)
 			if err != nil {
 				return cli.Needs(err, "run:write")
+			}
+			if said.Unanswered != nil {
+				return fmt.Errorf("the builder will not answer: %s", cli.Line(*said.Unanswered))
+			}
+			if said.RunID == nil {
+				return errors.New("the message was stored, and no run answers it")
+			}
+			run, err := cli.Result(api.GetRunWithResponse(cmd.Context(), team, *said.RunID))
+			if err != nil {
+				return err
 			}
 
 			if !isTable(opts) {
@@ -82,6 +93,30 @@ func NewBuild(opts *cli.Options) *cobra.Command {
 	cmd.Flags().StringVar(&session, "session", "", "carry on the conversation the first build started, by id")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "also show each step and its tokens, and every tool result whole")
 	return cmd
+}
+
+// say writes input to the builder: a new conversation with it, or the one
+// session names. The key is new each time, so each build is its own message.
+func say(cmd *cobra.Command, api *client.ClientWithResponses, team uuid.UUID, session *uuid.UUID, input string) (*client.Said, error) {
+	key := uuid.NewString()
+	if session != nil {
+		said, _, err := cli.Started(api.SendSessionMessageWithResponse(cmd.Context(), team, *session,
+			client.SendSessionMessageJSONRequestBody{Text: input, Key: key}))
+		return said, err
+	}
+	builder := true
+	res, err := api.StartConversationWithResponse(cmd.Context(), team,
+		client.StartConversationJSONRequestBody{Text: input, Key: key, Builder: &builder})
+	if err != nil {
+		return nil, err
+	}
+	if res.JSON201 != nil {
+		return res.JSON201, nil
+	}
+	if res.JSON200 != nil {
+		return res.JSON200, nil
+	}
+	return nil, cli.APIError(res.StatusCode(), res.Body)
 }
 
 // conversationView is a builder conversation as a script reads it: its

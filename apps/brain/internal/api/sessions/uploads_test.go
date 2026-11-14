@@ -290,3 +290,25 @@ func TestAFieldIsReadNoFurtherThanItsLimit(t *testing.T) {
 		t.Fatalf("read %d bytes, %v; want 11", len(got), err)
 	}
 }
+
+// A form says builder as a part of its own, as true or false.
+func TestAFormStartsAConversationWithTheBuilder(t *testing.T) {
+	f := newFixture(t)
+	f.inbox.out = gateway.Delivered{Session: uuid.New(), Message: uuid.New()}
+	kind, body := form(t, [][2]string{{"text", "read this"}, {"key", "k1"}, {"builder", "true"}}, upload{"spec.txt", []byte("an agent")})
+	if rec := f.upload(t, f.startPath(), kind, body); rec.Code != http.StatusCreated {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if got := f.inbox.got[0]; !got.Session.Builder || len(got.Files) != 1 {
+		t.Errorf("delivered %+v, want the builder's, with its file", got)
+	}
+
+	kind, body = form(t, [][2]string{{"text", "read this"}, {"key", "k2"}, {"builder", "yes please"}})
+	rec := f.upload(t, f.startPath(), kind, body)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "builder must be true or false") {
+		t.Errorf("status %d: %s", rec.Code, rec.Body)
+	}
+	if len(f.inbox.got) != 1 {
+		t.Errorf("delivered %d messages, want only the first", len(f.inbox.got))
+	}
+}

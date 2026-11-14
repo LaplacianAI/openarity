@@ -31,14 +31,17 @@ WHERE id = sqlc.arg('id') AND team_id = sqlc.arg('team_id')
 -- Nor is user_id. For a direct session it is who the conversation is with,
 -- and that is decided when it starts; letting a later message move it would
 -- let a second approved sender take over somebody else's private thread.
+--
+-- Nor is builder: who answers a conversation is decided when it starts.
 -- name: EnsureSession :one
-INSERT INTO sessions (team_id, channel_id, provider_ref, kind, user_id)
+INSERT INTO sessions (team_id, channel_id, provider_ref, kind, user_id, builder)
 VALUES (
     sqlc.arg('team_id')::uuid,
     sqlc.arg('channel_id')::uuid,
     sqlc.arg('provider_ref')::text,
     sqlc.arg('kind')::text,
-    sqlc.narg('user_id')::uuid
+    sqlc.narg('user_id')::uuid,
+    sqlc.arg('builder')::bool
 )
 ON CONFLICT (channel_id, provider_ref) WHERE status = 'open'
 DO UPDATE SET last_message_at = now()

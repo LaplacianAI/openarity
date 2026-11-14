@@ -74,7 +74,82 @@ export function brain(routes: Record<string, Reply | ((seen: Seen) => Reply)>): 
       });
     }),
   );
+  vi.stubGlobal("XMLHttpRequest", FakeXHR);
   return seen;
+}
+
+let held: Promise<void> | null = null;
+
+/**
+ * Holds every upload half sent until release is called, so a test can see a
+ * send while it is going up.
+ */
+export function holdUploads(): () => void {
+  let release = () => {};
+  held = new Promise((r) => {
+    release = () => {
+      held = null;
+      r();
+    };
+  });
+  return release;
+}
+
+/**
+ * XMLHttpRequest, answered by the fake brain's fetch: what the client uses
+ * for an upload it reports progress on. It reports half the body sent, waits
+ * while uploads are held, then all of it, then the answer.
+ */
+class FakeXHR {
+  upload: { onprogress: ((e: ProgressEvent) => void) | null } = { onprogress: null };
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  responseType = "";
+  status = 0;
+  statusText = "";
+  response: ArrayBuffer | null = null;
+  private method = "GET";
+  private path = "";
+  private headers = new Headers();
+  private answer = new Headers();
+
+  open(method: string, path: string) {
+    this.method = method;
+    this.path = path;
+  }
+  setRequestHeader(name: string, value: string) {
+    this.headers.set(name, value);
+  }
+  getAllResponseHeaders(): string {
+    return Array.from(this.answer.entries())
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("\r\n");
+  }
+  abort() {
+    this.onabort?.();
+  }
+  async send(body: XMLHttpRequestBodyInit | null) {
+    const progress = (loaded: number) =>
+      this.upload.onprogress?.({ lengthComputable: true, loaded, total: 100 } as ProgressEvent);
+    progress(50);
+    if (held) await held;
+    progress(100);
+    try {
+      const res = await fetch(this.path, {
+        method: this.method,
+        headers: this.headers,
+        body: body as BodyInit | null,
+      });
+      this.status = res.status;
+      this.statusText = res.statusText;
+      this.answer = res.headers;
+      this.response = await res.arrayBuffer();
+      this.onload?.();
+    } catch {
+      this.onerror?.();
+    }
+  }
 }
 
 /**

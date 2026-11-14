@@ -11,7 +11,6 @@ import type {
   Run,
   RunEvent,
 } from "@/api/types";
-import { type AskRefusal, askRefusal } from "@/lib/ask";
 
 /** One exchange: what the person asked, the builder's run, and what it proposed. */
 export type Turn = { run: Run; proposal: Proposal | null };
@@ -39,12 +38,15 @@ export function turnsOf(runs: Run[], proposals: Proposal[]): Turn[] {
     .map((run) => ({ run, proposal: byRun.get(run.id) ?? null }));
 }
 
-export const NO_BUILDER_MODEL = "The builder can't run until the team has a model.";
+/**
+ * What the brain asks a run when a message was files alone (its gateway's
+ * inputOf). The person said nothing, so the turn shows their files only.
+ */
+export const FILES_ALONE = "The message is the files sent with it.";
 
-/** Why the builder could not be asked, in the chat's words. */
-export function buildRefusal(err: unknown): AskRefusal {
-  const r = askRefusal(err);
-  return r.settings ? { text: NO_BUILDER_MODEL, settings: true } : r;
+/** What the person said in the turn: the run's input, unless it was files alone. */
+export function saidOf(run: Run, sent: unknown[]): string {
+  return sent.length > 0 && run.input === FILES_ALONE ? "" : run.input;
 }
 
 /**

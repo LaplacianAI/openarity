@@ -271,3 +271,38 @@ func TestADirectSessionSaysWhoItIsWith(t *testing.T) {
 		t.Fatalf("a group session names somebody: %s", rec.Body)
 	}
 }
+
+// A conversation with the builder starts as the builder's: the delivery says
+// so, and the gateway makes the session the builder's when it makes it.
+func TestAConversationStartedWithTheBuilderIsTheBuilders(t *testing.T) {
+	f := newFixture(t)
+	f.inbox.out = gateway.Delivered{Session: uuid.New(), Message: uuid.New(), Run: uuid.New()}
+
+	rec := f.do(t, http.MethodPost, f.teamSessions(), sayRequest{Text: "an agent for support", Key: "k1", Builder: true})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if m := f.inbox.got[0]; !m.Session.Builder {
+		t.Errorf("delivered %+v, want a session the builder answers", m.Session)
+	}
+
+	f.do(t, http.MethodPost, f.teamSessions(), sayRequest{Text: "hello", Key: "k2"})
+	if m := f.inbox.got[1]; m.Session.Builder {
+		t.Errorf("delivered %+v without builder, want the hub's", m.Session)
+	}
+}
+
+// Who answers is decided when a conversation starts. A message in one cannot
+// change it, and nothing is delivered when it tries.
+func TestAMessageCannotMakeAConversationTheBuilders(t *testing.T) {
+	f := newFixture(t)
+	f.dashboardSession()
+
+	rec := f.do(t, http.MethodPost, f.sessionMessages(), sayRequest{Text: "now you", Key: "k2", Builder: true})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "when a conversation starts") {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if len(f.inbox.got) != 0 {
+		t.Errorf("delivered %+v on a refusal", f.inbox.got)
+	}
+}
