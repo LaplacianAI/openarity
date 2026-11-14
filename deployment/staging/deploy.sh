@@ -95,6 +95,14 @@ if grep -Eq "^SEARXNG_SECRET=[^\"'[:space:]]" "$DEPLOYMENT/.env" 2>/dev/null; th
 	files+=(-f "$DEPLOYMENT/docker-compose.searxng.yml")
 	searxng=1
 fi
+# The logs are the server's to opt into too, by setting GRAFANA_ADMIN_PASSWORD
+# in .env. They change no brain service, so a deploy only starts them if they
+# are not running, and never interrupts what is being read.
+grafana=0
+if grep -Eq "^GRAFANA_ADMIN_PASSWORD=[^\"'[:space:]]" "$DEPLOYMENT/.env" 2>/dev/null; then
+	files+=(-f "$DEPLOYMENT/docker-compose.logs.yml")
+	grafana=1
+fi
 compose() {
 	docker compose --project-directory "$DEPLOYMENT" "${files[@]}" --profile brain "$@"
 }
@@ -139,6 +147,9 @@ switch() {
 	# never interrupts a search in flight.
 	if [ "$searxng" = 1 ]; then
 		compose up -d --no-deps searxng
+	fi
+	if [ "$grafana" = 1 ]; then
+		compose up -d --no-deps socket-proxy loki alloy grafana
 	fi
 	compose up -d --no-deps --force-recreate brain worker
 	wait_healthy

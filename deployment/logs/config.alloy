@@ -1,0 +1,53 @@
+// Every container of this compose project, read through the socket proxy.
+// Each line is labelled with its compose service; the brain's (the brain,
+// the worker and a migration) is JSON, and its level becomes a label too.
+// Everything else it says (run, channel, team_id, err) stays in the line,
+// searchable with | json, not a label: one stream per run would be one index
+// entry per run.
+
+discovery.docker "project" {
+  host = "tcp://socket-proxy:2375"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=" + sys.env("LOGS_PROJECT")]
+  }
+}
+
+discovery.relabel "project" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "project" {
+  host          = "tcp://socket-proxy:2375"
+  targets       = discovery.docker.project.targets
+  relabel_rules = discovery.relabel.project.rules
+  forward_to    = [loki.process.brain.receiver]
+}
+
+loki.process "brain" {
+  stage.match {
+    selector = "{service=~\"brain|worker|migrate\"}"
+
+    stage.json {
+      expressions = { level = "level" }
+    }
+
+    stage.labels {
+      values = { level = "" }
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -1,0 +1,44 @@
+# One Loki, on this machine's disk, keeping seven days.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    - from: 2026-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 168h
+  # A line older than the retention is dropped rather than refused, so Alloy
+  # catching up after a long stop does not retry it forever.
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+# Retention is the compactor's: without it nothing is ever deleted.
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+analytics:
+  reporting_enabled: false

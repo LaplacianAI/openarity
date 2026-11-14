@@ -1,0 +1,115 @@
+# The stack's logs, kept on this machine and read in Grafana: Alloy tails
+# every container of this compose project, Loki keeps seven days of it, and
+# Grafana shows it, with a dashboard for the brain.
+#
+# Measured: about 0.5 GB resident for the four together on a quiet stack.
+#
+#   cd deployment
+#   # set GRAFANA_ADMIN_PASSWORD in .env: openssl rand -hex 32
+#   make grafana
+#
+# The logs stay here. They hold addresses and ids, and on a public repository
+# nothing a server prints goes to Actions; the same holds for anywhere else
+# they could be shipped. Grafana is reached as the dashboard is: on the
+# private network at GRAFANA_PORT, or at an HTTPS name of its own through
+# caddy/sites/ (see deployment/staging/README.md).
+#
+# Alloy finds the containers through the Docker API, and the Docker socket is
+# root on this machine. So Alloy never holds it: socket-proxy does, read-only,
+# and answers only the container list, a container's details and logs, and
+# the network list.
+
+name: openarity
+
+services:
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.2
+    environment:
+      # Only what Alloy reads: the containers, their logs, and the networks
+      # discovery labels them with. Every other section (exec, images,
+      # volumes, the swarm) and every method but GET is refused.
+      CONTAINERS: 1
+      NETWORKS: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - logs
+    mem_limit: 64m
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.7.10
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./logs/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    networks:
+      - logs
+    # No healthcheck: the image is distroless, with no shell, wget or curl to
+    # ask /ready with, and Loki has no flag that checks itself. Nothing needs
+    # one: Alloy retries a push until Loki takes it, and Grafana a query.
+    mem_limit: 512m
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.21.3
+    command: ["run", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]
+    environment:
+      # The project whose containers are read: this one, and no other on the
+      # machine.
+      LOGS_PROJECT: ${LOGS_PROJECT:-openarity}
+    volumes:
+      - ./logs/config.alloy:/etc/alloy/config.alloy:ro
+      # Where each container was read up to, so a restart neither repeats
+      # nor skips lines.
+      - alloy-data:/var/lib/alloy
+    networks:
+      - logs
+    depends_on:
+      - loki
+    mem_limit: 256m
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.2.6
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in deployment/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./logs/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./logs/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    # GRAFANA_BIND, when Grafana has an HTTPS name of its own: 127.0.0.1
+    # there keeps this plain-HTTP port off the tailnet or LAN, and Caddy still
+    # reaches grafana:3000 in-network.
+    ports:
+      - "${GRAFANA_BIND:-${BIND_ADDR:-127.0.0.1}}:${GRAFANA_PORT:-13000}:3000"
+    networks:
+      - default
+      - logs
+    depends_on:
+      - loki
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    mem_limit: 256m
+    restart: unless-stopped
+
+networks:
+  # Its own network, so nothing else in the stack reaches the socket proxy or
+  # Loki. Grafana is on the default network too, for Caddy.
+  logs:
+
+volumes:
+  loki-data:
+  alloy-data:
+  grafana-data:
