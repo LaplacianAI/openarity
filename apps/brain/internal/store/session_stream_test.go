@@ -201,6 +201,15 @@ func TestConcurrentWritersAreNumberedInCommitOrder(t *testing.T) {
 	reader.Go(func() {
 		after := int64(0)
 		for {
+			// Whether the writers had finished before this read began. An
+			// empty read that began before they did says nothing about the
+			// last commit, so only one begun after ends the reading.
+			var done bool
+			select {
+			case <-stop:
+				done = true
+			default:
+			}
 			rows, err := s.ListSessionEvents(t.Context(), db.ListSessionEventsParams{SessionID: f.session, After: after, PageSize: 1000})
 			if err != nil {
 				gap = err
@@ -214,12 +223,8 @@ func TestConcurrentWritersAreNumberedInCommitOrder(t *testing.T) {
 				after = *r.Seq
 				seen = append(seen, after)
 			}
-			select {
-			case <-stop:
-				if len(rows) == 0 {
-					return
-				}
-			default:
+			if done && len(rows) == 0 {
+				return
 			}
 		}
 	})
