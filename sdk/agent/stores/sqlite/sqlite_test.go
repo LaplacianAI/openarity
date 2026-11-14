@@ -157,17 +157,18 @@ func TestEveryCallReportsAClosedDatabase(t *testing.T) {
 	})
 }
 
-// A ToolCall's Arguments are raw JSON the model produced, so a malformed one
-// reaches the store rather than being caught earlier. Saving it must fail and
-// say which message, not write half a transcript.
+// A reasoning block's fields are raw JSON a provider sent, so a malformed one
+// would reach the store. Saving it must fail and say which message, not
+// write half a transcript. (A tool call's arguments that are not JSON are
+// kept as text instead: agent.ToolCall encodes them.)
 func TestAMessageThatCannotBeEncodedIsReported(t *testing.T) {
 	store := open(t, filepath.Join(t.TempDir(), "sessions.db"))
 
 	msgs := []agent.Message{
 		{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "fine"}}},
-		{Role: agent.RoleAssistant, ToolCalls: []agent.ToolCall{{
-			ID: "call_1", Name: "search", Arguments: json.RawMessage(`{not json`),
-		}}},
+		{Role: agent.RoleAssistant, Reasoning: &agent.Reasoning{
+			Fields: map[string]json.RawMessage{"reasoning": json.RawMessage(`{not json`)},
+		}},
 	}
 
 	err := store.Save(t.Context(), "s1", msgs)
