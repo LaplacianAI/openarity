@@ -664,3 +664,78 @@ func TestADrainSendsRepliesAndNotices(t *testing.T) {
 		t.Fatalf("Drain = %d, %v, want 2", n, err)
 	}
 }
+
+func dueEvent(url string, attempts, seq int32) db.ClaimDueRepliesRow {
+	row := due(url, attempts)
+	row.Kind, row.Text, row.EventSeq, row.InReplyTo = "event", "Using `read_logs`…", &seq, nil
+	return row
+}
+
+// A step carries the run event it came from beside the run, so a receiver
+// drops a repeat of it without dropping the run's other steps or its answer.
+func TestAStepIsSentWithAnIDOfItsOwn(t *testing.T) {
+	t.Parallel()
+
+	s := newSending(t)
+	rcv := newReceiver(t, http.StatusOK)
+	row := dueEvent(rcv.URL, 1, 12)
+	s.store.due = []db.ClaimDueRepliesRow{row}
+	if n, err := s.sender.Drain(t.Context()); err != nil || n != 1 {
+		t.Fatalf("Drain = %d, %v", n, err)
+	}
+	out := s.relay.outs[0]
+	if out.ID != row.RunID.String()+":12" || out.Kind != "event" || out.InReplyTo != "" {
+		t.Errorf("the provider was handed %+v", out)
+	}
+}
+
+// A broken step is tried twice, not six times: its answer waits behind it.
+// The answer keeps its own schedule.
+func TestAStepThatFailsTwiceIsGivenUp(t *testing.T) {
+	t.Parallel()
+
+	rcv := newReceiver(t, http.StatusServiceUnavailable)
+	first := newSending(t)
+	first.store.due = []db.ClaimDueRepliesRow{dueEvent(rcv.URL, 1, 3)}
+	if _, err := first.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(first.store.retried) != 1 || first.store.retried[0].RetrySeconds != 60 {
+		t.Errorf("a step's first failure: retried %+v, want once in a minute", first.store.retried)
+	}
+
+	second := newSending(t)
+	second.store.due = []db.ClaimDueRepliesRow{dueEvent(rcv.URL, eventAttempts, 3)}
+	if _, err := second.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(second.store.gaveUp) != 1 || len(second.store.retried) != 0 {
+		t.Errorf("a step's second failure: gave up %d, retried %d; want given up", len(second.store.gaveUp), len(second.store.retried))
+	}
+
+	answer := newSending(t)
+	answer.store.due = []db.ClaimDueRepliesRow{due(rcv.URL, eventAttempts)}
+	if _, err := answer.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(answer.store.retried) != 1 || len(answer.store.gaveUp) != 0 {
+		t.Errorf("an answer failing as often was given up")
+	}
+}
+
+func TestOnlyAnEventReplierTakesEvents(t *testing.T) {
+	t.Parallel()
+
+	reg, err := NewRegistry(&relay{}, &stepRelay{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.RepliesWithEvents("relay") || !reg.RepliesWithEvents("steps") || reg.RepliesWithEvents("nope") {
+		t.Error("RepliesWithEvents does not follow the marker")
+	}
+}
+
+type stepRelay struct{ relay }
+
+func (*stepRelay) Name() string       { return "steps" }
+func (*stepRelay) RepliesWithEvents() {}

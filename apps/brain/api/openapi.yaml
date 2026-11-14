@@ -585,10 +585,15 @@ paths:
     patch:
       operationId: updateChannel
       tags: [channels]
-      summary: Change a channel's reply URL or its notices to strangers
+      summary: Change a channel's reply URL, its notices to strangers or its reply mode
       description: |
-        Requires `channel:write` in this team. Send `reply_url`,
-        `notify_strangers` or both; what is not sent is left as it is.
+        Requires `channel:write` in this team. Send any of `reply_url`,
+        `notify_strangers` and `reply_mode`; what is not sent is left as it
+        is.
+
+        `reply_mode` is what the conversation is sent while a run works
+        (see `Channel`). It is refused with 400 on a channel whose provider
+        sends no steps (`can_show_events` false), the dashboard's among them.
 
         `notify_strangers` switches the notices a sender nobody has let in
         gets (see `Channel`). It is refused with 400 on a channel whose
@@ -610,6 +615,11 @@ paths:
         taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
         anything else is retried for about two and a half hours. A reply can
         arrive twice; drop a repeat by `id`.
+
+        With `reply_mode` `events`, each step of a run is a reply too, of
+        `kind` `event`, before the answer and with no `in_reply_to`. Its `id`
+        is the run's and the step's, `<run id>:<n>`, and it is tried twice,
+        so a broken step never holds the answer back.
       requestBody:
         required: true
         content:
@@ -626,8 +636,10 @@ paths:
         "400":
           description: |
             The body is malformed or names nothing to change, the URL is
-            refused, the channel's provider sends no replies, or it sends no
-            notices and `notify_strangers` was sent.
+            refused, the channel's provider sends no replies, it sends no
+            notices and `notify_strangers` was sent, it sends no steps and
+            `reply_mode` was sent, or `reply_mode` is neither `final` nor
+            `events`.
           content:
             text/plain:
               schema:
@@ -3639,7 +3651,7 @@ components:
 
     Channel:
       type: object
-      required: [id, team_id, provider, name, can_reply, takes_reply_url, can_notify, notify_strangers]
+      required: [id, team_id, provider, name, can_reply, takes_reply_url, can_notify, notify_strangers, can_show_events, reply_mode]
       properties:
         id:
           type: string
@@ -3698,6 +3710,25 @@ components:
             group, by naming it, replying to it or sending it a command),
             and told again when they are let in, if they were told they were
             waiting. Nothing they wrote is stored.
+        can_show_events:
+          type: boolean
+          description: |
+            Whether this channel's provider sends a run's steps as messages
+            of their own. `telegram` and `custom` do; the dashboard channel
+            does not, since its stream is already every step. Offer
+            `reply_mode` only when this is true; it is refused otherwise.
+        reply_mode:
+          type: string
+          enum: [final, events]
+          description: |
+            What the conversation is sent while a run works. `final`, the
+            default, is the answer alone. `events` is each step a person
+            would follow, a message of its own that stays: what the agent
+            says before it calls a tool, "Using `<tool>`…" and "Asking
+            `<agent>`…", then the answer. The run's own bookkeeping (finding
+            tools, planning, reading files) and tools' results are never
+            sent; nor is anything of a run another agent was handed. Always
+            `final` where `can_show_events` is false.
         reply_url:
           type: string
           format: uri
@@ -3790,6 +3821,10 @@ components:
         notify_strangers:
           type: boolean
           description: Whether the channel tells a sender nobody has let in that they are waiting, and that they are in
+        reply_mode:
+          type: string
+          enum: [final, events]
+          description: The run's answer alone, or each of its steps and then the answer
         reply_url:
           type: string
           format: uri

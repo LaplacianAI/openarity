@@ -72,6 +72,7 @@ type Providers interface {
 	Connector(name string) (gateway.Connector, bool)
 	Notifier(name string) (gateway.Notifier, bool)
 	TakesReplyURL(name string) bool
+	RepliesWithEvents(name string) bool
 }
 
 // Kicker has a notice sent now; a failed kick is only late, since the sweep
@@ -458,7 +459,14 @@ func (h *handler) page(w http.ResponseWriter, r *http.Request, teamID uuid.UUID,
 	return params, true
 }
 
-// update sets where the channel's replies go, or with null stops them.
+// The reply modes: a run's answer alone, or each of its steps and then it.
+const (
+	replyFinal  = "final"
+	replyEvents = "events"
+)
+
+// update sets where the channel's replies go, or with null stops them, and
+// what they are.
 func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	u := api.Caller(r)
 
@@ -471,9 +479,20 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	if !api.DecodeJSON(w, r, &req) {
 		return
 	}
-	if !req.ReplyURL.Set && req.NotifyStrangers == nil {
-		http.Error(w, "send reply_url, notify_strangers or both", http.StatusBadRequest)
+	if !req.ReplyURL.Set && req.NotifyStrangers == nil && req.ReplyMode == nil {
+		http.Error(w, "send reply_url, notify_strangers, reply_mode or several", http.StatusBadRequest)
 		return
+	}
+	if m := req.ReplyMode; m != nil {
+		if *m != replyFinal && *m != replyEvents {
+			http.Error(w, `reply_mode is "final" or "events"`, http.StatusBadRequest)
+			return
+		}
+		if !h.providers.RepliesWithEvents(row.Provider) {
+			http.Error(w, "the "+row.Provider+" provider sends no steps, so it takes no reply_mode",
+				http.StatusBadRequest)
+			return
+		}
 	}
 	if req.NotifyStrangers != nil {
 		if _, ok := h.providers.Notifier(row.Provider); !ok {
@@ -497,6 +516,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	if req.NotifyStrangers != nil {
 		params.NotifyStrangers = pgtype.Bool{Bool: *req.NotifyStrangers, Valid: true}
 	}
+	params.ReplyMode = req.ReplyMode
 	updated, err := h.store.UpdateChannel(r.Context(), params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -579,6 +599,11 @@ func (h *handler) view(row db.Channel) channel {
 	_, c.CanNotify = h.providers.Notifier(row.Provider)
 	c.NotifyStrangers = c.CanNotify && row.NotifyStrangers
 	c.TakesReplyURL = h.providers.TakesReplyURL(row.Provider)
+	c.CanShowEvents = h.providers.RepliesWithEvents(row.Provider)
+	c.ReplyMode = replyFinal
+	if c.CanShowEvents {
+		c.ReplyMode = row.ReplyMode
+	}
 	if h.hookBase == "" {
 		return c
 	}

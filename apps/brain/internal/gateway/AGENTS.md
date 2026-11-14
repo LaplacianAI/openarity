@@ -247,6 +247,12 @@ A notice is built like a reply and sent by the same sender, from its own
 `notices` outbox, since a stranger has no run or session to hang it on.
 Telegram is one; `custom` is not. A channel's `notify_strangers` switches it.
 
+A channel's `reply_mode` is `final`, its run's answer alone, or `events`: each
+step a person would follow first, a reply of kind `event` with its own id
+(`<run id>:<seq>`), tried twice and quoting nothing. Only an `EventReplier`
+takes the mode; `telegram` and `custom` are. The runtime decides which steps
+are told and in what words, and writes each after its run event.
+
 A channel takes a `reply_url` only when its provider is a `URLReplier`, which
 posts to an address the channel names. `custom` is; `telegram` replies into
 the chat itself, so it can reply and takes no URL.

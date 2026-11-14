@@ -771,3 +771,12 @@ func TestAnsweredSaysWhyTelegramRefused(t *testing.T) {
 		}
 	}
 }
+
+// Each of a run's steps is a message of its own, so a Telegram channel may
+// send them.
+func TestTelegramSendsARunsSteps(t *testing.T) {
+	t.Parallel()
+	if _, ok := telegram.New().(gateway.EventReplier); !ok {
+		t.Error("telegram is not an EventReplier")
+	}
+}

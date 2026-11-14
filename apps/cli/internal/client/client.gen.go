@@ -105,6 +105,42 @@ func (e BlueprintRefusalKind) Valid() bool {
 	}
 }
 
+// Defines values for ChannelReplyMode.
+const (
+	ChannelReplyModeEvents ChannelReplyMode = "events"
+	ChannelReplyModeFinal  ChannelReplyMode = "final"
+)
+
+// Valid indicates whether the value is a known member of the ChannelReplyMode enum.
+func (e ChannelReplyMode) Valid() bool {
+	switch e {
+	case ChannelReplyModeEvents:
+		return true
+	case ChannelReplyModeFinal:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreatedChannelReplyMode.
+const (
+	CreatedChannelReplyModeEvents CreatedChannelReplyMode = "events"
+	CreatedChannelReplyModeFinal  CreatedChannelReplyMode = "final"
+)
+
+// Valid indicates whether the value is a known member of the CreatedChannelReplyMode enum.
+func (e CreatedChannelReplyMode) Valid() bool {
+	switch e {
+	case CreatedChannelReplyModeEvents:
+		return true
+	case CreatedChannelReplyModeFinal:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Delegation.
 const (
 	DelegationListed Delegation = "listed"
@@ -171,6 +207,24 @@ func (e GraphNodeLabel) Valid() bool {
 	case GraphNodeLabelTool:
 		return true
 	case GraphNodeLabelToolkit:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListedChannelReplyMode.
+const (
+	ListedChannelReplyModeEvents ListedChannelReplyMode = "events"
+	ListedChannelReplyModeFinal  ListedChannelReplyMode = "final"
+)
+
+// Valid indicates whether the value is a known member of the ListedChannelReplyMode enum.
+func (e ListedChannelReplyMode) Valid() bool {
+	switch e {
+	case ListedChannelReplyModeEvents:
+		return true
+	case ListedChannelReplyModeFinal:
 		return true
 	default:
 		return false
@@ -351,6 +405,24 @@ func (e SkillSummarySource) Valid() bool {
 	case SkillSummarySourceURL:
 		return true
 	case SkillSummarySourceUpload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpdateChannelRequestReplyMode.
+const (
+	UpdateChannelRequestReplyModeEvents UpdateChannelRequestReplyMode = "events"
+	UpdateChannelRequestReplyModeFinal  UpdateChannelRequestReplyMode = "final"
+)
+
+// Valid indicates whether the value is a known member of the UpdateChannelRequestReplyMode enum.
+func (e UpdateChannelRequestReplyMode) Valid() bool {
+	switch e {
+	case UpdateChannelRequestReplyModeEvents:
+		return true
+	case UpdateChannelRequestReplyModeFinal:
 		return true
 	default:
 		return false
@@ -779,6 +851,12 @@ type Channel struct {
 	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
+	// CanShowEvents Whether this channel's provider sends a run's steps as messages
+	// of their own. `telegram` and `custom` do; the dashboard channel
+	// does not, since its stream is already every step. Offer
+	// `reply_mode` only when this is true; it is refused otherwise.
+	CanShowEvents bool `json:"can_show_events" yaml:"can_show_events"`
+
 	// HookURL The full address to give the provider: the brain's public
 	// webhook address, then `/hooks/<provider>/<id>` and the
 	// provider's route. Absent when the brain has no
@@ -814,6 +892,16 @@ type Channel struct {
 	// Examples: custom
 	Provider string `json:"provider" yaml:"provider"`
 
+	// ReplyMode What the conversation is sent while a run works. `final`, the
+	// default, is the answer alone. `events` is each step a person
+	// would follow, a message of its own that stays: what the agent
+	// says before it calls a tool, "Using `<tool>`…" and "Asking
+	// `<agent>`…", then the answer. The run's own bookkeeping (finding
+	// tools, planning, reading files) and tools' results are never
+	// sent; nor is anything of a run another agent was handed. Always
+	// `final` where `can_show_events` is false.
+	ReplyMode ChannelReplyMode `json:"reply_mode" yaml:"reply_mode"`
+
 	// ReplyURL Where the team's replies to this channel's conversations are
 	// posted. Absent for a channel that does not reply.
 	//
@@ -828,6 +916,16 @@ type Channel struct {
 	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
 }
+
+// ChannelReplyMode What the conversation is sent while a run works. `final`, the
+// default, is the answer alone. `events` is each step a person
+// would follow, a message of its own that stays: what the agent
+// says before it calls a tool, "Using `<tool>`…" and "Asking
+// `<agent>`…", then the answer. The run's own bookkeeping (finding
+// tools, planning, reading files) and tools' results are never
+// sent; nor is anything of a run another agent was handed. Always
+// `final` where `can_show_events` is false.
+type ChannelReplyMode string
 
 // ChannelPage defines model for ChannelPage.
 type ChannelPage struct {
@@ -907,6 +1005,12 @@ type CreatedChannel struct {
 	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
+	// CanShowEvents Whether this channel's provider sends a run's steps as messages
+	// of their own. `telegram` and `custom` do; the dashboard channel
+	// does not, since its stream is already every step. Offer
+	// `reply_mode` only when this is true; it is refused otherwise.
+	CanShowEvents bool `json:"can_show_events" yaml:"can_show_events"`
+
 	// Connected Whether the brain pointed the provider at this channel itself,
 	// as it does for `telegram` (setWebhook) when it has a public
 	// https webhook address. False for `custom`, and for a brain with
@@ -949,6 +1053,16 @@ type CreatedChannel struct {
 	// Examples: custom
 	Provider string `json:"provider" yaml:"provider"`
 
+	// ReplyMode What the conversation is sent while a run works. `final`, the
+	// default, is the answer alone. `events` is each step a person
+	// would follow, a message of its own that stays: what the agent
+	// says before it calls a tool, "Using `<tool>`…" and "Asking
+	// `<agent>`…", then the answer. The run's own bookkeeping (finding
+	// tools, planning, reading files) and tools' results are never
+	// sent; nor is anything of a run another agent was handed. Always
+	// `final` where `can_show_events` is false.
+	ReplyMode CreatedChannelReplyMode `json:"reply_mode" yaml:"reply_mode"`
+
 	// ReplyURL Where the team's replies to this channel's conversations are
 	// posted. Absent for a channel that does not reply.
 	//
@@ -983,6 +1097,16 @@ type CreatedChannel struct {
 	// off. Absent when there is nothing to say.
 	Warnings *[]string `json:"warnings,omitempty" yaml:"warnings,omitempty"`
 }
+
+// CreatedChannelReplyMode What the conversation is sent while a run works. `final`, the
+// default, is the answer alone. `events` is each step a person
+// would follow, a message of its own that stays: what the agent
+// says before it calls a tool, "Using `<tool>`…" and "Asking
+// `<agent>`…", then the answer. The run's own bookkeeping (finding
+// tools, planning, reading files) and tools' results are never
+// sent; nor is anything of a run another agent was handed. Always
+// `final` where `can_show_events` is false.
+type CreatedChannelReplyMode string
 
 // Delegation Whom the agent may hand work to with the delegate tool: any other
 // agent in its team, only its delegates, or no one. An agent set to
@@ -1082,6 +1206,12 @@ type ListedChannel struct {
 	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
+	// CanShowEvents Whether this channel's provider sends a run's steps as messages
+	// of their own. `telegram` and `custom` do; the dashboard channel
+	// does not, since its stream is already every step. Offer
+	// `reply_mode` only when this is true; it is refused otherwise.
+	CanShowEvents bool `json:"can_show_events" yaml:"can_show_events"`
+
 	// HookURL The full address to give the provider: the brain's public
 	// webhook address, then `/hooks/<provider>/<id>` and the
 	// provider's route. Absent when the brain has no
@@ -1120,6 +1250,16 @@ type ListedChannel struct {
 	// Examples: custom
 	Provider string `json:"provider" yaml:"provider"`
 
+	// ReplyMode What the conversation is sent while a run works. `final`, the
+	// default, is the answer alone. `events` is each step a person
+	// would follow, a message of its own that stays: what the agent
+	// says before it calls a tool, "Using `<tool>`…" and "Asking
+	// `<agent>`…", then the answer. The run's own bookkeeping (finding
+	// tools, planning, reading files) and tools' results are never
+	// sent; nor is anything of a run another agent was handed. Always
+	// `final` where `can_show_events` is false.
+	ReplyMode ListedChannelReplyMode `json:"reply_mode" yaml:"reply_mode"`
+
 	// ReplyURL Where the team's replies to this channel's conversations are
 	// posted. Absent for a channel that does not reply.
 	//
@@ -1137,6 +1277,16 @@ type ListedChannel struct {
 	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
 }
+
+// ListedChannelReplyMode What the conversation is sent while a run works. `final`, the
+// default, is the answer alone. `events` is each step a person
+// would follow, a message of its own that stays: what the agent
+// says before it calls a tool, "Using `<tool>`…" and "Asking
+// `<agent>`…", then the answer. The run's own bookkeeping (finding
+// tools, planning, reading files) and tools' results are never
+// sent; nor is anything of a run another agent was handed. Always
+// `final` where `can_show_events` is false.
+type ListedChannelReplyMode string
 
 // ListedSkill A row of the skills list, with how many agents hold the skill.
 type ListedSkill struct {
@@ -2073,9 +2223,15 @@ type UpdateChannelRequest struct {
 	// NotifyStrangers Whether the channel tells a sender nobody has let in that they are waiting, and that they are in
 	NotifyStrangers *bool `json:"notify_strangers,omitempty" yaml:"notify_strangers,omitempty"`
 
+	// ReplyMode The run's answer alone, or each of its steps and then the answer
+	ReplyMode *UpdateChannelRequestReplyMode `json:"reply_mode,omitempty" yaml:"reply_mode,omitempty"`
+
 	// ReplyURL The URL replies go to; null or an empty string stops sending them
 	ReplyURL *string `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
 }
+
+// UpdateChannelRequestReplyMode The run's answer alone, or each of its steps and then the answer
+type UpdateChannelRequestReplyMode string
 
 // User defines model for User.
 type User struct {
@@ -2893,10 +3049,15 @@ type ClientInterface interface {
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateChannelWithBody Change a channel's reply URL or its notices to strangers
+	// UpdateChannelWithBody Change a channel's reply URL, its notices to strangers or its reply mode
 	//
-	// Requires `channel:write` in this team. Send `reply_url`,
-	// `notify_strangers` or both; what is not sent is left as it is.
+	// Requires `channel:write` in this team. Send any of `reply_url`,
+	// `notify_strangers` and `reply_mode`; what is not sent is left as it
+	// is.
+	//
+	// `reply_mode` is what the conversation is sent while a run works
+	// (see `Channel`). It is refused with 400 on a channel whose provider
+	// sends no steps (`can_show_events` false), the dashboard's among them.
 	//
 	// `notify_strangers` switches the notices a sender nobody has let in
 	// gets (see `Channel`). It is refused with 400 on a channel whose
@@ -2918,16 +3079,26 @@ type ClientInterface interface {
 	// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
 	// anything else is retried for about two and a half hours. A reply can
 	// arrive twice; drop a repeat by `id`.
+	//
+	// With `reply_mode` `events`, each step of a run is a reply too, of
+	// `kind` `event`, before the answer and with no `in_reply_to`. Its `id`
+	// is the run's and the step's, `<run id>:<n>`, and it is tried twice,
+	// so a broken step never holds the answer back.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
 	UpdateChannelWithBody(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateChannel Change a channel's reply URL or its notices to strangers
+	// UpdateChannel Change a channel's reply URL, its notices to strangers or its reply mode
 	//
-	// Requires `channel:write` in this team. Send `reply_url`,
-	// `notify_strangers` or both; what is not sent is left as it is.
+	// Requires `channel:write` in this team. Send any of `reply_url`,
+	// `notify_strangers` and `reply_mode`; what is not sent is left as it
+	// is.
+	//
+	// `reply_mode` is what the conversation is sent while a run works
+	// (see `Channel`). It is refused with 400 on a channel whose provider
+	// sends no steps (`can_show_events` false), the dashboard's among them.
 	//
 	// `notify_strangers` switches the notices a sender nobody has let in
 	// gets (see `Channel`). It is refused with 400 on a channel whose
@@ -2949,6 +3120,11 @@ type ClientInterface interface {
 	// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
 	// anything else is retried for about two and a half hours. A reply can
 	// arrive twice; drop a repeat by `id`.
+	//
+	// With `reply_mode` `events`, each step of a run is a reply too, of
+	// `kind` `event`, before the answer and with no `in_reply_to`. Its `id`
+	// is the run's and the step's, `<run id>:<n>`, and it is tried twice,
+	// so a broken step never holds the answer back.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4555,10 +4731,15 @@ func (c *Client) DeleteChannel(ctx context.Context, id TeamID, channelID openapi
 	return c.Client.Do(req)
 }
 
-// UpdateChannelWithBody Change a channel's reply URL or its notices to strangers
+// UpdateChannelWithBody Change a channel's reply URL, its notices to strangers or its reply mode
 //
-// Requires `channel:write` in this team. Send `reply_url`,
-// `notify_strangers` or both; what is not sent is left as it is.
+// Requires `channel:write` in this team. Send any of `reply_url`,
+// `notify_strangers` and `reply_mode`; what is not sent is left as it
+// is.
+//
+// `reply_mode` is what the conversation is sent while a run works
+// (see `Channel`). It is refused with 400 on a channel whose provider
+// sends no steps (`can_show_events` false), the dashboard's among them.
 //
 // `notify_strangers` switches the notices a sender nobody has let in
 // gets (see `Channel`). It is refused with 400 on a channel whose
@@ -4580,6 +4761,11 @@ func (c *Client) DeleteChannel(ctx context.Context, id TeamID, channelID openapi
 // taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
 // anything else is retried for about two and a half hours. A reply can
 // arrive twice; drop a repeat by `id`.
+//
+// With `reply_mode` `events`, each step of a run is a reply too, of
+// `kind` `event`, before the answer and with no `in_reply_to`. Its `id`
+// is the run's and the step's, `<run id>:<n>`, and it is tried twice,
+// so a broken step never holds the answer back.
 //
 // Takes any type of body and a specified content type.
 //
@@ -4596,10 +4782,15 @@ func (c *Client) UpdateChannelWithBody(ctx context.Context, id TeamID, channelID
 	return c.Client.Do(req)
 }
 
-// UpdateChannel Change a channel's reply URL or its notices to strangers
+// UpdateChannel Change a channel's reply URL, its notices to strangers or its reply mode
 //
-// Requires `channel:write` in this team. Send `reply_url`,
-// `notify_strangers` or both; what is not sent is left as it is.
+// Requires `channel:write` in this team. Send any of `reply_url`,
+// `notify_strangers` and `reply_mode`; what is not sent is left as it
+// is.
+//
+// `reply_mode` is what the conversation is sent while a run works
+// (see `Channel`). It is refused with 400 on a channel whose provider
+// sends no steps (`can_show_events` false), the dashboard's among them.
 //
 // `notify_strangers` switches the notices a sender nobody has let in
 // gets (see `Channel`). It is refused with 400 on a channel whose
@@ -4621,6 +4812,11 @@ func (c *Client) UpdateChannelWithBody(ctx context.Context, id TeamID, channelID
 // taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
 // anything else is retried for about two and a half hours. A reply can
 // arrive twice; drop a repeat by `id`.
+//
+// With `reply_mode` `events`, each step of a run is a reply too, of
+// `kind` `event`, before the answer and with no `in_reply_to`. Its `id`
+// is the run's and the step's, `<run id>:<n>`, and it is tried twice,
+// so a broken step never holds the answer back.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10483,10 +10679,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteChannelResponse, error)
 
-	// UpdateChannelWithBodyWithResponse Change a channel's reply URL or its notices to strangers
+	// UpdateChannelWithBodyWithResponse Change a channel's reply URL, its notices to strangers or its reply mode
 	//
-	// Requires `channel:write` in this team. Send `reply_url`,
-	// `notify_strangers` or both; what is not sent is left as it is.
+	// Requires `channel:write` in this team. Send any of `reply_url`,
+	// `notify_strangers` and `reply_mode`; what is not sent is left as it
+	// is.
+	//
+	// `reply_mode` is what the conversation is sent while a run works
+	// (see `Channel`). It is refused with 400 on a channel whose provider
+	// sends no steps (`can_show_events` false), the dashboard's among them.
 	//
 	// `notify_strangers` switches the notices a sender nobody has let in
 	// gets (see `Channel`). It is refused with 400 on a channel whose
@@ -10508,16 +10709,26 @@ type ClientWithResponsesInterface interface {
 	// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
 	// anything else is retried for about two and a half hours. A reply can
 	// arrive twice; drop a repeat by `id`.
+	//
+	// With `reply_mode` `events`, each step of a run is a reply too, of
+	// `kind` `event`, before the answer and with no `in_reply_to`. Its `id`
+	// is the run's and the step's, `<run id>:<n>`, and it is tried twice,
+	// so a broken step never holds the answer back.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
 	UpdateChannelWithBodyWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateChannelResponse, error)
 
-	// UpdateChannelWithResponse Change a channel's reply URL or its notices to strangers
+	// UpdateChannelWithResponse Change a channel's reply URL, its notices to strangers or its reply mode
 	//
-	// Requires `channel:write` in this team. Send `reply_url`,
-	// `notify_strangers` or both; what is not sent is left as it is.
+	// Requires `channel:write` in this team. Send any of `reply_url`,
+	// `notify_strangers` and `reply_mode`; what is not sent is left as it
+	// is.
+	//
+	// `reply_mode` is what the conversation is sent while a run works
+	// (see `Channel`). It is refused with 400 on a channel whose provider
+	// sends no steps (`can_show_events` false), the dashboard's among them.
 	//
 	// `notify_strangers` switches the notices a sender nobody has let in
 	// gets (see `Channel`). It is refused with 400 on a channel whose
@@ -10539,6 +10750,11 @@ type ClientWithResponsesInterface interface {
 	// taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
 	// anything else is retried for about two and a half hours. A reply can
 	// arrive twice; drop a repeat by `id`.
+	//
+	// With `reply_mode` `events`, each step of a run is a reply too, of
+	// `kind` `event`, before the answer and with no `in_reply_to`. Its `id`
+	// is the run's and the step's, `<run id>:<n>`, and it is tried twice,
+	// so a broken step never holds the answer back.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15443,10 +15659,15 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, id 
 	return ParseDeleteChannelResponse(rsp)
 }
 
-// UpdateChannelWithBodyWithResponse Change a channel's reply URL or its notices to strangers
+// UpdateChannelWithBodyWithResponse Change a channel's reply URL, its notices to strangers or its reply mode
 //
-// Requires `channel:write` in this team. Send `reply_url`,
-// `notify_strangers` or both; what is not sent is left as it is.
+// Requires `channel:write` in this team. Send any of `reply_url`,
+// `notify_strangers` and `reply_mode`; what is not sent is left as it
+// is.
+//
+// `reply_mode` is what the conversation is sent while a run works
+// (see `Channel`). It is refused with 400 on a channel whose provider
+// sends no steps (`can_show_events` false), the dashboard's among them.
 //
 // `notify_strangers` switches the notices a sender nobody has let in
 // gets (see `Channel`). It is refused with 400 on a channel whose
@@ -15468,6 +15689,11 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, id 
 // taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
 // anything else is retried for about two and a half hours. A reply can
 // arrive twice; drop a repeat by `id`.
+//
+// With `reply_mode` `events`, each step of a run is a reply too, of
+// `kind` `event`, before the answer and with no `in_reply_to`. Its `id`
+// is the run's and the step's, `<run id>:<n>`, and it is tried twice,
+// so a broken step never holds the answer back.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15480,10 +15706,15 @@ func (c *ClientWithResponses) UpdateChannelWithBodyWithResponse(ctx context.Cont
 	return ParseUpdateChannelResponse(rsp)
 }
 
-// UpdateChannelWithResponse Change a channel's reply URL or its notices to strangers
+// UpdateChannelWithResponse Change a channel's reply URL, its notices to strangers or its reply mode
 //
-// Requires `channel:write` in this team. Send `reply_url`,
-// `notify_strangers` or both; what is not sent is left as it is.
+// Requires `channel:write` in this team. Send any of `reply_url`,
+// `notify_strangers` and `reply_mode`; what is not sent is left as it
+// is.
+//
+// `reply_mode` is what the conversation is sent while a run works
+// (see `Channel`). It is refused with 400 on a channel whose provider
+// sends no steps (`can_show_events` false), the dashboard's among them.
 //
 // `notify_strangers` switches the notices a sender nobody has let in
 // gets (see `Channel`). It is refused with 400 on a channel whose
@@ -15505,6 +15736,11 @@ func (c *ClientWithResponses) UpdateChannelWithBodyWithResponse(ctx context.Cont
 // taken over `reply:v1:<timestamp>:<body>`. Any 2xx is delivered;
 // anything else is retried for about two and a half hours. A reply can
 // arrive twice; drop a repeat by `id`.
+//
+// With `reply_mode` `events`, each step of a run is a reply too, of
+// `kind` `event`, before the answer and with no `in_reply_to`. Its `id`
+// is the run's and the step's, `<run id>:<n>`, and it is tried twice,
+// so a broken step never holds the answer back.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

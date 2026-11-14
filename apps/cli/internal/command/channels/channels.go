@@ -215,12 +215,12 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 }
 
 func newUpdateCmd(opts *cli.Options) *cobra.Command {
-	var replyURL string
+	var replyURL, replyMode string
 	var noReplyURL, notify, noNotify bool
 
 	cmd := &cobra.Command{
 		Use:   "update <team> <channel>",
-		Short: "Change where a channel's replies go, or whether it tells strangers they are waiting",
+		Short: "Change where a channel's replies go, what they are, or whether it tells strangers they are waiting",
 		Long: "Both arguments take a name or an id. Needs channel:write in the team.\n" +
 			"Change either or both; what you leave out stays as it is.\n\n" +
 			"--reply-url sets where the team's replies are posted; --no-reply-url\n" +
@@ -230,7 +230,11 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 			"its signature instead.\n\n" +
 			"--notify-strangers and --no-notify-strangers switch what a sender nobody\n" +
 			"has let in is told: that they are waiting, once, and that they are in.\n" +
-			"Telegram channels only.",
+			"Telegram channels only.\n\n" +
+			"--reply-mode final sends a run's answer alone; --reply-mode events sends\n" +
+			"each step a person would follow first (what the agent says before it\n" +
+			"calls a tool, \"Using <tool>…\", \"Asking <agent>…\"), each a message of\n" +
+			"its own that stays. Not the dashboard channel, whose stream is every step.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			setURL := cmd.Flags().Changed("reply-url")
@@ -240,8 +244,13 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 			if notify && noNotify {
 				return fmt.Errorf("pass one of --notify-strangers or --no-notify-strangers, not both")
 			}
-			if !setURL && !noReplyURL && !notify && !noNotify {
-				return fmt.Errorf("pass --reply-url, --no-reply-url, --notify-strangers or --no-notify-strangers")
+			setMode := cmd.Flags().Changed("reply-mode")
+			if !setURL && !noReplyURL && !notify && !noNotify && !setMode {
+				return fmt.Errorf("pass --reply-url, --no-reply-url, --notify-strangers, --no-notify-strangers or --reply-mode")
+			}
+			mode := client.UpdateChannelRequestReplyMode(replyMode)
+			if setMode && !mode.Valid() {
+				return fmt.Errorf("--reply-mode is final or events, not %q", replyMode)
 			}
 			body := client.UpdateChannelJSONRequestBody{}
 			switch {
@@ -257,6 +266,9 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 			}
 			if notify || noNotify {
 				body.NotifyStrangers = &notify
+			}
+			if setMode {
+				body.ReplyMode = &mode
 			}
 
 			api, err := opts.API(cmd.Context())
@@ -293,6 +305,9 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 						}
 						what = append(what, opts.Styles.Muted.Render("strangers are told they are waiting: "+state))
 					}
+					if body.ReplyMode != nil {
+						what = append(what, opts.Styles.Muted.Render("replies: "+replyModeWords(string(ch.ReplyMode))))
+					}
 					table.Row(opts.Styles.OK.Render("updated"), opts.Styles.Value.Render(ch.Name),
 						strings.Join(what, opts.Styles.Muted.Render("; ")))
 				},
@@ -304,7 +319,15 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().BoolVar(&noReplyURL, "no-reply-url", false, "stop sending replies")
 	cmd.Flags().BoolVar(&notify, "notify-strangers", false, "tell a sender nobody has let in that they are waiting, and that they are in")
 	cmd.Flags().BoolVar(&noNotify, "no-notify-strangers", false, "stop telling them")
+	cmd.Flags().StringVar(&replyMode, "reply-mode", "", "final: the answer alone; events: each step, then the answer")
 	return cmd
+}
+
+func replyModeWords(mode string) string {
+	if mode == string(client.ChannelReplyModeEvents) {
+		return "every step, then the answer"
+	}
+	return "the answer alone"
 }
 
 // telegramHint is the one step Telegram leaves to the person: pointing the bot

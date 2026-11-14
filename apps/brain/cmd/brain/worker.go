@@ -57,7 +57,7 @@ func newJobs(
 		if err != nil {
 			return nil, nil, err
 		}
-		return []worker.Job{sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies)}, func() {}, nil
+		return []worker.Job{sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent)}, func() {}, nil
 	}
 
 	g, embedder, closeGraph, err := dialGraph(ctx, cfg)
@@ -72,6 +72,6 @@ func newJobs(
 	}
 	projector := graph.NewProjector(dbStore, g, embedder, logger)
 	return []worker.Job{
-		sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies), graph.DrainJob(projector, logger),
+		sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), graph.DrainJob(projector, logger),
 	}, closeGraph, nil
 }

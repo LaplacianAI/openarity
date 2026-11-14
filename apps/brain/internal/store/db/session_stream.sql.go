@@ -128,7 +128,7 @@ func (q *Queries) ConsumeMessages(ctx context.Context, arg ConsumeMessagesParams
 }
 
 const dashboardChannel = `-- name: DashboardChannel :one
-SELECT id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers FROM channels WHERE team_id = $1 AND provider = 'dashboard'
+SELECT id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers, reply_mode FROM channels WHERE team_id = $1 AND provider = 'dashboard'
 `
 
 // The team's dashboard channel, which every team has one of.
@@ -144,6 +144,7 @@ func (q *Queries) DashboardChannel(ctx context.Context, teamID uuid.UUID) (Chann
 		&i.UpdatedAt,
 		&i.ReplyUrl,
 		&i.NotifyStrangers,
+		&i.ReplyMode,
 	)
 	return i, err
 }

@@ -33,6 +33,8 @@ type Store interface {
 	StartChildRun(ctx context.Context, arg db.StartChildRunParams) (db.Run, error)
 	ReapChildren(ctx context.Context, arg db.ReapChildrenParams) ([]uuid.UUID, error)
 	GetRun(ctx context.Context, id uuid.UUID) (db.Run, error)
+	RunShowsEvents(ctx context.Context, runID uuid.UUID) (bool, error)
+	InsertEventReply(ctx context.Context, arg db.InsertEventReplyParams) (int64, error)
 }
 
 const (
@@ -88,6 +90,9 @@ type Executor struct {
 	// kickReply has a channel run's reply sent now. Nil leaves it to the
 	// reply sweep, a minute at most.
 	kickReply func(uuid.UUID) error
+	// kickEvent has one step of a channel run sent now, named by the run
+	// event it came from.
+	kickEvent func(uuid.UUID, int32) error
 
 	// notes holds, for each run executing here, the channel its recorder takes
 	// the brain's own events on, so they are written in order with the agent's.
@@ -299,7 +304,7 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	}
 	lines := newSoftLines(budgetOf(row.TokenBudget), int64(built.Spec.Model.MaxTokens))
 	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, lines,
-		streams, events, notes, stop)
+		streams, e.teller(context.WithoutCancel(ctx), row), events, notes, stop)
 	// The model client reads the conversation's files for each request.
 	run := runner.Start(withSession(ctx, row.SessionID), built.Spec, msgs, e.endpoint, events)
 	lines.hold(run)

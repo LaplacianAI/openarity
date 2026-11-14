@@ -453,3 +453,11 @@ func TestParseRefusesAmbiguousAttachmentRefs(t *testing.T) {
 		})
 	}
 }
+
+// A step is a reply like the answer, so a custom channel may send them.
+func TestCustomSendsARunsSteps(t *testing.T) {
+	t.Parallel()
+	if _, ok := custom.New().(gateway.EventReplier); !ok {
+		t.Error("custom is not an EventReplier")
+	}
+}

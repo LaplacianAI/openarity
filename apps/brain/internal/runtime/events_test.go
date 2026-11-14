@@ -164,7 +164,7 @@ func feedAs(t *testing.T, s EventStore, runID uuid.UUID, budget int64, streams b
 
 	st := &stops{}
 	ch := make(chan agent.Event)
-	done := record(t.Context(), s, runID, worker, newSoftLines(budget, 0), streams, ch, nil, st.stop)
+	done := record(t.Context(), s, runID, worker, newSoftLines(budget, 0), streams, nil, ch, nil, st.stop)
 	for _, e := range events {
 		select {
 		case ch <- e:

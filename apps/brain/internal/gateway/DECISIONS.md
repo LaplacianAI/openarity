@@ -230,6 +230,34 @@ tombstone sweep's rule — no ordering, because deletes commute — does not hol
 for replies, and a `NOT EXISTS` over the session's older pending replies gives
 the order without a partition scheme to run.
 
+## A run's steps are replies, sent through the outbox
+
+A channel's `reply_mode` is `final` (the answer alone) or `events`: each
+step a person would follow is a message of its own, then the answer. The
+choice is the channel's, on every provider; a provider renders a step through
+its own `Reply`, as kind `event`, and marks itself an `EventReplier`.
+
+Considered first: token-by-token drafts (Telegram's `sendMessageDraft`, a
+typing indicator in a group), sent best effort from the worker. Refused: a
+draft is a 30-second preview Telegram removes when the answer arrives, exists
+only in private chats, and has no equivalent on most platforms. Event by
+event fits every chat, and a step that stays is the history of how the answer
+was reached.
+
+A step that stays must survive a restart and a 429, and never arrive after
+the answer, which is what the outbox already does: oldest first within a
+conversation, under a lease, at least once. So a step is a `replies` row
+(`event_seq`, the run event it came from; one answer per run, any number of
+events), written after its run event so a channel never shows what the
+stream does not. A step is tried twice, not six times: a broken one must not
+hold its answer back for hours. Each is kicked under its own workflow id,
+since a second kick under the run's would be the first one again.
+
+Which steps are sent, and their words ("Using `<tool>`…", "Asking
+`<agent>`…"), are the runtime's: every platform says the same. Bookkeeping
+tools and every tool's result are never sent; a delegated run never replies
+to a channel (`runs_reply_from_a_root`), so its parent's "Asking" is all of it.
+
 ## Telegram: a shared secret, rich messages, and getMe
 
 Telegram proves a delivery with the `secret_token` given to `setWebhook`,

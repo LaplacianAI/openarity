@@ -8,7 +8,7 @@ import { createChannel, deleteChannel, listChannels, updateChannel } from "@/api
 import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
-import type { CreateChannelRequest, CreatedChannel, ListedChannel } from "@/api/types";
+import type { CreateChannelRequest, CreatedChannel, ListedChannel, ReplyMode } from "@/api/types";
 import { KeyValue, KeyValues, Time } from "@/components/facts";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
 import { ErrorState } from "@/components/states";
@@ -293,6 +293,16 @@ function ChannelDetail({
             ) : null}
           </KeyValue>
         ) : null}
+        {channel.can_show_events ? (
+          <KeyValue label="While it works">
+            {channel.reply_mode === "events"
+              ? "Each step is sent as it happens: what the agent says it will do, the tools it uses, the agents it asks. Every message stays in the chat; the answer comes last."
+              : "Nothing until the answer, which is sent alone."}
+            {canWrite ? (
+              <EditReplyMode teamId={teamId} channel={channel} onChanged={onChanged} />
+            ) : null}
+          </KeyValue>
+        ) : null}
         {channel.takes_reply_url ? (
           <KeyValue label="Replies to">
             {channel.reply_url ? (
@@ -362,6 +372,52 @@ function NotifyStrangers({
         onClick={() => save.mutate(!on)}
       >
         {on ? "Stop telling them" : "Tell them"}
+      </Button>
+      {save.isError ? (
+        <p role="alert" className="mt-1 text-sm text-destructive">
+          {save.error.message}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Whether a run's steps are sent to the conversation before its answer. Each
+ * is a message that stays, so the switch says which it will be.
+ */
+function EditReplyMode({
+  teamId,
+  channel,
+  onChanged,
+}: {
+  teamId: string;
+  channel: ListedChannel;
+  onChanged: () => void;
+}) {
+  const events = channel.reply_mode === "events";
+  const save = useMutation({
+    mutationFn: (next: ReplyMode) => updateChannel(teamId, channel.id, { reply_mode: next }),
+    onSuccess: (c) => {
+      toast.success(
+        c.reply_mode === "events"
+          ? `${channel.name} sends each step, then the answer`
+          : `${channel.name} sends the answer alone`,
+      );
+      onChanged();
+    },
+  });
+
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        className="mt-2 block"
+        loading={save.isPending}
+        onClick={() => save.mutate(events ? "final" : "events")}
+      >
+        {events ? "Send the answer alone" : "Send each step"}
       </Button>
       {save.isError ? (
         <p role="alert" className="mt-1 text-sm text-destructive">

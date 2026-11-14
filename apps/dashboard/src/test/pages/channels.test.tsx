@@ -798,3 +798,72 @@ describe("telling senders nobody has let in", () => {
     expect(await within(sheet).findByRole("alert")).toHaveTextContent(/sends no notices/);
   });
 });
+
+describe("what a conversation is sent while a run works", () => {
+  const at = () => showAt("/ui/channels/", [["/ui/channels/", Route]]);
+  const bot = { ...support, provider: "telegram", can_show_events: true, reply_mode: "final" };
+
+  function patched(seen: { method: string; body: BodyInit | null | undefined }[]) {
+    const patch = seen.find((s) => s.method === "PATCH");
+    return patch ? JSON.parse(String(patch.body)) : undefined;
+  }
+
+  it("says the answer goes alone by default", async () => {
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [bot] } } });
+    at();
+    const sheet = await opened("support");
+    expect(within(sheet).getByText("While it works")).toBeInTheDocument();
+    expect(within(sheet).getByText(/nothing until the answer/i)).toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: /send each step/i })).toBeNull();
+  });
+
+  // The dashboard's stream is every step already, and a brain from before
+  // the field is read as one whose provider sends none.
+  it("is not offered where the provider sends no steps", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [support] } },
+    });
+    at();
+    const sheet = await opened("support");
+    expect(within(sheet).queryByText("While it works")).toBeNull();
+  });
+
+  it("switches to each step, sending only that, and says each one stays", async () => {
+    let events = false;
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": () => ({
+        body: { items: [events ? { ...bot, reply_mode: "events" } : bot] },
+      }),
+      "PATCH /teams/{id}/channels/{cid}": () => {
+        events = true;
+        return { body: { ...bot, reply_mode: "events" } };
+      },
+    });
+    at();
+    const sheet = await opened("support");
+    await userEvent.click(within(sheet).getByRole("button", { name: /send each step/i }));
+
+    expect(await within(sheet).findByText(/every message stays in the chat/i)).toBeInTheDocument();
+    expect(patched(seen)).toEqual({ reply_mode: "events" });
+    expect(
+      await within(sheet).findByRole("button", { name: /send the answer alone/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the brain's refusal", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [bot] } },
+      "PATCH /teams/{id}/channels/{cid}": {
+        status: 400,
+        body: "the telegram provider sends no steps",
+      },
+    });
+    at();
+    const sheet = await opened("support");
+    await userEvent.click(within(sheet).getByRole("button", { name: /send each step/i }));
+    expect(await within(sheet).findByRole("alert")).toHaveTextContent(/sends no steps/);
+  });
+});
