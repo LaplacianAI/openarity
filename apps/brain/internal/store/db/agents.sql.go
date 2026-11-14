@@ -496,7 +496,7 @@ func (q *Queries) ListGrantedMCPServers(ctx context.Context, agentID uuid.UUID) 
 }
 
 const listGrantedMCPTools = `-- name: ListGrantedMCPTools :many
-SELECT t.mcp_server_id, t.name, t.description, t.input_schema
+SELECT t.id, t.mcp_server_id, t.name, t.description, t.input_schema
 FROM agent_mcp_servers g
 JOIN mcp_tools t ON t.mcp_server_id = g.mcp_server_id
 WHERE g.agent_id = $1 AND (g.allow IS NULL OR t.name = ANY (g.allow))
@@ -504,6 +504,7 @@ ORDER BY t.mcp_server_id, t.name
 `
 
 type ListGrantedMCPToolsRow struct {
+	ID          uuid.UUID
 	McpServerID uuid.UUID
 	Name        string
 	Description string
@@ -523,6 +524,7 @@ func (q *Queries) ListGrantedMCPTools(ctx context.Context, agentID uuid.UUID) ([
 	for rows.Next() {
 		var i ListGrantedMCPToolsRow
 		if err := rows.Scan(
+			&i.ID,
 			&i.McpServerID,
 			&i.Name,
 			&i.Description,

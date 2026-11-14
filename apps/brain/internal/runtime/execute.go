@@ -435,6 +435,12 @@ func startedOf(agentName string, spec agent.Spec) startedPayload {
 		Agent: agentName, Model: spec.Model.Name, Pattern: string(spec.Pattern),
 		Tools: make([]string, 0, len(spec.Tools)), Skills: make([]string, 0, len(spec.Skills)),
 	}
+	// Found by search or sent, they are the run's to use.
+	if spec.Discovery != nil {
+		for _, t := range spec.Discovery.Tools {
+			p.Tools = append(p.Tools, t.Name)
+		}
+	}
 	for _, t := range spec.Tools {
 		p.Tools = append(p.Tools, t.Name)
 	}

@@ -176,8 +176,9 @@ Telegram, to a signed reply URL for `custom`, a generic webhook.
 
 Not built yet: Slack and Discord adapters; the seam they plug into is.
 Learnings are not in the graph, and there is no sandbox for model-written code.
-A run still binds every tool its agent is granted: the graph finds tools one by
-one, and loading only those a task needs is the next step.
+A run whose granted tools are too many to send finds them instead: it searches
+the graph, reads a found tool's schema with `describe_tools` and runs it with
+`call_tool`, and an MCP server is reached only when one of its tools is called.
 
 ## Quick start
 

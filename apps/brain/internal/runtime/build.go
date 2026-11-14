@@ -130,19 +130,27 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 
 	// The builder reads the web for servers' docs and a skill's source.
 	web := run.Hub || a.Web || run.Builder
+	var held catalogue
 	if a.ID != uuid.Nil {
-		built.Spec.Tools, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, web, &built)
+		held, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, web, &built)
 		if err != nil {
 			built.Close()
 			return Built{}, err
 		}
 	}
+	// The MCP tools are found with graph rather than sent, when the SDK
+	// judges them too many to send. With no graph there is nothing to find
+	// them with, so they are sent.
 	if b.graph == nil {
 		built.Unavailable = append(built.Unavailable, Unavailable{
 			Name: GraphToolName, Reason: "no embedding model is configured, so the team's graph is not built",
 		})
+		built.Spec.Tools = append(built.Spec.Tools, held.tools...)
 	} else {
-		built.Spec.Tools = append(built.Spec.Tools, GraphTool(*b.graph, run.TeamID, b.reach(run, a)))
+		built.Spec.Tools = append(built.Spec.Tools, GraphTool(*b.graph, run.TeamID, b.reach(run, a), held))
+		if len(held.tools) > 0 {
+			built.Spec.Discovery = &agent.Discovery{Search: GraphToolName, Tools: held.tools, Groups: held.groups}
+		}
 	}
 
 	delegate, ok, err := b.delegateFor(ctx, a, run, l)
@@ -244,22 +252,31 @@ func specOf(a db.Agent) agent.Spec {
 	return spec
 }
 
-func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hub, web bool, built *Built) ([]agent.Tool, error) {
+// A catalogue is the MCP tools a run holds: the tools, grouped by server for
+// the prompt, and the names the run calls them by, by their id in the graph.
+type catalogue struct {
+	tools    []agent.Tool
+	groups   []agent.Group
+	names    map[uuid.UUID]string
+	byServer map[string][]uuid.UUID
+}
+
+func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hub, web bool, built *Built) (catalogue, error) {
 	grants, err := b.store.ListGrantedMCPServers(ctx, agentID)
 	if err != nil {
-		return nil, fmt.Errorf("reading the agent's MCP servers: %w", err)
+		return catalogue{}, fmt.Errorf("reading the agent's MCP servers: %w", err)
 	}
 	// The allow-list is applied by the query.
 	rows, err := b.store.ListGrantedMCPTools(ctx, agentID)
 	if err != nil {
-		return nil, fmt.Errorf("reading the agent's MCP tools: %w", err)
+		return catalogue{}, fmt.Errorf("reading the agent's MCP tools: %w", err)
 	}
 	offered := map[uuid.UUID][]db.ListGrantedMCPToolsRow{}
 	for _, r := range rows {
 		offered[r.McpServerID] = append(offered[r.McpServerID], r)
 	}
 
-	var out []agent.Tool
+	out := catalogue{names: map[uuid.UUID]string{}, byServer: map[string][]uuid.UUID{}}
 	owner := map[string]string{}
 	for _, g := range grants {
 		s := g.McpServer
@@ -277,6 +294,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 		}
 
 		server := built.servers.server(s)
+		group := agent.Group{Name: s.Name}
 		for _, row := range offered[s.ID] {
 			name := row.Name
 			if !s.Bare {
@@ -300,10 +318,16 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 				continue
 			}
 			if first, taken := owner[name]; taken {
-				return nil, fmt.Errorf("the MCP servers %q and %q both offer %q", first, s.Name, name)
+				return catalogue{}, fmt.Errorf("the MCP servers %q and %q both offer %q", first, s.Name, name)
 			}
 			owner[name] = s.Name
-			out = append(out, limited(server.tool(name, row)))
+			out.tools = append(out.tools, limited(server.tool(name, row)))
+			out.names[row.ID] = name
+			out.byServer[s.Name] = append(out.byServer[s.Name], row.ID)
+			group.Tools = append(group.Tools, name)
+		}
+		if len(group.Tools) > 0 {
+			out.groups = append(out.groups, group)
 		}
 	}
 	return out, nil
@@ -317,6 +341,10 @@ func reserved(name string, hub, web bool) bool {
 	switch name {
 	// Every run compacts, and the SDK refuses a second read_output.
 	case GraphToolName, DelegateToolName, agent.ReadOutputToolName:
+		return true
+	// The names the SDK gives the tools that find, describe and run the rest,
+	// and open skills: a server's tool under one would stop the run.
+	case agent.DescribeToolsName, agent.CallToolName, agent.SkillToolName, agent.SkillResourceToolName:
 		return true
 	case PlanToolName:
 		return hub

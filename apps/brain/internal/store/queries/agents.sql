@@ -106,7 +106,7 @@ ORDER BY s.name;
 -- them without connecting a server it may never call. The allow-list holds
 -- the name the server gave, as ListGrantedToolIDs reads it.
 -- name: ListGrantedMCPTools :many
-SELECT t.mcp_server_id, t.name, t.description, t.input_schema
+SELECT t.id, t.mcp_server_id, t.name, t.description, t.input_schema
 FROM agent_mcp_servers g
 JOIN mcp_tools t ON t.mcp_server_id = g.mcp_server_id
 WHERE g.agent_id = $1 AND (g.allow IS NULL OR t.name = ANY (g.allow))

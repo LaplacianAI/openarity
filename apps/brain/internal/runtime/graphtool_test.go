@@ -82,6 +82,8 @@ type graphFixture struct {
 	reach  *fakeReach
 	team   uuid.UUID
 	agent  uuid.UUID
+	// held is the run's own MCP tools.
+	held catalogue
 }
 
 func newGraphFixture() *graphFixture {
@@ -97,13 +99,13 @@ func newGraphFixture() *graphFixture {
 
 func (f *graphFixture) invoke(t *testing.T, args string) (string, error) {
 	t.Helper()
-	tool := GraphTool(GraphDeps{Search: f.search, Embed: f.embed, Store: f.reach}, f.team, agentReach(f.reach, f.team, f.agent))
+	tool := GraphTool(GraphDeps{Search: f.search, Embed: f.embed, Store: f.reach}, f.team, agentReach(f.reach, f.team, f.agent), f.held)
 	return tool.Invoke(t.Context(), json.RawMessage(args))
 }
 
 func TestGraphToolIsNamedGraphAndDescribesItsArguments(t *testing.T) {
 	f := newGraphFixture()
-	tool := GraphTool(GraphDeps{Search: f.search, Embed: f.embed, Store: f.reach}, f.team, agentReach(f.reach, f.team, f.agent))
+	tool := GraphTool(GraphDeps{Search: f.search, Embed: f.embed, Store: f.reach}, f.team, agentReach(f.reach, f.team, f.agent), catalogue{})
 
 	if tool.Name != GraphToolName || GraphToolName != "graph" {
 		t.Errorf("name = %q, want graph", tool.Name)
@@ -335,5 +337,76 @@ func TestGraphToolWithNoHitsSaysSo(t *testing.T) {
 	}
 	if out != `{"results":[]}` {
 		t.Errorf("output = %s, want an empty list rather than null", out)
+	}
+}
+
+// A tool the run holds says what to call it by; one it does not hold, such
+// as a team tool a hub reaches to delegate, says nothing it could call.
+func TestAToolTheRunHoldsCarriesTheNameToCallItBy(t *testing.T) {
+	f := newGraphFixture()
+	held, other := uuid.New(), uuid.New()
+	f.held = catalogue{names: map[uuid.UUID]string{held: "github__list_issues"}}
+	f.search.hits = []graph.Hit{
+		{Kind: graph.KindTool, ID: held, Name: "list_issues", Score: 0.9},
+		{Kind: graph.KindTool, ID: other, Name: "post_message", Score: 0.8},
+		{Kind: graph.KindSkill, ID: held, Name: "triage", Score: 0.7},
+	}
+
+	out, err := f.invoke(t, `{"query":"issues"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got graphOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Results[0].UseAs != "github__list_issues" || got.Results[1].UseAs != "" || got.Results[2].UseAs != "" {
+		t.Errorf("use_as = %q, %q, %q; want only the held tool's", got.Results[0].UseAs, got.Results[1].UseAs, got.Results[2].UseAs)
+	}
+	if strings.Count(out, "use_as") != 1 {
+		t.Errorf("graph = %s, want use_as once", out)
+	}
+}
+
+// A server narrows the tools searched to that server's, within the reach:
+// it takes away and never adds.
+func TestAServerNarrowsTheToolsWithinTheReach(t *testing.T) {
+	f := newGraphFixture()
+	inReach, outOfReach, linear := f.reach.tools[0], uuid.New(), uuid.New()
+	f.reach.tools = append(f.reach.tools, linear)
+	reach := slices.Clone(f.reach.tools)
+	f.held = catalogue{byServer: map[string][]uuid.UUID{"github": {inReach, outOfReach}, "linear": {linear}}}
+
+	if _, err := f.invoke(t, `{"query":"issues","server":"github"}`); err != nil {
+		t.Fatal(err)
+	}
+	asked := f.search.asked[0]
+	if !slices.Equal(asked.Reach.Tools, []uuid.UUID{inReach}) {
+		t.Errorf("tools searched = %v, want github's within the reach alone", asked.Reach.Tools)
+	}
+	if len(asked.Reach.Agents) != 1 || len(asked.Reach.Skills) != 1 {
+		t.Errorf("reach = %+v; agents and skills are not narrowed", asked.Reach)
+	}
+	// The reach the next call reads is untouched.
+	if !slices.Equal(f.reach.tools, reach) {
+		t.Errorf("the reach itself was changed: %v, was %v", f.reach.tools, reach)
+	}
+}
+
+func TestAServerTheAgentDoesNotHoldIsRefusedNamingThoseItDoes(t *testing.T) {
+	f := newGraphFixture()
+	f.held = catalogue{byServer: map[string][]uuid.UUID{"github": {uuid.New()}, "linear": {uuid.New()}}}
+
+	_, err := f.invoke(t, `{"query":"issues","server":"slack"}`)
+	if err == nil || !strings.Contains(err.Error(), `no MCP server named "slack"; it holds github, linear`) {
+		t.Fatalf("err = %v", err)
+	}
+	if f.search.calls() != 0 {
+		t.Errorf("searched %d times for a server it does not hold", f.search.calls())
+	}
+
+	f.held = catalogue{}
+	if _, err := f.invoke(t, `{"query":"issues","server":"slack"}`); err == nil || !strings.Contains(err.Error(), "it holds none") {
+		t.Errorf("err = %v, want it to say the agent holds none", err)
 	}
 }
