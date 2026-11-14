@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -696,6 +697,53 @@ func TestListGrantedMCPServersCarriesTheAllowList(t *testing.T) {
 	}
 	if !slices.Equal(got[0].Allow, []string{"list_issues"}) || got[1].Allow != nil {
 		t.Errorf("allow = %v and %v; want [list_issues] and every tool", got[0].Allow, got[1].Allow)
+	}
+}
+
+// A run binds its MCP tools from what discovery recorded: the granted
+// servers' tools, less what an allow-list leaves out, and never an
+// ungranted server's.
+func TestListGrantedMCPToolsIsWhatTheGrantsAllow(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	github := insertServer(t, s, f.team, "github")
+	linear := insertServer(t, s, f.team, "linear")
+	closed := insertServer(t, s, f.team, "closed")
+	ungranted := insertServer(t, s, f.team, "ungranted")
+	if _, err := s.pool.Exec(t.Context(), `
+		INSERT INTO mcp_tools (mcp_server_id, team_id, name, description, input_schema) VALUES
+		  ($1, $5, 'list_issues', 'List issues', '{"type":"object","properties":{"repo":{"type":"string"}}}'),
+		  ($1, $5, 'delete_repo', 'Delete a repository', '{"type":"object"}'),
+		  ($2, $5, 'search', 'Search Linear', '{"type":"object"}'),
+		  ($3, $5, 'anything', '', '{"type":"object"}'),
+		  ($4, $5, 'secret', '', '{"type":"object"}')`,
+		github, linear, closed, ungranted, f.team); err != nil {
+		t.Fatalf("tools: %v", err)
+	}
+	if _, err := s.pool.Exec(t.Context(), `
+		INSERT INTO agent_mcp_servers (agent_id, mcp_server_id, team_id, allow)
+		VALUES ($1, $2, $3, ARRAY['list_issues']), ($1, $4, $3, NULL), ($1, $5, $3, ARRAY['not_offered'])`,
+		f.agent, github, f.team, linear, closed); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+
+	got, err := s.ListGrantedMCPTools(t.Context(), f.agent)
+	if err != nil {
+		t.Fatalf("ListGrantedMCPTools: %v", err)
+	}
+	byServer := map[uuid.UUID][]string{}
+	for _, r := range got {
+		byServer[r.McpServerID] = append(byServer[r.McpServerID], r.Name)
+	}
+	if len(got) != 2 || !slices.Equal(byServer[github], []string{"list_issues"}) || !slices.Equal(byServer[linear], []string{"search"}) {
+		t.Fatalf("tools = %v, want github's list_issues and linear's search alone", byServer)
+	}
+	for _, r := range got {
+		if r.Name == "list_issues" && (r.Description != "List issues" || !strings.Contains(string(r.InputSchema), `"repo"`)) {
+			t.Errorf("list_issues came back as %q with %s", r.Description, r.InputSchema)
+		}
 	}
 }
 
