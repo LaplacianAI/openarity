@@ -308,11 +308,9 @@ export function listTeamRuns(
 }
 
 /**
- * Queues a run and answers with it as it now is, before it has done
- * anything; its events say what it does. With no agent, the team's hub
- * answers.
+ * Starts a conversation on the dashboard: the hub answers what was typed, or
+ * the builder when `say.builder` is set.
  */
-/** Starts a conversation on the dashboard: the hub answers what was typed. */
 export function startConversation(
   teamId: string,
   say: SayRequest,
@@ -427,6 +425,11 @@ function sessionEnvelope(seq: number, kind: string, data: unknown): SessionEnvel
   return { seq, kind: "other", name: kind, data };
 }
 
+/**
+ * Queues a run and answers with it as it now is, before it has done
+ * anything; its events say what it does. With no agent, the team's hub
+ * answers.
+ */
 export function startRun(teamId: string, run: RunRequest): Promise<Run> {
   return request<Run>(`/teams/${teamId}/runs`, { method: "POST", body: run });
 }

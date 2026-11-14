@@ -164,8 +164,9 @@ download and store bytes under a team's key, objects no row will ever name.
 
 **A file the provider holds is downloaded, and the adapter still holds no
 client.** `Downloader` builds each request (the first from the ref, each next
-from the answer before) and the ingest sends them with the client that dials
-public addresses only and follows no redirect, as replies are sent. Telegram
+from the answer before) and the ingest sends them with the reply client:
+public addresses and the operator's `MCP_PRIVATE_NETWORKS`, no redirect,
+exactly what a reply may reach. Telegram
 is two requests: `getFile` for a path, then the path under the bot's token.
 No error quotes a request's URL, since a provider's carries its token.
 Considered: `Fetcher` doing the network itself, which hands every adapter a
