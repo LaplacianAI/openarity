@@ -383,7 +383,7 @@ func (f *fixture) get(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, discardLogger())).
+	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, nil, discardLogger())).
 		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)

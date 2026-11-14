@@ -81,6 +81,19 @@ type message struct {
 	Entities        []entity  `json:"entities"`
 	CaptionEntities []entity  `json:"caption_entities"`
 	ReplyTo         *replyMsg `json:"reply_to_message"`
+	// Photo is one picture in several sizes, smallest first.
+	Photo    []file `json:"photo"`
+	Document *file  `json:"document"`
+	Audio    *file  `json:"audio"`
+}
+
+// file is what Telegram says about a photo size, a document or audio: its id,
+// which getFile turns into a path to download, and what the sender claims.
+type file struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name"`
+	MimeType string `json:"mime_type"`
+	FileSize int64  `json:"file_size"`
 }
 
 type replyMsg struct {
@@ -148,15 +161,55 @@ func (provider) Parse(req gateway.WebhookRequest, creds gateway.Credentials) (ga
 			DisplayName: displayName(m.From),
 			IsBot:       m.From.IsBot,
 		},
-		Session:  session,
-		Text:     text,
-		Mentions: mentions(text, entities, m.ReplyTo, creds),
-		SentAt:   time.Unix(m.Date, 0).UTC(),
+		Session:     session,
+		Text:        text,
+		Mentions:    mentions(text, entities, m.ReplyTo, creds),
+		SentAt:      time.Unix(m.Date, 0).UTC(),
+		Attachments: attachmentsOf(m),
 	}
 	if m.ReplyTo != nil {
 		in.ReplyTo = chatID + ":" + strconv.FormatInt(m.ReplyTo.MessageID, 10)
 	}
 	return gateway.Result{Messages: []gateway.Inbound{in}}, nil
+}
+
+// maxDownload is the largest file the Bot API lets a bot download.
+const maxDownload = 20 << 20
+
+// attachmentsOf names the files a message carries: a photo at the largest
+// size a bot may download, a document, audio. A voice note, a video or a
+// sticker is not one the brain keeps, and the brain reads each file's type
+// from its bytes whatever Telegram claimed.
+func attachmentsOf(m *message) []gateway.Attachment {
+	var out []gateway.Attachment
+	if p, ok := largestPhoto(m.Photo); ok {
+		out = append(out, gateway.Attachment{
+			Ref:              p.FileID,
+			ClaimedFilename:  "photo-" + strconv.FormatInt(m.MessageID, 10) + ".jpg",
+			ClaimedMediaType: "image/jpeg",
+			ClaimedSize:      p.FileSize,
+		})
+	}
+	for _, f := range []*file{m.Document, m.Audio} {
+		if f == nil || f.FileID == "" {
+			continue
+		}
+		out = append(out, gateway.Attachment{
+			Ref: f.FileID, ClaimedFilename: f.FileName, ClaimedMediaType: f.MimeType, ClaimedSize: f.FileSize,
+		})
+	}
+	return out
+}
+
+// largestPhoto is the biggest size of a photo a bot may download. A size with
+// no file_size is taken as small enough; getFile says if it is not.
+func largestPhoto(sizes []file) (file, bool) {
+	for i := len(sizes) - 1; i >= 0; i-- {
+		if sizes[i].FileID != "" && sizes[i].FileSize <= maxDownload {
+			return sizes[i], true
+		}
+	}
+	return file{}, false
 }
 
 // sessionOf names the conversation. A forum topic is its own conversation,
@@ -426,4 +479,49 @@ func (provider) Complete(status int, body []byte) (gateway.Credentials, []string
 		KeyBotID:       strconv.FormatInt(me.Result.ID, 10),
 		KeyBotUsername: me.Result.Username,
 	}, warnings, nil
+}
+
+// fileBase is where a bot downloads a file getFile located.
+const fileBase = "https://api.telegram.org/file/bot"
+
+// DownloadRequest fetches a file in two requests: getFile turns its id into a
+// path, and the path, under the bot's token, is the file.
+func (provider) DownloadRequest(ref string, prev []byte, creds gateway.Credentials) (gateway.OutboundRequest, bool, error) {
+	token := creds.Get(KeyBotToken)
+	if token == "" {
+		return gateway.OutboundRequest{}, false, errors.New("telegram: no bot token")
+	}
+	if prev == nil {
+		raw, err := json.Marshal(map[string]string{"file_id": ref})
+		if err != nil {
+			return gateway.OutboundRequest{}, false, fmt.Errorf("telegram: encoding getFile: %w", err)
+		}
+		return gateway.OutboundRequest{URL: apiBase + token + "/getFile", Header: jsonHeader(), Body: raw}, false, nil
+	}
+
+	var got struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      struct {
+			FilePath string `json:"file_path"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(prev, &got); err != nil {
+		return gateway.OutboundRequest{}, false, fmt.Errorf("telegram: reading getFile: %w", err)
+	}
+	if !got.OK {
+		return gateway.OutboundRequest{}, false, fmt.Errorf("telegram: getFile refused: %s", got.Description)
+	}
+	path := got.Result.FilePath
+	// The path goes under the token, so nothing in it may lead elsewhere.
+	if path == "" || strings.HasPrefix(path, "/") || strings.ContainsAny(path, "?#\\") || strings.Contains(path, "..") {
+		return gateway.OutboundRequest{}, false, fmt.Errorf("telegram: getFile gave the path %q", path)
+	}
+	return gateway.OutboundRequest{Method: http.MethodGet, URL: fileBase + token + "/" + path}, true, nil
+}
+
+// FetchBudget is longer than the gateway's default: Telegram waits for the
+// answer to an update, and a slow one only holds back the bot's next.
+func (provider) FetchBudget() (perFile, total time.Duration) {
+	return 6 * time.Second, 8 * time.Second
 }

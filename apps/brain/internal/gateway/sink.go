@@ -18,6 +18,9 @@ type Delivery struct {
 	Inbound
 	UserID uuid.UUID
 	Files  []Stored
+	// Missed says, a sentence each, which files were sent and not kept, and
+	// why, so the run can tell the person rather than the file vanishing.
+	Missed []string
 }
 
 type Sink interface {

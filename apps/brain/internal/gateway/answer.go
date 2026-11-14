@@ -23,7 +23,7 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 	if !asksUs(s, m) {
 		return outcome{}, nil
 	}
-	if strings.TrimSpace(m.Text) == "" && len(m.Files) == 0 {
+	if strings.TrimSpace(m.Text) == "" && len(m.Files) == 0 && len(m.Missed) == 0 {
 		return outcome{unanswered: "the message has no text"}, nil
 	}
 
@@ -130,9 +130,20 @@ func steer(m Delivery) string {
 
 // inputOf is what a message asks a run. A run's first message names the files
 // sent with it, so a message of files alone asks that they be looked at.
+//
+// A file sent and not kept is said after it, so the run can tell the person
+// what it never saw rather than answer as if it had.
 func inputOf(m Delivery) string {
+	said := m.Text
 	if strings.TrimSpace(m.Text) == "" && len(m.Files) > 0 {
-		return "The message is the files sent with it."
+		said = "The message is the files sent with it."
 	}
-	return m.Text
+	if len(m.Missed) == 0 {
+		return said
+	}
+	missed := "[Not received: " + strings.Join(m.Missed, "; ") + ".]"
+	if strings.TrimSpace(said) == "" {
+		return missed
+	}
+	return said + "\n" + missed
 }

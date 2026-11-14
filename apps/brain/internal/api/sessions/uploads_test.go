@@ -83,7 +83,7 @@ func form(t *testing.T, fields [][2]string, files ...upload) (string, []byte) {
 func (f *fixture) upload(t *testing.T, path, contentType string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, discardLogger())).
+	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, nil, discardLogger())).
 		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", contentType)

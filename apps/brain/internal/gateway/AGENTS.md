@@ -27,7 +27,7 @@ internal/gateway/
   job.go            the reply queue, the kick a finished run sends, the sweep
   providertest/     the conformance suite every adapter runs
   custom/           the generic adapter, and the reference implementation
-  telegram/         a Telegram bot: secret_token in, rich messages out, getMe at setup
+  telegram/         a Telegram bot: secret_token in, rich messages out, getMe at setup, files by getFile
   <provider>/       one package per platform
 ```
 
@@ -88,7 +88,8 @@ surfacing as an intermittent handler failure three tasks away.
 Consequences that follow from purity:
 
 - **`Attachment` holds a `Ref`, not bytes.** Fetching happens afterwards,
-  through the optional `Fetcher` interface. See [DECISIONS.md](DECISIONS.md).
+  through the optional `Fetcher` (bytes in the delivery) or `Downloader`
+  (requests the gateway sends). See [DECISIONS.md](DECISIONS.md).
 - **`Enrichment` is where deferred work goes.** It is defined by a constraint,
   not a category: everything `Parse` was forbidden from doing. Substitutions
   that need `channel_senders`, a place name that needs geocoding.

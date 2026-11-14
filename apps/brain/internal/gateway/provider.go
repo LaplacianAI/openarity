@@ -48,6 +48,23 @@ type Fetcher interface {
 	) ([]byte, error)
 }
 
+// Downloader fetches a file the provider holds rather than one sent in the
+// delivery. It builds each request and the gateway sends it, with the client
+// that dials public addresses only, so the adapter still holds no client:
+// the first request from the ref, each next from the answer before, until
+// one is final and its answer is the file.
+type Downloader interface {
+	DownloadRequest(ref string, prev []byte, creds Credentials) (req OutboundRequest, final bool, err error)
+}
+
+// Budgeted is a provider that gives its files longer than the defaults, which
+// are sized to the shortest ack window, Slack's three seconds. A provider
+// whose webhook waits for its answer may take longer; one that does not must
+// not, or it loses the message to save a file.
+type Budgeted interface {
+	FetchBudget() (perFile, total time.Duration)
+}
+
 // Replier sends a run's answer back to the conversation it came from. It is
 // beside Provider rather than on it: a provider with nowhere to post back has
 // no honest implementation, and a stub returning nil would read as sent.
@@ -136,6 +153,8 @@ func NoticeText(k NoticeKind) string {
 }
 
 type OutboundRequest struct {
+	// Method is POST when empty, which every reply is.
+	Method string
 	URL    string
 	Header http.Header
 	Body   []byte
