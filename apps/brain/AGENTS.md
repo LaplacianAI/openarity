@@ -127,7 +127,7 @@ apps/brain/
     events.go          what a run does, as run_events, within its token budget; its text and reasoning, gathered
     execute.go         one run: claim, heartbeat, run to the end, finish
     transcript.go      where a run starts in its session's transcript, or resumes, and its open calls closed
-    graphtool.go       graph(query, kinds, hops), bound to every run
+    graphtool.go       graph(query, kinds, hops, server), bound to every run; how the run finds its MCP tools
     hub.go             the hub: the built-in orchestrator, or the team's chosen agent, reaching the whole team
     builder.go         the builder: team(), find_mcp_servers(), list_mcp_tools() and propose(), nothing that writes; its prompt and its turns
     job.go             the run queue, the sweep that takes over stale runs, the Enqueuer

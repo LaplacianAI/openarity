@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
@@ -84,6 +85,8 @@ func (f *fakeStore) ListGrantedMCPTools(context.Context, uuid.UUID) ([]db.ListGr
 		}
 		names, _ := offered.Load(*g.McpServer.Url)
 		tools, _ := names.([]string)
+		// Ordered by name, as the query orders them.
+		tools = slices.Sorted(slices.Values(tools))
 		for _, name := range tools {
 			if g.Allow != nil && !slices.Contains(g.Allow, name) {
 				continue
@@ -335,7 +338,7 @@ func (f *fixture) buildErr(t *testing.T) error {
 // own graph and delegate tools, which the tests below check on their own.
 func toolNames(built Built) []string {
 	out := make([]string, 0, len(built.Spec.Tools))
-	for _, tl := range built.Spec.Tools {
+	for _, tl := range heldTools(built) {
 		if tl.Description != graphDescription && tl.Description != delegateDescription && tl.Description != planDescription {
 			out = append(out, tl.Name)
 		}
@@ -344,10 +347,19 @@ func toolNames(built Built) []string {
 	return out
 }
 
+// heldTools is every tool the run may use: those sent and those it finds.
+func heldTools(built Built) []agent.Tool {
+	tools := slices.Clone(built.Spec.Tools)
+	if built.Spec.Discovery != nil {
+		tools = append(tools, built.Spec.Discovery.Tools...)
+	}
+	return tools
+}
+
 func tool(t *testing.T, built Built, name string) agent.Tool {
 	t.Helper()
 
-	for _, tl := range built.Spec.Tools {
+	for _, tl := range heldTools(built) {
 		if tl.Name == name {
 			return tl
 		}
@@ -1372,4 +1384,118 @@ func TestClosingAnEmptyBuiltIsSafe(t *testing.T) {
 	t.Parallel()
 
 	Built{}.Close()
+}
+
+// --- found with the graph ---
+
+// The MCP tools are handed to the SDK to find with graph, grouped by server;
+// they are not among the tools sent. Whether they are sent after all is the
+// SDK's, by their size.
+func TestTheMCPToolsAreFoundWithTheGraph(t *testing.T) {
+	f := newFixture()
+	f.store.grants = []db.ListGrantedMCPServersRow{
+		urlServer("github", serve(t, "list_issues", "close_issue").url, false),
+		urlServer("web", serve(t, "fetch").url, true),
+		// Every tool of it left out, so it is no group to search.
+		urlServer("clash", serve(t, GraphToolName).url, true),
+	}
+
+	built := f.build(t)
+	d := built.Spec.Discovery
+	if d == nil || d.Search != GraphToolName {
+		t.Fatalf("discovery = %+v, want the MCP tools found with graph", d)
+	}
+	for _, tl := range built.Spec.Tools {
+		if strings.HasPrefix(tl.Name, "github__") || tl.Name == "fetch" {
+			t.Errorf("%s is sent as well as found", tl.Name)
+		}
+	}
+	want := []agent.Group{
+		{Name: "github", Tools: []string{"github__close_issue", "github__list_issues"}},
+		{Name: "web", Tools: []string{"fetch"}},
+	}
+	if !reflect.DeepEqual(d.Groups, want) {
+		t.Errorf("groups = %+v, want %+v", d.Groups, want)
+	}
+}
+
+// With no graph there is nothing to find tools with, so every one is sent.
+func TestWithNoGraphEveryToolIsSent(t *testing.T) {
+	f := newFixture()
+	f.builder = NewBuilder(f.store, f.objects, f.clients, nil, nil, nil)
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", serve(t, "fetch").url, true)}
+
+	built := f.build(t)
+	if built.Spec.Discovery != nil {
+		t.Fatalf("discovery = %+v with no graph to find tools with", built.Spec.Discovery)
+	}
+	if got := toolNames(built); !slices.Equal(got, []string{"fetch"}) {
+		t.Errorf("tools = %v, want fetch sent", got)
+	}
+}
+
+// A run holding no MCP tool has nothing to find.
+func TestARunWithNoMCPToolsHasNothingToFind(t *testing.T) {
+	f := newFixture()
+	if built := f.build(t); built.Spec.Discovery != nil {
+		t.Errorf("discovery = %+v for a run with no MCP tools", built.Spec.Discovery)
+	}
+}
+
+// A bare server's tool under a name the SDK gives its own tools would stop the
+// run, so it is reported instead, and the run still builds.
+func TestAServersToolUnderAnSDKNameIsReported(t *testing.T) {
+	names := []string{agent.DescribeToolsName, agent.CallToolName, agent.SkillToolName, agent.SkillResourceToolName}
+	f := newFixture()
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("odd", serve(t, append([]string{"fetch"}, names...)...).url, true)}
+
+	built := f.build(t)
+	if got := toolNames(built); !slices.Equal(got, []string{"fetch"}) {
+		t.Errorf("tools = %v, want fetch alone", got)
+	}
+	var reported []string
+	for _, u := range built.Unavailable {
+		reported = append(reported, u.Name)
+	}
+	slices.Sort(reported)
+	want := slices.Sorted(slices.Values(names))
+	if !slices.Equal(reported, want) {
+		t.Errorf("reported %v, want %v", reported, want)
+	}
+}
+
+// The graph is told what the run calls each tool it holds, by the tool's id.
+func TestTheGraphKnowsWhatTheRunCallsItsTools(t *testing.T) {
+	f := newFixture()
+	server := urlServer("github", serve(t, "list_issues").url, false)
+	f.store.grants = []db.ListGrantedMCPServersRow{server}
+	id := uuid.New()
+	f.store.catalogue = []db.ListGrantedMCPToolsRow{
+		{ID: id, McpServerID: server.McpServer.ID, Name: "list_issues", InputSchema: []byte(`{}`)},
+	}
+	f.graph.search.hits = []graph.Hit{{Kind: graph.KindTool, ID: id, Name: "list_issues", Score: 0.9}}
+
+	out, err := graphTool(t, f.build(t)).Invoke(t.Context(), json.RawMessage(`{"query":"issues","server":"github"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"use_as":"github__list_issues"`) {
+		t.Errorf("graph = %s, want the run's name for the tool", out)
+	}
+	if got := f.graph.search.asked[0].Reach.Tools; !slices.Equal(got, []uuid.UUID{}) {
+		// The fixture's reach holds a different id, so narrowing to github
+		// leaves nothing: the filter takes away and never adds.
+		t.Errorf("reach = %v, want github's tools within the agent's reach, which is none", got)
+	}
+}
+
+func graphTool(t *testing.T, built Built) agent.Tool {
+	t.Helper()
+	for _, tl := range built.Spec.Tools {
+		if tl.Name == GraphToolName {
+			return tl
+		}
+	}
+	t.Fatal("no graph tool")
+	return agent.Tool{}
 }

@@ -380,6 +380,72 @@ func TestARunThatCallsAToolRecordsTheCallAndTheResult(t *testing.T) {
 	server.waitClosed(t, 1)
 }
 
+// A run whose MCP tools are too many to send finds one with graph, reads what
+// it takes and runs it through call_tool, and its record names the tool it
+// ran, not call_tool.
+func TestARunPastTheThresholdFindsDescribesAndCallsItsTool(t *testing.T) {
+	f := newExecFixture(t, newScripted(
+		callTool("c1", GraphToolName, `{"query":"read a web page"}`),
+		callTool("c2", agent.DescribeToolsName, `{"names":["fetch"]}`),
+		callTool("c3", agent.CallToolName, `{"name":"fetch","arguments":{}}`),
+		answer("done", 10, 5),
+	))
+	server := serve(t, "fetch")
+	var serverID, toolID uuid.UUID
+	if err := f.raw.QueryRow(t.Context(),
+		`INSERT INTO mcp_servers (team_id, name, url, bare) VALUES ($1, 'web', $2, true) RETURNING id`,
+		f.team, server.url).Scan(&serverID); err != nil {
+		t.Fatalf("insert server: %v", err)
+	}
+	// Past agent.DiscoverAbove on its own.
+	description := strings.Repeat("Reads a web page and returns it as markdown. ", 500)
+	if err := f.raw.QueryRow(t.Context(),
+		`INSERT INTO mcp_tools (mcp_server_id, team_id, name, description) VALUES ($1, $2, 'fetch', $3) RETURNING id`,
+		serverID, f.team, description).Scan(&toolID); err != nil {
+		t.Fatalf("insert tool: %v", err)
+	}
+	f.mustExec(t, `INSERT INTO agent_mcp_servers (agent_id, mcp_server_id, team_id) VALUES ($1, $2, $3)`, f.agent, serverID, f.team)
+	f.graph.hits = []graph.Hit{{Kind: graph.KindTool, ID: toolID, Name: "fetch", Description: "Reads a web page", Score: 0.9}}
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	var sent []string
+	for _, tl := range f.model.requests()[0].Tools {
+		sent = append(sent, tl.Name)
+	}
+	if !slices.Contains(sent, agent.CallToolName) || !slices.Contains(sent, agent.DescribeToolsName) || slices.Contains(sent, "fetch") {
+		t.Fatalf("the first request offered %v; fetch must be found, not sent", sent)
+	}
+
+	var called []string
+	results := map[string]toolResult{}
+	for _, e := range f.events(t) {
+		switch e.Kind {
+		case "tool_call":
+			called = append(called, payload[toolCallPayload](t, e).Name)
+		case "tool_result":
+			r := payload[toolResult](t, e)
+			results[r.ID] = r
+		}
+	}
+	if !slices.Equal(called, []string{GraphToolName, agent.DescribeToolsName, "fetch"}) {
+		t.Errorf("the run recorded calls to %v, want graph, describe_tools, then fetch by its own name", called)
+	}
+	if !strings.Contains(results["c1"].Output, `"use_as":"fetch"`) {
+		t.Errorf("graph answered %s, want the name to call the tool by", results["c1"].Output)
+	}
+	if !strings.Contains(results["c2"].Output, `"input_schema"`) {
+		t.Errorf("describe_tools answered %s", results["c2"].Output)
+	}
+	if r := results["c3"]; r.Name != "fetch" || r.Output != "fetch ran" {
+		t.Errorf("the call through call_tool = %+v", r)
+	}
+	if server.opened.Load() != 1 {
+		t.Errorf("the server was opened %d times, want once", server.opened.Load())
+	}
+}
+
 func TestACommandServerIsReportedAsUnavailable(t *testing.T) {
 	f := newExecFixture(t, newScripted(answer("ok", 1, 1)))
 	var id uuid.UUID
