@@ -28,6 +28,7 @@ type Store interface {
 	FinishRun(ctx context.Context, arg db.FinishRunParams) (int64, error)
 	FinishRunWithEvent(ctx context.Context, finish db.FinishRunParams, event db.AppendRunEventParams) (int64, uuid.UUID, error)
 	ListMessagesSinceLastRun(ctx context.Context, arg db.ListMessagesSinceLastRunParams) ([]db.ListMessagesSinceLastRunRow, error)
+	ListAttachmentsByMessage(ctx context.Context, messageID uuid.UUID) ([]db.Attachment, error)
 	SetTranscriptFrom(ctx context.Context, arg db.SetTranscriptFromParams) error
 	StartChildRun(ctx context.Context, arg db.StartChildRunParams) (db.Run, error)
 	ReapChildren(ctx context.Context, arg db.ReapChildrenParams) ([]uuid.UUID, error)
@@ -299,7 +300,8 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	lines := newSoftLines(budgetOf(row.TokenBudget), int64(built.Spec.Model.MaxTokens))
 	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, lines,
 		streams, events, notes, stop)
-	run := runner.Start(ctx, built.Spec, msgs, e.endpoint, events)
+	// The model client reads the conversation's files for each request.
+	run := runner.Start(withSession(ctx, row.SessionID), built.Spec, msgs, e.endpoint, events)
 	lines.hold(run)
 	if until, ok := ctx.Deadline(); ok {
 		clock := time.AfterFunc(time.Until(until)-timeWrapBefore, func() {
@@ -369,6 +371,7 @@ func (e *Executor) heartbeat(ctx context.Context, runID uuid.UUID, worker string
 }
 
 func outcome(runErr, cause error) (string, string) {
+	var files *filesRefused
 	var unreachable *url.Error
 	var answered *agent.ModelError
 	switch {
@@ -378,6 +381,8 @@ func outcome(runErr, cause error) (string, string) {
 		return "failed", cause.Error()
 	case runErr == nil:
 		return "succeeded", ""
+	case errors.As(runErr, &files):
+		return "failed", files.Error()
 	case errors.As(runErr, &unreachable):
 		return "failed", fmt.Sprintf("the model endpoint could not be reached: %v", unreachable.Err)
 	case errors.As(runErr, &answered):

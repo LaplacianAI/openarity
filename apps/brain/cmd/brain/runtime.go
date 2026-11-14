@@ -34,7 +34,9 @@ func newRunJob(
 		return nil, err
 	}
 
-	runner, err := agent.New(openaicompat.Factory(), runtime.Patterns()...)
+	// Each request carries the bytes of the files its transcript names.
+	clients := runtime.Resolving(openaicompat.Factory(), dbStore, attachments)
+	runner, err := agent.New(clients, runtime.Patterns()...)
 	if err != nil {
 		return nil, fmt.Errorf("building the agent runner: %w", err)
 	}
@@ -49,7 +51,7 @@ func newRunJob(
 		builder.WithRegistry(reg)
 	}
 	endpoint := agent.Endpoint{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
-	streamer, err := agent.New(openaicompat.Factory(), runtime.StreamingPatterns()...)
+	streamer, err := agent.New(clients, runtime.StreamingPatterns()...)
 	if err != nil {
 		return nil, fmt.Errorf("building the streaming agent runner: %w", err)
 	}

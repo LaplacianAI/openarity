@@ -68,7 +68,16 @@ func (e *Executor) firstMessage(ctx context.Context, row db.Run) (agent.Message,
 			return agent.Message{}, err
 		}
 	}
-	return agent.Message{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: input}}}, nil
+	msg := agent.Message{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: input}}}
+	// The builder holds no tool to read files with.
+	if row.MessageID != nil && !row.Builder {
+		files, err := e.store.ListAttachmentsByMessage(ctx, *row.MessageID)
+		if err != nil {
+			return agent.Message{}, fmt.Errorf("reading the files sent with run %s: %w", row.ID, err)
+		}
+		msg.Content = append(msg.Content, filesOf(files)...)
+	}
+	return msg, nil
 }
 
 // closeCalls gives a result to every call of the transcript's last turn that

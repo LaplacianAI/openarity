@@ -34,6 +34,7 @@ type BuildStore interface {
 	ListSkillFiles(ctx context.Context, skillID uuid.UUID) ([]db.SkillFile, error)
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 	CountOtherAgents(ctx context.Context, arg db.CountOtherAgentsParams) (int64, error)
+	AttachmentStore
 }
 
 type Objects interface {
@@ -171,6 +172,18 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			built.Spec.Tools = append(built.Spec.Tools, PlanTool(func(ctx context.Context, kind string, p any) error {
 				return b.note(ctx, run.ID, l.Worker, kind, p)
 			}))
+		}
+	}
+
+	if !run.Builder {
+		files, err := b.store.ListAttachmentsBySession(ctx, db.ListAttachmentsBySessionParams{SessionID: run.SessionID, PageSize: 1})
+		if err != nil {
+			built.Close()
+			return Built{}, fmt.Errorf("reading whether the conversation holds files: %w", err)
+		}
+		// Bound only where there is something to read.
+		if len(files) > 0 {
+			built.Spec.Tools = append(built.Spec.Tools, attachmentTools(b.store, run.SessionID)...)
 		}
 	}
 
@@ -340,7 +353,7 @@ var toolNameShape = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 func reserved(name string, hub, web bool) bool {
 	switch name {
 	// Every run compacts, and the SDK refuses a second read_output.
-	case GraphToolName, DelegateToolName, agent.ReadOutputToolName:
+	case GraphToolName, DelegateToolName, agent.ReadOutputToolName, AttachmentsToolName, ReadAttachmentToolName:
 		return true
 	// The names the SDK gives the tools that find, describe and run the rest,
 	// and open skills: a server's tool under one would stop the run.

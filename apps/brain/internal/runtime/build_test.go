@@ -39,9 +39,12 @@ type fakeStore struct {
 	// granted server offers.
 	catalogue []db.ListGrantedMCPToolsRow
 	toolsErr  error
-	skills    []db.Skill
-	skillsErr error
-	files     map[uuid.UUID][]db.SkillFile
+	// attached are the attachments of every session, newest first.
+	attached    []db.Attachment
+	attachedErr error
+	skills      []db.Skill
+	skillsErr   error
+	files       map[uuid.UUID][]db.SkillFile
 
 	settings      *db.TeamSetting
 	settingsErr   error
@@ -98,6 +101,32 @@ func (f *fakeStore) ListGrantedMCPTools(context.Context, uuid.UUID) ([]db.ListGr
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeStore) ListAttachmentsBySession(_ context.Context, arg db.ListAttachmentsBySessionParams) ([]db.Attachment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []db.Attachment
+	for _, a := range f.attached {
+		if a.SessionID == arg.SessionID && len(out) < int(arg.PageSize) {
+			out = append(out, a)
+		}
+	}
+	return out, f.attachedErr
+}
+
+func (f *fakeStore) GetAttachmentInSession(_ context.Context, arg db.GetAttachmentInSessionParams) (db.Attachment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.attachedErr != nil {
+		return db.Attachment{}, f.attachedErr
+	}
+	for _, a := range f.attached {
+		if a.ID == arg.ID && a.SessionID == arg.SessionID {
+			return a, nil
+		}
+	}
+	return db.Attachment{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) ListGrantedSkills(context.Context, uuid.UUID) ([]db.Skill, error) {
