@@ -66,7 +66,10 @@ services:
       - alloy-data:/var/lib/alloy
     networks:
       - logs
+    # Both, so starting Alloy alone (make grafana starts grafana and alloy)
+    # starts what it reads from and writes to.
     depends_on:
+      - socket-proxy
       - loki
     mem_limit: 256m
     restart: unless-stopped
