@@ -2,6 +2,7 @@ package mysql_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -168,9 +169,9 @@ func TestAMessageThatCannotBeEncodedIsReported(t *testing.T) {
 
 	msgs := []agent.Message{
 		{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "fine"}}},
-		{Role: agent.RoleAssistant, ToolCalls: []agent.ToolCall{{
-			ID: "call_1", Name: "search", Arguments: []byte(`{not json`),
-		}}},
+		{Role: agent.RoleAssistant, Reasoning: &agent.Reasoning{
+			Fields: map[string]json.RawMessage{"reasoning": json.RawMessage(`{not json`)},
+		}},
 	}
 
 	err := store.Save(t.Context(), "s1", msgs)

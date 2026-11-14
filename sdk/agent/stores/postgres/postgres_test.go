@@ -1,6 +1,7 @@
 package postgres_test
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -130,8 +131,9 @@ func TestEveryCallReportsAClosedPool(t *testing.T) {
 	})
 }
 
-// A ToolCall's Arguments are raw JSON the model produced, so a malformed one
-// reaches the store rather than being caught earlier.
+// A reasoning block's fields are raw JSON a provider sent, so a malformed one
+// would reach the store. (A tool call's arguments that are not JSON are kept
+// as text instead: agent.ToolCall encodes them.)
 func TestAMessageThatCannotBeEncodedIsReported(t *testing.T) {
 	pool := connect(t)
 	clear(t, pool)
@@ -139,9 +141,9 @@ func TestAMessageThatCannotBeEncodedIsReported(t *testing.T) {
 
 	msgs := []agent.Message{
 		{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "fine"}}},
-		{Role: agent.RoleAssistant, ToolCalls: []agent.ToolCall{{
-			ID: "call_1", Name: "search", Arguments: []byte(`{not json`),
-		}}},
+		{Role: agent.RoleAssistant, Reasoning: &agent.Reasoning{
+			Fields: map[string]json.RawMessage{"reasoning": json.RawMessage(`{not json`)},
+		}},
 	}
 
 	err := store.Save(t.Context(), "s1", msgs)
