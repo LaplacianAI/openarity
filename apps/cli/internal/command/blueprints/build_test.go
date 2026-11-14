@@ -17,8 +17,7 @@ const (
 
 var buildCommands = []clitest.Build{NewBuild, NewProposals}
 
-const builderRun = `{"id":"` + runID + `","session_id":"` + sessionID + `","agent":"builder","status":"queued",
-  "input":"x","input_tokens":0,"output_tokens":0,"created_at":"2026-11-11T10:00:00Z","depth":0,"hub":false,"builder":true,"delegates":[],"reply":null}`
+const said = `{"session_id":"` + sessionID + `","message_id":"` + otherRun + `","run_id":"` + runID + `"}`
 
 const finishedBuilder = `{"id":"` + runID + `","session_id":"` + sessionID + `","agent":"builder","status":"succeeded",
   "input":"x","output":"I propose a triage agent.","input_tokens":1,"output_tokens":1,"created_at":"2026-11-11T10:00:00Z","depth":0,"hub":false,"builder":true,"delegates":[],"reply":null}`
@@ -33,7 +32,8 @@ const openProposal = `{"id":"` + aProposal + `","session_id":"` + sessionID + `"
 
 func buildRoutes(proposals string) map[string]clitest.Reply {
 	return map[string]clitest.Reply{
-		"POST /teams/{id}/runs":                         {Status: http.StatusAccepted, Body: builderRun},
+		"POST /teams/{id}/sessions":                     {Status: http.StatusCreated, Body: said},
+		"POST /teams/{id}/sessions/{sid}/messages":      {Status: http.StatusAccepted, Body: said},
 		"GET /teams/{id}/runs/{runID}/events":           {Status: http.StatusOK, Body: builderStream},
 		"GET /teams/{id}/runs/{runID}":                  {Status: http.StatusOK, Body: finishedBuilder},
 		"GET /teams/{id}/proposals":                     {Status: http.StatusOK, Body: proposals},
@@ -49,8 +49,10 @@ func TestBuildAsksTheBuilderAndShowsItsProposal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
-	if body := script.All()[0].Body; !strings.Contains(body, `"builder":true`) || strings.Contains(body, `"agent"`) {
-		t.Errorf("start body = %s, want a builder run naming no agent", body)
+	start := script.All()[0]
+	if start.Path != "/teams/"+teamID+"/sessions" || !strings.Contains(start.Body, `"builder":true`) ||
+		!strings.Contains(start.Body, `"text":"An agent that triages email."`) {
+		t.Errorf("started with %s %s, want a conversation with the builder", start.Path, start.Body)
 	}
 	for _, want := range []string{
 		"I propose a triage agent.", "A triage agent with the FAQ", "triage", "create",
@@ -63,8 +65,10 @@ func TestBuildAsksTheBuilderAndShowsItsProposal(t *testing.T) {
 	if n := script.Calls("POST", "/teams/"+teamID+"/proposals/"+aProposal+"/apply"); n != 0 {
 		t.Errorf("build applied the proposal: %d calls", n)
 	}
-	if q := script.All()[3].Query; q != "session="+sessionID {
-		t.Errorf("proposals asked with %q, want this session's", q)
+	for _, e := range script.All() {
+		if e.Path == "/teams/"+teamID+"/proposals" && e.Query != "session="+sessionID {
+			t.Errorf("proposals asked with %q, want this session's", e.Query)
+		}
 	}
 }
 
@@ -88,8 +92,9 @@ func TestBuildCarriesOnASession(t *testing.T) {
 	if _, err := clitest.Execute(t, buildCommands, "build", teamID, "Sonnet.", "--session", sessionID); err != nil {
 		t.Fatal(err)
 	}
-	if body := script.All()[0].Body; !strings.Contains(body, `"session_id":"`+sessionID+`"`) {
-		t.Errorf("start body = %s, want the session", body)
+	sent := script.All()[0]
+	if sent.Path != "/teams/"+teamID+"/sessions/"+sessionID+"/messages" || strings.Contains(sent.Body, `"builder"`) {
+		t.Errorf("sent %s %s, want a message in the session, which is already the builder's", sent.Path, sent.Body)
 	}
 	if _, err := clitest.Execute(t, buildCommands, "build", teamID, "x", "--session", "nope"); err == nil {
 		t.Error("a session that is not an id was taken")
@@ -237,5 +242,24 @@ func TestBuildWithNoAskAndNoConversationsSaysHowToStart(t *testing.T) {
 	jsonOut, err := clitest.Execute(t, buildCommands, "build", teamID, "-o", "json")
 	if err != nil || strings.TrimSpace(jsonOut) != "[]" {
 		t.Errorf("json = %q, err %v; want an empty array", jsonOut, err)
+	}
+}
+
+// A message the builder will not answer is stored all the same; the command
+// says why and follows nothing.
+func TestBuildSaysWhyTheBuilderWillNotAnswer(t *testing.T) {
+	routes := buildRoutes(`{"items":[]}`)
+	routes["POST /teams/{id}/sessions"] = clitest.Reply{
+		Status: http.StatusCreated,
+		Body:   `{"session_id":"` + sessionID + `","message_id":"` + otherRun + `","unanswered":"the team has no model set, so its builder cannot run"}`,
+	}
+	script := clitest.Routes(t, routes)
+
+	_, err := clitest.Execute(t, buildCommands, "build", teamID, "An agent.")
+	if err == nil || !strings.Contains(err.Error(), "its builder cannot run") {
+		t.Fatalf("err = %v, want the reason", err)
+	}
+	if n := len(script.All()); n != 1 {
+		t.Errorf("made %d requests, want only the message", n)
 	}
 }

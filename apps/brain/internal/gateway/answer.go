@@ -49,13 +49,8 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 		return outcome{}, fmt.Errorf("active run in session %s: %w", s.ID, err)
 	}
 
-	can, err := q.HubCanRun(ctx, ch.TeamID)
-	if err != nil {
-		return outcome{}, fmt.Errorf("can the hub of %s run: %w", ch.TeamID, err)
-	}
-
-	if !can {
-		return outcome{unanswered: "the team has no model set, so its hub cannot run"}, nil
+	if why, err := cannotRun(ctx, q, ch.TeamID, s.Builder); err != nil || why != "" {
+		return outcome{unanswered: why}, err
 	}
 
 	id := uuid.New()
@@ -72,6 +67,30 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 		return outcome{}, fmt.Errorf("hand run %s the message it answers: %w", id, err)
 	}
 	return outcome{run: id}, nil
+}
+
+// cannotRun is why the agent that answers this conversation cannot run, or
+// "" when it can: the builder needs the team's model, the hub that or an
+// agent chosen to be it.
+func cannotRun(ctx context.Context, q Queries, teamID uuid.UUID, builder bool) (string, error) {
+	if builder {
+		can, err := q.BuilderCanRun(ctx, teamID)
+		if err != nil {
+			return "", fmt.Errorf("can the builder of %s run: %w", teamID, err)
+		}
+		if !can {
+			return "the team has no model set, so its builder cannot run", nil
+		}
+		return "", nil
+	}
+	can, err := q.HubCanRun(ctx, teamID)
+	if err != nil {
+		return "", fmt.Errorf("can the hub of %s run: %w", teamID, err)
+	}
+	if !can {
+		return "the team has no model set, so its hub cannot run", nil
+	}
+	return "", nil
 }
 
 func asksUs(s db.Session, m Delivery) bool { return addressed(SessionKind(s.Kind), m.Inbound) }

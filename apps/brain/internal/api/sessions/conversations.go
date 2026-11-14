@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -93,6 +94,10 @@ func (h *handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if req.Builder {
+		http.Error(w, "builder is chosen when a conversation starts; this one is answered by whom it began with", http.StatusBadRequest)
+		return
+	}
 	h.say(w, r, teamID, *session.ProviderRef, req, http.StatusAccepted)
 }
 
@@ -113,7 +118,7 @@ func (h *handler) say(w http.ResponseWriter, r *http.Request, teamID uuid.UUID, 
 		Inbound: gateway.Inbound{
 			ExternalID: external,
 			Author:     gateway.Author{Ref: u.ID.String(), DisplayName: nameOf(u)},
-			Session:    gateway.Session{Ref: ref, Kind: gateway.SessionDirect},
+			Session:    gateway.Session{Ref: ref, Kind: gateway.SessionDirect, Builder: req.Builder},
 			Text:       req.Text,
 		},
 		UserID: u.ID,
@@ -214,6 +219,16 @@ func (h *handler) readUpload(w http.ResponseWriter, r *http.Request, teamID uuid
 				uploadFailed(w, err)
 				return sayRequest{}, false
 			}
+		case "builder":
+			v, err := field(part, 5)
+			if err != nil {
+				uploadFailed(w, err)
+				return sayRequest{}, false
+			}
+			if req.Builder, err = strconv.ParseBool(v); err != nil {
+				http.Error(w, "builder must be true or false", http.StatusBadRequest)
+				return sayRequest{}, false
+			}
 		case "files":
 			if len(req.files) == maxFiles {
 				http.Error(w, fmt.Sprintf("a message may carry at most %d files", maxFiles), http.StatusBadRequest)
@@ -225,7 +240,7 @@ func (h *handler) readUpload(w http.ResponseWriter, r *http.Request, teamID uuid
 			}
 			req.files = append(req.files, stored)
 		default:
-			http.Error(w, fmt.Sprintf("the body has a part named %q; it takes text, key and files", part.FormName()), http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("the body has a part named %q; it takes text, key, builder and files", part.FormName()), http.StatusBadRequest)
 			return sayRequest{}, false
 		}
 	}

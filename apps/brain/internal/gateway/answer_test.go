@@ -450,3 +450,55 @@ func TestDeliverOneToADeletedTeamIsRefused(t *testing.T) {
 		t.Errorf("stored %d messages for a deleted team", len(a.store.calls))
 	}
 }
+
+func asBuilder(d Delivery) Delivery {
+	d.Session.Builder = true
+	return d
+}
+
+// The builder answers a conversation begun as its own: the session is made
+// the builder's when it starts, and its message starts the run that answers
+// it, which the store makes the builder's because the session is.
+func TestABuilderConversationIsStartedAsTheBuilders(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	if err := a.deliver(t, asBuilder(delivery("m-1", "an agent for support"))); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if got := a.store.sessionCalls[0]; !got.Builder {
+		t.Errorf("the session was ensured as %+v, want the builder's", got)
+	}
+	if len(a.store.created) != 1 {
+		t.Fatalf("started %d runs, want 1", len(a.store.created))
+	}
+}
+
+// The builder runs on the team's model and only on it. A team whose hub is an
+// agent it chose can answer anywhere else, but not in a builder conversation,
+// and it is told why.
+func TestABuilderConversationOnATeamWithNoModelIsNotAnswered(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	a.store.noModel, a.store.hubAgent = true, true
+	if err := a.deliver(t, asBuilder(delivery("m-1", "an agent for support"))); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(a.store.created) != 0 {
+		t.Errorf("started %d runs with no model for the builder", len(a.store.created))
+	}
+	if !strings.Contains(a.log.String(), "its builder cannot run") {
+		t.Errorf("log = %q, want the builder named", a.log)
+	}
+
+	// The same team answers a conversation the hub holds.
+	hub := delivery("m-2", "hello")
+	hub.Session.Ref = "c-2"
+	if err := a.deliver(t, hub); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(a.store.created) != 1 {
+		t.Errorf("started %d runs in the hub's conversation, want 1", len(a.store.created))
+	}
+}

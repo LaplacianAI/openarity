@@ -163,7 +163,7 @@ export function CommandPalette({
     if (!askable || ask.isPending) return;
     // Open until the brain has queued it: a refusal is read here, with the
     // question still typed.
-    ask.mutate(question, { onSuccess: () => close(false) });
+    ask.mutate({ text: question }, { onSuccess: () => close(false) });
   };
   const choose = (i: number) => {
     if (askable && i === askAt) return send();

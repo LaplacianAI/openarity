@@ -40,7 +40,6 @@ type StartArgs struct {
 	SessionID *uuid.UUID
 	Input     string
 	Hub       bool
-	Builder   bool
 }
 
 type Store interface {
@@ -106,8 +105,10 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 	case strings.ContainsRune(req.Input, 0):
 		http.Error(w, "input must not contain a NUL character", http.StatusBadRequest)
 		return
-	case req.Builder && req.Agent != "":
-		http.Error(w, "builder and agent cannot both be given: the builder is the team's own agent", http.StatusBadRequest)
+	case req.Builder:
+		// The builder is an agent on the dashboard channel, where every
+		// message has its channel; a run started here would have none.
+		http.Error(w, "the builder answers on the dashboard channel: start a conversation with it, with builder set, at /teams/{id}/sessions", http.StatusBadRequest)
 		return
 	}
 
@@ -127,13 +128,9 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 
 	args := StartArgs{
 		ID: uuid.New(), TeamID: teamID, UserID: u.ID, SessionID: req.SessionID, Input: req.Input,
-		Hub: req.Agent == "" && !req.Builder, Builder: req.Builder,
+		Hub: req.Agent == "",
 	}
 	switch {
-	case args.Builder:
-		if !h.builderCanRun(w, r, teamID) {
-			return
-		}
 	case args.Hub:
 		if !h.hubCanRun(w, r, teamID) {
 			return
@@ -161,7 +158,7 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		if args.Hub || args.Builder {
+		if args.Hub {
 			http.Error(w, "no such team", http.StatusNotFound)
 			return
 		}
@@ -193,21 +190,6 @@ func (h *handler) hubCanRun(w http.ResponseWriter, r *http.Request, teamID uuid.
 	}
 	if s.HubAgentID == nil && s.ModelName == nil {
 		http.Error(w, "the team has no model set, so its orchestrator cannot run; set one in the team's settings",
-			http.StatusConflict)
-		return false
-	}
-	return true
-}
-
-// builderCanRun is whether the team has the model its builder runs on.
-func (h *handler) builderCanRun(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) bool {
-	s, err := h.store.GetTeamSettings(r.Context(), teamID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		api.Fail(w, h.logger, api.Caller(r), "failed to read the team's settings", err)
-		return false
-	}
-	if s.ModelName == nil {
-		http.Error(w, "the team has no model set, so its builder cannot run; set one in the team's settings",
 			http.StatusConflict)
 		return false
 	}
@@ -444,7 +426,7 @@ func view(r db.Run, delegates []string, rp *reply) run {
 		InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
 		CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		ParentRunID: r.ParentRunID, Depth: r.Depth, Hub: r.Hub,
-		Builder: r.Builder, Delegates: delegates, Reply: rp,
+		Builder: r.Builder, MessageID: r.MessageID, Delegates: delegates, Reply: rp,
 	}
 }
 

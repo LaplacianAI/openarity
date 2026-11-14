@@ -15,16 +15,18 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
-// builderRun is a builder run in a session of its own kind, owned by owner
-// when the session is direct.
+// builderRun is a builder run in a builder conversation of its own kind on
+// the team's dashboard channel, owned by owner when the session is direct.
 func (w *world) builderRun(t *testing.T, kind string, owner *uuid.UUID) db.Run {
 	t.Helper()
 	var session uuid.UUID
 	if err := w.raw.QueryRow(t.Context(),
-		`INSERT INTO sessions (team_id, kind, user_id) VALUES ($1, $2, $3) RETURNING id`, w.team, kind, owner).Scan(&session); err != nil {
+		`INSERT INTO sessions (team_id, kind, user_id, channel_id, provider_ref, builder)
+		 SELECT $1, $2, $3, c.id, gen_random_uuid()::text, true FROM channels c
+		 WHERE c.team_id = $1 AND c.provider = 'dashboard' RETURNING id`, w.team, kind, owner).Scan(&session); err != nil {
 		t.Fatalf("session: %v", err)
 	}
-	run, err := w.store.CreateBuilderRun(t.Context(), db.CreateBuilderRunParams{
+	run, err := w.store.CreateChannelRun(t.Context(), db.CreateChannelRunParams{
 		ID: uuid.New(), SessionID: session, Input: "build me a team", TeamID: w.team, UserID: owner,
 	})
 	if err != nil {

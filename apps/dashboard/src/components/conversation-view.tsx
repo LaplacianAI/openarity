@@ -20,12 +20,14 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
-import type { Run } from "@/api/types";
+import type { Run, SessionEventFile } from "@/api/types";
+import { SentChip, SentPicture } from "@/components/file-chip";
 import { Markdown } from "@/components/markdown";
 import { duration } from "@/components/run-detail";
 import { HubTag } from "@/components/run-table";
 import { LiveBadge, StatusPill } from "@/components/status";
 import { Mono } from "@/components/ui-bits";
+import { isPicture } from "@/lib/attach";
 import { replyLine } from "@/lib/conversation";
 import { absoluteTime } from "@/lib/format";
 import { explainRunError } from "@/lib/run-error";
@@ -57,19 +59,31 @@ export function ConversationView({
   sessionId,
   rows,
   people,
+  files,
+  afterRun,
 }: {
   conversation: Conversation;
   sessionId: string;
   /** The session's runs as listed, for what the stream does not carry: the hub, a reply's fate. */
   rows: Run[];
   people: People;
+  /** Downloads a file sent with a message, and fetches a picture's bytes to draw; without it, files are named only. */
+  files?: SentFiles;
+  /** What the page shows under a run besides its answer: the builder's proposal, on Build. */
+  afterRun?: (runId: string) => ReactNode;
 }) {
   const now = useClock(Object.values(c.runs).some((r) => r.status === "running"));
   return (
     <ol className="space-y-5">
       {c.order.map((e) =>
         e.kind === "said" ? (
-          <SaidTurn key={e.id} said={c.said[e.id] as Said} conversation={c} people={people} />
+          <SaidTurn
+            key={e.id}
+            said={c.said[e.id] as Said}
+            conversation={c}
+            people={people}
+            files={files}
+          />
         ) : (
           <RunTurnView
             key={e.id}
@@ -79,10 +93,58 @@ export function ConversationView({
             sessionId={sessionId}
             people={people}
             now={now}
+            after={afterRun?.(e.id)}
           />
         ),
       )}
     </ol>
+  );
+}
+
+/** What the page does with a file sent in the conversation: download it, or read its bytes to draw it. */
+export type SentFiles = {
+  open: (f: SessionEventFile) => void;
+  load: (f: SessionEventFile) => Promise<Blob>;
+};
+
+/** The files sent with a message: pictures as tiles, the rest as chips, each in the order sent. */
+export function SentFilesView({ sent, files }: { sent: SessionEventFile[]; files?: SentFiles }) {
+  if (sent.length === 0) return null;
+  const pictures = files ? sent.filter((f) => isPicture(f.media_type)) : [];
+  const others = sent.filter((f) => !pictures.includes(f));
+  return (
+    <div className="mt-2 space-y-1.5">
+      {pictures.length > 0 && files ? (
+        <ul aria-label="Pictures sent" className="flex flex-wrap gap-1.5">
+          {pictures.map((f) => (
+            <li key={f.id}>
+              <SentPicture
+                id={f.id}
+                name={f.filename}
+                size={f.size}
+                mediaType={f.media_type}
+                load={() => files.load(f)}
+                onOpen={() => files.open(f)}
+              />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {others.length > 0 ? (
+        <ul aria-label="Files sent" className="flex flex-wrap gap-1.5">
+          {others.map((f) => (
+            <li key={f.id} className="min-w-0">
+              <SentChip
+                name={f.filename}
+                size={f.size}
+                mediaType={f.media_type}
+                onOpen={files ? () => files.open(f) : undefined}
+              />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 
@@ -101,10 +163,12 @@ function SaidTurn({
   said: m,
   conversation: c,
   people,
+  files,
 }: {
   said: Said;
   conversation: Conversation;
   people: People;
+  files?: SentFiles;
 }) {
   const mine = people.me !== null && m.userId === people.me;
   const name = mine ? "You" : people.nameOf(m.userId);
@@ -124,9 +188,12 @@ function SaidTurn({
           </time>
         </div>
         {/* A person typed this: it is shown as text, never parsed. */}
-        <p data-text className="mt-1 max-w-[75ch] whitespace-pre-wrap break-words text-sm">
-          {m.text}
-        </p>
+        {m.text !== "" ? (
+          <p data-text className="mt-1 max-w-[75ch] whitespace-pre-wrap break-words text-sm">
+            {m.text}
+          </p>
+        ) : null}
+        <SentFilesView sent={m.files} files={files} />
       </div>
       {m.pending ? (
         <p
@@ -159,6 +226,7 @@ function RunTurnView({
   sessionId,
   people,
   now,
+  after,
 }: {
   run: RunTurn;
   conversation: Conversation;
@@ -166,6 +234,7 @@ function RunTurnView({
   sessionId: string;
   people: People;
   now: number;
+  after?: ReactNode;
 }) {
   const running = run.status === "running";
   const w = worked(c, run, now);
@@ -215,6 +284,7 @@ function RunTurnView({
       </div>
 
       {row ? <ReplyStatus run={row} /> : null}
+      {after}
       <Link
         to="/ui/sessions/$sessionId"
         params={{ sessionId }}

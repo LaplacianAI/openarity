@@ -840,6 +840,14 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   web tools: no write, delegate, MCP tool call or skill, so text it reads can
   change what it proposes but never the team. A person reads every proposal,
   so the web is worth its injection risk here; the card names each new host.
+- **The builder is an agent on the dashboard channel.** Every message has
+  its channel, so a conversation with the builder is a dashboard conversation
+  (`sessions.builder`) and its runs are started by its messages, like any
+  other; `POST /runs` refuses `builder`. Who answers is fixed when the
+  conversation starts. The builder is the one agent a person talks to
+  directly; every other agent is reached through the hub. Builder sessions
+  made before had no channel and moved onto their team's dashboard channel;
+  the rollback leaves them there, since they may by then hold messages.
 - **`list_mcp_tools` sends a secret only where the team already does.** It
   discovers a server that need not be the team's, so a reference is sent only
   when the team has a server at that exact URL with that exact secret.

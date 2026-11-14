@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { ApiError } from "@/api/client";
 import type { BlueprintPlan, Proposal, Run, RunEvent } from "@/api/types";
+import { NO_BUILDER_MODEL, NO_MODEL, unansweredRefusal } from "@/lib/ask";
 import {
-  buildRefusal,
   conversationsOf,
+  FILES_ALONE,
   isLive,
   liveOf,
-  NO_BUILDER_MODEL,
   needsOf,
+  saidOf,
   secretGroups,
   turnsOf,
 } from "@/lib/build";
@@ -41,13 +41,25 @@ describe("a conversation's turns", () => {
   });
 });
 
-describe("a refused ask", () => {
-  it("names the builder's model, not the hub's", () => {
-    expect(buildRefusal(new ApiError(409, "no model"))).toEqual({
+describe("a message no run answers", () => {
+  it("names the builder's model when the builder can't run, and the hub's otherwise", () => {
+    expect(unansweredRefusal("the team has no model set, so its builder cannot run")).toEqual({
       text: NO_BUILDER_MODEL,
       settings: true,
     });
-    expect(buildRefusal(new ApiError(403, "")).settings).toBe(false);
+    expect(unansweredRefusal("the team has no model set, so its hub cannot run")).toEqual({
+      text: NO_MODEL,
+      settings: true,
+    });
+  });
+});
+
+describe("saidOf", () => {
+  it("shows what the person typed, and nothing for a message of files alone", () => {
+    expect(saidOf(run("a", "x", { input: "an agent" }), [{}])).toBe("an agent");
+    expect(saidOf(run("a", "x", { input: FILES_ALONE }), [{}])).toBe("");
+    // Typed with no files, the same words are theirs.
+    expect(saidOf(run("a", "x", { input: FILES_ALONE }), [])).toBe(FILES_ALONE);
   });
 });
 

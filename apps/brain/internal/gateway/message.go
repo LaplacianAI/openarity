@@ -23,6 +23,10 @@ const (
 type Session struct {
 	Ref  string
 	Kind SessionKind
+	// Builder starts the conversation as the builder's, which answers it in
+	// place of the hub. Only the dashboard starts one, and only when it
+	// begins: a session never changes who answers it.
+	Builder bool
 }
 
 type Author struct {

@@ -42,7 +42,12 @@ export class Unanswered extends Error {
 }
 
 /** Why a message the brain stored gets no answer, in the dashboard's words. */
+/** The builder runs on the team's model, and only on it. */
+export const NO_BUILDER_MODEL = "The builder can't run until the team has a model.";
+
 export function unansweredRefusal(reason: string): AskRefusal {
+  if (/no model/i.test(reason) && /builder/i.test(reason))
+    return { text: NO_BUILDER_MODEL, settings: true };
   if (/no model/i.test(reason)) return { text: NO_MODEL, settings: true };
   if (/may not start runs/i.test(reason)) {
     return { text: "You can't start runs in this team. An admin can grant it.", settings: false };

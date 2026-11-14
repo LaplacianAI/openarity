@@ -190,6 +190,10 @@ person types on the dashboard reaches the inbox from the API, through
 `Inbox.DeliverOne`, which delivers as `Deliver` does and says what became of
 the message. Its runs queue no reply; the session's stream is the answer.
 
+A dashboard conversation is the hub's unless it started as the builder's
+(`Session.Builder`, set only when it begins): then its messages start the
+builder, on the team's model. Every other agent is reached through the hub.
+
 ## Not here
 
 Reading a session back, or an attachment. `internal/api/sessions` serves both;

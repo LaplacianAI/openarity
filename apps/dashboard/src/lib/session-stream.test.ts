@@ -48,6 +48,42 @@ const finished = (run: string, output: string, status = "succeeded" as const): S
 });
 
 describe("fold", () => {
+  it("keeps the files sent with a message, in their order, apart from its text", () => {
+    const pdf = { id: "f1", filename: "report.pdf", media_type: "application/pdf", size: 900 };
+    const png = { id: "f2", filename: "chart.png", media_type: "image/png", size: 40 };
+    const c = all(
+      frames({
+        kind: "message",
+        data: {
+          at,
+          id: "m1",
+          user_id: "u1",
+          parts: [
+            { type: "text", text: "summarise these" },
+            { type: "file", file: pdf },
+            { type: "file", file: png },
+          ],
+        },
+      }),
+    );
+    expect(c.said.m1).toMatchObject({ text: "summarise these", files: [pdf, png] });
+  });
+
+  it("reads a message of files alone as one with no text", () => {
+    const f = { id: "f1", filename: "a.txt", media_type: "text/plain", size: 3 };
+    const c = all(
+      frames({
+        kind: "message",
+        data: { at, id: "m1", user_id: "u1", parts: [{ type: "file", file: f }] },
+      }),
+    );
+    expect(c.said.m1).toMatchObject({ text: "", files: [f] });
+  });
+
+  it("names no files for a message of text", () => {
+    expect(all(frames(said("m1", "hi"))).said.m1?.files).toEqual([]);
+  });
+
   it("reads a whole exchange: asked, taken, thought, called, answered", () => {
     const c = all(
       frames(

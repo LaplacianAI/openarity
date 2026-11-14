@@ -294,9 +294,6 @@ func (s *fakeStore) StartRun(_ context.Context, arg StartArgs) (db.Run, error) {
 		ID: arg.ID, RootRunID: arg.ID, TeamID: arg.TeamID, SessionID: session, AgentID: &arg.AgentID, AgentName: "triage",
 		UserID: &arg.UserID, Status: "queued", Input: arg.Input, CreatedAt: time.Now(),
 	}
-	if arg.Builder {
-		r.Builder, r.AgentID, r.AgentName = true, nil, "builder"
-	}
 	// CreateHubRun reads the hub as it inserts: the chosen agent, or none.
 	if arg.Hub {
 		r.Hub, r.AgentID, r.AgentName = true, nil, "orchestrator"
@@ -723,14 +720,14 @@ func TestTheRunIsReadAsItIs(t *testing.T) {
 	for _, k := range []string{
 		"id", "session_id", "agent", "status", "input", "output", "error",
 		"input_tokens", "output_tokens", "created_at", "started_at", "finished_at",
-		"parent_run_id", "depth", "hub", "builder", "delegates", "reply",
+		"parent_run_id", "depth", "hub", "builder", "message_id", "delegates", "reply",
 	} {
 		if _, ok := keys[k]; !ok {
 			t.Errorf("the run has no %q", k)
 		}
 	}
-	if len(keys) != 18 {
-		t.Errorf("the run has %d fields, want the 18 in the contract", len(keys))
+	if len(keys) != 19 {
+		t.Errorf("the run has %d fields, want the 19 in the contract", len(keys))
 	}
 	if keys["parent_run_id"] != nil || keys["depth"] != float64(0) {
 		t.Errorf("a top-level run says parent %v depth %v, want null and 0", keys["parent_run_id"], keys["depth"])
@@ -1227,46 +1224,25 @@ func TestARefusedHubBodyNeverReachesTheStore(t *testing.T) {
 
 // --- the builder ---
 
-func TestABuilderRunIsTheTeamsBuilderOnItsModel(t *testing.T) {
-	w := newWorld(t)
-	w.withModel()
-
-	rec := w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": "an agent for support", "builder": true})
-
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status %d (%s), want 202", rec.Code, rec.Body)
-	}
-	var out struct {
-		Agent   string `json:"agent"`
-		Builder bool   `json:"builder"`
-		Hub     bool   `json:"hub"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatal(err)
-	}
-	if !out.Builder || out.Hub || out.Agent != "builder" {
-		t.Errorf("run = %+v, want the builder, not the hub", out)
-	}
-	if a := w.store.started[0]; !a.Builder || a.Hub || a.AgentID != uuid.Nil {
-		t.Errorf("started with %+v, want a builder run and nothing else", a)
-	}
-}
-
-func TestABuilderRunIsRefusedWithAnAgentOrWithoutAModel(t *testing.T) {
-	w := newWorld(t)
-	w.withModel()
-	rec := w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": "hi", "builder": true, "agent": "triage"})
-	if rec.Code != http.StatusBadRequest || w.store.touched() != 0 {
-		t.Errorf("builder with agent: %d, store asked %d; want 400 and nothing asked", rec.Code, w.store.touched())
-	}
-
-	w = newWorld(t)
-	rec = w.call(t, w.me, http.MethodPost, w.runs(), map[string]any{"input": "hi", "builder": true})
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "builder cannot run") {
-		t.Errorf("builder with no model: %d %q, want 409 naming the builder", rec.Code, rec.Body)
-	}
-	if len(w.store.started) != 0 {
-		t.Error("a builder run was started with no model")
+// The builder is an agent on the dashboard channel, where every message has
+// its channel: a run started here would have none, so it is refused and the
+// caller is told where the builder answers.
+func TestABuilderRunIsRefusedHereAndPointedToTheDashboard(t *testing.T) {
+	for name, body := range map[string]map[string]any{
+		"alone":         {"input": "an agent for support", "builder": true},
+		"with an agent": {"input": "hi", "builder": true, "agent": "triage"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			w.withModel()
+			rec := w.call(t, w.me, http.MethodPost, w.runs(), body)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "/sessions") {
+				t.Errorf("status %d %q, want 400 naming where the builder answers", rec.Code, rec.Body)
+			}
+			if w.store.touched() != 0 {
+				t.Errorf("the store was asked %d things; want nothing", w.store.touched())
+			}
+		})
 	}
 }
 
@@ -1742,5 +1718,28 @@ func TestARunCannotBeStartedInAChannelsSession(t *testing.T) {
 
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "channel") {
 		t.Fatalf("status %d (%s), want 409 naming the channel", rec.Code, rec.Body)
+	}
+}
+
+// A run says which message it answers, so a client lists that message's files
+// beside it; a run started any other way says none.
+func TestARunNamesTheMessageItAnswers(t *testing.T) {
+	w := newWorld(t)
+	session := w.session("group", nil)
+	r := w.run(session, "succeeded")
+	msg := uuid.New()
+	r.MessageID = &msg
+	w.store.runs[r.ID] = r
+	other := w.run(session, "succeeded")
+
+	for id, want := range map[uuid.UUID]*uuid.UUID{r.ID: &msg, other.ID: nil} {
+		rec := w.call(t, w.me, http.MethodGet, w.runs()+"/"+id.String(), nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+		}
+		got := decodeRun(t, rec).MessageID
+		if (got == nil) != (want == nil) || (got != nil && *got != *want) {
+			t.Errorf("run %s names message %v, want %v", id, got, want)
+		}
 	}
 }

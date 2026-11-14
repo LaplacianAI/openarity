@@ -23,67 +23,6 @@ func (q *Queries) CountRunProposals(ctx context.Context, runID uuid.UUID) (int64
 	return count, err
 }
 
-const createBuilderRun = `-- name: CreateBuilderRun :one
-INSERT INTO runs (id, team_id, session_id, root_run_id, agent_name, user_id, input, builder, transcript)
-SELECT $1::uuid, t.id, $2::uuid, $1::uuid,
-       'builder', $3::uuid, $4::text, true,
-       'session:' || $2::uuid::text
-FROM teams t
-WHERE t.id = $5::uuid
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from
-`
-
-type CreateBuilderRunParams struct {
-	ID        uuid.UUID
-	SessionID uuid.UUID
-	UserID    *uuid.UUID
-	Input     string
-	TeamID    uuid.UUID
-}
-
-func (q *Queries) CreateBuilderRun(ctx context.Context, arg CreateBuilderRunParams) (Run, error) {
-	row := q.db.QueryRow(ctx, createBuilderRun,
-		arg.ID,
-		arg.SessionID,
-		arg.UserID,
-		arg.Input,
-		arg.TeamID,
-	)
-	var i Run
-	err := row.Scan(
-		&i.ID,
-		&i.TeamID,
-		&i.SessionID,
-		&i.ParentRunID,
-		&i.RootRunID,
-		&i.ParentToolCall,
-		&i.Depth,
-		&i.AgentID,
-		&i.AgentName,
-		&i.UserID,
-		&i.Status,
-		&i.Input,
-		&i.Output,
-		&i.Error,
-		&i.InputTokens,
-		&i.OutputTokens,
-		&i.Worker,
-		&i.HeartbeatAt,
-		&i.CancelRequestedAt,
-		&i.CreatedAt,
-		&i.StartedAt,
-		&i.FinishedAt,
-		&i.TokenBudget,
-		&i.Hub,
-		&i.MessageID,
-		&i.ReplyToChannel,
-		&i.Builder,
-		&i.Transcript,
-		&i.TranscriptFrom,
-	)
-	return i, err
-}
-
 const createProposal = `-- name: CreateProposal :one
 INSERT INTO proposals (team_id, session_id, run_id, summary, blueprint, plan)
 VALUES ($1::uuid, $2::uuid, $3::uuid,

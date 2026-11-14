@@ -11,6 +11,7 @@ import { CodeBlock, JsonView } from "@/components/code";
 import { Composer } from "@/components/composer";
 import { ConversationView } from "@/components/conversation-view";
 import { CopyId, KeyValue, KeyValues, Time } from "@/components/facts";
+import { AttachedChip } from "@/components/file-chip";
 import { Markdown } from "@/components/markdown";
 import { Field, ReadOnlyNote, Tag, TextArea } from "@/components/registry-bits";
 import { RunView } from "@/components/run-detail";
@@ -195,7 +196,27 @@ const finishedTalk = conversationOf(
       at: AT(0),
       id: "m1",
       user_id: ME,
-      parts: [{ type: "text", text: "Why did last night's deploy fail?" }],
+      parts: [
+        { type: "text", text: "Why did last night's deploy fail?" },
+        {
+          type: "file",
+          file: {
+            id: "f1",
+            filename: "deploy-2026-11-12.log",
+            media_type: "text/plain",
+            size: 48_210,
+          },
+        },
+        {
+          type: "file",
+          file: {
+            id: "f2",
+            filename: "grafana-error-rate-during-the-rollout-window.png",
+            media_type: "image/png",
+            size: 312_004,
+          },
+        },
+      ],
       state: "pending",
     },
   },
@@ -332,6 +353,25 @@ const liveTalk = conversationOf(
   },
 );
 
+/** A file of a claimed size, for chips that never send it. */
+function demoFile(name: string, type: string, size: number): File {
+  const f = new File(["x"], name, { type });
+  Object.defineProperty(f, "size", { value: size });
+  return f;
+}
+const picture = new File(
+  [
+    Uint8Array.from(
+      atob(
+        "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",
+      ),
+      (c) => c.charCodeAt(0),
+    ),
+  ],
+  "error-rate.png",
+  { type: "image/png" },
+);
+
 const people = {
   nameOf: (id: string) => (id === "user-ann" ? "ann@team.test" : null),
   me: ME,
@@ -346,6 +386,7 @@ function ConversationDemo() {
           sessionId="s-demo"
           rows={[]}
           people={people}
+          files={{ open: () => {}, load: async () => picture }}
         />
       </State>
       <State label="Live: thinking open, a tool running, text as it is written, a message waiting">
@@ -358,6 +399,34 @@ function ConversationDemo() {
             placeholder="Write a reply…"
           />
         </div>
+      </State>
+      <State label="Files in the composer: a picture, a long name cut before its extension, refused, and going up">
+        <ul className="flex flex-wrap gap-1.5">
+          <AttachedChip file={picture} refused={false} sending={false} onRemove={() => {}} />
+          <AttachedChip
+            file={demoFile(
+              "quarterly-revenue-by-region-final-v3-approved.xlsx.zip",
+              "application/zip",
+              4_404_019,
+            )}
+            refused={false}
+            sending={false}
+            onRemove={() => {}}
+          />
+          <AttachedChip
+            file={demoFile("screen-recording.mov", "video/quicktime", 88_000_000)}
+            refused
+            sending={false}
+            onRemove={() => {}}
+          />
+          <AttachedChip
+            file={demoFile("report.pdf", "application/pdf", 1_258_291)}
+            refused={false}
+            sending
+            progress={0.42}
+            onRemove={() => {}}
+          />
+        </ul>
       </State>
     </div>
   );

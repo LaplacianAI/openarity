@@ -67,6 +67,41 @@ describe("asking the team from Home", () => {
     expect(sent(posts(seen)[0]).text).toBe("first line\nsecond");
   });
 
+  it("asks with files, or with files alone, and lands on the conversation", async () => {
+    const { seen, router } = home(["run:write"]);
+    await screen.findByRole("textbox", { name: "Ask the team" });
+    const form = screen.getByRole("form", { name: "Ask the team" });
+    const ask = screen.getByRole("button", { name: "Ask" });
+    expect(ask).toBeDisabled();
+    await userEvent.upload(
+      form.querySelector("input[type=file]") as HTMLInputElement,
+      new File(["%PDF"], "deploy.log", { type: "text/plain" }),
+    );
+    expect(within(form).getByRole("button", { name: "Remove deploy.log" })).toBeInTheDocument();
+    await userEvent.click(ask);
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/ui/sessions/s-new"));
+    const body = posts(seen)[0]?.body;
+    expect(body).toBeInstanceOf(FormData);
+    expect((body as FormData).get("text")).toBe("");
+    expect(((body as FormData).getAll("files") as File[]).map((f) => f.name)).toEqual([
+      "deploy.log",
+    ]);
+  });
+
+  it("holds Ask while a refused file is attached", async () => {
+    home(["run:write"]);
+    const box = await screen.findByRole("textbox", { name: "Ask the team" });
+    const form = screen.getByRole("form", { name: "Ask the team" });
+    await userEvent.type(box, "what is in this?");
+    await userEvent.upload(
+      form.querySelector("input[type=file]") as HTMLInputElement,
+      new File(["x"], "clip.mp4", { type: "video/mp4" }),
+    );
+    expect(within(form).getByRole("alert")).toHaveTextContent("clip.mp4 can't be sent.");
+    expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
+  });
+
   it("offers no send for a blank question", async () => {
     const { seen } = home(["run:write"]);
     const box = await screen.findByRole("textbox", { name: "Ask the team" });

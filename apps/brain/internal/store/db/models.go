@@ -304,6 +304,7 @@ type Session struct {
 	LastMessageAt time.Time
 	UserID        *uuid.UUID
 	EventSeq      int64
+	Builder       bool
 }
 
 type Skill struct {

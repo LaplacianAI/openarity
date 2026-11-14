@@ -48,15 +48,6 @@ UPDATE proposals SET state = 'applied', applied_by = sqlc.narg('applied_by'), ap
 WHERE id = sqlc.arg('id') AND state = 'open'
 RETURNING *;
 
--- name: CreateBuilderRun :one
-INSERT INTO runs (id, team_id, session_id, root_run_id, agent_name, user_id, input, builder, transcript)
-SELECT sqlc.arg('id')::uuid, t.id, sqlc.arg('session_id')::uuid, sqlc.arg('id')::uuid,
-       'builder', sqlc.narg('user_id')::uuid, sqlc.arg('input')::text, true,
-       'session:' || sqlc.arg('session_id')::uuid::text
-FROM teams t
-WHERE t.id = sqlc.arg('team_id')::uuid
-RETURNING *;
-
 -- The tools each of a team's MCP servers offered when last discovered,
 -- by name, for the builder to choose an allow list from.
 -- name: ListTeamToolNames :many

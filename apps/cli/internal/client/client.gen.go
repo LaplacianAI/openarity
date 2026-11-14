@@ -1546,6 +1546,11 @@ type Run struct {
 	Input       string             `json:"input" yaml:"input"`
 	InputTokens int64              `json:"input_tokens" yaml:"input_tokens"`
 
+	// MessageID The message the run was started to answer, whose files are listed
+	// under the session's attachments with this `message_id`. Null for a
+	// run started any other way.
+	MessageID *openapi_types.UUID `json:"message_id,omitempty" yaml:"message_id,omitempty"`
+
 	// Output The agent's answer, null until it succeeds. A run stopped at its
 	// token budget or wall clock keeps what it had, its latest summary
 	// when it compacted, beside its error.
@@ -1595,9 +1600,9 @@ type RunRequest struct {
 	// Examples: triage
 	Agent *string `json:"agent,omitempty" yaml:"agent,omitempty"`
 
-	// Builder Start the team's builder rather than an agent or the hub. It reads
-	// the team and proposes blueprints, and writes nothing; refused with
-	// `agent`. A builder run reads its earlier turns in the session.
+	// Builder Refused with a 400. The builder answers on the dashboard channel:
+	// start a conversation with it at `POST /teams/{id}/sessions` with
+	// `builder`.
 	Builder *bool `json:"builder,omitempty" yaml:"builder,omitempty"`
 
 	// Input What the agent is asked to do. At most 100 KiB, with no NUL character.
@@ -1631,6 +1636,13 @@ type Said struct {
 
 // SayRequest defines model for SayRequest.
 type SayRequest struct {
+	// Builder On a new conversation only: the team's builder answers it rather
+	// than the hub. It reads the team and proposes blueprints, writes
+	// nothing, and runs on the team's model. Who answers a conversation
+	// is decided when it starts, so a message in one that sets it is
+	// refused with a 400.
+	Builder *bool `json:"builder,omitempty" yaml:"builder,omitempty"`
+
 	// Key The caller's own name for this send. A retry carries the same key
 	// and is the same send.
 	Key string `json:"key" yaml:"key"`
@@ -1641,6 +1653,9 @@ type SayRequest struct {
 
 // SayUpload defines model for SayUpload.
 type SayUpload struct {
+	// Builder As in `SayRequest`, sent as `true` or `false`.
+	Builder *bool `json:"builder,omitempty" yaml:"builder,omitempty"`
+
 	// Files The files sent with the message, each at most 25 MB: images (png,
 	// jpeg, gif, webp), PDF, plain text, zip, mp3 or wav, as their bytes
 	// say. The part's filename is kept, cleaned, as the file's name.
@@ -1694,6 +1709,10 @@ type SearchSettingsRequest struct {
 
 // Session defines model for Session.
 type Session struct {
+	// Builder A conversation on the dashboard channel that the team's builder
+	// answers, rather than its hub. Fixed when the conversation starts.
+	Builder bool `json:"builder" yaml:"builder"`
+
 	// ChannelID The channel it arrived on, absent when it did not arrive on one —
 	// a session started from the dashboard or the API has no webhook
 	// behind it.
@@ -3380,8 +3399,9 @@ type ClientInterface interface {
 	// orchestrator runs on the team's model, so with none set it is
 	// refused with a 409.
 	//
-	// With `builder` the run is the team's builder, on the team's model
-	// too: it reads the team and records proposals, and writes nothing.
+	// `builder` is refused with a 400: the builder is an agent on the
+	// dashboard channel, where every message has its channel. Start a
+	// conversation with it at `POST /teams/{id}/sessions` with `builder`.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -3413,8 +3433,9 @@ type ClientInterface interface {
 	// orchestrator runs on the team's model, so with none set it is
 	// refused with a 409.
 	//
-	// With `builder` the run is the team's builder, on the team's model
-	// too: it reads the team and records proposals, and writes nothing.
+	// `builder` is refused with a 400: the builder is an agent on the
+	// dashboard channel, where every message has its channel. Start a
+	// conversation with it at `POST /teams/{id}/sessions` with `builder`.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -5360,8 +5381,9 @@ func (c *Client) ListTeamRuns(ctx context.Context, id TeamID, params *ListTeamRu
 // orchestrator runs on the team's model, so with none set it is
 // refused with a 409.
 //
-// With `builder` the run is the team's builder, on the team's model
-// too: it reads the team and records proposals, and writes nothing.
+// `builder` is refused with a 400: the builder is an agent on the
+// dashboard channel, where every message has its channel. Start a
+// conversation with it at `POST /teams/{id}/sessions` with `builder`.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -5403,8 +5425,9 @@ func (c *Client) StartRunWithBody(ctx context.Context, id TeamID, contentType st
 // orchestrator runs on the team's model, so with none set it is
 // refused with a 409.
 //
-// With `builder` the run is the team's builder, on the team's model
-// too: it reads the team and records proposals, and writes nothing.
+// `builder` is refused with a 400: the builder is an agent on the
+// dashboard channel, where every message has its channel. Start a
+// conversation with it at `POST /teams/{id}/sessions` with `builder`.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -11002,8 +11025,9 @@ type ClientWithResponsesInterface interface {
 	// orchestrator runs on the team's model, so with none set it is
 	// refused with a 409.
 	//
-	// With `builder` the run is the team's builder, on the team's model
-	// too: it reads the team and records proposals, and writes nothing.
+	// `builder` is refused with a 400: the builder is an agent on the
+	// dashboard channel, where every message has its channel. Start a
+	// conversation with it at `POST /teams/{id}/sessions` with `builder`.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -11035,8 +11059,9 @@ type ClientWithResponsesInterface interface {
 	// orchestrator runs on the team's model, so with none set it is
 	// refused with a 409.
 	//
-	// With `builder` the run is the team's builder, on the team's model
-	// too: it reads the team and records proposals, and writes nothing.
+	// `builder` is refused with a 400: the builder is an agent on the
+	// dashboard channel, where every message has its channel. Start a
+	// conversation with it at `POST /teams/{id}/sessions` with `builder`.
 	//
 	// With no `session_id` the run gets a direct session of its own, owned
 	// by the caller. A named session must be one the caller can read: a
@@ -16152,8 +16177,9 @@ func (c *ClientWithResponses) ListTeamRunsWithResponse(ctx context.Context, id T
 // orchestrator runs on the team's model, so with none set it is
 // refused with a 409.
 //
-// With `builder` the run is the team's builder, on the team's model
-// too: it reads the team and records proposals, and writes nothing.
+// `builder` is refused with a 400: the builder is an agent on the
+// dashboard channel, where every message has its channel. Start a
+// conversation with it at `POST /teams/{id}/sessions` with `builder`.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a
@@ -16191,8 +16217,9 @@ func (c *ClientWithResponses) StartRunWithBodyWithResponse(ctx context.Context, 
 // orchestrator runs on the team's model, so with none set it is
 // refused with a 409.
 //
-// With `builder` the run is the team's builder, on the team's model
-// too: it reads the team and records proposals, and writes nothing.
+// `builder` is refused with a 400: the builder is an agent on the
+// dashboard channel, where every message has its channel. Start a
+// conversation with it at `POST /teams/{id}/sessions` with `builder`.
 //
 // With no `session_id` the run gets a direct session of its own, owned
 // by the caller. A named session must be one the caller can read: a

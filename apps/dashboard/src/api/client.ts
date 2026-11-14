@@ -66,6 +66,12 @@ type RequestOptions = {
    */
   upload?: FormData | Blob;
   signal?: AbortSignal;
+  /**
+   * Told how much of the body has gone, for an upload worth watching. fetch
+   * cannot report this, so a request that asks is sent with XMLHttpRequest;
+   * everything after the answer arrives is the same either way.
+   */
+  onProgress?: (sent: number, total: number) => void;
   /** For /auth/config, which answers before anyone has a token. */
   anonymous?: boolean;
   /** The body as bytes rather than JSON: an attachment. */
@@ -115,12 +121,15 @@ async function send<T>(path: string, options: RequestOptions): Promise<T> {
     body = JSON.stringify(options.body);
   }
 
-  const res = await fetch(path, {
+  const init = {
     method: options.method ?? "GET",
     headers,
     body,
     ...(options.signal ? { signal: options.signal } : {}),
-  });
+  };
+  const res = options.onProgress
+    ? await sendWatched(path, init, options.onProgress)
+    : await fetch(path, init);
 
   if (res.status === 401) {
     // Not cleared here: the caller decides, because a session with a refresh
@@ -145,6 +154,52 @@ async function send<T>(path: string, options: RequestOptions): Promise<T> {
   }
 
   return (await res.json()) as T;
+}
+
+/**
+ * fetch, by XMLHttpRequest, reporting the body's progress. The answer is made
+ * a Response, so status, errors and the body are read exactly as fetch's are.
+ * A request that never got an answer rejects with a TypeError, as fetch does.
+ */
+function sendWatched(
+  path: string,
+  init: { method: string; headers: Headers; body?: BodyInit; signal?: AbortSignal },
+  onProgress: (sent: number, total: number) => void,
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(init.method, path);
+    xhr.responseType = "arraybuffer";
+    init.headers.forEach((value, name) => {
+      xhr.setRequestHeader(name, value);
+    });
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      const headers = new Headers();
+      for (const line of xhr
+        .getAllResponseHeaders()
+        .trim()
+        .split(/[\r\n]+/)) {
+        const at = line.indexOf(":");
+        if (at > 0) headers.append(line.slice(0, at).trim(), line.slice(at + 1).trim());
+      }
+      // A Response may not carry a body with these statuses.
+      const empty = xhr.status === 204 || xhr.status === 205 || xhr.status === 304;
+      resolve(
+        new Response(empty ? null : xhr.response, {
+          status: xhr.status,
+          statusText: xhr.statusText,
+          headers,
+        }),
+      );
+    };
+    xhr.onerror = () => reject(new TypeError("the request could not reach the brain"));
+    xhr.onabort = () => reject(new DOMException("the request was cancelled", "AbortError"));
+    init.signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send((init.body ?? null) as XMLHttpRequestBodyInit | null);
+  });
 }
 
 /**

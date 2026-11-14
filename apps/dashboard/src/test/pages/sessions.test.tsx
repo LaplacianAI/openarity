@@ -1,9 +1,20 @@
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { setToken } from "@/api/token";
-import { brain, chunks, feed, pageOf, type Seen, STAMP, showAt, TEAM, team } from "@/test/brain";
+import {
+  brain,
+  chunks,
+  feed,
+  holdUploads,
+  pageOf,
+  type Seen,
+  STAMP,
+  showAt,
+  TEAM,
+  team,
+} from "@/test/brain";
 
 const { Route: ListRoute, sessionsFinding } = await import("@/routes/ui.sessions.index");
 const { Route: PageRoute } = await import("@/routes/ui.sessions.$sessionId");
@@ -2662,6 +2673,305 @@ describe("writing in a conversation", () => {
     );
     expect(within(form).getByRole("link", { name: /Open team settings/ })).toBeInTheDocument();
     expect(box).toHaveValue("");
+  });
+
+  const REPLY = `/teams/${TEAM}/sessions/${SID}/messages`;
+  const forms = (seen: Seen[], path: string) =>
+    seen
+      .filter((x) => x.method === "POST" && x.path === path)
+      .map((x) => x.body)
+      .filter((b): b is FormData => b instanceof FormData);
+  /** The names of the files in each form sent to path, in order. */
+  const sentFiles = (seen: Seen[], path: string) =>
+    forms(seen, path).map((f) => f.getAll("files").map((x) => (x as File).name));
+  const doc = (name: string, type: string, body = "hello", lastModified = 1) =>
+    new File([body], name, { type, lastModified });
+  const picker = () =>
+    screen
+      .getByRole("form", { name: "Reply" })
+      .querySelector("input[type=file]") as HTMLInputElement;
+  const accepted = () =>
+    writer({
+      [SESSION]: { body: MINE },
+      "POST /teams/{id}/sessions/{sid}/messages": {
+        status: 202,
+        body: { session_id: SID, message_id: "m9" },
+      },
+    });
+
+  it("sends picked files with the words, as one message, and clears both", async () => {
+    const seen = accepted();
+    await open("?tab=messages");
+    const box = await screen.findByRole("textbox", { name: "Reply" });
+    await userEvent.upload(picker(), [
+      doc("report.pdf", "application/pdf"),
+      doc("chart.png", "image/png"),
+    ]);
+    const chips = screen.getByRole("list", { name: "Attached files" });
+    expect(within(chips).getAllByRole("listitem")).toHaveLength(2);
+    await userEvent.type(box, "summarise these");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(forms(seen, REPLY)).toHaveLength(1));
+    const [form] = forms(seen, REPLY);
+    expect(form?.get("text")).toBe("summarise these");
+    expect(form?.get("key")).toBeTruthy();
+    expect(sentFiles(seen, REPLY)).toEqual([["report.pdf", "chart.png"]]);
+    await waitFor(() => expect(box).toHaveValue(""));
+    expect(screen.queryByRole("list", { name: "Attached files" })).toBeNull();
+  });
+
+  it("sends files with no words, which the brain answers", async () => {
+    const seen = accepted();
+    await open("?tab=messages");
+    await screen.findByRole("textbox", { name: "Reply" });
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toBeDisabled();
+    await userEvent.upload(picker(), doc("notes.md", ""));
+    expect(send).toBeEnabled();
+    await userEvent.click(send);
+    await waitFor(() => expect(forms(seen, REPLY)).toHaveLength(1));
+    expect(forms(seen, REPLY)[0]?.get("text")).toBe("");
+  });
+
+  it("removes an attached file before it is sent", async () => {
+    const seen = accepted();
+    await open("?tab=messages");
+    await screen.findByRole("textbox", { name: "Reply" });
+    await userEvent.upload(picker(), [doc("a.txt", "text/plain"), doc("b.txt", "text/plain")]);
+    await userEvent.click(screen.getByRole("button", { name: "Remove a.txt" }));
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(forms(seen, REPLY)).toHaveLength(1));
+    expect(sentFiles(seen, REPLY)).toEqual([["b.txt"]]);
+  });
+
+  // A refused file stays in sight with its reason, and holds the send until
+  // it is removed: sending the rest without it, unremarked, would let a person
+  // believe it went.
+  it("holds a refused file in sight with its reason until it is removed", async () => {
+    const seen = accepted();
+    await open("?tab=messages");
+    await screen.findByRole("textbox", { name: "Reply" });
+    await userEvent.upload(picker(), [
+      doc("clip.mov", "video/quicktime"),
+      doc("a.txt", "text/plain"),
+    ]);
+    const form = screen.getByRole("form", { name: "Reply" });
+    expect(within(form).getByRole("alert")).toHaveTextContent(
+      "clip.mov can't be sent. Videos are not accepted. Remove it to send the rest.",
+    );
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toBeDisabled();
+    await userEvent.click(send);
+    expect(forms(seen, REPLY)).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove clip.mov" }));
+    expect(within(form).queryByRole("alert")).toBeNull();
+    await userEvent.click(send);
+    await waitFor(() => expect(forms(seen, REPLY)).toHaveLength(1));
+    expect(sentFiles(seen, REPLY)).toEqual([["a.txt"]]);
+  });
+
+  it("attaches files dropped on the composer, and ignores a drag of text", async () => {
+    accepted();
+    await open("?tab=messages");
+    const form = await screen.findByRole("form", { name: "Reply" });
+    const f = doc("dropped.pdf", "application/pdf");
+
+    fireEvent.dragEnter(form, { dataTransfer: { types: ["text/plain"], files: [] } });
+    expect(within(form).queryByText(/Drop to attach/)).toBeNull();
+
+    fireEvent.dragEnter(form, { dataTransfer: { types: ["Files"], files: [f] } });
+    expect(
+      within(form).getByText("Drop to attach. Up to 8 files, 25 MB each."),
+    ).toBeInTheDocument();
+    fireEvent.drop(form, { dataTransfer: { types: ["Files"], files: [f] } });
+    expect(within(form).queryByText(/Drop to attach/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove dropped.pdf" })).toBeInTheDocument();
+  });
+
+  it("attaches a pasted screenshot, and leaves pasted words as words", async () => {
+    accepted();
+    await open("?tab=messages");
+    const box = await screen.findByRole("textbox", { name: "Reply" });
+    const shot = doc("image.png", "image/png");
+
+    fireEvent.paste(box, { clipboardData: { files: [shot], getData: () => "a caption" } });
+    expect(screen.queryByRole("list", { name: "Attached files" })).toBeNull();
+
+    fireEvent.paste(box, { clipboardData: { files: [shot], getData: () => "" } });
+    expect(screen.getByRole("button", { name: "Remove image.png" })).toBeInTheDocument();
+  });
+
+  it("keeps the files after a failed send, and retries them under the same key", async () => {
+    let posts = 0;
+    const seen = writer({
+      [SESSION]: { body: MINE },
+      "POST /teams/{id}/sessions/{sid}/messages": () => {
+        posts += 1;
+        return posts < 3
+          ? { status: 503, text: "the database is busy" }
+          : { status: 202, body: { session_id: SID, message_id: "m9" } };
+      },
+    });
+    await open("?tab=messages");
+    await screen.findByRole("textbox", { name: "Reply" });
+    const send = () => userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await userEvent.upload(picker(), doc("a.txt", "text/plain"));
+    await send();
+    await within(screen.getByRole("form", { name: "Reply" })).findByRole("alert");
+    expect(screen.getByRole("button", { name: "Remove a.txt" })).toBeInTheDocument();
+    await send();
+    await waitFor(() => expect(posts).toBe(2));
+    // Another file is another message.
+    await userEvent.upload(picker(), doc("b.txt", "text/plain"));
+    await send();
+    await waitFor(() => expect(posts).toBe(3));
+
+    const [first, retry, more] = forms(seen, REPLY);
+    expect(retry?.get("key")).toBe(first?.get("key"));
+    expect(more?.get("key")).not.toBe(first?.get("key"));
+  });
+
+  it("shows each file going up while the message is sent", async () => {
+    const seen = accepted();
+    await open("?tab=messages");
+    await screen.findByRole("textbox", { name: "Reply" });
+    await userEvent.upload(picker(), [
+      doc("a.txt", "text/plain", "aaaa"),
+      doc("b.txt", "text/plain", "bbbb"),
+    ]);
+    const release = holdUploads();
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // Half the body is half the bytes: the first file gone, the second not begun.
+    expect(await screen.findByRole("progressbar", { name: "Sending a.txt" })).toHaveAttribute(
+      "aria-valuenow",
+      "100",
+    );
+    expect(screen.getByRole("progressbar", { name: "Sending b.txt" })).toHaveAttribute(
+      "aria-valuenow",
+      "0",
+    );
+    expect(screen.getByText("Sending… 50%")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove a.txt" })).toBeDisabled();
+
+    release();
+    await waitFor(() => expect(forms(seen, REPLY)).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole("progressbar")).toBeNull());
+    expect(screen.queryByText(/Sending…/)).toBeNull();
+  });
+
+  // A picture is drawn from bytes fetched with the token; a link could not
+  // carry it. An SVG is never drawn, as it can carry script.
+  it("draws a picture sent with a message, and downloads it when pressed", async () => {
+    const png = { id: "p1", filename: "chart.png", media_type: "image/png", size: 40 };
+    const svg = { id: "s1", filename: "logo.svg", media_type: "image/svg+xml", size: 40 };
+    const seen = writer({
+      [SESSION]: { body: MINE },
+      [CONVO]: () =>
+        conversation(
+          sf("message", {
+            id: "m1",
+            user_id: ME,
+            parts: [
+              { type: "file", file: png },
+              { type: "file", file: svg },
+            ],
+          }),
+        ),
+      "GET /teams/{id}/sessions/{sid}/attachments/{aid}": { text: "PNG" },
+    });
+    vi.stubGlobal(
+      "URL",
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => "blob:picture"),
+        revokeObjectURL: vi.fn(),
+      }),
+    );
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await open("?tab=messages");
+
+    const pictures = await screen.findByRole("list", { name: "Pictures sent" });
+    const tile = within(pictures).getByRole("button", { name: "Download chart.png" });
+    await waitFor(() => expect(tile.querySelector("img")).toHaveAttribute("src", "blob:picture"));
+    // The SVG is a chip, never a picture.
+    expect(within(pictures).queryByRole("button", { name: "Download logo.svg" })).toBeNull();
+    expect(
+      within(screen.getByRole("list", { name: "Files sent" })).getByRole("button", {
+        name: "Download logo.svg",
+      }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(tile);
+    await waitFor(() => expect(click).toHaveBeenCalled());
+    expect(seen.filter((x) => x.path.endsWith("/attachments/p1")).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("names a picture as a file when its bytes can't be read", async () => {
+    writer({
+      [SESSION]: { body: MINE },
+      [CONVO]: () =>
+        conversation(
+          sf("message", {
+            id: "m1",
+            user_id: ME,
+            parts: [
+              {
+                type: "file",
+                file: { id: "p1", filename: "chart.png", media_type: "image/png", size: 2048 },
+              },
+            ],
+          }),
+        ),
+      "GET /teams/{id}/sessions/{sid}/attachments/{aid}": { status: 404, text: "gone" },
+    });
+    await open("?tab=messages");
+    const pictures = await screen.findByRole("list", { name: "Pictures sent" });
+    expect(await within(pictures).findByText("2 KB")).toBeInTheDocument();
+    expect(within(pictures).queryByRole("img")).toBeNull();
+  });
+
+  it("shows the files sent with a message, and downloads one", async () => {
+    const seen = writer({
+      [SESSION]: { body: MINE },
+      [CONVO]: () =>
+        conversation(
+          sf("message", {
+            id: "m1",
+            user_id: ME,
+            parts: [
+              {
+                type: "file",
+                file: {
+                  id: "f1",
+                  filename: "report.pdf",
+                  media_type: "application/pdf",
+                  size: 2048,
+                },
+              },
+            ],
+          }),
+        ),
+      "GET /teams/{id}/sessions/{sid}/attachments/{aid}": { text: "%PDF" },
+    });
+    vi.stubGlobal(
+      "URL",
+      Object.assign(URL, { createObjectURL: vi.fn(() => "blob:fake"), revokeObjectURL: vi.fn() }),
+    );
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await open("?tab=messages");
+
+    const sent = await screen.findByRole("list", { name: "Files sent" });
+    expect(within(sent).getByText("2 KB")).toBeInTheDocument();
+    // No text was sent, so none is drawn.
+    expect(texts()).toEqual([]);
+    await userEvent.click(within(sent).getByRole("button", { name: "Download report.pdf" }));
+    await waitFor(() =>
+      expect(seen.some((x) => x.path === `/teams/${TEAM}/sessions/${SID}/attachments/f1`)).toBe(
+        true,
+      ),
+    );
   });
 
   it("offers no reply in someone else's conversation on the dashboard", async () => {

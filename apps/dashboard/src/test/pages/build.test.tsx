@@ -16,7 +16,9 @@ afterEach(() => {
 
 const SESSION = "0b7c3e52-8a41-4f6d-9e2b-5c1a7d3f8e60";
 const RUNS = "GET /teams/{id}/sessions/{sid}/runs";
-const START = "POST /teams/{id}/runs";
+const START = "POST /teams/{id}/sessions";
+const REPLY = "POST /teams/{id}/sessions/{sid}/messages";
+const ATTACHMENTS = "GET /teams/{id}/sessions/{sid}/attachments";
 const PROPOSALS = "GET /teams/{id}/proposals";
 const EVENTS = "GET /teams/{id}/runs/{rid}/events";
 const PROPOSAL = "GET /teams/{id}/proposals/{pid}";
@@ -82,6 +84,7 @@ function conversation(
     ...team(actions),
     // The brain answers newest first; the chat shows oldest first.
     [RUNS]: { body: { items: [answered, asked] } },
+    [ATTACHMENTS]: { body: { items: [] } },
     [PROPOSALS]: { body: { items: [proposal] } },
     [PROPOSAL]: { body: { ...proposal, plan } },
     [APPLY]: {
@@ -356,9 +359,12 @@ describe("the builder's conversation", () => {
     expect(await screen.findByText("three")).toBeInTheDocument();
     expect(screen.queryByText("Let me look.")).not.toBeInTheDocument();
 
-    expect(await screen.findByText(/still working on the last message/)).toBeInTheDocument();
-    await userEvent.type(screen.getByRole("textbox"), "And the FAQ.");
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    // A message while it works is read before its next step, as anywhere.
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Reply to the builder" }),
+      "And the FAQ.",
+    );
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
 
     // Its stream ending reads the conversation again at once, not at the next poll.
     const reads = () => seen.filter((x) => x.path.includes("/sessions/")).length;
@@ -379,6 +385,64 @@ describe("the builder's conversation", () => {
     at(`/ui/build?session=${SESSION}`);
 
     expect(await screen.findByText(/couldn't finish: the model timed out/)).toBeInTheDocument();
+  });
+});
+
+describe("files with the builder", () => {
+  it("shows the files sent with each message, and nothing typed for files alone", async () => {
+    const spec = {
+      id: "f1",
+      message_id: "m1",
+      filename: "support-faq.pdf",
+      media_type: "application/pdf",
+      size_bytes: 2048,
+      created_at: STAMP,
+    };
+    conversation({
+      [RUNS]: {
+        body: {
+          items: [
+            answered,
+            { ...asked, input: "The message is the files sent with it.", message_id: "m1" },
+          ],
+        },
+      },
+      [ATTACHMENTS]: { body: { items: [spec] } },
+    });
+    at(`/ui/build?session=${SESSION}`);
+
+    const sent = await screen.findByRole("list", { name: "Files sent" });
+    expect(
+      within(sent).getByRole("button", { name: "Download support-faq.pdf" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("The message is the files sent with it.")).toBeNull();
+    // A turn whose message carried nothing shows only what was typed.
+    expect(screen.getByText("Sonnet.")).toBeInTheDocument();
+  });
+
+  it("sends files to the builder with the first message", async () => {
+    const seen = brain({
+      ...team(["run:write"]),
+      [START]: { status: 201, body: { session_id: SESSION, message_id: "m9", run_id: "r9" } },
+      [RUNS]: { body: { items: [] } },
+      [ATTACHMENTS]: { body: { items: [] } },
+      [PROPOSALS]: { body: { items: [] } },
+    });
+    const router = at("/ui/build");
+    const form = await screen.findByRole("form", { name: "What do you want?" });
+    await userEvent.upload(
+      form.querySelector("input[type=file]") as HTMLInputElement,
+      new File(["Q: refunds?"], "faq.txt", { type: "text/plain" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(router.state.location.search).toEqual({ session: SESSION }));
+    const body = seen.find(
+      (s) => s.method === "POST" && s.path === `/teams/${TEAM}/sessions`,
+    )?.body;
+    expect(body).toBeInstanceOf(FormData);
+    expect((body as FormData).get("builder")).toBe("true");
+    expect(((body as FormData).getAll("files") as File[]).map((f) => f.name)).toEqual(["faq.txt"]);
   });
 });
 
@@ -432,14 +496,12 @@ describe("finding a conversation again", () => {
 });
 
 describe("asking the builder", () => {
-  it("starts a builder run, and a first message opens its conversation", async () => {
+  it("starts a conversation with the builder, and a first message opens it", async () => {
     const seen = brain({
       ...team(["run:write"]),
-      [START]: {
-        status: 202,
-        body: run("r9", "x", { status: "queued", output: null, finished_at: null }),
-      },
+      [START]: { status: 201, body: { session_id: SESSION, message_id: "m9", run_id: "r9" } },
       [RUNS]: { body: { items: [] } },
+      [ATTACHMENTS]: { body: { items: [] } },
       [PROPOSALS]: { body: { items: [] } },
     });
     const router = at("/ui/build");
@@ -449,19 +511,16 @@ describe("asking the builder", () => {
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(router.state.location.search).toEqual({ session: SESSION }));
-    const start = seen.find((s) => s.method === "POST" && s.path.endsWith("/runs"));
-    expect(JSON.parse(String(start?.body))).toEqual({
-      input: "An agent for billing questions.",
+    const start = seen.find((s) => s.method === "POST" && s.path === `/teams/${TEAM}/sessions`);
+    expect(JSON.parse(String(start?.body))).toMatchObject({
+      text: "An agent for billing questions.",
       builder: true,
     });
   });
 
   it("carries a reply on in the same session", async () => {
     const seen = conversation({
-      [START]: {
-        status: 202,
-        body: run("r3", "x", { status: "queued", output: null, finished_at: null }),
-      },
+      [REPLY]: { status: 202, body: { session_id: SESSION, message_id: "m3", run_id: "r3" } },
     });
     at(`/ui/build?session=${SESSION}`);
 
@@ -470,19 +529,27 @@ describe("asking the builder", () => {
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
-      const start = seen.find((s) => s.method === "POST" && s.path.endsWith("/runs"));
-      expect(JSON.parse(String(start?.body))).toEqual({
-        input: "Give it the helpdesk server too.",
-        builder: true,
-        session_id: SESSION,
-      });
+      const sent = seen.find(
+        (s) => s.method === "POST" && s.path === `/teams/${TEAM}/sessions/${SESSION}/messages`,
+      );
+      const body = JSON.parse(String(sent?.body));
+      expect(body.text).toBe("Give it the helpdesk server too.");
+      // The conversation is the builder's already; a message cannot say so.
+      expect(body.builder).toBeUndefined();
     });
   });
 
   it("names the team's model when the builder has none, with the way to settings", async () => {
     brain({
       ...team(["run:write"]),
-      [START]: { status: 409, text: "the team has no model set, so its builder cannot run" },
+      [START]: {
+        status: 201,
+        body: {
+          session_id: SESSION,
+          message_id: "m1",
+          unanswered: "the team has no model set, so its builder cannot run",
+        },
+      },
     });
     at("/ui/build");
 

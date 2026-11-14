@@ -26,6 +26,7 @@ import type { Attachment, Page, Run, Session } from "@/api/types";
 import { Composer } from "@/components/composer";
 import { ConversationView } from "@/components/conversation-view";
 import { Time } from "@/components/facts";
+import { saveDownload } from "@/components/file-chip";
 import { isLive, RunDetail, RunStatus } from "@/components/run-detail";
 import { HandedTo } from "@/components/run-table";
 import { useSessionStream } from "@/components/session-stream";
@@ -239,21 +240,6 @@ function SessionPage() {
 
 /* --------------------------------------------------------------- messages */
 
-/**
- * Saves what a stranger may have sent. Retyped as plain bytes and handed over
- * as a download, so the browser never renders it on this origin, whatever
- * type it claims.
- */
-function save(bytes: Blob, filename: string): void {
-  const url = URL.createObjectURL(bytes.slice(0, bytes.size, "application/octet-stream"));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.rel = "noopener";
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
 /** How often a working run is read again for its answer. */
 const LIVE_EVERY_MS = 3000;
 const REPLY_EVERY_MS = 15_000;
@@ -296,10 +282,10 @@ function Conversation({
   const me = useMe();
 
   const [failed, setFailed] = useState<string | null>(null);
-  const download = async (f: Attachment) => {
+  const download = async (f: Pick<Attachment, "id" | "filename">) => {
     setFailed(null);
     try {
-      save(await downloadAttachment(teamId, sessionId, f.id), f.filename);
+      saveDownload(await downloadAttachment(teamId, sessionId, f.id), f.filename);
     } catch (err) {
       setFailed(`${f.filename}: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -329,6 +315,10 @@ function Conversation({
           sessionId={sessionId}
           rows={runs.data?.pages.flatMap((p) => p.items) ?? []}
           people={{ nameOf, me }}
+          files={{
+            open: (f) => void download(f),
+            load: (f) => downloadAttachment(teamId, sessionId, f.id),
+          }}
         />
       )}
       {stream.reconnecting ? (

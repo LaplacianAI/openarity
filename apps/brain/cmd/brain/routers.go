@@ -179,12 +179,6 @@ func (s runStore) StartRun(ctx context.Context, arg runs.StartArgs) (db.Run, err
 		}
 
 		var err error
-		if arg.Builder {
-			run, err = q.CreateBuilderRun(ctx, db.CreateBuilderRunParams{
-				ID: arg.ID, SessionID: *sessionID, UserID: &arg.UserID, Input: arg.Input, TeamID: arg.TeamID,
-			})
-			return err
-		}
 		if arg.Hub {
 			run, err = q.CreateHubRun(ctx, db.CreateHubRunParams{
 				ID: arg.ID, SessionID: *sessionID, UserID: &arg.UserID, Input: arg.Input, TeamID: arg.TeamID,

@@ -35,7 +35,10 @@ type run struct {
 	Depth       int32      `json:"depth"`
 	Hub         bool       `json:"hub"`
 	Builder     bool       `json:"builder"`
-	Delegates   []string   `json:"delegates"`
+	// MessageID is the message the run was started to answer, whose files a
+	// client lists beside it; null for a run started any other way.
+	MessageID *uuid.UUID `json:"message_id"`
+	Delegates []string   `json:"delegates"`
 	// Reply is what became of the run's answer to its channel; null for a run
 	// that answers none.
 	Reply *reply `json:"reply"`

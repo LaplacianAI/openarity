@@ -55,6 +55,9 @@ type inboxStore struct {
 	created  []db.CreateChannelRunParams
 	mayNot   bool
 	noModel  bool
+	// hubAgent is a team with an agent chosen as its hub and no model: the
+	// hub can run, the builder cannot.
+	hubAgent bool
 	runErr   error
 	inTx     bool
 }
@@ -111,6 +114,10 @@ func (f *inboxStore) AddSteer(_ context.Context, arg db.AddSteerParams) error {
 }
 
 func (f *inboxStore) HubCanRun(context.Context, uuid.UUID) (bool, error) {
+	return !f.noModel || f.hubAgent, nil
+}
+
+func (f *inboxStore) BuilderCanRun(context.Context, uuid.UUID) (bool, error) {
 	return !f.noModel, nil
 }
 
@@ -186,7 +193,7 @@ func (f *inboxStore) EnsureSession(_ context.Context, arg db.EnsureSessionParams
 
 	session := db.Session{
 		ID: uuid.New(), TeamID: arg.TeamID, ChannelID: &arg.ChannelID,
-		ProviderRef: &arg.ProviderRef, Kind: arg.Kind, Status: "open",
+		ProviderRef: &arg.ProviderRef, Kind: arg.Kind, Status: "open", Builder: arg.Builder,
 	}
 	f.sessions[key] = session
 	return session, nil
