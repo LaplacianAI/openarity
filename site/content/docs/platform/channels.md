@@ -288,6 +288,39 @@ resolves to one is refused when the reply is sent. A reply follows no redirect.
 false for `telegram`, which answers in the chat. A reply URL is refused on a
 channel that takes none.
 
+### Each step, or the answer alone
+
+By default a conversation is sent the run's answer alone. Set a channel to
+send each step first, and a person can follow the run as it works:
+
+```text
+person  why did the deploy fail?
+bot     Let me check the logs.
+bot     Using `read_logs`…
+bot     Asking `billing`…
+bot     It timed out because the job waited on the billing lock.
+```
+
+```sh
+oa channels update platform support --reply-mode events
+oa channels update platform support --reply-mode final
+```
+
+In the dashboard, it is **While it works** in the channel's sheet. Both need
+`channel:write`.
+
+Each step is a message of its own, and it stays in the conversation. A step is
+sent event by event, never word by word: what the agent says before it calls a
+tool, then **Using** that tool, or **Asking** another agent for help. The run's
+own bookkeeping (finding its tools, planning, reading the files it was sent)
+is not sent, nor is what a tool returned, nor anything the agent asked does.
+The answer comes last, and only it quotes the message it answers.
+
+`can_show_events` on a channel says whether its provider can send steps:
+Telegram and `custom` can. The dashboard channel cannot, and needs none: its
+conversation already shows every step as it happens. `reply_mode` is `final`
+or `events`, and is refused on a channel that cannot show events.
+
 ### What a reply looks like
 
 A `POST` with `Content-Type: application/json`:
@@ -304,6 +337,10 @@ A `POST` with `Content-Type: application/json`:
 
 `id` is the id of the run. `kind` is `answer` or `apology`. `in_reply_to` is the
 `id` of the incoming message it answers, and is left out when there is none.
+
+A step is a reply of `kind` `event`, with no `in_reply_to`. Its `id` is the
+run's and the step's, `<run id>:<n>`, so dropping a repeat by `id` drops only
+that step.
 
 It carries the same two headers as a message, signed under a different prefix:
 `X-Openarity-Signature` is `v1=` and the hex HMAC-SHA256 of
@@ -350,7 +387,11 @@ hours. Each attempt is signed afresh, so its timestamp is current. After the
 last, the reply is given up. A reply that cannot be built at all, such as one
 for a channel with no reply URL, is given up at once.
 
-Replies in one conversation are sent in order: a reply waiting to be retried
+A step is tried twice, a minute apart, and then given up, so a broken step
+never holds back the answer behind it for long.
+
+Replies in one conversation are sent in order, steps before their answer: a
+reply waiting to be retried
 holds back the later ones in the same conversation, and nothing else. Delivery
 is at least once. If your server took a reply and the answer was lost, the same
 reply arrives again with the same `id`, which is why step 4 above exists.

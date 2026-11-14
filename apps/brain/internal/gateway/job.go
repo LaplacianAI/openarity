@@ -84,6 +84,16 @@ func KickReplies(c dbos.Client, runID uuid.UUID) error {
 	return nil
 }
 
+// KickEvent has one step of a run sent at once. The workflow id is the run
+// event's, so each step is its own kick and a step kicked twice sends once.
+func KickEvent(c dbos.Client, runID uuid.UUID, seq int32) error {
+	key := "reply:" + runID.String() + ":" + strconv.Itoa(int(seq))
+	if _, err := dbos.Enqueue[string](c, replyQueue, replyWorkflow, key, dbos.WithEnqueueWorkflowID(key)); err != nil {
+		return fmt.Errorf("kicking step %d of run %s: %w", seq, runID, err)
+	}
+	return nil
+}
+
 // NoticeKicker has a notice sent at once, through the same queue and workflow
 // as a reply, rather than at the next sweep.
 type NoticeKicker struct{ c dbos.Client }

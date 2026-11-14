@@ -8,7 +8,8 @@ RETURNING *;
 -- name: UpdateChannel :one
 UPDATE channels
 SET reply_url = CASE WHEN sqlc.arg('set_reply_url')::bool THEN sqlc.narg('reply_url') ELSE reply_url END,
-    notify_strangers = COALESCE(sqlc.narg('notify_strangers')::bool, notify_strangers)
+    notify_strangers = COALESCE(sqlc.narg('notify_strangers')::bool, notify_strangers),
+    reply_mode = COALESCE(sqlc.narg('reply_mode')::text, reply_mode)
 WHERE id = sqlc.arg('id') AND team_id = sqlc.arg('team_id')
 RETURNING *;
 

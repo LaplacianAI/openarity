@@ -85,6 +85,9 @@ func (f *fakeStore) UpdateChannel(_ context.Context, arg db.UpdateChannelParams)
 			if arg.NotifyStrangers.Valid {
 				f.channels[i].NotifyStrangers = arg.NotifyStrangers.Bool
 			}
+			if arg.ReplyMode != nil {
+				f.channels[i].ReplyMode = *arg.ReplyMode
+			}
 			return f.channels[i], nil
 		}
 	}
@@ -923,6 +926,11 @@ func (p providers) Connector(name string) (gateway.Connector, bool) {
 func (p providers) Notifier(name string) (gateway.Notifier, bool) {
 	n, ok := p[name].(gateway.Notifier)
 	return n, ok
+}
+
+func (p providers) RepliesWithEvents(name string) bool {
+	_, ok := p[name].(gateway.EventReplier)
+	return ok
 }
 
 func (p providers) TakesReplyURL(name string) bool {

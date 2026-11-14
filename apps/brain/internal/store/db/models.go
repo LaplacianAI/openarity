@@ -89,6 +89,7 @@ type Channel struct {
 	UpdatedAt       time.Time
 	ReplyUrl        *string
 	NotifyStrangers bool
+	ReplyMode       string
 }
 
 type ChannelSender struct {
@@ -232,6 +233,7 @@ type Reply struct {
 	CreatedAt     time.Time
 	SentAt        *time.Time
 	PartsSent     int32
+	EventSeq      *int32
 }
 
 type Role struct {

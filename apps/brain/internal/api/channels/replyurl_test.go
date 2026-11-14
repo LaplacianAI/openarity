@@ -287,3 +287,70 @@ func TestAnUpdateThatNamesNothingIsRefused(t *testing.T) {
 		t.Errorf("PATCH {} = %d, updates %v; want 400 and nothing written", rec.Code, s.updates)
 	}
 }
+
+// A channel sends a run's steps when its provider can, and says so; the
+// switch changes the mode and nothing else.
+func TestAChannelCanBeSetToSendEachStep(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	bot := db.Channel{ID: uuid.New(), TeamID: teamID, Provider: "telegram", Name: "bot", NotifyStrangers: true, ReplyMode: "final"}
+	s := &fakeStore{channels: []db.Channel{bot}}
+	a := &fakeAuthz{allowed: true}
+
+	rec := callWith(t, both(), "", s, newFakeSecrets(), a, memberOf(teamID, "admin"),
+		http.MethodPatch, channelPath(teamID, bot.ID), `{"reply_mode":"events"}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"reply_mode":"events"`) ||
+		!strings.Contains(rec.Body.String(), `"can_show_events":true`) {
+		t.Fatalf("PATCH = %d %s, want 200, can_show_events and events", rec.Code, rec.Body)
+	}
+	u := s.updates[0]
+	if s.channels[0].ReplyMode != "events" || u.SetReplyUrl || u.NotifyStrangers.Valid {
+		t.Errorf("stored %q with update %+v; want the mode alone changed", s.channels[0].ReplyMode, u)
+	}
+	if len(a.asked) != 1 || a.asked[0] != authz.Action("channel:write") {
+		t.Errorf("the guard asked for %v, want channel:write", a.asked)
+	}
+}
+
+// A mode the brain does not know, or one for a provider that sends no steps,
+// is refused and changes nothing. The dashboard channel has no adapter, so
+// it is refused the same way.
+func TestAReplyModeIsRefusedWhereItMeansNothing(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	bot := db.Channel{ID: uuid.New(), TeamID: teamID, Provider: "telegram", Name: "bot", ReplyMode: "final"}
+	dash := db.Channel{ID: uuid.New(), TeamID: teamID, Provider: "dashboard", Name: "dashboard", ReplyMode: "final"}
+	for name, c := range map[string]struct {
+		ch   db.Channel
+		body string
+		want string
+	}{
+		"unknown mode": {bot, `{"reply_mode":"tokens"}`, `"final" or "events"`},
+		"dashboard":    {dash, `{"reply_mode":"events"}`, "sends no steps"},
+	} {
+		s := &fakeStore{channels: []db.Channel{c.ch}}
+		rec := callWith(t, both(), "", s, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+			http.MethodPatch, channelPath(teamID, c.ch.ID), c.body)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), c.want) || len(s.updates) != 0 {
+			t.Errorf("%s: PATCH = %d %q, %d updates; want 400 naming why, nothing written", name, rec.Code, rec.Body, len(s.updates))
+		}
+	}
+}
+
+// A provider that sends no steps reports the answer alone, whatever the
+// column holds.
+func TestAChannelThatCannotShowEventsReportsTheAnswerAlone(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	dash := db.Channel{ID: uuid.New(), TeamID: teamID, Provider: "dashboard", Name: "dashboard", ReplyMode: "events"}
+	s := &fakeStore{channels: []db.Channel{dash}}
+	rec := callWith(t, both(), "", s, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+		http.MethodGet, "/teams/"+teamID.String()+"/channels", "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"can_show_events":false`) ||
+		!strings.Contains(rec.Body.String(), `"reply_mode":"final"`) {
+		t.Errorf("GET = %d %s, want can_show_events false and final", rec.Code, rec.Body)
+	}
+}

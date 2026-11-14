@@ -77,13 +77,31 @@ export type Channel = {
   can_notify?: boolean;
   /** Whether this channel does. Always false where `can_notify` is. */
   notify_strangers?: boolean;
+  /**
+   * Whether the provider sends a run's steps as messages of their own.
+   * Telegram and custom do; the dashboard channel does not, its stream being
+   * every step already. Optional: a brain from before the field sends none.
+   */
+  can_show_events?: boolean;
+  /**
+   * What the conversation is sent while a run works: `final`, the answer
+   * alone, or `events`, each step a person would follow and then the answer.
+   * Always `final` where `can_show_events` is false.
+   */
+  reply_mode?: ReplyMode;
 };
+
+export type ReplyMode = "final" | "events";
 
 /**
  * PATCH /teams/{id}/channels/{channelID}. What is sent changes and the rest is
  * left: a null `reply_url` stops replies.
  */
-export type UpdateChannelRequest = { reply_url?: string | null; notify_strangers?: boolean };
+export type UpdateChannelRequest = {
+  reply_url?: string | null;
+  notify_strangers?: boolean;
+  reply_mode?: ReplyMode;
+};
 
 /**
  * POST /teams/{id}/channels. Leave `signing_secret` out and the brain

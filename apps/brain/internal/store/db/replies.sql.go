@@ -29,9 +29,9 @@ WITH claimed AS (
         ORDER BY d.next_attempt_at, d.id
         LIMIT $2
         FOR UPDATE SKIP LOCKED)
-    RETURNING r.id, r.team_id, r.run_id, r.session_id, r.channel_id, r.in_reply_to, r.kind, r.text, r.status, r.attempts, r.last_error, r.next_attempt_at, r.created_at, r.sent_at, r.parts_sent
+    RETURNING r.id, r.team_id, r.run_id, r.session_id, r.channel_id, r.in_reply_to, r.kind, r.text, r.status, r.attempts, r.last_error, r.next_attempt_at, r.created_at, r.sent_at, r.parts_sent, r.event_seq
 )
-SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent,
+SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent, c.event_seq,
        ch.provider, ch.reply_url,
        s.provider_ref AS session_ref, s.kind AS session_kind,
        m.external_id AS in_reply_to
@@ -56,6 +56,7 @@ type ClaimDueRepliesRow struct {
 	Text        string
 	Attempts    int32
 	PartsSent   int32
+	EventSeq    *int32
 	Provider    string
 	ReplyUrl    *string
 	SessionRef  *string
@@ -94,6 +95,7 @@ func (q *Queries) ClaimDueReplies(ctx context.Context, arg ClaimDueRepliesParams
 			&i.Text,
 			&i.Attempts,
 			&i.PartsSent,
+			&i.EventSeq,
 			&i.Provider,
 			&i.ReplyUrl,
 			&i.SessionRef,
@@ -129,6 +131,36 @@ func (q *Queries) GiveUpReply(ctx context.Context, arg GiveUpReplyParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const insertEventReply = `-- name: InsertEventReply :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, kind, text, event_seq)
+SELECT r.team_id, r.id, r.session_id, s.channel_id, 'event', $1::text, $2::integer
+FROM runs r
+JOIN sessions s ON s.id = r.session_id
+JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = $3::uuid
+  AND r.reply_to_channel
+  AND ch.reply_mode = 'events'
+ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING
+`
+
+type InsertEventReplyParams struct {
+	Text     string
+	EventSeq int32
+	RunID    uuid.UUID
+}
+
+// One step of a run, sent to its conversation. Only for a run RunShowsEvents
+// holds for, read again here so a channel switched to final since the run
+// began is sent no more. It quotes nothing. Written again for the same run
+// event, as a retried write is, it is still one row.
+func (q *Queries) InsertEventReply(ctx context.Context, arg InsertEventReplyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertEventReply, arg.Text, arg.EventSeq, arg.RunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertReply = `-- name: InsertReply :one
 INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text)
 SELECT r.team_id, r.id, r.session_id, s.channel_id,
@@ -139,7 +171,7 @@ SELECT r.team_id, r.id, r.session_id, s.channel_id,
 FROM runs r
 JOIN sessions s ON s.id = r.session_id
 WHERE r.id = $4::uuid AND r.reply_to_channel AND s.channel_id IS NOT NULL
-RETURNING id, team_id, run_id, session_id, channel_id, in_reply_to, kind, text, status, attempts, last_error, next_attempt_at, created_at, sent_at, parts_sent
+RETURNING id, team_id, run_id, session_id, channel_id, in_reply_to, kind, text, status, attempts, last_error, next_attempt_at, created_at, sent_at, parts_sent, event_seq
 `
 
 type InsertReplyParams struct {
@@ -181,6 +213,7 @@ func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply
 		&i.CreatedAt,
 		&i.SentAt,
 		&i.PartsSent,
+		&i.EventSeq,
 	)
 	return i, err
 }
@@ -188,7 +221,7 @@ func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply
 const listRunReplies = `-- name: ListRunReplies :many
 SELECT run_id, kind, status, attempts, last_error, sent_at, next_attempt_at
 FROM replies
-WHERE run_id = ANY($1::uuid[])
+WHERE run_id = ANY($1::uuid[]) AND event_seq IS NULL
 `
 
 type ListRunRepliesRow struct {
@@ -201,8 +234,9 @@ type ListRunRepliesRow struct {
 	NextAttemptAt time.Time
 }
 
-// What became of each of these runs' replies. A run that answers no channel
-// has none and is not in the result. Rides replies_one_per_run.
+// What became of each of these runs' answers. A run that answers no channel
+// has none and is not in the result; its events are not its answer. Rides
+// replies_one_per_run.
 func (q *Queries) ListRunReplies(ctx context.Context, runIds []uuid.UUID) ([]ListRunRepliesRow, error) {
 	rows, err := q.db.Query(ctx, listRunReplies, runIds)
 	if err != nil {
@@ -295,4 +329,25 @@ func (q *Queries) RetryReply(ctx context.Context, arg RetryReplyParams) (int64, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const runShowsEvents = `-- name: RunShowsEvents :one
+SELECT EXISTS (
+    SELECT 1 FROM runs r
+    JOIN sessions s ON s.id = r.session_id
+    JOIN channels ch ON ch.id = s.channel_id
+    WHERE r.id = $1::uuid
+      AND r.reply_to_channel
+      AND ch.reply_mode = 'events')::bool
+`
+
+// Whether a run's steps are sent to its conversation as they happen: a run
+// that answers a channel whose reply_mode is events. Only a top-level run
+// answers a channel (runs_reply_from_a_root), so a delegated run's steps are
+// its parent's to tell.
+func (q *Queries) RunShowsEvents(ctx context.Context, runID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, runShowsEvents, runID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }

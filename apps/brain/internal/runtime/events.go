@@ -95,14 +95,16 @@ const (
 // set, the model's text and reasoning are written too, each gathered into
 // events of its own kind; what is gathered is flushed before any other event,
 // and before the other kind, so the two never share a row and each stays in
-// order with the call it led to.
+// order with the call it led to. When tell is set, the steps a person would
+// follow are told to the run's conversation, each after the event it comes
+// from is written.
 func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, lines *softLines, streams bool,
-	events <-chan agent.Event, notes <-chan note, stop context.CancelCauseFunc,
+	tell func(seq int32, text string), events <-chan agent.Event, notes <-chan note, stop context.CancelCauseFunc,
 ) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		r := &recorder{ctx: ctx, s: s, runID: runID, worker: worker, stop: stop}
+		r := &recorder{ctx: ctx, s: s, runID: runID, worker: worker, stop: stop, tell: tell}
 		var tick <-chan time.Time
 		if streams {
 			t := time.NewTicker(textFlushEvery)
@@ -125,9 +127,14 @@ func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, l
 				r.flush()
 				if s, isStep := e.(agent.StepEvent); isStep {
 					r.step = s.Step
+					r.said.Reset()
 				}
 				if !r.lost {
-					r.failed(recordOne(ctx, s, runID, worker, lines, e))
+					seq, err := recordOne(ctx, s, runID, worker, lines, e)
+					r.failed(err)
+					if call, isCall := e.(agent.ToolCallEvent); isCall && err == nil {
+						r.told(call, seq)
+					}
 				}
 			case n := <-notes:
 				r.flush()
@@ -151,6 +158,28 @@ type recorder struct {
 	kind   string // what text holds: kindText or kindReasoning
 	step   int    // the step the model call writing is in
 	lost   bool
+
+	// tell, when set, sends a step to the conversation; said is the text the
+	// current step has written, and textSeq the event that last held it.
+	tell    func(seq int32, text string)
+	said    strings.Builder
+	textSeq int32
+}
+
+// told tells the conversation what a step said before it called a tool, once,
+// and then the call, if it is one a person would follow. The step's text with
+// no call after it is the answer, which goes as the answer.
+func (r *recorder) told(call agent.ToolCallEvent, seq int32) {
+	if r.tell == nil {
+		return
+	}
+	if text := strings.TrimSpace(r.said.String()); text != "" && r.textSeq > 0 {
+		r.tell(r.textSeq, text)
+	}
+	r.said.Reset()
+	if line, ok := spoken(call); ok {
+		r.tell(seq, line)
+	}
 }
 
 // writingOf is the kind and piece of an event that is the model writing.
@@ -170,6 +199,9 @@ func (r *recorder) gather(kind, delta string) {
 		r.kind = kind
 	}
 	r.text.WriteString(delta)
+	if kind == kindText && r.tell != nil {
+		r.said.WriteString(delta)
+	}
 	if r.text.Len() >= textFlushBytes {
 		r.flush()
 	}
@@ -185,7 +217,11 @@ func (r *recorder) flush() {
 	if r.lost {
 		return
 	}
-	r.failed(appendEvent(r.ctx, r.s, r.runID, r.worker, r.kind, textPayload{Text: text, Truncated: cut, Step: r.step}))
+	seq, err := appendEventSeq(r.ctx, r.s, r.runID, r.worker, r.kind, textPayload{Text: text, Truncated: cut, Step: r.step})
+	r.failed(err)
+	if err == nil && r.kind == kindText {
+		r.textSeq = seq
+	}
 }
 
 // failed stops the run on a write that failed; a run another worker holds
@@ -198,15 +234,22 @@ func (r *recorder) failed(err error) {
 	r.stop(err)
 }
 
-func recordOne(ctx context.Context, s EventStore, runID uuid.UUID, worker string, lines *softLines, e agent.Event) error {
+// recordOne writes one event and returns its seq: a tool call's is what a
+// step told of it is named by. It is 0 for an event written as none.
+func recordOne(ctx context.Context, s EventStore, runID uuid.UUID, worker string, lines *softLines, e agent.Event) (int32, error) {
+	if call, ok := e.(agent.ToolCallEvent); ok {
+		args, cut := clip(string(call.Arguments))
+		return appendEventSeq(ctx, s, runID, worker, "tool_call", toolCallPayload{
+			ID: call.ID, Name: call.Name, Arguments: args, Truncated: cut,
+		})
+	}
+	return 0, recordOther(ctx, s, runID, worker, lines, e)
+}
+
+func recordOther(ctx context.Context, s EventStore, runID uuid.UUID, worker string, lines *softLines, e agent.Event) error {
 	switch e := e.(type) {
 	case agent.StepEvent:
 		return appendEvent(ctx, s, runID, worker, "step", stepPayload{Step: e.Step})
-	case agent.ToolCallEvent:
-		args, cut := clip(string(e.Arguments))
-		return appendEvent(ctx, s, runID, worker, "tool_call", toolCallPayload{
-			ID: e.ID, Name: e.Name, Arguments: args, Truncated: cut,
-		})
 	case agent.ToolResultEvent:
 		output, cutOutput := clip(e.Output)
 		failure, cutError := clip(e.Err)
@@ -266,19 +309,25 @@ func budgetOf(set *int64) int64 {
 }
 
 func appendEvent(ctx context.Context, s EventStore, runID uuid.UUID, worker, kind string, payload any) error {
+	_, err := appendEventSeq(ctx, s, runID, worker, kind, payload)
+	return err
+}
+
+// appendEventSeq is appendEvent, returning the seq the event was written at.
+func appendEventSeq(ctx context.Context, s EventStore, runID uuid.UUID, worker, kind string, payload any) (int32, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("encoding the %s event: %w", kind, err)
+		return 0, fmt.Errorf("encoding the %s event: %w", kind, err)
 	}
 
-	_, err = s.AppendRunEvent(ctx, db.AppendRunEventParams{RunID: runID, Kind: kind, Payload: raw, Worker: worker})
+	seq, err := s.AppendRunEvent(ctx, db.AppendRunEventParams{RunID: runID, Kind: kind, Payload: raw, Worker: worker})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrLostRun
+		return 0, ErrLostRun
 	}
 	if err != nil {
-		return fmt.Errorf("recording the %s event: %w", kind, err)
+		return 0, fmt.Errorf("recording the %s event: %w", kind, err)
 	}
-	return nil
+	return seq, nil
 }
 
 func clip(s string) (string, bool) {

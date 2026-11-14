@@ -24,6 +24,13 @@ type channel struct {
 	CanNotify bool `json:"can_notify"`
 	// NotifyStrangers is whether this channel does; false where it cannot.
 	NotifyStrangers bool `json:"notify_strangers"`
+	// CanShowEvents is whether the provider sends a run's steps, so a client
+	// offers reply_mode only where it means something.
+	CanShowEvents bool `json:"can_show_events"`
+	// ReplyMode is what the conversation is sent while a run works: "final",
+	// its answer alone, or "events", each step and then the answer. Always
+	// "final" where the provider cannot show events.
+	ReplyMode string `json:"reply_mode"`
 }
 
 // listedChannel is a row of the channels list: the channel, and how recently
@@ -49,6 +56,7 @@ type createRequest struct {
 type updateRequest struct {
 	ReplyURL        nullableString `json:"reply_url"`
 	NotifyStrangers *bool          `json:"notify_strangers"`
+	ReplyMode       *string        `json:"reply_mode"`
 }
 
 type created struct {

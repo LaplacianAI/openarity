@@ -303,6 +303,10 @@ type sendRichMessage struct {
 	ReplyParameters *replyParameters `json:"reply_parameters,omitempty"`
 }
 
+// RepliesWithEvents: each of a run's steps is a message of its own, sent as
+// the answer is.
+func (provider) RepliesWithEvents() {}
+
 // Reply sends the answer as rich messages, so headings, lists, tables and
 // code read as they were written. One too long for a message is several, and
 // only the first quotes the message it answers.

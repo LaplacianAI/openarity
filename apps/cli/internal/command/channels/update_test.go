@@ -198,3 +198,38 @@ func TestUpdateRefusesTheSwitchBothWays(t *testing.T) {
 		t.Errorf("made %d calls before refusing", len(script.All()))
 	}
 }
+
+// The mode is sent alone, and the output says what the conversation will be
+// sent in words, not the wire value.
+func TestUpdateSetsTheReplyMode(t *testing.T) {
+	for mode, words := range map[string]string{"events": "every step, then the answer", "final": "the answer alone"} {
+		t.Run(mode, func(t *testing.T) {
+			body := `{"id": "` + channelID + `", "team_id": "` + teamID + `", "provider": "telegram", "name": "support", ` +
+				`"can_reply": true, "can_show_events": true, "reply_mode": "` + mode + `"}`
+			script := clitest.Routes(t, updateRoutes(clitest.Reply{Status: http.StatusOK, Body: body}))
+
+			out, err := clitest.Execute(t, commands, "channels", "update", "platform", "support", "--reply-mode", mode)
+			if err != nil {
+				t.Fatalf("channels update --reply-mode %s: %v\n%s", mode, err, out)
+			}
+			if got := patchBody(t, script); got != `{"reply_mode":"`+mode+`"}` {
+				t.Errorf("sent %s", got)
+			}
+			if !strings.Contains(out, "replies: "+words) {
+				t.Errorf("output should say %q:\n%s", words, out)
+			}
+		})
+	}
+}
+
+func TestUpdateRefusesAModeItDoesNotKnow(t *testing.T) {
+	script := clitest.Routes(t, updateRoutes(clitest.Reply{Status: http.StatusOK, Body: telegramUpdated(true)}))
+
+	_, err := clitest.Execute(t, commands, "channels", "update", "platform", "support", "--reply-mode", "tokens")
+	if err == nil || !strings.Contains(err.Error(), "final or events") {
+		t.Errorf("err = %v, want it to name the two modes", err)
+	}
+	if len(script.All()) != 0 {
+		t.Errorf("made %d calls before refusing", len(script.All()))
+	}
+}

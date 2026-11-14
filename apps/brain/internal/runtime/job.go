@@ -29,12 +29,13 @@ type SweepStore interface {
 }
 
 type Job struct {
-	executor *Executor
-	store    SweepStore
-	logger   *slog.Logger
-	dbos     dbos.Context
-	restart  func(uuid.UUID) error
-	kick     func(dbos.Client, uuid.UUID) error
+	executor  *Executor
+	store     SweepStore
+	logger    *slog.Logger
+	dbos      dbos.Context
+	restart   func(uuid.UUID) error
+	kick      func(dbos.Client, uuid.UUID) error
+	kickEvent func(dbos.Client, uuid.UUID, int32) error
 }
 
 func RunJob(e *Executor, s SweepStore, logger *slog.Logger) *Job {
@@ -44,9 +45,10 @@ func RunJob(e *Executor, s SweepStore, logger *slog.Logger) *Job {
 }
 
 // SendsReplies has a channel run's reply sent as soon as the run finishes,
-// through kick. Without it replies wait for their sweep.
-func (j *Job) SendsReplies(kick func(dbos.Client, uuid.UUID) error) *Job {
-	j.kick = kick
+// through kick, and each step it tells as soon as it is told, through
+// kickEvent. Without them replies wait for their sweep.
+func (j *Job) SendsReplies(kick func(dbos.Client, uuid.UUID) error, kickEvent func(dbos.Client, uuid.UUID, int32) error) *Job {
+	j.kick, j.kickEvent = kick, kickEvent
 	return j
 }
 
@@ -66,6 +68,9 @@ func (j *Job) Register(d dbos.Context) ([]dbos.ScheduleSpec, error) {
 	j.executor.enqueue = func(id uuid.UUID) error { return enqueue(d, id) }
 	if j.kick != nil {
 		j.executor.kickReply = func(id uuid.UUID) error { return j.kick(d, id) }
+	}
+	if j.kickEvent != nil {
+		j.executor.kickEvent = func(id uuid.UUID, seq int32) error { return j.kickEvent(d, id, seq) }
 	}
 
 	return []dbos.ScheduleSpec{j.schedule()}, nil

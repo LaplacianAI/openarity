@@ -112,6 +112,14 @@ type URLReplier interface {
 	RepliesToURL()
 }
 
+// EventReplier is a Replier that also sends a run's steps, each a reply of
+// kind "event" in the conversation, when its channel's reply_mode is events.
+// Only for these does a channel take that mode.
+type EventReplier interface {
+	Replier
+	RepliesWithEvents()
+}
+
 // Notifier tells a sender nobody has let in where they stand, in the
 // conversation they wrote in: that they are waiting, and later that they are
 // in. Optional, like Replier. Notice is pure.
@@ -169,7 +177,8 @@ type Outbound struct {
 	// InReplyTo is the provider's id for the message it answers. Empty when it
 	// answers several that came in while the team was working.
 	InReplyTo string
-	// Kind is "answer", or "apology" when the run failed.
+	// Kind is "answer", "apology" when the run failed, or "event": one step
+	// of a run still working, sent before its answer and quoting nothing.
 	Kind string
 	Text string
 }
@@ -179,6 +188,7 @@ type Registry struct {
 	repliers  map[string]Replier
 	setups    map[string]Setup
 	toURL     map[string]bool
+	events    map[string]bool
 	connects  map[string]Connector
 	notifiers map[string]Notifier
 }
@@ -186,7 +196,7 @@ type Registry struct {
 func NewRegistry(providers ...Provider) (Registry, error) {
 	reg := Registry{
 		providers: map[string]Provider{}, repliers: map[string]Replier{}, setups: map[string]Setup{},
-		toURL: map[string]bool{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
+		toURL: map[string]bool{}, events: map[string]bool{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
 	}
 	for _, p := range providers {
 		name := p.Name()
@@ -208,6 +218,9 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		}
 		if _, ok := p.(URLReplier); ok {
 			reg.toURL[name] = true
+		}
+		if _, ok := p.(EventReplier); ok {
+			reg.events[name] = true
 		}
 		if c, ok := p.(Connector); ok {
 			reg.connects[name] = c
@@ -252,6 +265,9 @@ func (r Registry) Notifier(name string) (Notifier, bool) {
 
 // TakesReplyURL is whether the named provider's channels say where replies go.
 func (r Registry) TakesReplyURL(name string) bool { return r.toURL[name] }
+
+// RepliesWithEvents is whether the named provider sends a run's steps.
+func (r Registry) RepliesWithEvents(name string) bool { return r.events[name] }
 
 // Setup is how the named provider completes its credentials, if it needs to.
 func (r Registry) Setup(name string) (Setup, bool) {

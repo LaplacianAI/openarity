@@ -207,6 +207,10 @@ func (a attachment) ref(i int) string {
 // RepliesToURL marks custom as posting replies to the channel's reply URL.
 func (provider) RepliesToURL() {}
 
+// RepliesWithEvents: an event is a reply like the answer, of kind "event",
+// with an id of its own.
+func (provider) RepliesWithEvents() {}
+
 // SignReply signs a reply the way Sign signs a message, under its own prefix:
 // a reply someone captured cannot be posted back to the webhook as a message
 // and pass Verify.

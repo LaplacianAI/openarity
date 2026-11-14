@@ -50,7 +50,7 @@ WITH claimed AS (
         FOR UPDATE SKIP LOCKED)
     RETURNING r.*
 )
-SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent,
+SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent, c.event_seq,
        ch.provider, ch.reply_url,
        s.provider_ref AS session_ref, s.kind AS session_kind,
        m.external_id AS in_reply_to
@@ -80,9 +80,38 @@ WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attemp
 UPDATE replies SET status = 'failed', last_error = sqlc.arg('error')::text
 WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attempts');
 
--- What became of each of these runs' replies. A run that answers no channel
--- has none and is not in the result. Rides replies_one_per_run.
+-- What became of each of these runs' answers. A run that answers no channel
+-- has none and is not in the result; its events are not its answer. Rides
+-- replies_one_per_run.
 -- name: ListRunReplies :many
 SELECT run_id, kind, status, attempts, last_error, sent_at, next_attempt_at
 FROM replies
-WHERE run_id = ANY(sqlc.arg('run_ids')::uuid[]);
+WHERE run_id = ANY(sqlc.arg('run_ids')::uuid[]) AND event_seq IS NULL;
+
+-- Whether a run's steps are sent to its conversation as they happen: a run
+-- that answers a channel whose reply_mode is events. Only a top-level run
+-- answers a channel (runs_reply_from_a_root), so a delegated run's steps are
+-- its parent's to tell.
+-- name: RunShowsEvents :one
+SELECT EXISTS (
+    SELECT 1 FROM runs r
+    JOIN sessions s ON s.id = r.session_id
+    JOIN channels ch ON ch.id = s.channel_id
+    WHERE r.id = sqlc.arg('run_id')::uuid
+      AND r.reply_to_channel
+      AND ch.reply_mode = 'events')::bool;
+
+-- One step of a run, sent to its conversation. Only for a run RunShowsEvents
+-- holds for, read again here so a channel switched to final since the run
+-- began is sent no more. It quotes nothing. Written again for the same run
+-- event, as a retried write is, it is still one row.
+-- name: InsertEventReply :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, kind, text, event_seq)
+SELECT r.team_id, r.id, r.session_id, s.channel_id, 'event', sqlc.arg('text')::text, sqlc.arg('event_seq')::integer
+FROM runs r
+JOIN sessions s ON s.id = r.session_id
+JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = sqlc.arg('run_id')::uuid
+  AND r.reply_to_channel
+  AND ch.reply_mode = 'events'
+ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING;

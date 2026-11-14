@@ -19,7 +19,10 @@ import (
 )
 
 const (
-	replyBatch     = 20
+	replyBatch = 20
+	// eventAttempts is how often an event is tried: a broken one must not hold
+	// its conversation's answer back through the answer's six.
+	eventAttempts  = 2
 	replyLease     = 2 * time.Minute // longer than the client's 10 s timeout
 	replyAttempts  = 6
 	replyReadLimit = 64 << 10
@@ -130,6 +133,7 @@ type outgoing struct {
 	what      string // "reply" or "notice", for the log and the errors
 	id        int64
 	attempts  int32
+	tries     int32 // how many attempts it is given
 	partsSent int32
 	teamID    uuid.UUID
 	channelID uuid.UUID
@@ -143,8 +147,14 @@ type outgoing struct {
 
 func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 	at := db.ReplySentParams{ID: row.ID, Attempts: row.Attempts}
+	// A run has one answer, which carries the run's id; each event carries the
+	// run event it came from, so a receiver drops a repeat of either.
+	id, tries := row.RunID.String(), int32(replyAttempts)
+	if row.EventSeq != nil {
+		id, tries = id+":"+strconv.Itoa(int(*row.EventSeq)), eventAttempts
+	}
 	return outgoing{
-		what: "reply", id: row.ID, attempts: row.Attempts, partsSent: row.PartsSent,
+		what: "reply", id: row.ID, attempts: row.Attempts, tries: tries, partsSent: row.PartsSent,
 		teamID: row.TeamID, channelID: row.ChannelID, provider: row.Provider,
 		build: func(creds Credentials) ([]OutboundRequest, error) {
 			rp, ok := s.reg.Replier(row.Provider)
@@ -153,7 +163,7 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 			}
 			ch := Channel{ID: row.ChannelID, TeamID: row.TeamID, ReplyURL: deref(row.ReplyUrl)}
 			return rp.Reply(ch, Outbound{
-				ID:        row.RunID.String(),
+				ID:        id,
 				Session:   Session{Ref: deref(row.SessionRef), Kind: SessionKind(row.SessionKind)},
 				InReplyTo: deref(row.InReplyTo),
 				Kind:      row.Kind,
@@ -180,7 +190,7 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 func (s *Sender) notice(row db.ClaimDueNoticesRow) outgoing {
 	at := db.NoticeSentParams{ID: row.ID, Attempts: row.Attempts}
 	return outgoing{
-		what: "notice", id: row.ID, attempts: row.Attempts,
+		what: "notice", id: row.ID, attempts: row.Attempts, tries: replyAttempts,
 		teamID: row.TeamID, channelID: row.ChannelID, provider: row.Provider,
 		build: func(creds Credentials) ([]OutboundRequest, error) {
 			n, ok := s.reg.Notifier(row.Provider)
@@ -227,7 +237,7 @@ func (s *Sender) send(ctx context.Context, o outgoing) (bool, error) {
 			return false, fmt.Errorf("marking %s %d sent: %w", o.what, o.id, markErr)
 		}
 		return true, nil
-	case errors.Is(err, errUnsendable) || o.attempts >= replyAttempts:
+	case errors.Is(err, errUnsendable) || o.attempts >= o.tries:
 		s.logger.WarnContext(ctx, o.what+" not sent; gave up",
 			o.what, o.id, "channel", o.channelID, "attempts", o.attempts, "err", err)
 		if _, markErr := o.giveUp(ctx, err.Error()); markErr != nil {
