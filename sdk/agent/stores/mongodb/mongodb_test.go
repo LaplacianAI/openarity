@@ -1,6 +1,7 @@
 package mongodb_test
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -49,9 +50,9 @@ func TestAFailedSaveLeavesTheLastGoodTranscript(t *testing.T) {
 
 	bad := []agent.Message{
 		{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "fine"}}},
-		{Role: agent.RoleAssistant, ToolCalls: []agent.ToolCall{{
-			ID: "call_1", Name: "search", Arguments: []byte(`{not json`),
-		}}},
+		{Role: agent.RoleAssistant, Reasoning: &agent.Reasoning{
+			Fields: map[string]json.RawMessage{"reasoning": json.RawMessage(`{not json`)},
+		}},
 	}
 	err := store.Save(t.Context(), "s1", bad)
 	if err == nil {

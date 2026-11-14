@@ -123,3 +123,40 @@ func TestABlobSurvivesTheRoundTrip(t *testing.T) {
 		t.Errorf("blob bytes did not survive: %v", blob.Data)
 	}
 }
+
+// A model cut off mid-call sends arguments that are not JSON. The transcript
+// still saves, and reads them back as they arrived, so the run goes on and the
+// model is told its arguments were not valid rather than the run failing.
+func TestACallWhoseArgumentsAreNotJSONStillSaves(t *testing.T) {
+	cut := Message{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "c1", Name: "propose", Arguments: json.RawMessage(`{"name": "supp`)}}}
+	raw, err := json.Marshal(cut)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var back Message
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("Unmarshal %s: %v", raw, err)
+	}
+	if got := string(back.ToolCalls[0].Arguments); got != `{"name": "supp` {
+		t.Errorf("read back %q, want the text that arrived", got)
+	}
+	if json.Valid(back.ToolCalls[0].Arguments) {
+		t.Error("the arguments read back as valid JSON; the model would not be told")
+	}
+}
+
+// Arguments that are JSON keep the shape transcripts already have, so every
+// transcript saved before reads back as it was.
+func TestACallWhoseArgumentsAreJSONKeepsItsShape(t *testing.T) {
+	raw, err := json.Marshal(ToolCall{ID: "c1", Name: "team", Arguments: json.RawMessage(`{"a":1}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"id":"c1","name":"team","arguments":{"a":1}}`; string(raw) != want {
+		t.Errorf("encoded %s, want %s", raw, want)
+	}
+	none, err := json.Marshal(ToolCall{ID: "c2", Name: "team"})
+	if err != nil || string(none) != `{"id":"c2","name":"team"}` {
+		t.Errorf("a call with no arguments encoded %s, %v", none, err)
+	}
+}

@@ -85,6 +85,43 @@ type ToolCall struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
+// toolCallJSON is a ToolCall as a transcript keeps it. A model cut off
+// mid-call sends arguments that are not JSON; they are kept as the text that
+// arrived, under arguments_text, since a raw value that is not JSON cannot be
+// encoded at all and the save would fail the run.
+type toolCallJSON struct {
+	ID            string          `json:"id"`
+	Name          string          `json:"name"`
+	Arguments     json.RawMessage `json:"arguments,omitempty"`
+	ArgumentsText string          `json:"arguments_text,omitempty"`
+}
+
+func (c ToolCall) MarshalJSON() ([]byte, error) {
+	out := toolCallJSON{ID: c.ID, Name: c.Name}
+	switch {
+	case len(c.Arguments) == 0:
+	case json.Valid(c.Arguments):
+		out.Arguments = c.Arguments
+	default:
+		out.ArgumentsText = string(c.Arguments)
+	}
+	return json.Marshal(out)
+}
+
+// UnmarshalJSON reads a call back as it was made, arguments that were not
+// JSON included: the model is told so when the call is run.
+func (c *ToolCall) UnmarshalJSON(b []byte) error {
+	var in toolCallJSON
+	if err := json.Unmarshal(b, &in); err != nil {
+		return err
+	}
+	*c = ToolCall{ID: in.ID, Name: in.Name, Arguments: in.Arguments}
+	if in.ArgumentsText != "" {
+		c.Arguments = json.RawMessage(in.ArgumentsText)
+	}
+	return nil
+}
+
 func (m Message) Text() string {
 	var b []byte
 	for _, c := range m.Content {
