@@ -49,8 +49,9 @@ type Fetcher interface {
 }
 
 // Downloader fetches a file the provider holds rather than one sent in the
-// delivery. It builds each request and the gateway sends it, with the client
-// that dials public addresses only, so the adapter still holds no client:
+// delivery. It builds each request and the gateway sends it, with the reply
+// client (public addresses and the operator's MCP_PRIVATE_NETWORKS, no
+// redirect), so the adapter still holds no client:
 // the first request from the ref, each next from the answer before, until
 // one is final and its answer is the file.
 type Downloader interface {
