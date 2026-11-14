@@ -102,6 +102,16 @@ JOIN mcp_servers s ON s.id = g.mcp_server_id
 WHERE g.agent_id = $1
 ORDER BY s.name;
 
+-- What a run's MCP tools are, as discovery last found them, so a run binds
+-- them without connecting a server it may never call. The allow-list holds
+-- the name the server gave, as ListGrantedToolIDs reads it.
+-- name: ListGrantedMCPTools :many
+SELECT t.mcp_server_id, t.name, t.description, t.input_schema
+FROM agent_mcp_servers g
+JOIN mcp_tools t ON t.mcp_server_id = g.mcp_server_id
+WHERE g.agent_id = $1 AND (g.allow IS NULL OR t.name = ANY (g.allow))
+ORDER BY t.mcp_server_id, t.name;
+
 -- With the body, unlike ListSkillsByTeam: a run hands it to the model when
 -- the skill is loaded. One table in the FROM, so sqlc returns db.Skill.
 -- name: ListGrantedSkills :many

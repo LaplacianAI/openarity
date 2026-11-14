@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,9 +34,13 @@ type fakeStore struct {
 	grants     []db.ListGrantedMCPServersRow
 	grantsErr  error
 	grantsRead int
-	skills     []db.Skill
-	skillsErr  error
-	files      map[uuid.UUID][]db.SkillFile
+	// catalogue, when set, is what discovery recorded in place of what each
+	// granted server offers.
+	catalogue []db.ListGrantedMCPToolsRow
+	toolsErr  error
+	skills    []db.Skill
+	skillsErr error
+	files     map[uuid.UUID][]db.SkillFile
 
 	settings      *db.TeamSetting
 	settingsErr   error
@@ -61,6 +66,35 @@ func (f *fakeStore) ListGrantedMCPServers(context.Context, uuid.UUID) ([]db.List
 	defer f.mu.Unlock()
 	f.grantsRead++
 	return f.grants, f.grantsErr
+}
+
+// ListGrantedMCPTools is what each granted server offers, as a discovery of
+// it would have recorded, less what its allow-list leaves out, as the query
+// does.
+func (f *fakeStore) ListGrantedMCPTools(context.Context, uuid.UUID) ([]db.ListGrantedMCPToolsRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.catalogue != nil || f.toolsErr != nil {
+		return f.catalogue, f.toolsErr
+	}
+	var out []db.ListGrantedMCPToolsRow
+	for _, g := range f.grants {
+		if g.McpServer.Url == nil {
+			continue
+		}
+		names, _ := offered.Load(*g.McpServer.Url)
+		tools, _ := names.([]string)
+		for _, name := range tools {
+			if g.Allow != nil && !slices.Contains(g.Allow, name) {
+				continue
+			}
+			out = append(out, db.ListGrantedMCPToolsRow{
+				McpServerID: g.McpServer.ID, Name: name, Description: name + " things",
+				InputSchema: []byte(`{"type":"object"}`),
+			})
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListGrantedSkills(context.Context, uuid.UUID) ([]db.Skill, error) {
@@ -146,10 +180,27 @@ type noSession struct{ agent.Session }
 // --- an MCP server ---
 
 // mcpServer is a real go-sdk server over streamable HTTP. It counts the
-// DELETEs that end a session, which is how a test sees Close happen.
+// DELETEs that end a session, which is how a test sees Close happen, and
+// every request, which is how it sees a server never reached.
 type mcpServer struct {
-	url     string
-	deletes atomic.Int32
+	url      string
+	deletes  atomic.Int32
+	requests atomic.Int32
+	// opened counts the sessions begun: each initialize.
+	opened atomic.Int32
+	// refuse, while set, answers every request 503.
+	refuse atomic.Bool
+}
+
+// offered is what each test server offers, by its address, for the fake
+// store to list as discovery would have.
+var offered sync.Map
+
+// offer records tools for an address no test server answers, such as one
+// that has gone away since discovery.
+func offer(url string, tools ...string) string {
+	offered.Store(url, tools)
+	return url
 }
 
 func serve(t *testing.T, tools ...string) *mcpServer {
@@ -166,6 +217,18 @@ func serve(t *testing.T, tools ...string) *mcpServer {
 	s := &mcpServer{}
 	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.requests.Add(1)
+		if s.refuse.Load() {
+			http.Error(w, "restarting", http.StatusServiceUnavailable)
+			return
+		}
+		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			if strings.Contains(string(body), `"method":"initialize"`) {
+				s.opened.Add(1)
+			}
+		}
 		if r.Method == http.MethodDelete {
 			s.deletes.Add(1)
 		}
@@ -178,6 +241,7 @@ func serve(t *testing.T, tools ...string) *mcpServer {
 		httpServer.Close()
 	})
 	s.url = httpServer.URL
+	offer(s.url, tools...)
 	return s
 }
 
@@ -510,36 +574,70 @@ func TestACommandServerIsReportedNotBound(t *testing.T) {
 	if got := toolNames(built); !slices.Equal(got, []string{"fetch"}) {
 		t.Errorf("tools = %v, want only the URL server's", got)
 	}
-	if !slices.Equal(f.clients.asked, []string{"web"}) {
-		t.Errorf("clients were asked for %v, want only web", f.clients.asked)
+	if len(f.clients.asked) != 0 {
+		t.Errorf("clients were asked for %v; a build reaches no server", f.clients.asked)
 	}
 }
 
-func TestAnUnreachableServerFailsTheBuildNamingIt(t *testing.T) {
+// A server that is down fails the calls that need it, naming it, and nothing
+// else: the run builds, and the other servers' tools work.
+func TestAServerThatIsDownFailsOnlyTheCallsThatNeedIt(t *testing.T) {
 	f := newFixture()
-	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("search-engine", unreachable(t), false)}
+	gone := offer(unreachable(t)+"/mcp?key=sekrit", "search")
+	f.store.grants = []db.ListGrantedMCPServersRow{
+		urlServer("search-engine", gone, false),
+		urlServer("web", serve(t, "fetch").url, true),
+	}
+	built := f.build(t)
 
-	err := f.buildErr(t)
+	if got, err := tool(t, built, "fetch").Invoke(t.Context(), json.RawMessage(`{}`)); err != nil || got != "fetch ran" {
+		t.Fatalf("fetch = %q, %v; a server that is down took another down with it", got, err)
+	}
+	_, err := tool(t, built, "search-engine__search").Invoke(t.Context(), json.RawMessage(`{}`))
 	if err == nil || !strings.Contains(err.Error(), `"search-engine" could not be reached`) {
-		t.Errorf("Build = %v, want the server named as unreachable", err)
+		t.Fatalf("search = %v, want the server named as unreachable", err)
+	}
+	// The address can carry a key, and the call's error is read by the model
+	// and the whole session.
+	if strings.Contains(err.Error(), "sekrit") {
+		t.Errorf("the error carries the key in the server's address: %v", err)
 	}
 	var down *serverDown
 	if !errors.As(err, &down) {
-		t.Errorf("Build = %v, which a run's outcome would read as the model's", err)
+		t.Errorf("search = %v, want a serverDown", err)
 	}
 }
 
-// What discovery refuses — a link-local address, a missing token — the run
-// is refused too, naming the server and keeping the reason.
-func TestAServerDiscoveryRefusesFailsTheBuild(t *testing.T) {
+// What discovery refuses — a link-local address, a missing token — the call is
+// refused too, naming the server and keeping the reason.
+func TestWhatDiscoveryRefusesFailsTheCall(t *testing.T) {
 	f := newFixture()
 	refused := errors.New("the address is link-local")
 	f.clients.err = refused
-	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("metadata", "http://169.254.169.254", false)}
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("metadata", offer("http://169.254.169.254", "read"), false)}
+	built := f.build(t)
 
-	err := f.buildErr(t)
+	_, err := tool(t, built, "metadata__read").Invoke(t.Context(), json.RawMessage(`{}`))
 	if !errors.Is(err, refused) || !strings.Contains(err.Error(), `"metadata"`) {
-		t.Errorf("Build = %v, want %v naming the server", err, refused)
+		t.Errorf("read = %v, want %v naming the server", err, refused)
+	}
+}
+
+// Building a run reaches no server: they are reached by the calls.
+func TestBuildingReachesNoServer(t *testing.T) {
+	f := newFixture()
+	web := serve(t, "fetch")
+	f.store.grants = []db.ListGrantedMCPServersRow{
+		urlServer("web", web.url, true),
+		urlServer("gone", offer(unreachable(t), "search"), true),
+	}
+
+	built := f.build(t)
+	if got := toolNames(built); !slices.Equal(got, []string{"fetch", "search"}) {
+		t.Fatalf("tools = %v, want both servers' tools as discovery recorded them", got)
+	}
+	if web.requests.Load() != 0 || len(f.clients.asked) != 0 {
+		t.Fatalf("the build sent %d requests and asked for %v clients", web.requests.Load(), f.clients.asked)
 	}
 }
 
@@ -555,8 +653,91 @@ func TestTwoServersOfferingOneToolNameFailTheBuild(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `"google" and "bing" both offer "search"`) {
 		t.Fatalf("Build = %v, want the clash named", err)
 	}
-	first.waitClosed(t, 1)
-	second.waitClosed(t, 1)
+	if first.requests.Load() != 0 || second.requests.Load() != 0 {
+		t.Errorf("finding the clash reached the servers")
+	}
+}
+
+func TestAToolsCatalogueThatCannotBeReadFailsTheBuild(t *testing.T) {
+	f := newFixture()
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", serve(t, "fetch").url, true)}
+	down := errors.New("connection refused")
+	f.store.toolsErr = down
+
+	if err := f.buildErr(t); !errors.Is(err, down) || !strings.Contains(err.Error(), "MCP tools") {
+		t.Fatalf("Build = %v, want %v", err, down)
+	}
+}
+
+// A granted server discovery found nothing on is said so, rather than left
+// out without a word.
+func TestAServerWithNoToolsDiscoveredIsReported(t *testing.T) {
+	f := newFixture()
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("fresh", unreachable(t), true)}
+
+	built := f.build(t)
+	want := []Unavailable{{Name: "fresh", Reason: "no tools of it have been discovered"}}
+	if !reflect.DeepEqual(built.Unavailable, want) || len(toolNames(built)) != 0 {
+		t.Errorf("unavailable = %+v, tools %v; want %+v", built.Unavailable, toolNames(built), want)
+	}
+}
+
+// A name a provider would refuse is reported rather than sent, which would
+// fail every request of the run.
+func TestAToolNameAProviderWouldRefuseIsReported(t *testing.T) {
+	f := newFixture()
+	server := urlServer("web", serve(t, "fetch").url, true)
+	f.store.grants = []db.ListGrantedMCPServersRow{server}
+	f.store.catalogue = []db.ListGrantedMCPToolsRow{
+		{McpServerID: server.McpServer.ID, Name: "fetch", InputSchema: []byte(`{}`)},
+		{McpServerID: server.McpServer.ID, Name: "read file", InputSchema: []byte(`{}`)},
+	}
+
+	built := f.build(t)
+	if got := toolNames(built); !slices.Equal(got, []string{"fetch"}) {
+		t.Errorf("tools = %v, want fetch alone", got)
+	}
+	if len(built.Unavailable) != 1 || built.Unavailable[0].Name != "read file" {
+		t.Errorf("unavailable = %+v, want the badly named tool", built.Unavailable)
+	}
+}
+
+// What a run is told about a tool is what discovery recorded: its
+// description and its schema.
+func TestAToolIsDescribedAsDiscoveryRecordedIt(t *testing.T) {
+	f := newFixture()
+	server := urlServer("web", serve(t, "fetch").url, true)
+	f.store.grants = []db.ListGrantedMCPServersRow{server}
+	schema := `{"type":"object","properties":{"url":{"type":"string"}}}`
+	f.store.catalogue = []db.ListGrantedMCPToolsRow{
+		{McpServerID: server.McpServer.ID, Name: "fetch", Description: "Read a page", InputSchema: []byte(schema)},
+	}
+
+	fetch := tool(t, f.build(t), "fetch")
+	if fetch.Description != "Read a page" || string(fetch.Schema) != schema {
+		t.Errorf("fetch is %q with %s", fetch.Description, fetch.Schema)
+	}
+}
+
+// Discovery may be older than the server: a tool it recorded that the server
+// has since dropped says so, and the server's other tools still work.
+func TestAToolTheServerNoLongerOffersSaysSo(t *testing.T) {
+	f := newFixture()
+	server := urlServer("web", serve(t, "fetch").url, true)
+	f.store.grants = []db.ListGrantedMCPServersRow{server}
+	f.store.catalogue = []db.ListGrantedMCPToolsRow{
+		{McpServerID: server.McpServer.ID, Name: "fetch", InputSchema: []byte(`{}`)},
+		{McpServerID: server.McpServer.ID, Name: "crawl", InputSchema: []byte(`{}`)},
+	}
+	built := f.build(t)
+
+	_, err := tool(t, built, "crawl").Invoke(t.Context(), json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), `the MCP server "web" no longer offers crawl; discover its tools again`) {
+		t.Fatalf("crawl = %v", err)
+	}
+	if got, err := tool(t, built, "fetch").Invoke(t.Context(), json.RawMessage(`{}`)); err != nil || got != "fetch ran" {
+		t.Errorf("fetch = %q, %v", got, err)
+	}
 }
 
 func TestAToolCallReachesItsServer(t *testing.T) {
@@ -571,62 +752,143 @@ func TestAToolCallReachesItsServer(t *testing.T) {
 	}
 }
 
-// A server that accepts and never answers holds the build only as long as the
-// run's context allows.
+// One session per server however many calls, made one after another or side
+// by side.
+func TestCallsToOneServerShareOneSession(t *testing.T) {
+	f := newFixture()
+	web := serve(t, "fetch", "crawl")
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", web.url, true)}
+	built, err := f.builder.Build(t.Context(), f.run, noSession{}, Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		name := []string{"fetch", "crawl"}[i%2]
+		wg.Go(func() {
+			if _, err := tool(t, built, name).Invoke(t.Context(), json.RawMessage(`{}`)); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	if _, err := tool(t, built, "fetch").Invoke(t.Context(), json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	built.Close()
+	web.waitClosed(t, 1)
+	if web.opened.Load() != 1 || web.deletes.Load() != 1 {
+		t.Errorf("%d sessions opened and %d closed, want one of each", web.opened.Load(), web.deletes.Load())
+	}
+}
+
+// A server that failed to open is tried again by the next call: it may have
+// been restarting.
+func TestAServerThatFailedToOpenIsTriedAgain(t *testing.T) {
+	f := newFixture()
+	web := serve(t, "fetch")
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", web.url, true)}
+	fetch := tool(t, f.build(t), "fetch")
+
+	web.refuse.Store(true)
+	if _, err := fetch.Invoke(t.Context(), json.RawMessage(`{}`)); err == nil {
+		t.Fatal("a call to a server refusing every request succeeded")
+	}
+	web.refuse.Store(false)
+	if got, err := fetch.Invoke(t.Context(), json.RawMessage(`{}`)); err != nil || got != "fetch ran" {
+		t.Fatalf("after the server came back: %q, %v", got, err)
+	}
+}
+
+// A call that arrives after the run closed opens nothing that would outlive
+// it.
+func TestACallAfterTheRunClosedLeavesNoSession(t *testing.T) {
+	f := newFixture()
+	web := serve(t, "fetch")
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", web.url, true)}
+	built, err := f.builder.Build(t.Context(), f.run, noSession{}, Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	built.Close()
+	built.Close()
+
+	if _, err := tool(t, built, "fetch").Invoke(t.Context(), json.RawMessage(`{}`)); err == nil {
+		t.Fatal("a call after Close succeeded")
+	}
+	web.waitClosed(t, web.opened.Load())
+}
+
+// A server that accepts and never answers holds the call only as long as the
+// call's context allows.
 //
 // It holds every call and acknowledges notifications: go-sdk follows a
 // cancelled call with notifications/cancelled on a five-second budget of its
-// own, so a server silent to those too holds Build ten seconds past the
+// own, so a server silent to those too holds the call ten seconds past the
 // deadline — bounded, measured, and not this package's to shorten.
-func TestConnectingGivesUpWhenTheRunsContextEnds(t *testing.T) {
-	stop := make(chan struct{})
-	var held atomic.Int32
-	silent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(body), `"method":"notifications/`) {
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		held.Add(1)
-		select {
-		case <-r.Context().Done():
-		case <-stop:
-		}
-	}))
-	t.Cleanup(silent.Close)
-	t.Cleanup(func() { close(stop) })
+func TestConnectingGivesUpWhenTheCallsContextEnds(t *testing.T) {
+	silent, held := silentServer(t)
 	f := newFixture()
-	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("silent", silent.URL, true)}
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("silent", offer(silent, "wait"), true)}
+	wait := tool(t, f.build(t), "wait")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		built, err := f.builder.Build(ctx, f.run, noSession{}, Lineage{})
-		if err == nil {
-			built.Close()
-		}
+		_, err := wait.Invoke(ctx, json.RawMessage(`{}`))
 		done <- err
 	}()
 
 	select {
 	case err := <-done:
 		if err == nil || !strings.Contains(err.Error(), `"silent"`) {
-			t.Errorf("Build = %v, want the silent server named", err)
+			t.Errorf("wait = %v, want the silent server named", err)
 		}
 		if held.Load() == 0 {
 			t.Error("the server held no call, so this tested nothing")
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Build was still connecting 5s after the run's context ended")
+		t.Fatal("the call was still connecting 5s after its context ended")
 	}
 }
 
 // A server that takes the connection and never answers is what the connect
-// timeout is for; the run's own context may allow hours.
+// timeout is for; the call's own context allows five minutes.
 func TestConnectingGivesUpAtItsTimeout(t *testing.T) {
+	silent, held := silentServer(t)
+	f := newFixture()
+	f.builder.connectTimeout = 200 * time.Millisecond
+	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("silent", offer(silent, "wait"), true)}
+	wait := tool(t, f.build(t), "wait")
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := wait.Invoke(t.Context(), json.RawMessage(`{}`))
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), `"silent"`) {
+			t.Errorf("wait = %v, want the silent server named", err)
+		}
+		if held.Load() == 0 {
+			t.Error("the server held no call, so this tested nothing")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the call was still connecting 5s after its connect timeout")
+	}
+}
+
+// silentServer takes every request and answers none but notifications.
+func silentServer(t *testing.T) (string, *atomic.Int32) {
+	t.Helper()
+
 	stop := make(chan struct{})
-	var held atomic.Int32
+	held := &atomic.Int32{}
 	silent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if strings.Contains(string(body), `"method":"notifications/`) {
@@ -641,30 +903,7 @@ func TestConnectingGivesUpAtItsTimeout(t *testing.T) {
 	}))
 	t.Cleanup(silent.Close)
 	t.Cleanup(func() { close(stop) })
-	f := newFixture()
-	f.builder.connectTimeout = 200 * time.Millisecond
-	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("silent", silent.URL, true)}
-
-	done := make(chan error, 1)
-	go func() {
-		built, err := f.builder.Build(t.Context(), f.run, noSession{}, Lineage{})
-		if err == nil {
-			built.Close()
-		}
-		done <- err
-	}()
-
-	select {
-	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), `"silent"`) {
-			t.Errorf("Build = %v, want the silent server named", err)
-		}
-		if held.Load() == 0 {
-			t.Error("the server held no call, so this tested nothing")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Build was still connecting 5s after its connect timeout")
-	}
+	return silent.URL, held
 }
 
 func TestTheConnectTimeoutIsThirtySeconds(t *testing.T) {
@@ -675,22 +914,21 @@ func TestTheConnectTimeoutIsThirtySeconds(t *testing.T) {
 	}
 }
 
-// The connect timeout bounds connecting and nothing after: a session whose
-// connect context has been cancelled still carries every call of the run.
-func TestASessionOutlivesItsConnectTimeout(t *testing.T) {
+// The connect timeout bounds connecting and nothing after: a session opened
+// by a call whose context has ended still carries the run's later calls.
+func TestASessionOutlivesTheCallThatOpenedIt(t *testing.T) {
 	f := newFixture()
 	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", serve(t, "fetch").url, true)}
+	fetch := tool(t, f.build(t), "fetch")
 
 	ctx, cancel := context.WithCancel(t.Context())
-	built, err := f.builder.Build(ctx, f.run, noSession{}, Lineage{})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
+	if _, err := fetch.Invoke(ctx, json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("the first call: %v", err)
 	}
-	t.Cleanup(built.Close)
 	cancel()
 
-	if _, err := tool(t, built, "fetch").Invoke(t.Context(), json.RawMessage(`{}`)); err != nil {
-		t.Errorf("a call after the build's context ended: %v", err)
+	if _, err := fetch.Invoke(t.Context(), json.RawMessage(`{}`)); err != nil {
+		t.Errorf("a call after the first call's context ended: %v", err)
 	}
 }
 
@@ -702,6 +940,11 @@ func TestEachToolCallIsBounded(t *testing.T) {
 	f.clients.client = &http.Client{Transport: seen}
 	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", serve(t, "fetch").url, true)}
 	fetch := tool(t, f.build(t), "fetch")
+	// Opened first, so what is measured below is the call and not the
+	// connect, which its own timeout bounds.
+	if _, err := fetch.Invoke(t.Context(), json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
 
 	t.Run("a caller with no deadline", func(t *testing.T) {
 		seen.reset()
@@ -741,14 +984,23 @@ func TestEachToolCallIsBounded(t *testing.T) {
 
 // --- closing ---
 
-func TestBuiltCloseEndsEverySession(t *testing.T) {
+// Close ends the sessions the calls opened, and a server never called was
+// never reached at all.
+func TestBuiltCloseEndsEverySessionTheCallsOpened(t *testing.T) {
 	f := newFixture()
-	a, b := serve(t, "one"), serve(t, "two")
-	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("a", a.url, true), urlServer("b", b.url, true)}
+	a, b, never := serve(t, "one"), serve(t, "two"), serve(t, "three")
+	f.store.grants = []db.ListGrantedMCPServersRow{
+		urlServer("a", a.url, true), urlServer("b", b.url, true), urlServer("never", never.url, true),
+	}
 
 	built, err := f.builder.Build(t.Context(), f.run, noSession{}, Lineage{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
+	}
+	for _, name := range []string{"one", "two"} {
+		if _, err := tool(t, built, name).Invoke(t.Context(), json.RawMessage(`{}`)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if a.deletes.Load() != 0 || b.deletes.Load() != 0 {
 		t.Fatal("a session was closed before the run was done with it")
@@ -757,33 +1009,9 @@ func TestBuiltCloseEndsEverySession(t *testing.T) {
 	built.Close()
 	a.waitClosed(t, 1)
 	b.waitClosed(t, 1)
-}
-
-func TestBuildClosesWhatItOpenedWhenALaterServerFails(t *testing.T) {
-	f := newFixture()
-	opened := serve(t, "fetch")
-	f.store.grants = []db.ListGrantedMCPServersRow{
-		urlServer("web", opened.url, true),
-		urlServer("gone", unreachable(t), true),
+	if never.requests.Load() != 0 {
+		t.Errorf("a server no call needed was sent %d requests", never.requests.Load())
 	}
-
-	if err := f.buildErr(t); err == nil {
-		t.Fatal("Build succeeded with an unreachable server")
-	}
-	opened.waitClosed(t, 1)
-}
-
-func TestBuildClosesWhatItOpenedWhenTheSkillsCannotBeRead(t *testing.T) {
-	f := newFixture()
-	opened := serve(t, "fetch")
-	f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", opened.url, true)}
-	down := errors.New("connection refused")
-	f.store.skillsErr = down
-
-	if err := f.buildErr(t); !errors.Is(err, down) {
-		t.Fatalf("Build = %v, want %v", err, down)
-	}
-	opened.waitClosed(t, 1)
 }
 
 // --- skills ---
@@ -1137,4 +1365,11 @@ func TestBuildLeavesOutAnMCPToolNamedDelegate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A failed Build returns a Built with nothing in it, and closing that is safe.
+func TestClosingAnEmptyBuiltIsSafe(t *testing.T) {
+	t.Parallel()
+
+	Built{}.Close()
 }

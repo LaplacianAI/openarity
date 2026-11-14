@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ const (
 type BuildStore interface {
 	GetAgent(ctx context.Context, id uuid.UUID) (db.Agent, error)
 	ListGrantedMCPServers(ctx context.Context, agentID uuid.UUID) ([]db.ListGrantedMCPServersRow, error)
+	ListGrantedMCPTools(ctx context.Context, agentID uuid.UUID) ([]db.ListGrantedMCPToolsRow, error)
 	ListGrantedSkills(ctx context.Context, agentID uuid.UUID) ([]db.Skill, error)
 	ListSkillFiles(ctx context.Context, skillID uuid.UUID) ([]db.SkillFile, error)
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
@@ -80,12 +82,14 @@ type Built struct {
 	Spec        agent.Spec
 	Agent       string
 	Unavailable []Unavailable
-	sessions    []*mcp.Session
+	servers     *runServers
 }
 
+// Close ends the sessions the run's calls opened. Safe to call twice, and on
+// a Built that opened none.
 func (b Built) Close() {
-	for _, s := range b.sessions {
-		_ = s.Close()
+	if b.servers != nil {
+		b.servers.close()
 	}
 }
 
@@ -120,7 +124,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	if err != nil {
 		return Built{}, err
 	}
-	built := Built{Spec: specOf(a), Agent: a.Name}
+	built := Built{Spec: specOf(a), Agent: a.Name, servers: &runServers{b: b}}
 	built.Spec.Session = session
 	built.Spec.Compaction = compactionFor(settings.CompactionMessages, budgetOf(run.TokenBudget))
 
@@ -245,6 +249,15 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 	if err != nil {
 		return nil, fmt.Errorf("reading the agent's MCP servers: %w", err)
 	}
+	// The allow-list is applied by the query.
+	rows, err := b.store.ListGrantedMCPTools(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("reading the agent's MCP tools: %w", err)
+	}
+	offered := map[uuid.UUID][]db.ListGrantedMCPToolsRow{}
+	for _, r := range rows {
+		offered[r.McpServerID] = append(offered[r.McpServerID], r)
+	}
 
 	var out []agent.Tool
 	owner := map[string]string{}
@@ -256,36 +269,49 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 			})
 			continue
 		}
-
-		live, err := b.connect(ctx, s)
-		if err != nil {
-			return nil, err
+		if len(offered[s.ID]) == 0 {
+			built.Unavailable = append(built.Unavailable, Unavailable{
+				Name: s.Name, Reason: "no tools of it have been discovered",
+			})
+			continue
 		}
-		built.sessions = append(built.sessions, live)
 
-		for _, t := range live.Tools() {
-			if !allowed(s, g.Allow, t.Name) {
-				continue
+		server := built.servers.server(s)
+		for _, row := range offered[s.ID] {
+			name := row.Name
+			if !s.Bare {
+				name = s.Name + "__" + row.Name
 			}
-			if !n.keepsTool(t.Name) {
-				continue
-			}
-			if reserved(t.Name, hub, web) {
+			if !toolNameShape.MatchString(name) {
 				built.Unavailable = append(built.Unavailable, Unavailable{
-					Name:   t.Name,
-					Reason: fmt.Sprintf("the MCP server %q offers a tool named %s, which is the brain's own", s.Name, t.Name),
+					Name:   name,
+					Reason: fmt.Sprintf("the MCP server %q offers %q, which is not a usable tool name", s.Name, row.Name),
 				})
 				continue
 			}
-			if first, taken := owner[t.Name]; taken {
-				return nil, fmt.Errorf("the MCP servers %q and %q both offer %q", first, s.Name, t.Name)
+			if !n.keepsTool(name) {
+				continue
 			}
-			owner[t.Name] = s.Name
-			out = append(out, limited(t))
+			if reserved(name, hub, web) {
+				built.Unavailable = append(built.Unavailable, Unavailable{
+					Name:   name,
+					Reason: fmt.Sprintf("the MCP server %q offers a tool named %s, which is the brain's own", s.Name, name),
+				})
+				continue
+			}
+			if first, taken := owner[name]; taken {
+				return nil, fmt.Errorf("the MCP servers %q and %q both offer %q", first, s.Name, name)
+			}
+			owner[name] = s.Name
+			out = append(out, limited(server.tool(name, row)))
 		}
 	}
 	return out, nil
 }
+
+// toolNameShape is what a provider accepts as a tool's name, as the SDK's MCP
+// client checks it.
+var toolNameShape = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 func reserved(name string, hub, web bool) bool {
 	switch name {
@@ -316,9 +342,9 @@ func (b *Builder) connect(ctx context.Context, s db.McpServer) (*mcp.Session, er
 	return live, nil
 }
 
-// A serverDown is an MCP server a run could not open. It wraps a *url.Error
-// as an unreachable model does, so outcome reads it first and names the
-// server rather than blaming the model.
+// A serverDown is an MCP server a call could not open. Its message names the
+// server and leaves out the address, which can carry a key: the call's error
+// is read by the model and by everyone in the session.
 type serverDown struct {
 	name string
 	err  error
@@ -335,16 +361,6 @@ func (s *serverDown) Error() string {
 }
 
 func (s *serverDown) Unwrap() error { return s.err }
-
-func allowed(s db.McpServer, allow []string, name string) bool {
-	if allow == nil {
-		return true
-	}
-	if !s.Bare {
-		name = strings.TrimPrefix(name, s.Name+"__")
-	}
-	return slices.Contains(allow, name)
-}
 
 func limited(t agent.Tool) agent.Tool {
 	invoke := t.Invoke

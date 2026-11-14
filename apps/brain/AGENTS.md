@@ -120,7 +120,8 @@ apps/brain/
     job.go             the reaper as background work: SweepAll, and its Job
   internal/purge/      erasing deleted teams once TEAM_PURGE_AFTER has passed
   internal/runtime/    a run: the agent built from its row, executed, recorded
-    build.go           the Spec, its granted MCP tools and skills, the one settings read; Patterns and Loops
+    build.go           the Spec, its granted MCP tools as discovery recorded them, and skills, the one settings read; Patterns and Loops
+    servers.go         a run's MCP servers, each opened by the first call to one of its tools
     compaction.go      when a run compacts, and the budget's soft lines (compact, then wrap up)
     delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run
     events.go          what a run does, as run_events, within its token budget; its text and reasoning, gathered

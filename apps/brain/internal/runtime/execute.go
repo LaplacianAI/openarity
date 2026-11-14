@@ -369,7 +369,6 @@ func (e *Executor) heartbeat(ctx context.Context, runID uuid.UUID, worker string
 }
 
 func outcome(runErr, cause error) (string, string) {
-	var down *serverDown
 	var unreachable *url.Error
 	var answered *agent.ModelError
 	switch {
@@ -379,8 +378,6 @@ func outcome(runErr, cause error) (string, string) {
 		return "failed", cause.Error()
 	case runErr == nil:
 		return "succeeded", ""
-	case errors.As(runErr, &down):
-		return "failed", down.Error()
 	case errors.As(runErr, &unreachable):
 		return "failed", fmt.Sprintf("the model endpoint could not be reached: %v", unreachable.Err)
 	case errors.As(runErr, &answered):

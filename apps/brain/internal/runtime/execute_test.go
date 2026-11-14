@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -360,6 +359,8 @@ func TestARunThatCallsAToolRecordsTheCallAndTheResult(t *testing.T) {
 		f.team, server.url).Scan(&id); err != nil {
 		t.Fatalf("insert server: %v", err)
 	}
+	// As discovery records it, which is what the run binds.
+	f.mustExec(t, `INSERT INTO mcp_tools (mcp_server_id, team_id, name) VALUES ($1, $2, 'fetch')`, id, f.team)
 	f.mustExec(t, `INSERT INTO agent_mcp_servers (agent_id, mcp_server_id, team_id) VALUES ($1, $2, $3)`, f.agent, id, f.team)
 
 	f.mustExecute(t)
@@ -652,9 +653,9 @@ func TestAnUnreachableModelFailsNamingTheModel(t *testing.T) {
 	}
 }
 
-// A server the run could not open wraps a *url.Error, as an unreachable model
-// does, and the run must name the server rather than blame the model.
-func TestAServerThatCannotBeReachedIsNotBlamedOnTheModel(t *testing.T) {
+// A server a call could not open is named, and its address, which can carry a
+// key, is left out: the call's error is read by the model and the session.
+func TestAServerThatCannotBeReachedIsNamedWithoutItsAddress(t *testing.T) {
 	t.Parallel()
 
 	dial := &url.Error{
@@ -662,13 +663,12 @@ func TestAServerThatCannotBeReachedIsNotBlamedOnTheModel(t *testing.T) {
 		URL: "https://statuspage.mcp.invalid/key-abc123/mcp",
 		Err: errors.New("dial tcp: lookup statuspage.mcp.invalid: no such host"),
 	}
-	runErr := fmt.Errorf("building incident-scribe: %w", &serverDown{name: "statuspage", err: dial})
 
-	status, failure := outcome(runErr, nil)
+	got := (&serverDown{name: "statuspage", err: dial}).Error()
 
 	want := `the MCP server "statuspage" could not be reached: dial tcp: lookup statuspage.mcp.invalid: no such host`
-	if status != "failed" || failure != want {
-		t.Errorf("outcome = %s, %q; want failed, %q", status, failure, want)
+	if got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
 

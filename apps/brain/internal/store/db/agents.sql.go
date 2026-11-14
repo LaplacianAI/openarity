@@ -495,6 +495,49 @@ func (q *Queries) ListGrantedMCPServers(ctx context.Context, agentID uuid.UUID) 
 	return items, nil
 }
 
+const listGrantedMCPTools = `-- name: ListGrantedMCPTools :many
+SELECT t.mcp_server_id, t.name, t.description, t.input_schema
+FROM agent_mcp_servers g
+JOIN mcp_tools t ON t.mcp_server_id = g.mcp_server_id
+WHERE g.agent_id = $1 AND (g.allow IS NULL OR t.name = ANY (g.allow))
+ORDER BY t.mcp_server_id, t.name
+`
+
+type ListGrantedMCPToolsRow struct {
+	McpServerID uuid.UUID
+	Name        string
+	Description string
+	InputSchema []byte
+}
+
+// What a run's MCP tools are, as discovery last found them, so a run binds
+// them without connecting a server it may never call. The allow-list holds
+// the name the server gave, as ListGrantedToolIDs reads it.
+func (q *Queries) ListGrantedMCPTools(ctx context.Context, agentID uuid.UUID) ([]ListGrantedMCPToolsRow, error) {
+	rows, err := q.db.Query(ctx, listGrantedMCPTools, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGrantedMCPToolsRow
+	for rows.Next() {
+		var i ListGrantedMCPToolsRow
+		if err := rows.Scan(
+			&i.McpServerID,
+			&i.Name,
+			&i.Description,
+			&i.InputSchema,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGrantedSkills = `-- name: ListGrantedSkills :many
 SELECT id, team_id, name, description, license, compatibility, metadata, allowed_tools, body, source, source_ref, source_sha, created_at, updated_at FROM skills
 WHERE id IN (SELECT skill_id FROM agent_skills WHERE agent_id = $1)

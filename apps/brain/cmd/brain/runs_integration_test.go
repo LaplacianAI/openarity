@@ -292,6 +292,8 @@ func newBrain(t *testing.T, llm *scriptedLLM) *brain {
 		args []any
 	}{
 		{`INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, 'member')`, []any{b.team, user}},
+		// As discovery records it: a run binds what discovery found.
+		{`INSERT INTO mcp_tools (mcp_server_id, team_id, name) VALUES ($1, $2, 'lookup')`, []any{server, b.team}},
 		{
 			`INSERT INTO agent_mcp_servers (agent_id, mcp_server_id, team_id, allow) VALUES ($1, $2, $3, '{lookup}')`,
 			[]any{agentID, server, b.team},
