@@ -456,6 +456,16 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   which key sealed an object, and adding the column now costs nothing while
   adding it later means a migration over every attachment ever stored. Every
   row is version 1 today.
+- **A model reads a file by reference, and the bytes are fetched per
+  request.** A run's transcript holds `attachment:<id>` and never the file:
+  transcripts are saved in Postgres outside the attachment encryption, and a
+  session outlives any one run. The runner's model client looks each reference
+  up within the run's session, so another conversation's file is a missing
+  row, and decrypts it for that request only; a four-step run reads an image
+  four times. Keeping bytes in the worker's memory between requests would
+  save the reads and leave every file a run saw lingering in a process that
+  runs other teams' work. At most eight files go in one request, the newest;
+  images are read up to 5 MB and PDFs and text up to 10 MB.
 - **What Postgres cannot include in a transaction gets a tombstone, not a
   best-effort call.** A cascade does not reach a bucket or a secret store, and
   the two writes can never both be atomic. What is atomic is recording the

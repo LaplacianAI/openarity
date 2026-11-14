@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -138,6 +139,8 @@ type execFixture struct {
 	run      uuid.UUID
 	graph    *fakeSearcher
 	search   *SearchDeps
+	// objects holds the files' bytes, by object key.
+	objects *fakeObjects
 }
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -153,7 +156,10 @@ func newExecFixture(t *testing.T, model *scripted) *execFixture {
 		t.Fatalf("CreateTeam: %v", err)
 	}
 
-	f := &execFixture{store: s, raw: raw, model: model, team: team.ID, graph: &fakeSearcher{}}
+	f := &execFixture{
+		store: s, raw: raw, model: model, team: team.ID, graph: &fakeSearcher{},
+		objects: &fakeObjects{data: map[string]string{}},
+	}
 	if err := raw.QueryRow(t.Context(), `
 		INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
 		VALUES ($1, 'triage', 'test/model', 1024, 'react', 5) RETURNING id`, team.ID).Scan(&f.agent); err != nil {
@@ -187,11 +193,12 @@ func newExecFixture(t *testing.T, model *scripted) *execFixture {
 func (f *execFixture) executor(t *testing.T, clients agent.ClientFactory, endpoint agent.Endpoint) *Executor {
 	t.Helper()
 
-	runner, err := agent.New(clients, Patterns()...)
+	// As cmd/brain wires it: each request carries the files it names.
+	runner, err := agent.New(Resolving(clients, f.store, f.objects), Patterns()...)
 	if err != nil {
 		t.Fatalf("agent.New: %v", err)
 	}
-	builder := NewBuilder(f.store, &fakeObjects{data: map[string]string{}}, &fakeClients{client: &http.Client{}},
+	builder := NewBuilder(f.store, f.objects, &fakeClients{client: &http.Client{}},
 		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store}, f.search, nil)
 	e := NewExecutor(f.store, builder, runner, endpoint, f.sessions, quietLogger())
 	e.every = 20 * time.Millisecond
@@ -443,6 +450,59 @@ func TestARunPastTheThresholdFindsDescribesAndCallsItsTool(t *testing.T) {
 	}
 	if server.opened.Load() != 1 {
 		t.Errorf("the server was opened %d times, want once", server.opened.Load())
+	}
+}
+
+// A file sent with a run's message reaches the model with its bytes, while
+// the transcript the run saves names it and never holds them.
+func TestAFileSentWithTheMessageReachesTheModelAndNotTheTranscript(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("a crash in the parser", 10, 5)))
+	var session, channel, user, message uuid.UUID
+	f.mustScan(t, `SELECT session_id FROM runs WHERE id = $1`, []any{f.run}, &session)
+	f.mustScan(t, `INSERT INTO users (issuer, subject) VALUES ('dev', 'ann') RETURNING id`, nil, &user)
+	f.mustScan(t, `SELECT id FROM channels WHERE team_id = $1 AND provider = 'dashboard'`, []any{f.team}, &channel)
+	f.mustScan(t, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text)
+		VALUES ($1, $2, $3, 'ext-1', 'why does it crash?') RETURNING id`, []any{channel, session, user}, &message)
+	f.mustExec(t, `UPDATE runs SET message_id = $1 WHERE id = $2`, message, f.run)
+
+	const png = "\x89PNG-the-screenshot-bytes"
+	shot, err := f.store.CreateAttachment(t.Context(), db.CreateAttachmentParams{
+		MessageID: message, SessionID: session, TeamID: f.team, ObjectKey: "teams/x/objects/shot", KeyVersion: 1,
+		MediaType: "image/png", SizeBytes: int64(len(png)), Filename: "screen.png",
+	})
+	if err != nil {
+		t.Fatalf("CreateAttachment: %v", err)
+	}
+	f.objects.data[shot.ObjectKey] = png
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	first := f.model.requests()[0]
+	var sentImage bool
+	for _, c := range first.Messages[0].Content {
+		if c.Blob != nil && string(c.Blob.Data) == png {
+			sentImage = true
+		}
+	}
+	if !sentImage || !strings.Contains(first.Messages[0].Text(), "screen.png (image/png") {
+		t.Fatalf("the first request was %+v", first.Messages[0].Content)
+	}
+	var names []string
+	for _, tl := range first.Tools {
+		names = append(names, tl.Name)
+	}
+	if !slices.Contains(names, ReadAttachmentToolName) || !slices.Contains(names, AttachmentsToolName) {
+		t.Errorf("offered %v, want the file tools", names)
+	}
+
+	var saved string
+	f.mustScan(t, `SELECT coalesce(string_agg(body::text, ''), '') FROM agent_messages`, nil, &saved)
+	if !strings.Contains(saved, "attachment:"+shot.ID.String()) {
+		t.Fatalf("the transcript does not name the file: %s", saved)
+	}
+	if strings.Contains(saved, "PNG-the-screenshot") || strings.Contains(saved, base64.StdEncoding.EncodeToString([]byte(png))) {
+		t.Fatalf("the transcript holds the file's bytes: %s", saved)
 	}
 }
 
@@ -1840,4 +1900,11 @@ func TestAFailedKickDoesNotFailTheRun(t *testing.T) {
 	f.mustExecute(t)
 
 	wantStatus(t, f.row(t), "succeeded", "")
+}
+
+func (f *execFixture) mustScan(t *testing.T, sql string, args []any, into ...any) {
+	t.Helper()
+	if err := f.raw.QueryRow(t.Context(), sql, args...).Scan(into...); err != nil {
+		t.Fatalf("%s: %v", sql, err)
+	}
 }
