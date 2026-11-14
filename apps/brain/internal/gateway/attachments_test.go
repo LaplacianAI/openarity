@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 // A one-pixel PNG. Real bytes, because the whole point of the sniff is that it
@@ -70,6 +72,25 @@ type fakeObjects struct {
 	err error
 
 	teams []uuid.UUID
+
+	// reserved is every key reserved, held is for how long, and order is
+	// each reserve and put as it happened, so a test sees which came first.
+	reserved   []string
+	held       []float64
+	reserveErr error
+	order      []string
+}
+
+func (f *fakeObjects) ReserveObjects(_ context.Context, arg db.ReserveObjectsParams) error {
+	if f.reserveErr != nil {
+		return f.reserveErr
+	}
+	f.reserved = append(f.reserved, arg.ObjectKeys...)
+	f.held = append(f.held, arg.HoldSeconds)
+	for _, k := range arg.ObjectKeys {
+		f.order = append(f.order, "reserve "+k)
+	}
+	return nil
 }
 
 func newFakeObjects() *fakeObjects {
@@ -80,6 +101,7 @@ func (f *fakeObjects) Put(_ context.Context, teamID uuid.UUID, key string, body 
 	if f.err != nil {
 		return f.err
 	}
+	f.order = append(f.order, "put "+key)
 	f.teams = append(f.teams, teamID)
 	f.put[key] = bytes.Clone(body)
 	return nil
@@ -105,7 +127,7 @@ func fetchFixture(t *testing.T) (*Ingest, *fetchProvider, *fakeObjects, uuid.UUI
 
 	store := newFakeObjects()
 	p := &fetchProvider{bodies: map[string][]byte{"a": pngBytes}}
-	return NewIngest(store, discardLogger()), p, store, uuid.New()
+	return NewIngest(store, store, discardLogger()), p, store, uuid.New()
 }
 
 func TestFetchStoresWhatItMeasured(t *testing.T) {
@@ -406,5 +428,70 @@ func TestTheRequestLimitIsTheRealLimitForInlineBytes(t *testing.T) {
 	const overhead = 4.0 / 3.0
 	if fits := float64(maxBody) / overhead; fits > objects.MaxAttachment {
 		t.Errorf("a base64 body within maxBody could carry %.0f bytes", fits)
+	}
+}
+
+// Every file is reserved before its bytes are written, held for an hour, so
+// one whose message never commits is the reaper's to remove: a delivery
+// refused, repeated, or cut short by a crash.
+func TestAFileIsReservedBeforeItIsWritten(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeObjects()
+	ingest := NewIngest(store, store, discardLogger())
+
+	s, err := ingest.Store(t.Context(), uuid.New(), "../shot.png", []byte("\x89PNG\r\n\x1a\nrest"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"reserve " + s.ObjectKey, "put " + s.ObjectKey}; !slices.Equal(store.order, want) {
+		t.Fatalf("order = %v, want %v", store.order, want)
+	}
+	if store.held[0] != time.Hour.Seconds() {
+		t.Errorf("held for %vs, want an hour", store.held[0])
+	}
+	if s.Filename != "shot.png" || s.MediaType != "image/png" || s.SizeBytes != 12 {
+		t.Errorf("stored %+v", s)
+	}
+}
+
+// A file that is not stored says why, for the sender to act on, and nothing
+// is reserved or written for it.
+func TestAFileThatIsNotAcceptedIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		body []byte
+		want string
+	}{
+		{"empty.txt", nil, "empty.txt is empty"},
+		{"", nil, "a file with no name is empty"},
+		{"big.bin", make([]byte, objects.MaxAttachment+1), "big.bin is over the 25 MB a file may be"},
+		{"page.html", []byte("<html><script>x</script></html>"), "page.html is text/html; charset=utf-8, which is not accepted"},
+	} {
+		store := newFakeObjects()
+		_, err := NewIngest(store, store, discardLogger()).Store(t.Context(), uuid.New(), tc.name, tc.body)
+		var refused *Refused
+		if !errors.As(err, &refused) || refused.Reason != tc.want {
+			t.Errorf("%q: err = %v, want %q", tc.name, err, tc.want)
+		}
+		if len(store.order) != 0 {
+			t.Errorf("%q: %v", tc.name, store.order)
+		}
+	}
+}
+
+// A key that could not be reserved is never written: its bytes would have no
+// tombstone to find them by.
+func TestAFileWhoseKeyCannotBeReservedIsNotWritten(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeObjects()
+	store.reserveErr = errors.New("connection refused")
+	_, err := NewIngest(store, store, discardLogger()).Store(t.Context(), uuid.New(), "a.txt", []byte("hello"))
+	var refused *Refused
+	if err == nil || errors.As(err, &refused) || len(store.put) != 0 {
+		t.Fatalf("err = %v, put %d; want a failure, not a refusal, and nothing written", err, len(store.put))
 	}
 }

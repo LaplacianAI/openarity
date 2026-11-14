@@ -14,6 +14,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/stream"
 )
@@ -40,6 +41,25 @@ func TestEveryRecordedKindBecomesItsEvent(t *testing.T) {
 		{
 			eventRow(2, "message", nil, `{"id":"`+msg.String()+`","user_id":"`+user.String()+`","text":"aside","asks":false}`),
 			stream.Message{ID: msg.String(), UserID: user.String(), Parts: []stream.Part{{Type: stream.PartText, Text: "aside"}}},
+		},
+		// Its files follow its text, in the order they were sent.
+		{
+			eventRow(6, "message", nil, `{"id":"`+msg.String()+`","text":"look","asks":true,"files":[`+
+				`{"id":"a1","filename":"screen.png","media_type":"image/png","size":307200},`+
+				`{"id":"a2","filename":"crash.log","media_type":"text/plain","size":40}]}`),
+			stream.Message{ID: msg.String(), State: stream.StatePending, Parts: []stream.Part{
+				{Type: stream.PartText, Text: "look"},
+				{Type: stream.PartFile, File: &stream.File{ID: "a1", Filename: "screen.png", MediaType: "image/png", Size: 307200}},
+				{Type: stream.PartFile, File: &stream.File{ID: "a2", Filename: "crash.log", MediaType: "text/plain", Size: 40}},
+			}},
+		},
+		// A message of files alone has no empty text part.
+		{
+			eventRow(7, "message", nil, `{"id":"`+msg.String()+`","text":"","asks":true,"files":[`+
+				`{"id":"a1","filename":"screen.png","media_type":"image/png","size":10}]}`),
+			stream.Message{ID: msg.String(), State: stream.StatePending, Parts: []stream.Part{
+				{Type: stream.PartFile, File: &stream.File{ID: "a1", Filename: "screen.png", MediaType: "image/png", Size: 10}},
+			}},
 		},
 		{func() db.ListSessionEventsRow {
 			r := eventRow(3, "started", &run, `{"agent":"x"}`)
@@ -131,7 +151,7 @@ func TestARowThatCannotBeReadIsAnError(t *testing.T) {
 func (f *fixture) follow(t *testing.T, after string, want int) []stream.Envelope {
 	t.Helper()
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store, f.authz, f.objects, f.inbox).
+	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, discardLogger())).
 		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, r.WithContext(auth.WithUser(r.Context(), f.caller)))
@@ -207,7 +227,7 @@ func TestFollowingIsRefused(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
 			mux := http.NewServeMux()
-			New(discardLogger(), f.store, f.authz, f.objects, f.inbox).
+			New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, discardLogger())).
 				Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 			// Bounded: a refusal that let the stream through would follow it
 			// for good, and should fail by name rather than by timeout.
@@ -234,7 +254,7 @@ func TestALogThatFailsEndsTheStream(t *testing.T) {
 	f := newFixture(t)
 	f.store.eventsErr = errors.New("connection reset")
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store, f.authz, f.objects, f.inbox).
+	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, discardLogger())).
 		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, f.session()+"/events", nil)
 	req = req.WithContext(auth.WithUser(req.Context(), f.caller))

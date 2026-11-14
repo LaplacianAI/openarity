@@ -1639,6 +1639,20 @@ type SayRequest struct {
 	Text string `json:"text" yaml:"text"`
 }
 
+// SayUpload defines model for SayUpload.
+type SayUpload struct {
+	// Files The files sent with the message, each at most 25 MB: images (png,
+	// jpeg, gif, webp), PDF, plain text, zip, mp3 or wav, as their bytes
+	// say. The part's filename is kept, cleaned, as the file's name.
+	Files *[]openapi_types.File `json:"files,omitempty" yaml:"files,omitempty"`
+
+	// Key As in `SayRequest`.
+	Key string `json:"key" yaml:"key"`
+
+	// Text What the person says, as in `SayRequest`. It may be empty when a file is sent.
+	Text *string `json:"text,omitempty" yaml:"text,omitempty"`
+}
+
 // SearchProvider `searxng` and `firecrawl-oss` are self-hosted and take a `url`;
 // `brave`, `tavily` and `firecrawl-cloud` take a key and no url.
 // `firecrawl-oss` takes a key only if the instance requires one.
@@ -2466,8 +2480,14 @@ type StartRunJSONRequestBody = RunRequest
 // StartConversationJSONRequestBody defines body for StartConversation for application/json ContentType.
 type StartConversationJSONRequestBody = SayRequest
 
+// StartConversationMultipartRequestBody defines body for StartConversation for multipart/form-data ContentType.
+type StartConversationMultipartRequestBody = SayUpload
+
 // SendSessionMessageJSONRequestBody defines body for SendSessionMessage for application/json ContentType.
 type SendSessionMessageJSONRequestBody = SayRequest
+
+// SendSessionMessageMultipartRequestBody defines body for SendSessionMessage for multipart/form-data ContentType.
+type SendSessionMessageMultipartRequestBody = SayUpload
 
 // SaveTeamSettingsJSONRequestBody defines body for SaveTeamSettings for application/json ContentType.
 type SaveTeamSettingsJSONRequestBody = TeamSettingsRequest
@@ -3530,6 +3550,13 @@ type ClientInterface interface {
 	// answers `200` with what was stored the first time rather than
 	// starting another conversation.
 	//
+	// A message with files is sent as `multipart/form-data`: its `text`,
+	// its `key`, and up to eight `files` parts of at most 25 MB each. Each
+	// file's type is read from its bytes, not its name, and one of a type
+	// not accepted is refused with `400` naming it. A message of files
+	// alone needs no text. The session's stream carries each file as a
+	// `file` part of the message, and the hub reads them with its tools.
+	//
 	// A message the hub cannot answer, because the team has no model set or
 	// the caller may not start runs, is still stored, and `unanswered` says
 	// why.
@@ -3550,6 +3577,13 @@ type ClientInterface interface {
 	// send: the message is stored once, and a second request with the key
 	// answers `200` with what was stored the first time rather than
 	// starting another conversation.
+	//
+	// A message with files is sent as `multipart/form-data`: its `text`,
+	// its `key`, and up to eight `files` parts of at most 25 MB each. Each
+	// file's type is read from its bytes, not its name, and one of a type
+	// not accepted is refused with `400` naming it. A message of files
+	// alone needs no text. The session's stream carries each file as a
+	// `file` part of the message, and the hub reads them with its tools.
 	//
 	// A message the hub cannot answer, because the team has no model set or
 	// the caller may not start runs, is still stored, and `unanswered` says
@@ -3683,7 +3717,8 @@ type ClientInterface interface {
 	// way the message is pending until a run takes it, which the session's
 	// stream reports as `message_consumed`.
 	//
-	// `key` makes a retry the same send, as for `startConversation`.
+	// `key` makes a retry the same send, and files are sent as
+	// `multipart/form-data`, both as for `startConversation`.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -3702,7 +3737,8 @@ type ClientInterface interface {
 	// way the message is pending until a run takes it, which the session's
 	// stream reports as `message_consumed`.
 	//
-	// `key` makes a retry the same send, as for `startConversation`.
+	// `key` makes a retry the same send, and files are sent as
+	// `multipart/form-data`, both as for `startConversation`.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5565,6 +5601,13 @@ func (c *Client) ListSessions(ctx context.Context, id TeamID, params *ListSessio
 // answers `200` with what was stored the first time rather than
 // starting another conversation.
 //
+// A message with files is sent as `multipart/form-data`: its `text`,
+// its `key`, and up to eight `files` parts of at most 25 MB each. Each
+// file's type is read from its bytes, not its name, and one of a type
+// not accepted is refused with `400` naming it. A message of files
+// alone needs no text. The session's stream carries each file as a
+// `file` part of the message, and the hub reads them with its tools.
+//
 // A message the hub cannot answer, because the team has no model set or
 // the caller may not start runs, is still stored, and `unanswered` says
 // why.
@@ -5595,6 +5638,13 @@ func (c *Client) StartConversationWithBody(ctx context.Context, id TeamID, conte
 // send: the message is stored once, and a second request with the key
 // answers `200` with what was stored the first time rather than
 // starting another conversation.
+//
+// A message with files is sent as `multipart/form-data`: its `text`,
+// its `key`, and up to eight `files` parts of at most 25 MB each. Each
+// file's type is read from its bytes, not its name, and one of a type
+// not accepted is refused with `400` naming it. A message of files
+// alone needs no text. The session's stream carries each file as a
+// `file` part of the message, and the hub reads them with its tools.
 //
 // A message the hub cannot answer, because the team has no model set or
 // the caller may not start runs, is still stored, and `unanswered` says
@@ -5788,7 +5838,8 @@ func (c *Client) ListSessionMessages(ctx context.Context, id TeamID, sessionID o
 // way the message is pending until a run takes it, which the session's
 // stream reports as `message_consumed`.
 //
-// `key` makes a retry the same send, as for `startConversation`.
+// `key` makes a retry the same send, and files are sent as
+// `multipart/form-data`, both as for `startConversation`.
 //
 // Takes any type of body and a specified content type.
 //
@@ -5817,7 +5868,8 @@ func (c *Client) SendSessionMessageWithBody(ctx context.Context, id TeamID, sess
 // way the message is pending until a run takes it, which the session's
 // stream reports as `message_consumed`.
 //
-// `key` makes a retry the same send, as for `startConversation`.
+// `key` makes a retry the same send, and files are sent as
+// `multipart/form-data`, both as for `startConversation`.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11130,6 +11182,13 @@ type ClientWithResponsesInterface interface {
 	// answers `200` with what was stored the first time rather than
 	// starting another conversation.
 	//
+	// A message with files is sent as `multipart/form-data`: its `text`,
+	// its `key`, and up to eight `files` parts of at most 25 MB each. Each
+	// file's type is read from its bytes, not its name, and one of a type
+	// not accepted is refused with `400` naming it. A message of files
+	// alone needs no text. The session's stream carries each file as a
+	// `file` part of the message, and the hub reads them with its tools.
+	//
 	// A message the hub cannot answer, because the team has no model set or
 	// the caller may not start runs, is still stored, and `unanswered` says
 	// why.
@@ -11150,6 +11209,13 @@ type ClientWithResponsesInterface interface {
 	// send: the message is stored once, and a second request with the key
 	// answers `200` with what was stored the first time rather than
 	// starting another conversation.
+	//
+	// A message with files is sent as `multipart/form-data`: its `text`,
+	// its `key`, and up to eight `files` parts of at most 25 MB each. Each
+	// file's type is read from its bytes, not its name, and one of a type
+	// not accepted is refused with `400` naming it. A message of files
+	// alone needs no text. The session's stream carries each file as a
+	// `file` part of the message, and the hub reads them with its tools.
 	//
 	// A message the hub cannot answer, because the team has no model set or
 	// the caller may not start runs, is still stored, and `unanswered` says
@@ -11293,7 +11359,8 @@ type ClientWithResponsesInterface interface {
 	// way the message is pending until a run takes it, which the session's
 	// stream reports as `message_consumed`.
 	//
-	// `key` makes a retry the same send, as for `startConversation`.
+	// `key` makes a retry the same send, and files are sent as
+	// `multipart/form-data`, both as for `startConversation`.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11312,7 +11379,8 @@ type ClientWithResponsesInterface interface {
 	// way the message is pending until a run takes it, which the session's
 	// stream reports as `message_consumed`.
 	//
-	// `key` makes a retry the same send, as for `startConversation`.
+	// `key` makes a retry the same send, and files are sent as
+	// `multipart/form-data`, both as for `startConversation`.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16307,6 +16375,13 @@ func (c *ClientWithResponses) ListSessionsWithResponse(ctx context.Context, id T
 // answers `200` with what was stored the first time rather than
 // starting another conversation.
 //
+// A message with files is sent as `multipart/form-data`: its `text`,
+// its `key`, and up to eight `files` parts of at most 25 MB each. Each
+// file's type is read from its bytes, not its name, and one of a type
+// not accepted is refused with `400` naming it. A message of files
+// alone needs no text. The session's stream carries each file as a
+// `file` part of the message, and the hub reads them with its tools.
+//
 // A message the hub cannot answer, because the team has no model set or
 // the caller may not start runs, is still stored, and `unanswered` says
 // why.
@@ -16333,6 +16408,13 @@ func (c *ClientWithResponses) StartConversationWithBodyWithResponse(ctx context.
 // send: the message is stored once, and a second request with the key
 // answers `200` with what was stored the first time rather than
 // starting another conversation.
+//
+// A message with files is sent as `multipart/form-data`: its `text`,
+// its `key`, and up to eight `files` parts of at most 25 MB each. Each
+// file's type is read from its bytes, not its name, and one of a type
+// not accepted is refused with `400` naming it. A message of files
+// alone needs no text. The session's stream carries each file as a
+// `file` part of the message, and the hub reads them with its tools.
 //
 // A message the hub cannot answer, because the team has no model set or
 // the caller may not start runs, is still stored, and `unanswered` says
@@ -16512,7 +16594,8 @@ func (c *ClientWithResponses) ListSessionMessagesWithResponse(ctx context.Contex
 // way the message is pending until a run takes it, which the session's
 // stream reports as `message_consumed`.
 //
-// `key` makes a retry the same send, as for `startConversation`.
+// `key` makes a retry the same send, and files are sent as
+// `multipart/form-data`, both as for `startConversation`.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -16537,7 +16620,8 @@ func (c *ClientWithResponses) SendSessionMessageWithBodyWithResponse(ctx context
 // way the message is pending until a run takes it, which the session's
 // stream reports as `message_consumed`.
 //
-// `key` makes a retry the same send, as for `startConversation`.
+// `key` makes a retry the same send, and files are sent as
+// `multipart/form-data`, both as for `startConversation`.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

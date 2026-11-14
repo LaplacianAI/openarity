@@ -15,8 +15,19 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "type": "string", "description": "text; a type a reader does not know is kept with its type." },
-        "text": { "type": "string" }
+        "type": { "type": "string", "description": "text or file; a type a reader does not know is kept with its type." },
+        "text": { "type": "string" },
+        "file": {
+          "type": "object",
+          "description": "A file sent with the message, named by its id; its bytes are the server's to serve.",
+          "required": ["id", "filename", "media_type", "size"],
+          "properties": {
+            "id": { "type": "string" },
+            "filename": { "type": "string" },
+            "media_type": { "type": "string" },
+            "size": { "type": "integer", "minimum": 0 }
+          }
+        }
       }
     },
     "message": {

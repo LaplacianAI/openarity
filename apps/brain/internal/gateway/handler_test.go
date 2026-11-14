@@ -284,7 +284,7 @@ func (h *harness) mount(t *testing.T) {
 	}
 
 	h.mux = http.NewServeMux()
-	ingest := NewIngest(h.objects, discardLogger())
+	ingest := NewIngest(h.objects, h.objects, discardLogger())
 	New(discardLogger(), h.store, h.secrets, registry, h.sink, ingest, h.store).Register(h.mux, nil)
 }
 
@@ -876,7 +876,7 @@ func TestTheGatewayRouterIsPublic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	ingest := NewIngest(h.objects, discardLogger())
+	ingest := NewIngest(h.objects, h.objects, discardLogger())
 	if r := New(discardLogger(), h.store, h.secrets, registry, h.sink, ingest, nil); !r.Public() {
 		t.Error("the gateway router is not public, so registering it needs a guard it will never have")
 	}

@@ -456,6 +456,14 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   which key sealed an object, and adding the column now costs nothing while
   adding it later means a migration over every attachment ever stored. Every
   row is version 1 today.
+- **A file a person sends is reserved before it is written**, as a skill's
+  files are: its key goes into `deleted_objects` held for an hour, then the
+  bytes into the bucket, then the attachment row with the message. A delivery
+  refused, repeated or cut short by a crash leaves bytes no row names, and the
+  reaper deletes them once the hold passes; one that commits is kept, since
+  the reaper counts references first. `gateway.Ingest.Store` does it for the
+  webhooks and the dashboard alike, so a webhook delivered twice no longer
+  leaves its second copy in the bucket for good.
 - **A model reads a file by reference, and the bytes are fetched per
   request.** A run's transcript holds `attachment:<id>` and never the file:
   transcripts are saved in Postgres outside the attachment encryption, and a

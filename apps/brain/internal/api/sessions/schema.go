@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 )
 
 type session struct {
@@ -71,6 +73,8 @@ type attachmentCursor struct {
 type sayRequest struct {
 	Text string `json:"text"`
 	Key  string `json:"key"`
+	// files arrive in a multipart body only, stored as they are read.
+	files []gateway.Stored
 }
 
 // said is what became of it: the conversation, the message, and the run that

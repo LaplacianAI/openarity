@@ -20,6 +20,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -309,6 +310,7 @@ type fixture struct {
 	authz     *fakeAuthz
 	objects   *fakeObjects
 	inbox     *fakeInbox
+	uploads   *fakeUploads
 	caller    *auth.User
 	// dashboardID is the team's dashboard channel.
 	dashboardID uuid.UUID
@@ -320,6 +322,7 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{
 		teamID: uuid.New(), channelID: uuid.New(),
 		sessionID: uuid.New(), userID: uuid.New(),
+		uploads: &fakeUploads{put: map[string][]byte{}},
 	}
 	ref := "D01ABC"
 	f.store = &fakeStore{
@@ -380,7 +383,7 @@ func (f *fixture) get(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store, f.authz, f.objects, f.inbox).
+	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, discardLogger())).
 		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)

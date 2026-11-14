@@ -13,7 +13,10 @@ import (
 // drops a field fails.
 func samples() []Event {
 	return []Event{
-		Message{ID: "m1", UserID: "u1", Parts: []Part{{Type: PartText, Text: "hi"}}, State: StatePending},
+		Message{ID: "m1", UserID: "u1", Parts: []Part{
+			{Type: PartText, Text: "hi"},
+			{Type: PartFile, File: &File{ID: "a1", Filename: "screen.png", MediaType: "image/png", Size: 307200}},
+		}, State: StatePending},
 		MessageConsumed{MessageIDs: []string{"m1", "m2"}},
 		RunStarted{ParentRunID: "r0", Agent: "billing"},
 		StepStarted{Step: 2},

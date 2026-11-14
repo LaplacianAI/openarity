@@ -182,7 +182,14 @@ SELECT x.seq, x.at, x.kind, x.run_id, x.payload, x.agent, x.parent_run_id, x.out
 FROM (
     SELECT m.session_seq AS seq, m.received_at AS at, 'message'::text AS kind,
            NULL::uuid AS run_id,
-           jsonb_build_object('id', m.id, 'user_id', m.user_id, 'text', m.text, 'asks', m.asks) AS payload,
+           jsonb_build_object('id', m.id, 'user_id', m.user_id, 'text', m.text, 'asks', m.asks,
+               -- Written in the message's own transaction, so a reader never
+               -- sees the message without its files.
+               'files', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                               'id', a.id, 'filename', a.filename,
+                               'media_type', a.media_type, 'size', a.size_bytes)
+                             ORDER BY a.created_at, a.id), '[]'::jsonb)
+                         FROM attachments a WHERE a.message_id = m.id)) AS payload,
            NULL::text AS agent, NULL::uuid AS parent_run_id, NULL::text AS output
     FROM messages m
     WHERE m.session_id = $1::uuid AND m.session_seq > $2::bigint

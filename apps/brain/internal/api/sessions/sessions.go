@@ -49,10 +49,11 @@ type handler struct {
 	authz   api.Authorizer
 	objects Objects
 	inbox   Deliverer
+	files   Files
 }
 
-func New(logger *slog.Logger, s Store, a api.Authorizer, o Objects, inbox Deliverer) *api.Router {
-	h := &handler{logger: logger, store: s, authz: a, objects: o, inbox: inbox}
+func New(logger *slog.Logger, s Store, a api.Authorizer, o Objects, inbox Deliverer, files Files) *api.Router {
+	h := &handler{logger: logger, store: s, authz: a, objects: o, inbox: inbox, files: files}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/channels/{channelID}/sessions", h.listByChannel)

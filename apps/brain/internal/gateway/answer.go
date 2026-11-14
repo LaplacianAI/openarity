@@ -23,7 +23,7 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 	if !asksUs(s, m) {
 		return outcome{}, nil
 	}
-	if strings.TrimSpace(m.Text) == "" {
+	if strings.TrimSpace(m.Text) == "" && len(m.Files) == 0 {
 		return outcome{unanswered: "the message has no text"}, nil
 	}
 
@@ -61,7 +61,7 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 	id := uuid.New()
 	if _, err := q.CreateChannelRun(ctx, db.CreateChannelRunParams{
 		ID: id, TeamID: ch.TeamID, SessionID: s.ID, UserID: &m.UserID,
-		Input: m.Text, MessageID: &messageID,
+		Input: inputOf(m), MessageID: &messageID,
 	}); err != nil {
 		return outcome{}, fmt.Errorf("start a run for %q: %w", m.ExternalID, err)
 	}
@@ -93,5 +93,27 @@ func steer(m Delivery) string {
 	if who == "" {
 		who = m.Author.Ref
 	}
-	return who + ": " + m.Text
+	said := who + ": " + inputOf(m)
+	if len(m.Files) == 0 {
+		return said
+	}
+	// A run reads a steer's text alone; the files it names are in the
+	// conversation for attachments() to list.
+	names := make([]string, len(m.Files))
+	for i, f := range m.Files {
+		names[i] = f.Filename
+		if names[i] == "" {
+			names[i] = "a file with no name"
+		}
+	}
+	return said + "\n[sent with " + strings.Join(names, ", ") + "]"
+}
+
+// inputOf is what a message asks a run. A run's first message names the files
+// sent with it, so a message of files alone asks that they be looked at.
+func inputOf(m Delivery) string {
+	if strings.TrimSpace(m.Text) == "" && len(m.Files) > 0 {
+		return "The message is the files sent with it."
+	}
+	return m.Text
 }

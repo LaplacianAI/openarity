@@ -64,7 +64,7 @@ with the envelope's `at` and `run_id` beside the event's own fields.
 
 | Kind | What it is |
 | --- | --- |
-| `message` | something a person said; `pending` while it waits for a run |
+| `message` | something a person said, in text and file parts; `pending` while it waits for a run |
 | `message_consumed` | a run taking messages: the one it started from, or ones sent while it worked |
 | `run_started` | a run beginning, with its parent when another run handed it the work |
 | `step_started` | a run making its next model call |
@@ -90,6 +90,10 @@ Vercel AI SDK give every block an id. `stream.MessageID` builds it, and
 `agentstream.Pipe` stamps it, so a reader never infers where one message ends.
 Show reasoning folded away, text as it arrives, and `run_finished`'s output as
 the answer once the run ends.
+
+A file part names a file sent with the message, by its id, filename, media
+type and size; its bytes are never on the stream, so a reader fetches them from
+the server that sent the event.
 
 Sequence numbers may be negative: a server that numbers history it had before
 it kept a stream counts it down to 0, and `stream.Start` is the cursor before
