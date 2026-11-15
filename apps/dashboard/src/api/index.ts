@@ -19,6 +19,7 @@ import type {
   BlueprintDiscovered,
   BlueprintPlan,
   Channel,
+  ChannelPairing,
   CreateChannelRequest,
   CreatedChannel,
   ListedAgent,
@@ -31,6 +32,7 @@ import type {
   Member,
   Message,
   Page,
+  PairChannelRequest,
   PendingSender,
   Proposal,
   Run,
@@ -144,6 +146,23 @@ export function updateChannel(
   body: UpdateChannelRequest,
 ): Promise<Channel> {
   return request<Channel>(`/teams/${teamId}/channels/${channelId}`, { method: "PATCH", body });
+}
+
+/** Asks for the channel's number to be linked: by a QR code, or a code for `phone`. */
+export function pairChannel(
+  teamId: string,
+  channelId: string,
+  body: PairChannelRequest,
+): Promise<ChannelPairing> {
+  return request<ChannelPairing>(`/teams/${teamId}/channels/${channelId}/pairing`, {
+    method: "POST",
+    body,
+  });
+}
+
+/** What linking the channel's number shows now. */
+export function getChannelPairing(teamId: string, channelId: string): Promise<ChannelPairing> {
+  return request<ChannelPairing>(`/teams/${teamId}/channels/${channelId}/pairing`);
 }
 
 export function deleteChannel(teamId: string, channelId: string): Promise<void> {

@@ -279,6 +279,18 @@
       "permission": "channel:write"
     },
     {
+      "method": "POST",
+      "path": "/teams/{id}/channels/{channelID}/pairing",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/channels/{channelID}/pairing",
+      "scope": "team",
+      "permission": "channel:write"
+    },
+    {
       "method": "GET",
       "path": "/teams/{id}/channels/{channelID}/senders/pending",
       "scope": "team",

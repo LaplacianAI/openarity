@@ -262,3 +262,43 @@ func TestTheWhatsAppAccountsRollBack(t *testing.T) {
 		t.Fatalf("Migrate after Rollback: %v", err)
 	}
 }
+
+// Asking to pair works before any role has made the row, and each request
+// is a new one: the number moves on and what the last one showed is gone.
+func TestAskingToPairIsANewRequestEachTime(t *testing.T) {
+	t.Parallel()
+	s := queryStore(t)
+	team := mustCreate(t, s, "wa-pair "+uuid.NewString()[:8])
+	ch := mustCreateChannel(t, s, team.ID, "whatsapp", "number")
+	qr, code, phone := "qr", "code", "919876543210"
+
+	if err := s.RequestWhatsAppPairing(t.Context(), db.RequestWhatsAppPairingParams{ChannelID: ch.ID, Method: &qr}); err != nil {
+		t.Fatalf("RequestWhatsAppPairing before any role: %v", err)
+	}
+	leased(t, s, "a", 60, ch.ID)
+	shown := "2@old"
+	if _, err := s.SetWhatsAppPairing(t.Context(), db.SetWhatsAppPairingParams{ChannelID: ch.ID, Holder: "a", Seq: 1, Qr: &shown}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequestWhatsAppPairing(t.Context(), db.RequestWhatsAppPairingParams{ChannelID: ch.ID, Method: &code, Phone: &phone}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := leased(t, s, "a", 60, ch.ID)[ch.ID]
+	if r.PairSeq != 2 || r.PairSeen != 1 || *r.PairMethod != "code" || *r.PairPhone != phone {
+		t.Fatalf("account = %+v; want request 2, a code for the number, 1 taken", r)
+	}
+	acc, err := s.GetWhatsAppAccount(t.Context(), db.GetWhatsAppAccountParams{ChannelID: ch.ID, StaleSeconds: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acc.State != "pairing" || acc.PairQr != nil || !acc.Held {
+		t.Errorf("account = %+v; want pairing, the old QR gone, held", acc)
+	}
+	if _, err := s.pool.Exec(t.Context(), `UPDATE whatsapp_accounts SET heartbeat_at = now() - interval '5 minutes' WHERE channel_id = $1`, ch.ID); err != nil {
+		t.Fatal(err)
+	}
+	if acc, _ := s.GetWhatsAppAccount(t.Context(), db.GetWhatsAppAccountParams{ChannelID: ch.ID, StaleSeconds: 60}); acc.Held {
+		t.Error("a holder silent five minutes still holds it")
+	}
+}

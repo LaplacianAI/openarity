@@ -679,6 +679,92 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/channels/{channelID}/pairing:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: channelID
+        in: path
+        required: true
+        description: The channel
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: pairChannel
+      tags: [channels]
+      summary: Link a WhatsApp number to the channel
+      description: |
+        Requires `channel:write` in this team. Only for a channel whose
+        `can_pair` is true; any other is refused with 400.
+
+        `qr` shows a QR code to scan from WhatsApp on the phone (Settings,
+        Linked devices, Link a device). `code` asks WhatsApp for a code for
+        `phone`, the number with its country code, entered on that phone
+        instead ("Link with phone number").
+
+        The `brain whatsapp` role holding the channel takes the request
+        within about 15 seconds and writes what to show. Poll `GET` every
+        few seconds: a QR changes about every 20 seconds, a code lasts about
+        three minutes, and `state` becomes `connected` with the `phone`
+        once it is linked, or `unpaired` with an `error` saying why it
+        stopped. `held` false means no role is running to take it.
+
+        Pairing a channel already linked replaces its number: the device
+        linked before is logged out.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairChannelRequest"
+      responses:
+        "202":
+          description: Asked for; what the pairing shows now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelPairing"
+        "400":
+          description: |
+            The body is malformed, `method` is neither `qr` nor `code`,
+            `phone` is missing for `code`, sent for `qr` or not a number with
+            its country code, or the channel is not linked by pairing.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["phone must be a number with its country code, 7 to 15 digits, such as +91 98765 43210"]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    get:
+      operationId: getChannelPairing
+      tags: [channels]
+      summary: What linking the channel's number shows
+      description: |
+        Requires `channel:write` in this team, not `channel:read`: the QR or
+        code is what lets a phone link the channel, and whoever links it
+        makes the bot their number. Only for a channel whose `can_pair` is
+        true.
+      responses:
+        "200":
+          description: The pairing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelPairing"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/senders/pending:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -3651,7 +3737,7 @@ components:
 
     Channel:
       type: object
-      required: [id, team_id, provider, name, can_reply, takes_reply_url, can_notify, notify_strangers, can_show_events, reply_mode]
+      required: [id, team_id, provider, name, can_reply, takes_reply_url, can_notify, notify_strangers, can_show_events, reply_mode, can_pair]
       properties:
         id:
           type: string
@@ -3729,6 +3815,12 @@ components:
             tools, planning, reading files) and tools' results are never
             sent; nor is anything of a run another agent was handed. Always
             `final` where `can_show_events` is false.
+        can_pair:
+          type: boolean
+          description: |
+            Whether this channel's number is linked by pairing, as a
+            `whatsapp` channel's is: a phone links it by scanning a QR or
+            entering a code (`/teams/{id}/channels/{channelID}/pairing`).
         reply_url:
           type: string
           format: uri
@@ -3813,6 +3905,58 @@ components:
             secret, as one secret, and are never returned. A provider that
             asks for nothing refuses any.
           examples: [{"bot_token": "<token from @BotFather>"}]
+
+    PairChannelRequest:
+      type: object
+      additionalProperties: false
+      required: [method]
+      properties:
+        method:
+          type: string
+          enum: [qr, code]
+        phone:
+          type: string
+          description: |
+            For `code` alone: the number to link, with its country code.
+            Spaces, dashes, dots, brackets and a leading `+` are allowed.
+          examples: ["+91 98765 43210"]
+
+    ChannelPairing:
+      type: object
+      required: [state, held]
+      properties:
+        state:
+          type: string
+          enum: [unpaired, pairing, connected]
+        method:
+          type: string
+          enum: [qr, code]
+          description: What the pairing under way was asked to show.
+        qr:
+          type: string
+          description: |
+            The text to draw as a QR code, while a QR pairing waits to be
+            scanned. It changes about every 20 seconds.
+        code:
+          type: string
+          description: The code to enter on the phone, while a code pairing waits.
+          examples: ["ABCD-1234"]
+        phone:
+          type: string
+          description: The linked number, once `connected`.
+          examples: ["919876543210"]
+        error:
+          type: string
+          description: Why the last pairing stopped, or the device was unlinked.
+        held:
+          type: boolean
+          description: |
+            Whether a `brain whatsapp` role holds the channel now. Without
+            one nothing pairs and nothing is sent: the deployment runs no
+            role, or it is down.
+        updated_at:
+          type: string
+          format: date-time
 
     UpdateChannelRequest:
       type: object

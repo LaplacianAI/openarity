@@ -100,7 +100,7 @@ func connectLogging(
 	teamID := uuid.New()
 	mux := http.NewServeMux()
 	a := &fakeAuthz{allowed: true}
-	New(logger, s, a, sec, p, "https://hooks.example.com", publicOnly, tg.client(), s).
+	New(logger, s, a, sec, p, "https://hooks.example.com", publicOnly, tg.client(), s, pairingOf(s)).
 		Register(mux, api.NewGuard(channelRoutes(t), a, liveTeams{}, discardLogger()))
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/teams/"+teamID.String()+"/channels", strings.NewReader(body))
 	req = req.WithContext(auth.WithUser(req.Context(), memberOf(teamID, "admin")))
@@ -349,7 +349,7 @@ func TestWithNoPublicAddressTheBotIsLeftForThePersonToPoint(t *testing.T) {
 			teamID := uuid.New()
 			mux := http.NewServeMux()
 			a := &fakeAuthz{allowed: true}
-			New(discardLogger(), s, a, sec, both(), hookBase, publicOnly, tg.client(), s).
+			New(discardLogger(), s, a, sec, both(), hookBase, publicOnly, tg.client(), s, pairingOf(s)).
 				Register(mux, api.NewGuard(channelRoutes(t), a, liveTeams{}, discardLogger()))
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/teams/"+teamID.String()+"/channels",
 				strings.NewReader(`{"provider":"telegram","name":"ops","credentials":{"bot_token":"`+botToken+`"}}`))
@@ -371,7 +371,7 @@ func deleteChannel(t *testing.T, tg *telegramAPI, s *fakeStore, sec *fakeSecrets
 	t.Helper()
 	mux := http.NewServeMux()
 	a := &fakeAuthz{allowed: true}
-	New(discardLogger(), s, a, sec, both(), "https://hooks.example.com", publicOnly, tg.client(), s).
+	New(discardLogger(), s, a, sec, both(), "https://hooks.example.com", publicOnly, tg.client(), s, pairingOf(s)).
 		Register(mux, api.NewGuard(channelRoutes(t), a, liveTeams{}, discardLogger()))
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, channelPath(ch.TeamID, ch.ID), nil)
 	req = req.WithContext(auth.WithUser(req.Context(), memberOf(ch.TeamID, "admin")))

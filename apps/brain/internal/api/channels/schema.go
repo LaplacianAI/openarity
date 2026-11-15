@@ -31,6 +31,9 @@ type channel struct {
 	// its answer alone, or "events", each step and then the answer. Always
 	// "final" where the provider cannot show events.
 	ReplyMode string `json:"reply_mode"`
+	// CanPair is whether the channel's number is linked by pairing, as a
+	// WhatsApp number is, so a client offers it only there.
+	CanPair bool `json:"can_pair"`
 }
 
 // listedChannel is a row of the channels list: the channel, and how recently
@@ -116,4 +119,25 @@ type teamPendingCursor struct {
 type senderCursor struct {
 	CreatedAt time.Time `json:"c"`
 	Ref       string    `json:"r"`
+}
+
+// pairRequest asks for the channel's number to be linked: by a QR to scan,
+// or by a code WhatsApp sends for the number given.
+type pairRequest struct {
+	Method string  `json:"method"`
+	Phone  *string `json:"phone,omitempty"`
+}
+
+// pairing is what linking a number shows. QR is the text to draw as a QR
+// code, which changes about every 20 seconds; Code is typed on the phone.
+// Held is whether a role holds the channel now: without one, nothing pairs.
+type pairing struct {
+	State     string     `json:"state"`
+	Method    string     `json:"method,omitempty"`
+	QR        string     `json:"qr,omitempty"`
+	Code      string     `json:"code,omitempty"`
+	Phone     string     `json:"phone,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	Held      bool       `json:"held"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }

@@ -89,9 +89,33 @@ export type Channel = {
    * Always `final` where `can_show_events` is false.
    */
   reply_mode?: ReplyMode;
+  /**
+   * Whether the channel's number is linked by pairing, as a WhatsApp
+   * channel's is. Optional: a brain from before the field sends none.
+   */
+  can_pair?: boolean;
 };
 
 export type ReplyMode = "final" | "events";
+
+/** POST /teams/{id}/channels/{channelID}/pairing. `phone` is for `code` alone. */
+export type PairChannelRequest = { method: "qr" | "code"; phone?: string };
+
+/**
+ * GET /teams/{id}/channels/{channelID}/pairing. `qr` is the text to draw as
+ * a QR code, changing about every 20 seconds; `code` is typed on the phone;
+ * `held` is whether a WhatsApp role holds the channel at all.
+ */
+export type ChannelPairing = {
+  state: "unpaired" | "pairing" | "connected";
+  method?: "qr" | "code";
+  qr?: string;
+  code?: string;
+  phone?: string;
+  error?: string;
+  held: boolean;
+  updated_at?: string;
+};
 
 /**
  * PATCH /teams/{id}/channels/{channelID}. What is sent changes and the rest is

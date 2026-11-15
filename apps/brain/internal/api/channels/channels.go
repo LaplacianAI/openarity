@@ -73,6 +73,7 @@ type Providers interface {
 	Notifier(name string) (gateway.Notifier, bool)
 	TakesReplyURL(name string) bool
 	RepliesWithEvents(name string) bool
+	HoldsConnection(name string) bool
 }
 
 // Kicker has a notice sent now; a failed kick is only late, since the sweep
@@ -93,17 +94,18 @@ type handler struct {
 	allow func(netip.Addr) bool
 	// setup asks a provider about the credentials a channel is connected
 	// with. It refuses what a team may not reach and follows no redirect.
-	setup *http.Client
-	kick  Kicker
+	setup   *http.Client
+	kick    Kicker
+	pairing PairingStore
 }
 
 func New(
 	logger *slog.Logger, s Store, a api.Authorizer, sec Secrets, p Providers, hookBase string,
-	allow func(netip.Addr) bool, setup *http.Client, kick Kicker,
+	allow func(netip.Addr) bool, setup *http.Client, kick Kicker, pairing PairingStore,
 ) *api.Router {
 	h := &handler{
 		logger: logger, store: s, authz: a, secrets: sec, providers: p,
-		hookBase: strings.TrimSuffix(hookBase, "/"), allow: allow, setup: setup, kick: kick,
+		hookBase: strings.TrimSuffix(hookBase, "/"), allow: allow, setup: setup, kick: kick, pairing: pairing,
 	}
 
 	r := api.NewRouter("/teams")
@@ -111,6 +113,8 @@ func New(
 	r.Post("/{id}/channels", h.create)
 	r.Patch("/{id}/channels/{channelID}", h.update)
 	r.Delete("/{id}/channels/{channelID}", h.delete)
+	r.Post("/{id}/channels/{channelID}/pairing", h.pair)
+	r.Get("/{id}/channels/{channelID}/pairing", h.getPairing)
 
 	senders := "/{id}/channels/{channelID}/senders"
 	r.Get(senders+"/pending", h.listPending)
@@ -600,6 +604,7 @@ func (h *handler) view(row db.Channel) channel {
 	c.NotifyStrangers = c.CanNotify && row.NotifyStrangers
 	c.TakesReplyURL = h.providers.TakesReplyURL(row.Provider)
 	c.CanShowEvents = h.providers.RepliesWithEvents(row.Provider)
+	c.CanPair = h.providers.HoldsConnection(row.Provider)
 	c.ReplyMode = replyFinal
 	if c.CanShowEvents {
 		c.ReplyMode = row.ReplyMode

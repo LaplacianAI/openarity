@@ -163,6 +163,9 @@ type Reply struct {
 	// ContentType is application/json unless set, as a plain-text error
 	// from the brain is not.
 	ContentType string
+	// Then is what the route answers on its later calls, in order, the last
+	// one repeating: a resource polled while it changes.
+	Then []Reply
 }
 
 // Exchange is one request a routed stub received.
@@ -228,9 +231,18 @@ func Routes(t *testing.T, replies map[string]Reply) *Transcript {
 	}
 
 	mux := http.NewServeMux()
-	for pattern, reply := range replies {
+	for pattern, first := range replies {
+		var mu sync.Mutex
+		calls := 0
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			record(r)
+			mu.Lock()
+			reply := first
+			if calls > 0 && len(first.Then) > 0 {
+				reply = first.Then[min(calls, len(first.Then))-1]
+			}
+			calls++
+			mu.Unlock()
 			ct := reply.ContentType
 			if ct == "" {
 				ct = "application/json"
