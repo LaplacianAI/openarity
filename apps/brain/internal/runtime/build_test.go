@@ -42,9 +42,12 @@ type fakeStore struct {
 	// attached are the attachments of every session, newest first.
 	attached    []db.Attachment
 	attachedErr error
-	skills      []db.Skill
-	skillsErr   error
-	files       map[uuid.UUID][]db.SkillFile
+	// history is every session's conversation, newest first.
+	history    map[uuid.UUID][]db.ListSessionHistoryRow
+	historyErr error
+	skills     []db.Skill
+	skillsErr  error
+	files      map[uuid.UUID][]db.SkillFile
 
 	settings      *db.TeamSetting
 	settingsErr   error
@@ -113,6 +116,18 @@ func (f *fakeStore) ListAttachmentsBySession(_ context.Context, arg db.ListAttac
 		}
 	}
 	return out, f.attachedErr
+}
+
+func (f *fakeStore) ListSessionHistory(_ context.Context, arg db.ListSessionHistoryParams) ([]db.ListSessionHistoryRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []db.ListSessionHistoryRow
+	for _, r := range f.history[arg.SessionID] {
+		if r.Seq < arg.Before && len(out) < int(arg.PageSize) {
+			out = append(out, r)
+		}
+	}
+	return out, f.historyErr
 }
 
 func (f *fakeStore) GetAttachmentInSession(_ context.Context, arg db.GetAttachmentInSessionParams) (db.Attachment, error) {

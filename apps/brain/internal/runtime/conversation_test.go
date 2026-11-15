@@ -11,7 +11,7 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
-func said(text string, author *string) db.ListMessagesSinceLastRunRow {
+func said(text, author string) db.ListMessagesSinceLastRunRow {
 	return db.ListMessagesSinceLastRunRow{Text: text, At: time.Now(), Author: author}
 }
 
@@ -23,8 +23,8 @@ func TestHistoryIsOldestFirstWithWhoSaidIt(t *testing.T) {
 
 	asha := "asha@example.com"
 	got := withHistory([]db.ListMessagesSinceLastRunRow{
-		said("and now?", &asha),
-		said("is the export done?", nil),
+		said("and now?", asha),
+		said("is the export done?", ""),
 	}, "it was the nightly one")
 
 	want := "someone: is the export done?\nasha@example.com: and now?\n\nThe new message:\n\nit was the nightly one"
@@ -52,9 +52,9 @@ func TestHistoryKeepsTheNewestWhenItIsTooLong(t *testing.T) {
 
 	long := strings.Repeat("x", historyBytes/2)
 	got := withHistory([]db.ListMessagesSinceLastRunRow{
-		said("NEWEST-TURN "+long, nil),
-		said("MIDDLE-TURN "+long, nil),
-		said("OLDEST-TURN "+long, nil),
+		said("NEWEST-TURN "+long, ""),
+		said("MIDDLE-TURN "+long, ""),
+		said("OLDEST-TURN "+long, ""),
 	}, "q")
 
 	if !strings.Contains(got, "NEWEST-TURN") || strings.Contains(got, "OLDEST-TURN") {
@@ -103,9 +103,9 @@ func TestHistoryStopsAtTheFirstTurnThatDoesNotFit(t *testing.T) {
 	t.Parallel()
 
 	got := withHistory([]db.ListMessagesSinceLastRunRow{
-		said("RECENT-TURN", nil),
-		said("HUGE-TURN "+strings.Repeat("x", historyBytes), nil),
-		said("EARLY-TURN", nil),
+		said("RECENT-TURN", ""),
+		said("HUGE-TURN "+strings.Repeat("x", historyBytes), ""),
+		said("EARLY-TURN", ""),
 	}, "q")
 	if !strings.Contains(got, "RECENT-TURN") || strings.Contains(got, "EARLY-TURN") {
 		t.Errorf("history = %q, want the recent turn only, stopping at the one that does not fit", got)

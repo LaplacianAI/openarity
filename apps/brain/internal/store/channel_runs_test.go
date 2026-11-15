@@ -363,7 +363,7 @@ func TestMessagesSinceTheLastRunAreWhatReachedNoRun(t *testing.T) {
 	if want := []string{"it was the cron", "the export is late again"}; !slices.Equal(got, want) {
 		t.Fatalf("said = %q, want %q: only what came after the last run finished, and not this run's own", got, want)
 	}
-	if said[0].Author == nil || *said[0].Author == "" {
+	if said[0].Author == "" {
 		t.Error("a message's author is empty; the model cannot tell who said it")
 	}
 

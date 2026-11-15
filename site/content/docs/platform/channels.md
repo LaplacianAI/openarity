@@ -213,7 +213,14 @@ word for word.
 
 In a group, most messages are not addressed to the bot and start no run. The
 next run is shown those that came since the last one finished, at most 20 of
-them and 8 KiB, before the message that asked it.
+them and 8 KiB, before the message that asked it, each with the sender's name.
+
+To go further back, the run reads the conversation with its `history` tool:
+what people wrote and what the bot answered, oldest first, a page at a time
+(30 messages unless it asks for more, at most 100). It reads only the
+conversation it is in, and only the run answering it has the tool, not an
+agent it hands work to. What people wrote is given to it as what they said,
+never as instructions.
 
 Each chat is its own conversation: a direct message with the bot, a group, and
 each topic of a group that has topics. A run started with `oa runs start` or

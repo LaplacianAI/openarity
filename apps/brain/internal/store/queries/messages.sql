@@ -14,8 +14,8 @@
 -- message id is unique within its channel, and a retry that arrived after a
 -- session closed would otherwise be stored twice under two sessions.
 -- name: InsertMessage :one
-INSERT INTO messages (channel_id, session_id, user_id, external_id, text, sent_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO messages (channel_id, session_id, user_id, external_id, text, sent_at, sender_name)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (channel_id, external_id) DO NOTHING
 RETURNING id;
 

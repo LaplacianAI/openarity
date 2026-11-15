@@ -135,3 +135,34 @@ WITH ordered AS (
 )
 SELECT (SELECT count(*) FROM messages_done)::bigint AS messages,
        (SELECT count(*) FROM events_done)::bigint AS events;
+
+-- A conversation read back: what people wrote and what the bot answered,
+-- before a sequence number, newest first. An answer is a top-level run that
+-- succeeded with output; a delegated run's, a failed run's and a run's steps
+-- are not part of the conversation. Rows the stream never numbered are not
+-- read. who is the sender's name, else their email, else empty.
+-- name: ListSessionHistory :many
+SELECT x.seq, x.at, x.ours, x.who, x.text, x.files
+FROM (
+    SELECT coalesce(m.session_seq, 0) AS seq, m.received_at AS at, false AS ours,
+           coalesce(nullif(m.sender_name, ''), u.email, '')::text AS who,
+           m.text,
+           (SELECT coalesce(array_agg(a.filename ORDER BY a.created_at, a.id), '{}')
+              FROM attachments a WHERE a.message_id = m.id)::text[] AS files
+    FROM messages m
+    LEFT JOIN users u ON u.id = m.user_id
+    WHERE m.session_id = sqlc.arg('session_id')::uuid
+      AND m.session_seq < sqlc.arg('before')::bigint
+    UNION ALL
+    SELECT coalesce(e.session_seq, 0), e.created_at, true, ''::text, coalesce(r.output, ''), '{}'::text[]
+    FROM run_events e
+    JOIN runs r ON r.id = e.run_id
+    WHERE e.session_id = sqlc.arg('session_id')::uuid
+      AND e.session_seq < sqlc.arg('before')::bigint
+      AND e.kind = 'finished'
+      AND r.parent_run_id IS NULL
+      AND r.status = 'succeeded'
+      AND coalesce(r.output, '') <> ''
+) x
+ORDER BY x.seq DESC
+LIMIT sqlc.arg('page_size');

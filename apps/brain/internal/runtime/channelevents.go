@@ -14,6 +14,7 @@ import (
 // what it already holds. In a chat it is noise.
 var unspoken = map[string]bool{
 	GraphToolName: true, PlanToolName: true, AttachmentsToolName: true, ReadAttachmentToolName: true,
+	HistoryToolName:          true,
 	agent.ReadOutputToolName: true, agent.DescribeToolsName: true,
 	agent.SkillToolName: true, agent.SkillResourceToolName: true,
 	patterns.PlanToolName: true, patterns.CritiqueToolName: true,
