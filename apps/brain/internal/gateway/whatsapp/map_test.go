@@ -39,7 +39,7 @@ func inGroup(m *waE2E.Message) *events.Message {
 
 func mapped(t *testing.T, m *events.Message) gateway.Inbound {
 	t.Helper()
-	in, ok := Map(m, us, false)
+	in, ok := Map(m, us, "", false)
 	if !ok {
 		t.Fatal("the message was dropped")
 	}
@@ -172,14 +172,14 @@ func TestWhatIsNotAConversationIsDropped(t *testing.T) {
 		"no message":        {Info: direct(nil).Info},
 		"nil":               nil,
 	} {
-		if in, ok := Map(m, us, false); ok {
+		if in, ok := Map(m, us, "", false); ok {
 			t.Errorf("%s was kept as %+v", name, in)
 		}
 	}
 }
 
 func TestAHistoricalMessageIsMarkedSo(t *testing.T) {
-	in, ok := Map(direct(text("from last week")), us, true)
+	in, ok := Map(direct(text("from last week")), us, "", true)
 	if !ok || !in.Historical {
 		t.Fatalf("Map = %+v, %v; want it kept and marked historical", in, ok)
 	}
@@ -229,7 +229,7 @@ func TestTheOwnersOwnElsewhereIsStillDropped(t *testing.T) {
 		"with the number not known": {fromBefore, Self{}, false},
 		"with only the LID known":   {byLIDOnly, Self{LID: us.LID}, false},
 	} {
-		if in, ok := Map(c.m, c.self, c.historical); ok {
+		if in, ok := Map(c.m, c.self, "", c.historical); ok {
 			t.Errorf("%s: kept %+v", name, in)
 		}
 	}
@@ -241,5 +241,63 @@ func TestOnlyTheOwnerIsToSelf(t *testing.T) {
 	m.Info.Chat = us.PN
 	if in := mapped(t, m); in.ToSelf {
 		t.Error("a message not from the owner was marked as the owner's to itself")
+	}
+}
+
+// With a trigger word the owner calls the bot from any chat: their own
+// message holding the word is kept, by their number, in the conversation it
+// was typed in; a direct chat's is the other person's conversation, so the
+// answer goes to them.
+func TestTheOwnerCallsTheBotByItsWordFromAnyChat(t *testing.T) {
+	inDirect := direct(text("@Fduv when is the next train?"))
+	inDirect.Info.Sender, inDirect.Info.IsFromMe = types.NewADJID(us.PN.User, 0, 2), true
+	byLID := direct(text("@fduv and after that?"))
+	byLID.Info.Chat, byLID.Info.RecipientAlt = types.NewJID("2222", types.HiddenUserServer), priya
+	byLID.Info.Sender, byLID.Info.IsFromMe = us.LID, true
+	inAGroup := inGroup(text("@Fduv what did we decide?"))
+	inAGroup.Info.Sender, inAGroup.Info.IsFromMe = us.PN, true
+
+	for name, c := range map[string]struct {
+		m       *events.Message
+		session gateway.Session
+	}{
+		"in a direct chat":    {inDirect, gateway.Session{Ref: priya.String(), Kind: gateway.SessionDirect}},
+		"in one named by LID": {byLID, gateway.Session{Ref: priya.String(), Kind: gateway.SessionDirect}},
+		"in a group":          {inAGroup, gateway.Session{Ref: group.String(), Kind: gateway.SessionGroup}},
+	} {
+		in, ok := Map(c.m, us, "@Fduv", false)
+		if !ok {
+			t.Fatalf("%s: dropped", name)
+		}
+		if in.Author.Ref != us.PN.String() || in.Session != c.session || in.ToSelf {
+			t.Errorf("%s: author %q, session %+v, to self %v; want the owner, in that chat", name, in.Author.Ref, in.Session, in.ToSelf)
+		}
+	}
+}
+
+// Without the word the owner is talking to someone, and nobody asked the
+// bot: not kept, nor are the owner's from before, nor any of theirs when the
+// channel has no word.
+func TestTheOwnersOwnWithoutTheWordIsNotKept(t *testing.T) {
+	plain := direct(text("see you at six"))
+	plain.Info.IsFromMe = true
+	nearly := direct(text("@Fduvx nearly"))
+	nearly.Info.IsFromMe = true
+	called := direct(text("@Fduv summarise"))
+	called.Info.IsFromMe = true
+
+	for name, c := range map[string]struct {
+		m          *events.Message
+		trigger    string
+		historical bool
+	}{
+		"without the word":          {plain, "@Fduv", false},
+		"with a longer word":        {nearly, "@Fduv", false},
+		"from before linking":       {called, "@Fduv", true},
+		"on a channel with no word": {called, "", false},
+	} {
+		if in, ok := Map(c.m, us, c.trigger, c.historical); ok {
+			t.Errorf("%s: kept %+v", name, in)
+		}
 	}
 }

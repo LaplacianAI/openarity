@@ -14,11 +14,12 @@ import (
 )
 
 const createChannel = `-- name: CreateChannel :one
-INSERT INTO channels (team_id, provider, name, reply_url, answers_in, notify_strangers)
+INSERT INTO channels (team_id, provider, name, reply_url, answers_in, notify_strangers, trigger_word)
 VALUES ($1, $2, $3, $4,
         COALESCE($5::text, 'everywhere'),
-        COALESCE($6::bool, true))
-RETURNING id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers, reply_mode, answers_in
+        COALESCE($6::bool, true),
+        NULLIF($7::text, ''))
+RETURNING id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers, reply_mode, answers_in, trigger_word
 `
 
 type CreateChannelParams struct {
@@ -28,6 +29,7 @@ type CreateChannelParams struct {
 	ReplyUrl        *string
 	AnswersIn       *string
 	NotifyStrangers pgtype.Bool
+	TriggerWord     *string
 }
 
 func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (Channel, error) {
@@ -38,6 +40,7 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 		arg.ReplyUrl,
 		arg.AnswersIn,
 		arg.NotifyStrangers,
+		arg.TriggerWord,
 	)
 	var i Channel
 	err := row.Scan(
@@ -51,6 +54,7 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 		&i.NotifyStrangers,
 		&i.ReplyMode,
 		&i.AnswersIn,
+		&i.TriggerWord,
 	)
 	return i, err
 }
@@ -65,7 +69,7 @@ func (q *Queries) DeleteChannel(ctx context.Context, id uuid.UUID) error {
 }
 
 const getChannel = `-- name: GetChannel :one
-SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url, c.notify_strangers, c.reply_mode, c.answers_in
+SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url, c.notify_strangers, c.reply_mode, c.answers_in, c.trigger_word
 FROM channels c
 JOIN teams t ON t.id = c.team_id
 WHERE c.id = $1 AND t.deleted_at IS NULL
@@ -87,12 +91,13 @@ func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (Channel, error)
 		&i.NotifyStrangers,
 		&i.ReplyMode,
 		&i.AnswersIn,
+		&i.TriggerWord,
 	)
 	return i, err
 }
 
 const listChannelsByTeam = `-- name: ListChannelsByTeam :many
-SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url, c.notify_strangers, c.reply_mode, c.answers_in,
+SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url, c.notify_strangers, c.reply_mode, c.answers_in, c.trigger_word,
     latest.last_message_at,
     (SELECT count(*) FROM sessions s
      WHERE s.channel_id = c.id
@@ -166,6 +171,7 @@ func (q *Queries) ListChannelsByTeam(ctx context.Context, arg ListChannelsByTeam
 			&i.Channel.NotifyStrangers,
 			&i.Channel.ReplyMode,
 			&i.Channel.AnswersIn,
+			&i.Channel.TriggerWord,
 			&i.LastMessageAt,
 			&i.Sessions24h,
 		); err != nil {
@@ -184,9 +190,11 @@ UPDATE channels
 SET reply_url = CASE WHEN $1::bool THEN $2 ELSE reply_url END,
     notify_strangers = COALESCE($3::bool, notify_strangers),
     reply_mode = COALESCE($4::text, reply_mode),
-    answers_in = COALESCE($5::text, answers_in)
-WHERE id = $6 AND team_id = $7
-RETURNING id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers, reply_mode, answers_in
+    answers_in = COALESCE($5::text, answers_in),
+    trigger_word = CASE WHEN $6::text IS NULL THEN trigger_word
+                        ELSE NULLIF($6::text, '') END
+WHERE id = $7 AND team_id = $8
+RETURNING id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers, reply_mode, answers_in, trigger_word
 `
 
 type UpdateChannelParams struct {
@@ -195,12 +203,14 @@ type UpdateChannelParams struct {
 	NotifyStrangers pgtype.Bool
 	ReplyMode       *string
 	AnswersIn       *string
+	TriggerWord     *string
 	ID              uuid.UUID
 	TeamID          uuid.UUID
 }
 
 // Each field changes only when it was sent. A null reply_url stops replies
-// from being sent; the ones already waiting fail.
+// from being sent; the ones already waiting fail. An empty trigger_word
+// takes the word away.
 func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (Channel, error) {
 	row := q.db.QueryRow(ctx, updateChannel,
 		arg.SetReplyUrl,
@@ -208,6 +218,7 @@ func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (C
 		arg.NotifyStrangers,
 		arg.ReplyMode,
 		arg.AnswersIn,
+		arg.TriggerWord,
 		arg.ID,
 		arg.TeamID,
 	)
@@ -223,6 +234,7 @@ func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (C
 		&i.NotifyStrangers,
 		&i.ReplyMode,
 		&i.AnswersIn,
+		&i.TriggerWord,
 	)
 	return i, err
 }

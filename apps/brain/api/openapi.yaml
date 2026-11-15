@@ -585,11 +585,16 @@ paths:
     patch:
       operationId: updateChannel
       tags: [channels]
-      summary: Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
+      summary: Change a channel's reply URL, its notices to strangers, its reply mode, where it answers or its trigger word
       description: |
         Requires `channel:write` in this team. Send any of `reply_url`,
-        `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
-        is left as it is.
+        `notify_strangers`, `reply_mode`, `answers_in` and `trigger_word`;
+        what is not sent is left as it is.
+
+        `trigger_word` sets the word a message must hold to ask the channel
+        (see `TriggerWord`), and `""` takes it away. It is refused with 400
+        on a channel whose `can_trigger_word` is false, and for a word that
+        is not one word.
 
         `answers_in` is where the channel answers (see `AnswersIn`); a value
         outside its three is refused with 400.
@@ -3740,7 +3745,7 @@ components:
 
     Channel:
       type: object
-      required: [id, team_id, provider, name, can_reply, takes_reply_url, can_notify, notify_strangers, can_show_events, reply_mode, can_pair, answers_in]
+      required: [id, team_id, provider, name, can_reply, takes_reply_url, can_notify, notify_strangers, can_show_events, reply_mode, can_pair, answers_in, can_trigger_word, trigger_word]
       properties:
         id:
           type: string
@@ -3826,6 +3831,15 @@ components:
             entering a code (`/teams/{id}/channels/{channelID}/pairing`).
         answers_in:
           $ref: "#/components/schemas/AnswersIn"
+        can_trigger_word:
+          type: boolean
+          description: |
+            Whether the channel can be called by a word, as a `whatsapp`
+            channel can, so a client offers `trigger_word` only there.
+        trigger_word:
+          type: string
+          nullable: true
+          description: The word a message must hold to ask the channel (see `TriggerWord`); null is none.
         reply_url:
           type: string
           format: uri
@@ -3920,6 +3934,23 @@ components:
             `whatsapp`); refused with 400 for one that cannot (`custom`).
             Checked, with `answers_in`, before the provider is asked about
             `credentials`.
+        trigger_word:
+          $ref: "#/components/schemas/TriggerWord"
+
+    TriggerWord:
+      type: string
+      maxLength: 32
+      examples: ["@Fduv"]
+      description: |
+        The word a message must hold to ask the channel, such as `@Fduv`:
+        for a WhatsApp number that is also a person's own. With one, a
+        message asks only when it holds the word, in any case and as a word
+        of its own (`@fduv, now?` does, `@Fduvx` does not), in a direct chat
+        or a group alike, and a mention of the number no longer does. The
+        owner calls it from any chat: their own message holding the word is
+        answered in that chat, from their number; their others are not kept.
+        Still only within `answers_in`. One word of at most 32 characters,
+        with a letter or digit in it; only where `can_trigger_word`.
 
     AnswersIn:
       type: string
@@ -3990,6 +4021,10 @@ components:
       properties:
         answers_in:
           $ref: "#/components/schemas/AnswersIn"
+        trigger_word:
+          type: string
+          maxLength: 32
+          description: The word a message must hold to ask the channel (see `TriggerWord`); "" takes it away
         notify_strangers:
           type: boolean
           description: Whether the channel tells a sender nobody has let in that they are waiting, and that they are in

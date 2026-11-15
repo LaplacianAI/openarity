@@ -225,7 +225,7 @@ func (a *Accounts) held(ctx context.Context, rows []db.LeaseWhatsAppAccountsRow)
 		if c == nil {
 			c = a.open(ctx, r)
 		}
-		c.setSettings(settings{notifyStrangers: r.NotifyStrangers, answersIn: r.AnswersIn})
+		c.setSettings(settings{notifyStrangers: r.NotifyStrangers, answersIn: r.AnswersIn, triggerWord: r.TriggerWord})
 		if r.PairSeq > r.PairSeen {
 			c.pair(ctx, r)
 		}
@@ -235,7 +235,7 @@ func (a *Accounts) held(ctx context.Context, rows []db.LeaseWhatsAppAccountsRow)
 // open starts holding a channel, connecting the device it was linked to.
 func (a *Accounts) open(ctx context.Context, r db.LeaseWhatsAppAccountsRow) *conn {
 	c := a.newConn(ctx, db.Channel{ID: r.ChannelID, TeamID: r.TeamID})
-	c.setSettings(settings{notifyStrangers: r.NotifyStrangers, answersIn: r.AnswersIn})
+	c.setSettings(settings{notifyStrangers: r.NotifyStrangers, answersIn: r.AnswersIn, triggerWord: r.TriggerWord})
 	a.mu.Lock()
 	a.conns[r.ChannelID] = c
 	a.mu.Unlock()

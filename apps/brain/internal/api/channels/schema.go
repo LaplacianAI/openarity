@@ -37,6 +37,12 @@ type channel struct {
 	// AnswersIn is where it answers: "everywhere" (direct chats, and groups
 	// where it is mentioned), "groups" or "direct".
 	AnswersIn string `json:"answers_in"`
+	// CanTriggerWord is whether the channel can be called by a word, as a
+	// linked WhatsApp number can, so a client offers it only there.
+	CanTriggerWord bool `json:"can_trigger_word"`
+	// TriggerWord is the word a message must hold to ask the channel, such
+	// as @Fduv; null is none.
+	TriggerWord *string `json:"trigger_word"`
 }
 
 // listedChannel is a row of the channels list: the channel, and how recently
@@ -60,6 +66,7 @@ type createRequest struct {
 	// answers everywhere and tells strangers where its provider can.
 	AnswersIn       *string `json:"answers_in,omitempty"`
 	NotifyStrangers *bool   `json:"notify_strangers,omitempty"`
+	TriggerWord     *string `json:"trigger_word,omitempty"`
 }
 
 // updateRequest changes what it names and nothing else.
@@ -68,6 +75,8 @@ type updateRequest struct {
 	NotifyStrangers *bool          `json:"notify_strangers"`
 	ReplyMode       *string        `json:"reply_mode"`
 	AnswersIn       *string        `json:"answers_in"`
+	// TriggerWord sets the word; "" takes it away.
+	TriggerWord *string `json:"trigger_word"`
 }
 
 type created struct {

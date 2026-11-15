@@ -14,6 +14,7 @@ const {
   isQuiet,
   opensToLink,
   setWebhookCommand,
+  triggerWordOK,
 } = await import("@/routes/ui.channels.index");
 const Channels = await pageOf(Route);
 
@@ -64,6 +65,7 @@ describe("the create form", () => {
     answersIn: "everywhere" as const,
     notify: true,
     mine: false,
+    triggerWord: "",
   };
 
   // A person's own number answers where they chose and tells strangers
@@ -71,11 +73,14 @@ describe("the create form", () => {
   it("sends where a channel answers and its notices only when they differ", () => {
     const wa = { ...draft, provider: "whatsapp" };
     expect(channelRequest(wa)).toEqual({ name: "support", provider: "whatsapp" });
-    expect(channelRequest({ ...wa, mine: true, answersIn: "groups" })).toEqual({
+    expect(
+      channelRequest({ ...wa, mine: true, answersIn: "groups", triggerWord: "@Fduv" }),
+    ).toEqual({
       name: "support",
       provider: "whatsapp",
       answers_in: "groups",
       notify_strangers: false,
+      trigger_word: "@Fduv",
     });
     expect(channelRequest({ ...wa, notify: false, answersIn: "direct" })).toEqual({
       name: "support",
@@ -83,6 +88,36 @@ describe("the create form", () => {
       answers_in: "direct",
       notify_strangers: false,
     });
+  });
+
+  // On someone's own number the word is what keeps the agent quiet, so a
+  // channel marked as theirs is not made without one; a word is sent trimmed,
+  // and only for WhatsApp, the one provider called by a word.
+  it("sends the trigger word, and asks for one on a number that is yours", () => {
+    const wa = { ...draft, provider: "whatsapp" };
+    expect(channelRequest({ ...wa, mine: true })).toBe(
+      "Pick the word that calls the agent, such as @Fduv.",
+    );
+    expect(channelRequest({ ...wa, mine: true, triggerWord: "  @Fduv " })).toEqual({
+      name: "support",
+      provider: "whatsapp",
+      notify_strangers: false,
+      trigger_word: "@Fduv",
+    });
+    expect(channelRequest({ ...wa, triggerWord: "two words" })).toMatch(/one word/);
+    expect(channelRequest({ ...draft, triggerWord: "@Fduv" })).toEqual({
+      name: "support",
+      provider: "custom",
+    });
+  });
+
+  it("takes a trigger word that is one word with a letter or digit in it", () => {
+    expect(triggerWordOK("@Fduv")).toBe(true);
+    expect(triggerWordOK("ok2")).toBe(true);
+    expect(triggerWordOK("@@@")).toBe(false);
+    expect(triggerWordOK("two words")).toBe(false);
+    expect(triggerWordOK("a".repeat(33))).toBe(false);
+    expect(triggerWordOK("a".repeat(32))).toBe(true);
   });
 
   // A custom webhook cannot tell strangers anything, so it never says so.
@@ -1150,5 +1185,86 @@ describe("where a channel answers", () => {
     await userEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     expect(posted(seen)).toEqual({ name: "support", provider: "custom", answers_in: "direct" });
+  });
+});
+
+describe("a channel's trigger word", () => {
+  const at = () => showAt("/ui/channels/", [["/ui/channels/", Route]]);
+  const wa = {
+    ...support,
+    name: "mine",
+    provider: "whatsapp",
+    answers_in: "everywhere" as const,
+    can_trigger_word: true,
+    trigger_word: null,
+  };
+  const pairing = { body: { state: "connected", phone: "919000000001", held: true } };
+
+  it("is set in place, and the word sent is the one typed, trimmed", async () => {
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "GET /teams/{id}/channels/{channelID}/pairing": pairing,
+      "PATCH /teams/{id}/channels/{channelID}": { body: { ...wa, trigger_word: "@Fduv" } },
+    });
+    at();
+
+    const sheet = await opened("mine");
+    expect(within(sheet).getByText(/^None\. Direct chats ask the agent/)).toBeInTheDocument();
+    await userEvent.click(within(sheet).getByRole("button", { name: "Set a word" }));
+    await userEvent.type(within(sheet).getByRole("textbox", { name: "Trigger word" }), " @Fduv ");
+    await userEvent.click(within(sheet).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "PATCH")).toBe(true));
+    const patch = seen.find((s) => s.method === "PATCH");
+    expect(JSON.parse(String(patch?.body))).toEqual({ trigger_word: "@Fduv" });
+  });
+
+  // A word the brain would refuse is said so before anything is sent.
+  it("refuses two words without asking the brain", async () => {
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "GET /teams/{id}/channels/{channelID}/pairing": pairing,
+    });
+    at();
+
+    const sheet = await opened("mine");
+    await userEvent.click(within(sheet).getByRole("button", { name: "Set a word" }));
+    await userEvent.type(within(sheet).getByRole("textbox", { name: "Trigger word" }), "hey bot");
+    expect(within(sheet).getByText(/one word of at most 32 characters/)).toBeInTheDocument();
+    expect(within(sheet).getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(seen.some((s) => s.method === "PATCH")).toBe(false);
+  });
+
+  it("is taken away with an empty word", async () => {
+    const set = { ...wa, trigger_word: "@Fduv" };
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [set] } },
+      "GET /teams/{id}/channels/{channelID}/pairing": pairing,
+      "PATCH /teams/{id}/channels/{channelID}": { body: { ...set, trigger_word: null } },
+    });
+    at();
+
+    const sheet = await opened("mine");
+    expect(within(sheet).getByText("@Fduv")).toBeInTheDocument();
+    await userEvent.click(within(sheet).getByRole("button", { name: "Change the word" }));
+    await userEvent.click(within(sheet).getByRole("button", { name: "Take it away" }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "PATCH")).toBe(true));
+    const patch = seen.find((s) => s.method === "PATCH");
+    expect(JSON.parse(String(patch?.body))).toEqual({ trigger_word: "" });
+  });
+
+  it("is not offered where a channel cannot be called by a word", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [{ ...support, name: "mine" }] } },
+    });
+    at();
+
+    const sheet = await opened("mine");
+    expect(within(sheet).queryByText("Trigger word")).not.toBeInTheDocument();
   });
 });

@@ -77,6 +77,9 @@ func (f *fakeStore) CreateChannel(_ context.Context, arg db.CreateChannelParams)
 	if arg.NotifyStrangers.Valid {
 		row.NotifyStrangers = arg.NotifyStrangers.Bool
 	}
+	if arg.TriggerWord != nil && *arg.TriggerWord != "" { // NULLIF(..., '')
+		row.TriggerWord = arg.TriggerWord
+	}
 	f.channels = append(f.channels, row)
 	return row, nil
 }
@@ -99,6 +102,12 @@ func (f *fakeStore) UpdateChannel(_ context.Context, arg db.UpdateChannelParams)
 			}
 			if arg.AnswersIn != nil {
 				f.channels[i].AnswersIn = *arg.AnswersIn
+			}
+			if arg.TriggerWord != nil {
+				f.channels[i].TriggerWord = arg.TriggerWord
+				if *arg.TriggerWord == "" {
+					f.channels[i].TriggerWord = nil
+				}
 			}
 			return f.channels[i], nil
 		}

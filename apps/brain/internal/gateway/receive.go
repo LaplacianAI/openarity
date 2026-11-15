@@ -41,7 +41,8 @@ func (r *Receiver) Receive(ctx context.Context, p Provider, ch db.Channel, msgs 
 	for i := range deliveries {
 		deliveries[i].Files, deliveries[i].Missed = files(ctx, deliveries[i].Attachments)
 	}
-	return r.sink.Deliver(ctx, Channel{ID: ch.ID, TeamID: ch.TeamID, AnswersIn: AnswersIn(ch.AnswersIn)}, deliveries)
+	a := AnsweringOf(ch)
+	return r.sink.Deliver(ctx, Channel{ID: ch.ID, TeamID: ch.TeamID, AnswersIn: a.Where, TriggerWord: a.Trigger}, deliveries)
 }
 
 func (r *Receiver) resolve(ctx context.Context, p Provider, ch db.Channel, msgs []Inbound) ([]Delivery, error) {
@@ -54,7 +55,7 @@ func (r *Receiver) resolve(ctx context.Context, p Provider, ch db.Channel, msgs 
 			continue
 		}
 
-		userID, linked, err := ResolveSender(ctx, r.store, ch.ID, AnswersIn(ch.AnswersIn), in)
+		userID, linked, err := ResolveSender(ctx, r.store, ch.ID, AnsweringOf(ch), in)
 		if err != nil {
 			return nil, err
 		}

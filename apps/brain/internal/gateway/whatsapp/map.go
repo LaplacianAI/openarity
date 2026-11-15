@@ -26,9 +26,11 @@ func (s Self) is(j types.JID) bool {
 // for one that is not kept:
 //
 //   - the owner's own, typed on the phone or another of its devices, except
-//     in "Message yourself", the chat with the number itself: elsewhere it is
-//     the owner talking to someone, and nobody asked the bot. One the holder
-//     sent itself is the caller's to drop, since only it knows its own;
+//     in "Message yourself", the chat with the number itself, and one that
+//     holds the channel's trigger word, which is the owner calling the bot
+//     in that chat: anything else is the owner talking to someone, and
+//     nobody asked the bot. One the holder sent itself is the caller's to
+//     drop, since only it knows its own;
 //   - a status, a broadcast list or a channel (newsletter), which are not
 //     conversations;
 //   - an edit, which would answer the same message twice;
@@ -40,15 +42,18 @@ func (s Self) is(j types.JID) bool {
 // before: stored, never answered. The owner's own from before are not kept
 // at all: "Message yourself" holds the bot's old answers too, and the holder
 // no longer knows which were its own.
-func Map(m *events.Message, self Self, historical bool) (gateway.Inbound, bool) {
+//
+// trigger is the channel's trigger word; empty is none.
+func Map(m *events.Message, self Self, trigger string, historical bool) (gateway.Inbound, bool) {
 	if m == nil || m.Message == nil || m.IsEdit {
 		return gateway.Inbound{}, false
 	}
 	chat := m.Info.Chat
-	toSelf := m.Info.IsFromMe && !m.Info.IsGroup && self.is(chat) && !self.PN.IsEmpty()
-	if m.Info.IsFromMe && (!toSelf || historical) {
+	own := m.Info.IsFromMe
+	if own && (historical || self.PN.IsEmpty()) {
 		return gateway.Inbound{}, false
 	}
+	toSelf := own && !m.Info.IsGroup && self.is(chat)
 	switch chat.Server {
 	case types.BroadcastServer, types.NewsletterServer:
 		return gateway.Inbound{}, false
@@ -60,11 +65,14 @@ func Map(m *events.Message, self Self, historical bool) (gateway.Inbound, bool) 
 	if strings.TrimSpace(text) == "" && len(files) == 0 {
 		return gateway.Inbound{}, false
 	}
+	if own && !toSelf && !gateway.HasWord(text, trigger) {
+		return gateway.Inbound{}, false
+	}
 
 	author := phoneFirst(m.Info.Sender, m.Info.SenderAlt)
-	if toSelf {
+	if own {
 		// The owner by their number, whichever of their devices typed it, so
-		// "Message yourself" is one conversation and one sender to approve.
+		// they are one sender to approve wherever they call the bot.
 		author = self.PN
 	}
 	in := gateway.Inbound{
@@ -82,7 +90,12 @@ func Map(m *events.Message, self Self, historical bool) (gateway.Inbound, bool) 
 	} else {
 		// A direct chat is the other person, named as their sender is, so a
 		// chat that arrives by LID and one by number are one conversation.
-		in.Session = gateway.Session{Ref: in.Author.Ref, Kind: gateway.SessionDirect}
+		// The owner's own is to the person the chat is with.
+		other := author
+		if own && !toSelf {
+			other = phoneFirst(chat, m.Info.RecipientAlt)
+		}
+		in.Session = gateway.Session{Ref: other.String(), Kind: gateway.SessionDirect}
 	}
 	for _, raw := range ctx.GetMentionedJID() {
 		// A mention is of a person; anything else in the list is not one,

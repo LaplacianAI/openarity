@@ -75,7 +75,7 @@ JOIN teams t ON t.id = c.team_id AND t.deleted_at IS NULL
 WHERE a.channel_id = c.id
   AND (a.held_by = $1::text OR a.held_by IS NULL
        OR a.heartbeat_at < now() - make_interval(secs => $2::float8))
-RETURNING a.channel_id, c.team_id, c.notify_strangers, c.answers_in,
+RETURNING a.channel_id, c.team_id, c.notify_strangers, c.answers_in, c.trigger_word,
           a.state, a.jid, a.pair_seq, a.pair_seen, a.pair_method, a.pair_phone
 `
 
@@ -89,6 +89,7 @@ type LeaseWhatsAppAccountsRow struct {
 	TeamID          uuid.UUID
 	NotifyStrangers bool
 	AnswersIn       string
+	TriggerWord     *string
 	State           string
 	Jid             *string
 	PairSeq         int64
@@ -115,6 +116,7 @@ func (q *Queries) LeaseWhatsAppAccounts(ctx context.Context, arg LeaseWhatsAppAc
 			&i.TeamID,
 			&i.NotifyStrangers,
 			&i.AnswersIn,
+			&i.TriggerWord,
 			&i.State,
 			&i.Jid,
 			&i.PairSeq,

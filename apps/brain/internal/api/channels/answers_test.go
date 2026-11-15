@@ -112,3 +112,88 @@ func TestWhereAChannelAnswersCanBeChanged(t *testing.T) {
 		t.Errorf("a refused change left %q, want direct", got)
 	}
 }
+
+// A number that is someone's own is made with the word that calls it, sent
+// trimmed; a channel that cannot be called by one says so.
+func TestAWhatsAppChannelIsMadeWithItsTriggerWord(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	s := &pairStore{fakeStore: &fakeStore{}}
+	rec := callWith(t, answersProviders(), "", s, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+		http.MethodPost, "/teams/"+teamID.String()+"/channels",
+		`{"provider":"whatsapp","name":"mine","trigger_word":"  @Fduv "}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST = %d %s", rec.Code, rec.Body)
+	}
+	if arg := s.created[0]; arg.TriggerWord == nil || *arg.TriggerWord != "@Fduv" {
+		t.Fatalf("created with %v; want @Fduv, trimmed", arg.TriggerWord)
+	}
+	c := decodeChannel(t, rec.Body.Bytes())
+	if !c.CanTriggerWord || c.TriggerWord == nil || *c.TriggerWord != "@Fduv" {
+		t.Errorf("the channel = %+v; want it called by @Fduv", c)
+	}
+
+	rec = callWith(t, answersProviders(), "", s, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+		http.MethodPost, "/teams/"+teamID.String()+"/channels", `{"provider":"custom","name":"hook"}`)
+	if c := decodeChannel(t, rec.Body.Bytes()); c.CanTriggerWord || c.TriggerWord != nil {
+		t.Errorf("a custom channel = %+v; want no word, and none offered", c)
+	}
+}
+
+// A word for a channel that is not called by one, or a word nobody could
+// type as one, is refused before anything is made or the provider is asked.
+func TestATriggerWordAskedWrongIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for name, body := range map[string]string{
+		"for telegram":       `{"provider":"telegram","name":"x","credentials":{"bot_token":"1:a"},"trigger_word":"@bot"}`,
+		"for custom":         `{"provider":"custom","name":"x","trigger_word":"@bot"}`,
+		"two words":          `{"provider":"whatsapp","name":"x","trigger_word":"hey bot"}`,
+		"no letter or digit": `{"provider":"whatsapp","name":"x","trigger_word":"@@"}`,
+		"too long":           `{"provider":"whatsapp","name":"x","trigger_word":"` + strings.Repeat("a", 33) + `"}`,
+	} {
+		teamID := uuid.New()
+		s := &pairStore{fakeStore: &fakeStore{}}
+		rec := callWith(t, answersProviders(), "", s, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+			http.MethodPost, "/teams/"+teamID.String()+"/channels", body)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "trigger_word") {
+			t.Errorf("%s: POST = %d %q, want 400 naming trigger_word", name, rec.Code, rec.Body)
+		}
+		if len(s.created) != 0 {
+			t.Errorf("%s: a channel was made", name)
+		}
+	}
+}
+
+func TestATriggerWordCanBeChangedAndTakenAway(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	ch := db.Channel{ID: uuid.New(), TeamID: teamID, Provider: "whatsapp", Name: "mine", AnswersIn: "everywhere"}
+	s := &pairStore{fakeStore: &fakeStore{channels: []db.Channel{ch}}}
+	patch := func(body string) channel {
+		t.Helper()
+		rec := callWith(t, answersProviders(), "", s, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+			http.MethodPatch, channelPath(teamID, ch.ID), body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH %s = %d %s", body, rec.Code, rec.Body)
+		}
+		return decodeChannel(t, rec.Body.Bytes())
+	}
+	if c := patch(`{"trigger_word":"@Fduv"}`); c.TriggerWord == nil || *c.TriggerWord != "@Fduv" {
+		t.Fatalf("after setting it, %v; want @Fduv", c.TriggerWord)
+	}
+	if c := patch(`{"answers_in":"groups"}`); c.TriggerWord == nil || *c.TriggerWord != "@Fduv" {
+		t.Fatalf("a change of something else left %v; want the word kept", c.TriggerWord)
+	}
+	if c := patch(`{"trigger_word":""}`); c.TriggerWord != nil {
+		t.Fatalf("after taking it away, %v; want none", c.TriggerWord)
+	}
+
+	rec := callWith(t, answersProviders(), "", s, newFakeSecrets(), &fakeAuthz{allowed: true}, memberOf(teamID, "admin"),
+		http.MethodPatch, channelPath(teamID, ch.ID), `{"trigger_word":"two words"}`)
+	if rec.Code != http.StatusBadRequest || s.channels[0].TriggerWord != nil {
+		t.Errorf("a refused word = %d, left %v; want 400 and nothing changed", rec.Code, s.channels[0].TriggerWord)
+	}
+}

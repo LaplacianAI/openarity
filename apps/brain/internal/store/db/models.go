@@ -91,6 +91,7 @@ type Channel struct {
 	NotifyStrangers bool
 	ReplyMode       string
 	AnswersIn       string
+	TriggerWord     *string
 }
 
 type ChannelSender struct {

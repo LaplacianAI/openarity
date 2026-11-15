@@ -25,7 +25,7 @@ func TestAReceivedMessageIsTakenByItsChannelsScope(t *testing.T) {
 	s, sink := newFakeSenders(), &fakeSink{}
 	r := NewReceiver(slog.New(slog.NewTextHandler(io.Discard, nil)), s, reg, sink, nil)
 	p, _ := reg.Get("chat")
-	ch := db.Channel{ID: uuid.New(), TeamID: uuid.New(), AnswersIn: string(AnswersInGroups)}
+	ch := db.Channel{ID: uuid.New(), TeamID: uuid.New(), AnswersIn: string(AnswersInGroups), TriggerWord: new("@Fduv")}
 
 	if err := r.Receive(t.Context(), p, ch, []Inbound{message("u-new", "Asha")}, noFiles); err != nil {
 		t.Fatalf("Receive: %v", err)
@@ -38,7 +38,7 @@ func TestAReceivedMessageIsTakenByItsChannelsScope(t *testing.T) {
 	if err := r.Receive(t.Context(), p, ch, []Inbound{message("u-1", "Asha")}, noFiles); err != nil {
 		t.Fatalf("Receive: %v", err)
 	}
-	if sink.channel.AnswersIn != AnswersInGroups || sink.channel.ID != ch.ID {
-		t.Errorf("the inbox was handed %+v; want the channel with its scope", sink.channel)
+	if sink.channel.AnswersIn != AnswersInGroups || sink.channel.TriggerWord != "@Fduv" || sink.channel.ID != ch.ID {
+		t.Errorf("the inbox was handed %+v; want the channel with its scope and its word", sink.channel)
 	}
 }

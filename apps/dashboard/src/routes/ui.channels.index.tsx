@@ -321,6 +321,21 @@ function ChannelDetail({
             ) : null}
           </KeyValue>
         )}
+        {channel.can_trigger_word ? (
+          <KeyValue label="Trigger word">
+            {channel.trigger_word ? (
+              <>
+                <span className="font-medium">{channel.trigger_word}</span>: a message must hold it
+                to ask the agent.
+              </>
+            ) : (
+              "None. Direct chats ask the agent, and groups where the number is mentioned."
+            )}
+            {canWrite ? (
+              <EditTriggerWord teamId={teamId} channel={channel} onChanged={onChanged} />
+            ) : null}
+          </KeyValue>
+        ) : null}
         {channel.can_notify ? (
           <KeyValue label="Waiting senders">
             {channel.notify_strangers
@@ -512,6 +527,103 @@ function EditAnswersIn({
   );
 }
 
+/** The longest trigger word the brain takes, in characters. */
+const TRIGGER_WORD_MAX = 32;
+const TRIGGER_WORD_RULE = `A trigger word is one word of at most ${TRIGGER_WORD_MAX} characters, with a letter or digit in it, such as @Fduv.`;
+
+/** Whether the brain takes w as a trigger word: one word, with a letter or digit in it. */
+export function triggerWordOK(w: string): boolean {
+  return [...w].length <= TRIGGER_WORD_MAX && !/\s/u.test(w) && /[\p{L}\p{N}]/u.test(w);
+}
+
+/**
+ * The word that calls the channel, set or taken away in place. Taking it
+ * away goes back to direct chats and mentions, which it says before it is
+ * done.
+ */
+function EditTriggerWord({
+  teamId,
+  channel,
+  onChanged,
+}: {
+  teamId: string;
+  channel: ListedChannel;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [word, setWord] = useState(channel.trigger_word ?? "");
+  const save = useMutation({
+    mutationFn: (next: string) => updateChannel(teamId, channel.id, { trigger_word: next }),
+    onSuccess: (c) => {
+      toast.success(
+        c.trigger_word
+          ? `${channel.name} is called by ${c.trigger_word}`
+          : `${channel.name} has no trigger word`,
+      );
+      setOpen(false);
+      onChanged();
+    },
+  });
+  if (!open) {
+    return (
+      <Button variant="outline" size="sm" className="mt-2 block" onClick={() => setOpen(true)}>
+        {channel.trigger_word ? "Change the word" : "Set a word"}
+      </Button>
+    );
+  }
+  const typed = word.trim();
+  const problem = typed !== "" && !triggerWordOK(typed) ? TRIGGER_WORD_RULE : null;
+  return (
+    <form
+      className="mt-2 space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (typed !== "" && problem === null) save.mutate(typed);
+      }}
+    >
+      <Input
+        aria-label="Trigger word"
+        placeholder="@Fduv"
+        autoComplete="off"
+        spellCheck={false}
+        maxLength={TRIGGER_WORD_MAX}
+        value={word}
+        onChange={(e) => setWord(e.target.value)}
+        className="w-48"
+      />
+      {problem ? <p className="text-sm text-destructive">{problem}</p> : null}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="submit"
+          size="sm"
+          loading={save.isPending}
+          disabled={typed === "" || problem !== null}
+        >
+          Save
+        </Button>
+        {channel.trigger_word ? (
+          <Button type="button" size="sm" variant="ghost" onClick={() => save.mutate("")}>
+            Take it away
+          </Button>
+        ) : null}
+        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+      </div>
+      {channel.trigger_word ? (
+        <p className="text-sm text-muted-foreground">
+          Without a word, every direct chat and every mention of the number asks the agent.
+        </p>
+      ) : null}
+      {save.isError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {save.error.message}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
 /**
  * Where the channel's replies go, set or stopped. Stopping gives up any reply
  * still waiting, so it says so before it is done.
@@ -700,6 +812,8 @@ export type ChannelDraft = {
   notify: boolean;
   /** A WhatsApp number that is the person's own: strangers are never told. */
   mine: boolean;
+  /** WhatsApp's word that calls the agent, such as @Fduv; empty is none. */
+  triggerWord: string;
 };
 
 const EMPTY: ChannelDraft = {
@@ -711,6 +825,7 @@ const EMPTY: ChannelDraft = {
   answersIn: "everywhere",
   notify: true,
   mine: false,
+  triggerWord: "",
 };
 
 /**
@@ -722,6 +837,7 @@ function settingsOf(d: ChannelDraft, provider: string): Partial<CreateChannelReq
   const out: Partial<CreateChannelRequest> = {};
   if (d.answersIn !== "everywhere") out.answers_in = d.answersIn;
   if (NOTIFIES.has(provider) && (d.mine || !d.notify)) out.notify_strangers = false;
+  if (provider === WHATSAPP && d.triggerWord.trim() !== "") out.trigger_word = d.triggerWord.trim();
   return out;
 }
 
@@ -740,7 +856,14 @@ export function channelRequest(d: ChannelDraft): CreateChannelRequest | string {
   if (provider === "") return "A channel needs a provider: the adapter that reads its webhooks.";
   const settings = settingsOf(d, provider);
   // A linked number has no webhook to sign; it is paired once the channel is made.
-  if (provider === WHATSAPP) return { name, provider, ...settings };
+  if (provider === WHATSAPP) {
+    const word = d.triggerWord.trim();
+    // Without a word, the agent on someone's own number answers every
+    // direct chat and every tag of them, as them.
+    if (d.mine && word === "") return "Pick the word that calls the agent, such as @Fduv.";
+    if (word !== "" && !triggerWordOK(word)) return TRIGGER_WORD_RULE;
+    return { name, provider, ...settings };
+  }
   if (provider === TELEGRAM) {
     if (d.botToken.trim() === "") return "Paste the bot token from @BotFather.";
     return { name, provider, credentials: { bot_token: d.botToken.trim() }, ...settings };
@@ -867,6 +990,7 @@ function ConnectSheet({
                   answersIn: "everywhere",
                   notify: true,
                   mine: false,
+                  triggerWord: "",
                 })
               }
             >
@@ -946,7 +1070,7 @@ function ConnectSheet({
                       onChange={() =>
                         set(
                           mine
-                            ? { mine, answersIn: "groups", notify: false }
+                            ? { mine, answersIn: "everywhere", notify: false }
                             : { mine, answersIn: "everywhere", notify: true },
                         )
                       }
@@ -957,6 +1081,27 @@ function ConnectSheet({
                 ))}
               </div>
             </fieldset>
+          ) : null}
+          {draft.provider === WHATSAPP ? (
+            <Field
+              label="Trigger word"
+              htmlFor="channel-trigger-word"
+              hint={
+                draft.mine
+                  ? "The agent answers only a message with this word in it, from you in any chat or from someone you let in."
+                  : "Optional. With one, a message must hold it to ask the agent, in groups and direct chats."
+              }
+            >
+              <Input
+                id="channel-trigger-word"
+                placeholder="@Fduv"
+                autoComplete="off"
+                spellCheck={false}
+                maxLength={TRIGGER_WORD_MAX}
+                value={draft.triggerWord}
+                onChange={(e) => set({ triggerWord: e.target.value })}
+              />
+            </Field>
           ) : null}
           <AnswersInChoice
             name="channel-answers-in"
@@ -974,7 +1119,7 @@ function ConnectSheet({
             <p role="note" className="flex gap-2 text-sm">
               <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
               <span>
-                The agent answers as you, with typing shown, wherever it answers. Someone not yet
+                The agent answers as you, with typing shown, wherever it is called. Someone not yet
                 let in is never told anything.
               </span>
             </p>
