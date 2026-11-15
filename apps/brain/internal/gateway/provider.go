@@ -121,6 +121,16 @@ type EventReplier interface {
 	RepliesWithEvents()
 }
 
+// Socket is a provider that holds a connection to its platform instead of
+// taking webhooks: WhatsApp's linked device. Nothing arrives over HTTP to
+// verify, so it declares no routes and need declare no keys; its messages
+// reach the inbox from the process holding the connection, which also sends
+// its channels' replies and notices through a Poster of its own. The worker's
+// sender leaves those alone.
+type Socket interface {
+	HoldsConnection()
+}
+
 // Notifier tells a sender nobody has let in where they stand, in the
 // conversation they wrote in: that they are waiting, and later that they are
 // in. Optional, like Replier. Notice is pure.
@@ -192,12 +202,14 @@ type Registry struct {
 	events    map[string]bool
 	connects  map[string]Connector
 	notifiers map[string]Notifier
+	sockets   map[string]bool
 }
 
 func NewRegistry(providers ...Provider) (Registry, error) {
 	reg := Registry{
 		providers: map[string]Provider{}, repliers: map[string]Replier{}, setups: map[string]Setup{},
 		toURL: map[string]bool{}, events: map[string]bool{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
+		sockets: map[string]bool{},
 	}
 	for _, p := range providers {
 		name := p.Name()
@@ -207,11 +219,19 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		if _, dup := reg.providers[name]; dup {
 			return Registry{}, fmt.Errorf("gateway: two providers named %q", name)
 		}
-		if err := checkRoutes(name, p.Routes()); err != nil {
-			return Registry{}, err
-		}
-		if len(p.Keys()) == 0 {
-			return Registry{}, fmt.Errorf("gateway: provider %q declares no secret keys, so it cannot verify anything", name)
+		if _, ok := p.(Socket); ok {
+			// Mounted, a route would be a webhook nothing verifies.
+			if len(p.Routes()) > 0 {
+				return Registry{}, fmt.Errorf("gateway: provider %q holds a connection and declares routes", name)
+			}
+			reg.sockets[name] = true
+		} else {
+			if err := checkRoutes(name, p.Routes()); err != nil {
+				return Registry{}, err
+			}
+			if len(p.Keys()) == 0 {
+				return Registry{}, fmt.Errorf("gateway: provider %q declares no secret keys, so it cannot verify anything", name)
+			}
 		}
 		reg.providers[name] = p
 		if rp, ok := p.(Replier); ok {
@@ -274,6 +294,15 @@ func (r Registry) RepliesWithEvents(name string) bool { return r.events[name] }
 func (r Registry) Setup(name string) (Setup, bool) {
 	s, ok := r.setups[name]
 	return s, ok
+}
+
+// HoldsConnection is whether the named provider's channels are a socket's,
+// sent by the process that holds it.
+func (r Registry) HoldsConnection(name string) bool { return r.sockets[name] }
+
+// Sockets is every provider that holds a connection, sorted.
+func (r Registry) Sockets() []string {
+	return slices.Sorted(maps.Keys(r.sockets))
 }
 
 // Names is every registered provider, sorted.

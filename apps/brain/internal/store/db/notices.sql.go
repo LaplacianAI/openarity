@@ -22,12 +22,19 @@ WITH claimed AS (
           -- A deleted team's channels take no messages; its notices wait
           -- for the purge that deletes them.
           AND EXISTS (SELECT 1 FROM teams t WHERE t.id = d.team_id AND t.deleted_at IS NULL)
+          -- A socket's channels are sent by the process holding the socket:
+          -- it claims those it holds, and every other sender leaves them.
+          AND CASE WHEN $2::bool
+                   THEN d.channel_id = ANY($3::uuid[])
+                   ELSE NOT EXISTS (SELECT 1 FROM channels s
+                                    WHERE s.id = d.channel_id AND s.provider = ANY($4::text[]))
+              END
           AND NOT EXISTS (
               SELECT 1 FROM notices o
               WHERE o.channel_id = d.channel_id AND o.session_ref = d.session_ref
                 AND o.status = 'pending' AND o.id < d.id)
         ORDER BY d.next_attempt_at, d.id
-        LIMIT $2
+        LIMIT $5
         FOR UPDATE SKIP LOCKED)
     RETURNING n.id, n.team_id, n.channel_id, n.sender_ref, n.sender_name, n.session_ref, n.session_kind, n.in_reply_to, n.kind, n.status, n.attempts, n.last_error, n.next_attempt_at, n.created_at, n.sent_at
 )
@@ -40,6 +47,9 @@ ORDER BY c.id
 
 type ClaimDueNoticesParams struct {
 	LeaseSeconds float64
+	HeldOnly     bool
+	Held         []uuid.UUID
+	Sockets      []string
 	BatchSize    int32
 }
 
@@ -62,7 +72,13 @@ type ClaimDueNoticesRow struct {
 // committed lease, as for replies (replies.sql): attempts is the claim's own
 // number, and every mark below matches on it.
 func (q *Queries) ClaimDueNotices(ctx context.Context, arg ClaimDueNoticesParams) ([]ClaimDueNoticesRow, error) {
-	rows, err := q.db.Query(ctx, claimDueNotices, arg.LeaseSeconds, arg.BatchSize)
+	rows, err := q.db.Query(ctx, claimDueNotices,
+		arg.LeaseSeconds,
+		arg.HeldOnly,
+		arg.Held,
+		arg.Sockets,
+		arg.BatchSize,
+	)
 	if err != nil {
 		return nil, err
 	}

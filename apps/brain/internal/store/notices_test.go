@@ -293,3 +293,41 @@ func TestARefusedApprovalWritesNoNotice(t *testing.T) {
 		t.Errorf("%d notices, want only the waiting one", n)
 	}
 }
+
+// A socket's notices go the way its replies do: only to its holder.
+func TestASocketsNoticesAreClaimedOnlyByItsHolder(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	team := mustCreate(t, s, "platform")
+	ch := mustCreateChannel(t, s, team.ID, "whatsapp", "number")
+	record(t, s, ch.ID, "919876543210@s.whatsapp.net", "Priya")
+	w := stranger{team: team.ID, channel: ch.ID, ref: "919876543210@s.whatsapp.net"}
+	id, err := w.tell(t, s)
+	if err != nil || id == 0 {
+		t.Fatalf("tell = %d, %v", id, err)
+	}
+
+	claimed := func(p db.ClaimDueNoticesParams) bool {
+		p.LeaseSeconds, p.BatchSize = 0, 1000
+		rows, err := s.ClaimDueNotices(t.Context(), p)
+		if err != nil {
+			t.Fatalf("ClaimDueNotices: %v", err)
+		}
+		for _, r := range rows {
+			if r.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if claimed(db.ClaimDueNoticesParams{Sockets: []string{"whatsapp"}}) {
+		t.Error("the worker claimed a socket's notice")
+	}
+	if claimed(db.ClaimDueNoticesParams{HeldOnly: true, Held: []uuid.UUID{uuid.New()}}) {
+		t.Error("the holder of another channel claimed it")
+	}
+	if !claimed(db.ClaimDueNoticesParams{HeldOnly: true, Held: []uuid.UUID{ch.ID}}) {
+		t.Error("the holder did not claim its own channel's notice")
+	}
+}

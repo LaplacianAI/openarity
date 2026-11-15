@@ -69,6 +69,10 @@ type Inbound struct {
 	ReplyTo string
 
 	SentAt time.Time
+
+	// Historical is a message from before the bot was there, which the
+	// platform sent when it was linked: stored, never answered.
+	Historical bool
 }
 
 type Result struct {

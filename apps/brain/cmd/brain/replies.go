@@ -24,7 +24,7 @@ func newReplyJob(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, 
 		return nil, err
 	}
 	client := replyClient(reachable(cfg.MCPPrivateNetworks))
-	return gateway.ReplyJob(gateway.NewSender(dbStore, sec, reg, client, logger)), nil
+	return gateway.ReplyJob(gateway.NewSender(dbStore, sec, reg, gateway.HTTPPoster(client), gateway.Scope{}, logger)), nil
 }
 
 // replyClient follows no redirect: a 302 would turn the POST into a GET

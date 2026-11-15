@@ -75,12 +75,14 @@ type outbox struct {
 	gaveUp  []db.GiveUpReplyParams
 
 	notices       []db.ClaimDueNoticesRow
+	noticeClaims  []db.ClaimDueNoticesParams
 	noticeSent    []db.NoticeSentParams
 	noticeRetried []db.RetryNoticeParams
 	noticeGaveUp  []db.GiveUpNoticeParams
 }
 
 func (o *outbox) ClaimDueNotices(_ context.Context, arg db.ClaimDueNoticesParams) ([]db.ClaimDueNoticesRow, error) {
+	o.noticeClaims = append(o.noticeClaims, arg)
 	if o.claimErr != nil {
 		return nil, o.claimErr
 	}
@@ -205,7 +207,7 @@ func newSending(t *testing.T, providers ...Provider) *sending {
 		Timeout:       5 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	s.sender = NewSender(s.store, s.secrets, reg, client, slog.New(slog.NewTextHandler(s.log, nil)))
+	s.sender = NewSender(s.store, s.secrets, reg, HTTPPoster(client), Scope{}, slog.New(slog.NewTextHandler(s.log, nil)))
 	return s
 }
 
@@ -739,3 +741,111 @@ type stepRelay struct{ relay }
 
 func (*stepRelay) Name() string       { return "steps" }
 func (*stepRelay) RepliesWithEvents() {}
+
+// --- whose replies a sender claims, and how it sends them ---
+
+// posted is a Poster that keeps what it was handed, and answers err.
+type posted struct {
+	mu       sync.Mutex
+	channels []uuid.UUID
+	reqs     []OutboundRequest
+	err      error
+}
+
+func (p *posted) Post(_ context.Context, ch uuid.UUID, req OutboundRequest) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.channels, p.reqs = append(p.channels, ch), append(p.reqs, req)
+	return p.err
+}
+
+func senderWith(t *testing.T, s *sending, reg Registry, p Poster, scope Scope) *Sender {
+	t.Helper()
+	return NewSender(s.store, s.secrets, reg, p, scope, slog.New(slog.NewTextHandler(s.log, nil)))
+}
+
+// The worker claims every channel but a socket's, whose replies only the
+// process holding the socket can send.
+func TestTheWorkersSenderLeavesASocketsChannelsAlone(t *testing.T) {
+	t.Parallel()
+
+	s := newSending(t)
+	reg, err := NewRegistry(&relay{}, socketProvider{stubProvider{name: "whatsapp", routes: []Route{}, keys: []string{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := senderWith(t, s, reg, &posted{}, Scope{}).Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	r, n := s.store.claims[0], s.store.noticeClaims[0]
+	if r.HeldOnly || len(r.Sockets) != 1 || r.Sockets[0] != "whatsapp" {
+		t.Errorf("replies claimed with %+v; want every channel but whatsapp's", r)
+	}
+	if n.HeldOnly || len(n.Sockets) != 1 || n.Sockets[0] != "whatsapp" {
+		t.Errorf("notices claimed with %+v; want every channel but whatsapp's", n)
+	}
+}
+
+// A socket's process claims the channels it holds and nothing else, read
+// again at each claim, so a channel let go is not claimed after.
+func TestASocketsSenderClaimsOnlyWhatItHolds(t *testing.T) {
+	t.Parallel()
+
+	s := newSending(t)
+	held := []uuid.UUID{uuid.New()}
+	sender := senderWith(t, s, mustRegistry(t), &posted{}, Scope{Held: func() []uuid.UUID { return held }})
+	if _, err := sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	held = nil
+	if _, err := sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if c := s.store.claims; len(c) != 2 || !c[0].HeldOnly || len(c[0].Held) != 1 || !c[1].HeldOnly || len(c[1].Held) != 0 || c[0].Sockets != nil {
+		t.Errorf("claims = %+v; want the held channel, then none, and never all channels", c)
+	}
+	if c := s.store.noticeClaims; len(c) != 2 || !c[0].HeldOnly || len(c[0].Held) != 1 {
+		t.Errorf("notice claims = %+v; want the held channel", c)
+	}
+}
+
+func mustRegistry(t *testing.T) Registry {
+	t.Helper()
+	reg, err := NewRegistry(&relay{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reg
+}
+
+// Each part goes to the Poster with the channel it is for; a part the Poster
+// can never send gives the reply up at once rather than retrying it.
+func TestAPosterSendsEachPartForItsChannel(t *testing.T) {
+	t.Parallel()
+
+	s := newSending(t)
+	s.relay.parts = 2
+	row := due("https://example.com/r", 1)
+	s.store.due = []db.ClaimDueRepliesRow{row}
+	reg, err := NewRegistry(s.relay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &posted{}
+	if n, err := senderWith(t, s, reg, p, Scope{}).Drain(t.Context()); err != nil || n != 1 {
+		t.Fatalf("Drain = %d, %v", n, err)
+	}
+	if len(p.reqs) != 2 || p.channels[0] != row.ChannelID || p.channels[1] != row.ChannelID {
+		t.Errorf("the poster got %d parts for %v; want 2 for %s", len(p.reqs), p.channels, row.ChannelID)
+	}
+
+	s2 := newSending(t)
+	s2.store.due = []db.ClaimDueRepliesRow{due("https://example.com/r", 1)}
+	never := &posted{err: fmt.Errorf("%w: not a WhatsApp address", ErrUnsendable)}
+	if _, err := senderWith(t, s2, mustRegistry(t), never, Scope{}).Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s2.store.gaveUp) != 1 || len(s2.store.retried) != 0 {
+		t.Errorf("gave up %d, retried %d; want an unsendable part given up at once", len(s2.store.gaveUp), len(s2.store.retried))
+	}
+}
