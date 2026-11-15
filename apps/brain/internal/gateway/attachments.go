@@ -101,6 +101,21 @@ func (g *Ingest) Fetch(
 	if b, ok := p.(Budgeted); ok {
 		perFile, total = b.FetchBudget()
 	}
+	return g.Keep(ctx, p.Name(), get, perFile, total, teamID, claimed)
+}
+
+// Keep stores the files claimed, each read with get within perFile and all
+// within total, under the same checks as every file: the size, the type and
+// the name. A socket's holder, which reads its files from its connection,
+// keeps them here.
+func (g *Ingest) Keep(
+	ctx context.Context,
+	provider string,
+	get func(context.Context, Attachment) ([]byte, error),
+	perFile, total time.Duration,
+	teamID uuid.UUID,
+	claimed []Attachment,
+) (stored []Stored, missed []string) {
 	ctx, cancel := context.WithTimeout(ctx, total)
 	defer cancel()
 
@@ -112,10 +127,10 @@ func (g *Ingest) Fetch(
 		}
 		missed = append(missed, missedOf(a, err))
 		g.logger.Warn("gateway: attachment dropped",
-			"provider", p.Name(), "team_id", teamID, "ref", a.Ref, "error", err)
+			"provider", provider, "team_id", teamID, "ref", a.Ref, "error", err)
 		if ctx.Err() != nil {
 			g.logger.Warn("gateway: attachment budget exhausted",
-				"provider", p.Name(), "team_id", teamID, "budget", total)
+				"provider", provider, "team_id", teamID, "budget", total)
 			for _, rest := range claimed[i+1:] {
 				missed = append(missed, labelOf(rest.ClaimedFilename)+" could not be fetched in time")
 			}

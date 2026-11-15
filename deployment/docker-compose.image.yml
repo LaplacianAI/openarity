@@ -44,3 +44,8 @@ services:
     build: !reset null
     image: *image
     pull_policy: always
+
+  whatsapp:
+    build: !reset null
+    image: *image
+    pull_policy: always

@@ -377,3 +377,27 @@ type User struct {
 	UpdatedAt    time.Time
 	IsSuperAdmin bool
 }
+
+type WhatsappAccount struct {
+	ChannelID   uuid.UUID
+	State       string
+	Jid         *string
+	Phone       *string
+	PairSeq     int64
+	PairSeen    int64
+	PairMethod  *string
+	PairPhone   *string
+	PairQr      *string
+	PairCode    *string
+	PairError   *string
+	HeldBy      *string
+	HeartbeatAt *time.Time
+	UpdatedAt   time.Time
+}
+
+type WhatsappSent struct {
+	ChannelID uuid.UUID
+	PartID    string
+	MessageID string
+	SentAt    time.Time
+}

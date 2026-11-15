@@ -65,6 +65,7 @@ apps/brain/
     migrate.go         the migrate role
     reap.go            the reap role, and newEffects for both it and the worker
     worker.go          the worker role, and newJobs: every job it runs
+    whatsapp.go        the whatsapp role: holds WhatsApp channels' connections and sends their replies
     graph.go           the graph role: rebuild one team, or every team
     backfill.go        the backfill role: number what sessions held before they had a stream
     projector.go       newProjector, for the worker and the graph role
@@ -119,6 +120,7 @@ apps/brain/
   internal/reaper/     the sweep: one loop, one Effect per outside system
     job.go             the reaper as background work: SweepAll, and its Job
   internal/purge/      erasing deleted teams once TEAM_PURGE_AFTER has passed
+  internal/whatsapp/   WhatsApp numbers linked as devices: leases, connections, pairing, paced sending
   internal/runtime/    a run: the agent built from its row, executed, recorded
     build.go           the Spec, its granted MCP tools as discovery recorded them, and skills, the one settings read; Patterns and Loops
     servers.go         a run's MCP servers, each opened by the first call to one of its tools

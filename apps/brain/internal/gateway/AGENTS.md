@@ -19,7 +19,8 @@ without being trusted at all.
 internal/gateway/
   message.go        Inbound, Session, Result, Validate — the normalised contract
   provider.go       Provider, WebhookRequest, Credentials, Registry
-  handler.go        the request path: route, verify, parse, resolve, deliver
+  handler.go        the request path: route, verify, parse, then the Receiver
+  receive.go        Receiver: resolve each sender, keep the files, deliver; a webhook's and a socket's alike
   senders.go        ResolveSender, and the display-name cleaning
   sink.go           where a delivery goes; inbox.go is the stand-in
   answer.go         whether a stored message starts a run, steers one, or is left
@@ -273,8 +274,9 @@ last.
 **A `Socket` holds a connection instead of taking webhooks.** It declares no
 routes (`NewRegistry` refuses one that does, since a mounted route would be a
 webhook nothing verifies) and need declare no keys. Its messages reach the
-inbox from the process holding the connection, through `Inbox.DeliverOne`,
-and its adapter stays pure: WhatsApp's maps a message to `Inbound` and builds
+gateway from the process holding the connection (`brain whatsapp`, in
+`internal/whatsapp`) through the same `Receiver` a webhook's do, and its
+adapter stays pure: WhatsApp's maps a message to `Inbound` and builds
 a reply's parts as `OutboundRequest`s addressed `whatsapp:send`. The `Sender`
 posts through a `Poster`: the worker's is HTTP and claims every channel but a
 socket's (`Scope{}`); the holder's sends through its socket and claims only

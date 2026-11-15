@@ -103,8 +103,16 @@ if grep -Eq "^GRAFANA_ADMIN_PASSWORD=[^\"'[:space:]]" "$DEPLOYMENT/.env" 2>/dev/
 	files+=(-f "$DEPLOYMENT/docker-compose.logs.yml")
 	grafana=1
 fi
+# WhatsApp's role is the server's to opt into, with WHATSAPP_ENABLED=1 in
+# .env. It runs the brain's image, so a deploy replaces it with the brain.
+profiles=(--profile brain)
+brains=(brain worker)
+if grep -Eq "^WHATSAPP_ENABLED=1([[:space:]]|$)" "$DEPLOYMENT/.env" 2>/dev/null; then
+	profiles+=(--profile whatsapp)
+	brains+=(whatsapp)
+fi
 compose() {
-	docker compose --project-directory "$DEPLOYMENT" "${files[@]}" --profile brain "$@"
+	docker compose --project-directory "$DEPLOYMENT" "${files[@]}" "${profiles[@]}" "$@"
 }
 
 psql_postgres() {
@@ -131,7 +139,8 @@ wait_healthy() {
 	refuse "the brain did not answer /healthz within two minutes"
 }
 
-# Migrate this database with this image, then replace brain and worker.
+# Migrate this database with this image, then replace brain and worker, and
+# WhatsApp's role when it runs.
 #
 # --no-deps on both, because nothing else is to be touched: recreating
 # Postgres, authentik or OpenBao for a deploy would drop every session and
@@ -141,7 +150,7 @@ switch() {
 	local slot=$1 tag=$2 digest=$3
 
 	export BRAIN_TAG="$tag@$digest" OPENARITY_DATABASE="$DATABASE"
-	compose pull migrate brain worker
+	compose pull migrate "${brains[@]}"
 	compose run --rm --no-deps migrate || refuse "the migration of $DATABASE failed; the brain was not replaced"
 	# Started, not recreated: running already, it is left alone, so a deploy
 	# never interrupts a search in flight.
@@ -151,7 +160,7 @@ switch() {
 	if [ "$grafana" = 1 ]; then
 		compose up -d --no-deps socket-proxy loki alloy grafana
 	fi
-	compose up -d --no-deps --force-recreate brain worker
+	compose up -d --no-deps --force-recreate "${brains[@]}"
 	wait_healthy
 
 	printf '%s %s %s\n' "$slot" "$tag" "$digest" >"$STATE_DIR/current"
