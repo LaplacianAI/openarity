@@ -5,9 +5,16 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { setToken } from "@/api/token";
 import { brain, pageOf, STAMP, show, showAt, TEAM, team } from "@/test/brain";
 
-const { Route, channelRequest, hookAddress, hookPath, isQuiet, setWebhookCommand } = await import(
-  "@/routes/ui.channels.index"
-);
+const {
+  Route,
+  PROVIDERS,
+  channelRequest,
+  hookAddress,
+  hookPath,
+  isQuiet,
+  opensToLink,
+  setWebhookCommand,
+} = await import("@/routes/ui.channels.index");
 const Channels = await pageOf(Route);
 
 afterEach(() => {
@@ -55,6 +62,14 @@ describe("the create form", () => {
     secret: "",
     botToken: "",
   };
+
+  // A linked number has no webhook to sign: no secret is sent, even one typed
+  // before the provider was changed.
+  it("sends a WhatsApp channel with no secret", () => {
+    expect(
+      channelRequest({ ...draft, provider: "whatsapp", ownSecret: true, secret: "typed" }),
+    ).toEqual({ name: "support", provider: "whatsapp" });
+  });
 
   it("trims the name and provider, and leaves the secret to the brain", () => {
     expect(channelRequest(draft)).toEqual({ name: "support", provider: "custom" });
@@ -865,5 +880,177 @@ describe("what a conversation is sent while a run works", () => {
     const sheet = await opened("support");
     await userEvent.click(within(sheet).getByRole("button", { name: /send each step/i }));
     expect(await within(sheet).findByRole("alert")).toHaveTextContent(/sends no steps/);
+  });
+});
+
+describe("a WhatsApp channel's number", () => {
+  const at = () => showAt("/ui/channels/", [["/ui/channels/", Route]]);
+  const wa = {
+    ...support,
+    id: "w1",
+    name: "whatsapp-support",
+    provider: "whatsapp",
+    can_pair: true,
+    can_show_events: true,
+  };
+  const QR_TEXT = "2@not-to-be-shown,abc=,def=,1";
+
+  /** A pairing route that answers each GET with the next state, the last repeating. */
+  function states(...ps: object[]) {
+    let n = 0;
+    return () => ({ body: ps[Math.min(n++, ps.length - 1)] });
+  }
+
+  // A paired channel opens beside the list to link its number; any other
+  // shows its secret once, in the dialog.
+  it("opens a channel linked by pairing to link it, and any other to show its secret", () => {
+    expect(opensToLink({ ...wa, can_pair: true })).toBe(true);
+    expect(opensToLink({ ...support, can_pair: false })).toBe(false);
+    expect(opensToLink(support)).toBe(false);
+  });
+
+  it("names WhatsApp among the providers", () => {
+    expect(PROVIDERS.map(([value]) => value)).toContain("whatsapp");
+  });
+
+  it("draws the QR it was given, never its text, and says when the number is linked", async () => {
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "POST /teams/{id}/channels/{channelID}/pairing": {
+        status: 202,
+        body: { state: "pairing", method: "qr", held: true },
+      },
+      "GET /teams/{id}/channels/{channelID}/pairing": states(
+        { state: "unpaired", held: true },
+        { state: "pairing", method: "qr", qr: QR_TEXT, held: true },
+        { state: "connected", phone: "919876543210", held: true },
+      ),
+    });
+    at();
+
+    const sheet = await opened("whatsapp-support");
+    await userEvent.click(await within(sheet).findByRole("button", { name: "Show a QR code" }));
+    const pairs = seen.filter((s) => s.method === "POST" && s.path.endsWith("/pairing"));
+    expect(pairs.map((s) => JSON.parse(String(s.body)))).toEqual([{ method: "qr" }]);
+    expect(pairs[0]?.path).toBe(`/teams/${TEAM}/channels/w1/pairing`);
+
+    expect(await within(sheet).findByRole("img", { name: /QR code to scan/ })).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(QR_TEXT);
+    expect(await within(sheet).findByText("+919876543210")).toBeInTheDocument();
+    expect(within(sheet).queryByRole("img", { name: /QR code/ })).not.toBeInTheDocument();
+  });
+
+  it("asks a code for the number typed, and shows it", async () => {
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "POST /teams/{id}/channels/{channelID}/pairing": {
+        status: 202,
+        body: { state: "pairing", method: "code", code: "ABCD-1234", held: true },
+      },
+      "GET /teams/{id}/channels/{channelID}/pairing": states(
+        { state: "unpaired", held: true },
+        { state: "pairing", method: "code", code: "ABCD-1234", held: true },
+      ),
+    });
+    at();
+
+    const sheet = await opened("whatsapp-support");
+    await userEvent.click(await within(sheet).findByRole("button", { name: "Use a pairing code" }));
+    expect(within(sheet).getByRole("button", { name: "Get a code" })).toBeDisabled();
+    await userEvent.type(within(sheet).getByLabelText(/country code/), " +91 98765 43210 ");
+    await userEvent.click(within(sheet).getByRole("button", { name: "Get a code" }));
+
+    const body = posted(seen.filter((s) => s.path.endsWith("/pairing")));
+    expect(body).toEqual({ method: "code", phone: "+91 98765 43210" });
+    expect(await within(sheet).findByText("ABCD-1234")).toBeInTheDocument();
+  });
+
+  // The QR is what lets a phone link the channel: someone who cannot change
+  // channels is never shown it, and it is never even asked for.
+  it("never reads the pairing for someone without channel:write", async () => {
+    const seen = brain({
+      ...team([]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "GET /teams/{id}/channels/{channelID}/pairing": {
+        body: { state: "pairing", qr: QR_TEXT, held: true },
+      },
+    });
+    at();
+
+    const sheet = await opened("whatsapp-support");
+    expect(within(sheet).getByText(/needs channel:write/)).toBeInTheDocument();
+    expect(seen.some((s) => s.path.endsWith("/pairing"))).toBe(false);
+    expect(within(sheet).queryByRole("button", { name: /QR code/ })).not.toBeInTheDocument();
+  });
+
+  it("says why the last pairing stopped, and when no role runs", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "GET /teams/{id}/channels/{channelID}/pairing": {
+        body: {
+          state: "unpaired",
+          error: "The QR code expired before it was scanned.",
+          held: false,
+        },
+      },
+    });
+    at();
+
+    const sheet = await opened("whatsapp-support");
+    expect(await within(sheet).findByText(/expired before it was scanned/)).toBeInTheDocument();
+    expect(within(sheet).getByRole("alert")).toHaveTextContent(/runs no WhatsApp role/);
+  });
+
+  // Linking another number logs this one out, so it asks first.
+  it("asks before replacing a linked number", async () => {
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "POST /teams/{id}/channels/{channelID}/pairing": {
+        status: 202,
+        body: { state: "pairing", method: "qr", held: true },
+      },
+      "GET /teams/{id}/channels/{channelID}/pairing": {
+        body: { state: "connected", phone: "919876543210", held: true },
+      },
+    });
+    at();
+
+    const sheet = await opened("whatsapp-support");
+    await userEvent.click(
+      await within(sheet).findByRole("button", { name: "Link another number" }),
+    );
+    expect(within(sheet).getByText(/logs \+919876543210 out/)).toBeInTheDocument();
+    expect(seen.some((s) => s.method === "POST")).toBe(false);
+    await userEvent.click(within(sheet).getByRole("button", { name: "Keep this one" }));
+    expect(seen.some((s) => s.method === "POST")).toBe(false);
+
+    await userEvent.click(within(sheet).getByRole("button", { name: "Link another number" }));
+    await userEvent.click(within(sheet).getByRole("button", { name: "Link another number" }));
+    expect(posted(seen)).toEqual({ method: "qr" });
+  });
+
+  it("shows the brain's reason when it refuses", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "GET /teams/{id}/channels/{channelID}/pairing": { body: { state: "unpaired", held: true } },
+      "POST /teams/{id}/channels/{channelID}/pairing": {
+        status: 400,
+        text: "phone must be a number with its country code",
+      },
+    });
+    at();
+
+    const sheet = await opened("whatsapp-support");
+    await userEvent.click(await within(sheet).findByRole("button", { name: "Use a pairing code" }));
+    await userEvent.type(within(sheet).getByLabelText(/country code/), "12");
+    await userEvent.click(within(sheet).getByRole("button", { name: "Get a code" }));
+    expect(await within(sheet).findByRole("alert")).toHaveTextContent(
+      "phone must be a number with its country code",
+    );
   });
 });

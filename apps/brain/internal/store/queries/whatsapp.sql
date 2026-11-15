@@ -62,3 +62,22 @@ ON CONFLICT (channel_id, part_id) DO NOTHING;
 
 -- name: PruneWhatsAppSent :exec
 DELETE FROM whatsapp_sent WHERE sent_at < now() - interval '1 day';
+
+-- Asking for a pairing: a new request (pair_seq moves on), and what showed
+-- before cleared. The role holding the channel takes it at its next renewal.
+-- The row is made here if no role has made it yet, so asking works before
+-- any role runs.
+-- name: RequestWhatsAppPairing :exec
+INSERT INTO whatsapp_accounts (channel_id, state, pair_seq, pair_method, pair_phone)
+VALUES (sqlc.arg('channel_id'), 'pairing', 1, sqlc.arg('method'), sqlc.narg('phone'))
+ON CONFLICT (channel_id) DO UPDATE
+SET state = 'pairing', pair_seq = whatsapp_accounts.pair_seq + 1,
+    pair_method = EXCLUDED.pair_method, pair_phone = EXCLUDED.pair_phone,
+    pair_qr = NULL, pair_code = NULL, pair_error = NULL, updated_at = now();
+
+-- What a person sees of a channel's number: linked or not, the pairing's QR
+-- or code, why it stopped, and whether any role holds the channel now.
+-- name: GetWhatsAppAccount :one
+SELECT state, phone, pair_method, pair_qr, pair_code, pair_error, updated_at,
+       coalesce(heartbeat_at > now() - make_interval(secs => sqlc.arg('stale_seconds')::float8), false)::bool AS held
+FROM whatsapp_accounts WHERE channel_id = sqlc.arg('channel_id');

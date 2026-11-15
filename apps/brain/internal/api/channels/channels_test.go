@@ -251,6 +251,8 @@ func channelRoutes(t *testing.T) authz.Routes {
 	add("POST", "/teams/{id}/channels", "team", &write)
 	add("PATCH", "/teams/{id}/channels/{channelID}", "team", &write)
 	add("DELETE", "/teams/{id}/channels/{channelID}", "team", &write)
+	add("POST", "/teams/{id}/channels/{channelID}/pairing", "team", &write)
+	add("GET", "/teams/{id}/channels/{channelID}/pairing", "team", &write)
 
 	read, approve := "channel:read", "sender:approve"
 	senders := "/teams/{id}/channels/{channelID}/senders"
@@ -304,7 +306,7 @@ func callWith(
 
 	mux := http.NewServeMux()
 	k, _ := s.(Kicker)
-	New(discardLogger(), s, a, sec, p, hookBase, publicOnly, offline(t), k).
+	New(discardLogger(), s, a, sec, p, hookBase, publicOnly, offline(t), k, pairingOf(s)).
 		Register(mux, api.NewGuard(channelRoutes(t), a, liveTeams{}, discardLogger()))
 
 	var reader io.Reader
@@ -936,6 +938,30 @@ func (p providers) RepliesWithEvents(name string) bool {
 func (p providers) TakesReplyURL(name string) bool {
 	_, ok := p[name].(gateway.URLReplier)
 	return ok
+}
+
+func (p providers) HoldsConnection(name string) bool {
+	_, ok := p[name].(gateway.Socket)
+	return ok
+}
+
+// pairingOf is the store's pairing when it keeps one, and a store with no
+// accounts otherwise, so a test that never pairs needs nothing for it.
+func pairingOf(s any) PairingStore {
+	if p, ok := s.(PairingStore); ok {
+		return p
+	}
+	return noPairing{}
+}
+
+type noPairing struct{}
+
+func (noPairing) RequestWhatsAppPairing(context.Context, db.RequestWhatsAppPairingParams) error {
+	return errors.New("this test keeps no accounts")
+}
+
+func (noPairing) GetWhatsAppAccount(context.Context, db.GetWhatsAppAccountParams) (db.GetWhatsAppAccountRow, error) {
+	return db.GetWhatsAppAccountRow{}, pgx.ErrNoRows
 }
 
 func TestAChannelCarriesTheURLItsProviderPostsTo(t *testing.T) {

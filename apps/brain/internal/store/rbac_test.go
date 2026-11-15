@@ -502,6 +502,12 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"PATCH /teams/{id}/channels/{channelID}":  "team channel:write",
 		"DELETE /teams/{id}/channels/{channelID}": "team channel:write",
 
+		// Pairing links a phone to the channel, and the QR or code it shows is
+		// what lets a phone link: whoever reads it can make the bot their own
+		// number. So reading it is channel:write too, not channel:read.
+		"POST /teams/{id}/channels/{channelID}/pairing": "team channel:write",
+		"GET /teams/{id}/channels/{channelID}/pairing":  "team channel:write",
+
 		// Senders have permissions of their own, apart from channel:write.
 		// Approving a stranger lets them instruct an agent as a named user,
 		// which an approver may do without being trusted to rewire the

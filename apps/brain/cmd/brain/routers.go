@@ -63,7 +63,7 @@ func newRouters(
 		whoami.New(logger),
 		teams.New(logger, dbStore, authorizer, cfg.TeamPurgeAfter),
 		channels.New(logger, dbStore, authorizer, channelSecrets{secretStore, secretWriter}, registry, cfg.WebhookPublicURL,
-			reachable(cfg.MCPPrivateNetworks), replyClient(reachable(cfg.MCPPrivateNetworks)), notices),
+			reachable(cfg.MCPPrivateNetworks), replyClient(reachable(cfg.MCPPrivateNetworks)), notices, dbStore),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
 		mcpservers.New(logger, mcpStore{dbStore}, discoverer, secretWriter),
 		agents.New(logger, agentStore{dbStore}, runtime.Loops()),

@@ -10,6 +10,7 @@ import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type { CreateChannelRequest, CreatedChannel, ListedChannel, ReplyMode } from "@/api/types";
 import { KeyValue, KeyValues, Time } from "@/components/facts";
+import { LinkNumber } from "@/components/link-number";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
@@ -58,12 +59,14 @@ const WRITE = "channel:write";
 const READ_ALL = "session:read_all";
 
 /** The adapters this build ships, each with the name a person knows it by. */
-const PROVIDERS: [value: string, word: string][] = [
+export const PROVIDERS: [value: string, word: string][] = [
   ["custom", "Custom webhook"],
   ["telegram", "Telegram"],
+  ["whatsapp", "WhatsApp (linked device)"],
 ];
 
 const TELEGRAM = "telegram";
+const WHATSAPP = "whatsapp";
 /** The dashboard's own channel: made with the team, written to from the dashboard, never deleted. */
 const DASHBOARD = "dashboard";
 
@@ -218,7 +221,8 @@ function Channels() {
           onCreated={(c) => {
             void changed();
             setAdding(false);
-            setCreated(c);
+            if (opensToLink(c)) setShown(c.id);
+            else setCreated(c);
           }}
         />
       ) : null}
@@ -226,6 +230,15 @@ function Channels() {
       <CreatedDialog channel={created} onDone={() => setCreated(null)} />
     </div>
   );
+}
+
+/**
+ * Whether a channel just connected opens beside the list to link its number,
+ * rather than in the dialog that shows its secret once: a paired channel's
+ * generated secret signs nothing, and linking is what is left to do.
+ */
+export function opensToLink(c: CreatedChannel): boolean {
+  return Boolean(c.can_pair);
 }
 
 /**
@@ -267,6 +280,14 @@ function ChannelDetail({
           <KeyValue label="Messages">
             Typed here, on the dashboard: asking the team starts a conversation on this channel, and
             the answer is read in the conversation as it is written.
+          </KeyValue>
+        ) : channel.can_pair ? (
+          <KeyValue label="Number">
+            {canWrite ? (
+              <LinkNumber teamId={teamId} channelId={channel.id} />
+            ) : (
+              <>Linked by pairing a phone, which needs {WRITE}.</>
+            )}
           </KeyValue>
         ) : (
           <>
@@ -634,6 +655,8 @@ export function channelRequest(d: ChannelDraft): CreateChannelRequest | string {
   if (name === "") return "A channel needs a name.";
   if (name.length > MAX_NAME) return `A name is at most ${MAX_NAME} characters.`;
   if (provider === "") return "A channel needs a provider: the adapter that reads its webhooks.";
+  // A linked number has no webhook to sign; it is paired once the channel is made.
+  if (provider === WHATSAPP) return { name, provider };
   if (provider === TELEGRAM) {
     if (d.botToken.trim() === "") return "Paste the bot token from @BotFather.";
     return { name, provider, credentials: { bot_token: d.botToken.trim() } };
@@ -782,6 +805,12 @@ function ConnectSheet({
                 onChange={(e) => set({ botToken: e.target.value })}
               />
             </Field>
+          ) : draft.provider === WHATSAPP ? (
+            <p className="text-sm text-muted-foreground">
+              A WhatsApp number linked as a device, as WhatsApp Web is. You link it next, from the
+              phone. Use a number of the bot's own: a linked device is unofficial, and a number can
+              be banned.
+            </p>
           ) : (
             <SwitchField
               label="The provider gave me a signing secret"
@@ -789,7 +818,7 @@ function ConnectSheet({
               onCheckedChange={(on) => set({ ownSecret: on, secret: "" })}
             />
           )}
-          {draft.provider !== TELEGRAM && draft.ownSecret ? (
+          {draft.provider !== TELEGRAM && draft.provider !== WHATSAPP && draft.ownSecret ? (
             <Field
               label="Signing secret"
               htmlFor="channel-secret"

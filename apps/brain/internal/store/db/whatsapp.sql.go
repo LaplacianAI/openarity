@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -24,6 +25,46 @@ ON CONFLICT (channel_id) DO NOTHING
 func (q *Queries) EnsureWhatsAppAccounts(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, ensureWhatsAppAccounts)
 	return err
+}
+
+const getWhatsAppAccount = `-- name: GetWhatsAppAccount :one
+SELECT state, phone, pair_method, pair_qr, pair_code, pair_error, updated_at,
+       coalesce(heartbeat_at > now() - make_interval(secs => $1::float8), false)::bool AS held
+FROM whatsapp_accounts WHERE channel_id = $2
+`
+
+type GetWhatsAppAccountParams struct {
+	StaleSeconds float64
+	ChannelID    uuid.UUID
+}
+
+type GetWhatsAppAccountRow struct {
+	State      string
+	Phone      *string
+	PairMethod *string
+	PairQr     *string
+	PairCode   *string
+	PairError  *string
+	UpdatedAt  time.Time
+	Held       bool
+}
+
+// What a person sees of a channel's number: linked or not, the pairing's QR
+// or code, why it stopped, and whether any role holds the channel now.
+func (q *Queries) GetWhatsAppAccount(ctx context.Context, arg GetWhatsAppAccountParams) (GetWhatsAppAccountRow, error) {
+	row := q.db.QueryRow(ctx, getWhatsAppAccount, arg.StaleSeconds, arg.ChannelID)
+	var i GetWhatsAppAccountRow
+	err := row.Scan(
+		&i.State,
+		&i.Phone,
+		&i.PairMethod,
+		&i.PairQr,
+		&i.PairCode,
+		&i.PairError,
+		&i.UpdatedAt,
+		&i.Held,
+	)
+	return i, err
 }
 
 const leaseWhatsAppAccounts = `-- name: LeaseWhatsAppAccounts :many
@@ -144,6 +185,30 @@ WHERE held_by = $1::text
 // A role stopping lets its accounts go, so another takes them at once.
 func (q *Queries) ReleaseWhatsAppAccounts(ctx context.Context, holder string) error {
 	_, err := q.db.Exec(ctx, releaseWhatsAppAccounts, holder)
+	return err
+}
+
+const requestWhatsAppPairing = `-- name: RequestWhatsAppPairing :exec
+INSERT INTO whatsapp_accounts (channel_id, state, pair_seq, pair_method, pair_phone)
+VALUES ($1, 'pairing', 1, $2, $3)
+ON CONFLICT (channel_id) DO UPDATE
+SET state = 'pairing', pair_seq = whatsapp_accounts.pair_seq + 1,
+    pair_method = EXCLUDED.pair_method, pair_phone = EXCLUDED.pair_phone,
+    pair_qr = NULL, pair_code = NULL, pair_error = NULL, updated_at = now()
+`
+
+type RequestWhatsAppPairingParams struct {
+	ChannelID uuid.UUID
+	Method    *string
+	Phone     *string
+}
+
+// Asking for a pairing: a new request (pair_seq moves on), and what showed
+// before cleared. The role holding the channel takes it at its next renewal.
+// The row is made here if no role has made it yet, so asking works before
+// any role runs.
+func (q *Queries) RequestWhatsAppPairing(ctx context.Context, arg RequestWhatsAppPairingParams) error {
+	_, err := q.db.Exec(ctx, requestWhatsAppPairing, arg.ChannelID, arg.Method, arg.Phone)
 	return err
 }
 

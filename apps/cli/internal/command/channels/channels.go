@@ -30,6 +30,7 @@ func New(opts *cli.Options) *cobra.Command {
 		newCreateCmd(opts),
 		newUpdateCmd(opts),
 		newDeleteCmd(opts),
+		newPairCmd(opts),
 		newSendersCmd(opts),
 	)
 	return cmd

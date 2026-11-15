@@ -123,6 +123,45 @@ func (e ChannelReplyMode) Valid() bool {
 	}
 }
 
+// Defines values for ChannelPairingMethod.
+const (
+	ChannelPairingMethodCode ChannelPairingMethod = "code"
+	ChannelPairingMethodQr   ChannelPairingMethod = "qr"
+)
+
+// Valid indicates whether the value is a known member of the ChannelPairingMethod enum.
+func (e ChannelPairingMethod) Valid() bool {
+	switch e {
+	case ChannelPairingMethodCode:
+		return true
+	case ChannelPairingMethodQr:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ChannelPairingState.
+const (
+	Connected ChannelPairingState = "connected"
+	Pairing   ChannelPairingState = "pairing"
+	Unpaired  ChannelPairingState = "unpaired"
+)
+
+// Valid indicates whether the value is a known member of the ChannelPairingState enum.
+func (e ChannelPairingState) Valid() bool {
+	switch e {
+	case Connected:
+		return true
+	case Pairing:
+		return true
+	case Unpaired:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreatedChannelReplyMode.
 const (
 	CreatedChannelReplyModeEvents CreatedChannelReplyMode = "events"
@@ -246,6 +285,24 @@ func (e ListedSkillSource) Valid() bool {
 	case ListedSkillSourceURL:
 		return true
 	case ListedSkillSourceUpload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PairChannelRequestMethod.
+const (
+	PairChannelRequestMethodCode PairChannelRequestMethod = "code"
+	PairChannelRequestMethodQr   PairChannelRequestMethod = "qr"
+)
+
+// Valid indicates whether the value is a known member of the PairChannelRequestMethod enum.
+func (e PairChannelRequestMethod) Valid() bool {
+	switch e {
+	case PairChannelRequestMethodCode:
+		return true
+	case PairChannelRequestMethodQr:
 		return true
 	default:
 		return false
@@ -848,6 +905,11 @@ type Channel struct {
 	// is true; it is refused otherwise.
 	CanNotify bool `json:"can_notify" yaml:"can_notify"`
 
+	// CanPair Whether this channel's number is linked by pairing, as a
+	// `whatsapp` channel's is: a phone links it by scanning a QR or
+	// entering a code (`/teams/{id}/channels/{channelID}/pairing`).
+	CanPair bool `json:"can_pair" yaml:"can_pair"`
+
 	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
@@ -935,6 +997,42 @@ type ChannelPage struct {
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
+// ChannelPairing defines model for ChannelPairing.
+type ChannelPairing struct {
+	// Code The code to enter on the phone, while a code pairing waits.
+	//
+	// Examples: ABCD-1234
+	Code *string `json:"code,omitempty" yaml:"code,omitempty"`
+
+	// Error Why the last pairing stopped, or the device was unlinked.
+	Error *string `json:"error,omitempty" yaml:"error,omitempty"`
+
+	// Held Whether a `brain whatsapp` role holds the channel now. Without
+	// one nothing pairs and nothing is sent: the deployment runs no
+	// role, or it is down.
+	Held bool `json:"held" yaml:"held"`
+
+	// Method What the pairing under way was asked to show.
+	Method *ChannelPairingMethod `json:"method,omitempty" yaml:"method,omitempty"`
+
+	// Phone The linked number, once `connected`.
+	//
+	// Examples: 919876543210
+	Phone *string `json:"phone,omitempty" yaml:"phone,omitempty"`
+
+	// Qr The text to draw as a QR code, while a QR pairing waits to be
+	// scanned. It changes about every 20 seconds.
+	Qr        *string             `json:"qr,omitempty" yaml:"qr,omitempty"`
+	State     ChannelPairingState `json:"state" yaml:"state"`
+	UpdatedAt *time.Time          `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
+}
+
+// ChannelPairingMethod What the pairing under way was asked to show.
+type ChannelPairingMethod string
+
+// ChannelPairingState defines model for ChannelPairing.State.
+type ChannelPairingState string
+
 // ChannelSender defines model for ChannelSender.
 type ChannelSender struct {
 	// CreatedAt When they were approved
@@ -1001,6 +1099,11 @@ type CreatedChannel struct {
 	// does; `custom` does not. Offer `notify_strangers` only when this
 	// is true; it is refused otherwise.
 	CanNotify bool `json:"can_notify" yaml:"can_notify"`
+
+	// CanPair Whether this channel's number is linked by pairing, as a
+	// `whatsapp` channel's is: a phone links it by scanning a QR or
+	// entering a code (`/teams/{id}/channels/{channelID}/pairing`).
+	CanPair bool `json:"can_pair" yaml:"can_pair"`
 
 	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
@@ -1202,6 +1305,11 @@ type ListedChannel struct {
 	// does; `custom` does not. Offer `notify_strangers` only when this
 	// is true; it is refused otherwise.
 	CanNotify bool `json:"can_notify" yaml:"can_notify"`
+
+	// CanPair Whether this channel's number is linked by pairing, as a
+	// `whatsapp` channel's is: a phone links it by scanning a QR or
+	// entering a code (`/teams/{id}/channels/{channelID}/pairing`).
+	CanPair bool `json:"can_pair" yaml:"can_pair"`
 
 	// CanReply Whether this channel's provider sends replies at all.
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
@@ -1551,6 +1659,21 @@ type OutputSchema struct {
 	Name   string `json:"name" yaml:"name"`
 	Strict *bool  `json:"strict,omitempty" yaml:"strict,omitempty"`
 }
+
+// PairChannelRequest defines model for PairChannelRequest.
+type PairChannelRequest struct {
+	Method PairChannelRequestMethod `json:"method" yaml:"method"`
+
+	// Phone For `code` alone: the number to link, with its country code.
+	// Spaces, dashes, dots, brackets and a leading `+` are allowed.
+	//
+	//
+	// Examples: +91 98765 43210
+	Phone *string `json:"phone,omitempty" yaml:"phone,omitempty"`
+}
+
+// PairChannelRequestMethod defines model for PairChannelRequest.Method.
+type PairChannelRequestMethod string
 
 // ParserModel Only with parser. max_tokens and temperature fall back to the SDK's defaults.
 type ParserModel struct {
@@ -2631,6 +2754,9 @@ type CreateChannelJSONRequestBody = CreateChannelRequest
 // UpdateChannelJSONRequestBody defines body for UpdateChannel for application/json ContentType.
 type UpdateChannelJSONRequestBody = UpdateChannelRequest
 
+// PairChannelJSONRequestBody defines body for PairChannel for application/json ContentType.
+type PairChannelJSONRequestBody = PairChannelRequest
+
 // ApproveChannelSenderJSONRequestBody defines body for ApproveChannelSender for application/json ContentType.
 type ApproveChannelSenderJSONRequestBody = ApproveSenderRequest
 
@@ -3130,6 +3256,66 @@ type ClientInterface interface {
 	//
 	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
 	UpdateChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, body UpdateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetChannelPairing What linking the channel's number shows
+	//
+	// Requires `channel:write` in this team, not `channel:read`: the QR or
+	// code is what lets a phone link the channel, and whoever links it
+	// makes the bot their number. Only for a channel whose `can_pair` is
+	// true.
+	//
+	// Corresponds with GET /teams/{id}/channels/{channelID}/pairing (the `GetChannelPairing` operationId).
+	GetChannelPairing(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PairChannelWithBody Link a WhatsApp number to the channel
+	//
+	// Requires `channel:write` in this team. Only for a channel whose
+	// `can_pair` is true; any other is refused with 400.
+	//
+	// `qr` shows a QR code to scan from WhatsApp on the phone (Settings,
+	// Linked devices, Link a device). `code` asks WhatsApp for a code for
+	// `phone`, the number with its country code, entered on that phone
+	// instead ("Link with phone number").
+	//
+	// The `brain whatsapp` role holding the channel takes the request
+	// within about 15 seconds and writes what to show. Poll `GET` every
+	// few seconds: a QR changes about every 20 seconds, a code lasts about
+	// three minutes, and `state` becomes `connected` with the `phone`
+	// once it is linked, or `unpaired` with an `error` saying why it
+	// stopped. `held` false means no role is running to take it.
+	//
+	// Pairing a channel already linked replaces its number: the device
+	// linked before is logged out.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/channels/{channelID}/pairing (the `PairChannel` operationId).
+	PairChannelWithBody(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PairChannel Link a WhatsApp number to the channel
+	//
+	// Requires `channel:write` in this team. Only for a channel whose
+	// `can_pair` is true; any other is refused with 400.
+	//
+	// `qr` shows a QR code to scan from WhatsApp on the phone (Settings,
+	// Linked devices, Link a device). `code` asks WhatsApp for a code for
+	// `phone`, the number with its country code, entered on that phone
+	// instead ("Link with phone number").
+	//
+	// The `brain whatsapp` role holding the channel takes the request
+	// within about 15 seconds and writes what to show. Poll `GET` every
+	// few seconds: a QR changes about every 20 seconds, a code lasts about
+	// three minutes, and `state` becomes `connected` with the `phone`
+	// once it is linked, or `unpaired` with an `error` saying why it
+	// stopped. `held` false means no role is running to take it.
+	//
+	// Pairing a channel already linked replaces its number: the device
+	// linked before is logged out.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/channels/{channelID}/pairing (the `PairChannel` operationId).
+	PairChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, body PairChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RemoveChannelSender Remove a sender, or dismiss a pending one
 	//
@@ -4823,6 +5009,96 @@ func (c *Client) UpdateChannelWithBody(ctx context.Context, id TeamID, channelID
 // Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
 func (c *Client) UpdateChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, body UpdateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateChannelRequest(c.Server, id, channelID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetChannelPairing What linking the channel's number shows
+//
+// Requires `channel:write` in this team, not `channel:read`: the QR or
+// code is what lets a phone link the channel, and whoever links it
+// makes the bot their number. Only for a channel whose `can_pair` is
+// true.
+//
+// Corresponds with GET /teams/{id}/channels/{channelID}/pairing (the `GetChannelPairing` operationId).
+func (c *Client) GetChannelPairing(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetChannelPairingRequest(c.Server, id, channelID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PairChannelWithBody Link a WhatsApp number to the channel
+//
+// Requires `channel:write` in this team. Only for a channel whose
+// `can_pair` is true; any other is refused with 400.
+//
+// `qr` shows a QR code to scan from WhatsApp on the phone (Settings,
+// Linked devices, Link a device). `code` asks WhatsApp for a code for
+// `phone`, the number with its country code, entered on that phone
+// instead ("Link with phone number").
+//
+// The `brain whatsapp` role holding the channel takes the request
+// within about 15 seconds and writes what to show. Poll `GET` every
+// few seconds: a QR changes about every 20 seconds, a code lasts about
+// three minutes, and `state` becomes `connected` with the `phone`
+// once it is linked, or `unpaired` with an `error` saying why it
+// stopped. `held` false means no role is running to take it.
+//
+// Pairing a channel already linked replaces its number: the device
+// linked before is logged out.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/channels/{channelID}/pairing (the `PairChannel` operationId).
+func (c *Client) PairChannelWithBody(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPairChannelRequestWithBody(c.Server, id, channelID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PairChannel Link a WhatsApp number to the channel
+//
+// Requires `channel:write` in this team. Only for a channel whose
+// `can_pair` is true; any other is refused with 400.
+//
+// `qr` shows a QR code to scan from WhatsApp on the phone (Settings,
+// Linked devices, Link a device). `code` asks WhatsApp for a code for
+// `phone`, the number with its country code, entered on that phone
+// instead ("Link with phone number").
+//
+// The `brain whatsapp` role holding the channel takes the request
+// within about 15 seconds and writes what to show. Poll `GET` every
+// few seconds: a QR changes about every 20 seconds, a code lasts about
+// three minutes, and `state` becomes `connected` with the `phone`
+// once it is linked, or `unpaired` with an `error` saying why it
+// stopped. `held` false means no role is running to take it.
+//
+// Pairing a channel already linked replaces its number: the device
+// linked before is logged out.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/channels/{channelID}/pairing (the `PairChannel` operationId).
+func (c *Client) PairChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, body PairChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPairChannelRequest(c.Server, id, channelID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7422,6 +7698,101 @@ func NewUpdateChannelRequestWithBody(server string, id TeamID, channelID openapi
 	}
 
 	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetChannelPairingRequest constructs an http.Request for the GetChannelPairing method
+func NewGetChannelPairingRequest(server string, id TeamID, channelID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "channelID", channelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/channels/%s/pairing", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPairChannelRequest calls the generic PairChannel builder with application/json body
+func NewPairChannelRequest(server string, id TeamID, channelID openapi_types.UUID, body PairChannelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPairChannelRequestWithBody(server, id, channelID, "application/json", bodyReader)
+}
+
+// NewPairChannelRequestWithBody constructs an http.Request for the PairChannel method, with any body, and a specified content type
+func NewPairChannelRequestWithBody(server string, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "channelID", channelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/channels/%s/pairing", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -10761,6 +11132,68 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
 	UpdateChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, body UpdateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateChannelResponse, error)
 
+	// GetChannelPairingWithResponse What linking the channel's number shows
+	//
+	// Requires `channel:write` in this team, not `channel:read`: the QR or
+	// code is what lets a phone link the channel, and whoever links it
+	// makes the bot their number. Only for a channel whose `can_pair` is
+	// true.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/channels/{channelID}/pairing (the `GetChannelPairing` operationId).
+	GetChannelPairingWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetChannelPairingResponse, error)
+
+	// PairChannelWithBodyWithResponse Link a WhatsApp number to the channel
+	//
+	// Requires `channel:write` in this team. Only for a channel whose
+	// `can_pair` is true; any other is refused with 400.
+	//
+	// `qr` shows a QR code to scan from WhatsApp on the phone (Settings,
+	// Linked devices, Link a device). `code` asks WhatsApp for a code for
+	// `phone`, the number with its country code, entered on that phone
+	// instead ("Link with phone number").
+	//
+	// The `brain whatsapp` role holding the channel takes the request
+	// within about 15 seconds and writes what to show. Poll `GET` every
+	// few seconds: a QR changes about every 20 seconds, a code lasts about
+	// three minutes, and `state` becomes `connected` with the `phone`
+	// once it is linked, or `unpaired` with an `error` saying why it
+	// stopped. `held` false means no role is running to take it.
+	//
+	// Pairing a channel already linked replaces its number: the device
+	// linked before is logged out.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/channels/{channelID}/pairing (the `PairChannel` operationId).
+	PairChannelWithBodyWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PairChannelResponse, error)
+
+	// PairChannelWithResponse Link a WhatsApp number to the channel
+	//
+	// Requires `channel:write` in this team. Only for a channel whose
+	// `can_pair` is true; any other is refused with 400.
+	//
+	// `qr` shows a QR code to scan from WhatsApp on the phone (Settings,
+	// Linked devices, Link a device). `code` asks WhatsApp for a code for
+	// `phone`, the number with its country code, entered on that phone
+	// instead ("Link with phone number").
+	//
+	// The `brain whatsapp` role holding the channel takes the request
+	// within about 15 seconds and writes what to show. Poll `GET` every
+	// few seconds: a QR changes about every 20 seconds, a code lasts about
+	// three minutes, and `state` becomes `connected` with the `phone`
+	// once it is linked, or `unpaired` with an `error` saying why it
+	// stopped. `held` false means no role is running to take it.
+	//
+	// Pairing a channel already linked replaces its number: the device
+	// linked before is logged out.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/channels/{channelID}/pairing (the `PairChannel` operationId).
+	PairChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, body PairChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*PairChannelResponse, error)
+
 	// RemoveChannelSenderWithResponse Remove a sender, or dismiss a pending one
 	//
 	// Requires `sender:approve` in this team, and every permission the user
@@ -12762,6 +13195,102 @@ func (r UpdateChannelResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r UpdateChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetChannelPairingResponse401Headers the declared response headers of an HTTP 401 response for GetChannelPairing
+type GetChannelPairingResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetChannelPairingResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ChannelPairing
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetChannelPairingResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetChannelPairingResponse) GetJSON200() *ChannelPairing {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetChannelPairingResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetChannelPairingResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetChannelPairingResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetChannelPairingResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PairChannelResponse401Headers the declared response headers of an HTTP 401 response for PairChannel
+type PairChannelResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type PairChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *ChannelPairing
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *PairChannelResponse401Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r PairChannelResponse) GetJSON202() *ChannelPairing {
+	return r.JSON202
+}
+
+// GetBody returns the raw response body bytes
+func (r PairChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PairChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PairChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PairChannelResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -15753,6 +16282,86 @@ func (c *ClientWithResponses) UpdateChannelWithResponse(ctx context.Context, id 
 	return ParseUpdateChannelResponse(rsp)
 }
 
+// GetChannelPairingWithResponse What linking the channel's number shows
+//
+// Requires `channel:write` in this team, not `channel:read`: the QR or
+// code is what lets a phone link the channel, and whoever links it
+// makes the bot their number. Only for a channel whose `can_pair` is
+// true.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/channels/{channelID}/pairing (the `GetChannelPairing` operationId).
+func (c *ClientWithResponses) GetChannelPairingWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetChannelPairingResponse, error) {
+	rsp, err := c.GetChannelPairing(ctx, id, channelID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetChannelPairingResponse(rsp)
+}
+
+// PairChannelWithBodyWithResponse Link a WhatsApp number to the channel
+//
+// Requires `channel:write` in this team. Only for a channel whose
+// `can_pair` is true; any other is refused with 400.
+//
+// `qr` shows a QR code to scan from WhatsApp on the phone (Settings,
+// Linked devices, Link a device). `code` asks WhatsApp for a code for
+// `phone`, the number with its country code, entered on that phone
+// instead ("Link with phone number").
+//
+// The `brain whatsapp` role holding the channel takes the request
+// within about 15 seconds and writes what to show. Poll `GET` every
+// few seconds: a QR changes about every 20 seconds, a code lasts about
+// three minutes, and `state` becomes `connected` with the `phone`
+// once it is linked, or `unpaired` with an `error` saying why it
+// stopped. `held` false means no role is running to take it.
+//
+// Pairing a channel already linked replaces its number: the device
+// linked before is logged out.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/channels/{channelID}/pairing (the `PairChannel` operationId).
+func (c *ClientWithResponses) PairChannelWithBodyWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PairChannelResponse, error) {
+	rsp, err := c.PairChannelWithBody(ctx, id, channelID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePairChannelResponse(rsp)
+}
+
+// PairChannelWithResponse Link a WhatsApp number to the channel
+//
+// Requires `channel:write` in this team. Only for a channel whose
+// `can_pair` is true; any other is refused with 400.
+//
+// `qr` shows a QR code to scan from WhatsApp on the phone (Settings,
+// Linked devices, Link a device). `code` asks WhatsApp for a code for
+// `phone`, the number with its country code, entered on that phone
+// instead ("Link with phone number").
+//
+// The `brain whatsapp` role holding the channel takes the request
+// within about 15 seconds and writes what to show. Poll `GET` every
+// few seconds: a QR changes about every 20 seconds, a code lasts about
+// three minutes, and `state` becomes `connected` with the `phone`
+// once it is linked, or `unpaired` with an `error` saying why it
+// stopped. `held` false means no role is running to take it.
+//
+// Pairing a channel already linked replaces its number: the device
+// linked before is logged out.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/channels/{channelID}/pairing (the `PairChannel` operationId).
+func (c *ClientWithResponses) PairChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, body PairChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*PairChannelResponse, error) {
+	rsp, err := c.PairChannel(ctx, id, channelID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePairChannelResponse(rsp)
+}
+
 // RemoveChannelSenderWithResponse Remove a sender, or dismiss a pending one
 //
 // Requires `sender:approve` in this team, and every permission the user
@@ -17918,6 +18527,84 @@ func ParseUpdateChannelResponse(rsp *http.Response) (*UpdateChannelResponse, err
 	switch {
 	case rsp.StatusCode == 401:
 		var headers UpdateChannelResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetChannelPairingResponse parses an HTTP response from a GetChannelPairingWithResponse call
+func ParseGetChannelPairingResponse(rsp *http.Response) (*GetChannelPairingResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetChannelPairingResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ChannelPairing
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetChannelPairingResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePairChannelResponse parses an HTTP response from a PairChannelWithResponse call
+func ParsePairChannelResponse(rsp *http.Response) (*PairChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PairChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest ChannelPairing
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers PairChannelResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
