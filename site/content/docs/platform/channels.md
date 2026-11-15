@@ -7,9 +7,10 @@ that arrives on it is stored in a conversation, and, when it is addressed to
 the team and the sender has been let in, it starts a run of the team's
 [hub](hub.md). The hub's answer is posted back to the channel.
 
-Each channel belongs to one team and one provider. There are two:
-[`telegram`](#telegram), a Telegram bot, and `custom`, a generic signed webhook
-for anything else. Slack and Discord adapters are not written.
+Each channel belongs to one team and one provider. There are three:
+[`telegram`](#telegram), a Telegram bot; [`whatsapp`](whatsapp.md), a WhatsApp
+number linked as a device; and `custom`, a generic signed webhook for anything
+else. Slack and Discord adapters are not written.
 
 ## Connecting a channel
 
