@@ -116,7 +116,14 @@ func TestUpsertingTwiceKeepsOneRow(t *testing.T) {
 	s := queryStore(t)
 	team := mustCreate(t, s, "twice")
 
-	first := mustUpsertSettings(t, s, settings(team.ID))
+	mustUpsertSettings(t, s, settings(team.ID))
+	// The first save is put a day in the past, so the second's moving it
+	// forward does not hang on two readings of now() a moment apart, which a
+	// runner's clock stepping back, or one microsecond holding both, defeats.
+	past := time.Now().Add(-24 * time.Hour)
+	if _, err := s.pool.Exec(t.Context(), `UPDATE team_settings SET updated_at = $1 WHERE team_id = $2`, past, team.ID); err != nil {
+		t.Fatalf("backdating: %v", err)
+	}
 
 	again := settings(team.ID)
 	again.Learning = true
@@ -125,8 +132,8 @@ func TestUpsertingTwiceKeepsOneRow(t *testing.T) {
 	if !second.Learning {
 		t.Error("the second save did not change learning")
 	}
-	if !second.UpdatedAt.After(first.UpdatedAt) {
-		t.Errorf("updated_at %v did not move past %v", second.UpdatedAt, first.UpdatedAt)
+	if !second.UpdatedAt.After(past.Add(time.Hour)) {
+		t.Errorf("updated_at %v stayed where the first save left it, %v", second.UpdatedAt, past)
 	}
 
 	var n int
