@@ -265,7 +265,7 @@ func TestTheUnknownCommandErrorNamesEveryCommand(t *testing.T) {
 		t.Fatal("parse accepted a command that does not exist")
 	}
 
-	for _, name := range []commandName{commandServe, commandMigrate, commandReap, commandWorker, commandGraph} {
+	for _, name := range []commandName{commandServe, commandMigrate, commandReap, commandWorker, commandWhatsApp, commandGraph, commandBackfill} {
 		if !strings.Contains(err.Error(), string(name)) {
 			t.Errorf("%q is a command and the error does not mention it: %v", name, err)
 		}
@@ -283,5 +283,14 @@ func TestParseBackfill(t *testing.T) {
 		if _, err := parse(args); !errors.Is(err, errBackfillUsage) {
 			t.Errorf("%v: err = %v, want the usage", args, err)
 		}
+	}
+}
+
+func TestParseWhatsApp(t *testing.T) {
+	t.Parallel()
+
+	cmd, err := parse([]string{"whatsapp"})
+	if err != nil || cmd.name != commandWhatsApp {
+		t.Fatalf("whatsapp parsed as %+v, %v", cmd, err)
 	}
 }

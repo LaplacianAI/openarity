@@ -38,19 +38,21 @@ type Kicker interface {
 }
 
 type handler struct {
-	logger  *slog.Logger
-	store   Store
-	secrets Secrets
-	reg     Registry
-	sink    Sink
-	ingest  *Ingest
-	kick    Kicker
+	logger   *slog.Logger
+	store    Store
+	secrets  Secrets
+	reg      Registry
+	ingest   *Ingest
+	receiver *Receiver
 }
 
 func New(
 	logger *slog.Logger, s Store, sec Secrets, reg Registry, sink Sink, ingest *Ingest, kick Kicker,
 ) *api.Router {
-	h := &handler{logger: logger, store: s, secrets: sec, reg: reg, sink: sink, ingest: ingest, kick: kick}
+	h := &handler{
+		logger: logger, store: s, secrets: sec, reg: reg, ingest: ingest,
+		receiver: NewReceiver(logger, s, reg, sink, kick),
+	}
 
 	r := api.NewPublicRouter("/hooks")
 	for _, name := range reg.Names() {
@@ -105,31 +107,19 @@ func (h *handler) hook(p Provider, rt Route) http.HandlerFunc {
 			return
 		}
 
-		deliveries, err := h.resolve(r.Context(), p, channel, result.Messages)
-		if err != nil {
-			h.logger.Error("gateway: resolve senders", "channel_id", channel.ID, "error", err)
-			http.Error(w, "try again", http.StatusInternalServerError)
+		files := func(ctx context.Context, claimed []Attachment) ([]Stored, []string) {
+			return h.ingest.Fetch(ctx, p, req, creds, channel.TeamID, claimed)
+		}
+		err = h.receiver.Receive(r.Context(), p, channel, result.Messages, files)
+		if errors.Is(err, ErrTeamDeleted) {
+			h.logger.Info("gateway: delivery refused, the team is deleted", "channel_id", channel.ID)
+			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-
-		for i := range deliveries {
-			deliveries[i].Files, deliveries[i].Missed = h.ingest.Fetch(r.Context(),
-				p, req, creds, channel.TeamID, deliveries[i].Attachments)
-		}
-
-		if len(deliveries) > 0 {
-			err := h.sink.Deliver(r.Context(),
-				Channel{ID: channel.ID, TeamID: channel.TeamID}, deliveries)
-			if errors.Is(err, ErrTeamDeleted) {
-				h.logger.Info("gateway: delivery refused, the team is deleted", "channel_id", channel.ID)
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			if err != nil {
-				h.logger.Error("gateway: deliver", "channel_id", channel.ID, "error", err)
-				http.Error(w, "try again", http.StatusInternalServerError)
-				return
-			}
+		if err != nil {
+			h.logger.Error("gateway: deliver", "channel_id", channel.ID, "error", err)
+			http.Error(w, "try again", http.StatusInternalServerError)
+			return
 		}
 
 		ack(w, result.Ack)
@@ -199,32 +189,6 @@ func (h *handler) credentials(
 	return creds, true
 }
 
-func (h *handler) resolve(ctx context.Context, p Provider, ch db.Channel, msgs []Inbound) ([]Delivery, error) {
-	channelID := ch.ID
-	_, notifies := h.reg.Notifier(p.Name())
-	deliveries := make([]Delivery, 0, len(msgs))
-	for _, in := range msgs {
-		if err := in.Validate(); err != nil {
-			h.logger.Warn("gateway: adapter produced an invalid message",
-				"channel_id", channelID, "provider_message", in.ExternalID, "error", err)
-			continue
-		}
-
-		userID, linked, err := ResolveSender(ctx, h.store, channelID, in)
-		if err != nil {
-			return nil, err
-		}
-		if !linked {
-			if notifies {
-				h.tellWaiting(ctx, ch, in)
-			}
-			continue
-		}
-		deliveries = append(deliveries, Delivery{Inbound: in, UserID: userID})
-	}
-	return deliveries, nil
-}
-
 func ack(w http.ResponseWriter, body []byte) {
 	if len(body) == 0 {
 		w.WriteHeader(http.StatusOK)
@@ -234,23 +198,4 @@ func ack(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(body)
-}
-
-// tellWaiting is best effort: a notice that could not be written is logged,
-// and the stranger stays queued, which is what they came for.
-func (h *handler) tellWaiting(ctx context.Context, ch db.Channel, in Inbound) {
-	id, ok, err := TellWaiting(ctx, h.store, ch, in)
-	switch {
-	case err != nil:
-		h.logger.Error("gateway: notice for a waiting sender", "channel_id", ch.ID, "error", err)
-		return
-	case !ok:
-		return
-	}
-	if h.kick == nil {
-		return
-	}
-	if err := h.kick.KickNotice(ctx, id); err != nil {
-		h.logger.Warn("gateway: kick a notice; the sweep sends it", "notice", id, "error", err)
-	}
 }

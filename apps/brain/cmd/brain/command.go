@@ -17,6 +17,8 @@ const (
 	commandGraph   commandName = "graph"
 	// commandBackfill numbers what sessions held before they had a stream.
 	commandBackfill commandName = "backfill"
+	// commandWhatsApp holds WhatsApp channels' connections.
+	commandWhatsApp commandName = "whatsapp"
 )
 
 type direction string
@@ -52,6 +54,8 @@ func parse(args []string) (command, error) {
 		return command{name: commandReap}, nil
 	case commandWorker:
 		return command{name: commandWorker}, nil
+	case commandWhatsApp:
+		return command{name: commandWhatsApp}, nil
 	case commandGraph:
 		return parseGraph(args[1:])
 	case commandBackfill:
@@ -61,7 +65,7 @@ func parse(args []string) (command, error) {
 		return command{name: commandBackfill}, nil
 	default:
 		return command{}, fmt.Errorf(
-			"unknown command %q, want serve, migrate, reap, worker, graph or backfill", args[0])
+			"unknown command %q, want serve, migrate, reap, worker, whatsapp, graph or backfill", args[0])
 	}
 }
 

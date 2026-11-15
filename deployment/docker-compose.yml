@@ -261,6 +261,28 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  # WhatsApp numbers linked as devices: `brain whatsapp` holds each WhatsApp
+  # channel's connection, sends its replies and keeps its linked device's keys
+  # in the database's `whatsmeow` schema. Off unless .env has
+  # WHATSAPP_ENABLED=1 (the Makefile and the staging deploy add the profile);
+  # without it a WhatsApp channel can be created and never connects.
+  #
+  # One replica is enough; two are safe, since each channel is leased to one.
+  whatsapp:
+    profiles: ["whatsapp"]
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    command: ["whatsapp"]
+    environment:
+      <<: *brain-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   falkordb-data:

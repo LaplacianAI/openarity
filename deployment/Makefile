@@ -72,7 +72,10 @@ OIDC    := -f docker-compose.authentik.yml
 DEX     := -f docker-compose.dex.yml
 BAO     := -f docker-compose.openbao.yml
 OBJECTS := -f docker-compose.objects.yml
-PROFILE := --profile brain
+# WhatsApp's role runs when .env has WHATSAPP_ENABLED=1; it is one more brain
+# service, so every target that starts the brain starts it too.
+WHATSAPP := $(if $(shell grep -Eq "^WHATSAPP_ENABLED=1([[:space:]]|$$)" .env 2>/dev/null && echo y),--profile whatsapp)
+PROFILE := --profile brain $(WHATSAPP)
 
 # The bootstrap has to reach a running OpenBao before its AppRole exists, and
 # the overlay's `:?` guards are interpolated for the whole file before compose
