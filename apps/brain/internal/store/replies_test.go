@@ -337,3 +337,50 @@ func TestAReplysPartsAreRecordedUnderItsClaimAndCarriedToTheNext(t *testing.T) {
 		t.Errorf("parts_sent = %d (%v), want 1: the stale sender moved it", parts, err)
 	}
 }
+
+// A socket's channels are sent by the process holding the socket: the
+// worker's claim leaves them, and a holder's claim takes only those it
+// holds. Other tests' rows share this database, so each claim is judged by
+// these rows alone.
+func TestASocketsRepliesAreClaimedOnlyByItsHolder(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	web := newConversation(t, s, "socket-web")
+	wa := newConversation(t, s, "socket-wa")
+	if _, err := s.pool.Exec(t.Context(), `UPDATE channels SET provider = 'whatsapp' WHERE id = $1`, wa.channel.ID); err != nil {
+		t.Fatal(err)
+	}
+	other := newConversation(t, s, "socket-wa-other")
+	if _, err := s.pool.Exec(t.Context(), `UPDATE channels SET provider = 'whatsapp' WHERE id = $1`, other.channel.ID); err != nil {
+		t.Fatal(err)
+	}
+	webReply := web.answered(t, s, "m-web", "hi")
+	waReply := wa.answered(t, s, "m-wa", "hi")
+	otherReply := other.answered(t, s, "m-other", "hi")
+
+	claim := func(p db.ClaimDueRepliesParams) map[int64]bool {
+		p.LeaseSeconds, p.BatchSize = 0, 1000
+		rows, err := s.ClaimDueReplies(t.Context(), p)
+		if err != nil {
+			t.Fatalf("ClaimDueReplies: %v", err)
+		}
+		got := map[int64]bool{}
+		for _, r := range rows {
+			got[r.ID] = true
+		}
+		return got
+	}
+
+	worker := claim(db.ClaimDueRepliesParams{Sockets: []string{"whatsapp"}})
+	if !worker[webReply] || worker[waReply] || worker[otherReply] {
+		t.Errorf("the worker claimed web %v, whatsapp %v and %v; want the web reply alone", worker[webReply], worker[waReply], worker[otherReply])
+	}
+	holder := claim(db.ClaimDueRepliesParams{HeldOnly: true, Held: []uuid.UUID{wa.channel.ID}})
+	if !holder[waReply] || holder[webReply] || holder[otherReply] {
+		t.Errorf("the holder claimed whatsapp %v, web %v, another's %v; want its own channel's alone", holder[waReply], holder[webReply], holder[otherReply])
+	}
+	if none := claim(db.ClaimDueRepliesParams{HeldOnly: true}); none[waReply] || none[otherReply] || none[webReply] {
+		t.Error("a holder of nothing claimed a reply")
+	}
+}

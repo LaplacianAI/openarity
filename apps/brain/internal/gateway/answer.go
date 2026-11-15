@@ -96,9 +96,10 @@ func cannotRun(ctx context.Context, q Queries, teamID uuid.UUID, builder bool) (
 func asksUs(s db.Session, m Delivery) bool { return addressed(SessionKind(s.Kind), m.Inbound) }
 
 // addressed is whether a message asks the bot: always in a direct
-// conversation, elsewhere only when it mentions us; never from a bot.
+// conversation, elsewhere only when it mentions us; never from a bot, and
+// never one from before the bot was there.
 func addressed(kind SessionKind, in Inbound) bool {
-	if in.Author.IsBot {
+	if in.Author.IsBot || in.Historical {
 		return false
 	}
 	if kind == SessionDirect {

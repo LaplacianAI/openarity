@@ -50,14 +50,36 @@ type Sender struct {
 	store   ReplyStore
 	secrets Secrets
 	reg     Registry
-	client  *http.Client
+	poster  Poster
+	scope   Scope
 	logger  *slog.Logger
 }
 
-// client must refuse what a team may not reach, at dial time, and follow no
-// redirect: a 302 would turn the POST into a GET somewhere else.
-func NewSender(s ReplyStore, sec Secrets, reg Registry, client *http.Client, logger *slog.Logger) *Sender {
-	return &Sender{store: s, secrets: sec, reg: reg, client: client, logger: logger}
+// Poster sends one part a provider built, for a channel. An error is retried
+// unless it wraps ErrUnsendable.
+type Poster interface {
+	Post(ctx context.Context, channel uuid.UUID, req OutboundRequest) error
+}
+
+// Scope is which channels' replies and notices a sender claims. The zero
+// Scope is the worker's: every channel but a socket's.
+type Scope struct {
+	// Held, when set, is the channels whose socket this process holds; it
+	// claims theirs and nothing else. Read at each claim, so a channel taken
+	// over or let go changes what the next claim takes.
+	Held func() []uuid.UUID
+}
+
+func NewSender(s ReplyStore, sec Secrets, reg Registry, poster Poster, scope Scope, logger *slog.Logger) *Sender {
+	return &Sender{store: s, secrets: sec, reg: reg, poster: poster, scope: scope, logger: logger}
+}
+
+// claimScope is the scope as a claim's arguments.
+func (s *Sender) claimScope() (heldOnly bool, held []uuid.UUID, sockets []string) {
+	if s.scope.Held != nil {
+		return true, s.scope.Held(), nil
+	}
+	return false, nil, s.reg.Sockets()
 }
 
 // Drain sends every reply and notice due now and returns how many went. Each
@@ -75,8 +97,10 @@ func (s *Sender) Drain(ctx context.Context) (int, error) {
 func (s *Sender) drainReplies(ctx context.Context) (int, error) {
 	sent := 0
 	for {
+		heldOnly, held, sockets := s.claimScope()
 		rows, err := s.store.ClaimDueReplies(ctx, db.ClaimDueRepliesParams{
 			LeaseSeconds: replyLease.Seconds(), BatchSize: replyBatch,
+			HeldOnly: heldOnly, Held: held, Sockets: sockets,
 		})
 		if err != nil {
 			return sent, fmt.Errorf("claiming replies: %w", err)
@@ -99,8 +123,10 @@ func (s *Sender) drainReplies(ctx context.Context) (int, error) {
 func (s *Sender) drainNotices(ctx context.Context) (int, error) {
 	sent := 0
 	for {
+		heldOnly, held, sockets := s.claimScope()
 		rows, err := s.store.ClaimDueNotices(ctx, db.ClaimDueNoticesParams{
 			LeaseSeconds: replyLease.Seconds(), BatchSize: replyBatch,
+			HeldOnly: heldOnly, Held: held, Sockets: sockets,
 		})
 		if err != nil {
 			return sent, fmt.Errorf("claiming notices: %w", err)
@@ -120,8 +146,9 @@ func (s *Sender) drainNotices(ctx context.Context) (int, error) {
 	}
 }
 
-// errUnsendable is a reply no retry can send: the answer would be the same.
-var errUnsendable = errors.New("unsendable")
+// ErrUnsendable is a reply no retry can send: the answer would be the same.
+// A Poster wraps it for a part it can never send.
+var ErrUnsendable = errors.New("unsendable")
 
 // errLeaseLost is a reply another sender now holds: it marks the row, not us.
 var errLeaseLost = errors.New("lease lost")
@@ -237,7 +264,7 @@ func (s *Sender) send(ctx context.Context, o outgoing) (bool, error) {
 			return false, fmt.Errorf("marking %s %d sent: %w", o.what, o.id, markErr)
 		}
 		return true, nil
-	case errors.Is(err, errUnsendable) || o.attempts >= o.tries:
+	case errors.Is(err, ErrUnsendable) || o.attempts >= o.tries:
 		s.logger.WarnContext(ctx, o.what+" not sent; gave up",
 			o.what, o.id, "channel", o.channelID, "attempts", o.attempts, "err", err)
 		if _, markErr := o.giveUp(ctx, err.Error()); markErr != nil {
@@ -257,7 +284,7 @@ func (s *Sender) send(ctx context.Context, o outgoing) (bool, error) {
 func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 	p, ok := s.reg.Get(o.provider)
 	if !ok {
-		return fmt.Errorf("%w: no %s provider is registered", errUnsendable, o.provider)
+		return fmt.Errorf("%w: no %s provider is registered", ErrUnsendable, o.provider)
 	}
 
 	creds, err := s.credentials(ctx, o, p.Keys())
@@ -267,15 +294,15 @@ func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 
 	parts, err := o.build(creds)
 	if err != nil {
-		return fmt.Errorf("%w: %w", errUnsendable, err)
+		return fmt.Errorf("%w: %w", ErrUnsendable, err)
 	}
 	if len(parts) == 0 {
-		return fmt.Errorf("%w: the %s provider built no request", errUnsendable, o.provider)
+		return fmt.Errorf("%w: the %s provider built no request", ErrUnsendable, o.provider)
 	}
 	// Each part is recorded as it goes, so a retry starts at the first one
 	// not sent rather than sending the earlier ones twice.
 	for i := int(o.partsSent); i < len(parts); i++ {
-		if err := s.post(ctx, parts[i]); err != nil {
+		if err := s.poster.Post(ctx, o.channelID, parts[i]); err != nil {
 			return err
 		}
 		n, err := o.partSent(ctx, int32(i+1)) //nolint:gosec // G115: parts are few
@@ -302,14 +329,21 @@ func (s *Sender) credentials(ctx context.Context, o outgoing, keys []string) (Cr
 	return creds, nil
 }
 
-func (s *Sender) post(ctx context.Context, out OutboundRequest) error {
+// HTTPPoster posts each part with client, which must refuse what a team may
+// not reach at dial time and follow no redirect: a 302 would turn the POST
+// into a GET somewhere else.
+func HTTPPoster(client *http.Client) Poster { return httpPoster{client: client} }
+
+type httpPoster struct{ client *http.Client }
+
+func (p httpPoster) Post(ctx context.Context, _ uuid.UUID, out OutboundRequest) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, out.URL, bytes.NewReader(out.Body))
 	if err != nil {
-		return fmt.Errorf("%w: the reply URL: %w", errUnsendable, err)
+		return fmt.Errorf("%w: the reply URL: %w", ErrUnsendable, err)
 	}
 	req.Header = out.Header.Clone()
 
-	resp, err := s.client.Do(req) //nolint:gosec // G704: the client's dialer refuses what the team may not reach
+	resp, err := p.client.Do(req) //nolint:gosec // G704: the client's dialer refuses what the team may not reach
 	if err != nil {
 		// Not the *url.Error itself, which quotes the URL into last_error.
 		var ue *url.Error

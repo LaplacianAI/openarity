@@ -349,6 +349,33 @@ BotFather at any time, and a stored one would keep warning after it was
 fixed. Considered: refusing such a bot. Refused because private chats,
 commands and replies work, and some teams want exactly that.
 
+## WhatsApp: a linked device, held in the brain
+
+WhatsApp is a number linked as a device, as WhatsApp Web is, through
+whatsmeow, rather than Meta's Cloud API: the API charges for service
+messages past 1,000 a month per number since 2026-10-01 and needs a verified
+business. A linked device costs nothing and is unofficial, so it can be
+banned; the connection paces itself as a person would (typing first, gaps,
+caps a minute and a day), and the docs say to give it a number of its own.
+
+It is held in the brain, not in a bridge beside it. A Node bridge on Baileys
+was the first design; whatsmeow is Go, so the bridge's HTTP contract, its
+token and signing, an exception in the reply client for its address and a
+second language and image all went away. What that costs is that a
+connection has one owner, where a webhook lands on any replica: the
+`brain whatsapp` role leases each channel and holds its connection.
+
+So the provider is a `Socket`, and the outbox is kept rather than bypassed.
+`Reply` stays pure and returns parts, so splitting, `parts_sent`, retries and
+ordering are what every provider has; only the `Poster` differs, and the
+claims are split so the worker never takes a reply it cannot send. Messages
+in go through `Inbox.DeliverOne`, as the dashboard's do: there is no webhook
+to verify.
+
+A message the owner types on the phone is dropped for now: storing it needs
+an approved sender, and a dedicated number makes it rare. History WhatsApp
+sends on linking is stored as `Historical` and never answered.
+
 ## Settled: who may read a direct session
 
 **Its participant, plus anyone holding `session:read_all` in the team.** A

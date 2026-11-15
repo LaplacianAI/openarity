@@ -23,11 +23,18 @@ WITH claimed AS (
           -- A deleted team's channels take no messages; its replies wait for
           -- the purge that deletes them rather than going out after it.
           AND EXISTS (SELECT 1 FROM teams t WHERE t.id = d.team_id AND t.deleted_at IS NULL)
+          -- A socket's channels are sent by the process holding the socket:
+          -- it claims those it holds, and every other sender leaves them.
+          AND CASE WHEN $2::bool
+                   THEN d.channel_id = ANY($3::uuid[])
+                   ELSE NOT EXISTS (SELECT 1 FROM channels s
+                                    WHERE s.id = d.channel_id AND s.provider = ANY($4::text[]))
+              END
           AND NOT EXISTS (
               SELECT 1 FROM replies o
               WHERE o.session_id = d.session_id AND o.status = 'pending' AND o.id < d.id)
         ORDER BY d.next_attempt_at, d.id
-        LIMIT $2
+        LIMIT $5
         FOR UPDATE SKIP LOCKED)
     RETURNING r.id, r.team_id, r.run_id, r.session_id, r.channel_id, r.in_reply_to, r.kind, r.text, r.status, r.attempts, r.last_error, r.next_attempt_at, r.created_at, r.sent_at, r.parts_sent, r.event_seq
 )
@@ -44,6 +51,9 @@ ORDER BY c.id
 
 type ClaimDueRepliesParams struct {
 	LeaseSeconds float64
+	HeldOnly     bool
+	Held         []uuid.UUID
+	Sockets      []string
 	BatchSize    int32
 }
 
@@ -78,7 +88,13 @@ type ClaimDueRepliesRow struct {
 // attempts is the claim's own number. The marks below match on it, so a
 // sender whose lease ran out cannot mark a newer attempt.
 func (q *Queries) ClaimDueReplies(ctx context.Context, arg ClaimDueRepliesParams) ([]ClaimDueRepliesRow, error) {
-	rows, err := q.db.Query(ctx, claimDueReplies, arg.LeaseSeconds, arg.BatchSize)
+	rows, err := q.db.Query(ctx, claimDueReplies,
+		arg.LeaseSeconds,
+		arg.HeldOnly,
+		arg.Held,
+		arg.Sockets,
+		arg.BatchSize,
+	)
 	if err != nil {
 		return nil, err
 	}

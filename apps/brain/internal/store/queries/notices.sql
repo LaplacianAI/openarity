@@ -13,6 +13,13 @@ WITH claimed AS (
           -- A deleted team's channels take no messages; its notices wait
           -- for the purge that deletes them.
           AND EXISTS (SELECT 1 FROM teams t WHERE t.id = d.team_id AND t.deleted_at IS NULL)
+          -- A socket's channels are sent by the process holding the socket:
+          -- it claims those it holds, and every other sender leaves them.
+          AND CASE WHEN sqlc.arg('held_only')::bool
+                   THEN d.channel_id = ANY(sqlc.arg('held')::uuid[])
+                   ELSE NOT EXISTS (SELECT 1 FROM channels s
+                                    WHERE s.id = d.channel_id AND s.provider = ANY(sqlc.arg('sockets')::text[]))
+              END
           AND NOT EXISTS (
               SELECT 1 FROM notices o
               WHERE o.channel_id = d.channel_id AND o.session_ref = d.session_ref

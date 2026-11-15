@@ -367,3 +367,33 @@ type urlRelay struct{ relay }
 func (*urlRelay) Name() string { return "url-relay" }
 
 func (*urlRelay) RepliesToURL() {}
+
+// socketProvider holds a connection: no webhook, no keys of its own.
+type socketProvider struct{ stubProvider }
+
+func (socketProvider) HoldsConnection() {}
+
+func TestASocketProviderNeedsNoRoutesAndNoKeys(t *testing.T) {
+	t.Parallel()
+
+	reg, err := NewRegistry(socketProvider{stubProvider{name: "whatsapp", routes: []Route{}, keys: []string{}}}, stubProvider{name: "slack"})
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	if !reg.HoldsConnection("whatsapp") || reg.HoldsConnection("slack") {
+		t.Error("the registry does not know which provider holds a connection")
+	}
+	if got := reg.Sockets(); len(got) != 1 || got[0] != "whatsapp" {
+		t.Errorf("Sockets = %v; want whatsapp alone", got)
+	}
+}
+
+// A socket's route would be mounted as a webhook that nothing verifies.
+func TestASocketProviderWithARouteIsRefused(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewRegistry(socketProvider{stubProvider{name: "whatsapp", keys: []string{}}})
+	if err == nil || !strings.Contains(err.Error(), "whatsapp") {
+		t.Fatalf("NewRegistry = %v; want a socket with a route refused, by name", err)
+	}
+}

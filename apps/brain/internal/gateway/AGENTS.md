@@ -28,6 +28,7 @@ internal/gateway/
   providertest/     the conformance suite every adapter runs
   custom/           the generic adapter, and the reference implementation
   telegram/         a Telegram bot: secret_token in, rich messages out, getMe at setup, files by getFile
+  whatsapp/         a number linked as a device: pure Map and Reply; the connection is internal/whatsapp's
   <provider>/       one package per platform
 ```
 
@@ -200,9 +201,9 @@ builder, on the team's model. Every other agent is reached through the hub.
 Reading a session back, or an attachment. `internal/api/sessions` serves both;
 the gateway only writes. The promise this package makes by sniffing — that the
 recorded `media_type` is what a reader is given — is kept there, by serving it
-exactly and under `nosniff`. Socket transports: Slack Socket Mode and the
-Discord gateway are long-lived connections and `Provider` describes a request,
-so they need a second interface with a lifecycle.
+exactly and under `nosniff`. Holding a socket open: a provider that is a
+`Socket` (WhatsApp's linked device) keeps its adapter pure and leaves the
+connection to the process that holds it, outside this package.
 
 The queue. Ingest is inline, which is correct for a provider whose bytes arrive
 in the delivery and is bounded by the ack window for everyone else. A provider
@@ -269,6 +270,18 @@ Every key a channel holds is written as one secret with `PutAll`:
 OpenBao's KV write replaces the whole secret, so a `Put` per key keeps only the
 last.
 
+**A `Socket` holds a connection instead of taking webhooks.** It declares no
+routes (`NewRegistry` refuses one that does, since a mounted route would be a
+webhook nothing verifies) and need declare no keys. Its messages reach the
+inbox from the process holding the connection, through `Inbox.DeliverOne`,
+and its adapter stays pure: WhatsApp's maps a message to `Inbound` and builds
+a reply's parts as `OutboundRequest`s addressed `whatsapp:send`. The `Sender`
+posts through a `Poster`: the worker's is HTTP and claims every channel but a
+socket's (`Scope{}`); the holder's sends through its socket and claims only
+the channels it holds (`Scope{Held}`), replies and notices alike. A message
+marked `Historical` (sent by the platform when the number was linked) is
+stored and never answered.
+
 `custom` signs a reply under `reply:v1:` rather than the `v1:` of an incoming
 message, so a captured reply posted to the webhook does not verify as a
 message — the team would be answering itself.
@@ -276,4 +289,4 @@ message — the team would be answering itself.
 ## Decisions
 
 The decisions worth not relitigating, each with its reason, are in [DECISIONS.md](DECISIONS.md). Read it before changing a design, a boundary, or anything a convention above protects.
-Topics: the result of a delivery (`Result{}`), `Validate` on `Inbound`, sessions and messages, attachments fetched later, who may read a direct session, why a reply is built here and sent there, Telegram.
+Topics: the result of a delivery (`Result{}`), `Validate` on `Inbound`, sessions and messages, attachments fetched later, who may read a direct session, why a reply is built here and sent there, Telegram, WhatsApp.

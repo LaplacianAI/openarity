@@ -110,6 +110,30 @@ func TestABotsMessageIsNeverAnswered(t *testing.T) {
 	}
 }
 
+// A message from before the bot was there is part of the conversation and
+// asks nothing, in a direct chat too: it is stored, and starts and steers no
+// run.
+func TestAHistoricalMessageIsStoredAndNeverAnswered(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	if err := a.deliver(t, delivery("m-1", "why did the export fail?")); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	running := a.store.created[0].ID
+	old := delivery("m-0", "from last week")
+	old.Historical = true
+	if err := a.deliver(t, old); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(a.store.created) != 1 || len(a.store.steers[running]) != 0 {
+		t.Errorf("a historical message started %d runs and steered %d", len(a.store.created)-1, len(a.store.steers[running]))
+	}
+	if len(a.store.stored) != 2 {
+		t.Errorf("stored %d messages, want both", len(a.store.stored))
+	}
+}
+
 // In a group, people talk to each other. Only a message that mentions us asks
 // the team anything.
 func TestAGroupMessageIsAnsweredOnlyWhenItMentionsUs(t *testing.T) {
