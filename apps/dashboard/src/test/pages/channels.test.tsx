@@ -61,7 +61,38 @@ describe("the create form", () => {
     ownSecret: false,
     secret: "",
     botToken: "",
+    answersIn: "everywhere" as const,
+    notify: true,
+    mine: false,
   };
+
+  // A person's own number answers where they chose and tells strangers
+  // nothing; the bot's own sends neither setting, so the brain's defaults stand.
+  it("sends where a channel answers and its notices only when they differ", () => {
+    const wa = { ...draft, provider: "whatsapp" };
+    expect(channelRequest(wa)).toEqual({ name: "support", provider: "whatsapp" });
+    expect(channelRequest({ ...wa, mine: true, answersIn: "groups" })).toEqual({
+      name: "support",
+      provider: "whatsapp",
+      answers_in: "groups",
+      notify_strangers: false,
+    });
+    expect(channelRequest({ ...wa, notify: false, answersIn: "direct" })).toEqual({
+      name: "support",
+      provider: "whatsapp",
+      answers_in: "direct",
+      notify_strangers: false,
+    });
+  });
+
+  // A custom webhook cannot tell strangers anything, so it never says so.
+  it("sends no notices setting for a provider that sends none", () => {
+    expect(channelRequest({ ...draft, notify: false, answersIn: "groups" })).toEqual({
+      name: "support",
+      provider: "custom",
+      answers_in: "groups",
+    });
+  });
 
   // A linked number has no webhook to sign: no secret is sent, even one typed
   // before the provider was changed.
@@ -1052,5 +1083,72 @@ describe("a WhatsApp channel's number", () => {
     expect(await within(sheet).findByRole("alert")).toHaveTextContent(
       "phone must be a number with its country code",
     );
+  });
+});
+
+describe("where a channel answers", () => {
+  const at = () => showAt("/ui/channels/", [["/ui/channels/", Route]]);
+  const mine = {
+    ...support,
+    name: "mine",
+    provider: "whatsapp",
+    answers_in: "everywhere" as const,
+  };
+
+  it("is changed in place, one choice saved as it is made", async () => {
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [mine] } },
+      "GET /teams/{id}/channels/{channelID}/pairing": { body: { state: "unpaired", held: true } },
+      "PATCH /teams/{id}/channels/{channelID}": { body: { ...mine, answers_in: "groups" } },
+    });
+    at();
+
+    const sheet = await opened("mine");
+    expect(
+      within(sheet).getByText(/Direct chats, and groups where it is mentioned\./),
+    ).toBeInTheDocument();
+    await userEvent.click(within(sheet).getByRole("button", { name: "Change where it answers" }));
+    await userEvent.click(
+      within(sheet).getByRole("radio", { name: "Only groups, where it is mentioned" }),
+    );
+
+    const patch = seen.find((s) => s.method === "PATCH");
+    expect(patch?.path).toBe(`/teams/${TEAM}/channels/c1`);
+    expect(JSON.parse(String(patch?.body))).toEqual({ answers_in: "groups" });
+  });
+
+  it("is only read by someone without channel:write", async () => {
+    brain({
+      ...team([]),
+      "GET /teams/{id}/channels": { body: { items: [{ ...mine, answers_in: "direct" }] } },
+    });
+    at();
+
+    const sheet = await opened("mine");
+    expect(within(sheet).getByText(/Only direct chats\./)).toBeInTheDocument();
+    expect(
+      within(sheet).queryByRole("button", { name: /where it answers/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  // The form offers where it answers for every provider, and the notices
+  // only for one that can tell a stranger anything: a custom webhook cannot.
+  it("is chosen when connecting, and a custom webhook is not offered notices", async () => {
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [] } },
+      "POST /teams/{id}/channels": { status: 201, body: { ...support, signing_secret: GENERATED } },
+    });
+    show(Channels);
+
+    await userEvent.click(await screen.findByRole("button", { name: /connect channel/i }));
+    expect(screen.queryByText(/Tell someone not yet let in/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Whose number is it/)).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Name"), "support");
+    await userEvent.click(screen.getByRole("radio", { name: "Only direct chats" }));
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    expect(posted(seen)).toEqual({ name: "support", provider: "custom", answers_in: "direct" });
   });
 });

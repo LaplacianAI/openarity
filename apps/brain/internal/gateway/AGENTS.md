@@ -284,6 +284,16 @@ the channels it holds (`Scope{Held}`), replies and notices alike. A message
 marked `Historical` (sent by the platform when the number was linked) is
 stored and never answered.
 
+**Where a channel answers is one rule.** `addressed` decides, from the
+channel's `answers_in` (`everywhere`, `groups` or `direct`; empty is
+everywhere), whether a message asks anything: whether it starts a run, steers
+one, queues a stranger and tells them so. Outside it a message from someone
+let in is stored and does nothing else. It is how a WhatsApp number that is
+also a person's own answers in their groups and leaves their direct chats
+alone. The `Receiver` carries the scope from the channel row to
+`ResolveSender` and to the inbox, and the WhatsApp role takes it, with
+`notify_strangers`, from each lease.
+
 `custom` signs a reply under `reply:v1:` rather than the `v1:` of an incoming
 message, so a captured reply posted to the webhook does not verify as a
 message — the team would be answering itself.

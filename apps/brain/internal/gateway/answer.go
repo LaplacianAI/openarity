@@ -20,7 +20,7 @@ type outcome struct {
 }
 
 func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery, messageID uuid.UUID) (outcome, error) {
-	if !asksUs(s, m) {
+	if !asksUs(ch, s, m) {
 		return outcome{}, nil
 	}
 	if strings.TrimSpace(m.Text) == "" && len(m.Files) == 0 && len(m.Missed) == 0 {
@@ -93,17 +93,24 @@ func cannotRun(ctx context.Context, q Queries, teamID uuid.UUID, builder bool) (
 	return "", nil
 }
 
-func asksUs(s db.Session, m Delivery) bool { return addressed(SessionKind(s.Kind), m.Inbound) }
+func asksUs(ch Channel, s db.Session, m Delivery) bool {
+	return addressed(ch.AnswersIn, SessionKind(s.Kind), m.Inbound)
+}
 
-// addressed is whether a message asks the bot: always in a direct
-// conversation, elsewhere only when it mentions us; never from a bot, and
-// never one from before the bot was there.
-func addressed(kind SessionKind, in Inbound) bool {
+// addressed is whether a message asks the bot: in a direct conversation
+// always, elsewhere only when it mentions us; never from a bot, never one
+// from before the bot was there, and never outside where the channel
+// answers. The one rule for starting a run, steering one, queueing a stranger
+// and telling them so.
+func addressed(where AnswersIn, kind SessionKind, in Inbound) bool {
 	if in.Author.IsBot || in.Historical {
 		return false
 	}
 	if kind == SessionDirect {
-		return true
+		return where != AnswersInGroups
+	}
+	if where == AnswersInDirect {
+		return false
 	}
 	return slices.ContainsFunc(in.Mentions, func(x Mention) bool { return x.IsUs })
 }

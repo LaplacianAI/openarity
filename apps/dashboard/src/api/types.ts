@@ -94,7 +94,15 @@ export type Channel = {
    * channel's is. Optional: a brain from before the field sends none.
    */
   can_pair?: boolean;
+  /** Where it answers. Optional: a brain from before the field sends none. */
+  answers_in?: AnswersIn;
 };
+
+/**
+ * Where a channel answers: `everywhere` (direct chats, and groups where it is
+ * mentioned), only `groups`, or only `direct` chats.
+ */
+export type AnswersIn = "everywhere" | "groups" | "direct";
 
 export type ReplyMode = "final" | "events";
 
@@ -125,6 +133,7 @@ export type UpdateChannelRequest = {
   reply_url?: string | null;
   notify_strangers?: boolean;
   reply_mode?: ReplyMode;
+  answers_in?: AnswersIn;
 };
 
 /**
@@ -138,6 +147,10 @@ export type CreateChannelRequest = {
   reply_url?: string;
   /** What the provider asks a person for: Telegram needs `bot_token`. */
   credentials?: Record<string, string>;
+  /** Left out, it answers everywhere. */
+  answers_in?: AnswersIn;
+  /** Left out, on where the provider can tell; refused where it cannot. */
+  notify_strangers?: boolean;
 };
 
 /**

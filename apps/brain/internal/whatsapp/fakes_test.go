@@ -278,16 +278,18 @@ func (s *fakeStore) snapshot() fakeStore {
 // fakeReceiver keeps what it was handed, and answers errs in turn.
 type fakeReceiver struct {
 	mu    sync.Mutex
+	chans []db.Channel
 	got   [][]gateway.Inbound
 	files [][]gateway.Stored
 	errs  []error
 	calls int
 }
 
-func (r *fakeReceiver) Receive(ctx context.Context, _ gateway.Provider, _ db.Channel, msgs []gateway.Inbound, files gateway.Files) error {
+func (r *fakeReceiver) Receive(ctx context.Context, _ gateway.Provider, ch db.Channel, msgs []gateway.Inbound, files gateway.Files) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls++
+	r.chans = append(r.chans, ch)
 	if len(r.errs) > 0 {
 		err := r.errs[0]
 		r.errs = r.errs[1:]

@@ -169,3 +169,34 @@ func (f *fixture) logText() string {
 	defer f.log.mu.Unlock()
 	return f.log.b.String()
 }
+
+// The gateway decides whether a message asks anything from the channel's own
+// settings, so the connection hands them over, and the ones a person changed
+// since, at the next renewal.
+func TestAMessageCarriesTheChannelsSettingsAsTheyAreNow(t *testing.T) {
+	f := newFixture(t, newDevices(linkedJID))
+	ch := uuid.New()
+	r := row(ch, &linkedJID)
+	r.NotifyStrangers, r.AnswersIn = true, "everywhere"
+	f.store.rows = []db.LeaseWhatsAppAccountsRow{r}
+	f.a.lease(t.Context())
+	cli := f.client(t, 0)
+	cli.emit(incoming("M1", &waE2E.Message{Conversation: proto.String("one")}))
+	eventually(t, "the first message", func() bool { return len(f.receiver.delivered()) == 1 })
+
+	r.NotifyStrangers, r.AnswersIn = false, "groups"
+	f.store.rows = []db.LeaseWhatsAppAccountsRow{r}
+	f.a.lease(t.Context())
+	cli.emit(incoming("M2", &waE2E.Message{Conversation: proto.String("two")}))
+	eventually(t, "the second message", func() bool { return len(f.receiver.delivered()) == 2 })
+
+	f.receiver.mu.Lock()
+	defer f.receiver.mu.Unlock()
+	first, second := f.receiver.chans[0], f.receiver.chans[1]
+	if first.ID != ch || !first.NotifyStrangers || first.AnswersIn != "everywhere" {
+		t.Errorf("the first message's channel = %+v; want notices on, everywhere", first)
+	}
+	if second.NotifyStrangers || second.AnswersIn != "groups" {
+		t.Errorf("after the change, the channel = %+v; want notices off, groups", second)
+	}
+}

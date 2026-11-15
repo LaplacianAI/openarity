@@ -90,6 +90,7 @@ type Channel struct {
 	ReplyUrl        *string
 	NotifyStrangers bool
 	ReplyMode       string
+	AnswersIn       string
 }
 
 type ChannelSender struct {

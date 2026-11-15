@@ -67,7 +67,16 @@ func (f *fakeStore) CreateChannel(_ context.Context, arg db.CreateChannelParams)
 	if f.err != nil {
 		return db.Channel{}, f.err
 	}
-	row := db.Channel{ID: uuid.New(), TeamID: arg.TeamID, Provider: arg.Provider, Name: arg.Name, ReplyUrl: arg.ReplyUrl}
+	row := db.Channel{
+		ID: uuid.New(), TeamID: arg.TeamID, Provider: arg.Provider, Name: arg.Name, ReplyUrl: arg.ReplyUrl,
+		AnswersIn: "everywhere", NotifyStrangers: true,
+	}
+	if arg.AnswersIn != nil {
+		row.AnswersIn = *arg.AnswersIn
+	}
+	if arg.NotifyStrangers.Valid {
+		row.NotifyStrangers = arg.NotifyStrangers.Bool
+	}
 	f.channels = append(f.channels, row)
 	return row, nil
 }
@@ -87,6 +96,9 @@ func (f *fakeStore) UpdateChannel(_ context.Context, arg db.UpdateChannelParams)
 			}
 			if arg.ReplyMode != nil {
 				f.channels[i].ReplyMode = *arg.ReplyMode
+			}
+			if arg.AnswersIn != nil {
+				f.channels[i].AnswersIn = *arg.AnswersIn
 			}
 			return f.channels[i], nil
 		}

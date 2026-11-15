@@ -42,12 +42,38 @@ type conn struct {
 	ctx     context.Context //nolint:containedctx // the connection's lifetime, for what it starts
 	stop    context.CancelFunc
 
-	mu       sync.Mutex
+	mu sync.Mutex
+	// settings is what the channel says about answering, from the lease:
+	// it can change on the dashboard while the connection is held.
+	settings settings
 	dev      *store.Device
 	cli      Client
 	pairing  bool
 	quotes   map[types.MessageID]quoted
 	quoteFIF []types.MessageID
+}
+
+// settings is what a channel says about answering: whether a stranger is
+// told they wait, and where it answers. The lease carries them, so a change
+// reaches the connection at its next renewal.
+type settings struct {
+	notifyStrangers bool
+	answersIn       string
+}
+
+func (c *conn) setSettings(s settings) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.settings = s
+}
+
+// current is the channel as the gateway takes a message for it now.
+func (c *conn) current() db.Channel {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ch := c.channel
+	ch.NotifyStrangers, ch.AnswersIn = c.settings.notifyStrangers, c.settings.answersIn
+	return ch
 }
 
 // quoted is a message the device received, kept so an answer can quote it:
@@ -210,7 +236,7 @@ func (c *conn) receive(ctx context.Context, msgs []gateway.Inbound, get func(con
 	}
 	var err error
 	for try := range receiveTries {
-		err = c.a.receiver.Receive(ctx, c.a.provider, c.channel, msgs, files)
+		err = c.a.receiver.Receive(ctx, c.a.provider, c.current(), msgs, files)
 		if err == nil || errors.Is(err, gateway.ErrTeamDeleted) || ctx.Err() != nil {
 			break
 		}

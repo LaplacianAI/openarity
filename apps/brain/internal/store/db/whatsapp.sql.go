@@ -75,7 +75,8 @@ JOIN teams t ON t.id = c.team_id AND t.deleted_at IS NULL
 WHERE a.channel_id = c.id
   AND (a.held_by = $1::text OR a.held_by IS NULL
        OR a.heartbeat_at < now() - make_interval(secs => $2::float8))
-RETURNING a.channel_id, c.team_id, a.state, a.jid, a.pair_seq, a.pair_seen, a.pair_method, a.pair_phone
+RETURNING a.channel_id, c.team_id, c.notify_strangers, c.answers_in,
+          a.state, a.jid, a.pair_seq, a.pair_seen, a.pair_method, a.pair_phone
 `
 
 type LeaseWhatsAppAccountsParams struct {
@@ -84,14 +85,16 @@ type LeaseWhatsAppAccountsParams struct {
 }
 
 type LeaseWhatsAppAccountsRow struct {
-	ChannelID  uuid.UUID
-	TeamID     uuid.UUID
-	State      string
-	Jid        *string
-	PairSeq    int64
-	PairSeen   int64
-	PairMethod *string
-	PairPhone  *string
+	ChannelID       uuid.UUID
+	TeamID          uuid.UUID
+	NotifyStrangers bool
+	AnswersIn       string
+	State           string
+	Jid             *string
+	PairSeq         int64
+	PairSeen        int64
+	PairMethod      *string
+	PairPhone       *string
 }
 
 // A role takes the accounts nobody holds, or whose holder stopped renewing,
@@ -110,6 +113,8 @@ func (q *Queries) LeaseWhatsAppAccounts(ctx context.Context, arg LeaseWhatsAppAc
 		if err := rows.Scan(
 			&i.ChannelID,
 			&i.TeamID,
+			&i.NotifyStrangers,
+			&i.AnswersIn,
 			&i.State,
 			&i.Jid,
 			&i.PairSeq,

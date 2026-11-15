@@ -1,6 +1,8 @@
 -- name: CreateChannel :one
-INSERT INTO channels (team_id, provider, name, reply_url)
-VALUES (sqlc.arg('team_id'), sqlc.arg('provider'), sqlc.arg('name'), sqlc.narg('reply_url'))
+INSERT INTO channels (team_id, provider, name, reply_url, answers_in, notify_strangers)
+VALUES (sqlc.arg('team_id'), sqlc.arg('provider'), sqlc.arg('name'), sqlc.narg('reply_url'),
+        COALESCE(sqlc.narg('answers_in')::text, 'everywhere'),
+        COALESCE(sqlc.narg('notify_strangers')::bool, true))
 RETURNING *;
 
 -- Each field changes only when it was sent. A null reply_url stops replies
@@ -9,7 +11,8 @@ RETURNING *;
 UPDATE channels
 SET reply_url = CASE WHEN sqlc.arg('set_reply_url')::bool THEN sqlc.narg('reply_url') ELSE reply_url END,
     notify_strangers = COALESCE(sqlc.narg('notify_strangers')::bool, notify_strangers),
-    reply_mode = COALESCE(sqlc.narg('reply_mode')::text, reply_mode)
+    reply_mode = COALESCE(sqlc.narg('reply_mode')::text, reply_mode),
+    answers_in = COALESCE(sqlc.narg('answers_in')::text, answers_in)
 WHERE id = sqlc.arg('id') AND team_id = sqlc.arg('team_id')
 RETURNING *;
 
