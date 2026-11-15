@@ -14,6 +14,20 @@ type Channel struct {
 	ReplyURL string
 	// AnswersIn is where the channel answers; empty is everywhere.
 	AnswersIn AnswersIn
+	// TriggerWord is the word a message must hold to ask the channel; empty
+	// is none.
+	TriggerWord string
+}
+
+// Answering is what decides whether a message asks a channel: where it
+// answers, and the word a message must hold, if it has one.
+type Answering struct {
+	Where   AnswersIn
+	Trigger string
+}
+
+func (c Channel) answering() Answering {
+	return Answering{Where: c.AnswersIn, Trigger: c.TriggerWord}
 }
 
 // AnswersIn is where a channel answers: everywhere (direct chats, and groups

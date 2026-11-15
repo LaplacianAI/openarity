@@ -202,10 +202,29 @@ also your own, `groups` with stranger notices off leaves your direct chats
 alone; the dashboard sets both when you say the number is yours.
 
 What you type on a linked WhatsApp number is yours, not a question for the
-agent, and is not kept, with one exception: WhatsApp's **Message yourself**
-chat. There you are asking the agent, whatever `answers_in` says. You are let
-in from Approvals once, like anyone, and the agent's answers, which arrive in
-that chat as yours too, are never taken as questions.
+agent, and is not kept, with two exceptions. In WhatsApp's **Message
+yourself** chat you are asking the agent, whatever `answers_in` says. And with
+a trigger word, a message of yours that holds the word calls the agent in the
+chat you typed it in. You are let in from Approvals once, like anyone, and the
+agent's answers, which arrive as yours too, are never taken as questions.
+
+### A trigger word
+
+A WhatsApp channel can be given a `trigger_word`, such as `@Fduv`, when it is
+connected or later. With one, a message asks the agent only when it holds the
+word, in any case and as a word of its own: `@fduv, what now?` does, `@Fduvx`
+does not. That holds in groups and direct chats alike, and an @-mention of the
+number no longer asks anything, so a friend tagging you is not answered by the
+agent in your name. On your own number you call it from any chat by typing
+the word; the answer goes to that chat. `answers_in` still applies.
+
+```sh
+oa channels update <team> <channel> --trigger-word @Fduv
+oa channels update <team> <channel> --trigger-word ""   # take it away
+```
+
+On the dashboard, choosing **Mine** when you connect a WhatsApp number asks
+for the word.
 
 A message from a bot, ours or anyone's, is never answered. A message with no
 text is not answered. Neither is one from a sender whose member may not start

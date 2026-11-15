@@ -956,6 +956,10 @@ type Channel struct {
 	// `reply_mode` only when this is true; it is refused otherwise.
 	CanShowEvents bool `json:"can_show_events" yaml:"can_show_events"`
 
+	// CanTriggerWord Whether the channel can be called by a word, as a `whatsapp`
+	// channel can, so a client offers `trigger_word` only there.
+	CanTriggerWord bool `json:"can_trigger_word" yaml:"can_trigger_word"`
+
 	// HookURL The full address to give the provider: the brain's public
 	// webhook address, then `/hooks/<provider>/<id>` and the
 	// provider's route. Absent when the brain has no
@@ -1014,6 +1018,9 @@ type Channel struct {
 	// true; it is refused otherwise.
 	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
+
+	// TriggerWord The word a message must hold to ask the channel (see `TriggerWord`); null is none.
+	TriggerWord string `json:"trigger_word" yaml:"trigger_word"`
 }
 
 // ChannelReplyMode What the conversation is sent while a run works. `final`, the
@@ -1135,6 +1142,20 @@ type CreateChannelRequest struct {
 	// Omit it to have the server generate a strong one and return it
 	// once.
 	SigningSecret *string `json:"signing_secret,omitempty" yaml:"signing_secret,omitempty"`
+
+	// TriggerWord The word a message must hold to ask the channel, such as `@Fduv`:
+	// for a WhatsApp number that is also a person's own. With one, a
+	// message asks only when it holds the word, in any case and as a word
+	// of its own (`@fduv, now?` does, `@Fduvx` does not), in a direct chat
+	// or a group alike, and a mention of the number no longer does. The
+	// owner calls it from any chat: their own message holding the word is
+	// answered in that chat, from their number; their others are not kept.
+	// Still only within `answers_in`. One word of at most 32 characters,
+	// with a letter or digit in it; only where `can_trigger_word`.
+	//
+	//
+	// Examples: @Fduv
+	TriggerWord *TriggerWord `json:"trigger_word,omitempty" yaml:"trigger_word,omitempty"`
 }
 
 // CreateTeamRequest defines model for CreateTeamRequest.
@@ -1173,6 +1194,10 @@ type CreatedChannel struct {
 	// does not, since its stream is already every step. Offer
 	// `reply_mode` only when this is true; it is refused otherwise.
 	CanShowEvents bool `json:"can_show_events" yaml:"can_show_events"`
+
+	// CanTriggerWord Whether the channel can be called by a word, as a `whatsapp`
+	// channel can, so a client offers `trigger_word` only there.
+	CanTriggerWord bool `json:"can_trigger_word" yaml:"can_trigger_word"`
 
 	// Connected Whether the brain pointed the provider at this channel itself,
 	// as it does for `telegram` (setWebhook) when it has a public
@@ -1251,6 +1276,9 @@ type CreatedChannel struct {
 	// true; it is refused otherwise.
 	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
+
+	// TriggerWord The word a message must hold to ask the channel (see `TriggerWord`); null is none.
+	TriggerWord string `json:"trigger_word" yaml:"trigger_word"`
 
 	// Warnings What the person should know about how the provider's account is
 	// set up, read when the channel was connected. The channel is made
@@ -1388,6 +1416,10 @@ type ListedChannel struct {
 	// `reply_mode` only when this is true; it is refused otherwise.
 	CanShowEvents bool `json:"can_show_events" yaml:"can_show_events"`
 
+	// CanTriggerWord Whether the channel can be called by a word, as a `whatsapp`
+	// channel can, so a client offers `trigger_word` only there.
+	CanTriggerWord bool `json:"can_trigger_word" yaml:"can_trigger_word"`
+
 	// HookURL The full address to give the provider: the brain's public
 	// webhook address, then `/hooks/<provider>/<id>` and the
 	// provider's route. Absent when the brain has no
@@ -1452,6 +1484,9 @@ type ListedChannel struct {
 	// true; it is refused otherwise.
 	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
+
+	// TriggerWord The word a message must hold to ask the channel (see `TriggerWord`); null is none.
+	TriggerWord string `json:"trigger_word" yaml:"trigger_word"`
 }
 
 // ListedChannelReplyMode What the conversation is sent while a run works. `final`, the
@@ -2409,6 +2444,19 @@ type TeamSummary struct {
 	WaitingSenders int64 `json:"waiting_senders" yaml:"waiting_senders"`
 }
 
+// TriggerWord The word a message must hold to ask the channel, such as `@Fduv`:
+// for a WhatsApp number that is also a person's own. With one, a
+// message asks only when it holds the word, in any case and as a word
+// of its own (`@fduv, now?` does, `@Fduvx` does not), in a direct chat
+// or a group alike, and a mention of the number no longer does. The
+// owner calls it from any chat: their own message holding the word is
+// answered in that chat, from their number; their others are not kept.
+// Still only within `answers_in`. One word of at most 32 characters,
+// with a letter or digit in it; only where `can_trigger_word`.
+//
+// Examples: @Fduv
+type TriggerWord = string
+
 // UpdateChannelRequest defines model for UpdateChannelRequest.
 type UpdateChannelRequest struct {
 	// AnswersIn Where the channel answers. `everywhere`, the default: direct chats,
@@ -2427,6 +2475,9 @@ type UpdateChannelRequest struct {
 
 	// ReplyURL The URL replies go to; null or an empty string stops sending them
 	ReplyURL *string `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
+
+	// TriggerWord The word a message must hold to ask the channel (see `TriggerWord`); "" takes it away
+	TriggerWord *string `json:"trigger_word,omitempty" yaml:"trigger_word,omitempty"`
 }
 
 // UpdateChannelRequestReplyMode The run's answer alone, or each of its steps and then the answer
@@ -3251,11 +3302,16 @@ type ClientInterface interface {
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateChannelWithBody Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
+	// UpdateChannelWithBody Change a channel's reply URL, its notices to strangers, its reply mode, where it answers or its trigger word
 	//
 	// Requires `channel:write` in this team. Send any of `reply_url`,
-	// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
-	// is left as it is.
+	// `notify_strangers`, `reply_mode`, `answers_in` and `trigger_word`;
+	// what is not sent is left as it is.
+	//
+	// `trigger_word` sets the word a message must hold to ask the channel
+	// (see `TriggerWord`), and `""` takes it away. It is refused with 400
+	// on a channel whose `can_trigger_word` is false, and for a word that
+	// is not one word.
 	//
 	// `answers_in` is where the channel answers (see `AnswersIn`); a value
 	// outside its three is refused with 400.
@@ -3295,11 +3351,16 @@ type ClientInterface interface {
 	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
 	UpdateChannelWithBody(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateChannel Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
+	// UpdateChannel Change a channel's reply URL, its notices to strangers, its reply mode, where it answers or its trigger word
 	//
 	// Requires `channel:write` in this team. Send any of `reply_url`,
-	// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
-	// is left as it is.
+	// `notify_strangers`, `reply_mode`, `answers_in` and `trigger_word`;
+	// what is not sent is left as it is.
+	//
+	// `trigger_word` sets the word a message must hold to ask the channel
+	// (see `TriggerWord`), and `""` takes it away. It is refused with 400
+	// on a channel whose `can_trigger_word` is false, and for a word that
+	// is not one word.
 	//
 	// `answers_in` is where the channel answers (see `AnswersIn`); a value
 	// outside its three is refused with 400.
@@ -4999,11 +5060,16 @@ func (c *Client) DeleteChannel(ctx context.Context, id TeamID, channelID openapi
 	return c.Client.Do(req)
 }
 
-// UpdateChannelWithBody Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
+// UpdateChannelWithBody Change a channel's reply URL, its notices to strangers, its reply mode, where it answers or its trigger word
 //
 // Requires `channel:write` in this team. Send any of `reply_url`,
-// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
-// is left as it is.
+// `notify_strangers`, `reply_mode`, `answers_in` and `trigger_word`;
+// what is not sent is left as it is.
+//
+// `trigger_word` sets the word a message must hold to ask the channel
+// (see `TriggerWord`), and `""` takes it away. It is refused with 400
+// on a channel whose `can_trigger_word` is false, and for a word that
+// is not one word.
 //
 // `answers_in` is where the channel answers (see `AnswersIn`); a value
 // outside its three is refused with 400.
@@ -5053,11 +5119,16 @@ func (c *Client) UpdateChannelWithBody(ctx context.Context, id TeamID, channelID
 	return c.Client.Do(req)
 }
 
-// UpdateChannel Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
+// UpdateChannel Change a channel's reply URL, its notices to strangers, its reply mode, where it answers or its trigger word
 //
 // Requires `channel:write` in this team. Send any of `reply_url`,
-// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
-// is left as it is.
+// `notify_strangers`, `reply_mode`, `answers_in` and `trigger_word`;
+// what is not sent is left as it is.
+//
+// `trigger_word` sets the word a message must hold to ask the channel
+// (see `TriggerWord`), and `""` takes it away. It is refused with 400
+// on a channel whose `can_trigger_word` is false, and for a word that
+// is not one word.
 //
 // `answers_in` is where the channel answers (see `AnswersIn`); a value
 // outside its three is refused with 400.
@@ -11138,11 +11209,16 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteChannelResponse, error)
 
-	// UpdateChannelWithBodyWithResponse Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
+	// UpdateChannelWithBodyWithResponse Change a channel's reply URL, its notices to strangers, its reply mode, where it answers or its trigger word
 	//
 	// Requires `channel:write` in this team. Send any of `reply_url`,
-	// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
-	// is left as it is.
+	// `notify_strangers`, `reply_mode`, `answers_in` and `trigger_word`;
+	// what is not sent is left as it is.
+	//
+	// `trigger_word` sets the word a message must hold to ask the channel
+	// (see `TriggerWord`), and `""` takes it away. It is refused with 400
+	// on a channel whose `can_trigger_word` is false, and for a word that
+	// is not one word.
 	//
 	// `answers_in` is where the channel answers (see `AnswersIn`); a value
 	// outside its three is refused with 400.
@@ -11182,11 +11258,16 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
 	UpdateChannelWithBodyWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateChannelResponse, error)
 
-	// UpdateChannelWithResponse Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
+	// UpdateChannelWithResponse Change a channel's reply URL, its notices to strangers, its reply mode, where it answers or its trigger word
 	//
 	// Requires `channel:write` in this team. Send any of `reply_url`,
-	// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
-	// is left as it is.
+	// `notify_strangers`, `reply_mode`, `answers_in` and `trigger_word`;
+	// what is not sent is left as it is.
+	//
+	// `trigger_word` sets the word a message must hold to ask the channel
+	// (see `TriggerWord`), and `""` takes it away. It is refused with 400
+	// on a channel whose `can_trigger_word` is false, and for a word that
+	// is not one word.
 	//
 	// `answers_in` is where the channel answers (see `AnswersIn`); a value
 	// outside its three is refused with 400.
@@ -16282,11 +16363,16 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, id 
 	return ParseDeleteChannelResponse(rsp)
 }
 
-// UpdateChannelWithBodyWithResponse Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
+// UpdateChannelWithBodyWithResponse Change a channel's reply URL, its notices to strangers, its reply mode, where it answers or its trigger word
 //
 // Requires `channel:write` in this team. Send any of `reply_url`,
-// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
-// is left as it is.
+// `notify_strangers`, `reply_mode`, `answers_in` and `trigger_word`;
+// what is not sent is left as it is.
+//
+// `trigger_word` sets the word a message must hold to ask the channel
+// (see `TriggerWord`), and `""` takes it away. It is refused with 400
+// on a channel whose `can_trigger_word` is false, and for a word that
+// is not one word.
 //
 // `answers_in` is where the channel answers (see `AnswersIn`); a value
 // outside its three is refused with 400.
@@ -16332,11 +16418,16 @@ func (c *ClientWithResponses) UpdateChannelWithBodyWithResponse(ctx context.Cont
 	return ParseUpdateChannelResponse(rsp)
 }
 
-// UpdateChannelWithResponse Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
+// UpdateChannelWithResponse Change a channel's reply URL, its notices to strangers, its reply mode, where it answers or its trigger word
 //
 // Requires `channel:write` in this team. Send any of `reply_url`,
-// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
-// is left as it is.
+// `notify_strangers`, `reply_mode`, `answers_in` and `trigger_word`;
+// what is not sent is left as it is.
+//
+// `trigger_word` sets the word a message must hold to ask the channel
+// (see `TriggerWord`), and `""` takes it away. It is refused with 400
+// on a channel whose `can_trigger_word` is false, and for a word that
+// is not one word.
 //
 // `answers_in` is where the channel answers (see `AnswersIn`); a value
 // outside its three is refused with 400.

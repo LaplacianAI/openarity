@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"maps"
@@ -162,6 +163,10 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	if !answersInOK(w, req.AnswersIn) || !h.notifyOK(w, req.Provider, req.NotifyStrangers) {
 		return
 	}
+	trigger, ok := h.triggerOK(w, req.Provider, req.TriggerWord)
+	if !ok {
+		return
+	}
 
 	secret, generated, ok := h.signingSecret(w, req)
 	if !ok {
@@ -175,6 +180,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 
 	params := db.CreateChannelParams{
 		TeamID: teamID, Provider: req.Provider, Name: name, ReplyUrl: replyURL, AnswersIn: req.AnswersIn,
+		TriggerWord: trigger,
 	}
 	if req.NotifyStrangers != nil {
 		params.NotifyStrangers = pgtype.Bool{Bool: *req.NotifyStrangers, Valid: true}
@@ -492,11 +498,15 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	if !api.DecodeJSON(w, r, &req) {
 		return
 	}
-	if !req.ReplyURL.Set && req.NotifyStrangers == nil && req.ReplyMode == nil && req.AnswersIn == nil {
-		http.Error(w, "send reply_url, notify_strangers, reply_mode, answers_in or several", http.StatusBadRequest)
+	if !req.ReplyURL.Set && req.NotifyStrangers == nil && req.ReplyMode == nil && req.AnswersIn == nil && req.TriggerWord == nil {
+		http.Error(w, "send reply_url, notify_strangers, reply_mode, answers_in, trigger_word or several", http.StatusBadRequest)
 		return
 	}
 	if !answersInOK(w, req.AnswersIn) {
+		return
+	}
+	trigger, ok := h.triggerOK(w, row.Provider, req.TriggerWord)
+	if !ok {
 		return
 	}
 	if m := req.ReplyMode; m != nil {
@@ -530,6 +540,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	params.ReplyMode = req.ReplyMode
 	params.AnswersIn = req.AnswersIn
+	params.TriggerWord = trigger
 	updated, err := h.store.UpdateChannel(r.Context(), params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -612,6 +623,26 @@ func answersInOK(w http.ResponseWriter, v *string) bool {
 	return false
 }
 
+// triggerOK refuses a trigger word for a provider that cannot be called by
+// one, and a word nobody could type as one. The word comes back trimmed, ""
+// when it is taken away, nil when none was sent.
+func (h *handler) triggerOK(w http.ResponseWriter, provider string, v *string) (*string, bool) {
+	if v == nil {
+		return nil, true
+	}
+	if !h.providers.HoldsConnection(provider) {
+		http.Error(w, "the "+provider+" provider is not called by a word, so it takes no trigger_word", http.StatusBadRequest)
+		return nil, false
+	}
+	word := strings.TrimSpace(*v)
+	if word != "" && !gateway.ValidTriggerWord(word) {
+		http.Error(w, fmt.Sprintf("trigger_word is one word of at most %d characters, with a letter or digit in it, such as @Fduv",
+			gateway.TriggerWordMax), http.StatusBadRequest)
+		return nil, false
+	}
+	return &word, true
+}
+
 // notifyOK refuses notify_strangers for a provider that sends no notices.
 func (h *handler) notifyOK(w http.ResponseWriter, provider string, v *bool) bool {
 	if v == nil {
@@ -636,6 +667,10 @@ func (h *handler) view(row db.Channel) channel {
 	c.CanShowEvents = h.providers.RepliesWithEvents(row.Provider)
 	c.CanPair = h.providers.HoldsConnection(row.Provider)
 	c.AnswersIn = row.AnswersIn
+	// A word calls a number that is someone's own, which only a linked
+	// device is: the adapter that holds its connection sees the owner's own.
+	c.CanTriggerWord = c.CanPair
+	c.TriggerWord = row.TriggerWord
 	c.ReplyMode = replyFinal
 	if c.CanShowEvents {
 		c.ReplyMode = row.ReplyMode

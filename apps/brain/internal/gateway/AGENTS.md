@@ -298,6 +298,15 @@ channel answers: `ToSelf`, the account's owner writing to the account itself
 every other message of the owner's is dropped, and so is one the holder sent,
 which it names before sending so its echo is known.
 
+**A trigger word replaces mentions.** A channel's `trigger_word` reaches the
+rule as `Answering{Where, Trigger}`. With one, inside `answers_in`, a message
+asks only when `HasWord` finds the word in it (any case, a letter or digit on
+neither side), in a direct chat and a group alike; mentions no longer count.
+WhatsApp's adapter also keeps the owner's own message that holds the word, by
+the owner's number, in the chat it was typed in: a direct chat's is the other
+person's conversation, by `RecipientAlt` where the chat is a LID. Only a
+provider that holds a connection takes a word (`can_trigger_word`).
+
 `custom` signs a reply under `reply:v1:` rather than the `v1:` of an incoming
 message, so a captured reply posted to the webhook does not verify as a
 message — the team would be answering itself.

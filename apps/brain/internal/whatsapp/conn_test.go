@@ -227,3 +227,33 @@ func TestMessageYourselfAnswersTheOwnerAndNotTheBotsOwnAnswer(t *testing.T) {
 		t.Fatalf("delivered %+v; want only the owner's question, as theirs to themselves", in)
 	}
 }
+
+// The word comes with the lease: the owner's message holding it is taken,
+// carried to the gateway with the channel's word, and one without it is not.
+func TestTheOwnersCallByTheWordComesWithTheLease(t *testing.T) {
+	f := newFixture(t, newDevices(linkedJID))
+	r := row(uuid.New(), &linkedJID)
+	r.AnswersIn, r.TriggerWord = "everywhere", new("@Fduv")
+	f.store.rows = []db.LeaseWhatsAppAccountsRow{r}
+	f.a.lease(t.Context())
+	cli := f.client(t, 0)
+
+	own := func(id types.MessageID, words string) *events.Message {
+		m := incoming(id, &waE2E.Message{Conversation: proto.String(words)})
+		m.Info.Sender, m.Info.IsFromMe = linkedJID, true
+		return m
+	}
+	cli.emit(own("M1", "see you at six"))
+	cli.emit(own("M2", "@Fduv when is the next train?"))
+
+	eventually(t, "the call delivered", func() bool { return len(f.receiver.delivered()) == 1 })
+	f.receiver.mu.Lock()
+	defer f.receiver.mu.Unlock()
+	in, ch := f.receiver.got[0][0], f.receiver.chans[0]
+	if in.ExternalID != "M2" || in.Session.Ref != priya.String() {
+		t.Fatalf("delivered %+v; want only the call, in the chat with Priya", in)
+	}
+	if ch.TriggerWord == nil || *ch.TriggerWord != "@Fduv" {
+		t.Errorf("the channel carried %v; want the word", ch.TriggerWord)
+	}
+}

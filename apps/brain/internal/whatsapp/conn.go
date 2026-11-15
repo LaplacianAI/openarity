@@ -58,11 +58,21 @@ type conn struct {
 }
 
 // settings is what a channel says about answering: whether a stranger is
-// told they wait, and where it answers. The lease carries them, so a change
-// reaches the connection at its next renewal.
+// told they wait, where it answers, and the word that calls it. The lease
+// carries them, so a change reaches the connection at its next renewal.
 type settings struct {
 	notifyStrangers bool
 	answersIn       string
+	triggerWord     *string
+}
+
+func (c *conn) trigger() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.settings.triggerWord == nil {
+		return ""
+	}
+	return *c.settings.triggerWord
 }
 
 func (c *conn) setSettings(s settings) {
@@ -76,7 +86,7 @@ func (c *conn) current() db.Channel {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ch := c.channel
-	ch.NotifyStrangers, ch.AnswersIn = c.settings.notifyStrangers, c.settings.answersIn
+	ch.NotifyStrangers, ch.AnswersIn, ch.TriggerWord = c.settings.notifyStrangers, c.settings.answersIn, c.settings.triggerWord
 	return ch
 }
 
@@ -162,7 +172,7 @@ func (c *conn) handle(ctx context.Context, evt any) {
 		if e.Info.IsFromMe && c.sentHere(e.Info.ID) {
 			return
 		}
-		in, ok := gwa.Map(e, c.self(), false)
+		in, ok := gwa.Map(e, c.self(), c.trigger(), false)
 		if !ok {
 			return
 		}
@@ -299,7 +309,8 @@ func (c *conn) history(ctx context.Context, e *events.HistorySync) {
 			if err != nil {
 				continue
 			}
-			if in, ok := gwa.Map(m, self, true); ok {
+			// The owner's own from before are never kept, so no word is needed.
+			if in, ok := gwa.Map(m, self, "", true); ok {
 				in.Attachments = nil
 				msgs = append(msgs, in)
 			}

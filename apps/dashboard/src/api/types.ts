@@ -96,6 +96,10 @@ export type Channel = {
   can_pair?: boolean;
   /** Where it answers. Optional: a brain from before the field sends none. */
   answers_in?: AnswersIn;
+  /** Whether it can be called by a word, as a WhatsApp channel can. */
+  can_trigger_word?: boolean;
+  /** The word a message must hold to ask it, such as `@Fduv`; null is none. */
+  trigger_word?: string | null;
 };
 
 /**
@@ -134,6 +138,8 @@ export type UpdateChannelRequest = {
   notify_strangers?: boolean;
   reply_mode?: ReplyMode;
   answers_in?: AnswersIn;
+  /** The word a message must hold to ask it; `""` takes it away. */
+  trigger_word?: string;
 };
 
 /**
@@ -151,6 +157,8 @@ export type CreateChannelRequest = {
   answers_in?: AnswersIn;
   /** Left out, on where the provider can tell; refused where it cannot. */
   notify_strangers?: boolean;
+  /** WhatsApp only: the word a message must hold to ask it. */
+  trigger_word?: string;
 };
 
 /**

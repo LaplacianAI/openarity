@@ -84,7 +84,7 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 }
 
 func newCreateCmd(opts *cli.Options) *cobra.Command {
-	var provider, replyURL, answersIn string
+	var provider, replyURL, answersIn, triggerWord string
 	var secretStdin, noNotify bool
 	var credentialStdin string
 
@@ -113,7 +113,11 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"direct chats, and groups where it is mentioned), groups, or direct.\n" +
 			"For a WhatsApp number that is also your own, --answers-in groups\n" +
 			"--no-notify-strangers leaves your direct chats alone and tells nobody\n" +
-			"anything.",
+			"anything.\n\n" +
+			"--trigger-word, WhatsApp only, is the word a message must hold to ask\n" +
+			"the channel, such as @Fduv: in a group or a direct chat alike, and a\n" +
+			"mention of the number no longer does. On your own number you call it\n" +
+			"from any chat by typing the word.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.TrimSpace(args[1])
@@ -138,6 +142,10 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 					return err
 				}
 				body.AnswersIn = &where
+			}
+			if cmd.Flags().Changed("trigger-word") {
+				w := strings.TrimSpace(triggerWord)
+				body.TriggerWord = &w
 			}
 			if noNotify {
 				off := false
@@ -225,6 +233,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().StringVar(&credentialStdin, "credential-stdin", "",
 		"read the value of the named credential, such as bot_token, from stdin")
 	cmd.Flags().StringVar(&answersIn, "answers-in", "", "where it answers: everywhere, groups or direct")
+	cmd.Flags().StringVar(&triggerWord, "trigger-word", "", "the word a message must hold to ask it, such as @Fduv (WhatsApp)")
 	cmd.Flags().BoolVar(&noNotify, "no-notify-strangers", false, "tell a sender nobody has let in nothing")
 	cmd.Flags().StringVar(&replyURL, "reply-url", "",
 		"where the team's replies to this channel's conversations are posted")
@@ -234,7 +243,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 }
 
 func newUpdateCmd(opts *cli.Options) *cobra.Command {
-	var replyURL, replyMode, answersIn string
+	var replyURL, replyMode, answersIn, triggerWord string
 	var noReplyURL, notify, noNotify bool
 
 	cmd := &cobra.Command{
@@ -256,7 +265,9 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 			"its own that stays. Not the dashboard channel, whose stream is every step.\n\n" +
 			"--answers-in says where it answers: everywhere (direct chats, and groups\n" +
 			"where it is mentioned), groups, or direct. Outside it a message asks\n" +
-			"nothing: no answer, and no stranger queued or told.",
+			"nothing: no answer, and no stranger queued or told.\n\n" +
+			"--trigger-word, WhatsApp only, sets the word a message must hold to ask\n" +
+			"it, such as @Fduv; --trigger-word \"\" takes it away.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			setURL := cmd.Flags().Changed("reply-url")
@@ -268,8 +279,9 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 			}
 			setMode := cmd.Flags().Changed("reply-mode")
 			setWhere := cmd.Flags().Changed("answers-in")
-			if !setURL && !noReplyURL && !notify && !noNotify && !setMode && !setWhere {
-				return fmt.Errorf("pass --reply-url, --no-reply-url, --notify-strangers, --no-notify-strangers, --reply-mode or --answers-in")
+			setWord := cmd.Flags().Changed("trigger-word")
+			if !setURL && !noReplyURL && !notify && !noNotify && !setMode && !setWhere && !setWord {
+				return fmt.Errorf("pass --reply-url, --no-reply-url, --notify-strangers, --no-notify-strangers, --reply-mode, --answers-in or --trigger-word")
 			}
 			mode := client.UpdateChannelRequestReplyMode(replyMode)
 			if setMode && !mode.Valid() {
@@ -299,6 +311,10 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 					return err
 				}
 				body.AnswersIn = &where
+			}
+			if setWord {
+				w := strings.TrimSpace(triggerWord)
+				body.TriggerWord = &w
 			}
 
 			api, err := opts.API(cmd.Context())
@@ -341,6 +357,9 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 					if body.AnswersIn != nil {
 						what = append(what, opts.Styles.Muted.Render("answers "+answersInWords(ch.AnswersIn)))
 					}
+					if body.TriggerWord != nil {
+						what = append(what, opts.Styles.Muted.Render(triggerWords(ch.TriggerWord)))
+					}
 					table.Row(opts.Styles.OK.Render("updated"), opts.Styles.Value.Render(ch.Name),
 						strings.Join(what, opts.Styles.Muted.Render("; ")))
 				},
@@ -353,8 +372,17 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().BoolVar(&notify, "notify-strangers", false, "tell a sender nobody has let in that they are waiting, and that they are in")
 	cmd.Flags().BoolVar(&noNotify, "no-notify-strangers", false, "stop telling them")
 	cmd.Flags().StringVar(&answersIn, "answers-in", "", "where it answers: everywhere, groups or direct")
+	cmd.Flags().StringVar(&triggerWord, "trigger-word", "", `the word a message must hold to ask it, such as @Fduv; "" takes it away (WhatsApp)`)
 	cmd.Flags().StringVar(&replyMode, "reply-mode", "", "final: the answer alone; events: each step, then the answer")
 	return cmd
+}
+
+// triggerWords says how the channel is called now.
+func triggerWords(word string) string {
+	if word == "" {
+		return "called as before: direct chats, and groups where it is mentioned"
+	}
+	return "called by " + cli.Safe(word)
 }
 
 // answersInFlag is --answers-in as the brain takes it.

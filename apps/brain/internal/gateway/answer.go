@@ -94,28 +94,31 @@ func cannotRun(ctx context.Context, q Queries, teamID uuid.UUID, builder bool) (
 }
 
 func asksUs(ch Channel, s db.Session, m Delivery) bool {
-	return addressed(ch.AnswersIn, SessionKind(s.Kind), m.Inbound)
+	return addressed(ch.answering(), SessionKind(s.Kind), m.Inbound)
 }
 
-// addressed is whether a message asks the bot: in a direct conversation
-// always, elsewhere only when it mentions us; never from a bot, never one
-// from before the bot was there, and never outside where the channel
-// answers, except the owner writing to the account itself. The one rule for
-// starting a run, steering one, queueing a stranger and telling them so.
-func addressed(where AnswersIn, kind SessionKind, in Inbound) bool {
+// addressed is whether a message asks the bot. Never from a bot or from
+// before the bot was there; always the owner writing to the account itself;
+// never outside where the channel answers. Inside it, a channel with a
+// trigger word is asked by a message holding the word, in a direct chat or a
+// group alike; one without is asked by every direct message and a group
+// message that mentions us. The one rule for starting a run, steering one,
+// queueing a stranger and telling them so.
+func addressed(a Answering, kind SessionKind, in Inbound) bool {
 	if in.Author.IsBot || in.Historical {
 		return false
 	}
 	if in.ToSelf {
 		return true
 	}
-	if kind == SessionDirect {
-		return where != AnswersInGroups
-	}
-	if where == AnswersInDirect {
+	direct := kind == SessionDirect
+	if (direct && a.Where == AnswersInGroups) || (!direct && a.Where == AnswersInDirect) {
 		return false
 	}
-	return slices.ContainsFunc(in.Mentions, func(x Mention) bool { return x.IsUs })
+	if a.Trigger != "" {
+		return HasWord(in.Text, a.Trigger)
+	}
+	return direct || slices.ContainsFunc(in.Mentions, func(x Mention) bool { return x.IsUs })
 }
 
 func steer(m Delivery) string {
