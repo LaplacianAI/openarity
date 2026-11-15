@@ -13,7 +13,9 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
-var linkedJID = types.NewJID("919000000001", types.DefaultUserServer)
+// linkedJID is a linked device's own address: the number, and which of its
+// devices this is, as whatsmeow keeps it.
+var linkedJID = types.NewADJID("919000000001", 0, 12)
 
 func TestAChannelLeasedWithALinkedDeviceConnects(t *testing.T) {
 	f := newFixture(t, newDevices(linkedJID))
@@ -23,6 +25,29 @@ func TestAChannelLeasedWithALinkedDeviceConnects(t *testing.T) {
 
 	if got := f.a.Held(); len(got) != 1 || got[0] != ch {
 		t.Fatalf("Held = %v; want the channel leased", got)
+	}
+	if c := f.client(t, 0); c.connects != 1 || c.dev.ID.String() != linkedJID.String() {
+		t.Fatalf("connected %d times as %v; want once, as the linked device", c.connects, c.dev.ID)
+	}
+}
+
+// A role that restarts, as every deploy makes it, finds the device the
+// account names by its number and connects it: the number stays linked, and
+// the sweep for orphans, which runs while it holds it, leaves it alone.
+func TestARestartedRoleKeepsTheNumberLinked(t *testing.T) {
+	f := newFixture(t, newDevices(linkedJID))
+	ch := uuid.New()
+	f.store.rows = []db.LeaseWhatsAppAccountsRow{row(ch, &linkedJID)}
+	f.store.jids = []string{linkedJID.ToNonAD().String()}
+	f.a.lease(t.Context())
+	f.a.letGoOrphans(t.Context())
+	f.a.letGoOrphans(t.Context())
+
+	if s := f.store.snapshot(); len(s.unpaired) != 0 {
+		t.Fatalf("unpaired %+v; a restart must not unlink the number", s.unpaired)
+	}
+	if len(f.devices.deleted) != 0 || f.client(t, 0).logouts != 0 {
+		t.Fatalf("deleted %v, logged out %d times; want the linked device kept", f.devices.deleted, f.client(t, 0).logouts)
 	}
 	if c := f.client(t, 0); c.connects != 1 || c.dev.ID.String() != linkedJID.String() {
 		t.Fatalf("connected %d times as %v; want once, as the linked device", c.connects, c.dev.ID)
@@ -82,10 +107,10 @@ func TestADeviceWhoseKeysAreGoneIsUnpairedWithWhy(t *testing.T) {
 // role is a moment from naming is not taken for an orphan; and never one
 // this process holds.
 func TestADeviceNoAccountNamesIsLetGoAtTheSecondLook(t *testing.T) {
-	orphan := types.NewJID("919000000099", types.DefaultUserServer)
-	named := types.NewJID("919000000002", types.DefaultUserServer)
+	orphan := types.NewADJID("919000000099", 0, 4)
+	named := types.NewADJID("919000000002", 0, 7)
 	f := newFixture(t, newDevices(orphan, named, linkedJID))
-	f.store.jids = []string{named.String()}
+	f.store.jids = []string{named.ToNonAD().String()}
 	f.store.rows = []db.LeaseWhatsAppAccountsRow{row(uuid.New(), &linkedJID)}
 	f.a.lease(t.Context())
 
@@ -99,6 +124,10 @@ func TestADeviceNoAccountNamesIsLetGoAtTheSecondLook(t *testing.T) {
 	}
 	if c := f.client(t, f.madeClients()-1); c.logouts != 1 {
 		t.Errorf("the orphan was logged out %d times; want once", c.logouts)
+	}
+	// Logging out deleted its keys; deleting them again is no failure to log.
+	if strings.Contains(f.logText(), "ERROR") {
+		t.Errorf("logged an error letting the orphan go:\n%s", f.logText())
 	}
 }
 

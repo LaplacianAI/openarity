@@ -246,7 +246,7 @@ func (a *Accounts) open(ctx context.Context, r db.LeaseWhatsAppAccountsRow) *con
 	jid, err := types.ParseJID(*r.Jid)
 	var dev *store.Device
 	if err == nil {
-		dev, err = a.devices.GetDevice(ctx, jid)
+		dev, err = a.deviceOf(ctx, jid)
 	}
 	switch {
 	case err != nil:
@@ -259,6 +259,34 @@ func (a *Accounts) open(ctx context.Context, r db.LeaseWhatsAppAccountsRow) *con
 		}
 	}
 	return c
+}
+
+// deviceOf is the device linked as jid. An account names the number, and
+// whatsmeow keeps a device under its own address, the number and which of its
+// devices this is: looked up by the number alone it is never there, and every
+// restart would unlink it. Nil when its keys are gone.
+func (a *Accounts) deviceOf(ctx context.Context, jid types.JID) (*store.Device, error) {
+	devs, err := a.devices.GetAllDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	want := jid.ToNonAD()
+	for _, d := range devs {
+		if d.ID != nil && d.ID.ToNonAD() == want {
+			return d, nil
+		}
+	}
+	return nil, nil
+}
+
+// forget deletes a device's keys, unless logging it out already did:
+// whatsmeow deletes them itself once WhatsApp accepts the logout, and leaves
+// the device with no address.
+func (a *Accounts) forget(ctx context.Context, d *store.Device) error {
+	if d.ID == nil {
+		return nil
+	}
+	return a.devices.DeleteDevice(ctx, d)
 }
 
 func (a *Accounts) closeAll() {
@@ -341,7 +369,7 @@ func (a *Accounts) letGo(ctx context.Context, d *store.Device) {
 		cancel()
 		cli.Disconnect()
 	}
-	if err := a.devices.DeleteDevice(ctx, d); err != nil && !errors.Is(err, context.Canceled) {
+	if err := a.forget(ctx, d); err != nil && !errors.Is(err, context.Canceled) {
 		a.logger.Error("whatsapp: deleting an orphan's keys", "error", err)
 	}
 }
