@@ -27,6 +27,7 @@ type Client interface {
 	AddEventHandler(handler whatsmeow.EventHandler) uint32
 	GetQRChannel(ctx context.Context) (<-chan whatsmeow.QRChannelItem, error)
 	PairPhone(ctx context.Context, phone string, showPushNotification bool, clientType whatsmeow.PairClientType, clientDisplayName string) (string, error)
+	GenerateMessageID() types.MessageID
 	SendMessage(ctx context.Context, to types.JID, message *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error)
 	SendChatPresence(ctx context.Context, jid types.JID, state types.ChatPresence, media types.ChatPresenceMedia) error
 	DownloadAny(ctx context.Context, msg *waE2E.Message) ([]byte, error)

@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
+	gwa "github.com/LaplacianAI/openarity/apps/brain/internal/gateway/whatsapp"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -198,5 +199,31 @@ func TestAMessageCarriesTheChannelsSettingsAsTheyAreNow(t *testing.T) {
 	}
 	if second.NotifyStrangers || second.AnswersIn != "groups" {
 		t.Errorf("after the change, the channel = %+v; want notices off, groups", second)
+	}
+}
+
+func toSelf(id types.MessageID, words string) *events.Message {
+	m := incoming(id, &waE2E.Message{Conversation: proto.String(words)})
+	m.Info.Chat, m.Info.Sender, m.Info.IsFromMe = linkedJID, linkedJID, true
+	return m
+}
+
+// In "Message yourself" the bot's answer arrives as the owner's, like the
+// owner's own: the one it sent is not taken as a question, the owner's is.
+func TestMessageYourselfAnswersTheOwnerAndNotTheBotsOwnAnswer(t *testing.T) {
+	f, ch, cli := connected(t)
+	if err := f.a.Post(t.Context(), ch, part(t, gwa.Part{To: linkedJID.String(), Text: "Here is today."})); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if len(cli.sent) != 1 || cli.sent[0].id == "" {
+		t.Fatalf("sent %+v; want one message, named before it went", cli.sent)
+	}
+	cli.emit(toSelf(cli.sent[0].id, "Here is today."))
+	cli.emit(toSelf("M1", "and tomorrow?"))
+
+	eventually(t, "the owner's message delivered", func() bool { return len(f.receiver.delivered()) == 1 })
+	in := f.receiver.delivered()[0][0]
+	if in.Text != "and tomorrow?" || !in.ToSelf || in.Author.Ref != linkedJID.String() {
+		t.Fatalf("delivered %+v; want only the owner's question, as theirs to themselves", in)
 	}
 }

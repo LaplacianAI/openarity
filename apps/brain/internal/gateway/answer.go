@@ -100,11 +100,14 @@ func asksUs(ch Channel, s db.Session, m Delivery) bool {
 // addressed is whether a message asks the bot: in a direct conversation
 // always, elsewhere only when it mentions us; never from a bot, never one
 // from before the bot was there, and never outside where the channel
-// answers. The one rule for starting a run, steering one, queueing a stranger
-// and telling them so.
+// answers, except the owner writing to the account itself. The one rule for
+// starting a run, steering one, queueing a stranger and telling them so.
 func addressed(where AnswersIn, kind SessionKind, in Inbound) bool {
 	if in.Author.IsBot || in.Historical {
 		return false
+	}
+	if in.ToSelf {
+		return true
 	}
 	if kind == SessionDirect {
 		return where != AnswersInGroups

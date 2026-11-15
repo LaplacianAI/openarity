@@ -73,6 +73,11 @@ type Inbound struct {
 	// Historical is a message from before the bot was there, which the
 	// platform sent when it was linked: stored, never answered.
 	Historical bool
+
+	// ToSelf is the account's owner writing to the account itself, as in
+	// WhatsApp's "Message yourself": it asks the bot wherever the channel
+	// answers, since nobody else is in that conversation.
+	ToSelf bool
 }
 
 type Result struct {

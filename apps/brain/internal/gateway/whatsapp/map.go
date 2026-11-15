@@ -25,8 +25,10 @@ func (s Self) is(j types.JID) bool {
 // Map turns a message the linked device received into an Inbound, or false
 // for one that is not kept:
 //
-//   - the owner's own, typed on the phone or another of its devices: v1 has no
-//     approved sender to store it under;
+//   - the owner's own, typed on the phone or another of its devices, except
+//     in "Message yourself", the chat with the number itself: elsewhere it is
+//     the owner talking to someone, and nobody asked the bot. One the holder
+//     sent itself is the caller's to drop, since only it knows its own;
 //   - a status, a broadcast list or a channel (newsletter), which are not
 //     conversations;
 //   - an edit, which would answer the same message twice;
@@ -35,12 +37,18 @@ func (s Self) is(j types.JID) bool {
 //   - one with neither words nor a file.
 //
 // historical marks one WhatsApp sent when the number was linked, from
-// before: stored, never answered.
+// before: stored, never answered. The owner's own from before are not kept
+// at all: "Message yourself" holds the bot's old answers too, and the holder
+// no longer knows which were its own.
 func Map(m *events.Message, self Self, historical bool) (gateway.Inbound, bool) {
-	if m == nil || m.Message == nil || m.Info.IsFromMe || m.IsEdit {
+	if m == nil || m.Message == nil || m.IsEdit {
 		return gateway.Inbound{}, false
 	}
 	chat := m.Info.Chat
+	toSelf := m.Info.IsFromMe && !m.Info.IsGroup && self.is(chat) && !self.PN.IsEmpty()
+	if m.Info.IsFromMe && (!toSelf || historical) {
+		return gateway.Inbound{}, false
+	}
 	switch chat.Server {
 	case types.BroadcastServer, types.NewsletterServer:
 		return gateway.Inbound{}, false
@@ -54,6 +62,11 @@ func Map(m *events.Message, self Self, historical bool) (gateway.Inbound, bool) 
 	}
 
 	author := phoneFirst(m.Info.Sender, m.Info.SenderAlt)
+	if toSelf {
+		// The owner by their number, whichever of their devices typed it, so
+		// "Message yourself" is one conversation and one sender to approve.
+		author = self.PN
+	}
 	in := gateway.Inbound{
 		ExternalID:  m.Info.ID,
 		Author:      gateway.Author{Ref: author.String(), DisplayName: m.Info.PushName},
@@ -62,6 +75,7 @@ func Map(m *events.Message, self Self, historical bool) (gateway.Inbound, bool) 
 		ReplyTo:     ctx.GetStanzaID(),
 		SentAt:      m.Info.Timestamp,
 		Historical:  historical,
+		ToSelf:      toSelf,
 	}
 	if m.Info.IsGroup {
 		in.Session = gateway.Session{Ref: chat.ToNonAD().String(), Kind: gateway.SessionGroup}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 
@@ -58,7 +59,9 @@ func (a *Accounts) Post(ctx context.Context, channel uuid.UUID, req gateway.Outb
 	if err := a.sleep(ctx, typing(p.Text, a.jitter())); err != nil {
 		return err
 	}
-	resp, err := cli.SendMessage(ctx, to, a.message(c, p))
+	id := cli.GenerateMessageID()
+	c.sending(id)
+	resp, err := cli.SendMessage(ctx, to, a.message(c, p), whatsmeow.SendRequestExtra{ID: id})
 	_ = cli.SendChatPresence(ctx, to, types.ChatPresencePaused, types.ChatPresenceMediaText)
 	if err != nil {
 		return fmt.Errorf("sending: %w", err)

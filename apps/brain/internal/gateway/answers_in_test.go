@@ -97,3 +97,28 @@ func TestNoScopeIsEverywhere(t *testing.T) {
 		t.Error("a place no channel answers was taken as valid")
 	}
 }
+
+// The owner writing to the account itself asks the bot wherever the channel
+// answers, a channel that answers only in groups included; from before the
+// bot was there, it still asks nothing.
+func TestTheOwnerWritingToTheAccountIsAnsweredWhereverTheChannelAnswers(t *testing.T) {
+	t.Parallel()
+
+	for _, where := range []AnswersIn{AnswersEverywhere, AnswersInGroups, AnswersInDirect} {
+		a := newAnswering()
+		a.ch.AnswersIn = where
+		d := delivery("m-1", "summarise today")
+		d.ToSelf = true
+		if err := a.deliver(t, d); err != nil {
+			t.Fatalf("%s: Deliver: %v", where, err)
+		}
+		if len(a.store.created) != 1 {
+			t.Errorf("%s: started %d runs; want one", where, len(a.store.created))
+		}
+	}
+
+	old := Inbound{Session: Session{Kind: SessionDirect}, ToSelf: true, Historical: true}
+	if addressed(AnswersEverywhere, SessionDirect, old) {
+		t.Error("a note to self from before the bot was there asks it")
+	}
+}

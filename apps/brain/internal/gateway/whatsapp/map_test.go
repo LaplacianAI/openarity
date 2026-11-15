@@ -184,3 +184,62 @@ func TestAHistoricalMessageIsMarkedSo(t *testing.T) {
 		t.Fatalf("Map = %+v, %v; want it kept and marked historical", in, ok)
 	}
 }
+
+// "Message yourself" is the owner asking the bot: kept, by their number
+// whichever of their devices or names it came by, as one direct conversation.
+func TestMessageYourselfIsTheOwnerAskingTheBot(t *testing.T) {
+	byNumber := direct(text("summarise today"))
+	byNumber.Info.Chat, byNumber.Info.Sender, byNumber.Info.IsFromMe = us.PN, types.NewADJID(us.PN.User, 0, 2), true
+	byLID := direct(text("summarise today"))
+	byLID.Info.Chat, byLID.Info.Sender, byLID.Info.IsFromMe = us.LID, types.NewADJID(us.LID.User, 0, 3), true
+
+	for name, m := range map[string]*events.Message{"by number": byNumber, "by LID": byLID} {
+		t.Run(name, func(t *testing.T) {
+			in := mapped(t, m)
+			if !in.ToSelf {
+				t.Error("not marked as the owner writing to the account")
+			}
+			if in.Author.Ref != us.PN.String() || in.Session != (gateway.Session{Ref: us.PN.String(), Kind: gateway.SessionDirect}) {
+				t.Errorf("author %q, session %+v; want the owner's number, a direct conversation", in.Author.Ref, in.Session)
+			}
+		})
+	}
+}
+
+// The owner's own anywhere but "Message yourself" is them talking to someone,
+// and from before the number was linked it may be the bot's old answer.
+func TestTheOwnersOwnElsewhereIsStillDropped(t *testing.T) {
+	toPriya := direct(text("see you at six"))
+	toPriya.Info.IsFromMe = true
+	inAGroup := inGroup(text("lunch?"))
+	inAGroup.Info.IsFromMe, inAGroup.Info.Chat = true, us.PN // a group never is the number itself
+	fromBefore := direct(text("an old note"))
+	fromBefore.Info.Chat, fromBefore.Info.Sender, fromBefore.Info.IsFromMe = us.PN, us.PN, true
+	byLIDOnly := direct(text("a note"))
+	byLIDOnly.Info.Chat, byLIDOnly.Info.Sender, byLIDOnly.Info.IsFromMe = us.LID, us.LID, true
+
+	for name, c := range map[string]struct {
+		m          *events.Message
+		self       Self
+		historical bool
+	}{
+		"to someone else":           {toPriya, us, false},
+		"in a group":                {inAGroup, us, false},
+		"from before linking":       {fromBefore, us, true},
+		"with the number not known": {fromBefore, Self{}, false},
+		"with only the LID known":   {byLIDOnly, Self{LID: us.LID}, false},
+	} {
+		if in, ok := Map(c.m, c.self, c.historical); ok {
+			t.Errorf("%s: kept %+v", name, in)
+		}
+	}
+}
+
+// Someone else's message never is the owner's, even in a chat named like it.
+func TestOnlyTheOwnerIsToSelf(t *testing.T) {
+	m := direct(text("hi"))
+	m.Info.Chat = us.PN
+	if in := mapped(t, m); in.ToSelf {
+		t.Error("a message not from the owner was marked as the owner's to itself")
+	}
+}
