@@ -31,7 +31,11 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   answer reaches it. A run writes its place, `transcript_from`, before its
   first message, so a crash between the two writes it once. A channel's run
   is told, as text, only what was said since the last run: a group's
-  chatter, which reached no run.
+  chatter, which reached no run. Further back it reads with `history`
+  (`runtime/history.go`): the session's messages and its top-level runs'
+  answers, by `session_seq`, bound to the session when the run is built and
+  to the top-level run alone. A message keeps its sender's cleaned display
+  name (`messages.sender_name`), so a group read back has speakers.
 
 - **A session is one stream, numbered in commit order.** A session's messages
   and the events of every run in it share one count, `session_seq`, taken

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -35,6 +36,7 @@ type BuildStore interface {
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 	CountOtherAgents(ctx context.Context, arg db.CountOtherAgentsParams) (int64, error)
 	AttachmentStore
+	HistoryStore
 }
 
 type Objects interface {
@@ -184,6 +186,21 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	}
 	if len(files) > 0 {
 		built.Spec.Tools = append(built.Spec.Tools, attachmentTools(b.store, run.SessionID)...)
+	}
+
+	// The conversation is the top-level run's: a delegated agent is sent a
+	// task. Only when there is more than the run's own message to read.
+	if run.ParentRunID == nil {
+		said, err := b.store.ListSessionHistory(ctx, db.ListSessionHistoryParams{
+			SessionID: run.SessionID, Before: math.MaxInt64, PageSize: 2,
+		})
+		if err != nil {
+			built.Close()
+			return Built{}, fmt.Errorf("reading whether the conversation has history: %w", err)
+		}
+		if len(said) > 1 {
+			built.Spec.Tools = append(built.Spec.Tools, historyTool(b.store, run.SessionID))
+		}
 	}
 
 	if web {

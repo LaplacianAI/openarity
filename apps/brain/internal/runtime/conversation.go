@@ -45,8 +45,8 @@ func withHistory(said []db.ListMessagesSinceLastRunRow, input string) string {
 	size := 0
 	for _, m := range said {
 		who := "someone"
-		if m.Author != nil && *m.Author != "" {
-			who = *m.Author
+		if m.Author != "" {
+			who = m.Author
 		}
 		line := who + ": " + m.Text
 		if size+len(line) > historyBytes {

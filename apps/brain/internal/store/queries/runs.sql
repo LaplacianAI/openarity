@@ -289,7 +289,8 @@ WHERE id = sqlc.arg('id')::uuid AND transcript_from IS NULL;
 -- Newest first, at most turns; with no previous run, the latest. A run's own
 -- message is its input, not part of this.
 -- name: ListMessagesSinceLastRun :many
-SELECT m.text, m.received_at AS at, u.email AS author
+SELECT m.text, m.received_at AS at,
+       coalesce(nullif(m.sender_name, ''), u.email, '')::text AS author
 FROM messages m
 LEFT JOIN users u ON u.id = m.user_id
 WHERE m.session_id = sqlc.arg('session_id')::uuid
