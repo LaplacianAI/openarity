@@ -585,11 +585,14 @@ paths:
     patch:
       operationId: updateChannel
       tags: [channels]
-      summary: Change a channel's reply URL, its notices to strangers or its reply mode
+      summary: Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
       description: |
         Requires `channel:write` in this team. Send any of `reply_url`,
-        `notify_strangers` and `reply_mode`; what is not sent is left as it
-        is.
+        `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
+        is left as it is.
+
+        `answers_in` is where the channel answers (see `AnswersIn`); a value
+        outside its three is refused with 400.
 
         `reply_mode` is what the conversation is sent while a run works
         (see `Channel`). It is refused with 400 on a channel whose provider
@@ -3737,7 +3740,7 @@ components:
 
     Channel:
       type: object
-      required: [id, team_id, provider, name, can_reply, takes_reply_url, can_notify, notify_strangers, can_show_events, reply_mode, can_pair]
+      required: [id, team_id, provider, name, can_reply, takes_reply_url, can_notify, notify_strangers, can_show_events, reply_mode, can_pair, answers_in]
       properties:
         id:
           type: string
@@ -3821,6 +3824,8 @@ components:
             Whether this channel's number is linked by pairing, as a
             `whatsapp` channel's is: a phone links it by scanning a QR or
             entering a code (`/teams/{id}/channels/{channelID}/pairing`).
+        answers_in:
+          $ref: "#/components/schemas/AnswersIn"
         reply_url:
           type: string
           format: uri
@@ -3905,6 +3910,27 @@ components:
             secret, as one secret, and are never returned. A provider that
             asks for nothing refuses any.
           examples: [{"bot_token": "<token from @BotFather>"}]
+        answers_in:
+          $ref: "#/components/schemas/AnswersIn"
+        notify_strangers:
+          type: boolean
+          description: |
+            Whether the channel tells a sender nobody has let in that they
+            are waiting. On when left out, where the provider can (`telegram`,
+            `whatsapp`); refused with 400 for one that cannot (`custom`).
+            Checked, with `answers_in`, before the provider is asked about
+            `credentials`.
+
+    AnswersIn:
+      type: string
+      enum: [everywhere, groups, direct]
+      description: |
+        Where the channel answers. `everywhere`, the default: direct chats,
+        and groups where it is mentioned. `groups`: only groups where it is
+        mentioned, so the direct chats of a number that is also a person's
+        own are left alone. `direct`: only direct chats. Outside it a message
+        asks nothing: it is stored when its sender is let in, and starts no
+        run, steers none, and queues and tells no stranger.
 
     PairChannelRequest:
       type: object
@@ -3962,6 +3988,8 @@ components:
       type: object
       minProperties: 1
       properties:
+        answers_in:
+          $ref: "#/components/schemas/AnswersIn"
         notify_strangers:
           type: boolean
           description: Whether the channel tells a sender nobody has let in that they are waiting, and that they are in

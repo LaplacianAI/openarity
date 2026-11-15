@@ -157,6 +157,11 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		replyURL = &v
 	}
+	// Before the credentials, which ask the provider: a request refused here
+	// must not reach it.
+	if !answersInOK(w, req.AnswersIn) || !h.notifyOK(w, req.Provider, req.NotifyStrangers) {
+		return
+	}
 
 	secret, generated, ok := h.signingSecret(w, req)
 	if !ok {
@@ -168,9 +173,13 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	creds[gateway.KeySigning] = secret
 
-	row, err := h.store.CreateChannel(r.Context(), db.CreateChannelParams{
-		TeamID: teamID, Provider: req.Provider, Name: name, ReplyUrl: replyURL,
-	})
+	params := db.CreateChannelParams{
+		TeamID: teamID, Provider: req.Provider, Name: name, ReplyUrl: replyURL, AnswersIn: req.AnswersIn,
+	}
+	if req.NotifyStrangers != nil {
+		params.NotifyStrangers = pgtype.Bool{Bool: *req.NotifyStrangers, Valid: true}
+	}
+	row, err := h.store.CreateChannel(r.Context(), params)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == codeUniqueViolation {
@@ -483,8 +492,11 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	if !api.DecodeJSON(w, r, &req) {
 		return
 	}
-	if !req.ReplyURL.Set && req.NotifyStrangers == nil && req.ReplyMode == nil {
-		http.Error(w, "send reply_url, notify_strangers, reply_mode or several", http.StatusBadRequest)
+	if !req.ReplyURL.Set && req.NotifyStrangers == nil && req.ReplyMode == nil && req.AnswersIn == nil {
+		http.Error(w, "send reply_url, notify_strangers, reply_mode, answers_in or several", http.StatusBadRequest)
+		return
+	}
+	if !answersInOK(w, req.AnswersIn) {
 		return
 	}
 	if m := req.ReplyMode; m != nil {
@@ -498,12 +510,8 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.NotifyStrangers != nil {
-		if _, ok := h.providers.Notifier(row.Provider); !ok {
-			http.Error(w, "the "+row.Provider+" provider sends no notices, so it takes no notify_strangers",
-				http.StatusBadRequest)
-			return
-		}
+	if !h.notifyOK(w, row.Provider, req.NotifyStrangers) {
+		return
 	}
 	// "" stops replies as null does: a client generated from the spec cannot
 	// always send a null for a required field.
@@ -521,6 +529,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		params.NotifyStrangers = pgtype.Bool{Bool: *req.NotifyStrangers, Valid: true}
 	}
 	params.ReplyMode = req.ReplyMode
+	params.AnswersIn = req.AnswersIn
 	updated, err := h.store.UpdateChannel(r.Context(), params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -594,6 +603,27 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// answersInOK refuses a place a channel cannot answer, when one was sent.
+func answersInOK(w http.ResponseWriter, v *string) bool {
+	if v == nil || gateway.AnswersIn(*v).Valid() {
+		return true
+	}
+	http.Error(w, `answers_in is "everywhere", "groups" or "direct"`, http.StatusBadRequest)
+	return false
+}
+
+// notifyOK refuses notify_strangers for a provider that sends no notices.
+func (h *handler) notifyOK(w http.ResponseWriter, provider string, v *bool) bool {
+	if v == nil {
+		return true
+	}
+	if _, ok := h.providers.Notifier(provider); ok {
+		return true
+	}
+	http.Error(w, "the "+provider+" provider sends no notices, so it takes no notify_strangers", http.StatusBadRequest)
+	return false
+}
+
 func (h *handler) view(row db.Channel) channel {
 	c := channel{ID: row.ID, TeamID: row.TeamID, Provider: row.Provider, Name: row.Name}
 	if row.ReplyUrl != nil {
@@ -605,6 +635,7 @@ func (h *handler) view(row db.Channel) channel {
 	c.TakesReplyURL = h.providers.TakesReplyURL(row.Provider)
 	c.CanShowEvents = h.providers.RepliesWithEvents(row.Provider)
 	c.CanPair = h.providers.HoldsConnection(row.Provider)
+	c.AnswersIn = row.AnswersIn
 	c.ReplyMode = replyFinal
 	if c.CanShowEvents {
 		c.ReplyMode = row.ReplyMode

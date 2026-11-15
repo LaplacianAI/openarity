@@ -8,7 +8,14 @@ import { createChannel, deleteChannel, listChannels, updateChannel } from "@/api
 import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
-import type { CreateChannelRequest, CreatedChannel, ListedChannel, ReplyMode } from "@/api/types";
+import type {
+  AnswersIn,
+  CreateChannelRequest,
+  CreatedChannel,
+  ListedChannel,
+  ReplyMode,
+} from "@/api/types";
+import { AnswersInChoice, answersInWords } from "@/components/answers-in";
 import { KeyValue, KeyValues, Time } from "@/components/facts";
 import { LinkNumber } from "@/components/link-number";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
@@ -67,6 +74,8 @@ export const PROVIDERS: [value: string, word: string][] = [
 
 const TELEGRAM = "telegram";
 const WHATSAPP = "whatsapp";
+/** The providers that can tell a sender nobody has let in that they wait. */
+const NOTIFIES = new Set([TELEGRAM, WHATSAPP]);
 /** The dashboard's own channel: made with the team, written to from the dashboard, never deleted. */
 const DASHBOARD = "dashboard";
 
@@ -304,6 +313,14 @@ function ChannelDetail({
             Back into the Telegram chat each message came from.
           </KeyValue>
         ) : null}
+        {builtIn ? null : (
+          <KeyValue label="Answers">
+            {answersInWords(channel.answers_in)}.
+            {canWrite ? (
+              <EditAnswersIn teamId={teamId} channel={channel} onChanged={onChanged} />
+            ) : null}
+          </KeyValue>
+        )}
         {channel.can_notify ? (
           <KeyValue label="Waiting senders">
             {channel.notify_strangers
@@ -446,6 +463,52 @@ function EditReplyMode({
         </p>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Where the channel answers, changed in place: each choice is saved as it is
+ * made, as the reply mode is.
+ */
+function EditAnswersIn({
+  teamId,
+  channel,
+  onChanged,
+}: {
+  teamId: string;
+  channel: ListedChannel;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const save = useMutation({
+    mutationFn: (next: AnswersIn) => updateChannel(teamId, channel.id, { answers_in: next }),
+    onSuccess: (c) => {
+      toast.success(`${channel.name} answers: ${answersInWords(c.answers_in).toLowerCase()}`);
+      setOpen(false);
+      onChanged();
+    },
+  });
+  if (!open) {
+    return (
+      <Button variant="outline" size="sm" className="mt-2 block" onClick={() => setOpen(true)}>
+        Change where it answers
+      </Button>
+    );
+  }
+  return (
+    <div className="mt-2 space-y-2">
+      <AnswersInChoice
+        name={`answers-in-${channel.id}`}
+        value={channel.answers_in ?? "everywhere"}
+        onChange={(next) => save.mutate(next)}
+        disabled={save.isPending}
+      />
+      {save.isError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {save.error.message}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -632,6 +695,11 @@ export type ChannelDraft = {
   secret: string;
   /** Telegram's bot token, from @BotFather. */
   botToken: string;
+  answersIn: AnswersIn;
+  /** Whether strangers are told they wait, where the provider can tell them. */
+  notify: boolean;
+  /** A WhatsApp number that is the person's own: strangers are never told. */
+  mine: boolean;
 };
 
 const EMPTY: ChannelDraft = {
@@ -640,7 +708,22 @@ const EMPTY: ChannelDraft = {
   ownSecret: false,
   secret: "",
   botToken: "",
+  answersIn: "everywhere",
+  notify: true,
+  mine: false,
 };
+
+/**
+ * Where it answers and whether strangers are told, as the request carries
+ * them: only what differs from the brain's defaults, and the notices only
+ * for a provider that sends them.
+ */
+function settingsOf(d: ChannelDraft, provider: string): Partial<CreateChannelRequest> {
+  const out: Partial<CreateChannelRequest> = {};
+  if (d.answersIn !== "everywhere") out.answers_in = d.answersIn;
+  if (NOTIFIES.has(provider) && (d.mine || !d.notify)) out.notify_strangers = false;
+  return out;
+}
 
 /**
  * The request the form sends, or the sentence saying why it cannot. The
@@ -655,16 +738,17 @@ export function channelRequest(d: ChannelDraft): CreateChannelRequest | string {
   if (name === "") return "A channel needs a name.";
   if (name.length > MAX_NAME) return `A name is at most ${MAX_NAME} characters.`;
   if (provider === "") return "A channel needs a provider: the adapter that reads its webhooks.";
+  const settings = settingsOf(d, provider);
   // A linked number has no webhook to sign; it is paired once the channel is made.
-  if (provider === WHATSAPP) return { name, provider };
+  if (provider === WHATSAPP) return { name, provider, ...settings };
   if (provider === TELEGRAM) {
     if (d.botToken.trim() === "") return "Paste the bot token from @BotFather.";
-    return { name, provider, credentials: { bot_token: d.botToken.trim() } };
+    return { name, provider, credentials: { bot_token: d.botToken.trim() }, ...settings };
   }
-  if (!d.ownSecret) return { name, provider };
+  if (!d.ownSecret) return { name, provider, ...settings };
   if (d.secret.trim() === "")
     return "Paste the provider's signing secret, or let the brain make one.";
-  return { name, provider, signing_secret: d.secret };
+  return { name, provider, signing_secret: d.secret, ...settings };
 }
 
 /** Where the provider sends this channel's webhooks, on the brain's webhook listener. */
@@ -775,7 +859,15 @@ function ConnectSheet({
             <Select
               value={draft.provider}
               onValueChange={(provider) =>
-                set({ provider, ownSecret: false, secret: "", botToken: "" })
+                set({
+                  provider,
+                  ownSecret: false,
+                  secret: "",
+                  botToken: "",
+                  answersIn: "everywhere",
+                  notify: true,
+                  mine: false,
+                })
               }
             >
               <SelectTrigger id="channel-provider" className="w-full">
@@ -835,6 +927,57 @@ function ConnectSheet({
                 onChange={(e) => set({ secret: e.target.value })}
               />
             </Field>
+          ) : null}
+          {draft.provider === WHATSAPP ? (
+            <fieldset className="space-y-1.5">
+              <legend className="text-sm font-medium">Whose number is it?</legend>
+              <div className="grid gap-1.5 text-sm">
+                {(
+                  [
+                    [false, "The bot's own: a number only the team uses"],
+                    [true, "Mine: my own WhatsApp"],
+                  ] as const
+                ).map(([mine, words]) => (
+                  <label key={String(mine)} className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="radio"
+                      name="channel-whose"
+                      checked={draft.mine === mine}
+                      onChange={() =>
+                        set(
+                          mine
+                            ? { mine, answersIn: "groups", notify: false }
+                            : { mine, answersIn: "everywhere", notify: true },
+                        )
+                      }
+                      className="size-4 accent-primary"
+                    />
+                    {words}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          ) : null}
+          <AnswersInChoice
+            name="channel-answers-in"
+            value={draft.answersIn}
+            onChange={(answersIn) => set({ answersIn })}
+          />
+          {NOTIFIES.has(draft.provider) && !draft.mine ? (
+            <SwitchField
+              label="Tell someone not yet let in that they are waiting"
+              checked={draft.notify}
+              onCheckedChange={(notify) => set({ notify })}
+            />
+          ) : null}
+          {draft.mine ? (
+            <p role="note" className="flex gap-2 text-sm">
+              <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
+              <span>
+                The agent answers as you, with typing shown, wherever it answers. Someone not yet
+                let in is never told anything.
+              </span>
+            </p>
           ) : null}
           {problem ? (
             <p role="alert" className="text-xs text-destructive">

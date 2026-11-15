@@ -25,7 +25,7 @@ type Senders interface {
 }
 
 func ResolveSender(
-	ctx context.Context, s Senders, channelID uuid.UUID, in Inbound,
+	ctx context.Context, s Senders, channelID uuid.UUID, where AnswersIn, in Inbound,
 ) (uuid.UUID, bool, error) {
 	userID, err := s.FindChannelSender(ctx, db.FindChannelSenderParams{
 		ChannelID: channelID,
@@ -41,7 +41,7 @@ func ResolveSender(
 	// Only a stranger who asked the bot is waiting for anything. In a group
 	// a bot may be sent every message, and queueing everyone who spoke would
 	// fill the queue with people who never asked; a bot is never queued.
-	if !addressed(in.Session.Kind, in) {
+	if !addressed(where, in.Session.Kind, in) {
 		return uuid.Nil, false, nil
 	}
 
@@ -83,7 +83,7 @@ func CleanName(raw string) string {
 // called after ResolveSender queued them: a sender dropped at the cap has no
 // pending row, and so no notice. Reports the notice written, if one was.
 func TellWaiting(ctx context.Context, s Senders, ch db.Channel, in Inbound) (int64, bool, error) {
-	if !ch.NotifyStrangers || !addressed(in.Session.Kind, in) {
+	if !ch.NotifyStrangers || !addressed(AnswersIn(ch.AnswersIn), in.Session.Kind, in) {
 		return 0, false, nil
 	}
 	id, err := s.NoteWaitingSender(ctx, db.NoteWaitingSenderParams{

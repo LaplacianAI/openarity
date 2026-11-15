@@ -18,6 +18,27 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AnswersIn.
+const (
+	AnswersInDirect     AnswersIn = "direct"
+	AnswersInEverywhere AnswersIn = "everywhere"
+	AnswersInGroups     AnswersIn = "groups"
+)
+
+// Valid indicates whether the value is a known member of the AnswersIn enum.
+func (e AnswersIn) Valid() bool {
+	switch e {
+	case AnswersInDirect:
+		return true
+	case AnswersInEverywhere:
+		return true
+	case AnswersInGroups:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AuthConfigEnvironment.
 const (
 	Development AuthConfigEnvironment = "development"
@@ -389,19 +410,19 @@ func (e SearchProvider) Valid() bool {
 
 // Defines values for SessionKind.
 const (
-	Direct SessionKind = "direct"
-	Group  SessionKind = "group"
-	Thread SessionKind = "thread"
+	SessionKindDirect SessionKind = "direct"
+	SessionKindGroup  SessionKind = "group"
+	SessionKindThread SessionKind = "thread"
 )
 
 // Valid indicates whether the value is a known member of the SessionKind enum.
 func (e SessionKind) Valid() bool {
 	switch e {
-	case Direct:
+	case SessionKindDirect:
 		return true
-	case Group:
+	case SessionKindGroup:
 		return true
-	case Thread:
+	case SessionKindThread:
 		return true
 	default:
 		return false
@@ -682,6 +703,14 @@ type AgentSummary struct {
 	UpdatedAt time.Time          `json:"updated_at" yaml:"updated_at"`
 }
 
+// AnswersIn Where the channel answers. `everywhere`, the default: direct chats,
+// and groups where it is mentioned. `groups`: only groups where it is
+// mentioned, so the direct chats of a number that is also a person's
+// own are left alone. `direct`: only direct chats. Outside it a message
+// asks nothing: it is stored when its sender is let in, and starts no
+// run, steers none, and queues and tells no stranger.
+type AnswersIn string
+
 // ApproveSenderRequest defines model for ApproveSenderRequest.
 type ApproveSenderRequest struct {
 	// SenderRef Taken from the pending queue, or supplied directly when the
@@ -899,6 +928,14 @@ type BlueprintSkillFile struct {
 
 // Channel defines model for Channel.
 type Channel struct {
+	// AnswersIn Where the channel answers. `everywhere`, the default: direct chats,
+	// and groups where it is mentioned. `groups`: only groups where it is
+	// mentioned, so the direct chats of a number that is also a person's
+	// own are left alone. `direct`: only direct chats. Outside it a message
+	// asks nothing: it is stored when its sender is let in, and starts no
+	// run, steers none, and queues and tells no stranger.
+	AnswersIn AnswersIn `json:"answers_in" yaml:"answers_in"`
+
 	// CanNotify Whether this channel's provider tells a sender nobody has let in
 	// that they are waiting, and later that they are in. `telegram`
 	// does; `custom` does not. Offer `notify_strangers` only when this
@@ -1053,6 +1090,14 @@ type ChannelSenderPage struct {
 
 // CreateChannelRequest defines model for CreateChannelRequest.
 type CreateChannelRequest struct {
+	// AnswersIn Where the channel answers. `everywhere`, the default: direct chats,
+	// and groups where it is mentioned. `groups`: only groups where it is
+	// mentioned, so the direct chats of a number that is also a person's
+	// own are left alone. `direct`: only direct chats. Outside it a message
+	// asks nothing: it is stored when its sender is let in, and starts no
+	// run, steers none, and queues and tells no stranger.
+	AnswersIn *AnswersIn `json:"answers_in,omitempty" yaml:"answers_in,omitempty"`
+
 	// Credentials What the provider asks a person for, and nothing else: for
 	// `telegram`, `bot_token`, the token @BotFather gave. The brain
 	// asks the provider about them before the channel exists, so a
@@ -1067,6 +1112,13 @@ type CreateChannelRequest struct {
 
 	// Name Examples: support-tickets
 	Name string `json:"name" yaml:"name"`
+
+	// NotifyStrangers Whether the channel tells a sender nobody has let in that they
+	// are waiting. On when left out, where the provider can (`telegram`,
+	// `whatsapp`); refused with 400 for one that cannot (`custom`).
+	// Checked, with `answers_in`, before the provider is asked about
+	// `credentials`.
+	NotifyStrangers *bool `json:"notify_strangers,omitempty" yaml:"notify_strangers,omitempty"`
 
 	// Provider Examples: custom
 	Provider string `json:"provider" yaml:"provider"`
@@ -1094,6 +1146,14 @@ type CreateTeamRequest struct {
 
 // CreatedChannel defines model for CreatedChannel.
 type CreatedChannel struct {
+	// AnswersIn Where the channel answers. `everywhere`, the default: direct chats,
+	// and groups where it is mentioned. `groups`: only groups where it is
+	// mentioned, so the direct chats of a number that is also a person's
+	// own are left alone. `direct`: only direct chats. Outside it a message
+	// asks nothing: it is stored when its sender is let in, and starts no
+	// run, steers none, and queues and tells no stranger.
+	AnswersIn AnswersIn `json:"answers_in" yaml:"answers_in"`
+
 	// CanNotify Whether this channel's provider tells a sender nobody has let in
 	// that they are waiting, and later that they are in. `telegram`
 	// does; `custom` does not. Offer `notify_strangers` only when this
@@ -1300,6 +1360,14 @@ type ListedAgent struct {
 // count only the sessions the caller may open: their own direct
 // sessions, and everyone's with `session:read_all`.
 type ListedChannel struct {
+	// AnswersIn Where the channel answers. `everywhere`, the default: direct chats,
+	// and groups where it is mentioned. `groups`: only groups where it is
+	// mentioned, so the direct chats of a number that is also a person's
+	// own are left alone. `direct`: only direct chats. Outside it a message
+	// asks nothing: it is stored when its sender is let in, and starts no
+	// run, steers none, and queues and tells no stranger.
+	AnswersIn AnswersIn `json:"answers_in" yaml:"answers_in"`
+
 	// CanNotify Whether this channel's provider tells a sender nobody has let in
 	// that they are waiting, and later that they are in. `telegram`
 	// does; `custom` does not. Offer `notify_strangers` only when this
@@ -2343,6 +2411,14 @@ type TeamSummary struct {
 
 // UpdateChannelRequest defines model for UpdateChannelRequest.
 type UpdateChannelRequest struct {
+	// AnswersIn Where the channel answers. `everywhere`, the default: direct chats,
+	// and groups where it is mentioned. `groups`: only groups where it is
+	// mentioned, so the direct chats of a number that is also a person's
+	// own are left alone. `direct`: only direct chats. Outside it a message
+	// asks nothing: it is stored when its sender is let in, and starts no
+	// run, steers none, and queues and tells no stranger.
+	AnswersIn *AnswersIn `json:"answers_in,omitempty" yaml:"answers_in,omitempty"`
+
 	// NotifyStrangers Whether the channel tells a sender nobody has let in that they are waiting, and that they are in
 	NotifyStrangers *bool `json:"notify_strangers,omitempty" yaml:"notify_strangers,omitempty"`
 
@@ -3175,11 +3251,14 @@ type ClientInterface interface {
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannel(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateChannelWithBody Change a channel's reply URL, its notices to strangers or its reply mode
+	// UpdateChannelWithBody Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
 	//
 	// Requires `channel:write` in this team. Send any of `reply_url`,
-	// `notify_strangers` and `reply_mode`; what is not sent is left as it
-	// is.
+	// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
+	// is left as it is.
+	//
+	// `answers_in` is where the channel answers (see `AnswersIn`); a value
+	// outside its three is refused with 400.
 	//
 	// `reply_mode` is what the conversation is sent while a run works
 	// (see `Channel`). It is refused with 400 on a channel whose provider
@@ -3216,11 +3295,14 @@ type ClientInterface interface {
 	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
 	UpdateChannelWithBody(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateChannel Change a channel's reply URL, its notices to strangers or its reply mode
+	// UpdateChannel Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
 	//
 	// Requires `channel:write` in this team. Send any of `reply_url`,
-	// `notify_strangers` and `reply_mode`; what is not sent is left as it
-	// is.
+	// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
+	// is left as it is.
+	//
+	// `answers_in` is where the channel answers (see `AnswersIn`); a value
+	// outside its three is refused with 400.
 	//
 	// `reply_mode` is what the conversation is sent while a run works
 	// (see `Channel`). It is refused with 400 on a channel whose provider
@@ -4917,11 +4999,14 @@ func (c *Client) DeleteChannel(ctx context.Context, id TeamID, channelID openapi
 	return c.Client.Do(req)
 }
 
-// UpdateChannelWithBody Change a channel's reply URL, its notices to strangers or its reply mode
+// UpdateChannelWithBody Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
 //
 // Requires `channel:write` in this team. Send any of `reply_url`,
-// `notify_strangers` and `reply_mode`; what is not sent is left as it
-// is.
+// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
+// is left as it is.
+//
+// `answers_in` is where the channel answers (see `AnswersIn`); a value
+// outside its three is refused with 400.
 //
 // `reply_mode` is what the conversation is sent while a run works
 // (see `Channel`). It is refused with 400 on a channel whose provider
@@ -4968,11 +5053,14 @@ func (c *Client) UpdateChannelWithBody(ctx context.Context, id TeamID, channelID
 	return c.Client.Do(req)
 }
 
-// UpdateChannel Change a channel's reply URL, its notices to strangers or its reply mode
+// UpdateChannel Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
 //
 // Requires `channel:write` in this team. Send any of `reply_url`,
-// `notify_strangers` and `reply_mode`; what is not sent is left as it
-// is.
+// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
+// is left as it is.
+//
+// `answers_in` is where the channel answers (see `AnswersIn`); a value
+// outside its three is refused with 400.
 //
 // `reply_mode` is what the conversation is sent while a run works
 // (see `Channel`). It is refused with 400 on a channel whose provider
@@ -11050,11 +11138,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /teams/{id}/channels/{channelID} (the `DeleteChannel` operationId).
 	DeleteChannelWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteChannelResponse, error)
 
-	// UpdateChannelWithBodyWithResponse Change a channel's reply URL, its notices to strangers or its reply mode
+	// UpdateChannelWithBodyWithResponse Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
 	//
 	// Requires `channel:write` in this team. Send any of `reply_url`,
-	// `notify_strangers` and `reply_mode`; what is not sent is left as it
-	// is.
+	// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
+	// is left as it is.
+	//
+	// `answers_in` is where the channel answers (see `AnswersIn`); a value
+	// outside its three is refused with 400.
 	//
 	// `reply_mode` is what the conversation is sent while a run works
 	// (see `Channel`). It is refused with 400 on a channel whose provider
@@ -11091,11 +11182,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /teams/{id}/channels/{channelID} (the `UpdateChannel` operationId).
 	UpdateChannelWithBodyWithResponse(ctx context.Context, id TeamID, channelID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateChannelResponse, error)
 
-	// UpdateChannelWithResponse Change a channel's reply URL, its notices to strangers or its reply mode
+	// UpdateChannelWithResponse Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
 	//
 	// Requires `channel:write` in this team. Send any of `reply_url`,
-	// `notify_strangers` and `reply_mode`; what is not sent is left as it
-	// is.
+	// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
+	// is left as it is.
+	//
+	// `answers_in` is where the channel answers (see `AnswersIn`); a value
+	// outside its three is refused with 400.
 	//
 	// `reply_mode` is what the conversation is sent while a run works
 	// (see `Channel`). It is refused with 400 on a channel whose provider
@@ -16188,11 +16282,14 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, id 
 	return ParseDeleteChannelResponse(rsp)
 }
 
-// UpdateChannelWithBodyWithResponse Change a channel's reply URL, its notices to strangers or its reply mode
+// UpdateChannelWithBodyWithResponse Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
 //
 // Requires `channel:write` in this team. Send any of `reply_url`,
-// `notify_strangers` and `reply_mode`; what is not sent is left as it
-// is.
+// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
+// is left as it is.
+//
+// `answers_in` is where the channel answers (see `AnswersIn`); a value
+// outside its three is refused with 400.
 //
 // `reply_mode` is what the conversation is sent while a run works
 // (see `Channel`). It is refused with 400 on a channel whose provider
@@ -16235,11 +16332,14 @@ func (c *ClientWithResponses) UpdateChannelWithBodyWithResponse(ctx context.Cont
 	return ParseUpdateChannelResponse(rsp)
 }
 
-// UpdateChannelWithResponse Change a channel's reply URL, its notices to strangers or its reply mode
+// UpdateChannelWithResponse Change a channel's reply URL, its notices to strangers, its reply mode or where it answers
 //
 // Requires `channel:write` in this team. Send any of `reply_url`,
-// `notify_strangers` and `reply_mode`; what is not sent is left as it
-// is.
+// `notify_strangers`, `reply_mode` and `answers_in`; what is not sent
+// is left as it is.
+//
+// `answers_in` is where the channel answers (see `AnswersIn`); a value
+// outside its three is refused with 400.
 //
 // `reply_mode` is what the conversation is sent while a run works
 // (see `Channel`). It is refused with 400 on a channel whose provider

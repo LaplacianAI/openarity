@@ -14,16 +14,20 @@ import (
 )
 
 const createChannel = `-- name: CreateChannel :one
-INSERT INTO channels (team_id, provider, name, reply_url)
-VALUES ($1, $2, $3, $4)
-RETURNING id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers, reply_mode
+INSERT INTO channels (team_id, provider, name, reply_url, answers_in, notify_strangers)
+VALUES ($1, $2, $3, $4,
+        COALESCE($5::text, 'everywhere'),
+        COALESCE($6::bool, true))
+RETURNING id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers, reply_mode, answers_in
 `
 
 type CreateChannelParams struct {
-	TeamID   uuid.UUID
-	Provider string
-	Name     string
-	ReplyUrl *string
+	TeamID          uuid.UUID
+	Provider        string
+	Name            string
+	ReplyUrl        *string
+	AnswersIn       *string
+	NotifyStrangers pgtype.Bool
 }
 
 func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (Channel, error) {
@@ -32,6 +36,8 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 		arg.Provider,
 		arg.Name,
 		arg.ReplyUrl,
+		arg.AnswersIn,
+		arg.NotifyStrangers,
 	)
 	var i Channel
 	err := row.Scan(
@@ -44,6 +50,7 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 		&i.ReplyUrl,
 		&i.NotifyStrangers,
 		&i.ReplyMode,
+		&i.AnswersIn,
 	)
 	return i, err
 }
@@ -58,7 +65,7 @@ func (q *Queries) DeleteChannel(ctx context.Context, id uuid.UUID) error {
 }
 
 const getChannel = `-- name: GetChannel :one
-SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url, c.notify_strangers, c.reply_mode
+SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url, c.notify_strangers, c.reply_mode, c.answers_in
 FROM channels c
 JOIN teams t ON t.id = c.team_id
 WHERE c.id = $1 AND t.deleted_at IS NULL
@@ -79,12 +86,13 @@ func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (Channel, error)
 		&i.ReplyUrl,
 		&i.NotifyStrangers,
 		&i.ReplyMode,
+		&i.AnswersIn,
 	)
 	return i, err
 }
 
 const listChannelsByTeam = `-- name: ListChannelsByTeam :many
-SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url, c.notify_strangers, c.reply_mode,
+SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url, c.notify_strangers, c.reply_mode, c.answers_in,
     latest.last_message_at,
     (SELECT count(*) FROM sessions s
      WHERE s.channel_id = c.id
@@ -157,6 +165,7 @@ func (q *Queries) ListChannelsByTeam(ctx context.Context, arg ListChannelsByTeam
 			&i.Channel.ReplyUrl,
 			&i.Channel.NotifyStrangers,
 			&i.Channel.ReplyMode,
+			&i.Channel.AnswersIn,
 			&i.LastMessageAt,
 			&i.Sessions24h,
 		); err != nil {
@@ -174,9 +183,10 @@ const updateChannel = `-- name: UpdateChannel :one
 UPDATE channels
 SET reply_url = CASE WHEN $1::bool THEN $2 ELSE reply_url END,
     notify_strangers = COALESCE($3::bool, notify_strangers),
-    reply_mode = COALESCE($4::text, reply_mode)
-WHERE id = $5 AND team_id = $6
-RETURNING id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers, reply_mode
+    reply_mode = COALESCE($4::text, reply_mode),
+    answers_in = COALESCE($5::text, answers_in)
+WHERE id = $6 AND team_id = $7
+RETURNING id, team_id, provider, name, created_at, updated_at, reply_url, notify_strangers, reply_mode, answers_in
 `
 
 type UpdateChannelParams struct {
@@ -184,6 +194,7 @@ type UpdateChannelParams struct {
 	ReplyUrl        *string
 	NotifyStrangers pgtype.Bool
 	ReplyMode       *string
+	AnswersIn       *string
 	ID              uuid.UUID
 	TeamID          uuid.UUID
 }
@@ -196,6 +207,7 @@ func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (C
 		arg.ReplyUrl,
 		arg.NotifyStrangers,
 		arg.ReplyMode,
+		arg.AnswersIn,
 		arg.ID,
 		arg.TeamID,
 	)
@@ -210,6 +222,7 @@ func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (C
 		&i.ReplyUrl,
 		&i.NotifyStrangers,
 		&i.ReplyMode,
+		&i.AnswersIn,
 	)
 	return i, err
 }

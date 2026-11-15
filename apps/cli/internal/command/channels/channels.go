@@ -84,8 +84,8 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 }
 
 func newCreateCmd(opts *cli.Options) *cobra.Command {
-	var provider, replyURL string
-	var secretStdin bool
+	var provider, replyURL, answersIn string
+	var secretStdin, noNotify bool
 	var credentialStdin string
 
 	cmd := &cobra.Command{
@@ -108,7 +108,12 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"It cannot be combined with --secret-stdin: there is one stdin.\n\n" +
 			"There is deliberately no --secret flag. Arguments are readable by\n" +
 			"every process on the machine through ps, and they land in shell\n" +
-			"history.",
+			"history.\n\n" +
+			"--answers-in says where the channel answers: everywhere (the default:\n" +
+			"direct chats, and groups where it is mentioned), groups, or direct.\n" +
+			"For a WhatsApp number that is also your own, --answers-in groups\n" +
+			"--no-notify-strangers leaves your direct chats alone and tells nobody\n" +
+			"anything.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.TrimSpace(args[1])
@@ -126,6 +131,17 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			if cmd.Flags().Changed("reply-url") {
 				u := strings.TrimSpace(replyURL)
 				body.ReplyURL = &u
+			}
+			if cmd.Flags().Changed("answers-in") {
+				where, err := answersInFlag(answersIn)
+				if err != nil {
+					return err
+				}
+				body.AnswersIn = &where
+			}
+			if noNotify {
+				off := false
+				body.NotifyStrangers = &off
 			}
 			if secretStdin && cmd.Flags().Changed("credential-stdin") {
 				return fmt.Errorf("--secret-stdin and --credential-stdin both read stdin — pass only one")
@@ -208,6 +224,8 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 		"read the provider's own signing secret from stdin instead of generating one")
 	cmd.Flags().StringVar(&credentialStdin, "credential-stdin", "",
 		"read the value of the named credential, such as bot_token, from stdin")
+	cmd.Flags().StringVar(&answersIn, "answers-in", "", "where it answers: everywhere, groups or direct")
+	cmd.Flags().BoolVar(&noNotify, "no-notify-strangers", false, "tell a sender nobody has let in nothing")
 	cmd.Flags().StringVar(&replyURL, "reply-url", "",
 		"where the team's replies to this channel's conversations are posted")
 	_ = cmd.MarkFlagRequired("provider")
@@ -216,7 +234,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 }
 
 func newUpdateCmd(opts *cli.Options) *cobra.Command {
-	var replyURL, replyMode string
+	var replyURL, replyMode, answersIn string
 	var noReplyURL, notify, noNotify bool
 
 	cmd := &cobra.Command{
@@ -235,7 +253,10 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 			"--reply-mode final sends a run's answer alone; --reply-mode events sends\n" +
 			"each step a person would follow first (what the agent says before it\n" +
 			"calls a tool, \"Using <tool>…\", \"Asking <agent>…\"), each a message of\n" +
-			"its own that stays. Not the dashboard channel, whose stream is every step.",
+			"its own that stays. Not the dashboard channel, whose stream is every step.\n\n" +
+			"--answers-in says where it answers: everywhere (direct chats, and groups\n" +
+			"where it is mentioned), groups, or direct. Outside it a message asks\n" +
+			"nothing: no answer, and no stranger queued or told.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			setURL := cmd.Flags().Changed("reply-url")
@@ -246,8 +267,9 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 				return fmt.Errorf("pass one of --notify-strangers or --no-notify-strangers, not both")
 			}
 			setMode := cmd.Flags().Changed("reply-mode")
-			if !setURL && !noReplyURL && !notify && !noNotify && !setMode {
-				return fmt.Errorf("pass --reply-url, --no-reply-url, --notify-strangers, --no-notify-strangers or --reply-mode")
+			setWhere := cmd.Flags().Changed("answers-in")
+			if !setURL && !noReplyURL && !notify && !noNotify && !setMode && !setWhere {
+				return fmt.Errorf("pass --reply-url, --no-reply-url, --notify-strangers, --no-notify-strangers, --reply-mode or --answers-in")
 			}
 			mode := client.UpdateChannelRequestReplyMode(replyMode)
 			if setMode && !mode.Valid() {
@@ -270,6 +292,13 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 			}
 			if setMode {
 				body.ReplyMode = &mode
+			}
+			if setWhere {
+				where, err := answersInFlag(answersIn)
+				if err != nil {
+					return err
+				}
+				body.AnswersIn = &where
 			}
 
 			api, err := opts.API(cmd.Context())
@@ -309,6 +338,9 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 					if body.ReplyMode != nil {
 						what = append(what, opts.Styles.Muted.Render("replies: "+replyModeWords(string(ch.ReplyMode))))
 					}
+					if body.AnswersIn != nil {
+						what = append(what, opts.Styles.Muted.Render("answers "+answersInWords(ch.AnswersIn)))
+					}
 					table.Row(opts.Styles.OK.Render("updated"), opts.Styles.Value.Render(ch.Name),
 						strings.Join(what, opts.Styles.Muted.Render("; ")))
 				},
@@ -320,8 +352,31 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().BoolVar(&noReplyURL, "no-reply-url", false, "stop sending replies")
 	cmd.Flags().BoolVar(&notify, "notify-strangers", false, "tell a sender nobody has let in that they are waiting, and that they are in")
 	cmd.Flags().BoolVar(&noNotify, "no-notify-strangers", false, "stop telling them")
+	cmd.Flags().StringVar(&answersIn, "answers-in", "", "where it answers: everywhere, groups or direct")
 	cmd.Flags().StringVar(&replyMode, "reply-mode", "", "final: the answer alone; events: each step, then the answer")
 	return cmd
+}
+
+// answersInFlag is --answers-in as the brain takes it.
+func answersInFlag(v string) (client.AnswersIn, error) {
+	where := client.AnswersIn(strings.TrimSpace(v))
+	if !where.Valid() {
+		return "", fmt.Errorf("--answers-in is everywhere, groups or direct, not %q", v)
+	}
+	return where, nil
+}
+
+func answersInWords(where client.AnswersIn) string {
+	switch where {
+	case client.AnswersInGroups:
+		return "only in groups, where it is mentioned"
+	case client.AnswersInDirect:
+		return "only in direct chats"
+	case client.AnswersInEverywhere:
+		return "in direct chats, and groups where it is mentioned"
+	default:
+		return "in direct chats, and groups where it is mentioned"
+	}
 }
 
 func replyModeWords(mode string) string {

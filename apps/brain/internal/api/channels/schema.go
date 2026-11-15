@@ -34,6 +34,9 @@ type channel struct {
 	// CanPair is whether the channel's number is linked by pairing, as a
 	// WhatsApp number is, so a client offers it only there.
 	CanPair bool `json:"can_pair"`
+	// AnswersIn is where it answers: "everywhere" (direct chats, and groups
+	// where it is mentioned), "groups" or "direct".
+	AnswersIn string `json:"answers_in"`
 }
 
 // listedChannel is a row of the channels list: the channel, and how recently
@@ -53,6 +56,10 @@ type createRequest struct {
 	// Credentials are the keys the provider asks a person for, such as a
 	// Telegram bot_token. They go to the secret store and are never shown.
 	Credentials map[string]string `json:"credentials,omitempty"`
+	// AnswersIn and NotifyStrangers are as on an update; left out, a channel
+	// answers everywhere and tells strangers where its provider can.
+	AnswersIn       *string `json:"answers_in,omitempty"`
+	NotifyStrangers *bool   `json:"notify_strangers,omitempty"`
 }
 
 // updateRequest changes what it names and nothing else.
@@ -60,6 +67,7 @@ type updateRequest struct {
 	ReplyURL        nullableString `json:"reply_url"`
 	NotifyStrangers *bool          `json:"notify_strangers"`
 	ReplyMode       *string        `json:"reply_mode"`
+	AnswersIn       *string        `json:"answers_in"`
 }
 
 type created struct {

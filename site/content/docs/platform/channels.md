@@ -186,6 +186,21 @@ A message starts a run only when it is addressed to the team:
 | `direct`     | Always |
 | `group`, `thread` | The message mentions the bot (`is_us` on a mention; for Telegram, see [above](#telegram)) |
 
+A channel can narrow that with where it answers (`answers_in`), set when it
+is connected or changed later, on the dashboard or with `oa channels update
+--answers-in`:
+
+| `answers_in` | Answers |
+| ------------ | ------- |
+| `everywhere` (the default) | Direct chats, and groups where it is mentioned |
+| `groups` | Only groups, where it is mentioned |
+| `direct` | Only direct chats |
+
+Outside it a message asks nothing: it is kept when its sender has been let in,
+and nobody is queued or told they are waiting. For a WhatsApp number that is
+also your own, `groups` with stranger notices off leaves your direct chats
+alone; the dashboard sets both when you say the number is yours.
+
 A message from a bot, ours or anyone's, is never answered. A message with no
 text is not answered. Neither is one from a sender whose member may not start
 runs (`run:write`), or when the team has no model set, so its hub cannot run.

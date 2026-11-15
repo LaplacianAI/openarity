@@ -19,7 +19,8 @@ JOIN teams t ON t.id = c.team_id AND t.deleted_at IS NULL
 WHERE a.channel_id = c.id
   AND (a.held_by = sqlc.arg('holder')::text OR a.held_by IS NULL
        OR a.heartbeat_at < now() - make_interval(secs => sqlc.arg('stale_seconds')::float8))
-RETURNING a.channel_id, c.team_id, a.state, a.jid, a.pair_seq, a.pair_seen, a.pair_method, a.pair_phone;
+RETURNING a.channel_id, c.team_id, c.notify_strangers, c.answers_in,
+          a.state, a.jid, a.pair_seq, a.pair_seen, a.pair_method, a.pair_phone;
 
 -- A role stopping lets its accounts go, so another takes them at once.
 -- name: ReleaseWhatsAppAccounts :exec
