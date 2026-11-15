@@ -626,7 +626,8 @@ func (q *Queries) HubCanRun(ctx context.Context, teamID uuid.UUID) (bool, error)
 }
 
 const listMessagesSinceLastRun = `-- name: ListMessagesSinceLastRun :many
-SELECT m.text, m.received_at AS at, u.email AS author
+SELECT m.text, m.received_at AS at,
+       coalesce(nullif(m.sender_name, ''), u.email, '')::text AS author
 FROM messages m
 LEFT JOIN users u ON u.id = m.user_id
 WHERE m.session_id = $1::uuid
@@ -652,7 +653,7 @@ type ListMessagesSinceLastRunParams struct {
 type ListMessagesSinceLastRunRow struct {
 	Text   string
 	At     time.Time
-	Author *string
+	Author string
 }
 
 // What a session's people said since its previous top-level run finished, for

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -847,5 +848,142 @@ func TestAMessagesEventNamesItsFiles(t *testing.T) {
 	}
 	if got[1].Filename != "crash.log" || got[1].MediaType != "text/plain" || got[1].Size != 40 {
 		t.Errorf("the log is named as %+v", got[1])
+	}
+}
+
+// --- the conversation read back ---
+
+func (f streamFixture) sayAs(t *testing.T, s *Store, name, email, text string) {
+	t.Helper()
+	user := mustUser(t, s)
+	if email != "" {
+		if _, err := s.pool.Exec(t.Context(), `UPDATE users SET email = $2 WHERE id = $1`, user, email); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.InsertMessage(t.Context(), db.InsertMessageParams{
+		ChannelID: f.channel, SessionID: f.session, UserID: user, ExternalID: uuid.NewString(),
+		Text: text, SenderName: name,
+	}); err != nil {
+		t.Fatalf("InsertMessage: %v", err)
+	}
+}
+
+func (f streamFixture) ended(t *testing.T, s *Store, r db.Run, worker, status, output string) {
+	t.Helper()
+	p := db.FinishRunParams{ID: r.ID, Worker: worker, Status: status, Output: &output}
+	if status == "failed" {
+		failure := "the model refused"
+		p.Error = &failure
+	}
+	if _, _, err := s.FinishRunWithEvent(t.Context(), p, db.AppendRunEventParams{
+		RunID: r.ID, Worker: worker, Kind: "finished", Payload: []byte(`{"status":"` + status + `"}`),
+	}); err != nil {
+		t.Fatalf("FinishRunWithEvent(%s): %v", status, err)
+	}
+}
+
+func history(t *testing.T, s *Store, session uuid.UUID, before int64, n int32) []string {
+	t.Helper()
+	rows, err := s.ListSessionHistory(t.Context(), db.ListSessionHistoryParams{SessionID: session, Before: before, PageSize: n})
+	if err != nil {
+		t.Fatalf("ListSessionHistory: %v", err)
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		who := r.Who
+		if r.Ours {
+			who = "BOT"
+		}
+		out[i] = fmt.Sprintf("%d %s: %s", r.Seq, who, r.Text)
+	}
+	return out
+}
+
+// What people wrote and what the bot answered, newest first, by number. A
+// step, a delegated agent's answer, a failed run and a run with nothing to
+// say are not the conversation; a name wins over an email, and neither is
+// empty, not invented.
+func TestAConversationReadsBackAsPeopleAndAnswers(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	f := newStreamFixture(t, s)
+	f.sayAs(t, s, "Priya", "priya@example.com", "why did the deploy fail?") // 1
+
+	answers := createRun(t, s, f.runFixture)
+	claim(t, s, answers.ID, "w1")
+	if _, err := appendEvent(t, s, answers.ID, "w1", "started"); err != nil { // 2
+		t.Fatal(err)
+	}
+	child := mustStartChild(t, s, answers, f.agent, "c1")
+	f.ended(t, s, child, "w1", "succeeded", "CHILD'S OUTPUT")          // 3
+	f.ended(t, s, answers, "w1", "succeeded", "it waited on the lock") // 4
+
+	f.sayAs(t, s, "", "ravi@example.com", "and the retry?") // 5
+	fails := createRun(t, s, f.runFixture)
+	claim(t, s, fails.ID, "w1")
+	f.ended(t, s, fails, "w1", "failed", "HALF AN ANSWER") // 6
+	quiet := createRun(t, s, f.runFixture)
+	claim(t, s, quiet.ID, "w1")
+	f.ended(t, s, quiet, "w1", "succeeded", "") // 7
+	f.sayAs(t, s, "", "", "anyone?")            // 8
+
+	other := newStreamFixture(t, s)
+	other.sayAs(t, s, "Mallory", "", "ANOTHER CONVERSATION")
+
+	want := []string{
+		"8 : anyone?",
+		"5 ravi@example.com: and the retry?",
+		"4 BOT: it waited on the lock",
+		"1 Priya: why did the deploy fail?",
+	}
+	if got := history(t, s, f.session, 1<<62, 100); !slices.Equal(got, want) {
+		t.Fatalf("history =\n%q\nwant\n%q", got, want)
+	}
+	if got := history(t, s, f.session, 5, 100); !slices.Equal(got, want[2:]) {
+		t.Errorf("before 5 = %q; want only what is numbered below it", got)
+	}
+	if got := history(t, s, f.session, 1<<62, 2); !slices.Equal(got, want[:2]) {
+		t.Errorf("a page of 2 = %q; want the newest two", got)
+	}
+}
+
+// A message's sender name is bounded by the table too, not only by the Go
+// that cleans it.
+func TestASenderNameIsBoundedByTheTable(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	f := newStreamFixture(t, s)
+	_, err := s.InsertMessage(t.Context(), db.InsertMessageParams{
+		ChannelID: f.channel, SessionID: f.session, UserID: mustUser(t, s), ExternalID: uuid.NewString(),
+		Text: "hi", SenderName: strings.Repeat("a", 65),
+	})
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.ConstraintName != "messages_sender_name_bounded" {
+		t.Fatalf("a 65-character name = %v; want it refused by messages_sender_name_bounded", err)
+	}
+}
+
+const beforeSenderName = 20261114150000
+
+func TestTheSenderNameRollsBack(t *testing.T) {
+	s := migrationStore(t)
+	if _, err := s.Migrate(t.Context()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	f := newStreamFixture(t, s)
+	f.sayAs(t, s, "Priya", "", "kept")
+
+	downTo(t, s, beforeSenderName)
+	if n := count(t, s, `SELECT count(*) FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'sender_name'`); n != 0 {
+		t.Error("rolled back, messages still has sender_name")
+	}
+	if n := count(t, s, `SELECT count(*) FROM messages WHERE text = 'kept'`); n != 1 {
+		t.Errorf("rolling back lost the message: %d left", n)
+	}
+	if _, err := s.Migrate(t.Context()); err != nil {
+		t.Fatalf("Migrate after Rollback: %v", err)
 	}
 }

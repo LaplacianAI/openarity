@@ -150,7 +150,7 @@ func (q *Queries) DashboardChannel(ctx context.Context, teamID uuid.UUID) (Chann
 }
 
 const getMessageByExternalID = `-- name: GetMessageByExternalID :one
-SELECT id, channel_id, user_id, external_id, text, sent_at, received_at, session_id, session_seq, asks, consumed_by FROM messages WHERE channel_id = $1 AND external_id = $2
+SELECT id, channel_id, user_id, external_id, text, sent_at, received_at, session_id, session_seq, asks, consumed_by, sender_name FROM messages WHERE channel_id = $1 AND external_id = $2
 `
 
 type GetMessageByExternalIDParams struct {
@@ -174,6 +174,7 @@ func (q *Queries) GetMessageByExternalID(ctx context.Context, arg GetMessageByEx
 		&i.SessionSeq,
 		&i.Asks,
 		&i.ConsumedBy,
+		&i.SenderName,
 	)
 	return i, err
 }
@@ -243,6 +244,80 @@ func (q *Queries) ListSessionEvents(ctx context.Context, arg ListSessionEventsPa
 			&i.Agent,
 			&i.ParentRunID,
 			&i.Output,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionHistory = `-- name: ListSessionHistory :many
+SELECT x.seq, x.at, x.ours, x.who, x.text, x.files
+FROM (
+    SELECT coalesce(m.session_seq, 0) AS seq, m.received_at AS at, false AS ours,
+           coalesce(nullif(m.sender_name, ''), u.email, '')::text AS who,
+           m.text,
+           (SELECT coalesce(array_agg(a.filename ORDER BY a.created_at, a.id), '{}')
+              FROM attachments a WHERE a.message_id = m.id)::text[] AS files
+    FROM messages m
+    LEFT JOIN users u ON u.id = m.user_id
+    WHERE m.session_id = $1::uuid
+      AND m.session_seq < $2::bigint
+    UNION ALL
+    SELECT coalesce(e.session_seq, 0), e.created_at, true, ''::text, coalesce(r.output, ''), '{}'::text[]
+    FROM run_events e
+    JOIN runs r ON r.id = e.run_id
+    WHERE e.session_id = $1::uuid
+      AND e.session_seq < $2::bigint
+      AND e.kind = 'finished'
+      AND r.parent_run_id IS NULL
+      AND r.status = 'succeeded'
+      AND coalesce(r.output, '') <> ''
+) x
+ORDER BY x.seq DESC
+LIMIT $3
+`
+
+type ListSessionHistoryParams struct {
+	SessionID uuid.UUID
+	Before    int64
+	PageSize  int32
+}
+
+type ListSessionHistoryRow struct {
+	Seq   int64
+	At    time.Time
+	Ours  bool
+	Who   string
+	Text  string
+	Files []string
+}
+
+// A conversation read back: what people wrote and what the bot answered,
+// before a sequence number, newest first. An answer is a top-level run that
+// succeeded with output; a delegated run's, a failed run's and a run's steps
+// are not part of the conversation. Rows the stream never numbered are not
+// read. who is the sender's name, else their email, else empty.
+func (q *Queries) ListSessionHistory(ctx context.Context, arg ListSessionHistoryParams) ([]ListSessionHistoryRow, error) {
+	rows, err := q.db.Query(ctx, listSessionHistory, arg.SessionID, arg.Before, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSessionHistoryRow
+	for rows.Next() {
+		var i ListSessionHistoryRow
+		if err := rows.Scan(
+			&i.Seq,
+			&i.At,
+			&i.Ours,
+			&i.Who,
+			&i.Text,
+			&i.Files,
 		); err != nil {
 			return nil, err
 		}

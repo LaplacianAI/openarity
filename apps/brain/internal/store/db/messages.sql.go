@@ -24,8 +24,8 @@ func (q *Queries) CountMessagesBySession(ctx context.Context, sessionID uuid.UUI
 }
 
 const insertMessage = `-- name: InsertMessage :one
-INSERT INTO messages (channel_id, session_id, user_id, external_id, text, sent_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO messages (channel_id, session_id, user_id, external_id, text, sent_at, sender_name)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (channel_id, external_id) DO NOTHING
 RETURNING id
 `
@@ -37,6 +37,7 @@ type InsertMessageParams struct {
 	ExternalID string
 	Text       string
 	SentAt     *time.Time
+	SenderName string
 }
 
 // InsertMessage returns the id it wrote, and no row at all for a replay. Both
@@ -62,6 +63,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (u
 		arg.ExternalID,
 		arg.Text,
 		arg.SentAt,
+		arg.SenderName,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -69,7 +71,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (u
 }
 
 const listMessagesBySession = `-- name: ListMessagesBySession :many
-SELECT id, channel_id, user_id, external_id, text, sent_at, received_at, session_id, session_seq, asks, consumed_by FROM messages
+SELECT id, channel_id, user_id, external_id, text, sent_at, received_at, session_id, session_seq, asks, consumed_by, sender_name FROM messages
 WHERE session_id = $1
   AND (NOT $2::bool
    OR (received_at, id) < ($3::timestamptz, $4::uuid))
@@ -112,6 +114,7 @@ func (q *Queries) ListMessagesBySession(ctx context.Context, arg ListMessagesByS
 			&i.SessionSeq,
 			&i.Asks,
 			&i.ConsumedBy,
+			&i.SenderName,
 		); err != nil {
 			return nil, err
 		}

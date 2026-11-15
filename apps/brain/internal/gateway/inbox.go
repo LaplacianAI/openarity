@@ -214,6 +214,7 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) (Deliver
 		ExternalID: m.ExternalID,
 		Text:       m.Text,
 		SentAt:     sentAt,
+		SenderName: CleanName(m.Author.DisplayName),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

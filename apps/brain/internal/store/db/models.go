@@ -165,6 +165,7 @@ type Message struct {
 	SessionSeq *int64
 	Asks       bool
 	ConsumedBy *uuid.UUID
+	SenderName string
 }
 
 type Notice struct {

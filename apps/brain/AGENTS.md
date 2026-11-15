@@ -124,6 +124,7 @@ apps/brain/
     servers.go         a run's MCP servers, each opened by the first call to one of its tools
     attachments.go     attachments() and read_attachment(id): a conversation's files, handed over by reference
     resolve.go         Resolving: the model client that fetches those files' bytes for each request
+    history.go         history(before, limit): the conversation read back, its people and the top-level runs' answers
     compaction.go      when a run compacts, and the budget's soft lines (compact, then wrap up)
     delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run
     events.go          what a run does, as run_events, within its token budget; its text and reasoning, gathered
