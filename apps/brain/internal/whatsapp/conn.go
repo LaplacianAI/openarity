@@ -51,6 +51,10 @@ type conn struct {
 	pairing  bool
 	quotes   map[types.MessageID]quoted
 	quoteFIF []types.MessageID
+	// own is what this connection sent, so "Message yourself", where the
+	// bot's answers arrive as the owner's, does not answer them.
+	own    map[types.MessageID]struct{}
+	ownFIF []types.MessageID
 }
 
 // settings is what a channel says about answering: whether a stranger is
@@ -88,7 +92,7 @@ func (a *Accounts) newConn(ctx context.Context, ch db.Channel) *conn {
 	ctx, stop := context.WithCancel(ctx)
 	c := &conn{
 		a: a, channel: ch, events: make(chan any, queueDepth), done: make(chan struct{}), ctx: ctx, stop: stop,
-		quotes: map[types.MessageID]quoted{},
+		quotes: map[types.MessageID]quoted{}, own: map[types.MessageID]struct{}{},
 	}
 	go c.run(ctx)
 	return c
@@ -155,6 +159,9 @@ func (c *conn) handle(ctx context.Context, evt any) {
 	log := c.a.logger.With("channel_id", c.channel.ID)
 	switch e := evt.(type) {
 	case *events.Message:
+		if e.Info.IsFromMe && c.sentHere(e.Info.ID) {
+			return
+		}
 		in, ok := gwa.Map(e, c.self(), false)
 		if !ok {
 			return
@@ -207,6 +214,29 @@ func (c *conn) remember(e *events.Message) {
 		delete(c.quotes, c.quoteFIF[0])
 		c.quoteFIF = c.quoteFIF[1:]
 	}
+}
+
+// sending names a message before it goes, so its echo is known whenever it
+// arrives.
+func (c *conn) sending(id types.MessageID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.own[id]; ok {
+		return
+	}
+	c.own[id] = struct{}{}
+	c.ownFIF = append(c.ownFIF, id)
+	if len(c.ownFIF) > quoteMemory {
+		delete(c.own, c.ownFIF[0])
+		c.ownFIF = c.ownFIF[1:]
+	}
+}
+
+func (c *conn) sentHere(id types.MessageID) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.own[id]
+	return ok
 }
 
 func (c *conn) quote(id string) (quoted, bool) {

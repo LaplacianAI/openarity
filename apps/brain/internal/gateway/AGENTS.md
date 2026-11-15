@@ -292,7 +292,11 @@ let in is stored and does nothing else. It is how a WhatsApp number that is
 also a person's own answers in their groups and leaves their direct chats
 alone. The `Receiver` carries the scope from the channel row to
 `ResolveSender` and to the inbox, and the WhatsApp role takes it, with
-`notify_strangers`, from each lease.
+`notify_strangers`, from each lease. One message is addressed wherever the
+channel answers: `ToSelf`, the account's owner writing to the account itself
+(WhatsApp's "Message yourself"). The adapter marks it, by the owner's number;
+every other message of the owner's is dropped, and so is one the holder sent,
+which it names before sending so its echo is known.
 
 `custom` signs a reply under `reply:v1:` rather than the `v1:` of an incoming
 message, so a captured reply posted to the webhook does not verify as a

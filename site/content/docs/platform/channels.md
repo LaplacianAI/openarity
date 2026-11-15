@@ -201,6 +201,12 @@ and nobody is queued or told they are waiting. For a WhatsApp number that is
 also your own, `groups` with stranger notices off leaves your direct chats
 alone; the dashboard sets both when you say the number is yours.
 
+What you type on a linked WhatsApp number is yours, not a question for the
+agent, and is not kept, with one exception: WhatsApp's **Message yourself**
+chat. There you are asking the agent, whatever `answers_in` says. You are let
+in from Approvals once, like anyone, and the agent's answers, which arrive in
+that chat as yours too, are never taken as questions.
+
 A message from a bot, ours or anyone's, is never answered. A message with no
 text is not answered. Neither is one from a sender whose member may not start
 runs (`run:write`), or when the team has no model set, so its hub cannot run.

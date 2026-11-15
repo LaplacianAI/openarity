@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -35,6 +36,7 @@ type fakeClient struct {
 	logouts   int
 	connErr   error
 	sent      []sentMessage
+	ids       int
 	presences []types.ChatPresence
 	sendErr   error
 	qr        chan whatsmeow.QRChannelItem
@@ -47,6 +49,7 @@ type fakeClient struct {
 type sentMessage struct {
 	to  types.JID
 	msg *waE2E.Message
+	id  types.MessageID
 }
 
 func (f *fakeClient) Connect() error {
@@ -107,14 +110,25 @@ func (f *fakeClient) PairPhone(_ context.Context, phone string, _ bool, _ whatsm
 	return f.pairCode, f.pairErr
 }
 
-func (f *fakeClient) SendMessage(_ context.Context, to types.JID, msg *waE2E.Message, _ ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+func (f *fakeClient) GenerateMessageID() types.MessageID {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ids++
+	return fmt.Sprintf("SENT-%d", f.ids)
+}
+
+func (f *fakeClient) SendMessage(_ context.Context, to types.JID, msg *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.sendErr != nil {
 		return whatsmeow.SendResponse{}, f.sendErr
 	}
-	f.sent = append(f.sent, sentMessage{to: to, msg: msg})
-	return whatsmeow.SendResponse{ID: "SENT-" + types.MessageID(rune('0'+len(f.sent)))}, nil
+	var id types.MessageID
+	if len(extra) > 0 {
+		id = extra[0].ID
+	}
+	f.sent = append(f.sent, sentMessage{to: to, msg: msg, id: id})
+	return whatsmeow.SendResponse{ID: id}, nil
 }
 
 func (f *fakeClient) SendChatPresence(_ context.Context, _ types.JID, state types.ChatPresence, _ types.ChatPresenceMedia) error {
