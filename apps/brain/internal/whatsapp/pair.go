@@ -39,7 +39,7 @@ func (c *conn) pair(ctx context.Context, r db.LeaseWhatsAppAccountsRow) {
 			_ = cli.Logout(lctx)
 			cancel()
 		}
-		if err := c.a.devices.DeleteDevice(ctx, old); err != nil {
+		if err := c.a.forget(ctx, old); err != nil {
 			c.a.logger.Warn("whatsapp: deleting the device paired before", "channel_id", c.channel.ID, "error", err)
 		}
 	}

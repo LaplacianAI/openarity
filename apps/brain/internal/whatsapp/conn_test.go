@@ -204,7 +204,7 @@ func TestAMessageCarriesTheChannelsSettingsAsTheyAreNow(t *testing.T) {
 
 func toSelf(id types.MessageID, words string) *events.Message {
 	m := incoming(id, &waE2E.Message{Conversation: proto.String(words)})
-	m.Info.Chat, m.Info.Sender, m.Info.IsFromMe = linkedJID, linkedJID, true
+	m.Info.Chat, m.Info.Sender, m.Info.IsFromMe = linkedJID.ToNonAD(), linkedJID, true
 	return m
 }
 
@@ -212,7 +212,7 @@ func toSelf(id types.MessageID, words string) *events.Message {
 // owner's own: the one it sent is not taken as a question, the owner's is.
 func TestMessageYourselfAnswersTheOwnerAndNotTheBotsOwnAnswer(t *testing.T) {
 	f, ch, cli := connected(t)
-	if err := f.a.Post(t.Context(), ch, part(t, gwa.Part{To: linkedJID.String(), Text: "Here is today."})); err != nil {
+	if err := f.a.Post(t.Context(), ch, part(t, gwa.Part{To: linkedJID.ToNonAD().String(), Text: "Here is today."})); err != nil {
 		t.Fatalf("Post: %v", err)
 	}
 	if len(cli.sent) != 1 || cli.sent[0].id == "" {
@@ -223,7 +223,7 @@ func TestMessageYourselfAnswersTheOwnerAndNotTheBotsOwnAnswer(t *testing.T) {
 
 	eventually(t, "the owner's message delivered", func() bool { return len(f.receiver.delivered()) == 1 })
 	in := f.receiver.delivered()[0][0]
-	if in.Text != "and tomorrow?" || !in.ToSelf || in.Author.Ref != linkedJID.String() {
+	if in.Text != "and tomorrow?" || !in.ToSelf || in.Author.Ref != linkedJID.ToNonAD().String() {
 		t.Fatalf("delivered %+v; want only the owner's question, as theirs to themselves", in)
 	}
 }

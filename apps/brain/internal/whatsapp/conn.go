@@ -341,8 +341,8 @@ func (c *conn) unlink(ctx context.Context, why string) {
 	if cli != nil {
 		cli.Disconnect()
 	}
-	if dev != nil && dev.ID != nil {
-		if err := c.a.devices.DeleteDevice(ctx, dev); err != nil {
+	if dev != nil {
+		if err := c.a.forget(ctx, dev); err != nil {
 			c.a.logger.Error("whatsapp: deleting a device's keys", "channel_id", c.channel.ID, "error", err)
 		}
 	}

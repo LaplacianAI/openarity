@@ -37,7 +37,6 @@ type Client interface {
 // Devices is where linked devices' keys are kept. *sqlstore.Container is one.
 type Devices interface {
 	NewDevice() *store.Device
-	GetDevice(ctx context.Context, jid types.JID) (*store.Device, error)
 	GetAllDevices(ctx context.Context) ([]*store.Device, error)
 	DeleteDevice(ctx context.Context, device *store.Device) error
 }

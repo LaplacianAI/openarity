@@ -34,6 +34,7 @@ type fakeClient struct {
 	connects  int
 	discos    int
 	logouts   int
+	devices   *fakeDevices
 	connErr   error
 	sent      []sentMessage
 	ids       int
@@ -76,10 +77,18 @@ func (f *fakeClient) IsConnected() bool {
 	return f.connected
 }
 
-func (f *fakeClient) Logout(context.Context) error {
+// Logout deletes the device's keys, as whatsmeow's does once WhatsApp
+// accepts it, leaving the device with no address.
+func (f *fakeClient) Logout(ctx context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.logouts++
+	if f.devices != nil && f.dev != nil && f.dev.ID != nil {
+		if err := f.devices.DeleteDevice(ctx, f.dev); err != nil {
+			return err
+		}
+		f.dev.ID, f.dev.Deleted = nil, true
+	}
 	return nil
 }
 
@@ -178,12 +187,6 @@ func (d *fakeDevices) NewDevice() *store.Device {
 	return &store.Device{}
 }
 
-func (d *fakeDevices) GetDevice(_ context.Context, jid types.JID) (*store.Device, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.devs[jid.String()], nil
-}
-
 func (d *fakeDevices) GetAllDevices(context.Context) ([]*store.Device, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -197,10 +200,11 @@ func (d *fakeDevices) GetAllDevices(context.Context) ([]*store.Device, error) {
 func (d *fakeDevices) DeleteDevice(_ context.Context, dev *store.Device) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if dev.ID != nil {
-		delete(d.devs, dev.ID.String())
-		d.deleted = append(d.deleted, dev.ID.String())
+	if dev.ID == nil {
+		return errors.New("device JID must be known before accessing database") // as sqlstore's
 	}
+	delete(d.devs, dev.ID.String())
+	d.deleted = append(d.deleted, dev.ID.String())
 	return nil
 }
 
@@ -363,7 +367,7 @@ func newFixture(t *testing.T, devices *fakeDevices) *fixture {
 		Receiver: f.receiver, Ingest: fakeKeeper{},
 		Logger: slog.New(slog.NewTextHandler(f.log, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		NewClient: func(d *store.Device) Client {
-			c := &fakeClient{dev: d, qr: make(chan whatsmeow.QRChannelItem, 8)}
+			c := &fakeClient{dev: d, devices: devices, qr: make(chan whatsmeow.QRChannelItem, 8)}
 			f.mu.Lock()
 			if f.prepare != nil {
 				f.prepare(c)
@@ -437,7 +441,9 @@ func (l *lockedBuffer) Write(p []byte) (int, error) {
 func row(channel uuid.UUID, jid *types.JID) db.LeaseWhatsAppAccountsRow {
 	r := db.LeaseWhatsAppAccountsRow{ChannelID: channel, TeamID: uuid.New(), State: "unpaired"}
 	if jid != nil {
-		r.Jid, r.State = new(jid.String()), "connected"
+		// An account names the number; the device is kept under its own
+		// address, which says which of the number's devices it is.
+		r.Jid, r.State = new(jid.ToNonAD().String()), "connected"
 	}
 	return r
 }

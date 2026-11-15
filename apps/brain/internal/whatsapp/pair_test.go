@@ -104,4 +104,7 @@ func TestPairingAgainLetsTheOldDeviceGo(t *testing.T) {
 	if f.client(t, 0).logouts != 1 || len(f.devices.deleted) != 1 || f.devices.deleted[0] != linkedJID.String() {
 		t.Fatalf("logouts %d, deleted %v; want the old device logged out and deleted", f.client(t, 0).logouts, f.devices.deleted)
 	}
+	if strings.Contains(f.logText(), "deleting the device paired before") {
+		t.Errorf("deleting keys the logout already deleted was logged as a failure:\n%s", f.logText())
+	}
 }
