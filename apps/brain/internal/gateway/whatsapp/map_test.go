@@ -301,3 +301,23 @@ func TestTheOwnersOwnWithoutTheWordIsNotKept(t *testing.T) {
 		}
 	}
 }
+
+// Once a channel has a word, "Message yourself" is called by it like every
+// other chat: a note without it is the owner's own, and not kept.
+func TestMessageYourselfNeedsTheWordOnceOneIsSet(t *testing.T) {
+	note := func(words string) *events.Message {
+		m := direct(text(words))
+		m.Info.Chat, m.Info.Sender, m.Info.IsFromMe = us.PN, us.PN, true
+		return m
+	}
+	if in, ok := Map(note("buy milk"), us, "@Fduv", false); ok {
+		t.Errorf("a note without the word was kept: %+v", in)
+	}
+	in, ok := Map(note("@Fduv summarise today"), us, "@Fduv", false)
+	if !ok || !in.ToSelf || in.Session.Ref != us.PN.String() {
+		t.Fatalf("a note with the word = %+v, %v; want it kept, to self", in, ok)
+	}
+	if _, ok := Map(note("buy milk"), us, "", false); !ok {
+		t.Error("with no word, a note to self was dropped; want it kept, as before")
+	}
+}

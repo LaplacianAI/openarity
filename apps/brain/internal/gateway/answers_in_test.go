@@ -125,8 +125,8 @@ func TestTheOwnerWritingToTheAccountIsAnsweredWhereverTheChannelAnswers(t *testi
 
 // With a trigger word, a message asks only when it holds the word, in a
 // direct chat and a group alike, and a mention of the number no longer asks;
-// where the channel answers still holds, and the owner's note to self needs
-// no word.
+// where the channel answers still holds. The owner's note to self needs the
+// word too, though not a place the channel answers.
 func TestATriggerWordIsWhatAsksTheChannel(t *testing.T) {
 	t.Parallel()
 
@@ -152,7 +152,10 @@ func TestATriggerWordIsWhatAsksTheChannel(t *testing.T) {
 		{"the word outside where it answers", Answering{Where: AnswersInGroups, Trigger: "@Fduv"}, SessionDirect, msg("@Fduv hi", false), false},
 		{"the word from a bot", word, SessionGroup, Inbound{Text: "@Fduv", Author: Author{IsBot: true}}, false},
 		{"the word from before", word, SessionGroup, Inbound{Text: "@Fduv", Historical: true}, false},
-		{"a note to self without it", word, SessionDirect, Inbound{Text: "summarise", ToSelf: true}, true},
+		{"a note to self without it", word, SessionDirect, Inbound{Text: "summarise", ToSelf: true}, false},
+		{"a note to self with it", word, SessionDirect, Inbound{Text: "@Fduv summarise", ToSelf: true}, true},
+		{"a note to self with it, answering in groups", Answering{Where: AnswersInGroups, Trigger: "@Fduv"}, SessionDirect, Inbound{Text: "@Fduv summarise", ToSelf: true}, true},
+		{"no word: a note to self", Answering{Where: AnswersInGroups}, SessionDirect, Inbound{Text: "summarise", ToSelf: true}, true},
 		{"no word: a direct chat", Answering{Where: AnswersEverywhere}, SessionDirect, msg("hi", false), true},
 		{"no word: a group mention", Answering{Where: AnswersEverywhere}, SessionGroup, msg("hi", true), true},
 	} {

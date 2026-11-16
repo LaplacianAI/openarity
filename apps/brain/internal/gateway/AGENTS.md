@@ -292,11 +292,14 @@ let in is stored and does nothing else. It is how a WhatsApp number that is
 also a person's own answers in their groups and leaves their direct chats
 alone. The `Receiver` carries the scope from the channel row to
 `ResolveSender` and to the inbox, and the WhatsApp role takes it, with
-`notify_strangers`, from each lease. One message is addressed wherever the
-channel answers: `ToSelf`, the account's owner writing to the account itself
-(WhatsApp's "Message yourself"). The adapter marks it, by the owner's number;
-every other message of the owner's is dropped, and so is one the holder sent,
-which it names before sending so its echo is known.
+`notify_strangers`, from each lease. One message is addressed whatever
+`answers_in` says: `ToSelf`, the account's owner writing to the account itself
+(WhatsApp's "Message yourself"), since nobody else is in that conversation. It
+still needs the channel's trigger word when there is one, so notes to self
+stay notes; the adapter then drops one without it. The adapter marks it, by
+the owner's number; every other message of the owner's without the word is
+dropped, and so is one the holder sent, which it names before sending so its
+echo is known.
 
 **A trigger word replaces mentions.** A channel's `trigger_word` reaches the
 rule as `Answering{Where, Trigger}`. With one, inside `answers_in`, a message

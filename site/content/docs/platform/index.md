@@ -35,11 +35,11 @@ a message on a channel.
 - **Blueprints**: a team's MCP servers, skills and agents in one file, planned
   with `oa plan` and applied with `oa apply`, or built by a coding agent that
   shows you the plan first. See [Blueprints](blueprints.md).
-- **Channels**: a Telegram bot, or a `custom` signed webhook, brings messages
-  in. Senders are let in by an admin or approver; a message to the team starts
-  a hub run or steers the one going, and the answer goes back into the Telegram
-  chat, or is posted to a custom channel's reply URL, signed. See
-  [Channels](channels.md).
+- **Channels**: a Telegram bot, a [WhatsApp](whatsapp.md) number linked as a
+  device, or a `custom` signed webhook, brings messages in. Senders are let in
+  by an admin or approver; a message to the team starts a hub run or steers the
+  one going, and the answer goes back into the Telegram or WhatsApp chat, or is
+  posted to a custom channel's reply URL, signed. See [Channels](channels.md).
 - **The dashboard**, served by the brain at `/ui`: a home that says what needs
   you, runs, sessions, approvals, agents, skills, MCP servers, channels, teams,
   the graph and the team's settings, and a box to ask the team something.

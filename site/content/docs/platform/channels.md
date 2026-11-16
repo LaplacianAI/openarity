@@ -7,9 +7,10 @@ that arrives on it is stored in a conversation, and, when it is addressed to
 the team and the sender has been let in, it starts a run of the team's
 [hub](hub.md). The hub's answer is posted back to the channel.
 
-Each channel belongs to one team and one provider. There are two:
-[`telegram`](#telegram), a Telegram bot, and `custom`, a generic signed webhook
-for anything else. Slack and Discord adapters are not written.
+Each channel belongs to one team and one provider. There are three:
+[`telegram`](#telegram), a Telegram bot; [`whatsapp`](whatsapp.md), a WhatsApp
+number linked as a device; and `custom`, a generic signed webhook for anything
+else. Slack and Discord adapters are not written.
 
 ## Connecting a channel
 
@@ -202,10 +203,11 @@ also your own, `groups` with stranger notices off leaves your direct chats
 alone; the dashboard sets both when you say the number is yours.
 
 What you type on a linked WhatsApp number is yours, not a question for the
-agent, and is not kept, with two exceptions. In WhatsApp's **Message
-yourself** chat you are asking the agent, whatever `answers_in` says. And with
-a trigger word, a message of yours that holds the word calls the agent in the
-chat you typed it in. You are let in from Approvals once, like anyone, and the
+agent, and is not kept, with two exceptions. With a trigger word, a message of
+yours that holds the word calls the agent in the chat you typed it in,
+WhatsApp's **Message yourself** chat included. With no word, everything you
+type in **Message yourself** asks the agent. Either way `answers_in` does not
+apply to **Message yourself**. You are let in from Approvals once, like anyone, and the
 agent's answers, which arrive as yours too, are never taken as questions.
 
 ### A trigger word

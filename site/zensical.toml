@@ -30,6 +30,7 @@ nav = [
     "docs/platform/mcp-servers.md",
     "docs/platform/blueprints.md",
     "docs/platform/channels.md",
+    "docs/platform/whatsapp.md",
     "docs/platform/web.md",
     "docs/platform/dashboard.md",
   ] },
