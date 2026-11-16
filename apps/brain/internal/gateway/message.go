@@ -75,8 +75,9 @@ type Inbound struct {
 	Historical bool
 
 	// ToSelf is the account's owner writing to the account itself, as in
-	// WhatsApp's "Message yourself": it asks the bot wherever the channel
-	// answers, since nobody else is in that conversation.
+	// WhatsApp's "Message yourself": it asks the bot whatever the channel's
+	// answers_in, since nobody else is in that conversation, and needs the
+	// channel's trigger word when it has one.
 	ToSelf bool
 }
 

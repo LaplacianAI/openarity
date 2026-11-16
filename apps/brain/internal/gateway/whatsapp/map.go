@@ -26,9 +26,9 @@ func (s Self) is(j types.JID) bool {
 // for one that is not kept:
 //
 //   - the owner's own, typed on the phone or another of its devices, except
-//     in "Message yourself", the chat with the number itself, and one that
-//     holds the channel's trigger word, which is the owner calling the bot
-//     in that chat: anything else is the owner talking to someone, and
+//     one that holds the channel's trigger word, which is the owner calling
+//     the bot in that chat, and, on a channel with no word, one in "Message
+//     yourself", the chat with the number itself: anything else is the owner talking to someone, and
 //     nobody asked the bot. One the holder sent itself is the caller's to
 //     drop, since only it knows its own;
 //   - a status, a broadcast list or a channel (newsletter), which are not
@@ -65,7 +65,9 @@ func Map(m *events.Message, self Self, trigger string, historical bool) (gateway
 	if strings.TrimSpace(text) == "" && len(files) == 0 {
 		return gateway.Inbound{}, false
 	}
-	if own && !toSelf && !gateway.HasWord(text, trigger) {
+	// The owner's own asks only by the word, "Message yourself" included once
+	// a word is set; without one, only "Message yourself" does.
+	if own && (trigger != "" || !toSelf) && !gateway.HasWord(text, trigger) {
 		return gateway.Inbound{}, false
 	}
 

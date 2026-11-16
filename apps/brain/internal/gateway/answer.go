@@ -98,8 +98,9 @@ func asksUs(ch Channel, s db.Session, m Delivery) bool {
 }
 
 // addressed is whether a message asks the bot. Never from a bot or from
-// before the bot was there; always the owner writing to the account itself;
-// never outside where the channel answers. Inside it, a channel with a
+// before the bot was there; the owner writing to the account itself always,
+// or, when the channel has a trigger word, when it holds the word; never
+// outside where the channel answers. Inside it, a channel with a
 // trigger word is asked by a message holding the word, in a direct chat or a
 // group alike; one without is asked by every direct message and a group
 // message that mentions us. The one rule for starting a run, steering one,
@@ -109,7 +110,9 @@ func addressed(a Answering, kind SessionKind, in Inbound) bool {
 		return false
 	}
 	if in.ToSelf {
-		return true
+		// Nobody else is in that conversation, so where the channel answers
+		// does not apply; a word, once set, does, so notes to self stay notes.
+		return a.Trigger == "" || HasWord(in.Text, a.Trigger)
 	}
 	direct := kind == SessionDirect
 	if (direct && a.Where == AnswersInGroups) || (!direct && a.Where == AnswersInDirect) {

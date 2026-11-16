@@ -45,7 +45,7 @@ sensible defaults; each one can be changed afterwards.
 | --- | --- | --- |
 | Who is on it | A number only the team uses | Your own WhatsApp, with your friends and family |
 | What asks the agent | Every direct chat, and groups where the number is @-mentioned | Only a message holding your [trigger word](#your-own-number), such as `@Fduv` |
-| Your own messages | — | Dropped, except "Message yourself" and a message holding the word |
+| Your own messages | — | Dropped, except a message holding the word, in any chat |
 | Strangers | Told once that they are waiting | Never told anything; they wait in Approvals |
 | The answer | From the bot's number | **From your number, in your name**, with typing shown |
 
@@ -157,7 +157,10 @@ chat is with. Your messages without the word stay private; they are not even
 stored.
 
 **Message yourself.** WhatsApp's **Message yourself** chat is your own line to
-the agent. There every message asks it, word or not, whatever `answers_in` says.
+the agent, whatever `answers_in` says. With a trigger word it needs the word
+like every other chat, so a note to yourself stays a note: `buy milk` is
+neither answered nor stored, `@Fduv summarise today` is answered. With no word,
+every message there asks the agent.
 
 In both cases you are a sender like anyone else: the first time, you are queued
 in **Approvals**, and you let yourself in once. The agent's own answers, which
