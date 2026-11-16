@@ -670,3 +670,79 @@ func TestReasoningSentBackIsCounted(t *testing.T) {
 		t.Errorf("counted %d tokens, want %d", got, want)
 	}
 }
+
+// A turn's opening message says when it was asked. Folded into a summary, the
+// only date left in view would be the conversation's first message, days old,
+// so the latest pinned one is sent again after the summary.
+func TestThePinnedMessageAFoldCoversIsSentAfterTheSummary(t *testing.T) {
+	r := rig(Compaction{AfterMessages: 10, KeepTokens: 10})
+	first := say(RoleUser, "Now: Monday, 2 November 2026, 09:00 UTC.\n\nreview the pull request")
+	first.Pinned = true
+	older := say(RoleUser, "Now: Tuesday, 10 November 2026, 09:00 UTC.\n\nand the next one")
+	older.Pinned = true
+	turn := say(RoleUser, "Now: Tuesday, 17 November 2026, 04:30 UTC.\n\nand this one")
+	turn.Pinned = true
+
+	msgs := []Message{first, say(RoleAssistant, "done"), older, say(RoleAssistant, "done"), turn}
+	msgs = append(msgs, conversation(10, func(i int) string { return fmt.Sprintf("file %d", i) })[1:]...)
+
+	sent := r.send(t, msgs)
+
+	if r.model.summaries() != 1 {
+		t.Fatal("nothing was folded")
+	}
+	if text(sent[0]) != text(first) || !strings.HasPrefix(text(sent[1]), "This run was compacted") {
+		t.Fatalf("want the first message then the summary, got %q, %q", text(sent[0]), text(sent[1]))
+	}
+	if text(sent[2]) != text(turn) {
+		t.Fatalf("after the summary came %q, want this turn's pinned message", text(sent[2]))
+	}
+	var seen int
+	for _, m := range sent {
+		if text(m) == text(older) {
+			seen++
+		}
+	}
+	if seen != 0 {
+		t.Error("an older pinned message was sent again; only the latest is")
+	}
+}
+
+// A pinned message still in the kept part, or the first message itself, is
+// already in view: it is not sent twice.
+func TestAPinnedMessageInViewIsNotSentTwice(t *testing.T) {
+	r := rig(Compaction{AfterMessages: 10, KeepTokens: 10})
+	msgs := conversation(10, func(i int) string { return fmt.Sprintf("file %d", i) })
+	msgs[0].Pinned = true
+	turn := say(RoleUser, "Now: Tuesday, 17 November 2026, 04:30 UTC.\n\nand now?")
+	turn.Pinned = true
+	msgs = append(msgs, turn)
+
+	sent := r.send(t, msgs)
+
+	if r.model.summaries() != 1 {
+		t.Fatal("nothing was folded")
+	}
+	counts := map[string]int{}
+	for _, m := range sent {
+		counts[text(m)]++
+	}
+	if counts[text(msgs[0])] != 1 || counts[text(turn)] != 1 {
+		t.Errorf("the first message was sent %d times and the kept turn %d; want once each",
+			counts[text(msgs[0])], counts[text(turn)])
+	}
+}
+
+// A pinned message is saved with its pin, so a resumed run still keeps it.
+func TestAPinSurvivesTheTranscript(t *testing.T) {
+	m := say(RoleUser, "hello")
+	m.Pinned = true
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Message
+	if err := json.Unmarshal(b, &back); err != nil || !back.Pinned {
+		t.Fatalf("read back %+v, %v; want it pinned", back, err)
+	}
+}

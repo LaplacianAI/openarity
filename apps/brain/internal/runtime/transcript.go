@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
@@ -58,8 +59,13 @@ func (e *Executor) begin(ctx context.Context, row db.Run, msgs []agent.Message) 
 	return false, append(msgs, first), nil
 }
 
-// firstMessage is what a run adds to its transcript: its input, and for a
-// channel's run what was said since the last one.
+// firstMessage is what a run adds to its transcript: the date, its input,
+// and for a channel's run what was said since the last one.
+//
+// The date is here, not in the system prompt, so every system block stays
+// cacheable: a block that changes daily would end the cached prefix there,
+// and everything after it, the conversation included, would miss. Each turn
+// keeps the date it was asked on, which is also the truth.
 func (e *Executor) firstMessage(ctx context.Context, row db.Run) (agent.Message, error) {
 	input := row.Input
 	if row.ReplyToChannel {
@@ -68,7 +74,12 @@ func (e *Executor) firstMessage(ctx context.Context, row db.Run) (agent.Message,
 			return agent.Message{}, err
 		}
 	}
-	msg := agent.Message{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: input}}}
+	// Pinned, so a compaction that folds this turn still shows when it was asked.
+	msg := agent.Message{
+		Role:    agent.RoleUser,
+		Content: []agent.Content{{Type: agent.ContentText, Text: today(e.now()) + "\n\n" + input}},
+		Pinned:  true,
+	}
 	if row.MessageID != nil {
 		files, err := e.store.ListAttachmentsByMessage(ctx, *row.MessageID)
 		if err != nil {
@@ -110,4 +121,8 @@ func closeCalls(msgs []agent.Message) []agent.Message {
 		}
 	}
 	return out
+}
+
+func today(now time.Time) string {
+	return "Now: " + now.UTC().Format("Monday, 2 January 2006, 15:04") + " UTC."
 }

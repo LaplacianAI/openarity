@@ -48,12 +48,21 @@ func (l react) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 		result.Steps = step
 		in.Emit(ctx, agent.UsageEvent{Model: in.Spec.Model.Name, Usage: resp.Usage})
 
-		msgs = append(msgs, resp.Message)
+		c, err := carryOn(ctx, in, msgs, resp, l.call)
+		msgs = append(msgs, c.msgs...)
 		result.Messages = msgs
-		result.Output = resp.Message.Text()
+		result.Output = c.text
+		if err != nil {
+			return result, fmt.Errorf("step %d: %w", step, err)
+		}
+		resp = c.last
 
+		// A call cut off part-way is never run: it is answered, and the model
+		// tries again with less in it.
 		if resp.Finish == agent.FinishLength {
-			return result, agent.ErrTruncated
+			msgs = append(msgs, answerCut(&msgs[len(msgs)-1])...)
+			result.Messages = msgs
+			continue
 		}
 		if len(resp.Message.ToolCalls) == 0 {
 			return result, nil

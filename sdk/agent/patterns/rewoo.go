@@ -69,19 +69,10 @@ func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 	in.Emit(ctx, agent.StepEvent{Step: 2})
 	answer, err := l.solve(ctx, in, msgs)
 	result.Steps = 2
-	if err != nil {
-		result.Messages = msgs
-		return result, err
-	}
-
-	msgs = append(msgs, answer.Message)
+	msgs = append(msgs, answer.msgs...)
 	result.Messages = msgs
-	result.Output = answer.Message.Text()
-
-	if answer.Finish == agent.FinishLength {
-		return result, agent.ErrTruncated
-	}
-	return result, nil
+	result.Output = answer.text
+	return result, err
 }
 
 type step struct {
@@ -193,17 +184,21 @@ func record(b *strings.Builder, id, name string, args json.RawMessage, out strin
 	fmt.Fprintf(b, "%s = %s(%s)\n  %s\n", id, name, args, out)
 }
 
-func (l rewoo) solve(ctx context.Context, in agent.Input, msgs []agent.Message) (agent.Response, error) {
+func (l rewoo) solve(ctx context.Context, in agent.Input, msgs []agent.Message) (carried, error) {
 	ask := in
 	ask.Spec.System = append(slices.Clone(in.Spec.System), solving)
 	ask.Spec.Tools = nil
 
 	resp, err := (rewoo{stream: l.stream}).call(ctx, ask, msgs)
 	if err != nil {
-		return resp, fmt.Errorf("solving: %w", err)
+		return carried{}, fmt.Errorf("solving: %w", err)
 	}
 	in.Emit(ctx, agent.UsageEvent{Model: in.Spec.Model.Name, Usage: resp.Usage})
-	return resp, nil
+	c, err := carryOn(ctx, ask, msgs, resp, rewoo{stream: l.stream}.call)
+	if err != nil {
+		return c, fmt.Errorf("solving: %w", err)
+	}
+	return c, nil
 }
 
 func (l rewoo) call(ctx context.Context, in agent.Input, msgs []agent.Message) (agent.Response, error) {

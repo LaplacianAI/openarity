@@ -44,19 +44,20 @@ func (l plan) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 	}
 	in.Emit(ctx, agent.UsageEvent{Model: in.Spec.Model.Name, Usage: resp.Usage})
 
-	if resp.Finish == agent.FinishLength {
+	c, err := carryOn(ctx, ask, in.Messages, resp, react{stream: l.stream, aside: true}.call)
+	if err != nil {
 		return agent.Result{
-			Messages: append(slices.Clone(in.Messages), resp.Message),
-			Output:   resp.Message.Text(),
+			Messages: append(slices.Clone(in.Messages), c.msgs...),
+			Output:   c.text,
 			Usage:    resp.Usage,
 			Steps:    1,
-		}, agent.ErrTruncated
+		}, fmt.Errorf("planning: %w", err)
 	}
-	if len(resp.Message.ToolCalls) > 0 {
+	if len(c.last.Message.ToolCalls) > 0 {
 		return agent.Result{Steps: 1, Usage: resp.Usage}, ErrPlanCalledATool
 	}
 
-	msgs := append(slices.Clone(in.Messages), resp.Message)
+	msgs := append(slices.Clone(in.Messages), c.msgs...)
 
 	spec := in.Spec
 	spec.MaxSteps--

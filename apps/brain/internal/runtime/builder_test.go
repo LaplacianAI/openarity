@@ -307,7 +307,7 @@ func TestABuilderRunReadsItsEarlierTurns(t *testing.T) {
 
 	sent := f.model.requests()[1].Messages
 	if got := textOf(sent); !strings.Contains(got, "an agent that writes replies\nWhich model?") ||
-		strings.TrimSpace(sent[len(sent)-1].Text()) != "sonnet" {
+		sent[len(sent)-1].Text() != dated("sonnet") {
 		t.Errorf("the second run was sent %q, want the first turn then the new message", got)
 	}
 }

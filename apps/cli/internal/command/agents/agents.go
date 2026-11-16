@@ -262,7 +262,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"    # what it does and when to use it: this is how other agents find it\n" +
 			"    description: Sorts incoming issues and labels them\n" +
 			"    instructions: Read the issue. Label it. Say why.\n" +
-			"    model: {name: anthropic/claude-sonnet-5-5, max_tokens: 1024}\n" +
+			"    model: {name: anthropic/claude-sonnet-5-5, max_tokens: 200000}\n" +
 			"    pattern: react\n" +
 			"    max_steps: 5\n" +
 			"    # whom it may hand work to: none (alone, the default), team, or listed\n" +

@@ -20,7 +20,7 @@ skills:
 agents:
   - name: triage
     description: Sorts incoming support email
-    model: {name: anthropic/claude-sonnet-5-5, max_tokens: 4096}
+    model: {name: anthropic/claude-sonnet-5-5, max_tokens: 200000}
     pattern: react
     max_steps: 20
     instructions: Read the email, decide the queue, answer from the FAQ.
@@ -29,7 +29,7 @@ agents:
     delegation: listed
     delegates: [writer]
   - name: writer
-    model: {name: anthropic/claude-sonnet-5-5, max_tokens: 4096}
+    model: {name: anthropic/claude-sonnet-5-5, max_tokens: 200000}
     pattern: react
     max_steps: 10
     instructions: Write the reply.

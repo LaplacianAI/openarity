@@ -865,6 +865,18 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   of rows, not thousands. Postgres is the bus because the worker and the API
   are separate processes; the SSE route already polls it. A delegated run's
   writing is its parent's to report.
+- **Every run is told the date and time, in its message.** A model otherwise
+  takes its training cutoff for today, and reads a date already past as one
+  still to come. A run's first message starts `Now: <weekday, date, hh:mm>
+  UTC.`, a delegate's brief too. Never the system prompt: every system block
+  is cacheable, and a block that changed with the day would end the cached
+  prefix there, so the conversation after it would miss. In the message, each
+  turn keeps the time it was asked, which is also the truth. The message is
+  pinned (`agent.Message.Pinned`), so a compaction that folds the turn sends
+  it again after the summary: otherwise the only date left in view would be
+  the conversation's first message, days old. It is the time the turn began;
+  an agent that must count minutes needs a tool, not this line. UTC until a
+  team has a timezone.
 - **Thinking is recorded apart from talking.** What the SDK reports as
   reasoning, the model's own and a loop's plan or critique, is gathered into
   `reasoning` events the same way, and a switch between the two flushes, so

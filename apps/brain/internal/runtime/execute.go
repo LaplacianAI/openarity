@@ -82,6 +82,8 @@ type Executor struct {
 	logger    *slog.Logger
 	every     time.Duration
 	lostAfter time.Duration
+	// now is what a run is told today is.
+	now func() time.Time
 
 	// enqueue hands a run this executor started to the workers. Nil leaves it
 	// to the sweep, which starts any queued run within a minute.
@@ -105,10 +107,16 @@ func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
 	e := &Executor{
 		store: s, builder: b, runner: r, endpoint: endpoint,
 		sessions: sessions, logger: logger, every: heartbeatEvery,
-		lostAfter: heartbeatLostAfter,
+		lostAfter: heartbeatLostAfter, now: time.Now,
 	}
 	b.delegates = &DelegateDeps{Store: s, Run: e}
 	b.note = e.note
+	return e
+}
+
+// WithClock sets what a run is told today is.
+func (e *Executor) WithClock(now func() time.Time) *Executor {
+	e.now = now
 	return e
 }
 

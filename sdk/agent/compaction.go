@@ -539,14 +539,18 @@ func (c *compactingClient) keepFrom(msgs []Message) int {
 	return i
 }
 
-// view is what the model is sent: the task, the summary, then every message
-// after the cut, with old results cleared and large ones previewed.
+// view is what the model is sent: the task, the summary, the latest pinned
+// message it folded, then every message after the cut, with old results
+// cleared and large ones previewed.
 func (c *compactingClient) view(msgs []Message) []Message {
 	s := c.state
-	out := make([]Message, 0, len(msgs)+1)
+	out := make([]Message, 0, len(msgs)+2)
 	start := 0
 	if s.cut > 0 && s.cut <= len(msgs) {
 		out = append(out, msgs[0], summaryMessage(s.CompactionSummary))
+		if p := lastPinned(msgs[:s.cut]); p > 0 {
+			out = append(out, msgs[p])
+		}
 		start = s.cut
 	}
 	names := toolNames(msgs)
@@ -815,3 +819,14 @@ func appendSkills(have []string, msgs []Message) []string {
 }
 
 var _ ModelClient = (*compactingClient)(nil)
+
+// lastPinned is the index of the last pinned message in msgs, or -1. The
+// first message is always in view, so it is never the one returned.
+func lastPinned(msgs []Message) int {
+	for i := len(msgs) - 1; i > 0; i-- {
+		if msgs[i].Pinned {
+			return i
+		}
+	}
+	return -1
+}

@@ -30,6 +30,10 @@ type Message struct {
 	// Reasoning is what the model thought on its way to this turn, when the
 	// provider says.
 	Reasoning *Reasoning `json:"reasoning,omitempty"`
+	// Pinned keeps a message in view through compaction: the latest pinned
+	// one folded into a summary is sent again after it. A turn's opening
+	// message, which says when it was asked, is the one to pin.
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 // Reasoning is a model's thinking, kept as the provider sent it. A provider

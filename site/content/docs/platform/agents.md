@@ -18,7 +18,7 @@ name: triage
 # what it does and when to use it: this is how other agents find it
 description: Sorts incoming issues and labels them
 instructions: Read the issue. Label it. Say why.
-model: {name: anthropic/claude-sonnet-5-5, max_tokens: 1024}
+model: {name: anthropic/claude-sonnet-5-5, max_tokens: 200000}
 pattern: react
 max_steps: 5
 delegation: listed      # none (the default), team, or listed

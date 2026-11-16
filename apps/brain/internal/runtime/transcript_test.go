@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -116,7 +117,7 @@ func TestARunWhoseFirstMessageWasLostWritesItOnce(t *testing.T) {
 	}
 	var inputs int
 	for _, m := range msgs {
-		if m.Text() == runInput {
+		if m.Text() == dated(runInput) {
 			inputs++
 		}
 	}
@@ -150,7 +151,7 @@ func TestANewRunClosesACallTheLastRunLeftOpen(t *testing.T) {
 
 	sent := f.model.requests()[0].Messages
 	at := slices.IndexFunc(sent, func(m agent.Message) bool { return m.ToolCallID == "c9" })
-	if at != 2 || sent[at].Text() != endedMidCall || sent[3].Text() != runInput {
+	if at != 2 || sent[at].Text() != endedMidCall || sent[3].Text() != dated(runInput) {
 		t.Fatalf("the request was %q; want c9 closed, then the run's own message", textOf(sent))
 	}
 }
@@ -161,5 +162,38 @@ func TestADelegateKeepsATranscriptOfItsOwn(t *testing.T) {
 
 	if got := transcriptOf(child); got != child.ID.String() {
 		t.Fatalf("a delegate's transcript is %q, want its own id", got)
+	}
+}
+
+// 23:30 in New York is already the 17th in UTC: the date is UTC's, whatever
+// the clock's zone.
+var fixedNow = time.Date(2026, time.November, 16, 23, 30, 0, 0, time.FixedZone("EST", -5*3600))
+
+const wantToday = "Now: Tuesday, 17 November 2026, 04:30 UTC."
+
+// dated is a run's first message: the date it was asked, then its input.
+func dated(input string) string { return wantToday + "\n\n" + input }
+
+// A run is told the date, or the model takes its training cutoff for today and
+// reads a date already past as one still to come. In the message, never the
+// system prompt, so every system block stays cacheable. Each turn keeps the
+// day it was asked on, and a delegate is told too.
+func TestEveryRunIsToldTodaysDateInItsMessage(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("noted", 1, 1)))
+	f.mustExecute(t)
+
+	first := f.model.requests()[0]
+	if got := first.Messages[len(first.Messages)-1]; got.Text() != dated(runInput) || !got.Pinned {
+		t.Errorf("the run's message is %q, pinned %v; want %q, pinned so compaction keeps it", got.Text(), got.Pinned, dated(runInput))
+	}
+	for _, c := range first.System {
+		if strings.Contains(c.Text, "Now: ") {
+			t.Errorf("the system prompt holds the date, %q: a block that changes daily ends the cached prefix", c.Text)
+		}
+	}
+
+	delegate, err := f.exec.firstMessage(t.Context(), db.Run{ID: uuid.New(), Input: "the brief"})
+	if err != nil || delegate.Text() != dated("the brief") {
+		t.Errorf("a delegate's first message is %q, %v; want it dated", delegate.Text(), err)
 	}
 }
