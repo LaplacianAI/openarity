@@ -88,6 +88,90 @@ func (q *Queries) ApproveSender(ctx context.Context, arg ApproveSenderParams) (A
 	return i, err
 }
 
+const approveSenderAsNew = `-- name: ApproveSenderAsNew :one
+WITH made AS (
+    INSERT INTO users (issuer, subject, name)
+    VALUES ('openarity:channel', $1::uuid::text || ':' || $2::text,
+            $3::text)
+    ON CONFLICT (issuer, subject) DO UPDATE SET updated_at = users.updated_at
+    RETURNING id
+), joined AS (
+    INSERT INTO team_members (team_id, user_id, role)
+    SELECT c.team_id, made.id, $4::text
+    FROM made, channels c
+    WHERE c.id = $1::uuid
+    ON CONFLICT (team_id, user_id) DO NOTHING
+), linked AS (
+    INSERT INTO channel_senders (channel_id, sender_ref, user_id)
+    SELECT $1::uuid, $2::text, made.id FROM made
+    ON CONFLICT (channel_id, sender_ref) DO UPDATE SET user_id = EXCLUDED.user_id
+    WHERE channel_senders.user_id = EXCLUDED.user_id
+       OR channel_senders.user_id IS NOT DISTINCT FROM $5::uuid
+    RETURNING 1
+), admitted AS (
+    INSERT INTO notices (team_id, channel_id, sender_ref, sender_name, session_ref, session_kind, kind)
+    SELECT c.team_id, p.channel_id, p.sender_ref, p.sender_name,
+           p.notice_session_ref, p.notice_session_kind, 'admitted'
+    FROM pending_senders p
+    JOIN channels c ON c.id = p.channel_id
+    WHERE p.channel_id = $1::uuid
+      AND p.sender_ref = $2::text
+      AND p.notified_at IS NOT NULL
+      AND c.notify_strangers
+      AND EXISTS (SELECT 1 FROM linked)
+    RETURNING id
+), dequeued AS (
+    DELETE FROM pending_senders
+    WHERE pending_senders.channel_id = $1::uuid
+      AND pending_senders.sender_ref = $2::text
+      AND EXISTS (SELECT 1 FROM linked)
+)
+SELECT (SELECT count(*) FROM linked) AS linked,
+       COALESCE((SELECT id FROM admitted), 0)::bigint AS admitted,
+       (SELECT id FROM made)::uuid AS user_id
+`
+
+type ApproveSenderAsNewParams struct {
+	ChannelID      uuid.UUID
+	SenderRef      string
+	Name           string
+	Role           string
+	ExpectedHolder *uuid.UUID
+}
+
+type ApproveSenderAsNewRow struct {
+	Linked   int64
+	Admitted int64
+	UserID   uuid.UUID
+}
+
+// ApproveSenderAsNew lets a sender in as someone new: a channel user of their
+// own, a member of the channel's team with the role given, bound to the
+// sender, and the sender out of the queue, all in one statement as
+// ApproveSender is. The user is keyed on the channel and the ref, so
+// approving the same sender again finds the same user, and neither its name
+// nor a role since changed is overwritten.
+//
+// The binding is written while the ref is unbound, already bound to this
+// user, or still held by expected_holder, the holder the handler checked
+// the caller may take it from. A parent row and its child inserted in one
+// statement pass the foreign key: Postgres checks it at the end of the
+// statement. 0 linked is a 409, and nothing else was written that the
+// caller can see: the user and membership of a refused approval are the
+// ones a later approval of this sender would make anyway.
+func (q *Queries) ApproveSenderAsNew(ctx context.Context, arg ApproveSenderAsNewParams) (ApproveSenderAsNewRow, error) {
+	row := q.db.QueryRow(ctx, approveSenderAsNew,
+		arg.ChannelID,
+		arg.SenderRef,
+		arg.Name,
+		arg.Role,
+		arg.ExpectedHolder,
+	)
+	var i ApproveSenderAsNewRow
+	err := row.Scan(&i.Linked, &i.Admitted, &i.UserID)
+	return i, err
+}
+
 const countPendingSenders = `-- name: CountPendingSenders :one
 SELECT count(*) FROM pending_senders WHERE channel_id = $1
 `
@@ -97,6 +181,24 @@ func (q *Queries) CountPendingSenders(ctx context.Context, channelID uuid.UUID) 
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteLostChannelUser = `-- name: DeleteLostChannelUser :execrows
+DELETE FROM users u
+WHERE u.id = $1 AND u.issuer = 'openarity:channel'
+  AND NOT EXISTS (SELECT 1 FROM channel_senders cs WHERE cs.user_id = u.id)
+`
+
+// DeleteLostChannelUser deletes a channel user no sender speaks as any more:
+// one whose last binding was moved to somebody else or removed. Nobody can
+// log in as one, so with no binding it is a member of the team that can do
+// nothing. A user who logs in is never touched.
+func (q *Queries) DeleteLostChannelUser(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteLostChannelUser, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deletePendingSender = `-- name: DeletePendingSender :exec
@@ -130,6 +232,24 @@ func (q *Queries) FindChannelSender(ctx context.Context, arg FindChannelSenderPa
 	return user_id, err
 }
 
+const findPendingSenderName = `-- name: FindPendingSenderName :one
+SELECT sender_name FROM pending_senders WHERE channel_id = $1 AND sender_ref = $2
+`
+
+type FindPendingSenderNameParams struct {
+	ChannelID uuid.UUID
+	SenderRef string
+}
+
+// FindPendingSenderName is the name a waiting sender gave, for a channel
+// user approved with none of its own.
+func (q *Queries) FindPendingSenderName(ctx context.Context, arg FindPendingSenderNameParams) (string, error) {
+	row := q.db.QueryRow(ctx, findPendingSenderName, arg.ChannelID, arg.SenderRef)
+	var sender_name string
+	err := row.Scan(&sender_name)
+	return sender_name, err
+}
+
 const linkChannelSender = `-- name: LinkChannelSender :exec
 INSERT INTO channel_senders (channel_id, sender_ref, user_id)
 VALUES ($1, $2, $3)
@@ -148,11 +268,16 @@ func (q *Queries) LinkChannelSender(ctx context.Context, arg LinkChannelSenderPa
 }
 
 const listChannelSenders = `-- name: ListChannelSenders :many
-SELECT channel_id, sender_ref, user_id, created_at FROM channel_senders
-WHERE channel_id = $1
+SELECT cs.channel_id, cs.sender_ref, cs.user_id, cs.created_at, u.name AS user_name, u.email AS user_email,
+       (u.issuer = 'openarity:channel')::bool AS channel_user, tm.role AS role
+FROM channel_senders cs
+JOIN channels c ON c.id = cs.channel_id
+JOIN users u ON u.id = cs.user_id
+LEFT JOIN team_members tm ON tm.team_id = c.team_id AND tm.user_id = cs.user_id
+WHERE cs.channel_id = $1
   AND (NOT $2::bool
-   OR (created_at, sender_ref) < ($3::timestamptz, $4::text))
-ORDER BY created_at DESC, sender_ref DESC
+   OR (cs.created_at, cs.sender_ref) < ($3::timestamptz, $4::text))
+ORDER BY cs.created_at DESC, cs.sender_ref DESC
 LIMIT $5
 `
 
@@ -164,7 +289,18 @@ type ListChannelSendersParams struct {
 	PageSize       int32
 }
 
-func (q *Queries) ListChannelSenders(ctx context.Context, arg ListChannelSendersParams) ([]ChannelSender, error) {
+type ListChannelSendersRow struct {
+	ChannelSender ChannelSender
+	UserName      *string
+	UserEmail     *string
+	ChannelUser   bool
+	Role          *string
+}
+
+// ListChannelSenders is who may speak on a channel, and as whom: each
+// sender's user, that user's role in the channel's team (null once they have
+// left it), and whether they are a channel user of their own.
+func (q *Queries) ListChannelSenders(ctx context.Context, arg ListChannelSendersParams) ([]ListChannelSendersRow, error) {
 	rows, err := q.db.Query(ctx, listChannelSenders,
 		arg.ChannelID,
 		arg.UseCursor,
@@ -176,14 +312,18 @@ func (q *Queries) ListChannelSenders(ctx context.Context, arg ListChannelSenders
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ChannelSender
+	var items []ListChannelSendersRow
 	for rows.Next() {
-		var i ChannelSender
+		var i ListChannelSendersRow
 		if err := rows.Scan(
-			&i.ChannelID,
-			&i.SenderRef,
-			&i.UserID,
-			&i.CreatedAt,
+			&i.ChannelSender.ChannelID,
+			&i.ChannelSender.SenderRef,
+			&i.ChannelSender.UserID,
+			&i.ChannelSender.CreatedAt,
+			&i.UserName,
+			&i.UserEmail,
+			&i.ChannelUser,
+			&i.Role,
 		); err != nil {
 			return nil, err
 		}

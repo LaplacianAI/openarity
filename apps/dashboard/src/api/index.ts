@@ -11,6 +11,7 @@ import { readFrames } from "./sse";
 import type {
   Agent,
   AgentRequest,
+  Approval,
   ApprovedSender,
   Attachment,
   AuthConfig,
@@ -30,6 +31,7 @@ import type {
   MCPServerRequest,
   MCPTool,
   Member,
+  MemberChange,
   Message,
   Page,
   PairChannelRequest,
@@ -120,6 +122,11 @@ export function removeMember(teamId: string, userId: string): Promise<void> {
   return request<void>(`/teams/${teamId}/members/${userId}`, { method: "DELETE" });
 }
 
+/** A role changed in place, or a channel user's name. The last admin keeps theirs (409). */
+export function updateMember(teamId: string, userId: string, change: MemberChange): Promise<void> {
+  return request<void>(`/teams/${teamId}/members/${userId}`, { method: "PATCH", body: change });
+}
+
 /* ------------------------------------------------------------------ users */
 
 export function listUsers(cursor?: string | null): Promise<Page<User>> {
@@ -208,15 +215,19 @@ export function listTeamPendingSenders(
   );
 }
 
+/**
+ * Approving binds a sender to a member, or lets them in as someone new: a user
+ * of their own with a role. Approving again moves them.
+ */
 export function approveSender(
   teamId: string,
   channelId: string,
   senderRef: string,
-  userId: string,
-): Promise<ApprovedSender> {
-  return request<ApprovedSender>(`/teams/${teamId}/channels/${channelId}/senders`, {
+  as: Approval,
+): Promise<void> {
+  return request<void>(`/teams/${teamId}/channels/${channelId}/senders`, {
     method: "POST",
-    body: { sender_ref: senderRef, user_id: userId },
+    body: { sender_ref: senderRef, ...as },
   });
 }
 

@@ -104,6 +104,13 @@
         "tool:write",
         "run:write"
       ]
+    },
+    {
+      "name": "guest",
+      "description": "Talks to the team's agents from a channel, and changes nothing in the team",
+      "permissions": [
+        "run:write"
+      ]
     }
   ],
   "routes": [
@@ -145,6 +152,12 @@
     },
     {
       "method": "DELETE",
+      "path": "/teams/{id}/members/{userID}",
+      "scope": "team",
+      "permission": "membership:write"
+    },
+    {
+      "method": "PATCH",
       "path": "/teams/{id}/members/{userID}",
       "scope": "team",
       "permission": "membership:write"

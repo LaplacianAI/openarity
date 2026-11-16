@@ -36,6 +36,28 @@ func (q *Queries) AddTeamMember(ctx context.Context, arg AddTeamMemberParams) (T
 	return i, err
 }
 
+const countTeamAdmins = `-- name: CountTeamAdmins :one
+SELECT count(*) FROM team_members WHERE team_id = $1 AND role = 'admin'
+`
+
+func (q *Queries) CountTeamAdmins(ctx context.Context, teamID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countTeamAdmins, teamID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteChannelUser = `-- name: DeleteChannelUser :exec
+DELETE FROM users WHERE id = $1 AND issuer = 'openarity:channel'
+`
+
+// DeleteChannelUser deletes a channel user removed from its team: it exists
+// for that team alone.
+func (q *Queries) DeleteChannelUser(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteChannelUser, id)
+	return err
+}
+
 const findTeamMember = `-- name: FindTeamMember :one
 SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2
 `
@@ -56,8 +78,32 @@ func (q *Queries) FindTeamMember(ctx context.Context, arg FindTeamMemberParams) 
 	return role, err
 }
 
+const findTeamMemberUser = `-- name: FindTeamMemberUser :one
+SELECT tm.role, (u.issuer = 'openarity:channel')::bool AS channel_user
+FROM team_members tm
+JOIN users u ON u.id = tm.user_id
+WHERE tm.team_id = $1 AND tm.user_id = $2
+`
+
+type FindTeamMemberUserParams struct {
+	TeamID uuid.UUID
+	UserID uuid.UUID
+}
+
+type FindTeamMemberUserRow struct {
+	Role        string
+	ChannelUser bool
+}
+
+func (q *Queries) FindTeamMemberUser(ctx context.Context, arg FindTeamMemberUserParams) (FindTeamMemberUserRow, error) {
+	row := q.db.QueryRow(ctx, findTeamMemberUser, arg.TeamID, arg.UserID)
+	var i FindTeamMemberUserRow
+	err := row.Scan(&i.Role, &i.ChannelUser)
+	return i, err
+}
+
 const listTeamMembers = `-- name: ListTeamMembers :many
-SELECT u.id, u.subject, u.email, tm.role
+SELECT u.id, u.subject, u.email, tm.role, u.name, (u.issuer = 'openarity:channel')::bool AS channel_user
 FROM team_members tm
 JOIN users u ON u.id = tm.user_id
 WHERE tm.team_id = $1
@@ -76,10 +122,12 @@ type ListTeamMembersParams struct {
 }
 
 type ListTeamMembersRow struct {
-	ID      uuid.UUID
-	Subject string
-	Email   *string
-	Role    string
+	ID          uuid.UUID
+	Subject     string
+	Email       *string
+	Role        string
+	Name        *string
+	ChannelUser bool
 }
 
 func (q *Queries) ListTeamMembers(ctx context.Context, arg ListTeamMembersParams) ([]ListTeamMembersRow, error) {
@@ -102,6 +150,8 @@ func (q *Queries) ListTeamMembers(ctx context.Context, arg ListTeamMembersParams
 			&i.Subject,
 			&i.Email,
 			&i.Role,
+			&i.Name,
+			&i.ChannelUser,
 		); err != nil {
 			return nil, err
 		}
@@ -148,6 +198,18 @@ func (q *Queries) ListUserTeams(ctx context.Context, userID uuid.UUID) ([]ListUs
 	return items, nil
 }
 
+const lockTeamMembership = `-- name: LockTeamMembership :exec
+SELECT 1 FROM teams WHERE id = $1 FOR UPDATE
+`
+
+// LockTeamMembership serialises changes to one team's roles: demoting the
+// last admin is refused by counting the admins, and two demotions counted at
+// once would each see the other still there.
+func (q *Queries) LockTeamMembership(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockTeamMembership, id)
+	return err
+}
+
 const removeTeamMember = `-- name: RemoveTeamMember :exec
 DELETE FROM team_members WHERE team_id = $1 AND user_id = $2
 `
@@ -159,5 +221,39 @@ type RemoveTeamMemberParams struct {
 
 func (q *Queries) RemoveTeamMember(ctx context.Context, arg RemoveTeamMemberParams) error {
 	_, err := q.db.Exec(ctx, removeTeamMember, arg.TeamID, arg.UserID)
+	return err
+}
+
+const setChannelUserName = `-- name: SetChannelUserName :execrows
+UPDATE users SET name = $2, updated_at = now() WHERE id = $1 AND issuer = 'openarity:channel'
+`
+
+type SetChannelUserNameParams struct {
+	ID   uuid.UUID
+	Name *string
+}
+
+// SetChannelUserName renames a channel user; a user who logs in keeps the
+// name their identity provider gives.
+func (q *Queries) SetChannelUserName(ctx context.Context, arg SetChannelUserNameParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setChannelUserName, arg.ID, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setTeamMemberRole = `-- name: SetTeamMemberRole :exec
+UPDATE team_members SET role = $3, updated_at = now() WHERE team_id = $1 AND user_id = $2
+`
+
+type SetTeamMemberRoleParams struct {
+	TeamID uuid.UUID
+	UserID uuid.UUID
+	Role   string
+}
+
+func (q *Queries) SetTeamMemberRole(ctx context.Context, arg SetTeamMemberRoleParams) error {
+	_, err := q.db.Exec(ctx, setTeamMemberRole, arg.TeamID, arg.UserID, arg.Role)
 	return err
 }

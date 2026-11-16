@@ -865,6 +865,22 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   of rows, not thousands. Postgres is the bus because the worker and the API
   are separate processes; the SSE route already polls it. A delegated run's
   writing is its parent's to report.
+- **A sender let in as someone new is a user of their own, not a role.**
+  Approving names a member, or makes a channel user: issuer
+  `openarity:channel`, subject `<channel>:<ref>`, which no token is ever
+  issued for, added to the team with the role given. A role alone would make
+  every guest one identity: one schedule cap, one sign-in, nobody removable
+  alone, and `runs.user_id` meaning nothing for them. Moving a sender off a
+  channel user, or removing it, deletes that user when it was their last
+  sender, in the same transaction, since a user nobody can log in as and no
+  sender speaks as is a member that can do nothing. It is a second statement,
+  not a CTE: deleting the user cascades into the very binding the statement
+  rewrites.
+- **A role changes in place, and the last admin keeps theirs.** `PATCH
+  /teams/{id}/members/{userID}` locks the team's row before it counts the
+  admins, so two admins demoting each other at once leave one, not none. The
+  transaction lives in `cmd/brain`, as `StartRun` does, with its errors in
+  `internal/api/teams`.
 - **Every run is told the date and time, in its message.** A model otherwise
   takes its training cutoff for today, and reads a date already past as one
   still to come. A run's first message starts `Now: <weekday, date, hh:mm>

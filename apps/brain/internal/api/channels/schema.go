@@ -115,11 +115,25 @@ type channelSender struct {
 	SenderRef string    `json:"sender_ref"`
 	UserID    uuid.UUID `json:"user_id"`
 	CreatedAt time.Time `json:"created_at"`
+	// Who the sender speaks as: the user's name or email, their role in the
+	// team (empty once they have left it), and whether they are a channel
+	// user of their own.
+	Name        string `json:"name"`
+	Role        string `json:"role"`
+	ChannelUser bool   `json:"channel_user"`
 }
 
 type approveRequest struct {
 	SenderRef string    `json:"sender_ref"`
 	UserID    uuid.UUID `json:"user_id"`
+	// New lets the sender in as someone new, with a user of their own, in
+	// place of UserID.
+	New *newSender `json:"new"`
+}
+
+type newSender struct {
+	Role string `json:"role"`
+	Name string `json:"name"`
 }
 
 type pendingCursor struct {

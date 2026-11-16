@@ -17,7 +17,7 @@ export type Page<T> = {
   next_cursor?: string;
 };
 
-export type Role = "admin" | "approver" | "member";
+export type Role = "admin" | "approver" | "member" | "guest";
 
 /** GET /teams, GET /teams/{id}. `role` is present only when listing your own. */
 export type Team = {
@@ -36,6 +36,10 @@ export type Member = {
   subject: string;
   email?: string;
   role: string;
+  /** A channel user's name: they have no email. */
+  name?: string;
+  /** A sender let in as someone new, who never logs in. */
+  channel_user?: boolean;
 };
 
 /** GET /users */
@@ -219,7 +223,19 @@ export type ApprovedSender = {
   sender_ref: string;
   user_id: string;
   created_at: string;
+  /** The user's name, or their email; empty when they have neither. */
+  name?: string;
+  /** The user's role in the team; empty once they have left it. */
+  role?: string;
+  /** Whether the sender has a user of their own, let in as someone new. */
+  channel_user?: boolean;
 };
+
+/** Who an approved sender speaks as: a member, or someone new with a role. */
+export type Approval = { user_id: string } | { new: { role: string; name?: string } };
+
+/** PATCH /teams/{id}/members/{userID} */
+export type MemberChange = { role?: string; name?: string };
 
 /** GET /teams/{id}/sessions/{sessionID} */
 export type Session = {

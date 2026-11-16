@@ -44,6 +44,8 @@ type fakeStore struct {
 	created      []string
 	added        []db.AddTeamMemberParams
 	removed      []db.RemoveTeamMemberParams
+	updated      []memberUpdate
+	updateErr    error
 	teamArgs     []db.ListTeamsParams
 	memberArgs   []db.ListTeamMembersParams
 	subjectArgs  []db.FindUsersBySubjectParams
@@ -229,9 +231,22 @@ func (f *fakeStore) AddTeamMember(_ context.Context, arg db.AddTeamMemberParams)
 	return db.TeamMember{TeamID: arg.TeamID, UserID: arg.UserID, Role: arg.Role}, nil
 }
 
-func (f *fakeStore) RemoveTeamMember(_ context.Context, arg db.RemoveTeamMemberParams) error {
-	f.removed = append(f.removed, arg)
+func (f *fakeStore) RemoveMember(_ context.Context, teamID, userID uuid.UUID) error {
+	f.removed = append(f.removed, db.RemoveTeamMemberParams{TeamID: teamID, UserID: userID})
 	return f.err
+}
+
+type memberUpdate struct {
+	team, user uuid.UUID
+	change     MemberChange
+}
+
+func (f *fakeStore) UpdateMember(_ context.Context, teamID, userID uuid.UUID, c MemberChange) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	f.updated = append(f.updated, memberUpdate{team: teamID, user: userID, change: c})
+	return nil
 }
 
 // compareKey orders a (text, uuid) pair the way Postgres orders a row
@@ -291,6 +306,7 @@ func teamRoutes(t *testing.T) authz.Routes {
 	add("GET", "/teams/{id}/permissions", "member", nil)
 	add("POST", "/teams/{id}/members", "team", &membership)
 	add("DELETE", "/teams/{id}/members/{userID}", "team", &membership)
+	add("PATCH", "/teams/{id}/members/{userID}", "team", &membership)
 	return rs
 }
 
@@ -1718,7 +1734,7 @@ func TestOnlyContractedMemberFieldsAreSerialised(t *testing.T) {
 		t.Fatalf("got %d members, want 1", len(got.Items))
 	}
 
-	want := map[string]bool{"user_id": true, "subject": true, "email": true, "role": true}
+	want := map[string]bool{"user_id": true, "subject": true, "email": true, "role": true, "name": true, "channel_user": true}
 	for key := range got.Items[0] {
 		if !want[key] {
 			t.Errorf("unexpected field %q: %s", key, rec.Body)

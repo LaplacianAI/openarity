@@ -214,7 +214,7 @@ describe("adding a member", () => {
     screen.getByRole("combobox", { name: "Role" }).focus();
     await userEvent.keyboard("{ArrowDown}");
     const offered = (await screen.findAllByRole("option")).map((o) => o.textContent);
-    expect(offered).toEqual(["member", "approver", "admin"]);
+    expect(offered).toEqual(["guest", "member", "approver", "admin"]);
   });
 
   it("offers only people not already in the team, and sends who and what role", async () => {
@@ -346,5 +346,68 @@ describe("a new team", () => {
     const ops = await screen.findByRole("region", { name: "ops" });
     expect(within(ops).getByText("Current team")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Switch to platform" })).toBeInTheDocument();
+  });
+});
+
+describe("changing a member's role", () => {
+  it("changes it in place from the member's row", async () => {
+    stubScroll();
+    const seen = brain({
+      ...team(["membership:write"]),
+      ...people,
+      "PATCH /teams/{id}/members/{uid}": { status: 204 },
+    });
+    show(Teams);
+
+    (await screen.findByRole("combobox", { name: "Role of carol" })).focus();
+    await userEvent.keyboard("{ArrowDown}");
+    await userEvent.click(await screen.findByRole("option", { name: "member" }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "PATCH")).toBe(true));
+    const patch = seen.find((s) => s.method === "PATCH");
+    expect(patch?.path).toBe(`/teams/${TEAM}/members/u3`);
+    expect(JSON.parse(String(patch?.body))).toEqual({ role: "member" });
+  });
+
+  // The brain keeps the last admin's role; the row says so rather than offering it.
+  it("offers no role menu on the only admin", async () => {
+    brain({
+      ...team(["membership:write"]),
+      ...people,
+      "GET /teams/{id}/members": {
+        body: { items: [alice, { user_id: "u2", subject: "bala", role: "member" }] },
+      },
+    });
+    show(Teams);
+
+    expect(await screen.findByRole("combobox", { name: "Role of bala" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Role of alice" })).toBeNull();
+  });
+
+  it("offers no role menu without membership:write", async () => {
+    brain({ ...team([]), ...people });
+    show(Teams);
+
+    await screen.findByText("carol");
+    expect(screen.queryByRole("combobox", { name: /^Role of/ })).toBeNull();
+  });
+
+  it("names a channel user by their name, and says they never log in", async () => {
+    brain({
+      ...team([]),
+      ...people,
+      "GET /teams/{id}/members": {
+        body: {
+          items: [
+            alice,
+            { user_id: "u9", subject: "c:9198", role: "guest", name: "Ravi", channel_user: true },
+          ],
+        },
+      },
+    });
+    show(Teams);
+
+    expect(await screen.findByText("Ravi")).toBeInTheDocument();
+    expect(screen.getByText("Let in from a channel; never logs in")).toBeInTheDocument();
   });
 });

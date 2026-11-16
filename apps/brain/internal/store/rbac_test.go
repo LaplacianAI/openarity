@@ -492,6 +492,8 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"GET /teams/{id}/members":             "member",
 		"POST /teams/{id}/members":            "team membership:write",
 		"DELETE /teams/{id}/members/{userID}": "team membership:write",
+		// A role changes in place; only an admin holds membership:write.
+		"PATCH /teams/{id}/members/{userID}": "team membership:write",
 
 		// Listing is `member` and not `team channel:read`: a channel id is
 		// the routing key in its own hook URL, not a secret, and everyone in

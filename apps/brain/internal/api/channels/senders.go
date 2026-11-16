@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
@@ -192,14 +193,18 @@ func (h *handler) listSenders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page, err := api.MapPage(rows, limit,
-		func(row db.ChannelSender) any {
-			return senderCursor{CreatedAt: row.CreatedAt, Ref: row.SenderRef}
+		func(row db.ListChannelSendersRow) any {
+			return senderCursor{CreatedAt: row.ChannelSender.CreatedAt, Ref: row.ChannelSender.SenderRef}
 		},
-		func(row db.ChannelSender) channelSender {
+		func(row db.ListChannelSendersRow) channelSender {
+			cs := row.ChannelSender
 			return channelSender{
-				SenderRef: row.SenderRef,
-				UserID:    row.UserID,
-				CreatedAt: row.CreatedAt,
+				SenderRef:   cs.SenderRef,
+				UserID:      cs.UserID,
+				CreatedAt:   cs.CreatedAt,
+				Name:        first(row.UserName, row.UserEmail),
+				Role:        first(row.Role),
+				ChannelUser: row.ChannelUser,
 			}
 		},
 	)
@@ -229,8 +234,15 @@ func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.UserID == uuid.Nil {
-		http.Error(w, "user_id is required", http.StatusBadRequest)
+	switch {
+	case req.New != nil && req.UserID != uuid.Nil:
+		http.Error(w, "give user_id or new, not both", http.StatusBadRequest)
+		return
+	case req.New != nil:
+		h.approveNew(w, r, u, channel, ref, *req.New)
+		return
+	case req.UserID == uuid.Nil:
+		http.Error(w, "user_id is required, or new to let the sender in as someone new", http.StatusBadRequest)
 		return
 	}
 
@@ -257,7 +269,7 @@ func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 
 	// The write names the holder that was checked, so a binding moved since
 	// is refused rather than taken from somebody nobody checked.
-	approved, err := h.store.ApproveSender(r.Context(), db.ApproveSenderParams{
+	approved, err := h.store.BindSender(r.Context(), db.ApproveSenderParams{
 		ChannelID: channel.ID, SenderRef: ref, UserID: req.UserID, ExpectedHolder: holder,
 	})
 	if err != nil {
@@ -279,6 +291,85 @@ func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 		"subject", u.Subject, "channel_id", channel.ID, "sender_ref", ref, "user_id", req.UserID)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// approveNew lets a sender in as someone new: a user of their own, with the
+// role asked for. The caller must hold every permission of that role, as for
+// binding to a member who has it, and must cover whoever the sender speaks
+// as now, since the sender is taken from them.
+func (h *handler) approveNew(w http.ResponseWriter, r *http.Request, u *auth.User, channel db.Channel, ref string, n newSender) {
+	role := strings.TrimSpace(n.Role)
+	if role == "" {
+		http.Error(w, "new.role is required", http.StatusBadRequest)
+		return
+	}
+	if !h.covers(w, r, u, channel.TeamID, role) {
+		return
+	}
+	holder, ok := h.coversHolder(w, r, u, channel, ref, uuid.Nil)
+	if !ok {
+		return
+	}
+	name, ok := h.newSenderName(w, r, u, channel, ref, n.Name)
+	if !ok {
+		return
+	}
+
+	approved, err := h.store.BindSenderAsNew(r.Context(), db.ApproveSenderAsNewParams{
+		ChannelID: channel.ID, SenderRef: ref, Name: name, Role: role, ExpectedHolder: holder,
+	})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.ConstraintName == "team_members_role_fkey" {
+		http.Error(w, "unknown role", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to approve sender", err)
+		return
+	}
+	if approved.Linked == 0 {
+		http.Error(w, errMoved, http.StatusConflict)
+		return
+	}
+	if approved.Admitted != 0 && h.kick != nil {
+		if err := h.kick.KickNotice(r.Context(), approved.Admitted); err != nil {
+			h.logger.Warn("failed to kick the admitted notice; the sweep sends it",
+				"notice", approved.Admitted, "error", err)
+		}
+	}
+
+	h.logger.Info("channel sender approved as someone new",
+		"subject", u.Subject, "channel_id", channel.ID, "sender_ref", ref, "user_id", approved.UserID, "role", role)
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// newSenderName is the name a channel user is given: the approver's, else
+// the one the sender gave while waiting, else their ref.
+func (h *handler) newSenderName(
+	w http.ResponseWriter, r *http.Request, u *auth.User, channel db.Channel, ref, asked string,
+) (string, bool) {
+	if name := gateway.CleanName(asked); name != "" {
+		return name, true
+	}
+	waiting, err := h.store.FindPendingSenderName(r.Context(), db.FindPendingSenderNameParams{ChannelID: channel.ID, SenderRef: ref})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		api.Fail(w, h.logger, u, "failed to read the waiting sender's name", err)
+		return "", false
+	}
+	if name := gateway.CleanName(waiting); name != "" {
+		return name, true
+	}
+	return gateway.CleanName(ref), true
+}
+
+func first(values ...*string) string {
+	for _, v := range values {
+		if v != nil && *v != "" {
+			return *v
+		}
+	}
+	return ""
 }
 
 // covers answers whether the caller holds every permission role grants in the
@@ -370,7 +461,7 @@ func (h *handler) removeSender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	removed, err := h.store.RemoveSender(r.Context(), db.RemoveSenderParams{
+	removed, err := h.store.UnbindSender(r.Context(), db.RemoveSenderParams{
 		ChannelID: channel.ID, SenderRef: ref, ExpectedHolder: holder,
 	})
 	if err != nil {

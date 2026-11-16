@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
@@ -29,8 +30,9 @@ type senderState struct {
 	// bound is who each ref speaks as now, for the rebind and remove checks.
 	bound map[string]uuid.UUID
 
-	approvals []approval
-	removals  []approval
+	approvals    []approval
+	newApprovals []newApproval
+	removals     []approval
 	// teamAsked is every question put to the team's queue, cursor and all.
 	teamAsked []db.ListTeamPendingSendersParams
 
@@ -46,6 +48,13 @@ type senderState struct {
 	removeErr  error
 	// admitted is the "you're in" notice an approval wrote, 0 for none.
 	admitted int64
+}
+
+type newApproval struct {
+	channelID  uuid.UUID
+	senderRef  string
+	role, name string
+	expected   *uuid.UUID
 }
 
 type approval struct {
@@ -97,14 +106,18 @@ func (f *fakeStore) ListTeamPendingSenders(
 	return out, nil
 }
 
-func (f *fakeStore) ListChannelSenders(_ context.Context, arg db.ListChannelSendersParams) ([]db.ChannelSender, error) {
+func (f *fakeStore) ListChannelSenders(_ context.Context, arg db.ListChannelSendersParams) ([]db.ListChannelSendersRow, error) {
 	if f.senders.approvedErr != nil {
 		return nil, f.senders.approvedErr
 	}
-	var out []db.ChannelSender
+	var out []db.ListChannelSendersRow
 	for _, s := range f.senders.approved {
 		if s.ChannelID == arg.ChannelID {
-			out = append(out, s)
+			row := db.ListChannelSendersRow{ChannelSender: s}
+			if role, ok := f.senders.members[s.UserID]; ok {
+				row.Role = &role
+			}
+			out = append(out, row)
 		}
 	}
 	if n := int(arg.PageSize); n < len(out) {
@@ -136,6 +149,7 @@ func (f *fakeStore) FindChannelSender(_ context.Context, arg db.FindChannelSende
 // The shipped roles, as rbac.json grants them. roles_test pins the file to
 // these, so a test here that drifted from it would be testing another product.
 var shippedRoles = map[string][]string{
+	"guest":    {"run:write"},
 	"member":   {"agent:write", "skill:write", "tool:write", "run:write"},
 	"approver": {"agent:write", "skill:write", "tool:write", "run:write", "channel:read", "sender:approve"},
 	"admin": {
@@ -151,7 +165,7 @@ func (f *fakeStore) ListRolePermissions(_ context.Context, role string) ([]strin
 	return shippedRoles[role], nil
 }
 
-func (f *fakeStore) ApproveSender(_ context.Context, arg db.ApproveSenderParams) (db.ApproveSenderRow, error) {
+func (f *fakeStore) BindSender(_ context.Context, arg db.ApproveSenderParams) (db.ApproveSenderRow, error) {
 	if f.senders.approveErr != nil {
 		return db.ApproveSenderRow{}, f.senders.approveErr
 	}
@@ -164,7 +178,34 @@ func (f *fakeStore) ApproveSender(_ context.Context, arg db.ApproveSenderParams)
 	return db.ApproveSenderRow{Linked: 1, Admitted: f.senders.admitted}, nil
 }
 
-func (f *fakeStore) RemoveSender(_ context.Context, arg db.RemoveSenderParams) (bool, error) {
+// BindSenderAsNew refuses a role the shipped ones do not name the way the
+// foreign key does, so the handler's mapping of it is tested.
+func (f *fakeStore) BindSenderAsNew(_ context.Context, arg db.ApproveSenderAsNewParams) (db.ApproveSenderAsNewRow, error) {
+	if f.senders.approveErr != nil {
+		return db.ApproveSenderAsNewRow{}, f.senders.approveErr
+	}
+	if _, ok := shippedRoles[arg.Role]; !ok {
+		return db.ApproveSenderAsNewRow{}, &pgconn.PgError{Code: "23503", ConstraintName: "team_members_role_fkey"}
+	}
+	if f.senders.moved {
+		return db.ApproveSenderAsNewRow{}, nil
+	}
+	f.senders.newApprovals = append(f.senders.newApprovals, newApproval{
+		channelID: arg.ChannelID, senderRef: arg.SenderRef, role: arg.Role, name: arg.Name, expected: arg.ExpectedHolder,
+	})
+	return db.ApproveSenderAsNewRow{Linked: 1, Admitted: f.senders.admitted, UserID: uuid.New()}, nil
+}
+
+func (f *fakeStore) FindPendingSenderName(_ context.Context, arg db.FindPendingSenderNameParams) (string, error) {
+	for _, p := range f.senders.pending {
+		if p.ChannelID == arg.ChannelID && p.SenderRef == arg.SenderRef {
+			return p.SenderName, nil
+		}
+	}
+	return "", pgx.ErrNoRows
+}
+
+func (f *fakeStore) UnbindSender(_ context.Context, arg db.RemoveSenderParams) (bool, error) {
 	if f.senders.removeErr != nil {
 		return false, f.senders.removeErr
 	}

@@ -3,7 +3,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { addMember, createTeam, listMembers, listTeams, listUsers, removeMember } from "@/api";
+import {
+  addMember,
+  createTeam,
+  listMembers,
+  listTeams,
+  listUsers,
+  removeMember,
+  updateMember,
+} from "@/api";
 import { ApiError } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
@@ -45,14 +53,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Avatar, EmptyState, Mono, PageHeader } from "@/components/ui-bits";
+import { ROLES } from "@/lib/roles";
 import { count } from "@/lib/runs";
 
 export const Route = createFileRoute("/ui/teams/")({
   component: Teams,
 });
-
-/** The roles the brain ships, nested: each can do what the one before it can. */
-const ROLES = ["member", "approver", "admin"];
 
 /**
  * Whether a team's members, read whole, include no admin. A page with more
@@ -233,15 +239,25 @@ function TeamSection({
               <TableRow key={m.user_id}>
                 <TableCell className="sm:w-full sm:max-w-0">
                   <div className="flex min-w-0 items-center gap-3">
-                    <Avatar name={m.email ?? m.subject} />
+                    <Avatar name={m.email ?? m.name ?? m.subject} />
                     <div className="min-w-0">
-                      <div className="truncate">{m.email ?? m.subject}</div>
-                      {m.email ? <Mono className="block truncate">{m.subject}</Mono> : null}
+                      <div className="truncate">{m.email ?? m.name ?? m.subject}</div>
+                      {m.channel_user ? (
+                        <span className="block text-xs text-muted-foreground">
+                          Let in from a channel; never logs in
+                        </span>
+                      ) : m.email ? (
+                        <Mono className="block truncate">{m.subject}</Mono>
+                      ) : null}
                     </div>
                   </div>
                 </TableCell>
                 <TableCell label="Role" className="whitespace-nowrap">
-                  {m.role}
+                  {canManage && !onlyAdmin(members.data, m) ? (
+                    <RoleMenu teamId={team.id} member={m} />
+                  ) : (
+                    m.role
+                  )}
                 </TableCell>
                 {canManage ? (
                   <TableCell className="text-right stacked:justify-end">
@@ -545,5 +561,43 @@ function CreateTeam({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * A member's role, changed in place: every sender that speaks as them keeps
+ * doing so. The only admin is shown as text, since the brain keeps their role.
+ */
+function RoleMenu({ teamId, member }: { teamId: string; member: Member }) {
+  const qc = useQueryClient();
+  const change = useMutation({
+    mutationFn: (role: string) => updateMember(teamId, member.user_id, { role }),
+    onSuccess: (_, role) => {
+      void qc.invalidateQueries({ queryKey: ["members", teamId] });
+      toast.success(`${member.email ?? member.name ?? member.subject} is now ${role}`);
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  return (
+    <Select
+      value={member.role}
+      onValueChange={(role) => (role !== member.role ? change.mutate(role) : null)}
+      disabled={change.isPending}
+    >
+      <SelectTrigger
+        className="h-8 w-32 text-xs"
+        aria-label={`Role of ${member.email ?? member.name ?? member.subject}`}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {ROLES.map((r) => (
+          <SelectItem key={r} value={r}>
+            {r}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

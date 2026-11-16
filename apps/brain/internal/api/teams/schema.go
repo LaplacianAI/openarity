@@ -23,6 +23,15 @@ type member struct {
 	Subject string    `json:"subject"`
 	Email   *string   `json:"email,omitempty"`
 	Role    string    `json:"role"`
+	// Name is a channel user's, who has no email; ChannelUser marks a sender
+	// let in as someone new, who never logs in.
+	Name        *string `json:"name,omitempty"`
+	ChannelUser bool    `json:"channel_user"`
+}
+
+type updateMemberRequest struct {
+	Role *string `json:"role,omitempty"`
+	Name *string `json:"name,omitempty"`
 }
 
 type addMemberRequest struct {

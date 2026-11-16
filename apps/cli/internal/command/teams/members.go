@@ -30,6 +30,7 @@ func newMembersCmd(opts *cli.Options) *cobra.Command {
 	cmd.AddCommand(
 		newMembersListCmd(opts),
 		newMembersAddCmd(opts),
+		newMembersUpdateCmd(opts),
 		newMembersRemoveCmd(opts),
 	)
 
@@ -71,8 +72,11 @@ func newMembersListCmd(opts *cli.Options) *cobra.Command {
 				More:       "oa teams members list " + team.String(),
 				Row: func(table *printer.Table, member client.Member) {
 					email := opts.Styles.Muted.Render("no email")
-					if member.Email != nil {
+					switch {
+					case member.Email != nil:
 						email = string(*member.Email)
+					case member.ChannelUser != nil && *member.ChannelUser && member.Name != nil:
+						email = cli.Safe(*member.Name) + opts.Styles.Muted.Render(" (channel)")
 					}
 					table.Row(opts.Styles.Value.Render(member.Subject), member.Role, email,
 						opts.Styles.Muted.Render(member.UserID.String()))
@@ -100,7 +104,7 @@ func newMembersAddCmd(opts *cli.Options) *cobra.Command {
 			"you can name needs no permission to read the directory — only\n" +
 			"membership:write in this team.\n\n" +
 			"The role must name a row in the brain's `roles` table — it ships with\n" +
-			"admin, approver and member, and a deployment may add its own. An unknown one is\n" +
+			"admin, approver, member and guest, and a deployment may add its own. An unknown one is\n" +
 			"rejected by the database, so the brain answers 400 rather than storing\n" +
 			"something nothing can grant.",
 		Args: cobra.ExactArgs(2),
@@ -199,4 +203,63 @@ func newMembersRemoveCmd(opts *cli.Options) *cobra.Command {
 				})
 		},
 	}
+}
+
+func newMembersUpdateCmd(opts *cli.Options) *cobra.Command {
+	var role, name string
+
+	cmd := &cobra.Command{
+		Use:   "update <team> <user>",
+		Short: "Change a member's role, or a channel user's name",
+		Long: "Both arguments take a name or an id. The change is in place: every\n" +
+			"sender that speaks as them keeps doing so. The team's last admin keeps\n" +
+			"their role, so make someone else an admin first. --name is for a\n" +
+			"channel user only, one let in with `oa channels senders approve --new`;\n" +
+			"a user who logs in has their identity provider's.",
+		Example: "  oa teams members update platform ann@example.com --role approver",
+		Args:    cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body := client.UpdateTeamMemberJSONRequestBody{}
+			if r := strings.TrimSpace(role); r != "" {
+				body.Role = &r
+			}
+			if n := strings.TrimSpace(name); n != "" {
+				body.Name = &n
+			}
+			if body.Role == nil && body.Name == nil {
+				return fmt.Errorf("give --role, --name, or both")
+			}
+
+			api, err := opts.API(cmd.Context())
+			if err != nil {
+				return err
+			}
+			team, err := cli.ResolveTeam(cmd.Context(), api, args[0])
+			if err != nil {
+				return err
+			}
+			user, err := cli.ResolveMember(cmd.Context(), api, team, args[1])
+			if err != nil {
+				return err
+			}
+
+			if err := cli.NoContent(api.UpdateTeamMemberWithResponse(cmd.Context(), team, user, body)); err != nil {
+				return cli.Needs(err, "membership:write")
+			}
+
+			view := membershipView{Team: team, User: user.String(), Member: true}
+			if body.Role != nil {
+				view.Role = *body.Role
+			}
+			return opts.Out.Print(view, printer.Options{
+				Table: func(table *printer.Table) {
+					table.Row(opts.Styles.OK.Render("updated"), opts.Styles.Value.Render(user.String()))
+				},
+			})
+		},
+	}
+
+	cmd.Flags().StringVar(&role, "role", "", "the member's new role, for example approver")
+	cmd.Flags().StringVar(&name, "name", "", "a channel user's new name")
+	return cmd
 }

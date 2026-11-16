@@ -139,7 +139,7 @@ it("offers the team's members to bind a sender to, without the directory", async
   await userEvent.keyboard("{ArrowDown}");
   const offered = (await screen.findAllByRole("option")).map((o) => o.textContent);
 
-  expect(offered).toEqual(["bala@team.test", "chen"]);
+  expect(offered).toEqual(["Someone new, as a guest", "bala@team.test", "chen"]);
   expect(seen.some((s) => s.path === "/users" || s.path.startsWith("/users?"))).toBe(false);
 });
 
@@ -174,6 +174,28 @@ it("approves a sender on their own channel, and reads the queue and the count ag
   });
 });
 
+// Someone new is a guest of their own: no member is named, so none is bound.
+it("lets a sender in as someone new, a guest, naming no member", async () => {
+  stubScroll();
+  const seen = brain({
+    ...team(["channel:read", "sender:approve"]),
+    ...queue,
+    "POST /teams/{id}/channels/{cid}/senders": { status: 204 },
+  });
+  at();
+
+  await screen.findByText("Bala");
+  const row = rowOf("Bala");
+  within(row).getByRole("combobox", { name: "Bind this sender to" }).focus();
+  await userEvent.keyboard("{ArrowDown}");
+  await userEvent.click(await screen.findByRole("option", { name: "Someone new, as a guest" }));
+  await userEvent.click(within(row).getByRole("button", { name: "Approve" }));
+
+  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+  const post = seen.find((s) => s.method === "POST");
+  expect(JSON.parse(String(post?.body))).toEqual({ sender_ref: "U02DEF", new: { role: "guest" } });
+});
+
 // The name is the stranger's to choose, so a match is a hint, never a choice:
 // otherwise a sender could name themselves after an admin to be bound to one.
 it("lists the member whose name fits first and marks them, but chooses no one", async () => {
@@ -199,12 +221,18 @@ it("lists the member whose name fits first and marks them, but chooses no one", 
   bind.focus();
   await userEvent.keyboard("{ArrowDown}");
   const offered = (await screen.findAllByRole("option")).map((o) => o.textContent);
-  expect(offered).toEqual(["bala@team.test (matches their name)", "chen"]);
+  expect(offered).toEqual([
+    "Someone new, as a guest",
+    "bala@team.test (matches their name)",
+    "chen",
+  ]);
   await userEvent.keyboard("{Escape}");
 
   expect(bind).toHaveTextContent("Bind to a member…");
   await userEvent.click(within(row).getByRole("button", { name: "Approve" }));
-  expect(within(row).getByRole("alert")).toHaveTextContent("Choose which member they are first.");
+  expect(within(row).getByRole("alert")).toHaveTextContent(
+    "Choose which member they are, or someone new, first.",
+  );
   expect(seen.some((s) => s.method === "POST")).toBe(false);
 });
 
@@ -218,10 +246,12 @@ it("says to choose a member when Approve is pressed with none, and sends nothing
   await waitFor(() => expect(approve).toBeEnabled());
   await userEvent.click(approve);
 
-  expect(within(row).getByRole("alert")).toHaveTextContent("Choose which member they are first.");
+  expect(within(row).getByRole("alert")).toHaveTextContent(
+    "Choose which member they are, or someone new, first.",
+  );
   expect(
     within(row).getByRole("combobox", { name: "Bind this sender to" }),
-  ).toHaveAccessibleDescription("Choose which member they are first.");
+  ).toHaveAccessibleDescription("Choose which member they are, or someone new, first.");
   expect(seen.some((s) => s.method === "POST")).toBe(false);
 });
 
@@ -372,4 +402,122 @@ it("lists who is let in without Remove to someone who may not approve", async ()
   at("/ui/approvals?show=let-in");
   await screen.findByText("U09XYZ");
   expect(screen.queryByRole("button", { name: /^remove/i })).toBeNull();
+});
+
+// --- editing who a sender is ---
+
+const guestLetIn = {
+  ...letIn,
+  "GET /teams/{id}/channels/{cid}/senders": (r: { path: string }) =>
+    r.path.includes("id-sales")
+      ? {
+          body: {
+            items: [
+              {
+                sender_ref: "919800000001",
+                user_id: "u-ravi",
+                created_at: ago(2 * HOUR),
+                name: "Ravi",
+                role: "guest",
+                channel_user: true,
+              },
+            ],
+          },
+        }
+      : { body: { items: [] } },
+};
+
+it("says who each sender speaks as, and in what role", async () => {
+  brain({ ...team(["channel:read"]), ...queue, ...guestLetIn });
+  at("/ui/approvals?show=let-in");
+
+  const row = (await screen.findByText("919800000001")).closest("tr") as HTMLElement;
+  expect(within(row).getByText("Ravi")).toBeInTheDocument();
+  expect(within(row).getByText("their own")).toBeInTheDocument();
+  expect(within(row).getByText("guest")).toBeInTheDocument();
+});
+
+it("changes a guest's role in place from Edit, keeping who they speak as", async () => {
+  stubScroll();
+  const seen = brain({
+    ...team(["channel:read", "sender:approve", "membership:write"]),
+    ...queue,
+    ...guestLetIn,
+    "PATCH /teams/{id}/members/{uid}": { status: 204 },
+  });
+  at("/ui/approvals?show=let-in");
+
+  await userEvent.click(await screen.findByRole("button", { name: "Edit 919800000001" }));
+  const sheet = await screen.findByRole("dialog");
+  within(sheet).getByRole("combobox", { name: "Role" }).focus();
+  await userEvent.keyboard("{ArrowDown}");
+  await userEvent.click(await screen.findByRole("option", { name: "member" }));
+  await userEvent.click(within(sheet).getByRole("button", { name: "Save" }));
+
+  await waitFor(() => expect(seen.some((s) => s.method === "PATCH")).toBe(true));
+  const patch = seen.find((s) => s.method === "PATCH");
+  expect(patch?.path).toBe(`/teams/${TEAM}/members/u-ravi`);
+  expect(JSON.parse(String(patch?.body))).toEqual({ role: "member" });
+  expect(seen.some((s) => s.method === "POST")).toBe(false);
+});
+
+it("warns before moving a sender off their own identity, then moves them", async () => {
+  stubScroll();
+  const seen = brain({
+    ...team(["channel:read", "sender:approve"]),
+    ...queue,
+    ...guestLetIn,
+    "POST /teams/{id}/channels/{cid}/senders": { status: 204 },
+  });
+  at("/ui/approvals?show=let-in");
+
+  await userEvent.click(await screen.findByRole("button", { name: "Edit 919800000001" }));
+  const sheet = await screen.findByRole("dialog");
+  within(sheet).getByRole("combobox", { name: "Speaks as" }).focus();
+  await userEvent.keyboard("{ArrowDown}");
+  await userEvent.click(await screen.findByRole("option", { name: "bala@team.test" }));
+
+  expect(within(sheet).getByRole("alert")).toHaveTextContent(
+    "Ravi's own identity is deleted, with anything they own.",
+  );
+  await userEvent.click(within(sheet).getByRole("button", { name: "Save" }));
+
+  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+  const post = seen.find((s) => s.method === "POST");
+  expect(JSON.parse(String(post?.body))).toEqual({ sender_ref: "919800000001", user_id: "u-bala" });
+});
+
+// Moving a sender is sender:approve; a role is membership:write, which an
+// approver does not hold, so the sheet offers no role to change.
+it("offers an approver no role to change", async () => {
+  brain({ ...team(["channel:read", "sender:approve"]), ...queue, ...guestLetIn });
+  at("/ui/approvals?show=let-in");
+
+  await userEvent.click(await screen.findByRole("button", { name: "Edit 919800000001" }));
+  const sheet = await screen.findByRole("dialog");
+  expect(within(sheet).getByRole("combobox", { name: "Speaks as" })).toBeInTheDocument();
+  expect(within(sheet).queryByRole("combobox", { name: "Role" })).toBeNull();
+});
+
+it("shows the brain's refusal in the sheet, and stays", async () => {
+  stubScroll();
+  brain({
+    ...team(["channel:read", "sender:approve", "membership:write"]),
+    ...queue,
+    ...guestLetIn,
+    "PATCH /teams/{id}/members/{uid}": {
+      status: 409,
+      text: "the team's last admin keeps their role",
+    },
+  });
+  at("/ui/approvals?show=let-in");
+
+  await userEvent.click(await screen.findByRole("button", { name: "Edit 919800000001" }));
+  const sheet = await screen.findByRole("dialog");
+  within(sheet).getByRole("combobox", { name: "Role" }).focus();
+  await userEvent.keyboard("{ArrowDown}");
+  await userEvent.click(await screen.findByRole("option", { name: "admin" }));
+  await userEvent.click(within(sheet).getByRole("button", { name: "Save" }));
+
+  expect(await within(sheet).findByRole("alert")).toHaveTextContent("last admin keeps their role");
 });
