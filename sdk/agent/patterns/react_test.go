@@ -337,26 +337,38 @@ func TestExhaustingTheCeilingReturnsWhatHappened(t *testing.T) {
 
 // A turn cut at MaxTokens can carry a tool call whose arguments stop mid-JSON.
 // Dispatching it runs something the model never finished asking for.
-func TestATruncatedTurnIsNotDispatched(t *testing.T) {
+// A call cut off part-way has half its arguments: running it would act on
+// arguments the model never finished. It is answered instead, and the run
+// goes on.
+func TestACutOffToolCallIsAnsweredNotRun(t *testing.T) {
 	t.Parallel()
 
 	var ran bool
-	m := &fakeModel{turns: []turn{{resp: agent.Response{
-		Message: calling("lookup", `{"id":1}`),
-		Finish:  agent.FinishLength,
-	}}}}
+	m := &fakeModel{turns: []turn{
+		{resp: agent.Response{Message: calling("lookup", `{"id":1,"note":"half`), Finish: agent.FinishLength}},
+		answered(text("I'll ask for less.")),
+	}}
 
 	got, err := ReAct().Run(t.Context(), agent.Input{
 		Spec: spec(tool("lookup", "", nil, &ran)), Messages: ask("try"), Model: m,
 	})
-	if !errors.Is(err, agent.ErrTruncated) {
-		t.Fatalf("err = %v, want ErrTruncated", err)
+	if err != nil {
+		t.Fatalf("Run: %v; a cut-off call must not end the run", err)
 	}
 	if ran {
-		t.Error("a tool call from a truncated turn was dispatched")
+		t.Error("a tool call cut off part-way was run")
 	}
-	if got.Steps != 1 {
-		t.Errorf("Steps = %d, want 1", got.Steps)
+	if got.Steps != 2 || got.Output != "I'll ask for less." {
+		t.Errorf("Steps %d, Output %q; want the second step's answer", got.Steps, got.Output)
+	}
+
+	sent := m.calls[1].Messages
+	call, answer := sent[len(sent)-2], sent[len(sent)-1]
+	if len(call.ToolCalls) != 1 || string(call.ToolCalls[0].Arguments) != `{}` {
+		t.Errorf("the cut-off call went back as %+v, want its arguments emptied to {}", call.ToolCalls)
+	}
+	if answer.Role != agent.RoleTool || answer.ToolCallID != "call_1" || answer.Text() != cutCall {
+		t.Errorf("the call was answered with %+v, want the cut-off notice for call_1", answer)
 	}
 }
 

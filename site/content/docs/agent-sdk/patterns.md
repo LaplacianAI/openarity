@@ -154,6 +154,25 @@ answers to the same question and an argument between them.
     iterates within one task and remembers nothing afterwards; Reflexion carries
     what it learned across separate attempts. Only the first is implemented.
 
+## A reply cut off at MaxTokens
+
+Every shipped pattern treats a reply the model could not finish within
+`Spec.Model.MaxTokens` the same way:
+
+- **Cut off while writing text**, it is asked to go on, up to three times. The
+  pieces are joined in `Result.Output`, and each stays its own message in
+  `Result.Messages`, with the turn that asked it to go on between them: a
+  provider's reasoning is signed per reply, so two replies cannot be merged
+  into one. Each continuation is reported as usage like any other call.
+- **Cut off while calling a tool**, the call is never run: its arguments are
+  incomplete. It is answered with an error saying so, its arguments are kept
+  as `{}`, and the model tries again with less in it. That is a step.
+- Still cut off after three continuations, the run returns
+  `agent.ErrTruncated`, with everything it did say.
+
+A ReWOO plan and a reflection critique are single structured calls, so a cut
+there still returns `agent.ErrTruncated` at once.
+
 ## Writing your own
 
 `Pattern` is an interface, so a pattern is anything with a name and a `Run`.

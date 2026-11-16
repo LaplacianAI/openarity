@@ -181,16 +181,12 @@ func TestPlanWithNoModelClientIsRefused(t *testing.T) {
 	}
 }
 
-// A plan cut off at MaxTokens is half a plan, and the phase that follows would
-// work from it without knowing.
-func TestATruncatedPlanStopsTheRun(t *testing.T) {
+// A plan cut off at MaxTokens every time it goes on is half a plan, and the
+// phase that follows would work from it without knowing.
+func TestAPlanCutOffEveryTimeStopsTheRun(t *testing.T) {
 	t.Parallel()
 
-	model := &fakeModel{turns: []turn{{resp: agent.Response{
-		Message: text("1. First I will"),
-		Finish:  agent.FinishLength,
-		Usage:   agent.Usage{InputTokens: 10, OutputTokens: 5},
-	}}}}
+	model := &fakeModel{turns: cutTurns("1. First I will", 1+continuations)}
 
 	result, err := Plan().Run(t.Context(), agent.Input{
 		Spec: planSpec(), Messages: ask("go"), Model: model,
@@ -198,8 +194,8 @@ func TestATruncatedPlanStopsTheRun(t *testing.T) {
 	if !errors.Is(err, agent.ErrTruncated) {
 		t.Fatalf("err = %v, want ErrTruncated", err)
 	}
-	if len(model.calls) != 1 {
-		t.Error("the run kept going after a truncated plan")
+	if len(model.calls) != 1+continuations {
+		t.Errorf("%d calls, want the plan and its %d continuations, and nothing after", len(model.calls), continuations)
 	}
 	// What happened is still reported. The tokens are the Runner's to fill in —
 	// it does so on the error path too — so what this pattern owes is the step

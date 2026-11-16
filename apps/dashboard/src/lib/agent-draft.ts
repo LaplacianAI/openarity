@@ -28,7 +28,7 @@ export const EMPTY: Draft = {
   description: "",
   instructions: "",
   model: "",
-  maxTokens: "1024",
+  maxTokens: "200000",
   pattern: "react",
   maxSteps: "5",
   tokenBudget: "",

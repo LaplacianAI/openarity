@@ -378,17 +378,13 @@ func TestATruncatedReflectingTurnIsReported(t *testing.T) {
 
 // The draft was paid for and is still the best answer there is. Returning
 // nothing because the rewrite was cut off throws away work the caller owns.
-func TestATruncatedRewriteKeepsTheAnswerItAlreadyHad(t *testing.T) {
+func TestARewriteCutOffEveryTimeKeepsTheAnswerItAlreadyHad(t *testing.T) {
 	t.Parallel()
 
-	cut := answered(text("half a rewri"))
-	cut.resp.Finish = agent.FinishLength
-
-	model := &fakeModel{turns: []turn{
+	model := &fakeModel{turns: append([]turn{
 		answered(text("the original draft")),
 		critiqued(true, "make it better"),
-		cut,
-	}}
+	}, cutTurns("half a rewri", 1+continuations)...)}
 
 	result, err := Reflection(1).Run(t.Context(), agent.Input{
 		Spec: reflectSpec(), Messages: ask("write something"), Model: model,

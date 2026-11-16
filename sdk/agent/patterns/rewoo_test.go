@@ -471,14 +471,14 @@ func TestATruncatedPlanStopsTheRunBeforeAnythingRuns(t *testing.T) {
 	}
 }
 
-// A truncated answer is still an error, the same as in every other loop.
-func TestATruncatedAnswerIsReported(t *testing.T) {
+// An answer cut off every time it goes on is still an error, the same as in
+// every other loop.
+func TestAnAnswerCutOffEveryTimeIsReported(t *testing.T) {
 	t.Parallel()
 
-	model := &fakeModel{turns: []turn{
-		submitted(`[{"tool":"count","args":{},"why":"a"}]`),
-		{resp: agent.Response{Message: text("the count is"), Finish: agent.FinishLength}},
-	}}
+	model := &fakeModel{turns: append(
+		[]turn{submitted(`[{"tool":"count","args":{},"why":"a"}]`)},
+		cutTurns("the count is", 1+continuations)...)}
 
 	result, err := ReWOO().Run(t.Context(), agent.Input{
 		Spec: rewooSpec(tool("count", "3", nil, nil)), Messages: ask("go"), Model: model,
@@ -486,8 +486,8 @@ func TestATruncatedAnswerIsReported(t *testing.T) {
 	if !errors.Is(err, agent.ErrTruncated) {
 		t.Fatalf("err = %v, want ErrTruncated", err)
 	}
-	if result.Output != "the count is" {
-		t.Errorf("Output = %q, want what did arrive", result.Output)
+	if want := strings.Repeat("the count is", 1+continuations); result.Output != want {
+		t.Errorf("Output = %q, want all that did arrive, %q", result.Output, want)
 	}
 }
 

@@ -34,7 +34,7 @@ const example = "    # team.yaml\n" +
 	"      - path: ./skills/support-faq    # its folder, beside this file; SKILL.md names it\n" +
 	"    agents:\n" +
 	"      - name: triage\n" +
-	"        model: {name: anthropic/claude-sonnet-5-5, max_tokens: 4096}\n" +
+	"        model: {name: anthropic/claude-sonnet-5-5, max_tokens: 200000}\n" +
 	"        pattern: react\n" +
 	"        max_steps: 20\n" +
 	"        instructions: Read the email, decide the queue, answer from the FAQ.\n" +

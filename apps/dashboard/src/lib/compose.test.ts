@@ -41,6 +41,12 @@ const server = (name: string): Item => ({
 const names: Record<string, string> = { s1: "github", k1: "pdf", a1: "writer" };
 const nameOf = async (_kind: string, id: string) => names[id] ?? `?${id}`;
 
+describe("a new agent", () => {
+  it("starts at 200000 max tokens, so long answers are not cut off", () => {
+    expect(EMPTY.maxTokens).toBe("200000");
+  });
+});
+
 describe("draft ids", () => {
   it("name an item that does not exist yet, and never look like a uuid", () => {
     const id = draftId("servers", "help:desk");

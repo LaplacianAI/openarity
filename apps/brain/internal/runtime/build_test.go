@@ -339,7 +339,7 @@ func newFixture() *fixture {
 		run:     db.Run{ID: uuid.New(), TeamID: teamID, AgentID: &a.ID, AgentName: a.Name},
 	}
 	f.graph = newGraphFixture()
-	f.builder = NewBuilder(f.store, f.objects, f.clients, f.graph.deps(), nil, nil)
+	f.builder = NewBuilder(f.store, f.objects, f.clients, f.graph.deps(), nil, nil).WithClock(func() time.Time { return fixedNow })
 	return f
 }
 
@@ -493,6 +493,7 @@ func TestAnAgentRowBecomesTheSpecItDescribes(t *testing.T) {
 					"capped", got.Compaction, want)
 			}
 			got.Tools, got.Skills, got.Session, got.Compaction = nil, nil, nil, nil
+			got.System = promptOf(got.System)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("spec\n got %+v\nwant %+v", got, tc.want)
 			}
@@ -1542,4 +1543,42 @@ func graphTool(t *testing.T, built Built) agent.Tool {
 	}
 	t.Fatal("no graph tool")
 	return agent.Tool{}
+}
+
+// 23:30 in New York is already the 17th in UTC: the date is UTC's, whatever
+// the clock's zone.
+var fixedNow = time.Date(2026, time.November, 16, 23, 30, 0, 0, time.FixedZone("EST", -5*3600))
+
+const wantToday = "Today is Tuesday, 17 November 2026 (UTC)."
+
+// Without the date a model takes its training cutoff for today, and reads a
+// date already past as one still to come.
+func TestEveryRunIsToldTodaysDate(t *testing.T) {
+	cases := map[string]func(f *fixture){
+		"an agent":           func(*fixture) {},
+		"an agent with none": func(f *fixture) { f.agent.Instructions = ""; f.store.agents[f.agent.ID] = f.agent },
+		"a delegated agent":  func(f *fixture) { parent := uuid.New(); f.run.ParentRunID = &parent; f.run.Depth = 1 },
+		"the orchestrator":   func(f *fixture) { f.asOrchestrator(); f.teamModel() },
+		"the builder":        func(f *fixture) { f.asBuilder(); f.teamModel() },
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.agent.Instructions = "Research."
+			f.store.agents[f.agent.ID] = f.agent
+			setup(f)
+
+			system := f.build(t).Spec.System
+			if len(system) == 0 {
+				t.Fatal("no system prompt at all")
+			}
+			last := system[len(system)-1]
+			if last.Text != wantToday {
+				t.Errorf("last system block = %q, want %q", last.Text, wantToday)
+			}
+			if last.Cacheable {
+				t.Error("the date is marked cacheable; it changes daily and must not be a cache breakpoint")
+			}
+		})
+	}
 }

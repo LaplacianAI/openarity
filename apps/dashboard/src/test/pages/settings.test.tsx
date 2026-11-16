@@ -61,6 +61,10 @@ function saved(s: TeamSettings) {
 }
 
 describe("the request the form sends", () => {
+  it("offers 200000 max tokens for a team with no model yet, so long answers are not cut off", () => {
+    expect(draftOf(NEVER).maxTokens).toBe("200000");
+  });
+
   it("keeps everything as stored when nothing changed, and sends no key", () => {
     expect(settingsRequest(draftOf(BRAVE), BRAVE)).toEqual({
       model: { name: "gpt-5", max_tokens: 4096, temperature: 0.2 },

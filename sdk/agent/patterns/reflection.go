@@ -83,9 +83,9 @@ func (l reflection) Run(ctx context.Context, in agent.Input) (agent.Result, erro
 			return result, fmt.Errorf("rewriting on cycle %d: %w", cycle, err)
 		}
 
-		msgs = append(slices.Clone(msgs[:len(msgs)-1]), improved.Message)
+		msgs = append(slices.Clone(msgs[:answerStart(msgs)]), improved.msgs...)
 		result.Messages = msgs
-		result.Output = improved.Message.Text()
+		result.Output = improved.text
 	}
 
 	return result, nil
@@ -134,7 +134,7 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 
 func (l reflection) refine(
 	ctx context.Context, in agent.Input, msgs []agent.Message, note string,
-) (agent.Response, error) {
+) (carried, error) {
 	ask := in
 	ask.Spec.System = append(slices.Clone(in.Spec.System), refining)
 	ask.Spec.Tools = nil
@@ -150,14 +150,16 @@ func (l reflection) refine(
 
 	resp, err := (reflection{stream: l.stream}).call(ctx, ask, asked)
 	if err != nil {
-		return agent.Response{}, err
+		return carried{}, err
 	}
 	in.Emit(ctx, agent.UsageEvent{Model: in.Spec.Model.Name, Usage: resp.Usage})
 
-	if resp.Finish == agent.FinishLength {
-		return agent.Response{}, agent.ErrTruncated
+	c, err := carryOn(ctx, ask, asked, resp, reflection{stream: l.stream}.call)
+	if err != nil {
+		// A rewrite never finished is no answer; the one before it stands.
+		return carried{}, err
 	}
-	return resp, nil
+	return c, nil
 }
 
 func (l reflection) call(ctx context.Context, in agent.Input, msgs []agent.Message) (agent.Response, error) {

@@ -138,7 +138,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
   return {
     modelOn: s.model !== null,
     modelName: s.model?.name ?? "",
-    maxTokens: s.model ? String(s.model.max_tokens) : "4096",
+    maxTokens: s.model ? String(s.model.max_tokens) : "200000",
     temperature: s.model?.temperature === undefined ? "" : String(s.model.temperature),
     provider: s.search.provider,
     url: s.search.url ?? "",
