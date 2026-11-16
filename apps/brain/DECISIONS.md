@@ -865,6 +865,21 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   of rows, not thousands. Postgres is the bus because the worker and the API
   are separate processes; the SSE route already polls it. A delegated run's
   writing is its parent's to report.
+- **Signing in to an MCP server is the brain's, never the SDK's.** The agent
+  loop authorises nothing, and OAuth is all state it lacks: secrets, a
+  callback a browser is sent to, a person, a lock across workers. Discovery
+  (`internal/discovery/oauth.go`) follows the MCP authorization spec with the
+  go-sdk's `oauthex` and `auth.GetAuthServerMetadata`, and `x/oauth2` for the
+  code exchange; the SDK's `AuthorizationCodeHandler` is not used, because it
+  blocks on a browser a worker does not have. Measured against Gmail's server
+  rather than assumed: it answers `initialize` with 200 before any sign-in, so
+  no 401 is not "no sign-in" and the well-known paths are tried regardless;
+  its metadata names `https://accounts.google.com/` with a slash, trimmed
+  before the lookup; and it lists every Gmail scope, full mailbox access
+  included, so scopes set on the server win over the discovered ones. A
+  refresh is a form of its own because `x/oauth2` cannot name the `resource`
+  on one, and only `invalid_grant` means signing in again: an authority's bad
+  minute must not sign a team out of its servers.
 - **A sender let in as someone new is a user of their own, not a role.**
   Approving names a member, or makes a channel user: issuer
   `openarity:channel`, subject `<channel>:<ref>`, which no token is ever
