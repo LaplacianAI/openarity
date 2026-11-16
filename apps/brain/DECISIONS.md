@@ -865,12 +865,13 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   of rows, not thousands. Postgres is the bus because the worker and the API
   are separate processes; the SSE route already polls it. A delegated run's
   writing is its parent's to report.
-- **Every run is told today's date, last and uncached.** A model otherwise
+- **Every run is told today's date, in its message.** A model otherwise
   takes its training cutoff for today, and reads a date already past as one
-  still to come. `Build` appends one system block, `Today is <weekday, date>
-  (UTC).`, after the agent's, the hub's or the builder's prompt: the date
-  alone, so what comes before it stays a cached prefix all day, where the time
-  would make every request a miss. UTC until a team has a timezone of its own.
+  still to come. A run's first message starts `Today is <weekday, date>
+  (UTC).`, a delegate's brief too. Never the system prompt: every system
+  block is cacheable, and a block that changed daily would end the cached
+  prefix there, so the conversation after it would miss. In the message, each
+  turn keeps the day it was asked on. UTC until a team has a timezone.
 - **Thinking is recorded apart from talking.** What the SDK reports as
   reasoning, the model's own and a loop's plan or critique, is gathered into
   `reasoning` events the same way, and a switch between the two flushes, so

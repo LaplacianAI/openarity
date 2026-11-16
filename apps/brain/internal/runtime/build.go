@@ -59,23 +59,16 @@ type Builder struct {
 	registry       Registry
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
-	now            func() time.Time
 }
 
 func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps, search *SearchDeps, fetch *FetchDeps) *Builder {
-	return &Builder{store: s, objects: o, mcp: m, graph: g, search: search, fetch: fetch, connectTimeout: connectTimeout, now: time.Now}
+	return &Builder{store: s, objects: o, mcp: m, graph: g, search: search, fetch: fetch, connectTimeout: connectTimeout}
 }
 
 // WithRegistry lets builder runs look MCP servers up. Without one, they have
 // no find_mcp_servers.
 func (b *Builder) WithRegistry(r Registry) *Builder {
 	b.registry = r
-	return b
-}
-
-// WithClock sets what a run is told today is.
-func (b *Builder) WithClock(now func() time.Time) *Builder {
-	b.now = now
 	return b
 }
 
@@ -223,14 +216,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			return Built{}, err
 		}
 	}
-	// Last, and uncached: the model otherwise takes its training cutoff for
-	// today. The date alone, so the prompt before it stays cached all day.
-	built.Spec.System = append(built.Spec.System, today(b.now()))
 	return built, nil
-}
-
-func today(now time.Time) agent.Content {
-	return agent.Content{Type: agent.ContentText, Text: "Today is " + now.UTC().Format("Monday, 2 January 2006") + " (UTC)."}
 }
 
 func (b *Builder) delegateTool(ctx context.Context, a db.Agent, run db.Run, l Lineage) (agent.Tool, bool, error) {

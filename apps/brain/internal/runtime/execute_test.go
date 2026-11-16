@@ -200,7 +200,7 @@ func (f *execFixture) executor(t *testing.T, clients agent.ClientFactory, endpoi
 	}
 	builder := NewBuilder(f.store, f.objects, &fakeClients{client: &http.Client{}},
 		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store}, f.search, nil)
-	e := NewExecutor(f.store, builder, runner, endpoint, f.sessions, quietLogger())
+	e := NewExecutor(f.store, builder, runner, endpoint, f.sessions, quietLogger()).WithClock(func() time.Time { return fixedNow })
 	e.every = 20 * time.Millisecond
 	return e
 }
@@ -352,8 +352,8 @@ func TestARunThatAnswersSucceedsWithItsOutput(t *testing.T) {
 	}
 
 	first := f.model.requests()[0]
-	if len(first.Messages) != 1 || first.Messages[0].Text() != runInput {
-		t.Errorf("the first request carried %q, want the run's input alone", textOf(first.Messages))
+	if len(first.Messages) != 1 || first.Messages[0].Text() != dated(runInput) {
+		t.Errorf("the first request carried %q, want today's date and the run's input", textOf(first.Messages))
 	}
 }
 
@@ -559,7 +559,7 @@ func TestTheTranscriptIsSavedUnderTheSession(t *testing.T) {
 		t.Fatalf("the run's transcript is %q, want its session's", transcriptOf(row))
 	}
 	msgs, err := f.sessions.Messages(t.Context(), transcriptOf(row))
-	if err != nil || len(msgs) != 2 || msgs[0].Text() != runInput || msgs[1].Text() != "42" {
+	if err != nil || len(msgs) != 2 || msgs[0].Text() != dated(runInput) || msgs[1].Text() != "42" {
 		t.Errorf("transcript = %q, %v; want the input and the answer", textOf(msgs), err)
 	}
 }

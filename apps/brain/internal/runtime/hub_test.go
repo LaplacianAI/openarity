@@ -104,21 +104,12 @@ func (f *fixture) withTeam(others int64) (*fakeDelegateStore, *fakeDelegator) {
 	return ds, runner
 }
 
-// systemOf is the prompt a run was given, without the date every run ends
-// with; TestEveryRunIsToldTodaysDate holds that line.
 func systemOf(built Built) string {
 	var b strings.Builder
-	for _, c := range promptOf(built.Spec.System) {
+	for _, c := range built.Spec.System {
 		b.WriteString(c.Text)
 	}
 	return b.String()
-}
-
-func promptOf(system []agent.Content) []agent.Content {
-	if len(system) <= 1 {
-		return nil
-	}
-	return system[:len(system)-1]
 }
 
 // --- the built-in orchestrator ---
