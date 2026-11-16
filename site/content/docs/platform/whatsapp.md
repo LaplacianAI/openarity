@@ -180,6 +180,12 @@ let them in, under **Approvals**. Someone not let in who asks the agent is
 queued there; on the bot's own number they are told once that they are waiting,
 and told again when they are let in. On your own number they are told nothing.
 
+On your own number, your friends are not team members. Let each in as
+**someone new, as a guest** (`oa channels senders approve … --new`): they get
+an identity of their own, who can ask the agent from your chats and change
+nothing in the team. Binding them to a member instead would make their
+messages that member's, with everything that member may do.
+
 In a group, only messages from people let in are stored. A stranger's chatter
 in a group the number is in is never kept.
 

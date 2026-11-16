@@ -15,7 +15,7 @@ RETURNING *;
 DELETE FROM team_members WHERE team_id = $1 AND user_id = $2;
 
 -- name: ListTeamMembers :many
-SELECT u.id, u.subject, u.email, tm.role
+SELECT u.id, u.subject, u.email, tm.role, u.name, (u.issuer = 'openarity:channel')::bool AS channel_user
 FROM team_members tm
 JOIN users u ON u.id = tm.user_id
 WHERE tm.team_id = sqlc.arg('team_id')
@@ -30,3 +30,31 @@ LIMIT sqlc.arg('page_size');
 -- approval grants them a voice in a team they do not belong to.
 -- name: FindTeamMember :one
 SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2;
+
+-- LockTeamMembership serialises changes to one team's roles: demoting the
+-- last admin is refused by counting the admins, and two demotions counted at
+-- once would each see the other still there.
+-- name: LockTeamMembership :exec
+SELECT 1 FROM teams WHERE id = $1 FOR UPDATE;
+
+-- name: FindTeamMemberUser :one
+SELECT tm.role, (u.issuer = 'openarity:channel')::bool AS channel_user
+FROM team_members tm
+JOIN users u ON u.id = tm.user_id
+WHERE tm.team_id = $1 AND tm.user_id = $2;
+
+-- name: CountTeamAdmins :one
+SELECT count(*) FROM team_members WHERE team_id = $1 AND role = 'admin';
+
+-- name: SetTeamMemberRole :exec
+UPDATE team_members SET role = $3, updated_at = now() WHERE team_id = $1 AND user_id = $2;
+
+-- SetChannelUserName renames a channel user; a user who logs in keeps the
+-- name their identity provider gives.
+-- name: SetChannelUserName :execrows
+UPDATE users SET name = $2, updated_at = now() WHERE id = $1 AND issuer = 'openarity:channel';
+
+-- DeleteChannelUser deletes a channel user removed from its team: it exists
+-- for that team alone.
+-- name: DeleteChannelUser :exec
+DELETE FROM users WHERE id = $1 AND issuer = 'openarity:channel';

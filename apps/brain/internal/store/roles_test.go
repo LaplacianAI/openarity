@@ -33,8 +33,8 @@ func TestSeededRolesExist(t *testing.T) {
 			t.Errorf("role %q has no description", r.Name)
 		}
 	}
-	if !slices.Equal(names, []string{"admin", "approver", "member"}) {
-		t.Errorf("roles = %v, want [admin approver member]", names)
+	if !slices.Equal(names, []string{"admin", "approver", "guest", "member"}) {
+		t.Errorf("roles = %v, want [admin approver guest member]", names)
 	}
 }
 
@@ -60,6 +60,9 @@ func TestSeededPermissions(t *testing.T) {
 		// Not team:settings: the model every message runs on is a cost
 		// decision, and the search key is a credential.
 		"member": {"agent:write", "run:write", "skill:write", "tool:write"},
+		// A sender let in from a channel talks to the agents and writes
+		// nothing in the team: no tool, skill or agent, and never a schedule.
+		"guest": {"run:write"},
 	} {
 		got, err := s.ListRolePermissions(t.Context(), role)
 		if err != nil {
@@ -72,7 +75,7 @@ func TestSeededPermissions(t *testing.T) {
 	}
 }
 
-// The shipped roles nest: member within approver within admin. A membership
+// The shipped roles nest: guest within member within approver within admin. A membership
 // holds one role, so moving someone up must never take anything away, and a
 // permission added to one role and forgotten on the next would do exactly
 // that without a word.
@@ -81,7 +84,7 @@ func TestTheShippedRolesNest(t *testing.T) {
 
 	s := queryStore(t)
 
-	chain := []string{"member", "approver", "admin"}
+	chain := []string{"guest", "member", "approver", "admin"}
 	for i := range len(chain) - 1 {
 		lower, higher := chain[i], chain[i+1]
 		low, err := s.ListRolePermissions(t.Context(), lower)

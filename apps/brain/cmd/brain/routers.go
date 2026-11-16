@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
@@ -61,7 +62,7 @@ func newRouters(
 ) []server.Router {
 	routers := []server.Router{
 		whoami.New(logger),
-		teams.New(logger, dbStore, authorizer, cfg.TeamPurgeAfter),
+		teams.New(logger, teamStore{dbStore}, authorizer, cfg.TeamPurgeAfter),
 		channels.New(logger, dbStore, authorizer, channelSecrets{secretStore, secretWriter}, registry, cfg.WebhookPublicURL,
 			reachable(cfg.MCPPrivateNetworks), replyClient(reachable(cfg.MCPPrivateNetworks)), notices, dbStore),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
@@ -135,6 +136,49 @@ type blueprintStore struct{ *store.Store }
 
 func (s blueprintStore) InTx(ctx context.Context, fn func(blueprints.Queries) error) error {
 	return s.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
+}
+
+type teamStore struct{ *store.Store }
+
+// UpdateMember changes a member's role or a channel user's name. The team's
+// row is locked first, so two demotions cannot each count the other as the
+// admin who remains.
+func (s teamStore) UpdateMember(ctx context.Context, teamID, userID uuid.UUID, c teams.MemberChange) error {
+	return s.InTx(ctx, func(q *db.Queries) error {
+		if err := q.LockTeamMembership(ctx, teamID); err != nil {
+			return fmt.Errorf("locking the team's membership: %w", err)
+		}
+		m, err := q.FindTeamMemberUser(ctx, db.FindTeamMemberUserParams{TeamID: teamID, UserID: userID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return teams.ErrNotMember
+		}
+		if err != nil {
+			return fmt.Errorf("reading the member: %w", err)
+		}
+		if c.Name != nil && !m.ChannelUser {
+			return teams.ErrNotChannelUser
+		}
+		if c.Role != nil && *c.Role != m.Role {
+			if m.Role == "admin" {
+				admins, err := q.CountTeamAdmins(ctx, teamID)
+				if err != nil {
+					return fmt.Errorf("counting the team's admins: %w", err)
+				}
+				if admins <= 1 {
+					return teams.ErrLastAdmin
+				}
+			}
+			if err := q.SetTeamMemberRole(ctx, db.SetTeamMemberRoleParams{TeamID: teamID, UserID: userID, Role: *c.Role}); err != nil {
+				return err
+			}
+		}
+		if c.Name != nil {
+			if _, err := q.SetChannelUserName(ctx, db.SetChannelUserNameParams{ID: userID, Name: c.Name}); err != nil {
+				return fmt.Errorf("renaming the channel user: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 type runStore struct{ *store.Store }

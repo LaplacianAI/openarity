@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -24,6 +25,7 @@ const (
 	maxNameBytes        = 200
 	codeUniqueViolation = "23505"
 	maxSubjectMatches   = 10
+	maxMemberName       = 64
 )
 
 type Store interface {
@@ -33,7 +35,8 @@ type Store interface {
 	ListUserTeams(ctx context.Context, userID uuid.UUID) ([]db.ListUserTeamsRow, error)
 	ListTeamMembers(ctx context.Context, arg db.ListTeamMembersParams) ([]db.ListTeamMembersRow, error)
 	AddTeamMember(ctx context.Context, arg db.AddTeamMemberParams) (db.TeamMember, error)
-	RemoveTeamMember(ctx context.Context, arg db.RemoveTeamMemberParams) error
+	RemoveMember(ctx context.Context, teamID, userID uuid.UUID) error
+	UpdateMember(ctx context.Context, teamID, userID uuid.UUID, c MemberChange) error
 	FindUsersBySubject(ctx context.Context, arg db.FindUsersBySubjectParams) ([]db.FindUsersBySubjectRow, error)
 	ActionsFor(ctx context.Context, role string) ([]string, error)
 	GetLiveTeam(ctx context.Context, id uuid.UUID) (db.Team, error)
@@ -66,6 +69,7 @@ func New(logger *slog.Logger, s Store, a SuperAdmins, purgeAfter time.Duration) 
 	r.Get("/{id}/members", h.listMembers)
 	r.Post("/{id}/members", h.addMember)
 	r.Delete("/{id}/members/{userID}", h.removeMember)
+	r.Patch("/{id}/members/{userID}", h.updateMember)
 	return r
 }
 
@@ -329,7 +333,10 @@ func (h *handler) listMembers(w http.ResponseWriter, r *http.Request) {
 			return memberCursor{Subject: row.Subject, ID: row.ID}
 		},
 		func(row db.ListTeamMembersRow) member {
-			return member{UserID: row.ID, Subject: row.Subject, Email: row.Email, Role: row.Role}
+			return member{
+				UserID: row.ID, Subject: row.Subject, Email: row.Email, Role: row.Role,
+				Name: row.Name, ChannelUser: row.ChannelUser,
+			}
 		},
 	)
 	if err != nil {
@@ -461,14 +468,87 @@ func (h *handler) removeMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.RemoveTeamMember(r.Context(), db.RemoveTeamMemberParams{
-		TeamID: id, UserID: userID,
-	}); err != nil {
+	if err := h.store.RemoveMember(r.Context(), id, userID); err != nil {
 		api.Fail(w, h.logger, u, "failed to remove member", err)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// updateMember changes a member's role, or a channel user's name. Only an
+// admin holds membership:write, and an admin holds every permission in the
+// team, so no role it gives can exceed its own.
+func (h *handler) updateMember(w http.ResponseWriter, r *http.Request) {
+	u := api.Caller(r)
+
+	id, ok := api.RequireTeam(w, r, h.logger)
+	if !ok {
+		return
+	}
+	userID, err := uuid.Parse(r.PathValue("userID"))
+	if err != nil {
+		http.Error(w, "user id must be a uuid", http.StatusBadRequest)
+		return
+	}
+
+	var req updateMemberRequest
+	if !api.DecodeJSON(w, r, &req) {
+		return
+	}
+	change, ok := memberChange(w, req)
+	if !ok {
+		return
+	}
+
+	err = h.store.UpdateMember(r.Context(), id, userID, change)
+	var pgErr *pgconn.PgError
+	switch {
+	case err == nil:
+	case errors.Is(err, ErrNotMember):
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	case errors.Is(err, ErrLastAdmin):
+		http.Error(w, "the team's last admin keeps their role: make someone else an admin first", http.StatusConflict)
+		return
+	case errors.Is(err, ErrNotChannelUser):
+		http.Error(w, "only a channel user's name can be set; a user who logs in has their identity provider's", http.StatusBadRequest)
+		return
+	case errors.As(err, &pgErr) && pgErr.ConstraintName == "team_members_role_fkey":
+		http.Error(w, "unknown role", http.StatusBadRequest)
+		return
+	default:
+		api.Fail(w, h.logger, u, "failed to update member", err)
+		return
+	}
+
+	h.logger.Info("team member updated", "subject", u.Subject, "team_id", id, "user_id", userID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func memberChange(w http.ResponseWriter, req updateMemberRequest) (MemberChange, bool) {
+	var c MemberChange
+	if req.Role != nil {
+		role := strings.TrimSpace(*req.Role)
+		if role == "" {
+			http.Error(w, "role cannot be empty", http.StatusBadRequest)
+			return c, false
+		}
+		c.Role = &role
+	}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" || utf8.RuneCountInString(name) > maxMemberName {
+			http.Error(w, "name must be between 1 and 64 characters", http.StatusBadRequest)
+			return c, false
+		}
+		c.Name = &name
+	}
+	if c.Role == nil && c.Name == nil {
+		http.Error(w, "give a role, a name, or both", http.StatusBadRequest)
+		return c, false
+	}
+	return c, true
 }
 
 func (h *handler) visibleTeam(w http.ResponseWriter, r *http.Request, u *auth.User, id uuid.UUID) (db.Team, bool) {

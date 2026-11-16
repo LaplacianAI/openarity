@@ -446,10 +446,38 @@ paths:
       - name: userID
         in: path
         required: true
-        description: The user to remove
+        description: The member
         schema:
           type: string
           format: uuid
+    patch:
+      operationId: updateTeamMember
+      tags: [teams]
+      summary: Change a member's role, or a channel user's name
+      description: |
+        Requires `membership:write` in this team. The change is in place: the
+        member keeps every sender that speaks as them. The team's last admin
+        keeps their role (409), so a team is never left with nobody who can
+        manage it. A name may be set on a channel user only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMemberRequest"
+      responses:
+        "204":
+          description: Changed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The member is the team's last admin
     delete:
       operationId: removeTeamMember
       tags: [teams]
@@ -457,6 +485,7 @@ paths:
       description: |
         Requires `membership:write` in this team. Removing someone who is not a
         member succeeds: the caller asked for a state, and that state holds.
+        A channel user, who exists for this team alone, is deleted.
       responses:
         "204":
           description: No longer a member
@@ -905,6 +934,15 @@ paths:
 
         Approving somebody already approved moves them to the new user, so
         correcting a mistake is one call rather than a remove and an add.
+
+        In place of `user_id`, `new` lets the sender in as someone new: a user
+        of their own that nobody logs in as, added to this team with
+        `new.role`, and named `new.name`, else the name they gave while
+        waiting, else their ref. The caller must hold every permission of
+        that role, and cover whoever the ref is bound to now. Approving the
+        same sender as someone new again finds the same user. A channel user
+        left speaking as no sender, because their sender moved to someone
+        else or was removed, is deleted.
       requestBody:
         required: true
         content:
@@ -3663,6 +3701,12 @@ components:
         role:
           type: string
           examples: ["member"]
+        name:
+          type: string
+          description: A channel user's name, who has no email
+        channel_user:
+          type: boolean
+          description: A sender let in as someone new, who never logs in
 
     CreateTeamRequest:
       type: object
@@ -4156,6 +4200,15 @@ components:
           type: string
           format: date-time
           description: When they were approved
+        name:
+          type: string
+          description: The user's name, or their email; empty when they have neither
+        role:
+          type: string
+          description: The user's role in this team; empty once they have left it
+        channel_user:
+          type: boolean
+          description: Whether the sender has a user of their own, let in as someone new
 
     ChannelSenderPage:
       type: object
@@ -4171,7 +4224,8 @@ components:
 
     ApproveSenderRequest:
       type: object
-      required: [sender_ref, user_id]
+      required: [sender_ref]
+      description: Exactly one of `user_id` and `new`.
       properties:
         sender_ref:
           type: string
@@ -4186,6 +4240,36 @@ components:
           description: |
             Who this sender speaks as. Must already be a member of the
             channel's team.
+        new:
+          $ref: "#/components/schemas/NewSender"
+
+    NewSender:
+      type: object
+      required: [role]
+      description: The sender let in as someone new, with a user of their own.
+      properties:
+        role:
+          type: string
+          examples: ["guest"]
+        name:
+          type: string
+          maxLength: 64
+          description: Cleaned of control characters; empty takes the name they gave while waiting.
+
+    UpdateMemberRequest:
+      type: object
+      description: At least one of `role` and `name`.
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+          minLength: 1
+          examples: ["member"]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: A channel user's only; a user who logs in has their identity provider's.
 
     Session:
       type: object

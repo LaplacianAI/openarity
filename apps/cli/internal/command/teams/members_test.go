@@ -626,3 +626,43 @@ func TestMembersWorkInEveryFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestMembersUpdatePatchesTheRoleAndName(t *testing.T) {
+	got := clitest.BrainStub(t, http.StatusNoContent, "")
+
+	out, err := clitest.Execute(t, commands, "teams", "members", "update", teamID, userID, "--role", " member ", "--name", "Ravi")
+	if err != nil {
+		t.Fatalf("teams members update: %v\n%s", err, out)
+	}
+
+	got.Lock()
+	defer got.Unlock()
+	if got.Method != http.MethodPatch || got.Path != "/teams/"+teamID+"/members/"+userID {
+		t.Errorf("%s %s, want PATCH of the member", got.Method, got.Path)
+	}
+	if !strings.Contains(got.Body, `"role":"member"`) || !strings.Contains(got.Body, `"name":"Ravi"`) {
+		t.Errorf("body = %s, want the trimmed role and the name", got.Body)
+	}
+}
+
+func TestMembersUpdateNeedsSomethingToChange(t *testing.T) {
+	got := clitest.BrainStub(t, http.StatusNoContent, "")
+
+	if _, err := clitest.Execute(t, commands, "teams", "members", "update", teamID, userID); err == nil {
+		t.Fatal("an update with nothing to change succeeded")
+	}
+	got.Lock()
+	defer got.Unlock()
+	if got.Method != "" {
+		t.Error("a refused update still called the brain")
+	}
+}
+
+func TestMembersUpdateSaysWhatTheLastAdminNeeds(t *testing.T) {
+	clitest.BrainStub(t, http.StatusConflict, "the team's last admin keeps their role: make someone else an admin first")
+
+	_, err := clitest.Execute(t, commands, "teams", "members", "update", teamID, userID, "--role", "member")
+	if err == nil || !strings.Contains(err.Error(), "last admin") {
+		t.Fatalf("err = %v, want the brain's reason", err)
+	}
+}

@@ -8,7 +8,7 @@ import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import { useTeamSummary } from "@/api/summary";
-import type { Member, TeamPendingSender } from "@/api/types";
+import type { Approval, Member, TeamPendingSender } from "@/api/types";
 import { Time } from "@/components/facts";
 import { LetIn } from "@/components/let-in";
 import { ErrorState, ForbiddenState } from "@/components/states";
@@ -92,8 +92,8 @@ function Approvals() {
   });
 
   const approve = useMutation({
-    mutationFn: ({ row, userId }: { row: TeamPendingSender; userId: string }) =>
-      approveSender(teamId as string, row.channel_id, row.sender_ref, userId),
+    mutationFn: ({ row, as }: { row: TeamPendingSender; as: Approval }) =>
+      approveSender(teamId as string, row.channel_id, row.sender_ref, as),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["pending", teamId] });
       void qc.invalidateQueries({ queryKey: ["summary", teamId] });
@@ -107,7 +107,7 @@ function Approvals() {
       <PageHeader
         title="Approvals"
         finding={canRead && queue.isSuccess ? waitingFinding(total, rows[0]) : null}
-        description="People who wrote in on one of the team's channels and have not been let in. Nothing they send reaches an agent until they are bound to a member. There is no reject: someone never let in never reaches an agent."
+        description="People who wrote in on one of the team's channels and have not been let in. Nothing they send reaches an agent until they are bound to a member, or let in as someone new: a guest of their own, who talks to the agents and changes nothing. There is no reject: someone never let in never reaches an agent."
       />
 
       {!teamId ? (
@@ -128,7 +128,11 @@ function Approvals() {
           </TabsList>
           <TabsContent value="waiting">{waitingList()}</TabsContent>
           <TabsContent value="let-in">
-            <LetIn teamId={teamId} canRemove={canApprove} />
+            <LetIn
+              teamId={teamId}
+              canRemove={canApprove}
+              canManage={perms.can("membership:write")}
+            />
           </TabsContent>
         </Tabs>
       )}
@@ -205,7 +209,7 @@ function Approvals() {
                       disabled={approve.isPending || members.isPending}
                       members={members.data?.items ?? []}
                       suggested={suggestMember(row.sender_name, members.data?.items ?? [])}
-                      onApprove={(userId) => approve.mutate({ row, userId })}
+                      onApprove={(as) => approve.mutate({ row, as })}
                     />
                   </TableCell>
                 ) : null}
@@ -224,11 +228,15 @@ function Approvals() {
   }
 }
 
+/** The choice that lets a sender in as someone new, a guest of their own. */
+const SOMEONE_NEW = "someone-new";
+
 /**
  * Who a sender is, then Approve. A member whose name fits the sender's is
  * listed first and marked, never chosen: the name is the stranger's to pick,
  * and a pre-chosen match would let them steer whom they are bound to. Approve
- * with no one chosen says so rather than sitting greyed out.
+ * with no one chosen says so rather than sitting greyed out. Someone new is a
+ * guest named as they named themselves; their role is changed under Let in.
  */
 function BindTo({
   members,
@@ -239,7 +247,7 @@ function BindTo({
   members: Member[];
   suggested: string | null;
   disabled: boolean;
-  onApprove: (userId: string) => void;
+  onApprove: (as: Approval) => void;
 }) {
   const [picked, setPicked] = useState<string>("");
   const [asked, setAsked] = useState(false);
@@ -263,6 +271,7 @@ function BindTo({
           <SelectValue placeholder="Bind to a member…" />
         </SelectTrigger>
         <SelectContent>
+          <SelectItem value={SOMEONE_NEW}>Someone new, as a guest</SelectItem>
           {listed.map((m) => (
             <SelectItem key={m.user_id} value={m.user_id}>
               {m.email ?? m.subject}
@@ -276,7 +285,13 @@ function BindTo({
         size="sm"
         className="stacked:h-10"
         disabled={disabled}
-        onClick={() => (userId ? onApprove(userId) : setAsked(true))}
+        onClick={() =>
+          userId === SOMEONE_NEW
+            ? onApprove({ new: { role: "guest" } })
+            : userId
+              ? onApprove({ user_id: userId })
+              : setAsked(true)
+        }
       >
         Approve
       </Button>
@@ -286,7 +301,7 @@ function BindTo({
           role="alert"
           className="basis-full text-right text-xs text-failed stacked:text-left"
         >
-          Choose which member they are first.
+          Choose which member they are, or someone new, first.
         </p>
       ) : null}
     </div>

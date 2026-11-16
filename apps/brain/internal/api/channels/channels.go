@@ -52,12 +52,14 @@ type Store interface {
 
 	ListPendingSenders(ctx context.Context, arg db.ListPendingSendersParams) ([]db.PendingSender, error)
 	ListTeamPendingSenders(ctx context.Context, arg db.ListTeamPendingSendersParams) ([]db.ListTeamPendingSendersRow, error)
-	ListChannelSenders(ctx context.Context, arg db.ListChannelSendersParams) ([]db.ChannelSender, error)
+	ListChannelSenders(ctx context.Context, arg db.ListChannelSendersParams) ([]db.ListChannelSendersRow, error)
 	FindTeamMember(ctx context.Context, arg db.FindTeamMemberParams) (string, error)
 	FindChannelSender(ctx context.Context, arg db.FindChannelSenderParams) (uuid.UUID, error)
 	ListRolePermissions(ctx context.Context, role string) ([]string, error)
-	ApproveSender(ctx context.Context, arg db.ApproveSenderParams) (db.ApproveSenderRow, error)
-	RemoveSender(ctx context.Context, arg db.RemoveSenderParams) (bool, error)
+	FindPendingSenderName(ctx context.Context, arg db.FindPendingSenderNameParams) (string, error)
+	BindSender(ctx context.Context, arg db.ApproveSenderParams) (db.ApproveSenderRow, error)
+	BindSenderAsNew(ctx context.Context, arg db.ApproveSenderAsNewParams) (db.ApproveSenderAsNewRow, error)
+	UnbindSender(ctx context.Context, arg db.RemoveSenderParams) (bool, error)
 }
 
 type Secrets interface {

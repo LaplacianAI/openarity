@@ -711,15 +711,18 @@ type AgentSummary struct {
 // run, steers none, and queues and tells no stranger.
 type AnswersIn string
 
-// ApproveSenderRequest defines model for ApproveSenderRequest.
+// ApproveSenderRequest Exactly one of `user_id` and `new`.
 type ApproveSenderRequest struct {
+	// New The sender let in as someone new, with a user of their own.
+	New *NewSender `json:"new,omitempty" yaml:"new,omitempty"`
+
 	// SenderRef Taken from the pending queue, or supplied directly when the
 	// provider id is already known.
 	SenderRef string `json:"sender_ref" yaml:"sender_ref"`
 
 	// UserID Who this sender speaks as. Must already be a member of the
 	// channel's team.
-	UserID openapi_types.UUID `json:"user_id" yaml:"user_id"`
+	UserID *openapi_types.UUID `json:"user_id,omitempty" yaml:"user_id,omitempty"`
 }
 
 // Attachment defines model for Attachment.
@@ -1079,9 +1082,18 @@ type ChannelPairingState string
 
 // ChannelSender defines model for ChannelSender.
 type ChannelSender struct {
+	// ChannelUser Whether the sender has a user of their own, let in as someone new
+	ChannelUser *bool `json:"channel_user,omitempty" yaml:"channel_user,omitempty"`
+
 	// CreatedAt When they were approved
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
-	SenderRef string    `json:"sender_ref" yaml:"sender_ref"`
+
+	// Name The user's name, or their email; empty when they have neither
+	Name *string `json:"name,omitempty" yaml:"name,omitempty"`
+
+	// Role The user's role in this team; empty once they have left it
+	Role      *string `json:"role,omitempty" yaml:"role,omitempty"`
+	SenderRef string  `json:"sender_ref" yaml:"sender_ref"`
 
 	// UserID The user this sender speaks as
 	UserID openapi_types.UUID `json:"user_id" yaml:"user_id"`
@@ -1661,8 +1673,14 @@ type MCPToolList struct {
 
 // Member defines model for Member.
 type Member struct {
+	// ChannelUser A sender let in as someone new, who never logs in
+	ChannelUser *bool `json:"channel_user,omitempty" yaml:"channel_user,omitempty"`
+
 	// Email Absent when the provider released none
 	Email *openapi_types.Email `json:"email,omitempty" yaml:"email,omitempty"`
+
+	// Name A channel user's name, who has no email
+	Name *string `json:"name,omitempty" yaml:"name,omitempty"`
 
 	// Role Examples: member
 	Role string `json:"role" yaml:"role"`
@@ -1729,6 +1747,15 @@ type ModelRef struct {
 	// Examples: anthropic/claude-opus-5
 	Name        string   `json:"name" yaml:"name"`
 	Temperature *float64 `json:"temperature,omitempty" yaml:"temperature,omitempty"`
+}
+
+// NewSender The sender let in as someone new, with a user of their own.
+type NewSender struct {
+	// Name Cleaned of control characters; empty takes the name they gave while waiting.
+	Name *string `json:"name,omitempty" yaml:"name,omitempty"`
+
+	// Role Examples: guest
+	Role string `json:"role" yaml:"role"`
 }
 
 // OIDCConfig Absent when no identity provider is configured, rather than present
@@ -2483,6 +2510,15 @@ type UpdateChannelRequest struct {
 // UpdateChannelRequestReplyMode The run's answer alone, or each of its steps and then the answer
 type UpdateChannelRequestReplyMode string
 
+// UpdateMemberRequest At least one of `role` and `name`.
+type UpdateMemberRequest struct {
+	// Name A channel user's only; a user who logs in has their identity provider's.
+	Name *string `json:"name,omitempty" yaml:"name,omitempty"`
+
+	// Role Examples: member
+	Role *string `json:"role,omitempty" yaml:"role,omitempty"`
+}
+
 // User defines model for User.
 type User struct {
 	// Email Absent when the provider released none
@@ -2898,6 +2934,9 @@ type UpdateMCPServerJSONRequestBody = MCPServerRequest
 
 // AddTeamMemberJSONRequestBody defines body for AddTeamMember for application/json ContentType.
 type AddTeamMemberJSONRequestBody = AddMemberRequest
+
+// UpdateTeamMemberJSONRequestBody defines body for UpdateTeamMember for application/json ContentType.
+type UpdateTeamMemberJSONRequestBody = UpdateMemberRequest
 
 // ApplyProposalJSONRequestBody defines body for ApplyProposal for application/json ContentType.
 type ApplyProposalJSONRequestBody = ProposalApply
@@ -3519,6 +3558,15 @@ type ClientInterface interface {
 	// Approving somebody already approved moves them to the new user, so
 	// correcting a mistake is one call rather than a remove and an add.
 	//
+	// In place of `user_id`, `new` lets the sender in as someone new: a user
+	// of their own that nobody logs in as, added to this team with
+	// `new.role`, and named `new.name`, else the name they gave while
+	// waiting, else their ref. The caller must hold every permission of
+	// that role, and cover whoever the ref is bound to now. Approving the
+	// same sender as someone new again finds the same user. A channel user
+	// left speaking as no sender, because their sender moved to someone
+	// else or was removed, is deleted.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
@@ -3549,6 +3597,15 @@ type ClientInterface interface {
 	//
 	// Approving somebody already approved moves them to the new user, so
 	// correcting a mistake is one call rather than a remove and an add.
+	//
+	// In place of `user_id`, `new` lets the sender in as someone new: a user
+	// of their own that nobody logs in as, added to this team with
+	// `new.role`, and named `new.name`, else the name they gave while
+	// waiting, else their ref. The caller must hold every permission of
+	// that role, and cover whoever the ref is bound to now. Approving the
+	// same sender as someone new again finds the same user. A channel user
+	// left speaking as no sender, because their sender moved to someone
+	// else or was removed, is deleted.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -3804,9 +3861,34 @@ type ClientInterface interface {
 	//
 	// Requires `membership:write` in this team. Removing someone who is not a
 	// member succeeds: the caller asked for a state, and that state holds.
+	// A channel user, who exists for this team alone, is deleted.
 	//
 	// Corresponds with DELETE /teams/{id}/members/{userID} (the `RemoveTeamMember` operationId).
 	RemoveTeamMember(ctx context.Context, id TeamID, userID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateTeamMemberWithBody Change a member's role, or a channel user's name
+	//
+	// Requires `membership:write` in this team. The change is in place: the
+	// member keeps every sender that speaks as them. The team's last admin
+	// keeps their role (409), so a team is never left with nobody who can
+	// manage it. A name may be set on a channel user only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /teams/{id}/members/{userID} (the `UpdateTeamMember` operationId).
+	UpdateTeamMemberWithBody(ctx context.Context, id TeamID, userID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateTeamMember Change a member's role, or a channel user's name
+	//
+	// Requires `membership:write` in this team. The change is in place: the
+	// member keeps every sender that speaks as them. The team's last admin
+	// keeps their role (409), so a team is never left with nobody who can
+	// manage it. A name may be set on a channel user only.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /teams/{id}/members/{userID} (the `UpdateTeamMember` operationId).
+	UpdateTeamMember(ctx context.Context, id TeamID, userID openapi_types.UUID, body UpdateTeamMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetTeamPermissions What the caller may do in a team
 	//
@@ -5347,6 +5429,15 @@ func (c *Client) ListChannelSenders(ctx context.Context, id TeamID, channelID Ch
 // Approving somebody already approved moves them to the new user, so
 // correcting a mistake is one call rather than a remove and an add.
 //
+// In place of `user_id`, `new` lets the sender in as someone new: a user
+// of their own that nobody logs in as, added to this team with
+// `new.role`, and named `new.name`, else the name they gave while
+// waiting, else their ref. The caller must hold every permission of
+// that role, and cover whoever the ref is bound to now. Approving the
+// same sender as someone new again finds the same user. A channel user
+// left speaking as no sender, because their sender moved to someone
+// else or was removed, is deleted.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
@@ -5387,6 +5478,15 @@ func (c *Client) ApproveChannelSenderWithBody(ctx context.Context, id TeamID, ch
 //
 // Approving somebody already approved moves them to the new user, so
 // correcting a mistake is one call rather than a remove and an add.
+//
+// In place of `user_id`, `new` lets the sender in as someone new: a user
+// of their own that nobody logs in as, added to this team with
+// `new.role`, and named `new.name`, else the name they gave while
+// waiting, else their ref. The caller must hold every permission of
+// that role, and cover whoever the ref is bound to now. Approving the
+// same sender as someone new again finds the same user. A channel user
+// left speaking as no sender, because their sender moved to someone
+// else or was removed, is deleted.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -5832,10 +5932,55 @@ func (c *Client) AddTeamMember(ctx context.Context, id TeamID, body AddTeamMembe
 //
 // Requires `membership:write` in this team. Removing someone who is not a
 // member succeeds: the caller asked for a state, and that state holds.
+// A channel user, who exists for this team alone, is deleted.
 //
 // Corresponds with DELETE /teams/{id}/members/{userID} (the `RemoveTeamMember` operationId).
 func (c *Client) RemoveTeamMember(ctx context.Context, id TeamID, userID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRemoveTeamMemberRequest(c.Server, id, userID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateTeamMemberWithBody Change a member's role, or a channel user's name
+//
+// Requires `membership:write` in this team. The change is in place: the
+// member keeps every sender that speaks as them. The team's last admin
+// keeps their role (409), so a team is never left with nobody who can
+// manage it. A name may be set on a channel user only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /teams/{id}/members/{userID} (the `UpdateTeamMember` operationId).
+func (c *Client) UpdateTeamMemberWithBody(ctx context.Context, id TeamID, userID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateTeamMemberRequestWithBody(c.Server, id, userID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateTeamMember Change a member's role, or a channel user's name
+//
+// Requires `membership:write` in this team. The change is in place: the
+// member keeps every sender that speaks as them. The team's last admin
+// keeps their role (409), so a team is never left with nobody who can
+// manage it. A name may be set on a channel user only.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /teams/{id}/members/{userID} (the `UpdateTeamMember` operationId).
+func (c *Client) UpdateTeamMember(ctx context.Context, id TeamID, userID openapi_types.UUID, body UpdateTeamMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateTeamMemberRequest(c.Server, id, userID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8979,6 +9124,60 @@ func NewRemoveTeamMemberRequest(server string, id TeamID, userID openapi_types.U
 	return req, nil
 }
 
+// NewUpdateTeamMemberRequest calls the generic UpdateTeamMember builder with application/json body
+func NewUpdateTeamMemberRequest(server string, id TeamID, userID openapi_types.UUID, body UpdateTeamMemberJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateTeamMemberRequestWithBody(server, id, userID, "application/json", bodyReader)
+}
+
+// NewUpdateTeamMemberRequestWithBody constructs an http.Request for the UpdateTeamMember method, with any body, and a specified content type
+func NewUpdateTeamMemberRequestWithBody(server string, id TeamID, userID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "userID", userID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/members/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetTeamPermissionsRequest constructs an http.Request for the GetTeamPermissions method
 func NewGetTeamPermissionsRequest(server string, id TeamID) (*http.Request, error) {
 	var err error
@@ -11432,6 +11631,15 @@ type ClientWithResponsesInterface interface {
 	// Approving somebody already approved moves them to the new user, so
 	// correcting a mistake is one call rather than a remove and an add.
 	//
+	// In place of `user_id`, `new` lets the sender in as someone new: a user
+	// of their own that nobody logs in as, added to this team with
+	// `new.role`, and named `new.name`, else the name they gave while
+	// waiting, else their ref. The caller must hold every permission of
+	// that role, and cover whoever the ref is bound to now. Approving the
+	// same sender as someone new again finds the same user. A channel user
+	// left speaking as no sender, because their sender moved to someone
+	// else or was removed, is deleted.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
@@ -11462,6 +11670,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Approving somebody already approved moves them to the new user, so
 	// correcting a mistake is one call rather than a remove and an add.
+	//
+	// In place of `user_id`, `new` lets the sender in as someone new: a user
+	// of their own that nobody logs in as, added to this team with
+	// `new.role`, and named `new.name`, else the name they gave while
+	// waiting, else their ref. The caller must hold every permission of
+	// that role, and cover whoever the ref is bound to now. Approving the
+	// same sender as someone new again finds the same user. A channel user
+	// left speaking as no sender, because their sender moved to someone
+	// else or was removed, is deleted.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11737,11 +11954,36 @@ type ClientWithResponsesInterface interface {
 	//
 	// Requires `membership:write` in this team. Removing someone who is not a
 	// member succeeds: the caller asked for a state, and that state holds.
+	// A channel user, who exists for this team alone, is deleted.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /teams/{id}/members/{userID} (the `RemoveTeamMember` operationId).
 	RemoveTeamMemberWithResponse(ctx context.Context, id TeamID, userID openapi_types.UUID, reqEditors ...RequestEditorFn) (*RemoveTeamMemberResponse, error)
+
+	// UpdateTeamMemberWithBodyWithResponse Change a member's role, or a channel user's name
+	//
+	// Requires `membership:write` in this team. The change is in place: the
+	// member keeps every sender that speaks as them. The team's last admin
+	// keeps their role (409), so a team is never left with nobody who can
+	// manage it. A name may be set on a channel user only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /teams/{id}/members/{userID} (the `UpdateTeamMember` operationId).
+	UpdateTeamMemberWithBodyWithResponse(ctx context.Context, id TeamID, userID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateTeamMemberResponse, error)
+
+	// UpdateTeamMemberWithResponse Change a member's role, or a channel user's name
+	//
+	// Requires `membership:write` in this team. The change is in place: the
+	// member keeps every sender that speaks as them. The team's last admin
+	// keeps their role (409), so a team is never left with nobody who can
+	// manage it. A name may be set on a channel user only.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /teams/{id}/members/{userID} (the `UpdateTeamMember` operationId).
+	UpdateTeamMemberWithResponse(ctx context.Context, id TeamID, userID openapi_types.UUID, body UpdateTeamMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateTeamMemberResponse, error)
 
 	// GetTeamPermissionsWithResponse What the caller may do in a team
 	//
@@ -14294,6 +14536,47 @@ func (r RemoveTeamMemberResponse) ContentType() string {
 	return ""
 }
 
+// UpdateTeamMemberResponse401Headers the declared response headers of an HTTP 401 response for UpdateTeamMember
+type UpdateTeamMemberResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type UpdateTeamMemberResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *UpdateTeamMemberResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateTeamMemberResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateTeamMemberResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateTeamMemberResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateTeamMemberResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetTeamPermissionsResponse401Headers the declared response headers of an HTTP 401 response for GetTeamPermissions
 type GetTeamPermissionsResponse401Headers struct {
 	WWWAuthenticate *string
@@ -16628,6 +16911,15 @@ func (c *ClientWithResponses) ListChannelSendersWithResponse(ctx context.Context
 // Approving somebody already approved moves them to the new user, so
 // correcting a mistake is one call rather than a remove and an add.
 //
+// In place of `user_id`, `new` lets the sender in as someone new: a user
+// of their own that nobody logs in as, added to this team with
+// `new.role`, and named `new.name`, else the name they gave while
+// waiting, else their ref. The caller must hold every permission of
+// that role, and cover whoever the ref is bound to now. Approving the
+// same sender as someone new again finds the same user. A channel user
+// left speaking as no sender, because their sender moved to someone
+// else or was removed, is deleted.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /teams/{id}/channels/{channelID}/senders (the `ApproveChannelSender` operationId).
@@ -16664,6 +16956,15 @@ func (c *ClientWithResponses) ApproveChannelSenderWithBodyWithResponse(ctx conte
 //
 // Approving somebody already approved moves them to the new user, so
 // correcting a mistake is one call rather than a remove and an add.
+//
+// In place of `user_id`, `new` lets the sender in as someone new: a user
+// of their own that nobody logs in as, added to this team with
+// `new.role`, and named `new.name`, else the name they gave while
+// waiting, else their ref. The caller must hold every permission of
+// that role, and cover whoever the ref is bound to now. Approving the
+// same sender as someone new again finds the same user. A channel user
+// left speaking as no sender, because their sender moved to someone
+// else or was removed, is deleted.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -17053,6 +17354,7 @@ func (c *ClientWithResponses) AddTeamMemberWithResponse(ctx context.Context, id 
 //
 // Requires `membership:write` in this team. Removing someone who is not a
 // member succeeds: the caller asked for a state, and that state holds.
+// A channel user, who exists for this team alone, is deleted.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -17063,6 +17365,42 @@ func (c *ClientWithResponses) RemoveTeamMemberWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseRemoveTeamMemberResponse(rsp)
+}
+
+// UpdateTeamMemberWithBodyWithResponse Change a member's role, or a channel user's name
+//
+// Requires `membership:write` in this team. The change is in place: the
+// member keeps every sender that speaks as them. The team's last admin
+// keeps their role (409), so a team is never left with nobody who can
+// manage it. A name may be set on a channel user only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /teams/{id}/members/{userID} (the `UpdateTeamMember` operationId).
+func (c *ClientWithResponses) UpdateTeamMemberWithBodyWithResponse(ctx context.Context, id TeamID, userID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateTeamMemberResponse, error) {
+	rsp, err := c.UpdateTeamMemberWithBody(ctx, id, userID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateTeamMemberResponse(rsp)
+}
+
+// UpdateTeamMemberWithResponse Change a member's role, or a channel user's name
+//
+// Requires `membership:write` in this team. The change is in place: the
+// member keeps every sender that speaks as them. The team's last admin
+// keeps their role (409), so a team is never left with nobody who can
+// manage it. A name may be set on a channel user only.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /teams/{id}/members/{userID} (the `UpdateTeamMember` operationId).
+func (c *ClientWithResponses) UpdateTeamMemberWithResponse(ctx context.Context, id TeamID, userID openapi_types.UUID, body UpdateTeamMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateTeamMemberResponse, error) {
+	rsp, err := c.UpdateTeamMember(ctx, id, userID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateTeamMemberResponse(rsp)
 }
 
 // GetTeamPermissionsWithResponse What the caller may do in a team
@@ -19438,6 +19776,35 @@ func ParseRemoveTeamMemberResponse(rsp *http.Response) (*RemoveTeamMemberRespons
 	switch {
 	case rsp.StatusCode == 401:
 		var headers RemoveTeamMemberResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUpdateTeamMemberResponse parses an HTTP response from a UpdateTeamMemberWithResponse call
+func ParseUpdateTeamMemberResponse(rsp *http.Response) (*UpdateTeamMemberResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateTeamMemberResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers UpdateTeamMemberResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

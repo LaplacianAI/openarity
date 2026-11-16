@@ -71,7 +71,7 @@ func (q *Queries) FindUsersBySubject(ctx context.Context, arg FindUsersBySubject
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, issuer, subject, email, created_at, updated_at, is_super_admin FROM users WHERE id = $1
+SELECT id, issuer, subject, email, created_at, updated_at, is_super_admin, name FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
@@ -85,6 +85,7 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsSuperAdmin,
+		&i.Name,
 	)
 	return i, err
 }
@@ -187,7 +188,7 @@ func (q *Queries) LockFirstUserBootstrap(ctx context.Context, key int64) error {
 const promoteToSuperAdmin = `-- name: PromoteToSuperAdmin :one
 UPDATE users SET is_super_admin = true, updated_at = now()
 WHERE id = $1
-RETURNING id, issuer, subject, email, created_at, updated_at, is_super_admin
+RETURNING id, issuer, subject, email, created_at, updated_at, is_super_admin, name
 `
 
 func (q *Queries) PromoteToSuperAdmin(ctx context.Context, id uuid.UUID) (User, error) {
@@ -201,6 +202,7 @@ func (q *Queries) PromoteToSuperAdmin(ctx context.Context, id uuid.UUID) (User, 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsSuperAdmin,
+		&i.Name,
 	)
 	return i, err
 }
@@ -211,7 +213,7 @@ VALUES ($1, $2, $3)
 ON CONFLICT (issuer, subject) DO UPDATE
 SET email      = EXCLUDED.email,
     updated_at = now()
-RETURNING id, issuer, subject, email, created_at, updated_at, is_super_admin
+RETURNING id, issuer, subject, email, created_at, updated_at, is_super_admin, name
 `
 
 type UpsertUserParams struct {
@@ -231,6 +233,7 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsSuperAdmin,
+		&i.Name,
 	)
 	return i, err
 }

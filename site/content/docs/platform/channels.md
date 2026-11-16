@@ -142,15 +142,37 @@ always; in a group, by naming it, replying to it or sending it a command), and
 quotes their message. In a group it tags them by name, so nobody else takes it
 as theirs. Their message is still not stored.
 
-A person with the right to approve binds the sender to a member of the team.
-From then on the sender's messages are theirs, and run as that member.
+A person with the right to approve says who the sender is, in one of two ways:
+
+- **A member of the team.** The sender's messages are that member's, and run
+  as them. Right for a colleague who also uses the dashboard.
+- **Someone new, with a role.** The brain makes the sender a user of their own,
+  who never logs in: they exist only through this channel. Right for a friend
+  messaging your own number. `guest` is the usual role: a guest talks to the
+  team's agents and changes nothing in the team.
 
 ```sh
 oa channels senders pending platform support
 oa channels senders approve platform support u-17 erik@example.com
+oa channels senders approve platform support u-18 --new --name Ravi   # a guest
 oa channels senders list platform support
 oa channels senders remove platform support u-17
 ```
+
+An approval can be changed without removing it. On the dashboard, **Edit**
+beside a sender under **Let in**; from a terminal:
+
+```sh
+oa channels senders update platform support u-18 --role member    # in place
+oa channels senders update platform support u-18 --user erik@example.com
+oa teams members update platform erik@example.com --role approver
+```
+
+Moving a sender to another member is approving them again, with the same
+checks. A role, or a new name for someone let in as new, is a change to the
+user they speak as: it needs `membership:write`, and the team's last admin
+keeps their role. Moving a sender off a user of their own, or removing it,
+deletes that user, with anything they own; the dashboard says so first.
 
 When they are let in, the bot says so in the same place and asks them to send
 their message again, since the first was never kept. A sender who was never
@@ -168,15 +190,17 @@ a block: their next message queues them again.
 Who may do what:
 
 - **See the queue and the approved list**: `channel:read`.
-- **Approve or remove a sender**: `sender:approve`. The `admin` and `approver`
-  roles hold it; `member` does not.
+- **Approve, move or remove a sender**: `sender:approve`. The `admin` and
+  `approver` roles hold it; `member` and `guest` do not.
+- **Change a role, or a name**: `membership:write`. Only `admin` holds it.
 - **Connect, change or disconnect a channel**: `channel:write`. Only `admin`
   holds it, so an approver can let people in without rewiring a channel or
   touching its secret.
 
 The person approving must also hold every permission of the member they bind
-the sender to, and of whoever the sender is bound to now. An approver can let a
-stranger speak as a member or as another approver, never as an admin.
+the sender to, or of the role they give someone new, and of whoever the sender
+is bound to now. An approver can let a stranger speak as a member or as another
+approver, or in as a guest or a member, never as an admin.
 
 ## When a message is answered
 

@@ -378,6 +378,7 @@ type User struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	IsSuperAdmin bool
+	Name         *string
 }
 
 type WhatsappAccount struct {
