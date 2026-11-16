@@ -110,14 +110,16 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"every process on the machine through ps, and they land in shell\n" +
 			"history.\n\n" +
 			"--answers-in says where the channel answers: everywhere (the default:\n" +
-			"direct chats, and groups where it is mentioned), groups, or direct.\n" +
-			"For a WhatsApp number that is also your own, --answers-in groups\n" +
-			"--no-notify-strangers leaves your direct chats alone and tells nobody\n" +
-			"anything.\n\n" +
+			"direct chats, and groups where it is mentioned), groups, or direct.\n\n" +
 			"--trigger-word, WhatsApp only, is the word a message must hold to ask\n" +
 			"the channel, such as @Fduv: in a group or a direct chat alike, and a\n" +
 			"mention of the number no longer does. On your own number you call it\n" +
-			"from any chat by typing the word.",
+			"from any chat by typing the word. For a WhatsApp number that is also\n" +
+			"your own:\n\n" +
+			"    oa channels create platform mine --provider whatsapp \\\n" +
+			"        --trigger-word @Fduv --no-notify-strangers\n\n" +
+			"answers only a message holding the word, and tells nobody waiting\n" +
+			"anything.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.TrimSpace(args[1])
