@@ -79,6 +79,20 @@ So three things are kept beside it, without a model:
 A call and its results always stay together: the part kept word for word
 never starts on a tool result.
 
+A message you mark `Pinned` stays a message of its own. When a summary folds
+it, the latest pinned message is sent again straight after the summary, so a
+turn's opening message, with what it asked and when, is still in view:
+
+```go
+msgs = append(msgs, agent.Message{
+	Role:    agent.RoleUser,
+	Content: []agent.Content{{Type: agent.ContentText, Text: "Now: Tuesday, 17 November 2026, 04:30 UTC.\n\n" + question}},
+	Pinned:  true,
+})
+```
+
+The pin is saved with the message, so a resumed run keeps it too.
+
 ## Large results
 
 A tool result over 100 KiB is shown as its first 8 KiB, its last 4 KiB, and a

@@ -169,7 +169,7 @@ func TestADelegateKeepsATranscriptOfItsOwn(t *testing.T) {
 // the clock's zone.
 var fixedNow = time.Date(2026, time.November, 16, 23, 30, 0, 0, time.FixedZone("EST", -5*3600))
 
-const wantToday = "Today is Tuesday, 17 November 2026 (UTC)."
+const wantToday = "Now: Tuesday, 17 November 2026, 04:30 UTC."
 
 // dated is a run's first message: the date it was asked, then its input.
 func dated(input string) string { return wantToday + "\n\n" + input }
@@ -183,11 +183,11 @@ func TestEveryRunIsToldTodaysDateInItsMessage(t *testing.T) {
 	f.mustExecute(t)
 
 	first := f.model.requests()[0]
-	if got := first.Messages[len(first.Messages)-1].Text(); got != dated(runInput) {
-		t.Errorf("the run's message is %q, want %q", got, dated(runInput))
+	if got := first.Messages[len(first.Messages)-1]; got.Text() != dated(runInput) || !got.Pinned {
+		t.Errorf("the run's message is %q, pinned %v; want %q, pinned so compaction keeps it", got.Text(), got.Pinned, dated(runInput))
 	}
 	for _, c := range first.System {
-		if strings.Contains(c.Text, "Today is") {
+		if strings.Contains(c.Text, "Now: ") {
 			t.Errorf("the system prompt holds the date, %q: a block that changes daily ends the cached prefix", c.Text)
 		}
 	}

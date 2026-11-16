@@ -74,7 +74,12 @@ func (e *Executor) firstMessage(ctx context.Context, row db.Run) (agent.Message,
 			return agent.Message{}, err
 		}
 	}
-	msg := agent.Message{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: today(e.now()) + "\n\n" + input}}}
+	// Pinned, so a compaction that folds this turn still shows when it was asked.
+	msg := agent.Message{
+		Role:    agent.RoleUser,
+		Content: []agent.Content{{Type: agent.ContentText, Text: today(e.now()) + "\n\n" + input}},
+		Pinned:  true,
+	}
 	if row.MessageID != nil {
 		files, err := e.store.ListAttachmentsByMessage(ctx, *row.MessageID)
 		if err != nil {
@@ -119,5 +124,5 @@ func closeCalls(msgs []agent.Message) []agent.Message {
 }
 
 func today(now time.Time) string {
-	return "Today is " + now.UTC().Format("Monday, 2 January 2006") + " (UTC)."
+	return "Now: " + now.UTC().Format("Monday, 2 January 2006, 15:04") + " UTC."
 }
