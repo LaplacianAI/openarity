@@ -334,40 +334,40 @@ func TestTheEvidenceAnswersThePlansToolCall(t *testing.T) {
 	}
 }
 
-// A planning turn that answered without planning leaves nothing to execute,
-// and no observation to recover from.
-func TestAPlanningTurnWithNoPlanIsRefused(t *testing.T) {
+// A planning turn that finds nothing to plan, as a greeting has, is answered
+// as after a plan with no evidence: no tool runs, and the run does not fail.
+func TestNothingToPlanIsAnsweredWithoutTools(t *testing.T) {
 	t.Parallel()
 
-	model := &fakeModel{turns: []turn{answered(text("I would rather just answer"))}}
-
-	_, err := ReWOO().Run(t.Context(), agent.Input{
-		Spec: rewooSpec(tool("count", "3", nil, nil)), Messages: ask("go"), Model: model,
-	})
-	if !errors.Is(err, ErrNoPlan) {
-		t.Fatalf("err = %v, want ErrNoPlan", err)
+	cases := map[string]turn{
+		"no plan submitted":  answered(text("Hi! How can I help?")),
+		"a plan of no steps": submitted(`[]`),
 	}
-	// And it says the plan is missing, not that some JSON would not parse.
-	// Without its own check the empty call's nil arguments fail to unmarshal
-	// and reach the same sentinel by accident, with an error naming neither
-	// the plan nor the turn that should have carried it.
-	if strings.Contains(err.Error(), "JSON") {
-		t.Errorf("err = %v, want it to report a missing plan rather than a parse failure", err)
-	}
-	if len(model.calls) != 1 {
-		t.Error("the run continued past a turn with no plan")
-	}
-}
+	for name, planning := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ran := false
+			count := tool("count", "3", nil, &ran)
+			model := &fakeModel{turns: []turn{planning, answered(text("Hello."))}}
 
-func TestAnEmptyPlanIsRefused(t *testing.T) {
-	t.Parallel()
-
-	model := &fakeModel{turns: []turn{submitted(`[]`)}}
-	_, err := ReWOO().Run(t.Context(), agent.Input{
-		Spec: rewooSpec(tool("count", "3", nil, nil)), Messages: ask("go"), Model: model,
-	})
-	if !errors.Is(err, ErrEmptyPlan) {
-		t.Errorf("err = %v, want ErrEmptyPlan", err)
+			result, err := ReWOO().Run(t.Context(), agent.Input{
+				Spec: rewooSpec(count), Messages: ask("Hi"), Model: model,
+			})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if result.Output != "Hello." || ran || len(model.calls) != 2 {
+				t.Errorf("output %q, tool ran %v, model called %d; want the solver's answer, no tool, two calls",
+					result.Output, ran, len(model.calls))
+			}
+			// The solver sees the conversation, not a planning turn that was
+			// never shown: an unanswered tool call there is a request refused.
+			for _, m := range model.calls[1].Messages {
+				if len(m.ToolCalls) > 0 {
+					t.Errorf("the solver was sent a tool call: %+v", m)
+				}
+			}
+		})
 	}
 }
 
