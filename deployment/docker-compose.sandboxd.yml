@@ -1,0 +1,120 @@
+# sandboxd, the optional self-hosted sandbox provider: it runs a command MCP
+# server (npx, uvx) in a hardened container of its own, a room, and the brain
+# reaches the server through it. Nothing here is needed unless a team chooses
+# sandboxd as its sandbox provider.
+#
+#   cd deployment
+#   cp .env.example .env                        # then fill in the sandboxd block below
+#   docker compose -f docker-compose.yml -f docker-compose.sandboxd.yml up -d
+#
+# Variables, in deployment/.env:
+#
+#   SANDBOXD_TOKEN=<a long random string>   # what the brain sends; required
+#   SANDBOXD_UID=1000                       # the user that owns the daemon's socket
+#   SANDBOXD_DOCKER_SOCKET=/run/user/1000/docker.sock   # the rootless daemon's socket
+#   SANDBOXD_MEMORY_BUDGET=3221225472       # bytes, across every room; default 3 GiB
+#   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.242/32
+#
+# ROOTLESS DOCKER, ONCE, ON THE HOST
+#
+# sandboxd makes containers from what a team's server asks for, so whoever can
+# reach the daemon's socket can run containers on it. Point it at a rootless
+# Docker daemon, never the system one: in a rootless daemon, root inside a
+# container is an unprivileged user on the host, so an escape from a room
+# lands in an account with no more rights than the one running the daemon.
+# sandboxd already drops every capability, runs rooms as 65534 on a read-only
+# root with no new privileges; a rootless daemon is what makes a bug in that
+# list survivable. Setup, as the user that will own it (not root):
+#
+#   sudo apt-get install -y docker-ce-rootless-extras uidmap
+#   dockerd-rootless-setuptool.sh install
+#   systemctl --user enable --now docker
+#   sudo loginctl enable-linger "$USER"      # keep it running after logout
+#   echo "$XDG_RUNTIME_DIR/docker.sock"      # SANDBOXD_DOCKER_SOCKET
+#
+# Run the whole stack on that daemon, not just this file:
+#
+#   DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock docker compose -f ... up -d
+#
+# That is required, not a preference. sandboxd's own container has to join
+# each room's network (that is how a room reaches the one thing it may dial,
+# sandboxd's egress guard), and a container can only join a network of the
+# daemon it runs on. Rootless daemons cannot bind ports below 1024 and have
+# slower networking than the system one; the stack uses neither.
+#
+# The brain refuses to dial a private address unless MCP_PRIVATE_NETWORKS
+# names it, and a container's address is private. Naming the compose network
+# would also open Postgres and OpenBao to any URL a team saves, so sandboxd
+# sits on a network of its own at a fixed address, shared only with the brain
+# and the worker, and only that address is named:
+#
+#   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.242/32
+#
+# The worker dials a room's shim (that is where the agents run) and the brain
+# dials it for discovery, so both are on the network. The brain reaches
+# sandboxd at http://sandboxd:9090 with SANDBOXD_TOKEN, and is told each
+# room's proxy address by sandboxd itself.
+#
+# Memory is budgeted: a room gets 256 MiB, and a create that would take the
+# running rooms past SANDBOXD_MEMORY_BUDGET is refused with 503. Rooms are
+# removed by the brain; if sandboxd is restarted its rooms keep running, and
+# it finds them again from the daemon's labels.
+#
+# A room can reach sandboxd's port on its own network, as it can reach
+# nothing else; every route needs a token a room does not have.
+
+name: openarity
+
+services:
+  sandboxd:
+    # Built from apps/sandbox; the `room` target of the same Dockerfile makes a
+    # room image with Node and the shim in it.
+    build:
+      context: ../apps/sandbox
+      target: sandboxd
+    image: openarity/sandboxd:latest
+    # The user that owns the daemon's socket. Not root: the socket is the
+    # only privilege sandboxd has, and it is the rootless daemon's.
+    user: "${SANDBOXD_UID:-1000}"
+    environment:
+      SANDBOXD_TOKEN: ${SANDBOXD_TOKEN:?set SANDBOXD_TOKEN in deployment/.env}
+      SANDBOXD_PUBLIC_URL: http://sandboxd:9090
+      SANDBOXD_DOCKER_SOCKET: /var/run/docker.sock
+      SANDBOXD_MEMORY_BUDGET: ${SANDBOXD_MEMORY_BUDGET:-3221225472}
+      # sandboxd joins every room's network as this container.
+      SANDBOXD_CONTAINER: openarity-sandboxd
+    container_name: openarity-sandboxd
+    volumes:
+      - ${SANDBOXD_DOCKER_SOCKET:?set SANDBOXD_DOCKER_SOCKET in deployment/.env}:/var/run/docker.sock
+    networks:
+      sandbox:
+        ipv4_address: 172.31.255.242
+    # No published port: only the brain and the worker reach it, on `sandbox`.
+    # distroless has no shell or wget, so the probe is the binary itself being
+    # up; compose restarts it if it exits, and a bad socket makes it exit.
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  brain:
+    networks:
+      - default
+      - sandbox
+
+  worker:
+    networks:
+      - default
+      - sandbox
+
+networks:
+  # A /29 holds six addresses: the gateway, sandboxd, the brain and the
+  # worker, with room for either to be recreated without waiting for its old
+  # address. If it collides with a network on this machine, change both the
+  # subnet and sandboxd's address, and the /32 in MCP_PRIVATE_NETWORKS with
+  # them. It is next to the SearXNG network, 172.31.255.248/29, so the two
+  # overlays can run together.
+  sandbox:
+    ipam:
+      config:
+        - subnet: 172.31.255.240/29

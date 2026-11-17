@@ -1,0 +1,18 @@
+# What the brain and the worker dial. ClusterIP only: sandboxd is never
+# exposed outside the cluster, and the brain's MCP_PRIVATE_NETWORKS has to
+# name this Service's address, which is private (README).
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandboxd
+  labels:
+    app.kubernetes.io/name: sandboxd
+    app.kubernetes.io/part-of: openarity
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: sandboxd
+  ports:
+    - name: api
+      port: 9090
+      targetPort: api

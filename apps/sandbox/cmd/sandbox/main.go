@@ -17,6 +17,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LaplacianAI/openarity/apps/sandbox/internal/api"
+	"github.com/LaplacianAI/openarity/apps/sandbox/internal/docker"
+	"github.com/LaplacianAI/openarity/apps/sandbox/internal/guard"
+	"github.com/LaplacianAI/openarity/apps/sandbox/internal/rooms"
 	"github.com/LaplacianAI/openarity/apps/sandbox/internal/shim"
 )
 
@@ -45,6 +49,8 @@ func run(ctx context.Context, args []string, env func(string) string, stderr io.
 	switch cmd.role {
 	case roleShim:
 		return runShim(ctx, cmd, logger, stderr)
+	case roleServe:
+		return runServe(ctx, cmd, logger)
 	default:
 		return fmt.Errorf("unknown role %q", cmd.role)
 	}
@@ -88,6 +94,47 @@ func runShim(ctx context.Context, cmd command, logger *slog.Logger, stderr io.Wr
 	defer cancel()
 	if err := srv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	return end
+}
+
+// runServe is sandboxd: rooms on the daemon at the socket, until told to stop.
+// Rooms outlive it; the next start finds them again from the daemon.
+func runServe(ctx context.Context, cmd command, logger *slog.Logger) error {
+	s := cmd.serve
+	engine := docker.New(s.socket)
+	if err := engine.Ping(ctx); err != nil {
+		return fmt.Errorf("the Docker daemon at %s: %w", s.socket, err)
+	}
+	g := guard.New(logger)
+	svc := rooms.New(engine, g, logger, s.limits, s.self, []byte(s.token))
+	if err := svc.Reconcile(ctx); err != nil {
+		return fmt.Errorf("finding the rooms again: %w", err)
+	}
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cmd.listen)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{
+		Handler:           api.New(svc, s.token, s.publicURL, logger),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(l) }()
+	logger.Info("sandboxd serving", "addr", l.Addr().String())
+
+	var end error
+	select {
+	case <-ctx.Done():
+	case end = <-served:
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	if errors.Is(end, http.ErrServerClosed) {
+		end = nil
 	}
 	return end
 }

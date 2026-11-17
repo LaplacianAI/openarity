@@ -61,7 +61,7 @@ func TestParse(t *testing.T) {
 		says string
 	}{
 		{"no role", nil, withToken, "usage"},
-		{"an unknown role", []string{"serve"}, withToken, "unknown role"},
+		{"an unknown role", []string{"launch"}, withToken, "unknown role"},
 		{"no command", []string{"shim"}, withToken, "command after --"},
 		{"an unknown flag", []string{"shim", "--nope", "--", "x"}, withToken, "nope"},
 		{"no token", []string{"shim", "--", "x"}, env(nil), "SHIM_TOKEN"},

@@ -1,0 +1,115 @@
+# sandboxd on Kubernetes: one pod that runs a rootless Docker daemon, and
+# sandboxd as a container on that daemon. Read README.md first: it says what
+# this needs from the cluster and what it costs in isolation.
+#
+# Replicas: 1, and Recreate. A room lives on its pod's daemon, so a second
+# replica would not see the first one's rooms, and a rolling update would
+# briefly run two daemons on one budget.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandboxd
+  labels:
+    app.kubernetes.io/name: sandboxd
+    app.kubernetes.io/part-of: openarity
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sandboxd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sandboxd
+        app.kubernetes.io/part-of: openarity
+    spec:
+      # The brain's pods reach sandboxd through the Service; nothing else
+      # should. Add a NetworkPolicy that admits only them (README).
+      automountServiceAccountToken: false
+      containers:
+        - name: dind
+          # The rootless variant of Docker's own image, pinned. It runs as
+          # uid 1000, and its daemon runs inside a user namespace.
+          image: docker:27.5.1-dind-rootless
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              # Passing dockerd by name keeps the image's entrypoint from
+              # adding a TCP listener: the daemon listens on its unix socket
+              # only, so nothing on the pod network can reach it.
+              dockerd-entrypoint.sh dockerd --host="unix://${XDG_RUNTIME_DIR}/docker.sock" &
+              dockerd_pid=$!
+              until docker info >/dev/null 2>&1; do
+                kill -0 "$dockerd_pid" || exit 1
+                sleep 1
+              done
+              # sandboxd is a container on this daemon, because it has to join
+              # each room's network and a container can only join the networks
+              # of the daemon it runs on. root inside it is this pod's uid 1000
+              # on the outside, which owns the socket.
+              docker rm -f sandboxd >/dev/null 2>&1 || true
+              docker run -d --name sandboxd --restart unless-stopped \
+                --user 0 --read-only --cap-drop ALL --security-opt no-new-privileges \
+                -p 9090:9090 \
+                -v "${XDG_RUNTIME_DIR}/docker.sock:/var/run/docker.sock" \
+                -e SANDBOXD_TOKEN \
+                -e SANDBOXD_PUBLIC_URL \
+                -e SANDBOXD_MEMORY_BUDGET \
+                -e SANDBOXD_DOCKER_SOCKET=/var/run/docker.sock \
+                -e SANDBOXD_CONTAINER=sandboxd \
+                "${SANDBOXD_IMAGE}"
+              wait "$dockerd_pid"
+          env:
+            - name: SANDBOXD_IMAGE
+              value: ghcr.io/laplacianai/openarity-sandboxd:latest
+            - name: SANDBOXD_PUBLIC_URL
+              value: http://sandboxd.openarity.svc.cluster.local:9090
+            - name: SANDBOXD_MEMORY_BUDGET
+              value: "3221225472"
+            - name: SANDBOXD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: sandboxd-secrets
+                  key: SANDBOXD_TOKEN
+          ports:
+            - name: api
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: api
+            periodSeconds: 5
+            failureThreshold: 6
+          # The daemon takes a while to start and pull sandboxd's image.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: api
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              # Rooms are 256 MiB each and count against the budget, so the
+              # limit is the budget, the daemon and sandboxd.
+              memory: 4Gi
+          securityContext:
+            # See README.md, "What this needs". Docker's rootless image
+            # cannot start in an unprivileged container: it needs to mount
+            # /proc and create user, mount and network namespaces.
+            privileged: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            # The daemon's images, containers and layers. Lost with the pod:
+            # rooms do not outlive it, and the brain makes new ones.
+            - name: docker-data
+              mountPath: /home/rootless/.local/share/docker
+      volumes:
+        - name: docker-data
+          emptyDir:
+            sizeLimit: 20Gi
