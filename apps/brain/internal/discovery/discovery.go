@@ -25,7 +25,7 @@ const (
 )
 
 var (
-	ErrCommandServer = errors.New("a command server cannot be discovered until agents run in a sandbox")
+	ErrCommandServer = errors.New("the brain does not run command servers: run it behind a stdio-to-HTTP bridge, such as Supergateway, and register the bridge's URL instead")
 	ErrUnusable      = errors.New("the server offers something that cannot be stored")
 )
 

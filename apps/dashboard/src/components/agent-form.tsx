@@ -299,7 +299,7 @@ export function AgentForm({
               // Not created yet, so it has no tools to limit: granted whole.
               isDraftId(p.id) ? null : commandServers.has(p.id) ? (
                 // Granted, but a run starts without it: said on the chip itself.
-                <span className="px-1 text-warning">can't be used yet</span>
+                <span className="px-1 text-warning">not run by the brain</span>
               ) : (
                 <ToolLimit
                   teamId={teamId}
@@ -314,7 +314,8 @@ export function AgentForm({
           />
           {servers.some((p) => commandServers.has(p.id)) ? (
             <p className="mt-1.5 text-xs text-muted-foreground">
-              Command servers can't be used yet. A run of this agent starts without them.
+              The brain does not run command servers, so a run of this agent starts without them.
+              Register each through an HTTP bridge instead.
             </p>
           ) : null}
         </div>

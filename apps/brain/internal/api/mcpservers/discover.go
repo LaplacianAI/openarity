@@ -62,9 +62,10 @@ func (f *Failure) Error() string { return f.Message }
 // server moved meanwhile, and any other error for the brain's.
 func (rf *Refresher) Refresh(ctx context.Context, row db.McpServer) ([]discovery.Tool, error) {
 	tools, err := rf.discoverer.Discover(ctx, row)
-	// A server that signs in and is not signed in was not asked anything:
-	// said as such, and not recorded as a discovery the server failed.
-	if f := signInFailure(err); f != nil {
+	// A server that signs in and is not signed in, or a command server, was
+	// not asked anything: said as such, and not recorded as a discovery the
+	// server failed.
+	if f := notAsked(err); f != nil {
 		return nil, f
 	}
 	if err != nil {
@@ -83,8 +84,10 @@ func (rf *Refresher) Refresh(ctx context.Context, row db.McpServer) ([]discovery
 	return tools, nil
 }
 
-func signInFailure(err error) *Failure {
+func notAsked(err error) *Failure {
 	switch {
+	case errors.Is(err, discovery.ErrCommandServer):
+		return &Failure{discovery.ErrCommandServer.Error(), http.StatusConflict}
 	case errors.Is(err, discovery.ErrNotSignedIn):
 		return &Failure{"the server signs in, and nobody has connected it yet: connect it, and its tools are found then", http.StatusConflict}
 	case errors.Is(err, discovery.ErrNeedsSignIn):
@@ -97,8 +100,6 @@ func signInFailure(err error) *Failure {
 // failure, which is not recorded against the server.
 func (rf *Refresher) failure(row db.McpServer, err error) (f *Failure, ours bool) {
 	switch {
-	case errors.Is(err, discovery.ErrCommandServer):
-		return &Failure{discovery.ErrCommandServer.Error(), http.StatusConflict}, false
 	case errors.Is(err, context.DeadlineExceeded):
 		return &Failure{"the server did not answer in time", http.StatusGatewayTimeout}, false
 	case errors.Is(err, discovery.ErrRefused):

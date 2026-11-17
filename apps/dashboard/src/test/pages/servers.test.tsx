@@ -240,7 +240,9 @@ describe("what may be done", () => {
     await screen.findByRole("button", { name: "files" });
     expect(screen.queryByRole("button", { name: /^discover$/i })).toBeNull();
     // The reason is said where the button would be, not left as a gap.
-    expect(within(rowOf("files")).getByText("Command servers can't be used yet")).toBeVisible();
+    expect(
+      within(rowOf("files")).getByText("Not run by the brain: use an HTTP bridge"),
+    ).toBeVisible();
   });
 
   it("says under its title which servers nobody has asked, when none failed", async () => {

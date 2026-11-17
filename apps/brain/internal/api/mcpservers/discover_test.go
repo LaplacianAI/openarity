@@ -170,7 +170,6 @@ func TestEachDiscoveryFailureHasItsStatus(t *testing.T) {
 		code int
 		says string
 	}{
-		"a command server": {discovery.ErrCommandServer, http.StatusConflict, "sandbox"},
 		"a refused address": {
 			fmt.Errorf("connecting: Post \"https://vault.corp\": %w: 10.2.0.7:443 is not an address discovery may reach", discovery.ErrRefused),
 			http.StatusUnprocessableEntity, "may not reach",
@@ -302,15 +301,20 @@ func TestAFailedWriteRecordsNothing(t *testing.T) {
 	}
 }
 
-func TestACommandServerIsAConflict(t *testing.T) {
+// A command server is never asked anything, so it is told how to be reached
+// instead, and nothing is recorded against it: it did not fail a discovery.
+func TestACommandServerIsToldToUseABridgeAndNotRecorded(t *testing.T) {
 	t.Parallel()
 
 	row := aCommandServer(uuid.New(), "fs")
 	s := newFakeStore(row)
 	code, body := discoverWith(t, s, &fakeDiscoverer{err: discovery.ErrCommandServer}, row)
 
-	if code != http.StatusConflict || !strings.Contains(body, "sandbox") {
-		t.Errorf("status %d, body %q; want 409 naming the sandbox", code, body)
+	if code != http.StatusConflict || !strings.Contains(body, "bridge") {
+		t.Errorf("status %d, body %q; want 409 naming the bridge", code, body)
+	}
+	if len(s.failures) != 0 || s.servers[row.ID].LastDiscoveryError != nil {
+		t.Errorf("recorded %+v; a command server did not fail a discovery", s.failures)
 	}
 }
 

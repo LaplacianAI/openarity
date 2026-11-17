@@ -190,6 +190,8 @@ export function signInOf(s: MCPServer): SignIn | null {
 }
 
 export function discoveryOf(s: MCPServer): Discovery {
+  // The brain does not run a command server, so it is never asked.
+  if (!s.url) return "not discovered";
   if (s.last_discovery_error) return "failed";
   if (s.discovered_at) return "answered";
   return "not discovered";
