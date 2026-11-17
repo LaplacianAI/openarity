@@ -255,3 +255,38 @@ func render(hits []graph.Hit, names map[uuid.UUID]string) (string, error) {
 	b, err := json.Marshal(out)
 	return string(b), err
 }
+
+// SelectTools picks, best first, the names this run calls its MCP tools by
+// for a task: the graph's tool matches within reach that the run holds. It is
+// how a pattern that cannot search midway, ReWOO, plans with fewer than all.
+func SelectTools(deps GraphDeps, team uuid.UUID, reach ReachSource, held catalogue) func(context.Context, string, int) ([]string, error) {
+	return func(ctx context.Context, task string, limit int) ([]string, error) {
+		// The graph tool refuses a longer query; a long message is cut.
+		if r := []rune(task); len(r) > maxQueryRunes {
+			task = string(r[:maxQueryRunes])
+		}
+		scope, err := reach(ctx)
+		if err != nil {
+			return nil, err
+		}
+		vectors, err := deps.Embed.Embed(ctx, []string{task})
+		if err != nil {
+			return nil, fmt.Errorf("embedding the task: %w", err)
+		}
+		hits, err := deps.Search.Search(ctx, team, graph.Search{
+			Vector: vectors[0], Model: deps.Embed.Model(),
+			Kinds: []graph.Kind{graph.KindTool}, Reach: scope, Limit: limit,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("searching the graph: %w", err)
+		}
+
+		names := make([]string, 0, len(hits))
+		for _, h := range hits {
+			if name, ok := held.names[h.ID]; ok && h.Kind == graph.KindTool {
+				names = append(names, name)
+			}
+		}
+		return names, nil
+	}
+}

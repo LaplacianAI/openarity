@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -408,5 +409,74 @@ func TestAServerTheAgentDoesNotHoldIsRefusedNamingThoseItDoes(t *testing.T) {
 	f.held = catalogue{}
 	if _, err := f.invoke(t, `{"query":"issues","server":"slack"}`); err == nil || !strings.Contains(err.Error(), "it holds none") {
 		t.Errorf("err = %v, want it to say the agent holds none", err)
+	}
+}
+
+func (f *graphFixture) selectTools(t *testing.T, task string, limit int) ([]string, error) {
+	t.Helper()
+	sel := SelectTools(GraphDeps{Search: f.search, Embed: f.embed, Store: f.reach}, f.team, agentReach(f.reach, f.team, f.agent), f.held)
+	return sel(t.Context(), task, limit)
+}
+
+// Only tools this run holds are picked, by the name it calls them, in the
+// graph's order: a tool in reach it does not hold, or a skill that shares an
+// id with one, is not a tool it can plan with.
+func TestSelectToolsPicksTheHeldToolsBestFirst(t *testing.T) {
+	f := newGraphFixture()
+	label, list, other := uuid.New(), uuid.New(), uuid.New()
+	f.held = catalogue{names: map[uuid.UUID]string{label: "github__add_label", list: "github__list_issues"}}
+	f.search.hits = []graph.Hit{
+		{Kind: graph.KindTool, ID: label, Score: 0.9},
+		{Kind: graph.KindTool, ID: other, Score: 0.8},
+		{Kind: graph.KindSkill, ID: list, Score: 0.7},
+		{Kind: graph.KindTool, ID: list, Score: 0.6},
+	}
+
+	got, err := f.selectTools(t, "label the open issues", 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "github__add_label,github__list_issues" {
+		t.Errorf("picked %v", got)
+	}
+
+	asked := f.search.asked[0]
+	if len(asked.Kinds) != 1 || asked.Kinds[0] != graph.KindTool || asked.Limit != 15 || asked.Hops != 0 {
+		t.Errorf("searched kinds %v, limit %d, hops %d; want tools only, 15, 0", asked.Kinds, asked.Limit, asked.Hops)
+	}
+	if asked.Model != "embed-model" || !slices.Equal(asked.Reach.Tools, f.reach.tools) || f.search.teams[0] != f.team {
+		t.Errorf("searched %+v in team %s; want the embedder's model, the agent's reach, its team", asked, f.search.teams[0])
+	}
+	if f.embed.texts[0][0] != "label the open issues" {
+		t.Errorf("embedded %q", f.embed.texts[0])
+	}
+}
+
+// A first message longer than the graph tool takes is cut, not refused.
+func TestSelectToolsCutsALongTask(t *testing.T) {
+	f := newGraphFixture()
+	task := strings.Repeat("é", maxQueryRunes+50)
+	if _, err := f.selectTools(t, task, 15); err != nil {
+		t.Fatal(err)
+	}
+	if n := utf8.RuneCountInString(f.embed.texts[0][0]); n != maxQueryRunes {
+		t.Errorf("embedded %d runes, want %d", n, maxQueryRunes)
+	}
+}
+
+// An outage is an error, which the SDK answers by sending every tool.
+func TestSelectToolsReportsAnOutage(t *testing.T) {
+	for name, set := range map[string]func(*graphFixture){
+		"embedding": func(f *graphFixture) { f.embed.err = errors.New("the model router answered 503") },
+		"graph":     func(f *graphFixture) { f.search.err = errors.New("graph: connection refused") },
+		"reach":     func(f *graphFixture) { f.reach.toolsErr = errors.New("conn closed") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newGraphFixture()
+			set(f)
+			if got, err := f.selectTools(t, "x", 15); err == nil {
+				t.Errorf("picked %v and no error, want the outage reported", got)
+			}
+		})
 	}
 }

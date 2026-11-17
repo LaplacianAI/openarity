@@ -366,7 +366,21 @@ meant, not `call_tool`; the transcript keeps the call as the model made it.
 
 Skills are found the same way: no listing in the prompt, no enumeration of
 names in `Skill`'s schema, and the model opens one by the name the search
-returned. ReWOO plans every call before making one, so it is sent everything.
+returned.
+
+ReWOO plans every call before making one, so it cannot search midway. Past
+`DiscoverAbove` it plans with the tools `Select` picks for the last thing the
+user said, at most `SelectLimit` of them, best first:
+
+```go
+spec.Discovery.Select = func(ctx context.Context, task string, limit int) ([]string, error) {
+	return index.Closest(ctx, task, limit) // names from Discovery.Tools
+}
+```
+
+Without `Select`, or when it fails or names none of the tools, ReWOO is sent
+every one, so a broken index costs tokens rather than tools. Other patterns
+never call it.
 
 ### Tools that return files
 
