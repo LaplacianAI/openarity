@@ -46,3 +46,27 @@ func HasWord(text, word string) bool {
 }
 
 func wordy(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+// WordsOverlap is whether a message could call both words: one holds the
+// other as a word of its own, as "@Bot" and "@bot" do, or "@team" and
+// "@team" inside "hi @team". "@Dhars" and "@Dharshini" do not: a letter
+// follows. Empty overlaps nothing.
+func WordsOverlap(a, b string) bool {
+	return a != "" && b != "" && (HasWord(a, b) || HasWord(b, a))
+}
+
+// SharedAnswers is whether a channel on a number other channels also link
+// may answer: it has a word, every other has one, and no two could be called
+// by one message. A message reaches each channel on the number, so one with
+// no word would answer what was meant for another.
+func SharedAnswers(word string, others []string) bool {
+	if word == "" {
+		return false
+	}
+	for _, o := range others {
+		if o == "" || WordsOverlap(word, o) {
+			return false
+		}
+	}
+	return true
+}

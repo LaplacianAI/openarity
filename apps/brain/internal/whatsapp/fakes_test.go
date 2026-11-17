@@ -219,6 +219,8 @@ type fakeStore struct {
 	released []string
 	jids     []string
 	sent     map[string]string
+	// shared is what WhatsAppSharedWords answers for a channel just linked.
+	shared []string
 }
 
 func (s *fakeStore) EnsureWhatsAppAccounts(context.Context) error { return nil }
@@ -255,6 +257,12 @@ func (s *fakeStore) SetWhatsAppUnpaired(_ context.Context, arg db.SetWhatsAppUnp
 	defer s.mu.Unlock()
 	s.unpaired = append(s.unpaired, arg)
 	return 1, nil
+}
+
+func (s *fakeStore) WhatsAppSharedWords(context.Context, uuid.UUID) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.shared...), nil
 }
 
 func (s *fakeStore) ListWhatsAppJIDs(context.Context) ([]string, error) {
@@ -441,9 +449,17 @@ func (l *lockedBuffer) Write(p []byte) (int, error) {
 func row(channel uuid.UUID, jid *types.JID) db.LeaseWhatsAppAccountsRow {
 	r := db.LeaseWhatsAppAccountsRow{ChannelID: channel, TeamID: uuid.New(), State: "unpaired"}
 	if jid != nil {
-		// An account names the number; the device is kept under its own
-		// address, which says which of the number's devices it is.
-		r.Jid, r.State = new(jid.ToNonAD().String()), "connected"
+		// An account names its device by its own address: the number, and
+		// which of the number's devices it is.
+		r.Jid, r.State = new(jid.String()), "connected"
 	}
+	return r
+}
+
+// legacyRow is an account as they were kept before each named its device:
+// by the number alone.
+func legacyRow(channel uuid.UUID, jid types.JID) db.LeaseWhatsAppAccountsRow {
+	r := row(channel, &jid)
+	r.Jid = new(jid.ToNonAD().String())
 	return r
 }

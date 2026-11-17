@@ -543,7 +543,20 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	params.ReplyMode = req.ReplyMode
 	params.AnswersIn = req.AnswersIn
 	params.TriggerWord = trigger
-	updated, err := h.store.UpdateChannel(r.Context(), params)
+	var updated db.Channel
+	var err error
+	if trigger != nil {
+		// A word on a number other channels link must stay one each, so the
+		// change is checked with the number held.
+		updated, err = h.pairing.UpdateChannelOnItsNumber(r.Context(), params, sharedWordCheck(*trigger))
+	} else {
+		updated, err = h.store.UpdateChannel(r.Context(), params)
+	}
+	var shared *errWordShared
+	if errors.As(err, &shared) {
+		http.Error(w, shared.Error(), http.StatusConflict)
+		return
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

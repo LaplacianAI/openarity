@@ -25,6 +25,24 @@ type pairStore struct {
 	err      error
 	requests []db.RequestWhatsAppPairingParams
 	reads    int
+	// sharers are the other channels on the number; held counts the times
+	// the number was held for a word change.
+	sharers []db.ListWhatsAppSharersRow
+	held    int
+}
+
+func (p *pairStore) ListWhatsAppSharers(context.Context, uuid.UUID) ([]db.ListWhatsAppSharersRow, error) {
+	return p.sharers, nil
+}
+
+func (p *pairStore) UpdateChannelOnItsNumber(ctx context.Context, arg db.UpdateChannelParams,
+	check func([]db.ListWhatsAppSharersRow) error,
+) (db.Channel, error) {
+	p.held++
+	if err := check(p.sharers); err != nil {
+		return db.Channel{}, err
+	}
+	return p.UpdateChannel(ctx, arg)
 }
 
 func (p *pairStore) RequestWhatsAppPairing(_ context.Context, arg db.RequestWhatsAppPairingParams) error {

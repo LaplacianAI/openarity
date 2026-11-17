@@ -972,10 +972,32 @@ func pairingOf(s any) PairingStore {
 	if p, ok := s.(PairingStore); ok {
 		return p
 	}
-	return noPairing{}
+	up, _ := s.(interface {
+		UpdateChannel(context.Context, db.UpdateChannelParams) (db.Channel, error)
+	})
+	return noPairing{store: up}
 }
 
-type noPairing struct{}
+// noPairing keeps no accounts: no channel shares a number, and a word change
+// is the plain update.
+type noPairing struct {
+	store interface {
+		UpdateChannel(context.Context, db.UpdateChannelParams) (db.Channel, error)
+	}
+}
+
+func (noPairing) ListWhatsAppSharers(context.Context, uuid.UUID) ([]db.ListWhatsAppSharersRow, error) {
+	return nil, nil
+}
+
+func (n noPairing) UpdateChannelOnItsNumber(ctx context.Context, arg db.UpdateChannelParams,
+	check func([]db.ListWhatsAppSharersRow) error,
+) (db.Channel, error) {
+	if err := check(nil); err != nil {
+		return db.Channel{}, err
+	}
+	return n.store.UpdateChannel(ctx, arg)
+}
 
 func (noPairing) RequestWhatsAppPairing(context.Context, db.RequestWhatsAppPairingParams) error {
 	return errors.New("this test keeps no accounts")

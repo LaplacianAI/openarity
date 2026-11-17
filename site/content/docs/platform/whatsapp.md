@@ -173,6 +173,29 @@ oa channels update platform mine --trigger-word @Fduv
 oa channels update platform mine --trigger-word ""   # take it away
 ```
 
+### One number, several channels
+
+A phone links up to four devices, and each channel is one of them, so one
+number can serve channels in different teams. Every message to the number
+reaches each of them, so on a shared number **each channel answers only
+messages that hold its own word, whoever sends them**, strangers included:
+
+```text
++91 89395 12050 ─┬─ shrijeeth-personal (team personal)              @Fduv
+                 └─ dhars-whatsapp     (team dharshini-job-search)  @Dhars
+
+"@Dhars any openings?"   reaches dhars-whatsapp alone
+"any openings?"          reaches neither
+```
+
+A channel on a shared number answers nothing until every channel on it has a
+word, and no two words could be held by one message: `@Dhars` and `@dhars` are
+one word, but `@Dhars` and `@Dharshini` are not. When you link a number that
+another channel already uses, the **Link a number** panel asks for the words
+before the channel starts answering; `oa channels pair` prints the command to
+set them. Taking the word away from a channel on a shared number, or giving it
+one another channel's could share, is refused.
+
 ## Letting people in
 
 As on every channel, a sender is answered only once an admin or approver has
@@ -234,5 +257,8 @@ The keys never appear in the API, the dashboard or the logs.
 | "This deployment runs no WhatsApp role" | The `whatsapp` service is not running: `WHATSAPP_ENABLED=1` is missing from `.env`, or the stack was not restarted after setting it. |
 | "Waiting for WhatsApp…" that never ends | The same: no role has taken the request for a QR code. It is shown as soon as one does. |
 | "WhatsApp logged this device out. Pair the number again." | The device was removed on the phone, or WhatsApp logged it out. Link the number again. |
-| A message that gets no answer | The sender is waiting in Approvals; or, on your own number, the message did not hold the trigger word; or it is outside where the channel answers. |
+| "Another connection took this channel's linked device over." | Something else connected as the same device. Link the number again. |
+| "This number's channels were linked before each kept a device of its own." | Two channels on one number were linked by an older version, which could not tell their devices apart. Link each again; each keeps its own device from then on. |
+| "…so this one waits for a word of its own" on a shared number | It, or another channel on the number, has no trigger word, or two words overlap. Give each channel a word of its own. |
+| A message that gets no answer | The sender is waiting in Approvals; or, on your own number or a shared one, the message did not hold the trigger word; or it is outside where the channel answers. |
 | `whatsapp: the number is banned for a while` in the role's logs | WhatsApp has banned the number. Nothing is sent until it is lifted. |

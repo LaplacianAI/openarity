@@ -39,7 +39,7 @@ func inGroup(m *waE2E.Message) *events.Message {
 
 func mapped(t *testing.T, m *events.Message) gateway.Inbound {
 	t.Helper()
-	in, ok := Map(m, us, "", false)
+	in, ok := Map(m, us, "", false, false)
 	if !ok {
 		t.Fatal("the message was dropped")
 	}
@@ -172,14 +172,14 @@ func TestWhatIsNotAConversationIsDropped(t *testing.T) {
 		"no message":        {Info: direct(nil).Info},
 		"nil":               nil,
 	} {
-		if in, ok := Map(m, us, "", false); ok {
+		if in, ok := Map(m, us, "", false, false); ok {
 			t.Errorf("%s was kept as %+v", name, in)
 		}
 	}
 }
 
 func TestAHistoricalMessageIsMarkedSo(t *testing.T) {
-	in, ok := Map(direct(text("from last week")), us, "", true)
+	in, ok := Map(direct(text("from last week")), us, "", true, false)
 	if !ok || !in.Historical {
 		t.Fatalf("Map = %+v, %v; want it kept and marked historical", in, ok)
 	}
@@ -229,7 +229,7 @@ func TestTheOwnersOwnElsewhereIsStillDropped(t *testing.T) {
 		"with the number not known": {fromBefore, Self{}, false},
 		"with only the LID known":   {byLIDOnly, Self{LID: us.LID}, false},
 	} {
-		if in, ok := Map(c.m, c.self, "", c.historical); ok {
+		if in, ok := Map(c.m, c.self, "", c.historical, false); ok {
 			t.Errorf("%s: kept %+v", name, in)
 		}
 	}
@@ -265,7 +265,7 @@ func TestTheOwnerCallsTheBotByItsWordFromAnyChat(t *testing.T) {
 		"in one named by LID": {byLID, gateway.Session{Ref: priya.String(), Kind: gateway.SessionDirect}},
 		"in a group":          {inAGroup, gateway.Session{Ref: group.String(), Kind: gateway.SessionGroup}},
 	} {
-		in, ok := Map(c.m, us, "@Fduv", false)
+		in, ok := Map(c.m, us, "@Fduv", false, false)
 		if !ok {
 			t.Fatalf("%s: dropped", name)
 		}
@@ -296,7 +296,7 @@ func TestTheOwnersOwnWithoutTheWordIsNotKept(t *testing.T) {
 		"from before linking":       {called, "@Fduv", true},
 		"on a channel with no word": {called, "", false},
 	} {
-		if in, ok := Map(c.m, us, c.trigger, c.historical); ok {
+		if in, ok := Map(c.m, us, c.trigger, c.historical, false); ok {
 			t.Errorf("%s: kept %+v", name, in)
 		}
 	}
@@ -310,14 +310,43 @@ func TestMessageYourselfNeedsTheWordOnceOneIsSet(t *testing.T) {
 		m.Info.Chat, m.Info.Sender, m.Info.IsFromMe = us.PN, us.PN, true
 		return m
 	}
-	if in, ok := Map(note("buy milk"), us, "@Fduv", false); ok {
+	if in, ok := Map(note("buy milk"), us, "@Fduv", false, false); ok {
 		t.Errorf("a note without the word was kept: %+v", in)
 	}
-	in, ok := Map(note("@Fduv summarise today"), us, "@Fduv", false)
+	in, ok := Map(note("@Fduv summarise today"), us, "@Fduv", false, false)
 	if !ok || !in.ToSelf || in.Session.Ref != us.PN.String() {
 		t.Fatalf("a note with the word = %+v, %v; want it kept, to self", in, ok)
 	}
-	if _, ok := Map(note("buy milk"), us, "", false); !ok {
+	if _, ok := Map(note("buy milk"), us, "", false, false); !ok {
 		t.Error("with no word, a note to self was dropped; want it kept, as before")
+	}
+}
+
+// On a number other channels link too, everyone's message must hold the
+// word, the history from linking included: each channel hears every
+// message, and one without a word would answer what was meant for another.
+func TestOnASharedNumberEveryMessageMustHoldTheWord(t *testing.T) {
+	cases := []struct {
+		name       string
+		m          *events.Message
+		historical bool
+		kept       bool
+	}{
+		{"a stranger, with the word", direct(text("@Dhars any jobs?")), false, true},
+		{"a stranger, without it", direct(text("any jobs?")), false, false},
+		{"a stranger, with another channel's word", direct(text("@Fduv hi")), false, false},
+		{"history, without the word", direct(text("from last week")), true, false},
+		{"history, with it", direct(text("@Dhars from last week")), true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, ok := Map(c.m, us, "@Dhars", c.historical, true); ok != c.kept {
+				t.Errorf("kept = %v, want %v", ok, c.kept)
+			}
+		})
+	}
+	// A number of its own is as it was: a stranger needs no word.
+	if _, ok := Map(direct(text("any jobs?")), us, "@Dhars", false, false); !ok {
+		t.Error("a stranger on a number of its own was asked for the word")
 	}
 }

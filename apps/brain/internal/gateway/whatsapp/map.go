@@ -43,8 +43,11 @@ func (s Self) is(j types.JID) bool {
 // at all: "Message yourself" holds the bot's old answers too, and the holder
 // no longer knows which were its own.
 //
-// trigger is the channel's trigger word; empty is none.
-func Map(m *events.Message, self Self, trigger string, historical bool) (gateway.Inbound, bool) {
+// trigger is the channel's trigger word; empty is none. shared is a number
+// other channels link too: every message reaches each of them, so the word
+// is what everyone's message must hold, not only the owner's, or each
+// channel would answer each stranger.
+func Map(m *events.Message, self Self, trigger string, historical, shared bool) (gateway.Inbound, bool) {
 	if m == nil || m.Message == nil || m.IsEdit {
 		return gateway.Inbound{}, false
 	}
@@ -68,6 +71,10 @@ func Map(m *events.Message, self Self, trigger string, historical bool) (gateway
 	// The owner's own asks only by the word, "Message yourself" included once
 	// a word is set; without one, only "Message yourself" does.
 	if own && (trigger != "" || !toSelf) && !gateway.HasWord(text, trigger) {
+		return gateway.Inbound{}, false
+	}
+	// History too: a team has no business keeping what was never sent to it.
+	if shared && !gateway.HasWord(text, trigger) {
 		return gateway.Inbound{}, false
 	}
 

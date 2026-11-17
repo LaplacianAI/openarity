@@ -221,3 +221,34 @@ func TestAQRIsDrawnWithItsMarginAndInverts(t *testing.T) {
 		t.Error("text too long for a QR code was drawn")
 	}
 }
+
+const linkedShared = `{"state":"connected","phone":"918939512050","held":true,"needs_trigger_word":true,
+  "shared_with":[{"channel_id":"1c0e5b71-8d2c-4b0d-9a11-3f9a41c27e58","team_id":"6f1b8f4e-6d2a-4d1e-9a1e-2b8f4e6d2a4d",
+  "name":"shrijeeth-personal","trigger_word":"@Fduv","editable":true}]}`
+
+// Linked to a number another channel links too: pair says so, and that this
+// channel answers nothing until it has a word, with the command that sets it.
+func TestPairOnASharedNumberSaysToSetAWord(t *testing.T) {
+	quick(t, time.Minute, time.Minute)
+	clitest.Routes(t, pairRoutes(asked, linkedShared))
+
+	out, err := clitest.Execute(t, commands, "channels", "pair", "platform", "support")
+	if err != nil {
+		t.Fatalf("channels pair: %v\n%s", err, out)
+	}
+	for _, want := range []string{"shrijeeth-personal (@Fduv)", "a word of its own", "oa channels update platform support --trigger-word"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPairOnANumberOfItsOwnSaysNothingOfWords(t *testing.T) {
+	quick(t, time.Minute, time.Minute)
+	clitest.Routes(t, pairRoutes(asked, linked))
+
+	out, err := clitest.Execute(t, commands, "channels", "pair", "platform", "support")
+	if err != nil || strings.Contains(out, "trigger-word") || strings.Contains(out, "shared") {
+		t.Errorf("out = %s, %v; want nothing about words", out, err)
+	}
+}

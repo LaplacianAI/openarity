@@ -1268,3 +1268,141 @@ describe("a channel's trigger word", () => {
     expect(within(sheet).queryByText("Trigger word")).not.toBeInTheDocument();
   });
 });
+
+describe("a WhatsApp number shared with another channel", () => {
+  const at = () => showAt("/ui/channels/", [["/ui/channels/", Route]]);
+  const wa = {
+    ...support,
+    id: "w1",
+    name: "dhars-whatsapp",
+    provider: "whatsapp",
+    can_pair: true,
+    can_show_events: true,
+    trigger_word: null,
+  };
+  const OTHER_TEAM = "7a1b8f4e-6d2a-4d1e-9a1e-2b8f4e6d2a4e";
+  function sharedWith(word: string, editable: boolean) {
+    return {
+      state: "connected",
+      phone: "918939512050",
+      held: true,
+      needs_trigger_word: true,
+      shared_with: [
+        {
+          channel_id: "o1",
+          team_id: OTHER_TEAM,
+          name: "shrijeeth-personal",
+          trigger_word: word,
+          editable,
+        },
+      ],
+    };
+  }
+
+  it("asks for this channel's word, then sets it and stops asking", async () => {
+    let answered = false;
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "GET /teams/{id}/channels/{channelID}/pairing": () => ({
+        body: answered
+          ? {
+              state: "connected",
+              phone: "918939512050",
+              held: true,
+              shared_with: sharedWith("@Fduv", true).shared_with,
+            }
+          : sharedWith("@Fduv", true),
+      }),
+      "PATCH /teams/{id}/channels/{cid}": () => {
+        answered = true;
+        return { body: { ...wa, trigger_word: "@Dhars" } };
+      },
+    });
+    at();
+
+    const sheet = await opened("dhars-whatsapp");
+    const form = await within(sheet).findByRole("form", {
+      name: /trigger words for a shared number/i,
+    });
+    expect(form).toHaveTextContent("shrijeeth-personal");
+    const start = within(form).getByRole("button", { name: /start answering/i });
+    expect(start).toBeDisabled();
+
+    await userEvent.type(within(form).getByLabelText(/this channel's trigger word/i), "@Dhars");
+    await userEvent.click(start);
+
+    await waitFor(() => expect(seen.some((s) => s.method === "PATCH")).toBe(true));
+    const patches = seen.filter((s) => s.method === "PATCH");
+    // The other's word is already its own, so only this channel's is sent.
+    expect(patches.map((s) => s.path)).toEqual([`/teams/${TEAM}/channels/w1`]);
+    expect(JSON.parse(String(patches[0]?.body))).toEqual({ trigger_word: "@Dhars" });
+    expect(
+      await within(sheet).findByText(/also answers for shrijeeth-personal \(@Fduv\)/),
+    ).toBeInTheDocument();
+  });
+
+  it("sets the other channel's word first, when it has none and the caller may", async () => {
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "GET /teams/{id}/channels/{channelID}/pairing": { body: sharedWith("", true) },
+      "PATCH /teams/{id}/channels/{cid}": { body: wa },
+    });
+    at();
+
+    const sheet = await opened("dhars-whatsapp");
+    const form = await within(sheet).findByRole("form", {
+      name: /trigger words for a shared number/i,
+    });
+    await userEvent.type(within(form).getByLabelText(/this channel's trigger word/i), "@Dhars");
+    await userEvent.type(
+      within(form).getByLabelText(/shrijeeth-personal's trigger word/i),
+      "@Fduv",
+    );
+    await userEvent.click(within(form).getByRole("button", { name: /start answering/i }));
+
+    await waitFor(() => expect(seen.filter((s) => s.method === "PATCH")).toHaveLength(2));
+    expect(seen.filter((s) => s.method === "PATCH").map((s) => s.path)).toEqual([
+      `/teams/${OTHER_TEAM}/channels/o1`,
+      `/teams/${TEAM}/channels/w1`,
+    ]);
+  });
+
+  it("says whom to ask when the other channel's word is not the caller's to set", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "GET /teams/{id}/channels/{channelID}/pairing": { body: sharedWith("", false) },
+    });
+    at();
+
+    const sheet = await opened("dhars-whatsapp");
+    const form = await within(sheet).findByRole("form", {
+      name: /trigger words for a shared number/i,
+    });
+    expect(within(form).queryByLabelText(/shrijeeth-personal's trigger word/i)).toBeNull();
+    expect(form).toHaveTextContent(/ask an admin of its team/i);
+  });
+
+  it("shows the brain's refusal of a word", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [wa] } },
+      "GET /teams/{id}/channels/{channelID}/pairing": { body: sharedWith("@Fduv", true) },
+      "PATCH /teams/{id}/channels/{cid}": {
+        status: 409,
+        body: "shrijeeth-personal shares this channel's number and answers @Fduv; one message could hold both words, so pick another",
+      },
+    });
+    at();
+
+    const sheet = await opened("dhars-whatsapp");
+    const form = await within(sheet).findByRole("form", {
+      name: /trigger words for a shared number/i,
+    });
+    await userEvent.type(within(form).getByLabelText(/this channel's trigger word/i), "@fduv");
+    await userEvent.click(within(form).getByRole("button", { name: /start answering/i }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent(/pick another/);
+  });
+});

@@ -293,7 +293,11 @@ function ChannelDetail({
         ) : channel.can_pair ? (
           <KeyValue label="Number">
             {canWrite ? (
-              <LinkNumber teamId={teamId} channelId={channel.id} />
+              <LinkNumber
+                teamId={teamId}
+                channelId={channel.id}
+                word={channel.trigger_word ?? ""}
+              />
             ) : (
               <>Linked by pairing a phone, which needs {WRITE}.</>
             )}

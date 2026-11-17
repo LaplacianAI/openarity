@@ -3,8 +3,8 @@ import { LoaderCircle, TriangleAlert } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 
-import { getChannelPairing, pairChannel } from "@/api";
-import type { ChannelPairing, PairChannelRequest } from "@/api/types";
+import { getChannelPairing, pairChannel, updateChannel } from "@/api";
+import type { ChannelPairing, ChannelSharer, PairChannelRequest } from "@/api/types";
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,16 @@ export const PAIR_POLL_MS = 2000;
  * while it is under way and dropped from the cache when the sheet closes, so
  * a QR is never left behind.
  */
-export function LinkNumber({ teamId, channelId }: { teamId: string; channelId: string }) {
+export function LinkNumber({
+  teamId,
+  channelId,
+  word = "",
+}: {
+  teamId: string;
+  channelId: string;
+  /** This channel's trigger word, "" for none. */
+  word?: string;
+}) {
   const qc = useQueryClient();
   const key = ["pairing", teamId, channelId];
   const pairing = useQuery({
@@ -60,8 +69,29 @@ export function LinkNumber({ teamId, channelId }: { teamId: string; channelId: s
           <span>This deployment runs no WhatsApp role, so nothing pairs and nothing is sent.</span>
         </p>
       ) : null}
-      {p.state === "connected" ? (
-        <Linked phone={p.phone} onRelink={(body) => ask.mutate(body)} asking={ask.isPending} />
+      {p.state === "connected" && p.needs_trigger_word ? (
+        <SharedWords
+          teamId={teamId}
+          channelId={channelId}
+          phone={p.phone}
+          word={word}
+          others={p.shared_with ?? []}
+          onSet={() => {
+            void qc.invalidateQueries({ queryKey: key });
+            void qc.invalidateQueries({ queryKey: ["channels", teamId] });
+          }}
+        />
+      ) : p.state === "connected" ? (
+        <>
+          <Linked phone={p.phone} onRelink={(body) => ask.mutate(body)} asking={ask.isPending} />
+          {p.shared_with?.length ? (
+            <p className="text-xs text-muted-foreground">
+              The number also answers for{" "}
+              {p.shared_with.map((o) => `${o.name} (${o.trigger_word})`).join(", ")}. Each channel
+              answers only messages that hold its word.
+            </p>
+          ) : null}
+        </>
       ) : p.state === "pairing" ? (
         <Pairing p={p} />
       ) : (
@@ -228,4 +258,106 @@ function QR({ text }: { text: string }) {
   }, [text]);
   if (!src) return null;
   return <img src={src} alt="QR code to scan from WhatsApp" className="size-56 bg-white" />;
+}
+
+/**
+ * A number other channels link too: each hears every message to it, so each
+ * answers only messages that hold its word, and this one answers nothing
+ * until every channel on the number has a word no message could share with
+ * another's. A word another team's channel needs is set here when the
+ * caller may set it, and asked of that team's admin when not.
+ */
+function SharedWords({
+  teamId,
+  channelId,
+  phone,
+  word,
+  others,
+  onSet,
+}: {
+  teamId: string;
+  channelId: string;
+  phone?: string;
+  word: string;
+  others: ChannelSharer[];
+  onSet: () => void;
+}) {
+  const [mine, setMine] = useState(word);
+  const [theirs, setTheirs] = useState<Record<string, string>>(() =>
+    Object.fromEntries(others.map((o) => [o.channel_id, o.trigger_word])),
+  );
+  const fixable = others.filter((o) => o.editable);
+  const blocked = others.filter((o) => !o.editable && o.trigger_word === "");
+
+  const save = useMutation({
+    // Another channel's first: this one's is checked against the words as
+    // they stand, so the other's must be in place before it.
+    mutationFn: async () => {
+      for (const o of fixable) {
+        const w = (theirs[o.channel_id] ?? "").trim();
+        if (w !== o.trigger_word) await updateChannel(o.team_id, o.channel_id, { trigger_word: w });
+      }
+      if (mine.trim() !== word)
+        await updateChannel(teamId, channelId, { trigger_word: mine.trim() });
+    },
+    onSuccess: onSet,
+  });
+
+  return (
+    <form
+      className="space-y-3 border-l-2 border-warning pl-3"
+      aria-label="Trigger words for a shared number"
+      onSubmit={(e) => {
+        e.preventDefault();
+        save.mutate();
+      }}
+    >
+      <p className="text-sm">
+        <span className="font-medium tabular-nums">{shownNumber(phone)}</span> also answers for{" "}
+        {others.map((o) => o.name).join(", ")}. On a shared number each channel answers only
+        messages that hold its word, whoever sends them, so this one waits for a word of its own.
+      </p>
+      <label className="grid gap-1 text-xs font-medium" htmlFor="shared-word-mine">
+        This channel's trigger word
+        <Input
+          id="shared-word-mine"
+          value={mine}
+          placeholder="@Dhars"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => setMine(e.target.value)}
+        />
+      </label>
+      {fixable.map((o) => (
+        <label
+          key={o.channel_id}
+          className="grid gap-1 text-xs font-medium"
+          htmlFor={`shared-word-${o.channel_id}`}
+        >
+          {o.name}'s trigger word
+          <Input
+            id={`shared-word-${o.channel_id}`}
+            value={theirs[o.channel_id] ?? ""}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => setTheirs((t) => ({ ...t, [o.channel_id]: e.target.value }))}
+          />
+        </label>
+      ))}
+      {blocked.length > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          {blocked.map((o) => o.name).join(", ")} has no word, and you can't set it. Ask an admin of
+          its team to; this channel answers once it has one.
+        </p>
+      ) : null}
+      {save.isError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {save.error.message}
+        </p>
+      ) : null}
+      <Button type="submit" size="sm" loading={save.isPending} disabled={mine.trim() === ""}>
+        Start answering
+      </Button>
+    </form>
+  );
 }

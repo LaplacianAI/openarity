@@ -53,3 +53,41 @@ func TestATriggerWordIsOneWordWithALetterOrDigit(t *testing.T) {
 		}
 	}
 }
+
+func TestWordsOverlapWhenOneMessageCouldCallBoth(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"@Dhars", "@dhars", true},
+		{"@Dhars", "@Dharshini", false},
+		{"@Fduv", "@Dhars", false},
+		{"bot", "@bot", true}, // "@bot hi" holds bot as a word: @ is not a letter
+		{"", "@Dhars", false},
+	}
+	for _, c := range cases {
+		if got := WordsOverlap(c.a, c.b); got != c.want {
+			t.Errorf("WordsOverlap(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestAChannelOnASharedNumberAnswersOnlyWhenEveryWordIsItsOwn(t *testing.T) {
+	cases := []struct {
+		name   string
+		word   string
+		others []string
+		want   bool
+	}{
+		{"its word and another", "@Dhars", []string{"@Fduv"}, true},
+		{"no word of its own", "", []string{"@Fduv"}, false},
+		{"another with no word", "@Dhars", []string{""}, false},
+		{"the same word", "@Dhars", []string{"@DHARS"}, false},
+		{"alone", "@Dhars", nil, true},
+	}
+	for _, c := range cases {
+		if got := SharedAnswers(c.word, c.others); got != c.want {
+			t.Errorf("%s: SharedAnswers = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
