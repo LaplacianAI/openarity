@@ -211,7 +211,8 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 		e.heartbeat(beatCtx, row.ID, l.Worker, stop)
 	}()
 
-	output, summary, runErr := e.run(runCtx, row, l, stop)
+	var model string
+	output, summary, runErr := e.run(runCtx, row, l, stop, &model)
 
 	stopBeat()
 	<-beating
@@ -225,6 +226,13 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 		return nil
 	}
 	status, failure := outcome(runErr, cause)
+	if status == "failed" {
+		// The model too: a provider's own words are never kept, so a model
+		// the gateway cannot route reads only as its status.
+		said, _ := clip(failure)
+		e.logger.WarnContext(ctx, "Run failed",
+			"run", row.ID, "team", row.TeamID, "agent", row.AgentName, "model", model, "error", said)
+	}
 	switch {
 	case status == "succeeded":
 	case stopped(cause) && summary != "":
@@ -258,8 +266,10 @@ func chainOf(agentID *uuid.UUID) []uuid.UUID {
 	return []uuid.UUID{*agentID}
 }
 
+// run is the run itself. model is set to the model it runs on once that is
+// known, for Execute to name if the run fails.
 func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
-	stop context.CancelCauseFunc,
+	stop context.CancelCauseFunc, model *string,
 ) (output, summary string, err error) {
 	session, err := agent.Open(transcriptOf(row), e.sessions)
 	if err != nil {
@@ -276,6 +286,7 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	}
 	defer built.Close()
 	built.Spec = forChannel(row, built.Spec)
+	*model = built.Spec.Model.Name
 
 	resuming, msgs, err := e.begin(ctx, row, msgs)
 	if err != nil {
