@@ -104,7 +104,7 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 			spec.Pattern, strings.Join(r.registered(), ", "))
 	}
 
-	spec, search, err := withDiscovery(spec)
+	spec, search, err := withDiscovery(ctx, spec, msgs)
 	if err != nil {
 		return Result{}, err
 	}

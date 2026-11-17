@@ -150,9 +150,13 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		})
 		built.Spec.Tools = append(built.Spec.Tools, held.tools...)
 	} else {
-		built.Spec.Tools = append(built.Spec.Tools, GraphTool(*b.graph, run.TeamID, b.reach(run, a), held))
+		reach := b.reach(run, a)
+		built.Spec.Tools = append(built.Spec.Tools, GraphTool(*b.graph, run.TeamID, reach, held))
 		if len(held.tools) > 0 {
-			built.Spec.Discovery = &agent.Discovery{Search: GraphToolName, Tools: held.tools, Groups: held.groups}
+			built.Spec.Discovery = &agent.Discovery{
+				Search: GraphToolName, Tools: held.tools, Groups: held.groups,
+				Select: SelectTools(*b.graph, run.TeamID, reach, held),
+			}
 		}
 	}
 

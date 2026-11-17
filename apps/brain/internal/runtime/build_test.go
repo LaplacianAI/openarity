@@ -1473,6 +1473,10 @@ func TestTheMCPToolsAreFoundWithTheGraph(t *testing.T) {
 	if d == nil || d.Search != GraphToolName {
 		t.Fatalf("discovery = %+v, want the MCP tools found with graph", d)
 	}
+	// A ReWOO run cannot search midway, so it is given a way to pick.
+	if d.Select == nil {
+		t.Error("discovery has no Select, so a ReWOO run is sent every tool")
+	}
 	for _, tl := range built.Spec.Tools {
 		if strings.HasPrefix(tl.Name, "github__") || tl.Name == "fetch" {
 			t.Errorf("%s is sent as well as found", tl.Name)

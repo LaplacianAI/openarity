@@ -25,6 +25,12 @@ type Discovery struct {
 	// Search names the tool in Spec.Tools the model finds tools and skills
 	// with. Required, so a run never defers what it has no way to find.
 	Search string
+	// Select picks, best first, the names of the Tools a task most likely
+	// needs. A pattern that plans every call before making one cannot search
+	// midway, so with too many tools to send it plans with what Select picks.
+	// Optional: without it, or when it fails or picks none of the Tools,
+	// such a pattern is sent every one.
+	Select func(ctx context.Context, task string, limit int) ([]string, error)
 }
 
 // A Group is a set of Discovery tools named in the prompt by what they are
@@ -47,13 +53,18 @@ const (
 
 	describeLimit = 5
 	aboutLimit    = 200
+
+	// SelectLimit is how many tools Select is asked for: enough for a plan of
+	// several steps across a server or two, few enough to stay well under
+	// DiscoverAbove.
+	SelectLimit = 15
 )
 
 // withDiscovery sends Spec.Discovery's tools with the rest when they are
 // small, and offers describe_tools and call_tool in their place when they are
 // not. It returns the search tool's name when the run finds by search, so the
 // skills are found the same way.
-func withDiscovery(spec Spec) (Spec, string, error) {
+func withDiscovery(ctx context.Context, spec Spec, msgs []Message) (Spec, string, error) {
 	d := spec.Discovery
 	if d == nil {
 		return spec, "", nil
@@ -62,9 +73,17 @@ func withDiscovery(spec Spec) (Spec, string, error) {
 		return Spec{}, "", err
 	}
 
-	// ReWOO plans every call before making one, so it cannot search midway.
-	if spec.Pattern == PatternReWOO || catalogueSize(d.Tools, spec.Skills) <= DiscoverAbove {
-		spec.Tools = append(slices.Clone(spec.Tools), d.Tools...)
+	small := catalogueSize(d.Tools, spec.Skills) <= DiscoverAbove
+	// ReWOO plans every call before making one, so it cannot search midway:
+	// it plans with the tools picked for its task, or with every one.
+	if spec.Pattern == PatternReWOO || small {
+		tools := d.Tools
+		if !small && spec.Pattern == PatternReWOO {
+			if picked := selected(ctx, d, msgs); len(picked) > 0 {
+				tools = picked
+			}
+		}
+		spec.Tools = append(slices.Clone(spec.Tools), tools...)
 		return spec, "", nil
 	}
 
@@ -81,6 +100,52 @@ func withDiscovery(spec Spec) (Spec, string, error) {
 	}
 	spec.System = append(slices.Clone(spec.System), discoveryListing(*d, len(spec.Skills) > 0))
 	return spec, d.Search, nil
+}
+
+// selected is the Discovery tools Select picks for the last thing the user
+// said, best first. None when there is no Select, no text to pick for, or
+// Select fails: the caller then sends every tool rather than plan with less.
+func selected(ctx context.Context, d *Discovery, msgs []Message) []Tool {
+	if d.Select == nil {
+		return nil
+	}
+	task := lastUserText(msgs)
+	if task == "" {
+		return nil
+	}
+	names, err := d.Select(ctx, task, SelectLimit)
+	if err != nil {
+		return nil
+	}
+
+	byName := make(map[string]Tool, len(d.Tools))
+	for _, t := range d.Tools {
+		byName[t.Name] = t
+	}
+	var picked []Tool
+	for _, name := range names {
+		t, ok := byName[name]
+		if !ok {
+			continue // not one of this run's tools
+		}
+		delete(byName, name)
+		picked = append(picked, t)
+		if len(picked) == SelectLimit {
+			break
+		}
+	}
+	return picked
+}
+
+func lastUserText(msgs []Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == RoleUser && msgs[i].Compaction == nil {
+			if text := strings.TrimSpace(msgs[i].Text()); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
 }
 
 func checkDiscovery(tools []Tool, d *Discovery) error {

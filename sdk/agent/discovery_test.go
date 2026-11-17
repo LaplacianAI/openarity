@@ -3,8 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -76,7 +79,7 @@ func toolNamed(t *testing.T, tools []Tool, name string) Tool {
 
 func found(t *testing.T, spec Spec) Spec {
 	t.Helper()
-	out, search, err := withDiscovery(spec)
+	out, search, err := withDiscovery(t.Context(), spec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,10 +102,10 @@ func TestASmallCatalogueIsSentWithTheRest(t *testing.T) {
 	t.Parallel()
 
 	c := &recorder{}
-	spec, search, err := withDiscovery(Spec{
+	spec, search, err := withDiscovery(t.Context(), Spec{
 		Tools:     []Tool{search()},
 		Discovery: &Discovery{Search: "graph", Tools: []Tool{c.tool("github__list_issues", "List issues", `{"type":"object"}`)}},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +127,7 @@ func TestACatalogueExactlyAtTheThresholdIsStillSent(t *testing.T) {
 	if got := catalogueSize([]Tool{at}, nil); got != DiscoverAbove {
 		t.Fatalf("the fixture is %d tokens, not %d", got, DiscoverAbove)
 	}
-	spec, _, err := withDiscovery(Spec{Tools: []Tool{search()}, Discovery: &Discovery{Search: "graph", Tools: []Tool{at}}})
+	spec, _, err := withDiscovery(t.Context(), Spec{Tools: []Tool{search()}, Discovery: &Discovery{Search: "graph", Tools: []Tool{at}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +136,7 @@ func TestACatalogueExactlyAtTheThresholdIsStillSent(t *testing.T) {
 	}
 
 	over := c.tool("t", strings.Repeat("x", 4*DiscoverAbove-len("t")-len(`{}`)+4), `{}`)
-	spec, _, err = withDiscovery(Spec{Tools: []Tool{search()}, Discovery: &Discovery{Search: "graph", Tools: []Tool{over}}})
+	spec, _, err = withDiscovery(t.Context(), Spec{Tools: []Tool{search()}, Discovery: &Discovery{Search: "graph", Tools: []Tool{over}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,12 +210,129 @@ func TestManySkillsAreFoundBySearchToo(t *testing.T) {
 func TestReWOOIsSentEverything(t *testing.T) {
 	t.Parallel()
 
-	spec, search, err := withDiscovery(Spec{Pattern: PatternReWOO, Tools: []Tool{search()}, Discovery: large(&recorder{})})
+	spec, search, err := withDiscovery(t.Context(), Spec{Pattern: PatternReWOO, Tools: []Tool{search()}, Discovery: large(&recorder{})}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(names(spec.Tools), ","); got != "graph,github__close_issue,github__list_issues" || search != "" {
 		t.Fatalf("ReWOO was sent %s, search %q", got, search)
+	}
+}
+
+// many is a catalogue past DiscoverAbove with n small tools and Select set.
+func many(n int, sel func(ctx context.Context, task string, limit int) ([]string, error)) *Discovery {
+	c := &recorder{}
+	d := &Discovery{Search: "graph", Select: sel}
+	for i := range n {
+		d.Tools = append(d.Tools, c.tool(fmt.Sprintf("srv__t%02d", i), strings.Repeat("x", 8*DiscoverAbove/n), `{}`))
+	}
+	return d
+}
+
+func asked(text ...string) []Message {
+	var msgs []Message
+	for i, s := range text {
+		role := RoleUser
+		if i%2 == 1 {
+			role = RoleAssistant
+		}
+		msgs = append(msgs, Message{Role: role, Content: []Content{{Type: ContentText, Text: s}}})
+	}
+	return msgs
+}
+
+// A ReWOO run with too many tools to send plans with the ones picked for
+// the last thing the user said, best first, never more than SelectLimit.
+func TestReWOOPlansWithTheToolsPickedForItsTask(t *testing.T) {
+	t.Parallel()
+
+	var gotTask string
+	var gotLimit int
+	d := many(40, func(_ context.Context, task string, limit int) ([]string, error) {
+		gotTask, gotLimit = task, limit
+		picks := []string{"srv__t07", "not-a-tool", "srv__t03", "srv__t07"}
+		for i := range 30 {
+			picks = append(picks, fmt.Sprintf("srv__t%02d", 10+i))
+		}
+		return picks, nil
+	})
+	spec, search, err := withDiscovery(t.Context(), Spec{Pattern: PatternReWOO, Tools: []Tool{search()}, Discovery: d},
+		asked("hello", "hi", "  label the open issues  "))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := names(spec.Tools)
+	if gotTask != "label the open issues" || gotLimit != SelectLimit {
+		t.Errorf("Select was asked for %q, %d", gotTask, gotLimit)
+	}
+	if search != "" || got[0] != "graph" || got[1] != "srv__t07" || got[2] != "srv__t03" {
+		t.Errorf("sent %v, search %q; want graph, then the picks best first", got, search)
+	}
+	if len(got) != 1+SelectLimit {
+		t.Errorf("sent %d tools, want the run's own and %d picked", len(got), SelectLimit)
+	}
+	if slices.Contains(got, "not-a-tool") {
+		t.Error("a name that is not one of the run's tools was sent")
+	}
+}
+
+// Whatever goes wrong, a ReWOO run is sent every tool, as before Select.
+func TestReWOOIsSentEverythingWhenNothingIsPicked(t *testing.T) {
+	t.Parallel()
+
+	fails := func(context.Context, string, int) ([]string, error) { return nil, errors.New("graph down") }
+	strangers := func(context.Context, string, int) ([]string, error) { return []string{"elsewhere__x"}, nil }
+	called := false
+	never := func(context.Context, string, int) ([]string, error) { called = true; return []string{"srv__t01"}, nil }
+
+	for _, tc := range []struct {
+		name string
+		d    *Discovery
+		msgs []Message
+	}{
+		{"Select fails", many(40, fails), asked("label them")},
+		{"Select picks none of the run's tools", many(40, strangers), asked("label them")},
+		{"no Select", many(40, nil), asked("label them")},
+		{"no user text", many(40, never), nil},
+		{"only blank user text", many(40, never), asked("   ")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, _, err := withDiscovery(t.Context(), Spec{Pattern: PatternReWOO, Tools: []Tool{search()}, Discovery: tc.d}, tc.msgs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := len(spec.Tools); n != 41 {
+				t.Errorf("sent %d tools, want all 40 and graph", n)
+			}
+		})
+	}
+	if called {
+		t.Error("Select was asked with no task to pick for")
+	}
+}
+
+// Select is only for a pattern that cannot search: a small catalogue is sent
+// whole, and every other pattern defers as it did.
+func TestSelectIsOnlyAskedByReWOOWithTooManyTools(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	sel := func(context.Context, string, int) ([]string, error) { calls++; return []string{"srv__t01"}, nil }
+
+	small := &Discovery{Search: "graph", Select: sel, Tools: []Tool{(&recorder{}).tool("srv__a", "A", `{}`)}}
+	if _, _, err := withDiscovery(t.Context(), Spec{Pattern: PatternReWOO, Tools: []Tool{search()}, Discovery: small}, asked("x")); err != nil {
+		t.Fatal(err)
+	}
+	spec, search, err := withDiscovery(t.Context(), Spec{Pattern: PatternReAct, Tools: []Tool{search()}, Discovery: many(40, sel)}, asked("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Errorf("Select was asked %d times", calls)
+	}
+	if search != "graph" || !slices.Contains(names(spec.Tools), CallToolName) {
+		t.Errorf("ReAct was sent %v, search %q; want its tools deferred", names(spec.Tools), search)
 	}
 }
 
@@ -242,7 +362,7 @@ func TestADiscoveryThatCannotWorkIsRefused(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			d := tc.d
-			_, _, err := withDiscovery(Spec{Tools: tc.tools, Discovery: &d})
+			_, _, err := withDiscovery(t.Context(), Spec{Tools: tc.tools, Discovery: &d}, nil)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want it to mention %s", err, tc.want)
 			}
