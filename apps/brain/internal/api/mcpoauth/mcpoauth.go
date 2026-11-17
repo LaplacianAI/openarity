@@ -180,34 +180,13 @@ func (f *flow) server(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) 
 }
 
 func (f *flow) client(w http.ResponseWriter, r *http.Request, row db.McpServer) (discovery.Client, bool) {
-	c, err := clientOf(r.Context(), f.secrets, row)
+	c, err := discovery.ClientOf(r.Context(), f.secrets, row)
 	if err != nil {
 		f.logger.Warn("mcp oauth: the client secret could not be read", "server_id", row.ID, "error", err)
 		http.Error(w, "the server's client secret could not be read; set it again", http.StatusConflict)
 		return discovery.Client{}, false
 	}
 	return c, true
-}
-
-func clientOf(ctx context.Context, sec Secrets, row db.McpServer) (discovery.Client, error) {
-	c := discovery.Client{}
-	if row.OauthClientID != nil {
-		c.ID = *row.OauthClientID
-	}
-	if row.OauthClientSecretRef == nil {
-		return c, nil
-	}
-	ref := *row.OauthClientSecretRef
-	i := strings.LastIndexByte(ref, '#')
-	if i < 0 {
-		return c, errors.New("the client secret reference is not path#key")
-	}
-	v, err := sec.Get(ctx, ref[:i], ref[i+1:])
-	if err != nil {
-		return c, err
-	}
-	c.Secret = v
-	return c, nil
 }
 
 func hashOf(state string) []byte {
@@ -271,7 +250,7 @@ func (f *flow) callback(w http.ResponseWriter, r *http.Request) {
 		f.back(w, r, server, outcomeRefused)
 		return
 	}
-	client, err := clientOf(r.Context(), f.secrets, row)
+	client, err := discovery.ClientOf(r.Context(), f.secrets, row)
 	if err != nil {
 		f.logger.Warn("mcp oauth: the client secret could not be read", "server_id", server, "error", err)
 		f.back(w, r, server, outcomeFailed)

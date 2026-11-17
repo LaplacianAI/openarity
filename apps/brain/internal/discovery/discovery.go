@@ -42,10 +42,11 @@ type Secrets interface {
 }
 
 type Discoverer struct {
-	secrets   Secrets
-	transport http.RoundTripper
-	calls     http.RoundTripper
-	timeout   time.Duration
+	secrets     Secrets
+	transport   http.RoundTripper
+	calls       http.RoundTripper
+	timeout     time.Duration
+	connections Connections
 }
 
 func New(sec Secrets, p Policy, timeout time.Duration) *Discoverer {
@@ -62,11 +63,27 @@ func (d *Discoverer) Client(ctx context.Context, s db.McpServer) (*http.Client, 
 		return nil, ErrCommandServer
 	}
 
-	token, err := d.tokenFor(ctx, s)
-	if err != nil {
+	return d.httpClient(ctx, s, d.calls, time.Time{})
+}
+
+// httpClient calls a server as it is reached: with its sign-in's token,
+// renewed as it runs out, or with its static token, or with none. A sign-in
+// that cannot give a token now fails here, before any call is made.
+func (d *Discoverer) httpClient(ctx context.Context, s db.McpServer, base http.RoundTripper, deadline time.Time) (*http.Client, error) {
+	if s.AuthKind != "oauth" || d.connections == nil {
+		token, err := d.tokenFor(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		return newClient(base, token, deadline), nil
+	}
+	t := &tokens{d: d, s: s}
+	if _, err := t.get(ctx, ""); err != nil {
 		return nil, err
 	}
-	return newClient(d.calls, token, time.Time{}), nil
+	c := newClient(base, "", deadline)
+	c.Transport = renewing{t: t, next: c.Transport}
+	return c, nil
 }
 
 func (d *Discoverer) Discover(ctx context.Context, s db.McpServer) ([]Tool, error) {
@@ -78,7 +95,7 @@ func (d *Discoverer) Discover(ctx context.Context, s db.McpServer) ([]Tool, erro
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 
-	token, err := d.tokenFor(ctx, s)
+	httpClient, err := d.httpClient(ctx, s, d.transport, deadline)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +103,7 @@ func (d *Discoverer) Discover(ctx context.Context, s db.McpServer) ([]Tool, erro
 	client := sdk.NewClient(&sdk.Implementation{Name: "openarity-brain", Version: "v0.1.0"}, nil)
 	session, err := client.Connect(ctx, &sdk.StreamableClientTransport{
 		Endpoint:             *s.Url,
-		HTTPClient:           newClient(d.transport, token, deadline),
+		HTTPClient:           httpClient,
 		MaxRetries:           -1,
 		DisableStandaloneSSE: true,
 	}, nil)

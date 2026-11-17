@@ -446,16 +446,18 @@ func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamPara
 }
 
 const listGrantedMCPServers = `-- name: ListGrantedMCPServers :many
-SELECT s.id, s.team_id, s.name, s.url, s.command, s.env, s.auth_secret_ref, s.bare, s.discovered_at, s.created_at, s.updated_at, s.last_discovery_error, s.last_discovery_at, s.auth_kind, s.oauth_client_id, s.oauth_client_secret_ref, s.oauth_scopes, g.allow
+SELECT s.id, s.team_id, s.name, s.url, s.command, s.env, s.auth_secret_ref, s.bare, s.discovered_at, s.created_at, s.updated_at, s.last_discovery_error, s.last_discovery_at, s.auth_kind, s.oauth_client_id, s.oauth_client_secret_ref, s.oauth_scopes, g.allow, c.status AS oauth_status
 FROM agent_mcp_servers g
 JOIN mcp_servers s ON s.id = g.mcp_server_id
+LEFT JOIN mcp_oauth_connections c ON c.server_id = s.id
 WHERE g.agent_id = $1
 ORDER BY s.name
 `
 
 type ListGrantedMCPServersRow struct {
-	McpServer McpServer
-	Allow     []string
+	McpServer   McpServer
+	Allow       []string
+	OauthStatus *string
 }
 
 // What a run binds, read when it starts: each granted server with the grant's
@@ -488,6 +490,7 @@ func (q *Queries) ListGrantedMCPServers(ctx context.Context, agentID uuid.UUID) 
 			&i.McpServer.OauthClientSecretRef,
 			&i.McpServer.OauthScopes,
 			&i.Allow,
+			&i.OauthStatus,
 		); err != nil {
 			return nil, err
 		}

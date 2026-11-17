@@ -70,7 +70,7 @@ func TestTheDiscovererServeBuildsRefusesLoopback(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	u := srv.URL
-	_, err := newDiscoverer(&config.Config{}, static.New()).Discover(t.Context(), db.McpServer{Name: "x", Url: &u})
+	_, err := newDiscoverer(&config.Config{}, static.New(), nil).Discover(t.Context(), db.McpServer{Name: "x", Url: &u})
 	if !errors.Is(err, discovery.ErrRefused) {
 		t.Errorf("err = %v, want ErrRefused", err)
 	}
@@ -93,7 +93,7 @@ func TestTheDiscovererServeBuildsUsesTheConfiguredAllowlist(t *testing.T) {
 
 	cfg := &config.Config{MCPPrivateNetworks: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}
 	u := srv.URL
-	_, err := newDiscoverer(cfg, static.New()).Discover(t.Context(), db.McpServer{Name: "x", Url: &u})
+	_, err := newDiscoverer(cfg, static.New(), nil).Discover(t.Context(), db.McpServer{Name: "x", Url: &u})
 	if err == nil || errors.Is(err, discovery.ErrRefused) {
 		t.Fatalf("err = %v, want a failure that is not a refusal", err)
 	}

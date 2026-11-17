@@ -96,9 +96,10 @@ WHERE team_id = sqlc.arg('team_id') AND lower(name) = lower(sqlc.arg('name')::te
 -- What a run binds, read when it starts: each granted server with the grant's
 -- allow-list, which is null for every tool on the server.
 -- name: ListGrantedMCPServers :many
-SELECT sqlc.embed(s), g.allow
+SELECT sqlc.embed(s), g.allow, c.status AS oauth_status
 FROM agent_mcp_servers g
 JOIN mcp_servers s ON s.id = g.mcp_server_id
+LEFT JOIN mcp_oauth_connections c ON c.server_id = s.id
 WHERE g.agent_id = $1
 ORDER BY s.name;
 

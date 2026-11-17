@@ -738,6 +738,30 @@ func TestAServerWithNoToolsDiscoveredIsReported(t *testing.T) {
 	}
 }
 
+// A server that signs in and never has is said to need it, not to have no
+// tools; one whose sign-in ended keeps them, so a call can say why it fails.
+func TestAServerThatSignsInIsOfferedOnlyOnceSignedIn(t *testing.T) {
+	f := newFixture()
+	never := urlServer("gmail", serve(t, "search").url, true)
+	never.McpServer.AuthKind = "oauth"
+	f.store.grants = []db.ListGrantedMCPServersRow{never}
+
+	built := f.build(t)
+	want := []Unavailable{{Name: "gmail", Reason: "it needs signing in on the dashboard"}}
+	if !reflect.DeepEqual(built.Unavailable, want) || len(toolNames(built)) != 0 {
+		t.Errorf("unavailable = %+v, tools %v; want %+v", built.Unavailable, toolNames(built), want)
+	}
+
+	ended := "needs_sign_in"
+	f = newFixture()
+	again := urlServer("gmail", serve(t, "search").url, true)
+	again.McpServer.AuthKind, again.OauthStatus = "oauth", &ended
+	f.store.grants = []db.ListGrantedMCPServersRow{again}
+	if built := f.build(t); len(built.Unavailable) != 0 || len(toolNames(built)) == 0 {
+		t.Errorf("unavailable = %+v, tools %v; want its tools kept", built.Unavailable, toolNames(built))
+	}
+}
+
 // A name a provider would refuse is reported rather than sent, which would
 // fail every request of the run.
 func TestAToolNameAProviderWouldRefuseIsReported(t *testing.T) {
