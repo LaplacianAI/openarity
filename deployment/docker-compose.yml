@@ -71,6 +71,10 @@ x-brain-env: &brain-env
   # give its provider; without it, only the path. start-docker.sh sets it
   # from HOOKS_HOST when a tunnel is configured.
   OPENARITY_WEBHOOK_PUBLIC_URL: ${OPENARITY_WEBHOOK_PUBLIC_URL-}
+  # The dashboard's origin, such as https://openarity.example.com: where an
+  # MCP server's sign-in sends the browser back. Without it, no server can be
+  # signed in to. start-docker.sh sets it from HTTPS_HOST.
+  OPENARITY_PUBLIC_URL: ${OPENARITY_PUBLIC_URL-}
   # All empty by default, and each is a setting that can be left that way.
   # Skills import from GitHub regardless; another host only when listed.
   # MCP discovery reaches public addresses only, so a server running inside

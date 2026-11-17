@@ -15,7 +15,7 @@ import (
 const createMCPServer = `-- name: CreateMCPServer :one
 INSERT INTO mcp_servers (team_id, name, url, command, env, auth_secret_ref, bare)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at
+RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes
 `
 
 type CreateMCPServerParams struct {
@@ -53,6 +53,10 @@ func (q *Queries) CreateMCPServer(ctx context.Context, arg CreateMCPServerParams
 		&i.UpdatedAt,
 		&i.LastDiscoveryError,
 		&i.LastDiscoveryAt,
+		&i.AuthKind,
+		&i.OauthClientID,
+		&i.OauthClientSecretRef,
+		&i.OauthScopes,
 	)
 	return i, err
 }
@@ -67,7 +71,7 @@ func (q *Queries) DeleteMCPServer(ctx context.Context, id uuid.UUID) error {
 }
 
 const getMCPServer = `-- name: GetMCPServer :one
-SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at FROM mcp_servers WHERE id = $1
+SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes FROM mcp_servers WHERE id = $1
 `
 
 func (q *Queries) GetMCPServer(ctx context.Context, id uuid.UUID) (McpServer, error) {
@@ -87,12 +91,16 @@ func (q *Queries) GetMCPServer(ctx context.Context, id uuid.UUID) (McpServer, er
 		&i.UpdatedAt,
 		&i.LastDiscoveryError,
 		&i.LastDiscoveryAt,
+		&i.AuthKind,
+		&i.OauthClientID,
+		&i.OauthClientSecretRef,
+		&i.OauthScopes,
 	)
 	return i, err
 }
 
 const listMCPServersByTeam = `-- name: ListMCPServersByTeam :many
-SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at FROM mcp_servers
+SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes FROM mcp_servers
 WHERE team_id = $1
   AND strpos(lower(name), lower($2::text)) > 0
   AND (NOT $3::bool
@@ -140,6 +148,10 @@ func (q *Queries) ListMCPServersByTeam(ctx context.Context, arg ListMCPServersBy
 			&i.UpdatedAt,
 			&i.LastDiscoveryError,
 			&i.LastDiscoveryAt,
+			&i.AuthKind,
+			&i.OauthClientID,
+			&i.OauthClientSecretRef,
+			&i.OauthScopes,
 		); err != nil {
 			return nil, err
 		}
@@ -219,7 +231,7 @@ UPDATE mcp_servers SET
     END,
     updated_at      = now()
 WHERE id = $7
-RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at
+RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes
 `
 
 type UpdateMCPServerParams struct {
@@ -262,6 +274,10 @@ func (q *Queries) UpdateMCPServer(ctx context.Context, arg UpdateMCPServerParams
 		&i.UpdatedAt,
 		&i.LastDiscoveryError,
 		&i.LastDiscoveryAt,
+		&i.AuthKind,
+		&i.OauthClientID,
+		&i.OauthClientSecretRef,
+		&i.OauthScopes,
 	)
 	return i, err
 }

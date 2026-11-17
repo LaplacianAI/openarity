@@ -480,6 +480,12 @@
       "permission": "tool:write"
     },
     {
+      "method": "POST",
+      "path": "/teams/{id}/mcp-servers/{serverID}/oauth/start",
+      "scope": "team",
+      "permission": "tool:write"
+    },
+    {
       "method": "PUT",
       "path": "/teams/{id}/mcp-secrets/{name}",
       "scope": "team",

@@ -62,7 +62,7 @@ func (d *Discoverer) Client(ctx context.Context, s db.McpServer) (*http.Client, 
 		return nil, ErrCommandServer
 	}
 
-	token, err := d.token(ctx, s.AuthSecretRef)
+	token, err := d.tokenFor(ctx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func (d *Discoverer) Discover(ctx context.Context, s db.McpServer) ([]Tool, erro
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 
-	token, err := d.token(ctx, s.AuthSecretRef)
+	token, err := d.tokenFor(ctx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +97,33 @@ func (d *Discoverer) Discover(ctx context.Context, s db.McpServer) ([]Tool, erro
 
 	return collect(session.Tools(ctx, nil))
 }
+
+// ErrNotSignedIn is a server that signs in and has no sign-in: never made,
+// or disconnected. Someone connects it on the dashboard.
+var ErrNotSignedIn = errors.New("the server needs signing in: connect it on the dashboard")
+
+// tokenFor is the token a server is called with: its sign-in's access token,
+// or the static one its auth_secret_ref names, or none.
+func (d *Discoverer) tokenFor(ctx context.Context, s db.McpServer) (string, error) {
+	if s.AuthKind != "oauth" {
+		return d.token(ctx, s.AuthSecretRef)
+	}
+	v, err := d.secrets.Get(ctx, secrets.Path(s.TeamID, secrets.KindMCPOAuth, s.ID), OAuthAccessKey)
+	if errors.Is(err, secrets.ErrNotFound) || (err == nil && v == "") {
+		return "", ErrNotSignedIn
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading the server's sign-in: %w", err)
+	}
+	return v, nil
+}
+
+// The keys of a sign-in's secret, written whole.
+const (
+	OAuthAccessKey  = "access_token"
+	OAuthRefreshKey = "refresh_token"
+	OAuthExpiryKey  = "expires_at"
+)
 
 func (d *Discoverer) token(ctx context.Context, ref *string) (string, error) {
 	if ref == nil {

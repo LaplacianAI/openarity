@@ -2602,6 +2602,14 @@ type SkillID = openapi_types.UUID
 // TeamID defines model for TeamID.
 type TeamID = openapi_types.UUID
 
+// McpOAuthCallbackParams defines parameters for McpOAuthCallback.
+type McpOAuthCallbackParams struct {
+	State *string `form:"state,omitempty" json:"state,omitempty" yaml:"state,omitempty"`
+	Code  *string `form:"code,omitempty" json:"code,omitempty" yaml:"code,omitempty"`
+	Iss   *string `form:"iss,omitempty" json:"iss,omitempty" yaml:"iss,omitempty"`
+	Error *string `form:"error,omitempty" json:"error,omitempty" yaml:"error,omitempty"`
+}
+
 // ListTeamsParams defines parameters for ListTeams.
 type ListTeamsParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
@@ -3063,6 +3071,22 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /healthz (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// McpOAuthCallback Where an MCP server's sign-in comes back
+	//
+	// Unauthenticated: an authorization server sends the person's browser
+	// here, with no credential of its own. The `state` is the only proof,
+	// taken once and valid for ten minutes. The code is exchanged with a
+	// PKCE verifier only the brain holds, the tokens are kept in the secret
+	// store, and the server's tools are discovered with them.
+	//
+	// Always answers 303 to `<PUBLIC_URL>/ui/servers`, never anywhere the
+	// request names, with `oauth` set to `connected`, `connected-no-tools`
+	// (signed in, and the tools could not be listed), `expired`, `denied`,
+	// `refused` or `failed`, and `server` once the sign-in is known.
+	//
+	// Corresponds with GET /oauth/mcp/callback (the `McpOAuthCallback` operationId).
+	McpOAuthCallback(ctx context.Context, params *McpOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReady Readiness
 	//
@@ -3809,6 +3833,23 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/discover (the `DiscoverMCPServer` operationId).
 	DiscoverMCPServer(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartMCPServerOAuth Begin signing in to a server
+	//
+	// Requires `tool:write` in this team. For a server that signs in
+	// (`auth_kind` oauth, with an OAuth client), the brain finds its
+	// authorization server as the MCP authorization spec lays out, begins a
+	// sign-in with PKCE that lasts ten minutes, and answers with the URL to
+	// send the person to. They come back to `/oauth/mcp/callback`, which must
+	// be the client's registered redirect URI, under `PUBLIC_URL`.
+	//
+	// 409 when the server is reached with a token, is a command server, has
+	// no OAuth client, offers more than five scopes with none chosen on it,
+	// or when this brain has no `PUBLIC_URL`. 502 when the server's sign-in
+	// cannot be found or offers no PKCE with S256.
+	//
+	// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/oauth/start (the `StartMCPServerOAuth` operationId).
+	StartMCPServerOAuth(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListMCPTools List the tools a server offers
 	//
@@ -4635,6 +4676,32 @@ func (c *Client) GetAuthConfig(ctx context.Context, reqEditors ...RequestEditorF
 // Corresponds with GET /healthz (the `GetHealth` operationId).
 func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetHealthRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// McpOAuthCallback Where an MCP server's sign-in comes back
+//
+// Unauthenticated: an authorization server sends the person's browser
+// here, with no credential of its own. The `state` is the only proof,
+// taken once and valid for ten minutes. The code is exchanged with a
+// PKCE verifier only the brain holds, the tokens are kept in the secret
+// store, and the server's tools are discovered with them.
+//
+// Always answers 303 to `<PUBLIC_URL>/ui/servers`, never anywhere the
+// request names, with `oauth` set to `connected`, `connected-no-tools`
+// (signed in, and the tools could not be listed), `expired`, `denied`,
+// `refused` or `failed`, and `server` once the sign-in is known.
+//
+// Corresponds with GET /oauth/mcp/callback (the `McpOAuthCallback` operationId).
+func (c *Client) McpOAuthCallback(ctx context.Context, params *McpOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMcpOAuthCallbackRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -5831,6 +5898,33 @@ func (c *Client) UpdateMCPServer(ctx context.Context, id TeamID, serverID Server
 // Corresponds with POST /teams/{id}/mcp-servers/{serverID}/discover (the `DiscoverMCPServer` operationId).
 func (c *Client) DiscoverMCPServer(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDiscoverMCPServerRequest(c.Server, id, serverID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartMCPServerOAuth Begin signing in to a server
+//
+// Requires `tool:write` in this team. For a server that signs in
+// (`auth_kind` oauth, with an OAuth client), the brain finds its
+// authorization server as the MCP authorization spec lays out, begins a
+// sign-in with PKCE that lasts ten minutes, and answers with the URL to
+// send the person to. They come back to `/oauth/mcp/callback`, which must
+// be the client's registered redirect URI, under `PUBLIC_URL`.
+//
+// 409 when the server is reached with a token, is a command server, has
+// no OAuth client, offers more than five scopes with none chosen on it,
+// or when this brain has no `PUBLIC_URL`. 502 when the server's sign-in
+// cannot be found or offers no PKCE with S256.
+//
+// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/oauth/start (the `StartMCPServerOAuth` operationId).
+func (c *Client) StartMCPServerOAuth(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartMCPServerOAuthRequest(c.Server, id, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -7138,6 +7232,96 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewMcpOAuthCallbackRequest constructs an http.Request for the McpOAuthCallback method
+func NewMcpOAuthCallbackRequest(server string, params *McpOAuthCallbackParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/mcp/callback")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Code != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", *params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Iss != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "iss", *params.Iss, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Error != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "error", *params.Error, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -8905,6 +9089,47 @@ func NewDiscoverMCPServerRequest(server string, id TeamID, serverID ServerID) (*
 	}
 
 	operationPath := fmt.Sprintf("/teams/%s/mcp-servers/%s/discover", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStartMCPServerOAuthRequest constructs an http.Request for the StartMCPServerOAuth method
+func NewStartMCPServerOAuthRequest(server string, id TeamID, serverID ServerID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "serverID", serverID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-servers/%s/oauth/start", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11111,6 +11336,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /healthz (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
 
+	// McpOAuthCallbackWithResponse Where an MCP server's sign-in comes back
+	//
+	// Unauthenticated: an authorization server sends the person's browser
+	// here, with no credential of its own. The `state` is the only proof,
+	// taken once and valid for ten minutes. The code is exchanged with a
+	// PKCE verifier only the brain holds, the tokens are kept in the secret
+	// store, and the server's tools are discovered with them.
+	//
+	// Always answers 303 to `<PUBLIC_URL>/ui/servers`, never anywhere the
+	// request names, with `oauth` set to `connected`, `connected-no-tools`
+	// (signed in, and the tools could not be listed), `expired`, `denied`,
+	// `refused` or `failed`, and `server` once the sign-in is known.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /oauth/mcp/callback (the `McpOAuthCallback` operationId).
+	McpOAuthCallbackWithResponse(ctx context.Context, params *McpOAuthCallbackParams, reqEditors ...RequestEditorFn) (*McpOAuthCallbackResponse, error)
+
 	// GetReadyWithResponse Readiness
 	//
 	// Pings Postgres. The body never names the underlying error; the reason
@@ -11898,6 +12141,25 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/discover (the `DiscoverMCPServer` operationId).
 	DiscoverMCPServerWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*DiscoverMCPServerResponse, error)
+
+	// StartMCPServerOAuthWithResponse Begin signing in to a server
+	//
+	// Requires `tool:write` in this team. For a server that signs in
+	// (`auth_kind` oauth, with an OAuth client), the brain finds its
+	// authorization server as the MCP authorization spec lays out, begins a
+	// sign-in with PKCE that lasts ten minutes, and answers with the URL to
+	// send the person to. They come back to `/oauth/mcp/callback`, which must
+	// be the client's registered redirect URI, under `PUBLIC_URL`.
+	//
+	// 409 when the server is reached with a token, is a command server, has
+	// no OAuth client, offers more than five scopes with none chosen on it,
+	// or when this brain has no `PUBLIC_URL`. 502 when the server's sign-in
+	// cannot be found or offers no PKCE with S256.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/oauth/start (the `StartMCPServerOAuth` operationId).
+	StartMCPServerOAuthWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*StartMCPServerOAuthResponse, error)
 
 	// ListMCPToolsWithResponse List the tools a server offers
 	//
@@ -12817,6 +13079,40 @@ func (r GetHealthResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetHealthResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type McpOAuthCallbackResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r McpOAuthCallbackResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r McpOAuthCallbackResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r McpOAuthCallbackResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r McpOAuthCallbackResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -14352,6 +14648,60 @@ func (r DiscoverMCPServerResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DiscoverMCPServerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// StartMCPServerOAuthResponse401Headers the declared response headers of an HTTP 401 response for StartMCPServerOAuth
+type StartMCPServerOAuthResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type StartMCPServerOAuthResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *struct {
+		// AuthorizeURL Where to send the person to sign in
+		AuthorizeURL string `json:"authorize_url" yaml:"authorize_url"`
+	}
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *StartMCPServerOAuthResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StartMCPServerOAuthResponse) GetJSON200() *struct {
+	// AuthorizeURL Where to send the person to sign in
+	AuthorizeURL string `json:"authorize_url" yaml:"authorize_url"`
+} {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r StartMCPServerOAuthResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartMCPServerOAuthResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartMCPServerOAuthResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartMCPServerOAuthResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -16217,6 +16567,30 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 	return ParseGetHealthResponse(rsp)
 }
 
+// McpOAuthCallbackWithResponse Where an MCP server's sign-in comes back
+//
+// Unauthenticated: an authorization server sends the person's browser
+// here, with no credential of its own. The `state` is the only proof,
+// taken once and valid for ten minutes. The code is exchanged with a
+// PKCE verifier only the brain holds, the tokens are kept in the secret
+// store, and the server's tools are discovered with them.
+//
+// Always answers 303 to `<PUBLIC_URL>/ui/servers`, never anywhere the
+// request names, with `oauth` set to `connected`, `connected-no-tools`
+// (signed in, and the tools could not be listed), `expired`, `denied`,
+// `refused` or `failed`, and `server` once the sign-in is known.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /oauth/mcp/callback (the `McpOAuthCallback` operationId).
+func (c *ClientWithResponses) McpOAuthCallbackWithResponse(ctx context.Context, params *McpOAuthCallbackParams, reqEditors ...RequestEditorFn) (*McpOAuthCallbackResponse, error) {
+	rsp, err := c.McpOAuthCallback(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMcpOAuthCallbackResponse(rsp)
+}
+
 // GetReadyWithResponse Readiness
 //
 // Pings Postgres. The body never names the underlying error; the reason
@@ -17273,6 +17647,31 @@ func (c *ClientWithResponses) DiscoverMCPServerWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseDiscoverMCPServerResponse(rsp)
+}
+
+// StartMCPServerOAuthWithResponse Begin signing in to a server
+//
+// Requires `tool:write` in this team. For a server that signs in
+// (`auth_kind` oauth, with an OAuth client), the brain finds its
+// authorization server as the MCP authorization spec lays out, begins a
+// sign-in with PKCE that lasts ten minutes, and answers with the URL to
+// send the person to. They come back to `/oauth/mcp/callback`, which must
+// be the client's registered redirect URI, under `PUBLIC_URL`.
+//
+// 409 when the server is reached with a token, is a command server, has
+// no OAuth client, offers more than five scopes with none chosen on it,
+// or when this brain has no `PUBLIC_URL`. 502 when the server's sign-in
+// cannot be found or offers no PKCE with S256.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/oauth/start (the `StartMCPServerOAuth` operationId).
+func (c *ClientWithResponses) StartMCPServerOAuthWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*StartMCPServerOAuthResponse, error) {
+	rsp, err := c.StartMCPServerOAuth(ctx, id, serverID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartMCPServerOAuthResponse(rsp)
 }
 
 // ListMCPToolsWithResponse List the tools a server offers
@@ -18435,6 +18834,22 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	}
 
 	response := &GetHealthResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseMcpOAuthCallbackResponse parses an HTTP response from a McpOAuthCallbackWithResponse call
+func ParseMcpOAuthCallbackResponse(rsp *http.Response) (*McpOAuthCallbackResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &McpOAuthCallbackResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -19640,6 +20055,54 @@ func ParseDiscoverMCPServerResponse(rsp *http.Response) (*DiscoverMCPServerRespo
 	switch {
 	case rsp.StatusCode == 401:
 		var headers DiscoverMCPServerResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseStartMCPServerOAuthResponse parses an HTTP response from a StartMCPServerOAuthWithResponse call
+func ParseStartMCPServerOAuthResponse(rsp *http.Response) (*StartMCPServerOAuthResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartMCPServerOAuthResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// AuthorizeURL Where to send the person to sign in
+			AuthorizeURL string `json:"authorize_url" yaml:"authorize_url"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 409:
+		break // No content-type
+
+	case rsp.StatusCode == 502:
+		break // No content-type
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers StartMCPServerOAuthResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

@@ -16,6 +16,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/channels"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/docs"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/loops"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpoauth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpservers"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/runs"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/sessions"
@@ -59,8 +60,13 @@ func newRouters(
 	graphs teamgraph.Viewer,
 	starter runs.Starter,
 	notices gateway.Kicker,
+	oauth mcpoauth.Discoverer,
 ) []server.Router {
+	start, callback := mcpoauth.New(logger, dbStore, oauth, channelSecrets{secretStore, secretWriter},
+		mcpservers.NewRefresher(logger, discoverer, mcpStore{dbStore}), cfg.PublicURL)
 	routers := []server.Router{
+		start,
+		callback,
 		whoami.New(logger),
 		teams.New(logger, teamStore{dbStore}, authorizer, cfg.TeamPurgeAfter),
 		channels.New(logger, dbStore, authorizer, channelSecrets{secretStore, secretWriter}, registry, cfg.WebhookPublicURL,

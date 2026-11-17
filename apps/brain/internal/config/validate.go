@@ -79,6 +79,37 @@ func checkWebhookPublicURL(v string, env Environment) error {
 	return nil
 }
 
+// checkPublicURL allows the setting to be empty, which leaves MCP servers
+// unable to be signed in to. When set it is an origin, the dashboard's, that
+// an authorization server sends a browser back to: https, or http to a
+// loopback host, which is all OAuth accepts for a redirect.
+func checkPublicURL(v string) error {
+	if v == "" {
+		return nil
+	}
+	if err := checkURL("PUBLIC_URL", v, httpSchemes...); err != nil {
+		return err
+	}
+	u, _ := url.Parse(v) // checkURL has just parsed it
+	switch {
+	case u.User != nil:
+		return errors.New("PUBLIC_URL holds a user or password, and every authorization server is given it — take them out")
+	case u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Trim(u.Path, "/") != "":
+		return errors.New("PUBLIC_URL is the dashboard's origin, such as https://openarity.example.com, so it has no path, query or fragment")
+	case u.Scheme != "https" && !loopback(u.Hostname()):
+		return errors.New("PUBLIC_URL must be https, or http to localhost: an authorization server refuses to send a browser anywhere else")
+	}
+	return nil
+}
+
+func loopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
+}
+
 var hostPattern = regexp.MustCompile(`(?i)^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
 func checkHosts(field string, hosts []string) error {
@@ -162,6 +193,10 @@ func (c *Config) Validate() error {
 	}
 
 	if err := checkWebhookPublicURL(c.WebhookPublicURL, c.Environment); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := checkPublicURL(c.PublicURL); err != nil {
 		errs = append(errs, err)
 	}
 

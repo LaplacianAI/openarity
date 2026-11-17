@@ -128,20 +128,53 @@ type GraphOutbox struct {
 	LastAttemptAt *time.Time
 }
 
-type McpServer struct {
-	ID                 uuid.UUID
+type McpOauthConnection struct {
+	ServerID           uuid.UUID
 	TeamID             uuid.UUID
-	Name               string
-	Url                *string
-	Command            []string
-	Env                []byte
-	AuthSecretRef      *string
-	Bare               bool
-	DiscoveredAt       *time.Time
-	CreatedAt          time.Time
+	ConnectedBy        *uuid.UUID
+	Issuer             string
+	TokenEndpoint      string
+	RevocationEndpoint *string
+	Resource           string
+	Auth               []byte
+	ScopesGranted      []string
+	AccessExpiresAt    *time.Time
+	Status             string
+	Reason             *string
+	ConnectedAt        time.Time
 	UpdatedAt          time.Time
-	LastDiscoveryError *string
-	LastDiscoveryAt    *time.Time
+}
+
+type McpOauthPending struct {
+	StateHash   []byte
+	TeamID      uuid.UUID
+	ServerID    uuid.UUID
+	StartedBy   uuid.UUID
+	Verifier    string
+	RedirectUri string
+	Auth        []byte
+	CreatedAt   time.Time
+	ExpiresAt   time.Time
+}
+
+type McpServer struct {
+	ID                   uuid.UUID
+	TeamID               uuid.UUID
+	Name                 string
+	Url                  *string
+	Command              []string
+	Env                  []byte
+	AuthSecretRef        *string
+	Bare                 bool
+	DiscoveredAt         *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	LastDiscoveryError   *string
+	LastDiscoveryAt      *time.Time
+	AuthKind             string
+	OauthClientID        *string
+	OauthClientSecretRef *string
+	OauthScopes          []string
 }
 
 type McpTool struct {

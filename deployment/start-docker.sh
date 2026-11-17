@@ -670,6 +670,9 @@ Run with PROVIDER=authentik, or take HTTPS_HOST out of deployment/.env."
 	[ -n "$HTTPS_AUTH_HOST" ] || die "HTTPS_HOST is set without HTTPS_AUTH_HOST, the name authentik is served on."
 	env_is_set CLOUDFLARE_API_TOKEN || die "HTTPS_HOST is set without CLOUDFLARE_API_TOKEN, which the certificate is proven with."
 	HTTPS_OVERLAY="-f docker-compose.https.yml"
+	# Into .env, as the webhook URL is, so staging/deploy.sh keeps it: where
+	# an MCP server's sign-in sends the browser back, the dashboard's origin.
+	env_set OPENARITY_PUBLIC_URL "https://$HTTPS_HOST"
 fi
 
 HOOKS_HOST=""
