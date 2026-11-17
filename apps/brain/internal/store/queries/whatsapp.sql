@@ -20,7 +20,12 @@ WHERE a.channel_id = c.id
   AND (a.held_by = sqlc.arg('holder')::text OR a.held_by IS NULL
        OR a.heartbeat_at < now() - make_interval(secs => sqlc.arg('stale_seconds')::float8))
 RETURNING a.channel_id, c.team_id, c.notify_strangers, c.answers_in, c.trigger_word,
-          a.state, a.jid, a.pair_seq, a.pair_seen, a.pair_method, a.pair_phone;
+          a.state, a.jid, a.pair_seq, a.pair_seen, a.pair_method, a.pair_phone,
+          -- The words of the other channels linked to this number, '' for one
+          -- with none: every message reaches each, so the words decide which.
+          ARRAY(SELECT coalesce(oc.trigger_word, '')
+                FROM whatsapp_accounts o JOIN channels oc ON oc.id = o.channel_id
+                WHERE o.phone = a.phone AND o.channel_id <> a.channel_id)::text[] AS shared_words;
 
 -- A role stopping lets its accounts go, so another takes them at once.
 -- name: ReleaseWhatsAppAccounts :exec
@@ -82,3 +87,30 @@ SET state = 'pairing', pair_seq = whatsapp_accounts.pair_seq + 1,
 SELECT state, phone, pair_method, pair_qr, pair_code, pair_error, updated_at,
        coalesce(heartbeat_at > now() - make_interval(secs => sqlc.arg('stale_seconds')::float8), false)::bool AS held
 FROM whatsapp_accounts WHERE channel_id = sqlc.arg('channel_id');
+
+-- The words of the other channels linked to a channel's number, as the lease
+-- reads them, for a channel just linked.
+-- name: WhatsAppSharedWords :many
+SELECT coalesce(oc.trigger_word, '')::text
+FROM whatsapp_accounts a
+JOIN whatsapp_accounts o ON o.phone = a.phone AND o.channel_id <> a.channel_id
+JOIN channels oc ON oc.id = o.channel_id
+WHERE a.channel_id = $1;
+
+-- LockWhatsAppNumber holds every account on a channel's number, in one order,
+-- so two edits of the words on one number take turns rather than both
+-- passing a check the other is about to make false.
+-- name: LockWhatsAppNumber :exec
+SELECT channel_id FROM whatsapp_accounts
+WHERE phone = (SELECT phone FROM whatsapp_accounts w WHERE w.channel_id = $1)
+ORDER BY channel_id
+FOR UPDATE;
+
+-- The other channels linked to a channel's number, and their words.
+-- name: ListWhatsAppSharers :many
+SELECT o.channel_id, oc.team_id, oc.name, oc.trigger_word
+FROM whatsapp_accounts a
+JOIN whatsapp_accounts o ON o.phone = a.phone AND o.channel_id <> a.channel_id
+JOIN channels oc ON oc.id = o.channel_id
+WHERE a.channel_id = $1
+ORDER BY oc.name, o.channel_id;

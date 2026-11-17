@@ -37,6 +37,7 @@ type Store interface {
 	SetWhatsAppLinked(ctx context.Context, arg db.SetWhatsAppLinkedParams) (int64, error)
 	SetWhatsAppUnpaired(ctx context.Context, arg db.SetWhatsAppUnpairedParams) (int64, error)
 	ListWhatsAppJIDs(ctx context.Context) ([]string, error)
+	WhatsAppSharedWords(ctx context.Context, channelID uuid.UUID) ([]string, error)
 	WhatsAppPartSent(ctx context.Context, arg db.WhatsAppPartSentParams) (string, error)
 	RecordWhatsAppPart(ctx context.Context, arg db.RecordWhatsAppPartParams) error
 	PruneWhatsAppSent(ctx context.Context) error
@@ -225,7 +226,7 @@ func (a *Accounts) held(ctx context.Context, rows []db.LeaseWhatsAppAccountsRow)
 		if c == nil {
 			c = a.open(ctx, r)
 		}
-		c.setSettings(settings{notifyStrangers: r.NotifyStrangers, answersIn: r.AnswersIn, triggerWord: r.TriggerWord})
+		c.setSettings(settings{notifyStrangers: r.NotifyStrangers, answersIn: r.AnswersIn, triggerWord: r.TriggerWord, sharedWords: r.SharedWords})
 		if r.PairSeq > r.PairSeen {
 			c.pair(ctx, r)
 		}
@@ -235,7 +236,7 @@ func (a *Accounts) held(ctx context.Context, rows []db.LeaseWhatsAppAccountsRow)
 // open starts holding a channel, connecting the device it was linked to.
 func (a *Accounts) open(ctx context.Context, r db.LeaseWhatsAppAccountsRow) *conn {
 	c := a.newConn(ctx, db.Channel{ID: r.ChannelID, TeamID: r.TeamID})
-	c.setSettings(settings{notifyStrangers: r.NotifyStrangers, answersIn: r.AnswersIn, triggerWord: r.TriggerWord})
+	c.setSettings(settings{notifyStrangers: r.NotifyStrangers, answersIn: r.AnswersIn, triggerWord: r.TriggerWord, sharedWords: r.SharedWords})
 	a.mu.Lock()
 	a.conns[r.ChannelID] = c
 	a.mu.Unlock()
@@ -249,6 +250,8 @@ func (a *Accounts) open(ctx context.Context, r db.LeaseWhatsAppAccountsRow) *con
 		dev, err = a.deviceOf(ctx, jid)
 	}
 	switch {
+	case errors.Is(err, errDeviceAmbiguous):
+		c.unlink(ctx, "This number's channels were linked before each kept a device of its own. Pair this channel again.")
 	case err != nil:
 		a.logger.Error("whatsapp: reading the linked device", "channel_id", r.ChannelID, "error", err)
 	case dev == nil:
@@ -261,22 +264,45 @@ func (a *Accounts) open(ctx context.Context, r db.LeaseWhatsAppAccountsRow) *con
 	return c
 }
 
-// deviceOf is the device linked as jid. An account names the number, and
-// whatsmeow keeps a device under its own address, the number and which of its
-// devices this is: looked up by the number alone it is never there, and every
-// restart would unlink it. Nil when its keys are gone.
+// errDeviceAmbiguous is an account that names only a number, as accounts did
+// before each kept its device's address, on a number linked as more than one
+// device: which one is this channel's cannot be told.
+var errDeviceAmbiguous = errors.New("the account names a number linked as more than one device")
+
+// deviceOf is the device an account names: by its full address, number and
+// device, since a number can be linked to several channels, each its own
+// device. An account from before names the number alone, and is matched to
+// the one device of that number, or refused when there are several. Nil
+// when its keys are gone.
 func (a *Accounts) deviceOf(ctx context.Context, jid types.JID) (*store.Device, error) {
 	devs, err := a.devices.GetAllDevices(ctx)
 	if err != nil {
 		return nil, err
 	}
-	want := jid.ToNonAD()
-	for _, d := range devs {
-		if d.ID != nil && d.ID.ToNonAD() == want {
-			return d, nil
+	if jid.Device != 0 {
+		for _, d := range devs {
+			if d.ID != nil && sameDevice(*d.ID, jid) {
+				return d, nil
+			}
 		}
+		return nil, nil
 	}
-	return nil, nil
+	want := jid.ToNonAD()
+	var found *store.Device
+	for _, d := range devs {
+		if d.ID == nil || d.ID.ToNonAD() != want {
+			continue
+		}
+		if found != nil {
+			return nil, errDeviceAmbiguous
+		}
+		found = d
+	}
+	return found, nil
+}
+
+func sameDevice(a, b types.JID) bool {
+	return a.User == b.User && a.Device == b.Device && a.Server == b.Server
 }
 
 // forget deletes a device's keys, unless logging it out already did:
@@ -324,14 +350,21 @@ func (a *Accounts) letGoOrphans(ctx context.Context) {
 		a.logger.Error("whatsapp: listing linked accounts", "error", err)
 		return
 	}
+	// A device is known by its own address, or, for an account from before
+	// that names only the number, by the number: such an account keeps every
+	// device of its number until it is paired again.
 	known := make(map[string]bool, len(named))
-	for _, j := range named {
-		known[j] = true
+	for _, raw := range named {
+		if j, err := types.ParseJID(raw); err == nil && j.Device != 0 {
+			known[j.String()] = true
+		} else {
+			known[raw] = true
+		}
 	}
 	a.mu.Lock()
 	for _, c := range a.conns {
 		if d := c.device(); d != nil && d.ID != nil {
-			known[d.ID.ToNonAD().String()] = true
+			known[d.ID.String()] = true
 		}
 	}
 	last := a.orphans
@@ -342,8 +375,8 @@ func (a *Accounts) letGoOrphans(ctx context.Context) {
 		if d.ID == nil {
 			continue
 		}
-		id := d.ID.ToNonAD().String()
-		if known[id] {
+		id := d.ID.String()
+		if known[id] || known[d.ID.ToNonAD().String()] {
 			continue
 		}
 		if !last[id] {

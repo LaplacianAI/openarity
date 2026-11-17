@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -300,5 +301,99 @@ func TestAskingToPairIsANewRequestEachTime(t *testing.T) {
 	}
 	if acc, _ := s.GetWhatsAppAccount(t.Context(), db.GetWhatsAppAccountParams{ChannelID: ch.ID, StaleSeconds: 60}); acc.Held {
 		t.Error("a holder silent five minutes still holds it")
+	}
+}
+
+// onNumber links ch to phone as a device of its own, as a pairing does.
+func onNumber(t *testing.T, s *Store, ch db.Channel, phone string, device int, word *string) {
+	t.Helper()
+	jid := phone + ":" + string(rune('0'+device)) + "@s.whatsapp.net"
+	if _, err := s.pool.Exec(t.Context(),
+		`UPDATE whatsapp_accounts SET state = 'connected', jid = $2, phone = $3 WHERE channel_id = $1`, ch.ID, jid, phone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(t.Context(), `UPDATE channels SET trigger_word = $2 WHERE id = $1`, ch.ID, word); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Every channel on a number hears every message to it, so each learns the
+// others' words, and none learns a word of a channel on another number.
+func TestAChannelLearnsTheWordsOfTheOthersOnItsNumber(t *testing.T) {
+	t.Parallel()
+	s := queryStore(t)
+	phone := "9190" + uuid.NewString()[:8]
+	a, b, alone := waChannel(t, s), waChannel(t, s), waChannel(t, s)
+	onNumber(t, s, a, phone, 1, new("@Dhars"))
+	onNumber(t, s, b, phone, 2, nil)
+	onNumber(t, s, alone, "9191"+uuid.NewString()[:8], 1, new("@Solo"))
+
+	got := leased(t, s, "words/1", 60, a.ID, b.ID, alone.ID)
+	if w := got[a.ID].SharedWords; len(w) != 1 || w[0] != "" {
+		t.Errorf("a learned %q; want b's, which is none", w)
+	}
+	if w := got[b.ID].SharedWords; len(w) != 1 || w[0] != "@Dhars" {
+		t.Errorf("b learned %q; want @Dhars", w)
+	}
+	if w := got[alone.ID].SharedWords; len(w) != 0 {
+		t.Errorf("a channel alone on its number learned %q", w)
+	}
+	if w, err := s.WhatsAppSharedWords(t.Context(), b.ID); err != nil || len(w) != 1 || w[0] != "@Dhars" {
+		t.Errorf("WhatsAppSharedWords = %q, %v", w, err)
+	}
+	sharers, err := s.ListWhatsAppSharers(t.Context(), a.ID)
+	if err != nil || len(sharers) != 1 || sharers[0].ChannelID != b.ID || sharers[0].TeamID != b.TeamID {
+		t.Errorf("ListWhatsAppSharers = %+v, %v; want b, with its team", sharers, err)
+	}
+}
+
+// A word is changed with the number held: a refusal writes nothing, and two
+// changes on one number take turns, so the second sees the first's word.
+func TestAWordIsChangedWithItsNumberHeld(t *testing.T) {
+	t.Parallel()
+	s := queryStore(t)
+	phone := "9192" + uuid.NewString()[:8]
+	a, b := waChannel(t, s), waChannel(t, s)
+	onNumber(t, s, a, phone, 1, nil)
+	onNumber(t, s, b, phone, 2, nil)
+
+	refused := errors.New("refused")
+	_, err := s.UpdateChannelOnItsNumber(t.Context(), db.UpdateChannelParams{ID: a.ID, TeamID: a.TeamID, TriggerWord: new("@Dhars")},
+		func([]db.ListWhatsAppSharersRow) error { return refused })
+	if !errors.Is(err, refused) {
+		t.Fatalf("err = %v", err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM channels WHERE id = '`+a.ID.String()+`' AND trigger_word IS NOT NULL`); n != 0 {
+		t.Error("a refused change was written")
+	}
+
+	// a's change holds the number until b's starts; b's check then sees a's
+	// word, committed, rather than the none it would have seen beside it.
+	inside, release := make(chan struct{}), make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		_, _ = s.UpdateChannelOnItsNumber(t.Context(), db.UpdateChannelParams{ID: a.ID, TeamID: a.TeamID, TriggerWord: new("@Dhars")},
+			func([]db.ListWhatsAppSharersRow) error { close(inside); <-release; return nil })
+	})
+	<-inside
+	seen := make(chan []db.ListWhatsAppSharersRow, 1)
+	wg.Go(func() {
+		_, _ = s.UpdateChannelOnItsNumber(t.Context(), db.UpdateChannelParams{ID: b.ID, TeamID: b.TeamID, TriggerWord: new("@Fduv")},
+			func(others []db.ListWhatsAppSharersRow) error { seen <- others; return nil })
+	})
+	// b must wait while a holds the number: a check that runs now reads the
+	// words as they were before a's change.
+	select {
+	case got := <-seen:
+		close(release)
+		wg.Wait()
+		t.Fatalf("b's check ran while a held the number, and saw %+v", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	wg.Wait()
+	others := <-seen
+	if len(others) != 1 || others[0].TriggerWord == nil || *others[0].TriggerWord != "@Dhars" {
+		t.Errorf("b's check saw %+v; want a's word, committed before it ran", others)
 	}
 }

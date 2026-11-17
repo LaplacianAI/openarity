@@ -34,6 +34,10 @@ type pairingView struct {
 	Phone  string `json:"phone,omitempty" yaml:"phone,omitempty"`
 	Error  string `json:"error,omitempty" yaml:"error,omitempty"`
 	Held   bool   `json:"held" yaml:"held"`
+	// SharedWith names the other channels on the number and their words,
+	// "name (word)" joined, so the view stays comparable as it is polled.
+	SharedWith       string `json:"shared_with,omitempty" yaml:"shared_with,omitempty"`
+	NeedsTriggerWord bool   `json:"needs_trigger_word,omitempty" yaml:"needs_trigger_word,omitempty"`
 }
 
 func viewOf(p *client.ChannelPairing) pairingView {
@@ -42,6 +46,18 @@ func viewOf(p *client.ChannelPairing) pairingView {
 		v.Method = string(*p.Method)
 	}
 	v.QR, v.Code, v.Phone, v.Error = deref(p.Qr), deref(p.Code), deref(p.Phone), deref(p.Error)
+	v.NeedsTriggerWord = p.NeedsTriggerWord != nil && *p.NeedsTriggerWord
+	if p.SharedWith != nil {
+		names := make([]string, 0, len(*p.SharedWith))
+		for _, o := range *p.SharedWith {
+			word := o.TriggerWord
+			if word == "" {
+				word = "no word"
+			}
+			names = append(names, o.Name+" ("+word+")")
+		}
+		v.SharedWith = strings.Join(names, ", ")
+	}
 	return v
 }
 
@@ -99,7 +115,7 @@ func newPairCmd(opts *cli.Options) *cobra.Command {
 				return cli.Needs(err, "channel:write")
 			}
 
-			f := follower{opts: opts, invert: invert, started: time.Now()}
+			f := follower{opts: opts, invert: invert, started: time.Now(), team: args[0], channel: args[1]}
 			ctx, cancel := context.WithTimeout(cmd.Context(), pairWait)
 			defer cancel()
 			for {
@@ -136,6 +152,8 @@ type follower struct {
 	started time.Time
 	last    pairingView
 	shown   bool
+	// team and channel as they were typed, for the command to run next.
+	team, channel string
 }
 
 func (f *follower) show(v pairingView) (bool, error) {
@@ -146,6 +164,17 @@ func (f *follower) show(v pairingView) (bool, error) {
 	case v.State == string(client.ChannelPairingStateConnected):
 		return true, f.opts.Out.Line(v, printer.Options{Table: func(table *printer.Table) {
 			table.Row(f.opts.Styles.OK.Render("linked"), f.opts.Styles.Value.Render("+"+cli.Safe(v.Phone)))
+			if v.SharedWith != "" {
+				table.Row(f.opts.Styles.Muted.Render("shared"), "the number also answers for "+cli.Safe(v.SharedWith))
+			}
+			// The number is shared, and this channel answers nothing until
+			// each channel on it has a word of its own.
+			if v.NeedsTriggerWord {
+				table.Row(f.opts.Styles.Warn.Render("waiting"),
+					"each channel answers only messages that hold its word; give this one a word of its own:")
+				table.Row("", f.opts.Styles.Value.Render(
+					"oa channels update "+cli.Safe(f.team)+" "+cli.Safe(f.channel)+" --trigger-word <word>"))
+			}
 		}})
 	case v.State == string(client.ChannelPairingStateUnpaired) && v.Error != "":
 		if err := f.opts.Out.Line(v, printer.Options{Table: func(*printer.Table) {}}); err != nil {

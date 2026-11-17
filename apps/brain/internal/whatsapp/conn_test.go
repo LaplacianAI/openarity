@@ -142,8 +142,8 @@ func TestPairingSuccessRecordsTheNumber(t *testing.T) {
 	cli.emit(&events.PairSuccess{ID: types.JID{User: "919000000005", Server: types.DefaultUserServer, Device: 3}})
 	eventually(t, "the number recorded", func() bool { return len(f.store.snapshot().linked) == 1 })
 	l := f.store.snapshot().linked[0]
-	if l.ChannelID != ch || l.Holder != "test/1" || *l.Jid != "919000000005@s.whatsapp.net" || *l.Phone != "919000000005" {
-		t.Fatalf("linked %+v; want the number, without its device, by this holder", l)
+	if l.ChannelID != ch || l.Holder != "test/1" || *l.Jid != "919000000005:3@s.whatsapp.net" || *l.Phone != "919000000005" {
+		t.Fatalf("linked %+v; want the device's own address and its number, by this holder", l)
 	}
 }
 
@@ -255,5 +255,110 @@ func TestTheOwnersCallByTheWordComesWithTheLease(t *testing.T) {
 	}
 	if ch.TriggerWord == nil || *ch.TriggerWord != "@Fduv" {
 		t.Errorf("the channel carried %v; want the word", ch.TriggerWord)
+	}
+}
+
+// sharedFixture is a channel on a number another channel links too, the
+// other's word given.
+func sharedFixture(t *testing.T, word *string, others ...string) (*fixture, *fakeClient) {
+	t.Helper()
+	f := newFixture(t, newDevices(linkedJID))
+	r := row(uuid.New(), &linkedJID)
+	r.AnswersIn, r.TriggerWord, r.SharedWords = "everywhere", word, others
+	f.store.rows = []db.LeaseWhatsAppAccountsRow{r}
+	f.a.lease(t.Context())
+	return f, f.client(t, 0)
+}
+
+func words(id types.MessageID, text string) *events.Message {
+	return incoming(id, &waE2E.Message{Conversation: proto.String(text)})
+}
+
+// On a shared number a stranger reaches this channel only by its word: the
+// same message reaches the other channel, which answers by its own.
+func TestOnASharedNumberAStrangerReachesTheChannelByItsWord(t *testing.T) {
+	f, cli := sharedFixture(t, new("@Dhars"), "@Fduv")
+	cli.emit(words("M1", "any jobs?"))
+	cli.emit(words("M2", "@Fduv hi"))
+	cli.emit(words("M3", "@Dhars any jobs?"))
+
+	eventually(t, "the call delivered", func() bool { return len(f.receiver.delivered()) == 1 })
+	time.Sleep(50 * time.Millisecond)
+	if got := f.receiver.delivered(); len(got) != 1 || got[0][0].ExternalID != "M3" {
+		t.Fatalf("delivered %+v; want only the message with this channel's word", got)
+	}
+}
+
+// Until every channel on the number has a word of its own, this one answers
+// nothing: one without a word would answer what is meant for another.
+func TestOnASharedNumberAChannelWaitsForEveryWord(t *testing.T) {
+	cases := map[string]struct {
+		word   *string
+		others []string
+	}{
+		"no word of its own":    {nil, []string{"@Fduv"}},
+		"the other has no word": {new("@Dhars"), []string{""}},
+		"the two words are one": {new("@Dhars"), []string{"@dhars"}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			f, cli := sharedFixture(t, c.word, c.others...)
+			cli.emit(words("M1", "@Dhars any jobs?"))
+			time.Sleep(50 * time.Millisecond)
+			if n := len(f.receiver.delivered()); n != 0 {
+				t.Errorf("delivered %d; want nothing until the words are set", n)
+			}
+		})
+	}
+}
+
+// The history WhatsApp sends on linking comes before the next lease: the
+// channel learns its number is shared on linking, so the history is filtered
+// rather than handed to this team whole.
+func TestHistoryOnLinkingASharedNumberIsFilteredByTheWord(t *testing.T) {
+	f := newFixture(t, newDevices(linkedJID))
+	r := row(uuid.New(), &linkedJID)
+	r.TriggerWord = new("@Dhars")
+	f.store.rows = []db.LeaseWhatsAppAccountsRow{r}
+	f.store.shared = []string{"@Fduv"} // what the store says once linked; the lease said nothing
+	f.a.lease(t.Context())
+	cli := f.client(t, 0)
+
+	cli.emit(&events.PairSuccess{ID: linkedJID})
+	cli.emit(historyOf(priya, "what we said yesterday", "@Dhars any jobs?"))
+
+	eventually(t, "the history delivered", func() bool { return len(f.receiver.delivered()) == 1 })
+	if got := f.receiver.delivered()[0]; len(got) != 1 || !strings.Contains(got[0].Text, "@Dhars") {
+		t.Fatalf("history %+v; want only the message with this channel's word", got)
+	}
+}
+
+func historyOf(chat types.JID, texts ...string) *events.HistorySync {
+	msgs := make([]*waHistorySync.HistorySyncMsg, len(texts))
+	for i, text := range texts {
+		msgs[i] = &waHistorySync.HistorySyncMsg{Message: &waWeb.WebMessageInfo{
+			Key:     &waCommon.MessageKey{ID: proto.String("H" + string(rune('A'+i)))},
+			Message: &waE2E.Message{Conversation: proto.String(text)},
+		}}
+	}
+	return &events.HistorySync{Data: &waHistorySync.HistorySync{Conversations: []*waHistorySync.Conversation{
+		{ID: proto.String(chat.String()), Messages: msgs},
+	}}}
+}
+
+// Another connection taking the device over ends this one: the account says
+// so, rather than "linked" over a connection that is gone, and the keys are
+// left for the sweep, which logs the device out.
+func TestADeviceTakenOverIsUnpairedSayingSo(t *testing.T) {
+	f, ch, cli := connected(t)
+	cli.emit(&events.StreamReplaced{})
+
+	eventually(t, "the account unpaired", func() bool { return len(f.store.snapshot().unpaired) == 1 })
+	u := f.store.snapshot().unpaired[0]
+	if u.ChannelID != ch || !strings.Contains(*u.Error, "took this channel's linked device over") {
+		t.Fatalf("unpaired %+v", u)
+	}
+	if len(f.devices.deleted) != 0 || cli.discos == 0 {
+		t.Errorf("deleted %v, disconnected %d times; want the keys kept and the client let go", f.devices.deleted, cli.discos)
 	}
 }

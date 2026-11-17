@@ -1116,6 +1116,12 @@ type ChannelPairing struct {
 	// Method What the pairing under way was asked to show.
 	Method *ChannelPairingMethod `json:"method,omitempty" yaml:"method,omitempty"`
 
+	// NeedsTriggerWord True when the number is shared and this channel answers nothing
+	// yet: it, or another channel on the number, has no trigger word, or
+	// two words could be held by one message. Set the words with
+	// `PATCH /teams/{id}/channels/{channelID}`.
+	NeedsTriggerWord *bool `json:"needs_trigger_word,omitempty" yaml:"needs_trigger_word,omitempty"`
+
 	// Phone The linked number, once `connected`.
 	//
 	// Examples: 919876543210
@@ -1123,9 +1129,15 @@ type ChannelPairing struct {
 
 	// Qr The text to draw as a QR code, while a QR pairing waits to be
 	// scanned. It changes about every 20 seconds.
-	Qr        *string             `json:"qr,omitempty" yaml:"qr,omitempty"`
-	State     ChannelPairingState `json:"state" yaml:"state"`
-	UpdatedAt *time.Time          `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
+	Qr *string `json:"qr,omitempty" yaml:"qr,omitempty"`
+
+	// SharedWith Once `connected`, the other channels linked to this number, in
+	// this team or another. Every message to the number reaches each of
+	// them, so each answers only messages that hold its trigger word,
+	// whoever sent them. Absent when the number is this channel's alone.
+	SharedWith *[]ChannelSharer    `json:"shared_with,omitempty" yaml:"shared_with,omitempty"`
+	State      ChannelPairingState `json:"state" yaml:"state"`
+	UpdatedAt  *time.Time          `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
 }
 
 // ChannelPairingMethod What the pairing under way was asked to show.
@@ -1159,6 +1171,19 @@ type ChannelSenderPage struct {
 
 	// NextCursor Absent on the last page
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// ChannelSharer defines model for ChannelSharer.
+type ChannelSharer struct {
+	ChannelID openapi_types.UUID `json:"channel_id" yaml:"channel_id"`
+
+	// Editable Whether the caller may set its word, with `channel:write` in its team
+	Editable bool               `json:"editable" yaml:"editable"`
+	Name     string             `json:"name" yaml:"name"`
+	TeamID   openapi_types.UUID `json:"team_id" yaml:"team_id"`
+
+	// TriggerWord Its word; "" when it has none
+	TriggerWord string `json:"trigger_word" yaml:"trigger_word"`
 }
 
 // CreateChannelRequest defines model for CreateChannelRequest.
@@ -2625,7 +2650,10 @@ type UpdateChannelRequest struct {
 	// ReplyURL The URL replies go to; null or an empty string stops sending them
 	ReplyURL *string `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
 
-	// TriggerWord The word a message must hold to ask the channel (see `TriggerWord`); "" takes it away
+	// TriggerWord The word a message must hold to ask the channel (see
+	// `TriggerWord`); "" takes it away. On a number other channels link
+	// too, it cannot be taken away, nor be a word one message could hold
+	// with another channel's on that number: 409, naming that channel.
 	TriggerWord *string `json:"trigger_word,omitempty" yaml:"trigger_word,omitempty"`
 }
 

@@ -131,6 +131,21 @@ export type ChannelPairing = {
   error?: string;
   held: boolean;
   updated_at?: string;
+  /** Once connected: the other channels linked to this number, in this team or another. */
+  shared_with?: ChannelSharer[];
+  /** The number is shared and this channel answers nothing until every channel on it has a word. */
+  needs_trigger_word?: boolean;
+};
+
+/** Another channel on a channel's number. */
+export type ChannelSharer = {
+  channel_id: string;
+  team_id: string;
+  name: string;
+  /** "" when it has none. */
+  trigger_word: string;
+  /** Whether the caller may set its word. */
+  editable: boolean;
 };
 
 /**

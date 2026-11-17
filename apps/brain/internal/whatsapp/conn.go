@@ -64,15 +64,22 @@ type settings struct {
 	notifyStrangers bool
 	answersIn       string
 	triggerWord     *string
+	// sharedWords are the other channels' on this number, "" for one with
+	// none; empty when the number is this channel's alone.
+	sharedWords []string
 }
 
-func (c *conn) trigger() string {
+// words is the trigger word messages are mapped with, whether the number is
+// shared, and whether this channel answers at all: on a shared number it
+// waits until every channel has a word of its own.
+func (c *conn) words() (trigger string, shared, answers bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.settings.triggerWord == nil {
-		return ""
+	if c.settings.triggerWord != nil {
+		trigger = *c.settings.triggerWord
 	}
-	return *c.settings.triggerWord
+	shared = len(c.settings.sharedWords) > 0
+	return trigger, shared, !shared || gateway.SharedAnswers(trigger, c.settings.sharedWords)
 }
 
 func (c *conn) setSettings(s settings) {
@@ -172,7 +179,11 @@ func (c *conn) handle(ctx context.Context, evt any) {
 		if e.Info.IsFromMe && c.sentHere(e.Info.ID) {
 			return
 		}
-		in, ok := gwa.Map(e, c.self(), c.trigger(), false)
+		trigger, shared, answers := c.words()
+		if !answers {
+			return
+		}
+		in, ok := gwa.Map(e, c.self(), trigger, false, shared)
 		if !ok {
 			return
 		}
@@ -188,9 +199,11 @@ func (c *conn) handle(ctx context.Context, evt any) {
 		log.Warn("whatsapp: the number logged this device out", "on_connect", e.OnConnect, "reason", e.Reason.String())
 		c.unlink(ctx, "WhatsApp logged this device out. Pair the number again.")
 	case *events.StreamReplaced:
-		// Another client connected as this device: two holders, which the
-		// lease exists to prevent.
+		// Another client connected as this device, and this connection is
+		// over: WhatsApp does not hand it back. Said on the account, so the
+		// channel shows it needs pairing rather than "linked" over nothing.
 		log.Error("whatsapp: another connection took this device over")
+		c.replaced(ctx)
 	case *events.TemporaryBan:
 		log.Error("whatsapp: the number is banned for a while", "ban", e.String())
 	case *events.ConnectFailure:
@@ -295,6 +308,10 @@ func (c *conn) receive(ctx context.Context, msgs []gateway.Inbound, get func(con
 // often gone from WhatsApp's servers by now.
 func (c *conn) history(ctx context.Context, e *events.HistorySync) {
 	cli, self := c.client(), c.self()
+	trigger, shared, answers := c.words()
+	if !answers {
+		return
+	}
 	for _, conv := range e.Data.GetConversations() {
 		chat, err := types.ParseJID(conv.GetID())
 		if err != nil || chat.User == "" {
@@ -309,8 +326,9 @@ func (c *conn) history(ctx context.Context, e *events.HistorySync) {
 			if err != nil {
 				continue
 			}
-			// The owner's own from before are never kept, so no word is needed.
-			if in, ok := gwa.Map(m, self, "", true); ok {
+			// The owner's own from before are never kept, so the word only
+			// matters on a shared number, where it is what everyone's needs.
+			if in, ok := gwa.Map(m, self, trigger, true, shared); ok {
 				in.Attachments = nil
 				msgs = append(msgs, in)
 			}
@@ -329,9 +347,23 @@ func (c *conn) linked(ctx context.Context, e *events.PairSuccess) {
 	c.mu.Lock()
 	c.pairing = false
 	c.mu.Unlock()
+	// The device's own address, number and device both: a number can be
+	// linked to several channels, each its own device, and by the number
+	// alone every channel would connect as the first.
 	n, err := c.a.store.SetWhatsAppLinked(ctx, db.SetWhatsAppLinkedParams{
-		ChannelID: c.channel.ID, Holder: c.a.holder, Jid: new(e.ID.ToNonAD().String()), Phone: new(e.ID.User),
+		ChannelID: c.channel.ID, Holder: c.a.holder, Jid: new(e.ID.String()), Phone: new(e.ID.User),
 	})
+	// Whether the number is shared, now: the history WhatsApp sends next
+	// comes before the next sweep, and on a shared number it is filtered.
+	if err == nil && n > 0 {
+		if words, err := c.a.store.WhatsAppSharedWords(ctx, c.channel.ID); err == nil {
+			c.mu.Lock()
+			c.settings.sharedWords = words
+			c.mu.Unlock()
+		} else {
+			c.a.logger.Error("whatsapp: reading the number's other channels", "channel_id", c.channel.ID, "error", err)
+		}
+	}
 	switch {
 	case err != nil:
 		c.a.logger.Error("whatsapp: recording the linked number", "channel_id", c.channel.ID, "error", err)
@@ -361,6 +393,24 @@ func (c *conn) unlink(ctx context.Context, why string) {
 		ChannelID: c.channel.ID, Holder: c.a.holder, Error: &why,
 	}); err != nil {
 		c.a.logger.Error("whatsapp: recording the device unlinked", "channel_id", c.channel.ID, "error", err)
+	}
+}
+
+// replaced lets a device go whose connection another took. Its keys are
+// left: the account no longer names it, so the sweep logs it out.
+func (c *conn) replaced(ctx context.Context) {
+	c.mu.Lock()
+	cli := c.cli
+	c.dev, c.cli = nil, nil
+	c.mu.Unlock()
+	if cli != nil {
+		cli.Disconnect()
+	}
+	why := "Another connection took this channel's linked device over. Pair the number again."
+	if _, err := c.a.store.SetWhatsAppUnpaired(ctx, db.SetWhatsAppUnpairedParams{
+		ChannelID: c.channel.ID, Holder: c.a.holder, Error: &why,
+	}); err != nil {
+		c.a.logger.Error("whatsapp: recording the device taken over", "channel_id", c.channel.ID, "error", err)
 	}
 }
 

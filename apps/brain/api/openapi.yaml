@@ -708,6 +708,15 @@ paths:
               schema:
                 type: string
                 examples: ["reply_url must not have a query or a fragment; the signature is what authenticates a reply"]
+        "409":
+          description: |
+            `trigger_word` would leave a shared number with a channel that
+            answers everything, or with two words one message could hold.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["this channel's number is linked to shrijeeth-personal too, so it needs a trigger word: each channel answers only messages that hold its word"]
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -4156,6 +4165,41 @@ components:
         updated_at:
           type: string
           format: date-time
+        shared_with:
+          type: array
+          description: |
+            Once `connected`, the other channels linked to this number, in
+            this team or another. Every message to the number reaches each of
+            them, so each answers only messages that hold its trigger word,
+            whoever sent them. Absent when the number is this channel's alone.
+          items:
+            $ref: "#/components/schemas/ChannelSharer"
+        needs_trigger_word:
+          type: boolean
+          description: |
+            True when the number is shared and this channel answers nothing
+            yet: it, or another channel on the number, has no trigger word, or
+            two words could be held by one message. Set the words with
+            `PATCH /teams/{id}/channels/{channelID}`.
+
+    ChannelSharer:
+      type: object
+      required: [channel_id, team_id, name, trigger_word, editable]
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        trigger_word:
+          type: string
+          description: Its word; "" when it has none
+        editable:
+          type: boolean
+          description: Whether the caller may set its word, with `channel:write` in its team
 
     UpdateChannelRequest:
       type: object
@@ -4166,7 +4210,11 @@ components:
         trigger_word:
           type: string
           maxLength: 32
-          description: The word a message must hold to ask the channel (see `TriggerWord`); "" takes it away
+          description: |
+            The word a message must hold to ask the channel (see
+            `TriggerWord`); "" takes it away. On a number other channels link
+            too, it cannot be taken away, nor be a word one message could hold
+            with another channel's on that number: 409, naming that channel.
         notify_strangers:
           type: boolean
           description: Whether the channel tells a sender nobody has let in that they are waiting, and that they are in

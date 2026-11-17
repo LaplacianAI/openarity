@@ -38,7 +38,7 @@ func TestARestartedRoleKeepsTheNumberLinked(t *testing.T) {
 	f := newFixture(t, newDevices(linkedJID))
 	ch := uuid.New()
 	f.store.rows = []db.LeaseWhatsAppAccountsRow{row(ch, &linkedJID)}
-	f.store.jids = []string{linkedJID.ToNonAD().String()}
+	f.store.jids = []string{linkedJID.String()}
 	f.a.lease(t.Context())
 	f.a.letGoOrphans(t.Context())
 	f.a.letGoOrphans(t.Context())
@@ -110,7 +110,7 @@ func TestADeviceNoAccountNamesIsLetGoAtTheSecondLook(t *testing.T) {
 	orphan := types.NewADJID("919000000099", 0, 4)
 	named := types.NewADJID("919000000002", 0, 7)
 	f := newFixture(t, newDevices(orphan, named, linkedJID))
-	f.store.jids = []string{named.ToNonAD().String()}
+	f.store.jids = []string{named.String()}
 	f.store.rows = []db.LeaseWhatsAppAccountsRow{row(uuid.New(), &linkedJID)}
 	f.a.lease(t.Context())
 
@@ -144,5 +144,72 @@ func TestStoppingReleasesTheLeases(t *testing.T) {
 	}
 	if s := f.store.snapshot(); !slices.Equal(s.released, []string{"test/1"}) || len(f.a.Held()) != 0 {
 		t.Fatalf("released %v, held %v; want this holder's leases let go", s.released, f.a.Held())
+	}
+}
+
+// sameNumber is a second device of linkedJID's number: a phone links up to
+// four, and two channels may link one number, each its own device.
+var sameNumber = types.NewADJID("919000000001", 0, 13)
+
+func TestTwoChannelsOnOneNumberEachConnectAsTheirOwnDevice(t *testing.T) {
+	f := newFixture(t, newDevices(linkedJID, sameNumber))
+	a, b := uuid.New(), uuid.New()
+	f.store.rows = []db.LeaseWhatsAppAccountsRow{row(a, &linkedJID), row(b, &sameNumber)}
+	f.a.lease(t.Context())
+
+	got := map[string]bool{}
+	for i := range f.madeClients() {
+		got[f.client(t, i).dev.ID.String()] = true
+	}
+	if len(got) != 2 || !got[linkedJID.String()] || !got[sameNumber.String()] {
+		t.Fatalf("connected as %v; want each channel as its own device", got)
+	}
+	if s := f.store.snapshot(); len(s.unpaired) != 0 {
+		t.Errorf("unpaired %+v", s.unpaired)
+	}
+}
+
+// An account from before names only the number. With one device of it, that
+// is its device; with two, which is its own cannot be told, and it is
+// unpaired saying so, with no keys deleted.
+func TestAnAccountNamingOnlyTheNumberIsMatchedOnlyWhenItCanBe(t *testing.T) {
+	f := newFixture(t, newDevices(linkedJID))
+	f.store.rows = []db.LeaseWhatsAppAccountsRow{legacyRow(uuid.New(), linkedJID)}
+	f.a.lease(t.Context())
+	if c := f.client(t, 0); c.connects != 1 || c.dev.ID.String() != linkedJID.String() {
+		t.Fatalf("connected %d times as %v; want the number's one device", c.connects, c.dev.ID)
+	}
+
+	f = newFixture(t, newDevices(linkedJID, sameNumber))
+	ch := uuid.New()
+	f.store.rows = []db.LeaseWhatsAppAccountsRow{legacyRow(ch, linkedJID)}
+	f.a.lease(t.Context())
+	s := f.store.snapshot()
+	if len(s.unpaired) != 1 || s.unpaired[0].ChannelID != ch || !strings.Contains(*s.unpaired[0].Error, "Pair this channel again") {
+		t.Fatalf("unpaired %+v; want the channel unpaired, saying to pair it again", s.unpaired)
+	}
+	if f.madeClients() != 0 || len(f.devices.deleted) != 0 {
+		t.Errorf("made %d clients, deleted %v; want neither device touched", f.madeClients(), f.devices.deleted)
+	}
+}
+
+// A device is known by its own address: another device of the same number
+// that no account names is an orphan like any other. An account from before
+// keeps every device of its number until it is paired again.
+func TestTheSweepTellsANumbersDevicesApart(t *testing.T) {
+	f := newFixture(t, newDevices(linkedJID, sameNumber))
+	f.store.jids = []string{linkedJID.String()}
+	f.a.letGoOrphans(t.Context())
+	f.a.letGoOrphans(t.Context())
+	if !slices.Equal(f.devices.deleted, []string{sameNumber.String()}) {
+		t.Fatalf("deleted %v; want the device no account names", f.devices.deleted)
+	}
+
+	f = newFixture(t, newDevices(linkedJID, sameNumber))
+	f.store.jids = []string{linkedJID.ToNonAD().String()}
+	f.a.letGoOrphans(t.Context())
+	f.a.letGoOrphans(t.Context())
+	if len(f.devices.deleted) != 0 {
+		t.Fatalf("deleted %v; an account naming the number keeps its devices", f.devices.deleted)
 	}
 }

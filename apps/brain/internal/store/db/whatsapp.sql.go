@@ -76,7 +76,12 @@ WHERE a.channel_id = c.id
   AND (a.held_by = $1::text OR a.held_by IS NULL
        OR a.heartbeat_at < now() - make_interval(secs => $2::float8))
 RETURNING a.channel_id, c.team_id, c.notify_strangers, c.answers_in, c.trigger_word,
-          a.state, a.jid, a.pair_seq, a.pair_seen, a.pair_method, a.pair_phone
+          a.state, a.jid, a.pair_seq, a.pair_seen, a.pair_method, a.pair_phone,
+          -- The words of the other channels linked to this number, '' for one
+          -- with none: every message reaches each, so the words decide which.
+          ARRAY(SELECT coalesce(oc.trigger_word, '')
+                FROM whatsapp_accounts o JOIN channels oc ON oc.id = o.channel_id
+                WHERE o.phone = a.phone AND o.channel_id <> a.channel_id)::text[] AS shared_words
 `
 
 type LeaseWhatsAppAccountsParams struct {
@@ -96,6 +101,7 @@ type LeaseWhatsAppAccountsRow struct {
 	PairSeen        int64
 	PairMethod      *string
 	PairPhone       *string
+	SharedWords     []string
 }
 
 // A role takes the accounts nobody holds, or whose holder stopped renewing,
@@ -123,6 +129,7 @@ func (q *Queries) LeaseWhatsAppAccounts(ctx context.Context, arg LeaseWhatsAppAc
 			&i.PairSeen,
 			&i.PairMethod,
 			&i.PairPhone,
+			&i.SharedWords,
 		); err != nil {
 			return nil, err
 		}
@@ -157,6 +164,63 @@ func (q *Queries) ListWhatsAppJIDs(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const listWhatsAppSharers = `-- name: ListWhatsAppSharers :many
+SELECT o.channel_id, oc.team_id, oc.name, oc.trigger_word
+FROM whatsapp_accounts a
+JOIN whatsapp_accounts o ON o.phone = a.phone AND o.channel_id <> a.channel_id
+JOIN channels oc ON oc.id = o.channel_id
+WHERE a.channel_id = $1
+ORDER BY oc.name, o.channel_id
+`
+
+type ListWhatsAppSharersRow struct {
+	ChannelID   uuid.UUID
+	TeamID      uuid.UUID
+	Name        string
+	TriggerWord *string
+}
+
+// The other channels linked to a channel's number, and their words.
+func (q *Queries) ListWhatsAppSharers(ctx context.Context, channelID uuid.UUID) ([]ListWhatsAppSharersRow, error) {
+	rows, err := q.db.Query(ctx, listWhatsAppSharers, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWhatsAppSharersRow
+	for rows.Next() {
+		var i ListWhatsAppSharersRow
+		if err := rows.Scan(
+			&i.ChannelID,
+			&i.TeamID,
+			&i.Name,
+			&i.TriggerWord,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockWhatsAppNumber = `-- name: LockWhatsAppNumber :exec
+SELECT channel_id FROM whatsapp_accounts
+WHERE phone = (SELECT phone FROM whatsapp_accounts w WHERE w.channel_id = $1)
+ORDER BY channel_id
+FOR UPDATE
+`
+
+// LockWhatsAppNumber holds every account on a channel's number, in one order,
+// so two edits of the words on one number take turns rather than both
+// passing a check the other is about to make false.
+func (q *Queries) LockWhatsAppNumber(ctx context.Context, channelID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockWhatsAppNumber, channelID)
+	return err
 }
 
 const pruneWhatsAppSent = `-- name: PruneWhatsAppSent :exec
@@ -315,4 +379,34 @@ func (q *Queries) WhatsAppPartSent(ctx context.Context, arg WhatsAppPartSentPara
 	var message_id string
 	err := row.Scan(&message_id)
 	return message_id, err
+}
+
+const whatsAppSharedWords = `-- name: WhatsAppSharedWords :many
+SELECT coalesce(oc.trigger_word, '')::text
+FROM whatsapp_accounts a
+JOIN whatsapp_accounts o ON o.phone = a.phone AND o.channel_id <> a.channel_id
+JOIN channels oc ON oc.id = o.channel_id
+WHERE a.channel_id = $1
+`
+
+// The words of the other channels linked to a channel's number, as the lease
+// reads them, for a channel just linked.
+func (q *Queries) WhatsAppSharedWords(ctx context.Context, channelID uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, whatsAppSharedWords, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var column_1 string
+		if err := rows.Scan(&column_1); err != nil {
+			return nil, err
+		}
+		items = append(items, column_1)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

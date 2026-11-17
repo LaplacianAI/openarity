@@ -171,4 +171,20 @@ type pairing struct {
 	Error     string     `json:"error,omitempty"`
 	Held      bool       `json:"held"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	// SharedWith are the other channels linked to this number; set, every
+	// channel on it answers only by its word.
+	SharedWith []sharer `json:"shared_with,omitempty"`
+	// NeedsTriggerWord is a channel on a shared number that answers nothing
+	// until it and every other has a word of its own.
+	NeedsTriggerWord bool `json:"needs_trigger_word,omitempty"`
+}
+
+// sharer is another channel on this channel's number.
+type sharer struct {
+	ChannelID   uuid.UUID `json:"channel_id"`
+	TeamID      uuid.UUID `json:"team_id"`
+	Name        string    `json:"name"`
+	TriggerWord string    `json:"trigger_word"`
+	// Editable is whether the caller may set its word.
+	Editable bool `json:"editable"`
 }
