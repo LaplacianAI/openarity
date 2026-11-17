@@ -59,9 +59,11 @@ cover:
 ## audit: fail on a known high or critical advisory in any installed package
 #
 # Dev dependencies too: the test runner and the bundler run on CI machines and
-# on every contributor's laptop, so an advisory in them is not harmless.
+# on every contributor's laptop, so an advisory in them is not harmless. One
+# with no fix released can be accepted in scripts/audit-accepted.json, until a
+# release or its review date; scripts/audit.mjs says how.
 audit:
-	$(NPM) audit --audit-level=high
+	node scripts/audit.mjs
 
 ## build: type-check and emit the static bundle into dist/
 build:

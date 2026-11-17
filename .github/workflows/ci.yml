@@ -319,7 +319,8 @@ jobs:
         run: go test ./internal/api/ui/
 
       # npm audit, dev dependencies included: the test runner and the bundler
-      # run here and on every contributor's machine.
+      # run here and on every contributor's machine. Only an advisory with no
+      # fix released is accepted, in apps/dashboard/scripts/audit-accepted.json.
       - name: Known vulnerabilities
         run: make audit
 
