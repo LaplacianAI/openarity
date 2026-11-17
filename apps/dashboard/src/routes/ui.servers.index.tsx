@@ -571,7 +571,9 @@ function ServerDetail({
 
       {canWrite ? (
         <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-rule pt-4">
-          {server.url ? (
+          {/* A server that signs in has nothing to say until it is connected:
+              Connect, above, is what finds its tools. */}
+          {server.url && (signInOf(server) ?? "connected") === "connected" ? (
             <Button
               variant="outline"
               loading={discover.isPending}
