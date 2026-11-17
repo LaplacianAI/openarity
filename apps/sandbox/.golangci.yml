@@ -1,0 +1,70 @@
+version: "2"
+
+# Deliberately the same set as apps/brain and apps/cli. Two modules with two standards
+# means every contributor learns which directory they are in before they can
+# tell whether something is a real finding.
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose # unclosed HTTP response bodies — leaks connections
+    - errorlint # %w vs %v, errors.Is/As misuse
+    - exhaustive # a new enum value must break every switch that ignores it
+    - gocritic
+    - gosec
+    - misspell
+    - nilerr # returning nil when err is non-nil
+    - noctx # HTTP requests without a context
+    - revive
+    - unconvert
+    - unparam
+
+  settings:
+    exhaustive:
+      # a default: clause does NOT excuse a missing case — the point is that
+      # adding an enum value breaks every switch that ignores it
+      default-signifies-exhaustive: false
+
+    errcheck:
+      check-type-assertions: true
+
+    revive:
+      rules:
+        # Initialisms keep one case: URL not Url, DSN not Dsn, API not Api.
+        - name: var-naming
+        - name: exported
+          disabled: true # not a public library; doc comments not enforced yet
+
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # Test files may take shortcuts that production code may not.
+      - path: _test\.go
+        linters:
+          - gosec
+          - unparam
+          # The shim's tests close each response in t.Cleanup, where the
+          # linter cannot follow it.
+          - bodyclose
+
+formatters:
+  enable:
+    - gofumpt # stricter gofmt
+    - gci # deterministic import grouping and order
+  settings:
+    gofumpt:
+      # What extra-rules meant before it was split: adjacent parameters of
+      # one type share it. clothe-returns, the other half, is not taken up.
+      extra:
+        group-params: true
+    gci:
+      sections:
+        - standard # stdlib
+        - default # third party
+        - prefix(github.com/LaplacianAI/openarity) # our own
+  exclusions:
+    generated: lax

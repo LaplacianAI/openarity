@@ -23,6 +23,7 @@ jobs:
     outputs:
       brain: ${{ steps.filter.outputs.brain }}
       cli: ${{ steps.filter.outputs.cli }}
+      sandbox: ${{ steps.filter.outputs.sandbox }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
       sdk: ${{ steps.filter.outputs.sdk }}
 
@@ -49,6 +50,11 @@ jobs:
               - '.github/workflows/ci.yml'
             sdk:
               - 'sdk/**'
+              - 'go.work'
+              - 'go.work.sum'
+              - '.github/workflows/ci.yml'
+            sandbox:
+              - 'apps/sandbox/**'
               - 'go.work'
               - 'go.work.sum'
               - '.github/workflows/ci.yml'
@@ -382,6 +388,50 @@ jobs:
             go tool cover -func=coverage.out | tail -20
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Known vulnerabilities
+        run: make vuln
+
+  sandbox:
+    needs: changes
+    if: needs.changes.outputs.sandbox == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/sandbox
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/sandbox/go.mod
+          cache-dependency-path: apps/sandbox/go.sum
+
+      - name: Install tools
+        run: |
+          make tools
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Dependencies are tidy
+        run: make tidy-check
+
+      - name: Formatting and import order
+        run: make fmt-check
+
+      - name: Vet
+        run: make vet
+
+      - name: Lint
+        run: make lint
+
+      - name: Build
+        run: make build
+
+      # Race detector on; the tests run the test binary as a real stdio MCP
+      # server and drive the shim with the Go MCP SDK's own client.
+      - name: Test and coverage
+        run: make cover
 
       - name: Known vulnerabilities
         run: make vuln

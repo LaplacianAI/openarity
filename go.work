@@ -3,6 +3,7 @@ go 1.27.4
 use (
 	./apps/brain
 	./apps/cli
+	./apps/sandbox
 	./sdk/agent
 	./sdk/stream
 )
