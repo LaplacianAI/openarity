@@ -1,17 +1,31 @@
--- SetMCPServerOAuth makes a server one that signs in, with the client it
--- signs in as. Its static token, if it had one, is dropped: a server is
--- reached one way. A sign-in it already has is left; one made with another
--- client is the caller's to end.
--- name: SetMCPServerOAuth :one
-UPDATE mcp_servers SET
-    auth_kind               = 'oauth',
-    auth_secret_ref         = NULL,
-    oauth_client_id         = sqlc.narg('client_id'),
-    oauth_client_secret_ref = sqlc.narg('client_secret_ref'),
+-- SetMCPServerAuth sets how a server is reached: a static token or none, or
+-- a sign-in with a client. A sign-in already made is ended when it was made
+-- for something else: another address, another client, or a server no longer
+-- signing in. Its tokens are left to the sweep by the tombstone trigger. url
+-- is the address the server is about to have, so an edit's new one counts.
+-- name: SetMCPServerAuth :one
+WITH current AS (
+    SELECT m.id, m.url, m.oauth_client_id FROM mcp_servers m
+    WHERE m.id = sqlc.arg('id') AND m.team_id = sqlc.arg('team_id')
+    FOR UPDATE
+), ended AS (
+    DELETE FROM mcp_oauth_connections c USING current
+    WHERE c.server_id = current.id
+      AND (sqlc.arg('auth_kind')::text <> 'oauth'
+        OR current.url IS DISTINCT FROM sqlc.narg('url')::text
+        OR current.oauth_client_id IS DISTINCT FROM sqlc.narg('client_id')::text)
+    RETURNING c.server_id
+)
+UPDATE mcp_servers s SET
+    auth_kind               = sqlc.arg('auth_kind')::text,
+    auth_secret_ref         = sqlc.narg('auth_secret_ref')::text,
+    oauth_client_id         = sqlc.narg('client_id')::text,
+    oauth_client_secret_ref = sqlc.narg('client_secret_ref')::text,
     oauth_scopes            = sqlc.narg('scopes')::text[],
     updated_at              = now()
-WHERE id = sqlc.arg('id') AND team_id = sqlc.arg('team_id')
-RETURNING *;
+FROM current
+WHERE s.id = current.id
+RETURNING s.*;
 
 -- name: InsertOAuthPending :exec
 INSERT INTO mcp_oauth_pending (state_hash, team_id, server_id, started_by, verifier, redirect_uri, auth, expires_at)
@@ -82,3 +96,11 @@ UPDATE mcp_oauth_connections SET
 WHERE server_id = sqlc.arg('server_id')
   AND connected_at = sqlc.arg('connected_at')
   AND status = 'connected';
+
+-- name: ListOAuthConnectionsOf :many
+SELECT * FROM mcp_oauth_connections WHERE server_id = ANY(sqlc.arg('server_ids')::uuid[]);
+
+-- DeleteOAuthConnection is a disconnect. The tombstone trigger leaves the
+-- tokens to the sweep.
+-- name: DeleteOAuthConnection :execrows
+DELETE FROM mcp_oauth_connections WHERE server_id = $1;

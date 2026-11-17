@@ -5,10 +5,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setToken } from "@/api/token";
 import type { MCPServer } from "@/api/types";
 import { discoveryOf, serverRequest } from "@/lib/server-draft";
-import { brain, pageOf, type Seen, STAMP, show, TEAM, team } from "@/test/brain";
+import { brain, type Seen, STAMP, showAt, TEAM, team } from "@/test/brain";
 
 const { Route, serversFinding } = await import("@/routes/ui.servers.index");
-const Servers = await pageOf(Route);
+/** The screen under a router, since it reads what a sign-in came back with from its address. */
+function showServers(at = "/ui/servers/") {
+  return showAt(at, [["/ui/servers/", Route]]);
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -23,6 +26,7 @@ const github = {
   url: "https://mcp.example.com",
   auth_secret_ref: `teams/${TEAM}/mcp/github#token`,
   env: {},
+  auth_kind: "static" as const,
   bare: false,
   discovered_at: STAMP,
   last_discovery_at: STAMP,
@@ -53,6 +57,11 @@ const base = {
   env: "",
   bare: false,
   token: "",
+  auth: "token" as const,
+  clientId: "",
+  clientSecret: "",
+  clientSecretRef: "",
+  scopes: "",
 };
 
 /** The row a server's name sits in. */
@@ -155,7 +164,7 @@ describe("the servers list", () => {
         },
       },
     });
-    show(Servers);
+    showServers();
 
     await screen.findByRole("button", { name: "github" });
     expect(within(rowOf("github")).getByText("answered")).toBeInTheDocument();
@@ -170,7 +179,7 @@ describe("the servers list", () => {
       ...servers,
       "GET /teams/{id}/summary": { body: { ...summary, servers_failing: 2 } },
     });
-    show(Servers);
+    showServers();
     expect(await screen.findByText("2 servers failed their last discovery.")).toBeInTheDocument();
   });
 
@@ -180,7 +189,7 @@ describe("the servers list", () => {
       ...servers,
       "GET /teams/{id}/mcp-servers": { status: 500, text: "the store is down" },
     });
-    show(Servers);
+    showServers();
     expect(await screen.findByRole("alert")).toHaveTextContent("the store is down");
   });
 });
@@ -188,7 +197,7 @@ describe("the servers list", () => {
 describe("what may be done", () => {
   it("offers no write action without tool:write, and says what it takes", async () => {
     brain({ ...team(["skill:write", "agent:write"]), ...servers });
-    show(Servers);
+    showServers();
 
     await screen.findByRole("button", { name: "github" });
     expect(await screen.findByText("tool:write")).toBeInTheDocument();
@@ -203,7 +212,7 @@ describe("what may be done", () => {
 
   it("offers register and discover on the list, and edit and delete on the server", async () => {
     brain({ ...team(["tool:write"]), ...servers });
-    show(Servers);
+    showServers();
 
     expect(await screen.findByRole("button", { name: /register server/i })).toBeInTheDocument();
     expect(
@@ -226,7 +235,7 @@ describe("what may be done", () => {
         },
       },
     });
-    show(Servers);
+    showServers();
 
     await screen.findByRole("button", { name: "files" });
     expect(screen.queryByRole("button", { name: /^discover$/i })).toBeNull();
@@ -249,7 +258,7 @@ describe("what may be done", () => {
         },
       },
     });
-    show(Servers);
+    showServers();
     expect(await screen.findByText("1 server has never been asked for its tools.")).toBeVisible();
   });
 
@@ -276,7 +285,7 @@ describe("discovering a server from its row", () => {
         body: { items: [{ name: "search_code", description: "", input_schema: {} }] },
       },
     });
-    show(Servers);
+    showServers();
 
     await screen.findByRole("button", { name: "github" });
     const before = lists(seen);
@@ -300,7 +309,7 @@ describe("discovering a server from its row", () => {
         text: "the server did not answer in time",
       },
     });
-    show(Servers);
+    showServers();
 
     await screen.findByRole("button", { name: "github" });
     const before = lists(seen);
@@ -331,7 +340,7 @@ describe("a server's sheet", () => {
         },
       },
     });
-    show(Servers);
+    showServers();
 
     const sheet = await opened("github");
     expect(await within(sheet).findByText("search_code")).toBeInTheDocument();
@@ -343,7 +352,7 @@ describe("a server's sheet", () => {
 
   it("opens from the keyboard", async () => {
     brain({ ...team([]), ...servers });
-    show(Servers);
+    showServers();
 
     await screen.findByRole("button", { name: "github" });
     rowOf("github").focus();
@@ -359,7 +368,7 @@ describe("a server's sheet", () => {
       "DELETE /teams/{id}/mcp-servers/{serverID}": () =>
         held ? { status: 409, text: "the MCP server is granted to an agent" } : { status: 204 },
     });
-    show(Servers);
+    showServers();
 
     const sheet = await opened("github");
     await userEvent.click(within(sheet).getByRole("button", { name: /^delete$/i }));
@@ -389,7 +398,7 @@ describe("registering a server", () => {
         text: "a url server's address may not carry a password",
       },
     });
-    show(Servers);
+    showServers();
 
     await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
     await userEvent.type(screen.getByLabelText(/^name$/i), "linear");
@@ -413,7 +422,7 @@ describe("registering a server", () => {
       "POST /teams/{id}/mcp-servers": { status: 201, body: linear },
       "POST /teams/{id}/mcp-servers/{sid}/discover": { body: { items: [] } },
     });
-    show(Servers);
+    showServers();
 
     await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
     await userEvent.type(screen.getByLabelText(/^name$/i), "linear");
@@ -447,7 +456,7 @@ describe("registering a server", () => {
         text: "the secret store is unavailable",
       },
     });
-    show(Servers);
+    showServers();
 
     await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
     await userEvent.type(screen.getByLabelText(/^name$/i), "linear");
@@ -461,7 +470,7 @@ describe("registering a server", () => {
 
   it("refuses a token for a server whose name cannot name a secret", async () => {
     const seen = brain({ ...team(["tool:write"]), ...servers });
-    show(Servers);
+    showServers();
 
     await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
     await userEvent.type(screen.getByLabelText(/^name$/i), "linear.prod");
@@ -475,7 +484,7 @@ describe("registering a server", () => {
 
   it("refuses an incomplete form without a request", async () => {
     const seen = brain({ ...team(["tool:write"]), ...servers });
-    show(Servers);
+    showServers();
 
     await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
     await userEvent.type(screen.getByLabelText(/^name$/i), "linear");
@@ -496,6 +505,8 @@ describe("editing a server", () => {
     last_discovery_error,
     created_at,
     updated_at,
+    // static is the default, and a static server's edit leaves it unsaid.
+    auth_kind,
     ...definition
   } = github;
 
@@ -518,7 +529,7 @@ describe("editing a server", () => {
 
   it("opens a url server's form filled with what it has", async () => {
     brain({ ...team(["tool:write"]), ...servers });
-    show(Servers);
+    showServers();
 
     const dialog = await editing("github");
     expect(within(dialog).getByLabelText(/^name$/i)).toHaveValue("github");
@@ -539,7 +550,7 @@ describe("editing a server", () => {
       ...servers,
       "PUT /teams/{id}/mcp-servers/{sid}": { body: github },
     });
-    show(Servers);
+    showServers();
 
     const dialog = await editing("github");
     const token = within(dialog).getByLabelText(/^token$/i);
@@ -559,7 +570,7 @@ describe("editing a server", () => {
       ...servers,
       "GET /teams/{id}/mcp-servers": { body: { items: [files] } },
     });
-    show(Servers);
+    showServers();
 
     const dialog = await editing("files");
     expect(within(dialog).getByRole("radio", { name: /command/i })).toBeChecked();
@@ -578,7 +589,7 @@ describe("editing a server", () => {
       ...servers,
       "PUT /teams/{id}/mcp-servers/{serverID}": { body: github },
     });
-    show(Servers);
+    showServers();
 
     const dialog = await editing("github");
     await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
@@ -596,7 +607,7 @@ describe("editing a server", () => {
       "GET /teams/{id}/mcp-servers": { body: { items: [files] } },
       "PUT /teams/{id}/mcp-servers/{serverID}": { body: files },
     });
-    show(Servers);
+    showServers();
 
     const dialog = await editing("files");
     await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
@@ -618,7 +629,7 @@ describe("editing a server", () => {
         body: { ...github, url: "https://mcp2.example.com" },
       },
     });
-    show(Servers);
+    showServers();
 
     const dialog = await editing("github");
     const url = within(dialog).getByRole("textbox", { name: /^url$/i });
@@ -652,7 +663,7 @@ describe("editing a server", () => {
         text: "a url server's address may not carry a password",
       },
     });
-    show(Servers);
+    showServers();
 
     const dialog = await editing("github");
     await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));

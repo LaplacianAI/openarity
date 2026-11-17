@@ -16,6 +16,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 )
 
 // fakeVault records each write, so a refusal can be shown to have written
@@ -37,6 +38,17 @@ func (v *fakeVault) PutAll(_ context.Context, path string, values map[string]str
 	}
 	v.writes[path] = maps.Clone(values)
 	return nil
+}
+
+// Get reads what was written, as a secret store would.
+func (v *fakeVault) Get(_ context.Context, path, key string) (string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	val, ok := v.writes[path][key]
+	if !ok {
+		return "", secrets.ErrNotFound
+	}
+	return val, nil
 }
 
 func (v *fakeVault) count() int {
@@ -141,7 +153,7 @@ func TestABrainThatWritesNoSecretsSaysSo(t *testing.T) {
 	teamID := uuid.New()
 	s := newFakeStore()
 	mux := http.NewServeMux()
-	New(discardLogger(), s, &fakeDiscoverer{store: s}, nil).
+	New(discardLogger(), s, &fakeDiscoverer{store: s}, nil, Ending{}).
 		Register(mux, api.NewGuard(serverRoutes(t), &fakeAuthz{allowed: true}, liveTeams{}, discardLogger()))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, secretPath(teamID, "stripe"),

@@ -1,16 +1,18 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import {
   createMCPServer,
   deleteMCPServer,
+  disconnectMCPServerOAuth,
   discoverMCPServer,
   listMCPServers,
   listMCPTools,
   putMCPSecret,
   replaceMCPServer,
+  startMCPServerOAuth,
 } from "@/api";
 import { nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
@@ -50,6 +52,9 @@ import {
 import { EmptyState, LoadMore, Mono, PageHeader } from "@/components/ui-bits";
 import { count } from "@/lib/runs";
 import {
+  CLIENT_SECRET_KEY,
+  clientSecretName,
+  clientSecretRef,
   discoveryOf,
   draftOf,
   EMPTY_SERVER,
@@ -57,13 +62,72 @@ import {
   SECRET_NAME,
   type ServerDraft,
   serverRequest,
+  signInOf,
   TOKEN_KEY,
   tokenRef,
 } from "@/lib/server-draft";
 
+/** What a sign-in's callback came back with, as the brain names it. */
+const OUTCOMES = [
+  "connected",
+  "connected-no-tools",
+  "expired",
+  "denied",
+  "refused",
+  "failed",
+] as const;
+type Outcome = (typeof OUTCOMES)[number];
+
+type ServersSearch = { oauth?: Outcome; server?: string };
+
+function serversSearch(search: Record<string, unknown>): ServersSearch {
+  const { oauth, server } = search;
+  return {
+    oauth: OUTCOMES.includes(oauth as Outcome) ? (oauth as Outcome) : undefined,
+    server: typeof server === "string" && server !== "" ? server : undefined,
+  };
+}
+
 export const Route = createFileRoute("/ui/servers/")({
+  validateSearch: serversSearch,
   component: Servers,
 });
+
+/** The sentence a sign-in's outcome is told in, and whether it went well. */
+export function outcomeMessage(outcome: Outcome, name: string): { ok: boolean; text: string } {
+  switch (outcome) {
+    case "connected":
+      return { ok: true, text: `${name} is connected.` };
+    case "connected-no-tools":
+      return {
+        ok: true,
+        text: `${name} is connected, but its tools could not be listed. Discover it to try again.`,
+      };
+    case "expired":
+      return {
+        ok: false,
+        text: "That sign-in took longer than ten minutes, or was used already. Connect again.",
+      };
+    case "denied":
+      return { ok: false, text: `The sign-in to ${name} was declined, so nothing changed.` };
+    case "refused":
+      return {
+        ok: false,
+        text: `The sign-in to ${name} came back from somewhere it should not have, so it was refused.`,
+      };
+    case "failed":
+      return { ok: false, text: `The sign-in to ${name} could not be finished. Connect again.` };
+  }
+}
+
+/** Sends the browser to sign in: the brain begins it and says where. */
+function useConnect(teamId: string, server: MCPServer) {
+  return useMutation({
+    mutationFn: () => startMCPServerOAuth(teamId, server.id),
+    onSuccess: ({ authorize_url }) => window.location.assign(authorize_url),
+    onError: (err: Error) => toast.error(`${server.name} could not be connected: ${err.message}`),
+  });
+}
 
 /**
  * What needs the reader: servers whose last discovery failed, else the URL
@@ -95,6 +159,8 @@ function Servers() {
   const [shown, setShown] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<MCPServer | null>(null);
+  const { oauth, server: signedInto } = Route.useSearch();
+  const navigate = Route.useNavigate();
 
   const servers = useInfiniteQuery({
     queryKey: ["servers", teamId, "paged"],
@@ -111,6 +177,18 @@ function Servers() {
   const rows = servers.data?.pages.flatMap((p) => p.items) ?? [];
   const failing = summary.data?.servers_failing ?? 0;
   const open = rows.find((s) => s.id === shown) ?? null;
+
+  // Back from a sign-in: say how it went, once, and take it out of the URL so
+  // a reload does not say it again.
+  const returned = rows.find((s) => s.id === signedInto);
+  const loaded = !servers.isPending;
+  useEffect(() => {
+    if (!oauth || !loaded) return;
+    const { ok, text } = outcomeMessage(oauth, returned?.name ?? "The server");
+    if (ok) toast.success(text);
+    else toast.error(text);
+    void navigate({ search: {}, replace: true });
+  }, [oauth, loaded, returned?.name, navigate]);
 
   return (
     <div className="space-y-5">
@@ -156,6 +234,7 @@ function Servers() {
             <TableHeader>
               <tr>
                 <TableHead>Server</TableHead>
+                <TableHead>Sign-in</TableHead>
                 <TableHead>Discovery</TableHead>
                 <TableHead>Last tried</TableHead>
                 {canWrite ? (
@@ -263,7 +342,9 @@ function ServerRow({
   onChanged: () => void;
 }) {
   const discover = useDiscover(teamId, server, onChanged);
+  const connect = useConnect(teamId, server);
   const tried = server.last_discovery_at ?? server.discovered_at;
+  const signIn = signInOf(server);
 
   return (
     <TableRow onOpen={onOpen}>
@@ -283,6 +364,15 @@ function ServerRow({
           <Mono className="block min-w-0 truncate">{addressOf(server)}</Mono>
         </div>
       </TableCell>
+      <TableCell label="Sign-in">
+        {signIn ? (
+          <StatusPill status={signIn} />
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            {server.auth_secret_ref || Object.keys(server.env ?? {}).length > 0 ? "Token" : "None"}
+          </span>
+        )}
+      </TableCell>
       <TableCell label="Discovery">
         <StatusPill status={discoveryOf(server)} />
       </TableCell>
@@ -292,7 +382,16 @@ function ServerRow({
       {canWrite ? (
         <TableCell className="text-right">
           {/* The brain reaches a URL to ask; it does not start a command to. */}
-          {server.url ? (
+          {signIn && signIn !== "connected" ? (
+            <Button
+              variant="outline"
+              size="sm"
+              loading={connect.isPending}
+              onClick={() => connect.mutate()}
+            >
+              {signIn === "needs sign-in" ? "Reconnect" : "Connect"}
+            </Button>
+          ) : server.url ? (
             <Button
               variant="outline"
               size="sm"
@@ -414,6 +513,10 @@ function ServerDetail({
         ) : null}
       </section>
 
+      {signInOf(server) ? (
+        <SignInSection teamId={teamId} server={server} canWrite={canWrite} onChanged={onChanged} />
+      ) : null}
+
       {server.auth_secret_ref || env.length > 0 ? (
         <section aria-labelledby="server-secrets" className="space-y-2">
           <h3 id="server-secrets" className="text-sm font-medium">
@@ -483,6 +586,144 @@ function ServerDetail({
           <DeleteServer teamId={teamId} server={server} onDeleted={onDeleted} />
         </div>
       ) : null}
+    </>
+  );
+}
+
+/**
+ * A server that signs in: whether it is, who connected it and when, what it
+ * may do, and why it stopped when it did.
+ */
+function SignInSection({
+  teamId,
+  server,
+  canWrite,
+  onChanged,
+}: {
+  teamId: string;
+  server: MCPServer;
+  canWrite: boolean;
+  onChanged: () => void;
+}) {
+  const connect = useConnect(teamId, server);
+  const signIn = signInOf(server) ?? "not connected";
+  const c = server.connection;
+
+  return (
+    <section aria-labelledby="server-sign-in" className="space-y-2">
+      <h3 id="server-sign-in" className="text-sm font-medium">
+        Sign-in
+      </h3>
+      <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+        <StatusPill status={signIn} className="text-sm text-foreground" />
+        {c ? (
+          <span>
+            connected <Time iso={c.connected_at} />
+          </span>
+        ) : (
+          <span>Nobody has connected it yet.</span>
+        )}
+      </p>
+      {c?.status === "needs_sign_in" && c.reason ? (
+        <p className="rounded-lg bg-failed/8 px-3 py-2 font-mono text-xs text-failed">{c.reason}</p>
+      ) : null}
+      <ul className="space-y-1 text-xs text-muted-foreground">
+        {server.oauth_client_id ? (
+          <li>
+            Client <Mono className="text-foreground">{server.oauth_client_id}</Mono>
+          </li>
+        ) : null}
+        {c && c.scopes_granted.length > 0 ? (
+          <li>
+            Granted <Mono className="text-foreground">{c.scopes_granted.join(" ")}</Mono>
+          </li>
+        ) : server.oauth_scopes?.length ? (
+          <li>
+            Asks for <Mono className="text-foreground">{server.oauth_scopes.join(" ")}</Mono>
+          </li>
+        ) : null}
+      </ul>
+      {canWrite ? (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            loading={connect.isPending}
+            onClick={() => connect.mutate()}
+          >
+            {signIn === "not connected" ? "Connect" : "Reconnect"}
+          </Button>
+          {c ? <DisconnectServer teamId={teamId} server={server} onChanged={onChanged} /> : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function DisconnectServer({
+  teamId,
+  server,
+  onChanged,
+}: {
+  teamId: string;
+  server: MCPServer;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const disconnect = useMutation({
+    mutationFn: () => disconnectMCPServerOAuth(teamId, server.id),
+    onSuccess: () => {
+      setOpen(false);
+      toast.success(`Disconnected ${server.name}`);
+      onChanged();
+    },
+  });
+
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        className="text-destructive"
+        onClick={() => setOpen(true)}
+      >
+        Disconnect
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) disconnect.reset();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Disconnect {server.name}?</DialogTitle>
+            <DialogDescription>
+              Its tokens are deleted and revoked with its provider. Agents' calls to it fail until
+              someone connects it again; the server and its tools stay.
+            </DialogDescription>
+          </DialogHeader>
+          {disconnect.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {disconnect.error.message}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Keep it
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              loading={disconnect.isPending}
+              onClick={() => disconnect.mutate()}
+            >
+              Disconnect
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -571,16 +812,31 @@ function ServerDialog({
   const save = useMutation({
     // A token is written first and the server then names it: a server saved
     // before its secret exists would fail its first discovery.
-    mutationFn: async ({ body, token }: { body: MCPServerRequest; token: string }) => {
+    mutationFn: async ({
+      body,
+      token,
+      clientSecret,
+    }: {
+      body: MCPServerRequest;
+      token: string;
+      clientSecret: string;
+    }) => {
       if (token) {
         await putMCPSecret(teamId, body.name, { [TOKEN_KEY]: token });
         body.auth_secret_ref = tokenRef(teamId, body.name);
       }
+      if (clientSecret) {
+        await putMCPSecret(teamId, clientSecretName(body.name), {
+          [CLIENT_SECRET_KEY]: clientSecret,
+        });
+        body.oauth_client_secret_ref = clientSecretRef(teamId, body.name);
+      }
       const s = server
         ? await replaceMCPServer(teamId, server.id, body)
         : await createMCPServer(teamId, body);
-      // With a new token, or a new server, its tools are asked for at once.
-      if (s.url && (token || !server)) {
+      // With a new token, or a new server, its tools are asked for at once. A
+      // server that signs in has none to give until someone connects it.
+      if (s.url && s.auth_kind !== "oauth" && (token || !server)) {
         await discoverMCPServer(teamId, s.id).catch(() => undefined);
         void qc.invalidateQueries({ queryKey: ["tools", teamId, s.id] });
       }
@@ -590,7 +846,13 @@ function ServerDialog({
       setDraft(EMPTY_SERVER);
       onSaved(s);
       onClose();
-      toast.success(server ? `Saved ${s.name}` : `Registered ${s.name}`);
+      toast.success(
+        server
+          ? `Saved ${s.name}`
+          : s.auth_kind === "oauth"
+            ? `Registered ${s.name}. Connect it to sign in.`
+            : `Registered ${s.name}`,
+      );
     },
     onError: (err: Error) => setProblem(err.message),
   });
@@ -613,15 +875,17 @@ function ServerDialog({
               setProblem(body);
               return;
             }
-            const token = draft.transport === "url" ? draft.token.trim() : "";
-            if (token && !SECRET_NAME.test(body.name)) {
+            const url = draft.transport === "url";
+            const token = url && draft.auth === "token" ? draft.token.trim() : "";
+            const clientSecret = url && draft.auth === "oauth" ? draft.clientSecret.trim() : "";
+            if ((token || clientSecret) && !SECRET_NAME.test(clientSecretName(body.name))) {
               setProblem(
-                "To keep a token here, the server's name is letters, digits, _ and - only.",
+                "To keep a secret here, the server's name is letters, digits, _ and - only.",
               );
               return;
             }
             setProblem(null);
-            save.mutate({ body, token });
+            save.mutate({ body, token, clientSecret });
           }}
         >
           <ServerFields
@@ -629,6 +893,7 @@ function ServerDialog({
             set={set}
             withToken
             tokenSet={Boolean(server?.auth_secret_ref)}
+            clientSecretSet={Boolean(server?.oauth_client_secret_ref)}
           />
           {problem ? (
             <p role="alert" className="text-sm text-destructive">

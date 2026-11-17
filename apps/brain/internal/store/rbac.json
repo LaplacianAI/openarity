@@ -480,6 +480,12 @@
       "permission": "tool:write"
     },
     {
+      "method": "DELETE",
+      "path": "/teams/{id}/mcp-servers/{serverID}/oauth",
+      "scope": "team",
+      "permission": "tool:write"
+    },
+    {
       "method": "POST",
       "path": "/teams/{id}/mcp-servers/{serverID}/oauth/start",
       "scope": "team",

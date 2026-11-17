@@ -10,6 +10,15 @@ export type ServerDraft = {
   bare: boolean;
   /** A bearer token to write to the secret store; never read back, so never filled in. */
   token: string;
+  /** A url server's way in: a static token or none, or a sign-in. */
+  auth: "token" | "oauth";
+  clientId: string;
+  /** A confidential client's secret to write to the secret store; never read back. */
+  clientSecret: string;
+  /** A client secret already in the store, kept unless a new one is typed. */
+  clientSecretRef: string;
+  /** Space- or comma-separated, as a provider's documentation lists them. */
+  scopes: string;
 };
 
 export const EMPTY_SERVER: ServerDraft = {
@@ -21,7 +30,17 @@ export const EMPTY_SERVER: ServerDraft = {
   env: "",
   bare: false,
   token: "",
+  auth: "token",
+  clientId: "",
+  clientSecret: "",
+  clientSecretRef: "",
+  scopes: "",
 };
+
+/** The scopes as typed, one per word: spaces, commas and new lines all separate. */
+export function scopesOf(typed: string): string[] {
+  return typed.split(/[\s,]+/).filter(Boolean);
+}
 
 /**
  * The form as the API takes it. A command is one argument per line, because
@@ -37,6 +56,15 @@ export function serverRequest(d: ServerDraft): MCPServerRequest | string {
   if (d.transport === "url") {
     if (!d.url.trim()) return "A url server needs its URL.";
     body.url = d.url.trim();
+    if (d.auth === "oauth") {
+      if (!d.clientId.trim()) return "A server that signs in needs its OAuth client ID.";
+      body.auth_kind = "oauth";
+      body.oauth_client_id = d.clientId.trim();
+      if (d.clientSecretRef.trim()) body.oauth_client_secret_ref = d.clientSecretRef.trim();
+      const scopes = scopesOf(d.scopes);
+      if (scopes.length > 0) body.oauth_scopes = scopes;
+      return body;
+    }
     if (d.authRef.trim()) body.auth_secret_ref = d.authRef.trim();
     return body;
   }
@@ -74,6 +102,11 @@ export function draftOf(s: MCPServer): ServerDraft {
       .join("\n"),
     bare: s.bare,
     token: "",
+    auth: s.auth_kind === "oauth" ? "oauth" : "token",
+    clientId: s.oauth_client_id ?? "",
+    clientSecret: "",
+    clientSecretRef: s.oauth_client_secret_ref ?? "",
+    scopes: (s.oauth_scopes ?? []).join(" "),
   };
 }
 
@@ -85,6 +118,17 @@ export const SECRET_NAME = /^[A-Za-z0-9_-]{1,128}$/;
 
 export function tokenRef(teamId: string, serverName: string): string {
   return `teams/${teamId}/mcp/${serverName}#${TOKEN_KEY}`;
+}
+
+/** Where a client secret typed into a server's form is written: a secret of its own, beside a token's. */
+export const CLIENT_SECRET_KEY = "client_secret";
+
+export function clientSecretName(serverName: string): string {
+  return `${serverName}-oauth`;
+}
+
+export function clientSecretRef(teamId: string, serverName: string): string {
+  return `teams/${teamId}/mcp/${clientSecretName(serverName)}#${CLIENT_SECRET_KEY}`;
 }
 
 /**
@@ -112,6 +156,15 @@ export function editRequest(current: MCPServer, d: ServerDraft): MCPServerReques
     body.url = form.url;
     if (form.auth_secret_ref) body.auth_secret_ref = form.auth_secret_ref;
     else delete body.auth_secret_ref;
+    // How it is reached is the form's: a server that signs in carries its
+    // client, and one that does not carries none.
+    if (form.auth_kind === "oauth") {
+      delete body.auth_secret_ref;
+      body.auth_kind = "oauth";
+      body.oauth_client_id = form.oauth_client_id;
+      if (form.oauth_client_secret_ref) body.oauth_client_secret_ref = form.oauth_client_secret_ref;
+      if (form.oauth_scopes) body.oauth_scopes = form.oauth_scopes;
+    }
   } else {
     delete body.url;
     body.command = form.command;
@@ -127,6 +180,15 @@ export type Discovery = "answered" | "failed" | "not discovered";
  * A server whose last discovery failed says so until one works; one that has
  * answered once and not failed since is answered; one never asked is neither.
  */
+/** Where a server's sign-in stands; null for one that does not sign in. */
+export type SignIn = "connected" | "needs sign-in" | "not connected";
+
+export function signInOf(s: MCPServer): SignIn | null {
+  if (s.auth_kind !== "oauth") return null;
+  if (!s.connection) return "not connected";
+  return s.connection.status === "needs_sign_in" ? "needs sign-in" : "connected";
+}
+
 export function discoveryOf(s: MCPServer): Discovery {
   if (s.last_discovery_error) return "failed";
   if (s.discovered_at) return "answered";

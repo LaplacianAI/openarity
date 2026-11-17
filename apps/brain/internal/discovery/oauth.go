@@ -350,3 +350,40 @@ func (d *Discoverer) Refresh(ctx context.Context, as AuthServer, c Client, refre
 	}
 	return t, nil
 }
+
+// Revoke tells the authorization server a sign-in is over (RFC 7009), so the
+// grant stops working there as well as here. One with no revocation endpoint
+// has nothing to tell. A token the server does not know is revoked already:
+// RFC 7009 has it answer 200 for that too.
+func (d *Discoverer) Revoke(ctx context.Context, as AuthServer, c Client, token, hint string) error {
+	if as.RevokeURL == "" || token == "" {
+		return nil
+	}
+	form := url.Values{"token": {token}, "token_type_hint": {hint}}
+	style := authStyle(as, c)
+	if style == oauth2.AuthStyleInParams {
+		form.Set("client_id", c.ID)
+		if c.Secret != "" {
+			form.Set("client_secret", c.Secret)
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, as.RevokeURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("revoking: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if style == oauth2.AuthStyleInHeader {
+		req.SetBasicAuth(url.QueryEscape(c.ID), url.QueryEscape(c.Secret))
+	}
+
+	resp, err := d.oauthClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("revoking: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxTokenBytes))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("revoking: the authorization server answered %d", resp.StatusCode)
+	}
+	return nil
+}

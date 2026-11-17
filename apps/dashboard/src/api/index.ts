@@ -710,6 +710,24 @@ export function putMCPSecret(
   });
 }
 
+/** Begins a sign-in: the address to send the browser to, which comes back to /oauth/mcp/callback. */
+export function startMCPServerOAuth(
+  teamId: string,
+  serverId: string,
+): Promise<{ authorize_url: string }> {
+  return request<{ authorize_url: string }>(
+    `/teams/${teamId}/mcp-servers/${serverId}/oauth/start`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+/** Ends a server's sign-in: its tokens deleted, and revoked where it was made. */
+export function disconnectMCPServerOAuth(teamId: string, serverId: string): Promise<void> {
+  return request<void>(`/teams/${teamId}/mcp-servers/${serverId}/oauth`, { method: "DELETE" });
+}
+
 export function discoverMCPServer(teamId: string, serverId: string): Promise<{ items: MCPTool[] }> {
   return request<{ items: MCPTool[] }>(`/teams/${teamId}/mcp-servers/${serverId}/discover`, {
     method: "POST",

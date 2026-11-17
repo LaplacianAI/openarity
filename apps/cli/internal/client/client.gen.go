@@ -164,19 +164,19 @@ func (e ChannelPairingMethod) Valid() bool {
 
 // Defines values for ChannelPairingState.
 const (
-	Connected ChannelPairingState = "connected"
-	Pairing   ChannelPairingState = "pairing"
-	Unpaired  ChannelPairingState = "unpaired"
+	ChannelPairingStateConnected ChannelPairingState = "connected"
+	ChannelPairingStatePairing   ChannelPairingState = "pairing"
+	ChannelPairingStateUnpaired  ChannelPairingState = "unpaired"
 )
 
 // Valid indicates whether the value is a known member of the ChannelPairingState enum.
 func (e ChannelPairingState) Valid() bool {
 	switch e {
-	case Connected:
+	case ChannelPairingStateConnected:
 		return true
-	case Pairing:
+	case ChannelPairingStatePairing:
 		return true
-	case Unpaired:
+	case ChannelPairingStateUnpaired:
 		return true
 	default:
 		return false
@@ -306,6 +306,60 @@ func (e ListedSkillSource) Valid() bool {
 	case ListedSkillSourceURL:
 		return true
 	case ListedSkillSourceUpload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MCPServerAuthKind.
+const (
+	MCPServerAuthKindOauth  MCPServerAuthKind = "oauth"
+	MCPServerAuthKindStatic MCPServerAuthKind = "static"
+)
+
+// Valid indicates whether the value is a known member of the MCPServerAuthKind enum.
+func (e MCPServerAuthKind) Valid() bool {
+	switch e {
+	case MCPServerAuthKindOauth:
+		return true
+	case MCPServerAuthKindStatic:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MCPServerConnectionStatus.
+const (
+	MCPServerConnectionStatusConnected   MCPServerConnectionStatus = "connected"
+	MCPServerConnectionStatusNeedsSignIn MCPServerConnectionStatus = "needs_sign_in"
+)
+
+// Valid indicates whether the value is a known member of the MCPServerConnectionStatus enum.
+func (e MCPServerConnectionStatus) Valid() bool {
+	switch e {
+	case MCPServerConnectionStatusConnected:
+		return true
+	case MCPServerConnectionStatusNeedsSignIn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MCPServerRequestAuthKind.
+const (
+	MCPServerRequestAuthKindOauth  MCPServerRequestAuthKind = "oauth"
+	MCPServerRequestAuthKindStatic MCPServerRequestAuthKind = "static"
+)
+
+// Valid indicates whether the value is a known member of the MCPServerRequestAuthKind enum.
+func (e MCPServerRequestAuthKind) Valid() bool {
+	switch e {
+	case MCPServerRequestAuthKindOauth:
+		return true
+	case MCPServerRequestAuthKindStatic:
 		return true
 	default:
 		return false
@@ -1560,6 +1614,11 @@ type MCPSecretWrite struct {
 
 // MCPServer Exactly one of `url` and `command` is present.
 type MCPServer struct {
+	// AuthKind How the server is reached: `static`, with `auth_secret_ref` or no
+	// token at all, or `oauth`, signed in to on the dashboard as the
+	// client named here.
+	AuthKind MCPServerAuthKind `json:"auth_kind" yaml:"auth_kind"`
+
 	// AuthSecretRef A url server's bearer token. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
 	AuthSecretRef *string `json:"auth_secret_ref,omitempty" yaml:"auth_secret_ref,omitempty"`
 
@@ -1569,8 +1628,12 @@ type MCPServer struct {
 	// Command A local server, started with this argv and spoken to over stdio
 	//
 	// Examples: ["npx","-y","@modelcontextprotocol/server-filesystem"]
-	Command   *[]string `json:"command,omitempty" yaml:"command,omitempty"`
-	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
+	Command *[]string `json:"command,omitempty" yaml:"command,omitempty"`
+
+	// Connection A server's sign-in, or null when it has none: never made, or
+	// disconnected. Its tokens are never returned. Always sent.
+	Connection *MCPServerConnection `json:"connection,omitempty" yaml:"connection,omitempty"`
+	CreatedAt  time.Time            `json:"created_at" yaml:"created_at"`
 
 	// DiscoveredAt When its tools were last listed, and null until then. Always sent;
 	// optional here only so a generated client decodes null as absent
@@ -1601,15 +1664,53 @@ type MCPServer struct {
 	//
 	//
 	// Examples: github
-	Name      string             `json:"name" yaml:"name"`
-	TeamID    openapi_types.UUID `json:"team_id" yaml:"team_id"`
-	UpdatedAt time.Time          `json:"updated_at" yaml:"updated_at"`
+	Name string `json:"name" yaml:"name"`
+
+	// OauthClientID The OAuth client a server that signs in signs in as
+	OauthClientID *string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
+
+	// OauthClientSecretRef The client's secret, when it is a confidential client. A secret reference; the value is never returned.
+	OauthClientSecretRef *string `json:"oauth_client_secret_ref,omitempty" yaml:"oauth_client_secret_ref,omitempty"`
+
+	// OauthScopes The scopes a sign-in asks for. Absent, the ones the server's metadata offers.
+	OauthScopes *[]string          `json:"oauth_scopes,omitempty" yaml:"oauth_scopes,omitempty"`
+	TeamID      openapi_types.UUID `json:"team_id" yaml:"team_id"`
+	UpdatedAt   time.Time          `json:"updated_at" yaml:"updated_at"`
 
 	// URL A remote server, spoken to over streamable HTTP
 	//
 	// Examples: https://mcp.example.com/v1
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
 }
+
+// MCPServerAuthKind How the server is reached: `static`, with `auth_secret_ref` or no
+// token at all, or `oauth`, signed in to on the dashboard as the
+// client named here.
+type MCPServerAuthKind string
+
+// MCPServerConnection A server's sign-in, or null when it has none: never made, or
+// disconnected. Its tokens are never returned. Always sent.
+type MCPServerConnection struct {
+	AccessExpiresAt *time.Time `json:"access_expires_at,omitempty" yaml:"access_expires_at,omitempty"`
+	ConnectedAt     time.Time  `json:"connected_at" yaml:"connected_at"`
+
+	// ConnectedBy Who signed in; null once that person is gone
+	ConnectedBy *openapi_types.UUID `json:"connected_by,omitempty" yaml:"connected_by,omitempty"`
+
+	// Reason Why it needs signing in again
+	Reason        *string  `json:"reason,omitempty" yaml:"reason,omitempty"`
+	ScopesGranted []string `json:"scopes_granted" yaml:"scopes_granted"`
+
+	// Status `needs_sign_in` once the authorization server refused a refresh,
+	// or the server refused a renewed token or asked for more scope.
+	// Calls to the server fail until someone connects it again.
+	Status MCPServerConnectionStatus `json:"status" yaml:"status"`
+}
+
+// MCPServerConnectionStatus `needs_sign_in` once the authorization server refused a refresh,
+// or the server refused a renewed token or asked for more scope.
+// Calls to the server fail until someone connects it again.
+type MCPServerConnectionStatus string
 
 // MCPServerGrant defines model for MCPServerGrant.
 type MCPServerGrant struct {
@@ -1632,6 +1733,12 @@ type MCPServerPage struct {
 // is a secret reference rather than the secret, so none reaches the
 // database.
 type MCPServerRequest struct {
+	// AuthKind `oauth` for a url server signed in to on the dashboard: it takes
+	// `oauth_client_id` and no `auth_secret_ref`. Changing the url, the
+	// client or the kind ends a sign-in already made; changing only the
+	// scopes keeps it, and connecting again asks for them.
+	AuthKind *MCPServerRequestAuthKind `json:"auth_kind,omitempty" yaml:"auth_kind,omitempty"`
+
 	// AuthSecretRef Only with `url`. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
 	//
 	// Examples: teams/<team_id>/mcp/github#token
@@ -1647,11 +1754,26 @@ type MCPServerRequest struct {
 	// Name Examples: github
 	Name string `json:"name" yaml:"name"`
 
+	// OauthClientID Only with `auth_kind` oauth. The OAuth client registered with the server's authorization server, its redirect URI `<PUBLIC_URL>/oauth/mcp/callback`.
+	OauthClientID *string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
+
+	// OauthClientSecretRef Only with `auth_kind` oauth, for a confidential client. A secret reference in this team.
+	OauthClientSecretRef *string `json:"oauth_client_secret_ref,omitempty" yaml:"oauth_client_secret_ref,omitempty"`
+
+	// OauthScopes Only with `auth_kind` oauth. The scopes to ask for, in place of the ones the server's metadata offers.
+	OauthScopes *[]string `json:"oauth_scopes,omitempty" yaml:"oauth_scopes,omitempty"`
+
 	// URL http or https, with no user, password, query string or fragment
 	//
 	// Examples: https://mcp.example.com/v1
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
 }
+
+// MCPServerRequestAuthKind `oauth` for a url server signed in to on the dashboard: it takes
+// `oauth_client_id` and no `auth_secret_ref`. Changing the url, the
+// client or the kind ends a sign-in already made; changing only the
+// scopes keeps it, and connecting again asks for them.
+type MCPServerRequestAuthKind string
 
 // MCPTool defines model for MCPTool.
 type MCPTool struct {
@@ -3834,6 +3956,17 @@ type ClientInterface interface {
 	// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/discover (the `DiscoverMCPServer` operationId).
 	DiscoverMCPServer(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DisconnectMCPServerOAuth Disconnect a server's sign-in
+	//
+	// Requires `tool:write` in this team. Ends the server's sign-in: its
+	// tokens are deleted, and the authorization server is asked to revoke
+	// them (RFC 7009) as well as it will answer; a revocation that fails is
+	// logged, and the sign-in is ended here regardless. A server with no
+	// sign-in is disconnected already, and the answer is the same.
+	//
+	// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID}/oauth (the `DisconnectMCPServerOAuth` operationId).
+	DisconnectMCPServerOAuth(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// StartMCPServerOAuth Begin signing in to a server
 	//
 	// Requires `tool:write` in this team. For a server that signs in
@@ -5898,6 +6031,27 @@ func (c *Client) UpdateMCPServer(ctx context.Context, id TeamID, serverID Server
 // Corresponds with POST /teams/{id}/mcp-servers/{serverID}/discover (the `DiscoverMCPServer` operationId).
 func (c *Client) DiscoverMCPServer(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDiscoverMCPServerRequest(c.Server, id, serverID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DisconnectMCPServerOAuth Disconnect a server's sign-in
+//
+// Requires `tool:write` in this team. Ends the server's sign-in: its
+// tokens are deleted, and the authorization server is asked to revoke
+// them (RFC 7009) as well as it will answer; a revocation that fails is
+// logged, and the sign-in is ended here regardless. A server with no
+// sign-in is disconnected already, and the answer is the same.
+//
+// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID}/oauth (the `DisconnectMCPServerOAuth` operationId).
+func (c *Client) DisconnectMCPServerOAuth(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDisconnectMCPServerOAuthRequest(c.Server, id, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -9106,6 +9260,47 @@ func NewDiscoverMCPServerRequest(server string, id TeamID, serverID ServerID) (*
 	return req, nil
 }
 
+// NewDisconnectMCPServerOAuthRequest constructs an http.Request for the DisconnectMCPServerOAuth method
+func NewDisconnectMCPServerOAuthRequest(server string, id TeamID, serverID ServerID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "serverID", serverID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-servers/%s/oauth", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewStartMCPServerOAuthRequest constructs an http.Request for the StartMCPServerOAuth method
 func NewStartMCPServerOAuthRequest(server string, id TeamID, serverID ServerID) (*http.Request, error) {
 	var err error
@@ -12142,6 +12337,19 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/discover (the `DiscoverMCPServer` operationId).
 	DiscoverMCPServerWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*DiscoverMCPServerResponse, error)
 
+	// DisconnectMCPServerOAuthWithResponse Disconnect a server's sign-in
+	//
+	// Requires `tool:write` in this team. Ends the server's sign-in: its
+	// tokens are deleted, and the authorization server is asked to revoke
+	// them (RFC 7009) as well as it will answer; a revocation that fails is
+	// logged, and the sign-in is ended here regardless. A server with no
+	// sign-in is disconnected already, and the answer is the same.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID}/oauth (the `DisconnectMCPServerOAuth` operationId).
+	DisconnectMCPServerOAuthWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*DisconnectMCPServerOAuthResponse, error)
+
 	// StartMCPServerOAuthWithResponse Begin signing in to a server
 	//
 	// Requires `tool:write` in this team. For a server that signs in
@@ -14648,6 +14856,47 @@ func (r DiscoverMCPServerResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DiscoverMCPServerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DisconnectMCPServerOAuthResponse401Headers the declared response headers of an HTTP 401 response for DisconnectMCPServerOAuth
+type DisconnectMCPServerOAuthResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DisconnectMCPServerOAuthResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DisconnectMCPServerOAuthResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r DisconnectMCPServerOAuthResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DisconnectMCPServerOAuthResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DisconnectMCPServerOAuthResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DisconnectMCPServerOAuthResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -17649,6 +17898,25 @@ func (c *ClientWithResponses) DiscoverMCPServerWithResponse(ctx context.Context,
 	return ParseDiscoverMCPServerResponse(rsp)
 }
 
+// DisconnectMCPServerOAuthWithResponse Disconnect a server's sign-in
+//
+// Requires `tool:write` in this team. Ends the server's sign-in: its
+// tokens are deleted, and the authorization server is asked to revoke
+// them (RFC 7009) as well as it will answer; a revocation that fails is
+// logged, and the sign-in is ended here regardless. A server with no
+// sign-in is disconnected already, and the answer is the same.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID}/oauth (the `DisconnectMCPServerOAuth` operationId).
+func (c *ClientWithResponses) DisconnectMCPServerOAuthWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*DisconnectMCPServerOAuthResponse, error) {
+	rsp, err := c.DisconnectMCPServerOAuth(ctx, id, serverID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDisconnectMCPServerOAuthResponse(rsp)
+}
+
 // StartMCPServerOAuthWithResponse Begin signing in to a server
 //
 // Requires `tool:write` in this team. For a server that signs in
@@ -20055,6 +20323,35 @@ func ParseDiscoverMCPServerResponse(rsp *http.Response) (*DiscoverMCPServerRespo
 	switch {
 	case rsp.StatusCode == 401:
 		var headers DiscoverMCPServerResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDisconnectMCPServerOAuthResponse parses an HTTP response from a DisconnectMCPServerOAuthWithResponse call
+func ParseDisconnectMCPServerOAuthResponse(rsp *http.Response) (*DisconnectMCPServerOAuthResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DisconnectMCPServerOAuthResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DisconnectMCPServerOAuthResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
