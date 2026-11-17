@@ -69,6 +69,62 @@ func (q *Queries) InsertOAuthPending(ctx context.Context, arg InsertOAuthPending
 	return err
 }
 
+const lockOAuthConnection = `-- name: LockOAuthConnection :one
+SELECT server_id, team_id, connected_by, issuer, token_endpoint, revocation_endpoint, resource, auth, scopes_granted, access_expires_at, status, reason, connected_at, updated_at FROM mcp_oauth_connections WHERE server_id = $1 FOR UPDATE
+`
+
+// LockOAuthConnection holds a sign-in while its tokens are renewed, so two
+// workers spend a refresh token once: a server that rotates them refuses
+// the second.
+func (q *Queries) LockOAuthConnection(ctx context.Context, serverID uuid.UUID) (McpOauthConnection, error) {
+	row := q.db.QueryRow(ctx, lockOAuthConnection, serverID)
+	var i McpOauthConnection
+	err := row.Scan(
+		&i.ServerID,
+		&i.TeamID,
+		&i.ConnectedBy,
+		&i.Issuer,
+		&i.TokenEndpoint,
+		&i.RevocationEndpoint,
+		&i.Resource,
+		&i.Auth,
+		&i.ScopesGranted,
+		&i.AccessExpiresAt,
+		&i.Status,
+		&i.Reason,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markOAuthNeedsSignIn = `-- name: MarkOAuthNeedsSignIn :execrows
+UPDATE mcp_oauth_connections SET
+    status     = 'needs_sign_in',
+    reason     = $1,
+    updated_at = now()
+WHERE server_id = $2
+  AND connected_at = $3
+  AND status = 'connected'
+`
+
+type MarkOAuthNeedsSignInParams struct {
+	Reason      *string
+	ServerID    uuid.UUID
+	ConnectedAt time.Time
+}
+
+// MarkOAuthNeedsSignIn ends a sign-in that no longer works, and only the one
+// it was read with: a sign-in made again since, with its own connected_at,
+// is left as it is.
+func (q *Queries) MarkOAuthNeedsSignIn(ctx context.Context, arg MarkOAuthNeedsSignInParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markOAuthNeedsSignIn, arg.Reason, arg.ServerID, arg.ConnectedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneOAuthPending = `-- name: PruneOAuthPending :execrows
 DELETE FROM mcp_oauth_pending WHERE expires_at <= now()
 `
@@ -134,6 +190,25 @@ func (q *Queries) SetMCPServerOAuth(ctx context.Context, arg SetMCPServerOAuthPa
 		&i.OauthScopes,
 	)
 	return i, err
+}
+
+const setOAuthRenewed = `-- name: SetOAuthRenewed :exec
+UPDATE mcp_oauth_connections SET
+    access_expires_at = $1,
+    scopes_granted    = COALESCE($2::text[], scopes_granted),
+    updated_at        = now()
+WHERE server_id = $3
+`
+
+type SetOAuthRenewedParams struct {
+	AccessExpiresAt *time.Time
+	ScopesGranted   []string
+	ServerID        uuid.UUID
+}
+
+func (q *Queries) SetOAuthRenewed(ctx context.Context, arg SetOAuthRenewedParams) error {
+	_, err := q.db.Exec(ctx, setOAuthRenewed, arg.AccessExpiresAt, arg.ScopesGranted, arg.ServerID)
+	return err
 }
 
 const takeOAuthPending = `-- name: TakeOAuthPending :one

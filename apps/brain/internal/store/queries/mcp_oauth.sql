@@ -57,3 +57,28 @@ RETURNING *;
 
 -- name: GetOAuthConnection :one
 SELECT * FROM mcp_oauth_connections WHERE server_id = $1;
+
+-- LockOAuthConnection holds a sign-in while its tokens are renewed, so two
+-- workers spend a refresh token once: a server that rotates them refuses
+-- the second.
+-- name: LockOAuthConnection :one
+SELECT * FROM mcp_oauth_connections WHERE server_id = $1 FOR UPDATE;
+
+-- name: SetOAuthRenewed :exec
+UPDATE mcp_oauth_connections SET
+    access_expires_at = sqlc.narg('access_expires_at'),
+    scopes_granted    = COALESCE(sqlc.narg('scopes_granted')::text[], scopes_granted),
+    updated_at        = now()
+WHERE server_id = sqlc.arg('server_id');
+
+-- MarkOAuthNeedsSignIn ends a sign-in that no longer works, and only the one
+-- it was read with: a sign-in made again since, with its own connected_at,
+-- is left as it is.
+-- name: MarkOAuthNeedsSignIn :execrows
+UPDATE mcp_oauth_connections SET
+    status     = 'needs_sign_in',
+    reason     = sqlc.arg('reason'),
+    updated_at = now()
+WHERE server_id = sqlc.arg('server_id')
+  AND connected_at = sqlc.arg('connected_at')
+  AND status = 'connected';

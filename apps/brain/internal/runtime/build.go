@@ -315,6 +315,14 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 			})
 			continue
 		}
+		// One that needs signing in again keeps its tools: a call to one
+		// fails saying so, and the agent can tell the person why.
+		if s.AuthKind == "oauth" && g.OauthStatus == nil {
+			built.Unavailable = append(built.Unavailable, Unavailable{
+				Name: s.Name, Reason: "it needs signing in on the dashboard",
+			})
+			continue
+		}
 		if len(offered[s.ID]) == 0 {
 			built.Unavailable = append(built.Unavailable, Unavailable{
 				Name: s.Name, Reason: "no tools of it have been discovered",
