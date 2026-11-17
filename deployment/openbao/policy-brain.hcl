@@ -161,6 +161,14 @@ path "secret/data/teams/+/mcp/+" {
 # Read to call the provider, create to save, delete on metadata/ for the sweep,
 # exactly as a channel's signing secret. No update: a key's path is new every
 # time, so nothing overwrites one.
+# An MCP server's OAuth sign-in: the brain exchanges the code and refreshes
+# the tokens itself, so it writes them, and a disconnect deletes them.
+path "secret/data/teams/+/mcp-oauth/+" {
+  capabilities = ["read", "create", "update"]
+}
+path "secret/metadata/teams/+/mcp-oauth/+" {
+  capabilities = ["delete"]
+}
 path "secret/data/teams/+/search/+" {
   capabilities = ["read", "create"]
 }

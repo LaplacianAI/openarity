@@ -124,6 +124,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/AuthConfig"
 
+  /oauth/mcp/callback:
+    get:
+      operationId: mcpOAuthCallback
+      tags: [mcp-servers]
+      summary: Where an MCP server's sign-in comes back
+      description: |
+        Unauthenticated: an authorization server sends the person's browser
+        here, with no credential of its own. The `state` is the only proof,
+        taken once and valid for ten minutes. The code is exchanged with a
+        PKCE verifier only the brain holds, the tokens are kept in the secret
+        store, and the server's tools are discovered with them.
+
+        Always answers 303 to `<PUBLIC_URL>/ui/servers`, never anywhere the
+        request names, with `oauth` set to `connected`, `connected-no-tools`
+        (signed in, and the tools could not be listed), `expired`, `denied`,
+        `refused` or `failed`, and `server` once the sign-in is known.
+      security: []
+      parameters:
+        - {name: state, in: query, schema: {type: string}}
+        - {name: code, in: query, schema: {type: string}}
+        - {name: iss, in: query, schema: {type: string}}
+        - {name: error, in: query, schema: {type: string}}
+      responses:
+        "303":
+          description: Back to the dashboard, with the outcome
+
   /whoami:
     get:
       operationId: getWhoami
@@ -3075,6 +3101,52 @@ paths:
               schema:
                 type: string
                 examples: ["the server did not answer in time"]
+
+  /teams/{id}/mcp-servers/{serverID}/oauth/start:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ServerID"
+    post:
+      operationId: startMCPServerOAuth
+      tags: [mcp-servers]
+      summary: Begin signing in to a server
+      description: |
+        Requires `tool:write` in this team. For a server that signs in
+        (`auth_kind` oauth, with an OAuth client), the brain finds its
+        authorization server as the MCP authorization spec lays out, begins a
+        sign-in with PKCE that lasts ten minutes, and answers with the URL to
+        send the person to. They come back to `/oauth/mcp/callback`, which must
+        be the client's registered redirect URI, under `PUBLIC_URL`.
+
+        409 when the server is reached with a token, is a command server, has
+        no OAuth client, offers more than five scopes with none chosen on it,
+        or when this brain has no `PUBLIC_URL`. 502 when the server's sign-in
+        cannot be found or offers no PKCE with S256.
+      responses:
+        "200":
+          description: The sign-in, begun
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authorize_url]
+                properties:
+                  authorize_url:
+                    type: string
+                    format: uri
+                    description: Where to send the person to sign in
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The server cannot be signed in to as it is
+        "502":
+          description: The server's sign-in could not be found
 
   /teams/{id}/mcp-secrets/{name}:
     parameters:

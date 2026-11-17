@@ -120,6 +120,57 @@ func TestValidateChecksTheWebhookPublicURL(t *testing.T) {
 	}
 }
 
+// PUBLIC_URL is where an authorization server sends a browser back, so it is
+// held to what OAuth accepts for a redirect, and it is an origin alone.
+func TestValidateRefusesAPublicURLNoSignInCouldReturnTo(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ url, said string }{
+		{"http://openarity.example.com", "https"},
+		{"http://10.0.0.5:21120", "https"},
+		{"https://u:p@openarity.example.com", "user or password"},
+		{"https://openarity.example.com/ui", "origin"},
+		{"https://openarity.example.com/?x=1", "origin"},
+		{"https://openarity.example.com/#top", "origin"},
+		{"ftp://openarity.example.com", "PUBLIC_URL"},
+	} {
+		err := checkPublicURL(tc.url)
+		if err == nil || !strings.Contains(err.Error(), tc.said) {
+			t.Errorf("checkPublicURL(%q) = %v, want an error saying %q", tc.url, err, tc.said)
+		}
+	}
+}
+
+func TestValidateAcceptsAPublicURLASignInCanReturnTo(t *testing.T) {
+	t.Parallel()
+
+	for _, u := range []string{
+		"", "https://openarity.example.com", "https://openarity.example.com/", "https://openarity.example.com:8443",
+		"http://localhost:21120", "http://127.0.0.1:21120", "http://[::1]:21120",
+	} {
+		if err := checkPublicURL(u); err != nil {
+			t.Errorf("checkPublicURL(%q) = %v", u, err)
+		}
+	}
+}
+
+func TestValidateChecksThePublicURL(t *testing.T) {
+	t.Parallel()
+
+	if _, err := load(map[string]string{"OPENARITY_PUBLIC_URL": "http://openarity.example.com"}); err == nil {
+		t.Error("load accepted a PUBLIC_URL no authorization server would send a browser back to")
+	}
+}
+
+func TestStringRedactsThePublicURL(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{PublicURL: "https://user:pass@openarity.example.com"}
+	if strings.Contains(cfg.String(), "pass") {
+		t.Errorf("String() = %s, carries the password", cfg.String())
+	}
+}
+
 func TestCheckHostPort(t *testing.T) {
 	t.Parallel()
 

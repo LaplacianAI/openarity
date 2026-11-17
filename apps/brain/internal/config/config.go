@@ -16,6 +16,10 @@ type Config struct {
 	APIBind          string      `env:"API_BIND" envDefault:"127.0.0.1:21120"`
 	WebhookBind      string      `env:"WEBHOOK_BIND" envDefault:"127.0.0.1:21121"`
 	WebhookPublicURL string      `env:"WEBHOOK_PUBLIC_URL" envDefault:""`
+	// PublicURL is the origin the dashboard is served from: where a browser
+	// is sent back after signing in to an MCP server. Empty, and no server
+	// can be signed in to.
+	PublicURL string `env:"PUBLIC_URL" envDefault:""`
 
 	/* Logging Configuration */
 	LogLevel slog.Level `env:"LOG_LEVEL" envDefault:"info"`
@@ -91,7 +95,7 @@ const NoMCPRegistry = "none"
 
 func (c *Config) String() string {
 	return fmt.Sprintf(
-		"Config{Environment:%s LogLevel:%s APIBind:%s WebhookBind:%s WebhookPublicURL:%s "+
+		"Config{Environment:%s LogLevel:%s APIBind:%s WebhookBind:%s WebhookPublicURL:%s PublicURL:%s "+
 			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s "+
 			"SecretsBackend:%s SecretsAddr:%s "+
 			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
@@ -102,6 +106,7 @@ func (c *Config) String() string {
 		c.APIBind,
 		c.WebhookBind,
 		redactURL(c.WebhookPublicURL),
+		redactURL(c.PublicURL),
 		redactURL(c.PostgresDSN),
 		redactURL(c.FalkorDBURL),
 		redactURL(c.RedisURL),

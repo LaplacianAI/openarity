@@ -20,6 +20,7 @@ const (
 	KindAttachments Kind = "attachments"
 	KindMCP         Kind = "mcp"
 	KindSearch      Kind = "search"
+	KindMCPOAuth    Kind = "mcp-oauth"
 )
 
 var AllKinds = []Kind{
@@ -27,6 +28,7 @@ var AllKinds = []Kind{
 	KindAttachments,
 	KindMCP,
 	KindSearch,
+	KindMCPOAuth,
 }
 
 type Store interface {

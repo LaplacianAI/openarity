@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,7 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/oauth2"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 // authWorld is one server playing an MCP server, its protected resource
@@ -383,5 +388,39 @@ func TestAnAuthorityNamedWithATrailingSlashIsFound(t *testing.T) {
 	}
 	if as.Issuer != w.URL+"/as" {
 		t.Errorf("issuer = %q, want it without the slash", as.Issuer)
+	}
+}
+
+type mapSecrets map[string]string
+
+func (m mapSecrets) Get(_ context.Context, path, key string) (string, error) {
+	v, ok := m[path+"#"+key]
+	if !ok {
+		return "", secrets.ErrNotFound
+	}
+	return v, nil
+}
+
+// A server that signs in is called with its sign-in's access token, and one
+// never signed in says so rather than calling with none.
+func TestAServerThatSignsInIsCalledWithItsAccessToken(t *testing.T) {
+	team, server := uuid.New(), uuid.New()
+	row := db.McpServer{ID: server, TeamID: team, AuthKind: "oauth"}
+	path := secrets.Path(team, secrets.KindMCPOAuth, server)
+
+	d := New(mapSecrets{path + "#" + OAuthAccessKey: "at-1"}, Policy{Allow: allowAll}, time.Second)
+	if tok, err := d.tokenFor(t.Context(), row); err != nil || tok != "at-1" {
+		t.Errorf("token = %q, %v; want the sign-in's", tok, err)
+	}
+
+	d = New(mapSecrets{}, Policy{Allow: allowAll}, time.Second)
+	if _, err := d.tokenFor(t.Context(), row); !errors.Is(err, ErrNotSignedIn) {
+		t.Errorf("err = %v, want ErrNotSignedIn", err)
+	}
+
+	ref := "teams/" + team.String() + "/mcp/static#token"
+	d = New(mapSecrets{"teams/" + team.String() + "/mcp/static#token": "static-1", path + "#" + OAuthAccessKey: "at-1"}, Policy{Allow: allowAll}, time.Second)
+	if tok, err := d.tokenFor(t.Context(), db.McpServer{ID: server, TeamID: team, AuthKind: "static", AuthSecretRef: &ref}); err != nil || tok != "static-1" {
+		t.Errorf("a static server's token = %q, %v; want its own", tok, err)
 	}
 }

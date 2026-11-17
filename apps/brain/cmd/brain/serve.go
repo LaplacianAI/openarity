@@ -90,7 +90,8 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	authorizer := authz.New(dbStore, cfg.SuperAdmins)
 	enqueuer := runtime.NewEnqueuer(runQueue)
 	notices := gateway.NewNoticeKicker(runQueue)
-	routers := newRouters(cfg, logger, dbStore, authorizer, secretStore, secretWriter, registry, attachments, newImporter(cfg), newDiscoverer(cfg, secretStore), graphs, enqueuer, notices)
+	discoverer := newDiscoverer(cfg, secretStore)
+	routers := newRouters(cfg, logger, dbStore, authorizer, secretStore, secretWriter, registry, attachments, newImporter(cfg), discoverer, graphs, enqueuer, notices, discoverer)
 	// A provider's files are fetched with the reply client: the same public
 	// addresses only, and no redirect followed somewhere unchecked.
 	downloads := replyClient(reachable(cfg.MCPPrivateNetworks))

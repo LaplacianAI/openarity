@@ -34,8 +34,10 @@ var devOnlyRoutes = []string{"GET /docs", "GET /openapi.yaml"}
 
 // publicRoutes answer without a token in every environment. The list is
 // deliberately hand-written and short: a route joins it by being named here,
-// never by a flag someone set on a router.
-var publicRoutes = []string{"GET /auth/config"}
+// never by a flag someone set on a router. An MCP sign-in's callback is one:
+// the browser arrives from the authorization server with no token, and the
+// state it carries is the only proof, taken once.
+var publicRoutes = []string{"GET /auth/config", "GET /oauth/mcp/callback"}
 
 // uiRoutes serve the dashboard: HTML and its assets, not API operations.
 //
@@ -67,7 +69,7 @@ func servedRoutes(t *testing.T, environment config.Environment) []string {
 	cfg := &config.Config{Environment: environment}
 
 	routes := slices.Clone(probeRoutes)
-	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, gateway.Registry{}, nil, nil, nil, nil, nil, nil) {
+	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, gateway.Registry{}, nil, nil, nil, nil, nil, nil, nil) {
 		p, ok := r.(patterned)
 		if !ok {
 			t.Fatalf("%T does not expose Patterns, so it cannot be checked against the spec", r)
@@ -222,7 +224,7 @@ func TestOnlyDeclaredRoutesArePublic(t *testing.T) {
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
 	allowed := slices.Concat(devOnlyRoutes, publicRoutes, uiRoutes)
 
-	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, gateway.Registry{}, nil, nil, nil, nil, nil, nil) {
+	for _, r := range newRouters(cfg, discardLogger(), nil, nil, nil, nil, gateway.Registry{}, nil, nil, nil, nil, nil, nil, nil) {
 		if !r.Public() {
 			continue
 		}
@@ -267,7 +269,7 @@ func TestEveryRouterExposesItsPatterns(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{Environment: config.EnvironmentDevelopment}
-	routers := newRouters(cfg, discardLogger(), nil, nil, nil, nil, gateway.Registry{}, nil, nil, nil, nil, nil, nil)
+	routers := newRouters(cfg, discardLogger(), nil, nil, nil, nil, gateway.Registry{}, nil, nil, nil, nil, nil, nil, nil)
 
 	if len(routers) == 0 {
 		t.Fatal("newRouters returned nothing")
