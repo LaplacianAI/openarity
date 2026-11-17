@@ -32,6 +32,9 @@ const LOOKS: Record<string, Look> = {
   pending: { tone: "text-waiting", icon: Clock },
   // An MCP server's last discovery. Never asked is the unknown look.
   answered: { tone: "text-succeeded", icon: CheckCircle2 },
+  // A server's sign-in. One never made is the unknown look.
+  connected: { tone: "text-succeeded", icon: CheckCircle2 },
+  "needs sign-in": { tone: "text-failed", icon: XCircle },
   // A session's states.
   open: { tone: "text-succeeded" },
   active: { tone: "text-succeeded" },

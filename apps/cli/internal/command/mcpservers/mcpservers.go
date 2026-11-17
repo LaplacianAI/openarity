@@ -25,8 +25,11 @@ func New(opts *cli.Options) *cobra.Command {
 			"secret store, teams/<team_id>/mcp/<name>#<key>, never the secret: write\n" +
 			"it there with oa mcp-servers secret, and the brain reads it when it\n" +
 			"connects.\n\n" +
+			"A url server can instead sign in with OAuth (--oauth): someone connects\n" +
+			"it once with oa mcp-servers connect, and the brain renews its token.\n\n" +
 			"Seeing a team's servers and their tools needs only to be in the team.\n" +
-			"Registering, replacing, discovering or deleting one needs tool:write.",
+			"Registering, replacing, discovering, connecting or deleting one needs\n" +
+			"tool:write.",
 	}
 
 	cmd.AddCommand(
@@ -37,6 +40,8 @@ func New(opts *cli.Options) *cobra.Command {
 		newDeleteCmd(opts),
 		newToolsCmd(opts),
 		newDiscoverCmd(opts),
+		newConnectCmd(opts),
+		newDisconnectCmd(opts),
 		newSecretCmd(opts),
 	)
 	return cmd
@@ -73,7 +78,7 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 				Empty:      "no MCP servers",
 				More:       "oa mcp-servers list " + args[0],
 				Row: func(table *printer.Table, s client.MCPServer) {
-					table.Row(opts.Styles.Value.Render(cli.Safe(s.Name)), transport(s), discovered(s),
+					table.Row(opts.Styles.Value.Render(cli.Safe(s.Name)), transport(s), authOf(s), discovered(s),
 						opts.Styles.Muted.Render(s.ID.String()))
 				},
 			})
@@ -119,6 +124,11 @@ type definition struct {
 	authRef string
 	env     []string
 	bare    bool
+
+	oauth     bool
+	clientID  string
+	secretRef string
+	scopes    []string
 }
 
 func (d *definition) flags(cmd *cobra.Command) {
@@ -129,6 +139,13 @@ func (d *definition) flags(cmd *cobra.Command) {
 		"with a command: NAME=teams/<team_id>/mcp/<name>#<key>, once per variable")
 	cmd.Flags().BoolVar(&d.bare, "bare", false,
 		"tools reach the model as <tool> rather than <server>__<tool>")
+	cmd.Flags().BoolVar(&d.oauth, "oauth", false,
+		"with --url: sign in with OAuth rather than a static token; connect it afterwards")
+	cmd.Flags().StringVar(&d.clientID, "client-id", "", "with --oauth: the OAuth client registered for the server")
+	cmd.Flags().StringVar(&d.secretRef, "client-secret-ref", "",
+		"with --oauth, for a confidential client: its secret's reference, teams/<team_id>/mcp/<name>#<key>")
+	cmd.Flags().StringArrayVar(&d.scopes, "scope", nil,
+		"with --oauth: a scope to ask for, once per scope; without, the ones the server offers")
 }
 
 // request builds the body. argv is what followed --, and it is the command;
@@ -151,10 +168,16 @@ func (d *definition) request(name string, argv []string) (client.MCPServerReques
 		if d.authRef != "" {
 			body.AuthSecretRef = &d.authRef
 		}
+		if err := d.signIn(&body); err != nil {
+			return body, err
+		}
 		if len(d.env) > 0 {
 			return body, errors.New("--env sets variables for a command server; a url server takes --auth-secret-ref")
 		}
 	case len(argv) > 0:
+		if d.signsIn() {
+			return body, errors.New("--oauth and its flags are for a url server")
+		}
 		body.Command = &argv
 		if d.authRef != "" {
 			return body, errors.New("--auth-secret-ref is for a url server; a command server takes --env")
@@ -174,6 +197,37 @@ func (d *definition) request(name string, argv []string) (client.MCPServerReques
 	return body, nil
 }
 
+func (d *definition) signsIn() bool {
+	return d.oauth || d.clientID != "" || d.secretRef != "" || len(d.scopes) > 0
+}
+
+// signIn adds the OAuth client. The client flags without --oauth are a
+// mistake worth naming here: the brain would refuse them without saying which
+// flag was meant.
+func (d *definition) signIn(body *client.MCPServerRequest) error {
+	if !d.signsIn() {
+		return nil
+	}
+	if !d.oauth {
+		return errors.New("--client-id, --client-secret-ref and --scope go with --oauth")
+	}
+	if d.authRef != "" {
+		return errors.New("a server that signs in takes no --auth-secret-ref: its token comes from connecting it")
+	}
+	kind := client.MCPServerRequestAuthKindOauth
+	body.AuthKind = &kind
+	if d.clientID != "" {
+		body.OauthClientID = &d.clientID
+	}
+	if d.secretRef != "" {
+		body.OauthClientSecretRef = &d.secretRef
+	}
+	if len(d.scopes) > 0 {
+		body.OauthScopes = &d.scopes
+	}
+	return nil
+}
+
 func newCreateCmd(opts *cli.Options) *cobra.Command {
 	var def definition
 
@@ -184,7 +238,10 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"discovered, which `oa mcp-servers discover` does for a url server.\n\n" +
 			"    oa mcp-servers create platform github --url https://api.githubcopilot.com/mcp/ \\\n" +
 			"        --auth-secret-ref teams/<team_id>/mcp/github#token\n" +
-			"    oa mcp-servers create platform files -- npx -y @modelcontextprotocol/server-filesystem /data",
+			"    oa mcp-servers create platform files -- npx -y @modelcontextprotocol/server-filesystem /data\n" +
+			"    oa mcp-servers create platform gmail --url https://gmailmcp.googleapis.com/mcp/v1 \\\n" +
+			"        --oauth --client-id <id> --client-secret-ref teams/<team_id>/mcp/google#secret \\\n" +
+			"        --scope https://www.googleapis.com/auth/gmail.readonly",
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body, err := def.request(args[1], args[2:])
@@ -385,6 +442,9 @@ func printServer(opts *cli.Options, s *client.MCPServer, did string) error {
 			}
 			if s.AuthSecretRef != nil {
 				table.Row("auth", cli.Safe(*s.AuthSecretRef), "")
+			}
+			if s.AuthKind == client.MCPServerAuthKindOauth {
+				printSignIn(opts, table, s)
 			}
 			if s.Command != nil {
 				table.Row("command", cli.Safe(strings.Join(*s.Command, " ")), "")

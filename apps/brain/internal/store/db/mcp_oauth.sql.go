@@ -12,6 +12,20 @@ import (
 	"github.com/google/uuid"
 )
 
+const deleteOAuthConnection = `-- name: DeleteOAuthConnection :execrows
+DELETE FROM mcp_oauth_connections WHERE server_id = $1
+`
+
+// DeleteOAuthConnection is a disconnect. The tombstone trigger leaves the
+// tokens to the sweep.
+func (q *Queries) DeleteOAuthConnection(ctx context.Context, serverID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOAuthConnection, serverID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getOAuthConnection = `-- name: GetOAuthConnection :one
 SELECT server_id, team_id, connected_by, issuer, token_endpoint, revocation_endpoint, resource, auth, scopes_granted, access_expires_at, status, reason, connected_at, updated_at FROM mcp_oauth_connections WHERE server_id = $1
 `
@@ -67,6 +81,45 @@ func (q *Queries) InsertOAuthPending(ctx context.Context, arg InsertOAuthPending
 		arg.ExpiresAt,
 	)
 	return err
+}
+
+const listOAuthConnectionsOf = `-- name: ListOAuthConnectionsOf :many
+SELECT server_id, team_id, connected_by, issuer, token_endpoint, revocation_endpoint, resource, auth, scopes_granted, access_expires_at, status, reason, connected_at, updated_at FROM mcp_oauth_connections WHERE server_id = ANY($1::uuid[])
+`
+
+func (q *Queries) ListOAuthConnectionsOf(ctx context.Context, serverIds []uuid.UUID) ([]McpOauthConnection, error) {
+	rows, err := q.db.Query(ctx, listOAuthConnectionsOf, serverIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []McpOauthConnection
+	for rows.Next() {
+		var i McpOauthConnection
+		if err := rows.Scan(
+			&i.ServerID,
+			&i.TeamID,
+			&i.ConnectedBy,
+			&i.Issuer,
+			&i.TokenEndpoint,
+			&i.RevocationEndpoint,
+			&i.Resource,
+			&i.Auth,
+			&i.ScopesGranted,
+			&i.AccessExpiresAt,
+			&i.Status,
+			&i.Reason,
+			&i.ConnectedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockOAuthConnection = `-- name: LockOAuthConnection :one
@@ -137,37 +190,57 @@ func (q *Queries) PruneOAuthPending(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
-const setMCPServerOAuth = `-- name: SetMCPServerOAuth :one
-UPDATE mcp_servers SET
-    auth_kind               = 'oauth',
-    auth_secret_ref         = NULL,
-    oauth_client_id         = $1,
-    oauth_client_secret_ref = $2,
-    oauth_scopes            = $3::text[],
+const setMCPServerAuth = `-- name: SetMCPServerAuth :one
+WITH current AS (
+    SELECT m.id, m.url, m.oauth_client_id FROM mcp_servers m
+    WHERE m.id = $6 AND m.team_id = $7
+    FOR UPDATE
+), ended AS (
+    DELETE FROM mcp_oauth_connections c USING current
+    WHERE c.server_id = current.id
+      AND ($1::text <> 'oauth'
+        OR current.url IS DISTINCT FROM $8::text
+        OR current.oauth_client_id IS DISTINCT FROM $3::text)
+    RETURNING c.server_id
+)
+UPDATE mcp_servers s SET
+    auth_kind               = $1::text,
+    auth_secret_ref         = $2::text,
+    oauth_client_id         = $3::text,
+    oauth_client_secret_ref = $4::text,
+    oauth_scopes            = $5::text[],
     updated_at              = now()
-WHERE id = $4 AND team_id = $5
-RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes
+FROM current
+WHERE s.id = current.id
+RETURNING s.id, s.team_id, s.name, s.url, s.command, s.env, s.auth_secret_ref, s.bare, s.discovered_at, s.created_at, s.updated_at, s.last_discovery_error, s.last_discovery_at, s.auth_kind, s.oauth_client_id, s.oauth_client_secret_ref, s.oauth_scopes
 `
 
-type SetMCPServerOAuthParams struct {
+type SetMCPServerAuthParams struct {
+	AuthKind        string
+	AuthSecretRef   *string
 	ClientID        *string
 	ClientSecretRef *string
 	Scopes          []string
 	ID              uuid.UUID
 	TeamID          uuid.UUID
+	Url             *string
 }
 
-// SetMCPServerOAuth makes a server one that signs in, with the client it
-// signs in as. Its static token, if it had one, is dropped: a server is
-// reached one way. A sign-in it already has is left; one made with another
-// client is the caller's to end.
-func (q *Queries) SetMCPServerOAuth(ctx context.Context, arg SetMCPServerOAuthParams) (McpServer, error) {
-	row := q.db.QueryRow(ctx, setMCPServerOAuth,
+// SetMCPServerAuth sets how a server is reached: a static token or none, or
+// a sign-in with a client. A sign-in already made is ended when it was made
+// for something else: another address, another client, or a server no longer
+// signing in. Its tokens are left to the sweep by the tombstone trigger. url
+// is the address the server is about to have, so an edit's new one counts.
+func (q *Queries) SetMCPServerAuth(ctx context.Context, arg SetMCPServerAuthParams) (McpServer, error) {
+	row := q.db.QueryRow(ctx, setMCPServerAuth,
+		arg.AuthKind,
+		arg.AuthSecretRef,
 		arg.ClientID,
 		arg.ClientSecretRef,
 		arg.Scopes,
 		arg.ID,
 		arg.TeamID,
+		arg.Url,
 	)
 	var i McpServer
 	err := row.Scan(

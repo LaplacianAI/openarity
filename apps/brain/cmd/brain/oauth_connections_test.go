@@ -63,7 +63,7 @@ func newSigninWorld(t *testing.T) *signinWorld {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if srv, err = s.SetMCPServerOAuth(t.Context(), db.SetMCPServerOAuthParams{ID: srv.ID, TeamID: team.ID, ClientID: &id}); err != nil {
+	if srv, err = s.SetMCPServerAuth(t.Context(), db.SetMCPServerAuthParams{AuthKind: "oauth", Url: srv.Url, ID: srv.ID, TeamID: team.ID, ClientID: &id}); err != nil {
 		t.Fatal(err)
 	}
 	before := time.Now().Add(-time.Minute)

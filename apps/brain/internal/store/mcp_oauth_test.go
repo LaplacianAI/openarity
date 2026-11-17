@@ -27,9 +27,9 @@ func newOAuthWorld(t *testing.T) *oauthWorld {
 	u := "https://gmailmcp.example/mcp/v1"
 	srv := mustCreateServer(t, s, db.CreateMCPServerParams{TeamID: team.ID, Name: "gmail", Url: &u, Env: []byte(`{}`)})
 	id, scopes := "client-1", []string{"gmail.readonly"}
-	srv, err := s.SetMCPServerOAuth(t.Context(), db.SetMCPServerOAuthParams{ID: srv.ID, TeamID: team.ID, ClientID: &id, Scopes: scopes})
+	srv, err := s.SetMCPServerAuth(t.Context(), db.SetMCPServerAuthParams{AuthKind: "oauth", Url: srv.Url, ID: srv.ID, TeamID: team.ID, ClientID: &id, Scopes: scopes})
 	if err != nil {
-		t.Fatalf("SetMCPServerOAuth: %v", err)
+		t.Fatalf("SetMCPServerAuth: %v", err)
 	}
 	return &oauthWorld{s: s, team: team, server: srv, user: mustCreateUser(t, s, "ann")}
 }
@@ -184,7 +184,7 @@ func TestMCPOAuthRollsBack(t *testing.T) {
 	u := "https://mcp.example/mcp"
 	srv := mustCreateServer(t, s, db.CreateMCPServerParams{TeamID: team.ID, Name: "kept", Url: &u, Env: []byte(`{}`)})
 	id := "client-1"
-	if _, err := s.SetMCPServerOAuth(t.Context(), db.SetMCPServerOAuthParams{ID: srv.ID, TeamID: team.ID, ClientID: &id}); err != nil {
+	if _, err := s.SetMCPServerAuth(t.Context(), db.SetMCPServerAuthParams{AuthKind: "oauth", Url: srv.Url, ID: srv.ID, TeamID: team.ID, ClientID: &id}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -197,5 +197,88 @@ func TestMCPOAuthRollsBack(t *testing.T) {
 	}
 	if _, err := s.Migrate(t.Context()); err != nil {
 		t.Fatalf("Migrate after Rollback: %v", err)
+	}
+}
+
+// A sign-in is for one address and one client, as the API edits a server:
+// ending one leaves its tokens for the sweep.
+func TestSettingTheAuthEndsASignInMadeForSomethingElse(t *testing.T) {
+	cases := map[string]struct {
+		set  func(w *oauthWorld) db.SetMCPServerAuthParams
+		ends bool
+	}{
+		"the same": {func(w *oauthWorld) db.SetMCPServerAuthParams {
+			return db.SetMCPServerAuthParams{ID: w.server.ID, TeamID: w.team.ID, AuthKind: "oauth", Url: w.server.Url, ClientID: w.server.OauthClientID, Scopes: []string{"gmail.modify"}}
+		}, false},
+		"another url": {func(w *oauthWorld) db.SetMCPServerAuthParams {
+			u := "https://elsewhere.example/mcp"
+			return db.SetMCPServerAuthParams{ID: w.server.ID, TeamID: w.team.ID, AuthKind: "oauth", Url: &u, ClientID: w.server.OauthClientID}
+		}, true},
+		"another client": {func(w *oauthWorld) db.SetMCPServerAuthParams {
+			c := "client-2"
+			return db.SetMCPServerAuthParams{ID: w.server.ID, TeamID: w.team.ID, AuthKind: "oauth", Url: w.server.Url, ClientID: &c}
+		}, true},
+		"static": {func(w *oauthWorld) db.SetMCPServerAuthParams {
+			return db.SetMCPServerAuthParams{ID: w.server.ID, TeamID: w.team.ID, AuthKind: "static", Url: w.server.Url}
+		}, true},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := newOAuthWorld(t)
+			w.connect(t)
+			if _, err := w.s.SetMCPServerAuth(t.Context(), c.set(w)); err != nil {
+				t.Fatalf("SetMCPServerAuth: %v", err)
+			}
+			_, err := w.s.GetOAuthConnection(t.Context(), w.server.ID)
+			if ended := errors.Is(err, pgx.ErrNoRows); ended != c.ends {
+				t.Errorf("ended = %v (%v), want %v", ended, err, c.ends)
+			}
+			want := secrets.Path(w.team.ID, secrets.KindMCPOAuth, w.server.ID)
+			if n := count(t, w.s, `SELECT count(*) FROM deleted_secrets WHERE path = $1`, want); (n == 1) != c.ends {
+				t.Errorf("tombstones = %d, want one only when ended", n)
+			}
+		})
+	}
+}
+
+func TestSettingTheAuthReachesOnlyTheTeamsServer(t *testing.T) {
+	w := newOAuthWorld(t)
+	_, err := w.s.SetMCPServerAuth(t.Context(), db.SetMCPServerAuthParams{ID: w.server.ID, TeamID: uuid.New(), AuthKind: "static"})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("err = %v, want no rows for another team", err)
+	}
+}
+
+func TestOnlyTheServersAskedForHaveTheirSignInsListed(t *testing.T) {
+	w := newOAuthWorld(t)
+	w.connect(t)
+	other := newOAuthWorld(t)
+	other.connect(t)
+
+	got, err := w.s.ListOAuthConnectionsOf(t.Context(), []uuid.UUID{w.server.ID})
+	if err != nil || len(got) != 1 || got[0].ServerID != w.server.ID {
+		t.Errorf("ListOAuthConnectionsOf = %+v, %v; want this server's alone", got, err)
+	}
+	if n, err := w.s.DeleteOAuthConnection(t.Context(), w.server.ID); err != nil || n != 1 {
+		t.Errorf("DeleteOAuthConnection = %d, %v", n, err)
+	}
+	if n, _ := w.s.DeleteOAuthConnection(t.Context(), w.server.ID); n != 0 {
+		t.Errorf("a second disconnect deleted %d", n)
+	}
+}
+
+// A server that signs in with no client recorded, then becomes static, has its
+// sign-in ended for the kind alone: the client comparison sees nothing change.
+func TestBecomingStaticEndsASignInWhateverTheClient(t *testing.T) {
+	w := newOAuthWorld(t)
+	if _, err := w.s.SetMCPServerAuth(t.Context(), db.SetMCPServerAuthParams{ID: w.server.ID, TeamID: w.team.ID, AuthKind: "oauth", Url: w.server.Url}); err != nil {
+		t.Fatal(err)
+	}
+	w.connect(t)
+	if _, err := w.s.SetMCPServerAuth(t.Context(), db.SetMCPServerAuthParams{ID: w.server.ID, TeamID: w.team.ID, AuthKind: "static", Url: w.server.Url}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.s.GetOAuthConnection(t.Context(), w.server.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("a server now static kept its sign-in: %v", err)
 	}
 }

@@ -28,7 +28,18 @@ type Fields struct {
 	Env           []byte
 	AuthSecretRef *string
 	Bare          bool
+
+	AuthKind        string
+	ClientID        *string
+	ClientSecretRef *string
+	Scopes          []string
 }
+
+const (
+	authStatic = "static"
+	authOAuth  = "oauth"
+	maxScopes  = 50
+)
 
 func Parse(teamID uuid.UUID, req Request) (Fields, error) {
 	if !namePattern.MatchString(req.Name) {
@@ -46,6 +57,9 @@ func Parse(teamID uuid.UUID, req Request) (Fields, error) {
 	default:
 		err = errors.New("a server needs a url or a command")
 	}
+	if err == nil {
+		err = checkAuth(teamID, &req)
+	}
 	if err != nil {
 		return Fields{}, err
 	}
@@ -62,7 +76,47 @@ func Parse(teamID uuid.UUID, req Request) (Fields, error) {
 	return Fields{
 		Name: req.Name, URL: req.URL, Command: req.Command, Env: encoded,
 		AuthSecretRef: req.AuthSecretRef, Bare: req.Bare,
+		AuthKind: req.AuthKind, ClientID: req.OAuthClientID, ClientSecretRef: req.OAuthClientSecretRef, Scopes: req.OAuthScopes,
 	}, nil
+}
+
+// checkAuth is how a server is reached. A server signs in, or carries a
+// static token, never both: the token would be sent in place of the
+// sign-in's, and nobody could tell which one a call used.
+func checkAuth(teamID uuid.UUID, req *Request) error {
+	if req.AuthKind == "" {
+		req.AuthKind = authStatic
+	}
+	switch req.AuthKind {
+	case authStatic:
+		if req.OAuthClientID != nil || req.OAuthClientSecretRef != nil || req.OAuthScopes != nil {
+			return errors.New("oauth_client_id, oauth_client_secret_ref and oauth_scopes are for a server whose auth_kind is oauth")
+		}
+		return nil
+	case authOAuth:
+	default:
+		return errors.New("auth_kind must be static or oauth")
+	}
+
+	switch {
+	case req.URL == nil:
+		return errors.New("a server that signs in needs a url: a command server is given env")
+	case req.AuthSecretRef != nil:
+		return errors.New("a server that signs in carries no auth_secret_ref: its token comes from the sign-in")
+	case req.OAuthClientID == nil || strings.TrimSpace(*req.OAuthClientID) == "" || len(*req.OAuthClientID) > 512:
+		return errors.New("a server that signs in needs oauth_client_id, the OAuth client registered for it")
+	case len(req.OAuthScopes) > maxScopes:
+		return fmt.Errorf("oauth_scopes may name at most %d scopes", maxScopes)
+	}
+	for _, sc := range req.OAuthScopes {
+		if sc == "" || strings.ContainsAny(sc, " \t\r\n") || len(sc) > 512 {
+			return fmt.Errorf("oauth_scopes holds %q, which is not a scope", sc)
+		}
+	}
+	if req.OAuthClientSecretRef != nil {
+		return checkRef(teamID, "oauth_client_secret_ref", *req.OAuthClientSecretRef)
+	}
+	return nil
 }
 
 func checkURLServer(teamID uuid.UUID, req Request) error {

@@ -21,6 +21,9 @@ type Discoverer interface {
 }
 
 type Queries interface {
+	CreateMCPServer(ctx context.Context, arg db.CreateMCPServerParams) (db.McpServer, error)
+	UpdateMCPServer(ctx context.Context, arg db.UpdateMCPServerParams) (db.McpServer, error)
+	SetMCPServerAuth(ctx context.Context, arg db.SetMCPServerAuthParams) (db.McpServer, error)
 	MarkMCPServerDiscovered(ctx context.Context, arg db.MarkMCPServerDiscoveredParams) (int64, error)
 	UpsertMCPTool(ctx context.Context, arg db.UpsertMCPToolParams) error
 	DeleteMCPToolsNotIn(ctx context.Context, arg db.DeleteMCPToolsNotInParams) error

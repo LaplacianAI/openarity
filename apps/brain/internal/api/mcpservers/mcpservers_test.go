@@ -48,6 +48,9 @@ type fakeStore struct {
 
 	// vault is the secret store the secrets route writes to.
 	vault fakeVault
+	oauth oauthFakes
+	// revoker is the authorization server, told a sign-in is over.
+	revoker fakeRevoker
 
 	txOpen    bool
 	committed int
@@ -211,6 +214,7 @@ func (s *fakeStore) CreateMCPServer(_ context.Context, arg db.CreateMCPServerPar
 	row := db.McpServer{
 		ID: uuid.New(), TeamID: arg.TeamID, Name: arg.Name, Url: arg.Url, Command: arg.Command, Env: arg.Env,
 		AuthSecretRef: arg.AuthSecretRef, Bare: arg.Bare, CreatedAt: now, UpdatedAt: now,
+		AuthKind: "static", // the column's default
 	}
 	s.servers[row.ID] = row
 	return row, nil
@@ -345,6 +349,7 @@ func serverRoutes(t *testing.T) authz.Routes {
 	add("GET", "/teams/{id}/mcp-servers/{serverID}", "member", nil)
 	add("PUT", "/teams/{id}/mcp-servers/{serverID}", "team", &write)
 	add("DELETE", "/teams/{id}/mcp-servers/{serverID}", "team", &write)
+	add("DELETE", "/teams/{id}/mcp-servers/{serverID}/oauth", "team", &write)
 	add("GET", "/teams/{id}/mcp-servers/{serverID}/tools", "member", nil)
 	add("POST", "/teams/{id}/mcp-servers/{serverID}/discover", "team", &write)
 	add("PUT", "/teams/{id}/mcp-secrets/{name}", "team", &write)
@@ -361,7 +366,7 @@ func callWith(t *testing.T, s *fakeStore, d *fakeDiscoverer, logger *slog.Logger
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(logger, s, d, &s.vault).Register(mux, api.NewGuard(serverRoutes(t), a, liveTeams{}, discardLogger()))
+	New(logger, s, d, &s.vault, Ending{Secrets: &s.vault, Revoker: &s.revoker}).Register(mux, api.NewGuard(serverRoutes(t), a, liveTeams{}, discardLogger()))
 
 	var in io.Reader = http.NoBody
 	switch b := body.(type) {
@@ -620,7 +625,7 @@ func wantKeys(t *testing.T, what string, got map[string]bool, want ...string) {
 	}
 }
 
-var commonKeys = []string{"id", "team_id", "name", "env", "bare", "discovered_at", "last_discovery_error", "last_discovery_at", "created_at", "updated_at"}
+var commonKeys = []string{"id", "team_id", "name", "env", "auth_kind", "connection", "bare", "discovered_at", "last_discovery_error", "last_discovery_at", "created_at", "updated_at"}
 
 // The wire shape is a contract. A server shows its own transport's fields and
 // never the other's, and discovered_at is present as null until discovery

@@ -424,3 +424,38 @@ func TestAServerThatSignsInIsCalledWithItsAccessToken(t *testing.T) {
 		t.Errorf("a static server's token = %q, %v; want its own", tok, err)
 	}
 }
+
+// RFC 7009: the token, a hint of which it is, and the client as the token
+// endpoint takes it.
+func TestARevocationNamesTheTokenAndTheClient(t *testing.T) {
+	var got url.Values
+	var basic string
+	status := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		got, basic = r.PostForm, r.Header.Get("Authorization")
+		rw.WriteHeader(status)
+	}))
+	t.Cleanup(srv.Close)
+	d := New(&fakeSecrets{}, Policy{Allow: allowAll}, 5*time.Second)
+	as := AuthServer{RevokeURL: srv.URL + "/revoke", TokenAuth: []string{"client_secret_basic"}}
+
+	if err := d.Revoke(t.Context(), as, Client{ID: "c", Secret: "s"}, "rt-1", "refresh_token"); err != nil {
+		t.Fatal(err)
+	}
+	if got.Get("token") != "rt-1" || got.Get("token_type_hint") != "refresh_token" || got.Get("client_secret") != "" || basic == "" {
+		t.Errorf("form = %v, basic %q; want the token, its hint, the client in the header", got, basic)
+	}
+
+	status = http.StatusServiceUnavailable
+	if err := d.Revoke(t.Context(), as, Client{ID: "c", Secret: "s"}, "rt-1", "refresh_token"); err == nil {
+		t.Error("a revocation the server refused was taken as done")
+	}
+}
+
+func TestNoRevocationEndpointIsNothingToTell(t *testing.T) {
+	d := New(&fakeSecrets{}, Policy{Allow: allowAll}, time.Second)
+	if err := d.Revoke(t.Context(), AuthServer{}, Client{ID: "c"}, "rt-1", "refresh_token"); err != nil {
+		t.Errorf("Revoke = %v, want nothing done", err)
+	}
+}

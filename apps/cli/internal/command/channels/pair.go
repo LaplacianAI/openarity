@@ -143,11 +143,11 @@ func (f *follower) show(v pairingView) (bool, error) {
 	f.last, f.shown = v, true
 
 	switch {
-	case v.State == string(client.Connected):
+	case v.State == string(client.ChannelPairingStateConnected):
 		return true, f.opts.Out.Line(v, printer.Options{Table: func(table *printer.Table) {
 			table.Row(f.opts.Styles.OK.Render("linked"), f.opts.Styles.Value.Render("+"+cli.Safe(v.Phone)))
 		}})
-	case v.State == string(client.Unpaired) && v.Error != "":
+	case v.State == string(client.ChannelPairingStateUnpaired) && v.Error != "":
 		if err := f.opts.Out.Line(v, printer.Options{Table: func(*printer.Table) {}}); err != nil {
 			return true, err
 		}

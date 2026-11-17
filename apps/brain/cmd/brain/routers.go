@@ -60,7 +60,7 @@ func newRouters(
 	graphs teamgraph.Viewer,
 	starter runs.Starter,
 	notices gateway.Kicker,
-	oauth mcpoauth.Discoverer,
+	oauth oauthFlows,
 ) []server.Router {
 	start, callback := mcpoauth.New(logger, dbStore, oauth, channelSecrets{secretStore, secretWriter},
 		mcpservers.NewRefresher(logger, discoverer, mcpStore{dbStore}), cfg.PublicURL)
@@ -72,7 +72,7 @@ func newRouters(
 		channels.New(logger, dbStore, authorizer, channelSecrets{secretStore, secretWriter}, registry, cfg.WebhookPublicURL,
 			reachable(cfg.MCPPrivateNetworks), replyClient(reachable(cfg.MCPPrivateNetworks)), notices, dbStore),
 		skills.New(logger, skillStore{dbStore}, attachments, importer),
-		mcpservers.New(logger, mcpStore{dbStore}, discoverer, secretWriter),
+		mcpservers.New(logger, mcpStore{dbStore}, discoverer, secretWriter, mcpservers.Ending{Secrets: secretStore, Revoker: oauth}),
 		agents.New(logger, agentStore{dbStore}, runtime.Loops()),
 		blueprints.New(logger, blueprintStore{dbStore}, authorizer, attachments,
 			mcpservers.NewRefresher(logger, discoverer, mcpStore{dbStore}), runtime.Loops()),
@@ -124,6 +124,13 @@ type skillStore struct{ *store.Store }
 
 func (s skillStore) InTx(ctx context.Context, fn func(skills.Queries) error) error {
 	return s.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
+}
+
+// oauthFlows is signing in to a server and signing out of it: the discoverer,
+// as far as the API's flows reach it.
+type oauthFlows interface {
+	mcpoauth.Discoverer
+	mcpservers.Revoker
 }
 
 type mcpStore struct{ *store.Store }

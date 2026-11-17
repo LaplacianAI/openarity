@@ -593,6 +593,13 @@ export type MCPServer = {
   command?: string[];
   env: Record<string, string>;
   auth_secret_ref?: string;
+  /** static: a token or none; oauth: signed in to on the dashboard. */
+  auth_kind: "static" | "oauth";
+  oauth_client_id?: string;
+  oauth_client_secret_ref?: string;
+  oauth_scopes?: string[];
+  /** Its sign-in, null until one is made. Never its tokens. */
+  connection?: MCPServerConnection | null;
   bare: boolean;
   discovered_at?: string | null;
   /** Why the last discovery failed, as the caller was told; null once one works. */
@@ -603,6 +610,17 @@ export type MCPServer = {
   updated_at: string;
 };
 
+/** A server's sign-in, as GET /teams/{id}/mcp-servers carries it. */
+export type MCPServerConnection = {
+  status: "connected" | "needs_sign_in";
+  /** Why it needs signing in again. */
+  reason?: string | null;
+  connected_by?: string | null;
+  connected_at: string;
+  scopes_granted: string[];
+  access_expires_at?: string | null;
+};
+
 export type MCPServerRequest = {
   name: string;
   url?: string;
@@ -610,6 +628,10 @@ export type MCPServerRequest = {
   env?: Record<string, string>;
   auth_secret_ref?: string;
   bare?: boolean;
+  auth_kind?: "static" | "oauth";
+  oauth_client_id?: string;
+  oauth_client_secret_ref?: string;
+  oauth_scopes?: string[];
 };
 
 /** GET /teams/{id}/mcp-servers/{serverID}/tools. The server's own words. */

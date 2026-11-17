@@ -3102,6 +3102,32 @@ paths:
                 type: string
                 examples: ["the server did not answer in time"]
 
+  /teams/{id}/mcp-servers/{serverID}/oauth:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ServerID"
+    delete:
+      operationId: disconnectMCPServerOAuth
+      tags: [mcp-servers]
+      summary: Disconnect a server's sign-in
+      description: |
+        Requires `tool:write` in this team. Ends the server's sign-in: its
+        tokens are deleted, and the authorization server is asked to revoke
+        them (RFC 7009) as well as it will answer; a revocation that fails is
+        logged, and the sign-in is ended here regardless. A server with no
+        sign-in is disconnected already, and the answer is the same.
+      responses:
+        "204":
+          description: Disconnected
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/mcp-servers/{serverID}/oauth/start:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -5056,7 +5082,7 @@ components:
 
     MCPServer:
       type: object
-      required: [id, team_id, name, env, bare, created_at, updated_at]
+      required: [id, team_id, name, env, auth_kind, bare, created_at, updated_at]
       description: Exactly one of `url` and `command` is present.
       properties:
         id:
@@ -5094,6 +5120,26 @@ components:
           type: string
           description: |
             A url server's bearer token. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
+        auth_kind:
+          type: string
+          enum: [static, oauth]
+          description: |
+            How the server is reached: `static`, with `auth_secret_ref` or no
+            token at all, or `oauth`, signed in to on the dashboard as the
+            client named here.
+        oauth_client_id:
+          type: string
+          description: The OAuth client a server that signs in signs in as
+        oauth_client_secret_ref:
+          type: string
+          description: The client's secret, when it is a confidential client. A secret reference; the value is never returned.
+        oauth_scopes:
+          type: array
+          items:
+            type: string
+          description: The scopes a sign-in asks for. Absent, the ones the server's metadata offers.
+        connection:
+          $ref: "#/components/schemas/MCPServerConnection"
         bare:
           type: boolean
           description: Tools reach the model as `<tool>` rather than `<name>__<tool>`
@@ -5127,6 +5173,42 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    MCPServerConnection:
+      type: object
+      nullable: true
+      required: [status, connected_at, scopes_granted]
+      description: |
+        A server's sign-in, or null when it has none: never made, or
+        disconnected. Its tokens are never returned. Always sent.
+      properties:
+        status:
+          type: string
+          enum: [connected, needs_sign_in]
+          description: |
+            `needs_sign_in` once the authorization server refused a refresh,
+            or the server refused a renewed token or asked for more scope.
+            Calls to the server fail until someone connects it again.
+        reason:
+          type: string
+          nullable: true
+          description: Why it needs signing in again
+        connected_by:
+          type: string
+          format: uuid
+          nullable: true
+          description: Who signed in; null once that person is gone
+        connected_at:
+          type: string
+          format: date-time
+        scopes_granted:
+          type: array
+          items:
+            type: string
+        access_expires_at:
+          type: string
+          format: date-time
+          nullable: true
 
     MCPServerRequest:
       type: object
@@ -5168,6 +5250,31 @@ components:
         bare:
           type: boolean
           default: false
+        auth_kind:
+          type: string
+          enum: [static, oauth]
+          default: static
+          description: |
+            `oauth` for a url server signed in to on the dashboard: it takes
+            `oauth_client_id` and no `auth_secret_ref`. Changing the url, the
+            client or the kind ends a sign-in already made; changing only the
+            scopes keeps it, and connecting again asks for them.
+        oauth_client_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Only with `auth_kind` oauth. The OAuth client registered with the server's authorization server, its redirect URI `<PUBLIC_URL>/oauth/mcp/callback`.
+        oauth_client_secret_ref:
+          type: string
+          pattern: "^teams/[0-9a-f-]{36}/mcp/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*#[A-Za-z0-9_-]+$"
+          description: Only with `auth_kind` oauth, for a confidential client. A secret reference in this team.
+        oauth_scopes:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            minLength: 1
+          description: Only with `auth_kind` oauth. The scopes to ask for, in place of the ones the server's metadata offers.
 
     MCPServerPage:
       type: object

@@ -1,6 +1,7 @@
 import { Field, TextArea } from "@/components/registry-bits";
 import { Input } from "@/components/ui/input";
 import { SwitchField } from "@/components/ui/switch";
+import { Mono } from "@/components/ui-bits";
 import type { ServerDraft } from "@/lib/server-draft";
 
 /**
@@ -13,6 +14,7 @@ export function ServerFields({
   set,
   withToken = false,
   tokenSet = false,
+  clientSecretSet = false,
 }: {
   draft: ServerDraft;
   set: (patch: Partial<ServerDraft>) => void;
@@ -20,6 +22,8 @@ export function ServerFields({
   withToken?: boolean;
   /** The server already names a token. */
   tokenSet?: boolean;
+  /** The server already names a client secret. */
+  clientSecretSet?: boolean;
 }) {
   return (
     <>
@@ -64,6 +68,28 @@ export function ServerFields({
             />
           </Field>
           {withToken ? (
+            <fieldset className="space-y-1.5">
+              <legend className="text-sm font-medium">Signed in with</legend>
+              <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
+                {(["token", "oauth"] as const).map((a) => (
+                  <label key={a} className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="radio"
+                      name="auth"
+                      checked={draft.auth === a}
+                      onChange={() => set({ auth: a })}
+                      className="size-4 accent-primary"
+                    />
+                    {a === "token" ? "A token, or nothing" : "OAuth, on the dashboard"}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          ) : null}
+          {withToken && draft.auth === "oauth" ? (
+            <SignInFields draft={draft} set={set} secretSet={clientSecretSet} />
+          ) : null}
+          {withToken && draft.auth === "token" ? (
             <Field
               label="Token"
               htmlFor="server-token"
@@ -84,7 +110,7 @@ export function ServerFields({
               />
             </Field>
           ) : null}
-          {withToken ? (
+          {withToken && draft.auth === "token" ? (
             <details className="text-sm">
               <summary className="cursor-pointer text-muted-foreground">
                 Use a secret you manage in the secret store yourself
@@ -93,7 +119,7 @@ export function ServerFields({
                 <AuthRef draft={draft} set={set} />
               </div>
             </details>
-          ) : (
+          ) : withToken ? null : (
             <AuthRef draft={draft} set={set} />
           )}
         </>
@@ -147,5 +173,71 @@ function AuthRef({
         onChange={(e) => set({ authRef: e.target.value })}
       />
     </Field>
+  );
+}
+
+/**
+ * A server that signs in: the OAuth client registered for it, and the scopes
+ * to ask for. The client is registered with the server's provider, with this
+ * dashboard's callback as its redirect URI.
+ */
+function SignInFields({
+  draft,
+  set,
+  secretSet,
+}: {
+  draft: ServerDraft;
+  set: (patch: Partial<ServerDraft>) => void;
+  secretSet: boolean;
+}) {
+  const callback = `${window.location.origin}/oauth/mcp/callback`;
+  return (
+    <>
+      <p className="text-xs text-muted-foreground">
+        Register an OAuth client with the server's provider, with{" "}
+        <Mono className="break-all text-foreground">{callback}</Mono> as its redirect URI. Connect
+        the server once it is saved.
+      </p>
+      <Field label="Client ID" htmlFor="server-client-id">
+        <Input
+          id="server-client-id"
+          value={draft.clientId}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => set({ clientId: e.target.value })}
+        />
+      </Field>
+      <Field
+        label="Client secret"
+        htmlFor="server-client-secret"
+        hint={
+          secretSet
+            ? "A secret is set. Type a new one to replace it; it is never shown again."
+            : "For a confidential client. Kept in the secret store, never shown again."
+        }
+      >
+        <Input
+          id="server-client-secret"
+          type="password"
+          value={draft.clientSecret}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={secretSet ? "••••••••" : ""}
+          onChange={(e) => set({ clientSecret: e.target.value })}
+        />
+      </Field>
+      <Field
+        label="Scopes"
+        htmlFor="server-scopes"
+        hint="Separated by spaces. Empty asks for what the server offers, which a server offering many refuses."
+      >
+        <TextArea
+          id="server-scopes"
+          value={draft.scopes}
+          spellCheck={false}
+          onChange={(e) => set({ scopes: e.target.value })}
+        />
+      </Field>
+    </>
   );
 }
