@@ -416,7 +416,8 @@ func (f *execFixture) hubRun(t *testing.T, model string) {
 	if model != "" {
 		maxTokens := int32(2048)
 		if _, err := f.store.UpsertTeamSettings(t.Context(), db.UpsertTeamSettingsParams{
-			TeamID: f.team, ModelName: &model, ModelMaxTokens: &maxTokens,
+			SandboxProvider: "none",
+			TeamID:          f.team, ModelName: &model, ModelMaxTokens: &maxTokens,
 			SearchProvider: "none", CompactionMessages: 100,
 		}); err != nil {
 			t.Fatalf("UpsertTeamSettings: %v", err)

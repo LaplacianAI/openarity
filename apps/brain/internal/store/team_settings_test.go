@@ -23,6 +23,7 @@ func searchKeyPath(team, id uuid.UUID) string {
 // settings is a valid row with search off; each test changes what it is about.
 func settings(team uuid.UUID) db.UpsertTeamSettingsParams {
 	return db.UpsertTeamSettingsParams{
+		SandboxProvider:    "none",
 		TeamID:             team,
 		SearchProvider:     "none",
 		CompactionMessages: 100,

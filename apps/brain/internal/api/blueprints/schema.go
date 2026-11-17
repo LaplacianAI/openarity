@@ -4,6 +4,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 )
 
 // Blueprint is what a team should hold. Everything in it is named, and it
@@ -23,6 +24,9 @@ type serverSpec struct {
 	Env        map[string]string `json:"env"`
 	AuthSecret *string           `json:"auth_secret"`
 	Bare       bool              `json:"bare"`
+	// Vars and Egress are a command server's, for the team's sandbox.
+	Vars   map[string]string  `json:"vars,omitempty"`
+	Egress []sandbox.HostPort `json:"egress,omitempty"`
 }
 
 // skillSpec is a skill's files; its SKILL.md names it.

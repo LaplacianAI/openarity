@@ -13,7 +13,8 @@ func setHub(t *testing.T, s *Store, teamID uuid.UUID, hub *uuid.UUID) {
 	t.Helper()
 
 	if _, err := s.UpsertTeamSettings(t.Context(), db.UpsertTeamSettingsParams{
-		TeamID: teamID, SearchProvider: "none", CompactionMessages: 100, HubAgentID: hub,
+		SandboxProvider: "none",
+		TeamID:          teamID, SearchProvider: "none", CompactionMessages: 100, HubAgentID: hub,
 	}); err != nil {
 		t.Fatalf("UpsertTeamSettings: %v", err)
 	}

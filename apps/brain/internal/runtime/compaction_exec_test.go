@@ -24,7 +24,8 @@ func (f *execFixture) longTranscript(t *testing.T) {
 	}
 	f.resumes(t, msgs)
 	if _, err := f.store.UpsertTeamSettings(t.Context(), db.UpsertTeamSettingsParams{
-		TeamID: f.team, SearchProvider: "none", CompactionMessages: 10,
+		SandboxProvider: "none",
+		TeamID:          f.team, SearchProvider: "none", CompactionMessages: 10,
 	}); err != nil {
 		t.Fatal(err)
 	}

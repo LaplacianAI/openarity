@@ -25,10 +25,11 @@ const (
 // ShimPort is where the shim listens in every room.
 const ShimPort = 8080
 
-// A HostPort is one place a room may connect to.
+// A HostPort is one place a room may connect to. It is stored as a command
+// MCP server's egress, in this shape.
 type HostPort struct {
-	Host string
-	Port int
+	Host string `json:"host"`
+	Port int    `json:"port"`
 }
 
 // A Spec is what a room is made with. Env holds values, secrets among them:

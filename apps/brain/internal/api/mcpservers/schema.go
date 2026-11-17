@@ -5,27 +5,31 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 )
 
 type server struct {
-	ID                 uuid.UUID         `json:"id"`
-	TeamID             uuid.UUID         `json:"team_id"`
-	Name               string            `json:"name"`
-	URL                *string           `json:"url,omitempty"`
-	Command            []string          `json:"command,omitempty"`
-	Env                map[string]string `json:"env"`
-	AuthSecretRef      *string           `json:"auth_secret_ref,omitempty"`
-	AuthKind           string            `json:"auth_kind"`
-	OAuthClientID      *string           `json:"oauth_client_id,omitempty"`
-	OAuthClientSecret  *string           `json:"oauth_client_secret_ref,omitempty"`
-	OAuthScopes        []string          `json:"oauth_scopes,omitempty"`
-	Connection         *connection       `json:"connection"`
-	Bare               bool              `json:"bare"`
-	DiscoveredAt       *time.Time        `json:"discovered_at"`
-	LastDiscoveryError *string           `json:"last_discovery_error"`
-	LastDiscoveryAt    *time.Time        `json:"last_discovery_at"`
-	CreatedAt          time.Time         `json:"created_at"`
-	UpdatedAt          time.Time         `json:"updated_at"`
+	ID                 uuid.UUID          `json:"id"`
+	TeamID             uuid.UUID          `json:"team_id"`
+	Name               string             `json:"name"`
+	URL                *string            `json:"url,omitempty"`
+	Command            []string           `json:"command,omitempty"`
+	Env                map[string]string  `json:"env"`
+	Vars               map[string]string  `json:"vars,omitempty"`
+	Egress             []sandbox.HostPort `json:"egress,omitempty"`
+	AuthSecretRef      *string            `json:"auth_secret_ref,omitempty"`
+	AuthKind           string             `json:"auth_kind"`
+	OAuthClientID      *string            `json:"oauth_client_id,omitempty"`
+	OAuthClientSecret  *string            `json:"oauth_client_secret_ref,omitempty"`
+	OAuthScopes        []string           `json:"oauth_scopes,omitempty"`
+	Connection         *connection        `json:"connection"`
+	Bare               bool               `json:"bare"`
+	DiscoveredAt       *time.Time         `json:"discovered_at"`
+	LastDiscoveryError *string            `json:"last_discovery_error"`
+	LastDiscoveryAt    *time.Time         `json:"last_discovery_at"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
 }
 
 type Request struct {
@@ -35,6 +39,12 @@ type Request struct {
 	Env           map[string]string `json:"env"`
 	AuthSecretRef *string           `json:"auth_secret_ref"`
 	Bare          bool              `json:"bare"`
+
+	// Vars and Egress are for a command server, run in the team's sandbox:
+	// plain settings shown as they are, beside env's references, and the
+	// only places its room may connect to.
+	Vars   map[string]string  `json:"vars"`
+	Egress []sandbox.HostPort `json:"egress"`
 
 	// AuthKind is static, the default, or oauth: signed in to on the
 	// dashboard with the client named here.

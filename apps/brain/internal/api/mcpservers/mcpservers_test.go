@@ -213,7 +213,7 @@ func (s *fakeStore) CreateMCPServer(_ context.Context, arg db.CreateMCPServerPar
 	now := time.Now()
 	row := db.McpServer{
 		ID: uuid.New(), TeamID: arg.TeamID, Name: arg.Name, Url: arg.Url, Command: arg.Command, Env: arg.Env,
-		AuthSecretRef: arg.AuthSecretRef, Bare: arg.Bare, CreatedAt: now, UpdatedAt: now,
+		AuthSecretRef: arg.AuthSecretRef, Bare: arg.Bare, Vars: arg.Vars, Egress: arg.Egress, CreatedAt: now, UpdatedAt: now,
 		AuthKind: "static", // the column's default
 	}
 	s.servers[row.ID] = row

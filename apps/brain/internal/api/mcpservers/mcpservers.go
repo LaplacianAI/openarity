@@ -14,6 +14,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/discovery"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -95,7 +96,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		var err error
 		row, err = q.CreateMCPServer(r.Context(), db.CreateMCPServerParams{
 			TeamID: teamID, Name: f.Name, Url: f.URL, Command: f.Command, Env: f.Env,
-			AuthSecretRef: f.AuthSecretRef, Bare: f.Bare,
+			AuthSecretRef: f.AuthSecretRef, Bare: f.Bare, Vars: f.Vars, Egress: f.Egress,
 		})
 		if err != nil || f.AuthKind != authOAuth {
 			return err
@@ -160,7 +161,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		var err error
 		row, err = q.UpdateMCPServer(r.Context(), db.UpdateMCPServerParams{
 			Name: f.Name, Url: f.URL, Command: f.Command, Env: f.Env,
-			AuthSecretRef: f.AuthSecretRef, Bare: f.Bare, ID: current.ID,
+			AuthSecretRef: f.AuthSecretRef, Bare: f.Bare, Vars: f.Vars, Egress: f.Egress, ID: current.ID,
 		})
 		return err
 	})
@@ -377,14 +378,30 @@ func hasCode(err error, code string) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == code
 }
 
+// unmarshalOrEmpty reads a column the database never leaves null, and a row
+// built in Go may: nothing there is nothing set.
+func unmarshalOrEmpty(b []byte, v any) error {
+	if len(b) == 0 {
+		return nil
+	}
+	return json.Unmarshal(b, v)
+}
+
 func view(row db.McpServer) (server, error) {
-	var env map[string]string
+	var env, vars map[string]string
 	if err := json.Unmarshal(row.Env, &env); err != nil {
+		return server{}, err
+	}
+	var egress []sandbox.HostPort
+	if err := unmarshalOrEmpty(row.Vars, &vars); err != nil {
+		return server{}, err
+	}
+	if err := unmarshalOrEmpty(row.Egress, &egress); err != nil {
 		return server{}, err
 	}
 
 	return server{
-		ID: row.ID, TeamID: row.TeamID, Name: row.Name, URL: row.Url, Command: row.Command, Env: env,
+		ID: row.ID, TeamID: row.TeamID, Name: row.Name, URL: row.Url, Command: row.Command, Env: env, Vars: vars, Egress: egress,
 		AuthSecretRef: row.AuthSecretRef, Bare: row.Bare, DiscoveredAt: row.DiscoveredAt,
 		AuthKind: row.AuthKind, OAuthClientID: row.OauthClientID, OAuthClientSecret: row.OauthClientSecretRef, OAuthScopes: row.OauthScopes,
 		LastDiscoveryError: row.LastDiscoveryError, LastDiscoveryAt: row.LastDiscoveryAt,

@@ -177,6 +177,17 @@ path "secret/metadata/teams/+/search/+" {
   capabilities = ["delete"]
 }
 
+# A team's sandbox key, and each room's shim token, live under
+# teams/<team_id>/sandbox/<id>: a fresh path per key or token, tombstoned and
+# swept as the search key is. The room's own copy of a token is in the room.
+path "secret/data/teams/+/sandbox/+" {
+  capabilities = ["read", "create"]
+}
+
+path "secret/metadata/teams/+/sandbox/+" {
+  capabilities = ["delete"]
+}
+
 # Renewing its own token is how the brain avoids logging in on every read.
 # The default policy already grants this, so it is redundant today — and it is
 # what keeps renewal working the day the role sets token_no_default_policy.
