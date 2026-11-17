@@ -25,6 +25,42 @@ result, the model sees it, and the run continues — a model that can read
 "repository not found" usually recovers, and a run that dies on the first bad
 argument cannot.
 
+### Tools found by search
+
+Forty tools' schemas can cost more than the task. `Spec.Discovery` holds tools
+the model finds rather than is sent, with the tool it finds them with:
+
+```go
+spec.Tools = []agent.Tool{graph}
+spec.Discovery = &agent.Discovery{
+	Search: "graph",
+	Tools:  githubTools,
+	Groups: []agent.Group{{Name: "github", About: "issues and pull requests", Tools: githubNames}},
+}
+```
+
+While the deferred schemas and the skills' descriptions come to
+`DiscoverAbove` tokens (4000) or less, they are all sent as usual. Past it the
+run gets `describe_tools` and `call_tool` in their place, and the prompt lists
+each group, so the model searches for what it needs, reads its schema and runs
+it by name. The tools list never changes during the run.
+
+[ReWOO](patterns.md#rewoo) plans every call before making one, so it cannot
+search midway. Past `DiscoverAbove` it plans with the tools `Select` picks for
+the last thing the user said, at most `SelectLimit` (15) of them, best first:
+
+```go
+spec.Discovery.Select = func(ctx context.Context, task string, limit int) ([]string, error) {
+	return index.Closest(ctx, task, limit) // names from Discovery.Tools
+}
+```
+
+Names that are not the run's `Discovery.Tools` are dropped, and a name picked
+twice counts once. Without `Select`, or when it fails, names none of the tools,
+or there is no user text to pick for, ReWOO is sent every tool, so a broken
+index costs tokens rather than tools. Other patterns, and catalogues under
+`DiscoverAbove`, never call it.
+
 ## Skills
 
 A skill is a name, a description, and a body that is only fetched if asked for:

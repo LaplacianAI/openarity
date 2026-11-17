@@ -46,6 +46,13 @@ oa runs start platform triage 'Sort the issues opened today.' --follow
 | `delegation`    | Whom it may hand work to: `none`, any agent in the `team`, or the `listed` `delegates` |
 | `web`           | Gives it `web_search` and `web_fetch` — see [Web tools](web.md)  |
 
+A `rewoo` agent plans every call before making one, so it cannot search for
+tools midway. When its granted tools are too many to send, it plans with the
+tools the team's [graph](../concepts/why-a-graph.md) picks for the task, at most
+15, within what the agent can reach. When the team has no embedding model, or
+the graph picks none of them, it is sent every tool. The other patterns search
+instead.
+
 ## Changing one
 
 A replace is whole: a grant the new definition does not name is revoked, and a

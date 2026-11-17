@@ -28,7 +28,8 @@ a message on a channel.
   in the graph and hand it the work, search the web and read a page.
 - **The graph**: each team's agents, MCP servers, tools and skills, projected
   from Postgres into FalkorDB. A run's `graph` tool searches it, scoped to what
-  the caller can reach before anything is scored.
+  the caller can reach before anything is scored. A ReWOO agent with many tools
+  plans with the ones the graph picks for its task.
 - **Skills and MCP servers**: uploaded, imported from a repository and kept in
   sync; servers discovered for their tools, with their credentials in the
   secret store.

@@ -98,7 +98,10 @@ high-stakes call. The event stream is the seam this would sit on.
 **The graph does not yet choose a run's tools.** Each team's agents, MCP
 servers, tools and skills are projected into it and every run can search it,
 but a run still receives the tools its agent was granted rather than the ones
-a walk would select, and learnings are not in it.
+a walk would select, and learnings are not in it. The one exception is a
+[ReWOO](../agent-sdk/patterns.md#rewoo) agent with many tools: it plans with
+the tools the graph picks for its task, and gets every tool when there is no
+graph or nothing is picked.
 
 ## Why the boundaries are structural
 
