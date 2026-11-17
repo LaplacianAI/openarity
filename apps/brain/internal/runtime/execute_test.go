@@ -524,7 +524,7 @@ func TestACommandServerIsReportedAsUnavailable(t *testing.T) {
 	if got := kinds(events); len(got) < 2 || got[1] != "tool_unavailable" {
 		t.Fatalf("events = %v, want tool_unavailable after started", got)
 	}
-	if u := payload[unavailablePayload](t, events[1]); u.Name != "files" || u.Reason != "command servers can't be used yet" {
+	if u := payload[unavailablePayload](t, events[1]); u.Name != "files" || u.Reason != "the brain does not run command servers; register it through an HTTP bridge" {
 		t.Errorf("tool_unavailable = %+v", u)
 	}
 }

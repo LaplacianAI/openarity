@@ -402,7 +402,7 @@ function ServerRow({
             </Button>
           ) : (
             <span className="text-xs whitespace-nowrap text-muted-foreground">
-              Command servers can't be used yet
+              Not run by the brain: use an HTTP bridge
             </span>
           )}
         </TableCell>
@@ -490,17 +490,25 @@ function ServerDetail({
         <h3 id="server-discovery" className="text-sm font-medium">
           Discovery
         </h3>
-        <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
-          <StatusPill status={discoveryOf(server)} className="text-sm text-foreground" />
-          {tried ? (
-            <span>
-              last tried <Time iso={tried} />
-            </span>
-          ) : (
-            <span>Never tried.</span>
-          )}
-        </p>
-        {server.last_discovery_error ? (
+        {server.url ? (
+          <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+            <StatusPill status={discoveryOf(server)} className="text-sm text-foreground" />
+            {tried ? (
+              <span>
+                last tried <Time iso={tried} />
+              </span>
+            ) : (
+              <span>Never tried.</span>
+            )}
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            The brain does not run command servers, so this one is never asked for its tools. Run it
+            behind a stdio-to-HTTP bridge, such as Supergateway, and register the bridge's URL as a
+            server instead.
+          </p>
+        )}
+        {server.url && server.last_discovery_error ? (
           // The brain's words, as the caller was told them.
           <p className="rounded-lg bg-failed/8 px-3 py-2 font-mono text-xs text-failed">
             {server.last_discovery_error}

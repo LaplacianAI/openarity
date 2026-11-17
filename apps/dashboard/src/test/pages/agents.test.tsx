@@ -705,12 +705,12 @@ describe("editing an agent", () => {
     await opened();
 
     await waitFor(() => expect(chips("MCP servers")).toEqual(["github", "runbooks-fs"]));
-    expect(await screen.findByText("can't be used yet")).toBeVisible();
+    expect(await screen.findByText("not run by the brain")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Tools of runbooks-fs" })).toBeNull();
     expect(screen.getByRole("button", { name: "Tools of github" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Command servers can't be used yet. A run of this agent starts without them.",
+        /The brain does not run command servers, so a run of this agent starts without them/,
       ),
     ).toBeVisible();
   });

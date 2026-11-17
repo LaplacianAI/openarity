@@ -311,7 +311,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 		s := g.McpServer
 		if s.Url == nil {
 			built.Unavailable = append(built.Unavailable, Unavailable{
-				Name: s.Name, Reason: "command servers can't be used yet",
+				Name: s.Name, Reason: "the brain does not run command servers; register it through an HTTP bridge",
 			})
 			continue
 		}
