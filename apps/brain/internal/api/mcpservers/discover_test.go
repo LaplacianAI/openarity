@@ -426,3 +426,32 @@ func TestAServerShowsItsLastDiscoveryAttempt(t *testing.T) {
 		}
 	}
 }
+
+// A server that signs in and has no working sign-in was asked nothing: it is
+// told to connect, and no failed discovery is recorded against it, so the
+// list does not count it among the servers that failed.
+func TestAServerNotSignedInIsToldToConnectAndNotMarkedFailed(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		err  error
+		says string
+	}{
+		"never connected": {fmt.Errorf("the MCP server: %w", discovery.ErrNotSignedIn), "nobody has connected it"},
+		"signed out":      {fmt.Errorf("%w (revoked)", discovery.ErrNeedsSignIn), "reconnect it"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			row := aURLServer(uuid.New(), "gmail")
+			row.AuthSecretRef, row.AuthKind = nil, "oauth"
+			s := newFakeStore(row)
+
+			code, body := discoverWith(t, s, &fakeDiscoverer{err: tc.err}, row)
+			if code != http.StatusConflict || !strings.Contains(body, tc.says) {
+				t.Errorf("status %d, body %q; want 409 saying %q", code, body, tc.says)
+			}
+			if len(s.failures) != 0 || s.servers[row.ID].LastDiscoveryError != nil {
+				t.Errorf("recorded %+v; a server not signed in did not fail a discovery", s.failures)
+			}
+		})
+	}
+}

@@ -111,6 +111,16 @@ if grep -Eq "^WHATSAPP_ENABLED=1([[:space:]]|$)" "$DEPLOYMENT/.env" 2>/dev/null;
 	profiles+=(--profile whatsapp)
 	brains+=(whatsapp)
 fi
+# Where an MCP server's sign-in sends the browser back: the dashboard's
+# origin. start-docker.sh writes it into .env from HTTPS_HOST, but a server
+# set up before sign-in existed never ran that again, so a deploy derives it
+# the same way when .env has none. Exported, it is what compose interpolates.
+if ! grep -Eq "^OPENARITY_PUBLIC_URL=[^\"'[:space:]]" "$DEPLOYMENT/.env" 2>/dev/null; then
+	https_host=$(sed -n 's/^HTTPS_HOST=//p' "$DEPLOYMENT/.env" 2>/dev/null | tail -n 1 | tr -d "\"'[:space:]")
+	if [ -n "$https_host" ]; then
+		export OPENARITY_PUBLIC_URL="https://$https_host"
+	fi
+fi
 compose() {
 	docker compose --project-directory "$DEPLOYMENT" "${files[@]}" "${profiles[@]}" "$@"
 }
