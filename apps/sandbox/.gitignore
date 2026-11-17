@@ -1,0 +1,10 @@
+# `make build` output.
+bin/
+
+# `go build` with no -o lands here, named after the package. Anchored and
+# not a directory, or it also swallows cmd/sandbox.
+/sandbox
+
+# `make cover` output.
+coverage.out
+coverage.html

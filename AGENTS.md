@@ -4,7 +4,7 @@ Openarity is an open-source agent platform in which agents, tools, skills and
 learnings form a knowledge graph, and selection is a walk over that graph rather
 than a ranking of a flat list: a run with more tools than it is worth sending
 finds the ones its task needs by searching that graph. The repository holds the brain (the Go server
-that runs agents), the `oa` CLI, the dashboard, the Go agent SDK, and the Go
+that runs agents), the `oa` CLI, the dashboard, the sandbox shim, the Go agent SDK, and the Go
 stream SDK that serves a conversation as resumable events.
 
 | Where | Instructions | Skills |
@@ -13,6 +13,7 @@ stream SDK that serves a conversation as resumable events.
 | `apps/brain/internal/gateway` | `apps/brain/internal/gateway/AGENTS.md` | (brain's) |
 | `apps/cli` | `apps/cli/AGENTS.md` | `apps/cli/.agents/skills` |
 | `apps/dashboard` | `apps/dashboard/AGENTS.md` | `apps/dashboard/.agents/skills` |
+| `apps/sandbox` | `apps/sandbox/AGENTS.md` | none |
 | `sdk/agent` | none | `sdk/agent/.agents/skills` |
 | `sdk/stream` | none | none |
 | repo root | this file | `.agents/skills`: file-an-issue, open-a-pull-request, running-an-agent-team, update-project-docs, upgrade-the-go-toolchain |
