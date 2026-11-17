@@ -1,6 +1,7 @@
 package daytona
 
 import (
+	"context"
 	"fmt"
 	"net/netip"
 	"regexp"
@@ -36,8 +37,18 @@ import (
 //	                                  only, and the CIDR list has no names
 //	hostnames and IPs together     -> ErrRefused: the lists are exclusive
 //
-// A mail server over IMAPS or SMTPS (993, 465) is therefore refused rather
-// than made with a room that cannot reach it.
+// A mail server over IMAPS or SMTPS (993, 465) is therefore refused on
+// Daytona cloud rather than made with a room that cannot reach it.
+//
+// Self-hosted Daytona (the open-source runner, probed at v0.187.0) accepts
+// domainAllowList and does not enforce it: a room made with one reached every
+// host. Only the CIDR list and block-all are enforced, at the IP level and on
+// every port. So against a self-hosted Daytona a host name is resolved here,
+// to the IPv4 addresses it has now, and sent as /32 networks. That reaches
+// imap.gmail.com:993 and the few addresses behind it, on every port, but only
+// while those addresses still serve that name: they are looked up when the
+// room is made, and a room is short-lived. A wildcard cannot be resolved and
+// is refused.
 
 const (
 	maxDomains = 100
@@ -54,7 +65,10 @@ type network struct {
 	domains  []string
 }
 
-func mapEgress(egress []sandbox.HostPort) (network, error) {
+// mapEgress turns egress into Daytona's network fields. domainFirewall says
+// the Daytona enforces domain allow lists (its cloud); otherwise host names
+// are resolved with resolve.
+func mapEgress(ctx context.Context, egress []sandbox.HostPort, domainFirewall bool, resolve Resolver) (network, error) {
 	if len(egress) == 0 {
 		return network{blockAll: true}, nil
 	}
@@ -75,6 +89,16 @@ func mapEgress(egress []sandbox.HostPort) (network, error) {
 		if !domainPattern.MatchString(host) {
 			return network{}, refuse("egress host %q is not a domain name Daytona can allow", e.Host)
 		}
+		if !domainFirewall {
+			addrs, err := resolveV4(ctx, resolve, host)
+			if err != nil {
+				return network{}, err
+			}
+			for _, a := range addrs {
+				cidrs[a.String()+"/32"] = true
+			}
+			continue
+		}
 		if e.Port != httpsPort {
 			return network{}, refuse(
 				"egress %s:%d: Daytona's domain allow list covers HTTPS only, and its IP allow list cannot name a host",
@@ -93,6 +117,29 @@ func mapEgress(egress []sandbox.HostPort) (network, error) {
 		return network{}, refuse("%d egress addresses: Daytona allows %d networks", len(n.cidrs), maxCIDRs)
 	}
 	return n, nil
+}
+
+// A Resolver looks up the addresses of a host name.
+type Resolver func(ctx context.Context, host string) ([]netip.Addr, error)
+
+func resolveV4(ctx context.Context, resolve Resolver, host string) ([]netip.Addr, error) {
+	if strings.HasPrefix(host, "*.") {
+		return nil, refuse("egress %q: a wildcard cannot be turned into addresses, and this Daytona does not enforce domain lists", host)
+	}
+	addrs, err := resolve(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("daytona: resolve egress host %q: %w", host, err)
+	}
+	var v4 []netip.Addr
+	for _, a := range addrs {
+		if a = a.Unmap(); a.Is4() {
+			v4 = append(v4, a)
+		}
+	}
+	if len(v4) == 0 {
+		return nil, refuse("egress host %q has no IPv4 address", host)
+	}
+	return v4, nil
 }
 
 func keys(m map[string]bool) []string {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -53,6 +54,7 @@ func (f *fake) client() *Client {
 	c := New(f.srv.URL+"/api", testKey, f.srv.Client())
 	c.PollEvery = time.Millisecond
 	c.StartTimeout = 2 * time.Second
+	c.DomainFirewall = true // these tests are of what Daytona cloud takes
 	return c
 }
 
@@ -454,5 +456,58 @@ func TestNewDefaultsToDaytonaCloud(t *testing.T) {
 	}
 	if c := New("https://daytona.internal/api/", "k", nil); c.apiURL != "https://daytona.internal/api" {
 		t.Errorf("apiURL = %q", c.apiURL)
+	}
+}
+
+func TestSelfHostedDaytonaGetsResolvedAddressesNotDomains(t *testing.T) {
+	f := newFake(t)
+	c := f.client()
+	c.DomainFirewall = false
+	c.Resolve = func(_ context.Context, host string) ([]netip.Addr, error) {
+		return map[string][]netip.Addr{
+			"imap.gmail.com": {netip.MustParseAddr("192.0.2.9"), netip.MustParseAddr("192.0.2.8"), netip.MustParseAddr("2001:db8::1")},
+			"smtp.gmail.com": {netip.MustParseAddr("192.0.2.8")},
+		}[host], nil
+	}
+	_, err := c.Create(t.Context(), sandbox.Spec{Egress: []sandbox.HostPort{
+		{Host: "imap.gmail.com", Port: 993}, {Host: "smtp.gmail.com", Port: 465}, {Host: "198.51.100.1", Port: 443},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := f.last(http.MethodPost).Body
+	if b["networkAllowList"] != "192.0.2.8/32,192.0.2.9/32,198.51.100.1/32" {
+		t.Errorf("networkAllowList = %v", b["networkAllowList"])
+	}
+	if _, ok := b["domainAllowList"]; ok {
+		t.Errorf("domainAllowList sent to a Daytona that ignores it: %v", b["domainAllowList"])
+	}
+}
+
+func TestSelfHostedEgressThatCannotBeResolvedIsRefusedOrFails(t *testing.T) {
+	c := New("http://daytona.invalid/api", testKey, nil)
+	if c.DomainFirewall {
+		t.Fatal("a self-hosted URL was taken for Daytona cloud")
+	}
+	if !New("", testKey, nil).DomainFirewall {
+		t.Fatal("Daytona cloud was taken for self-hosted")
+	}
+	// The resolver would answer for a wildcard, so only the guard stops it.
+	c.Resolve = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("192.0.2.1")}, nil
+	}
+	_, err := c.Create(t.Context(), sandbox.Spec{Egress: []sandbox.HostPort{{Host: "*.example.com", Port: 443}}})
+	if !errors.Is(err, sandbox.ErrRefused) {
+		t.Errorf("wildcard: err = %v, want ErrRefused", err)
+	}
+	c.Resolve = func(context.Context, string) ([]netip.Addr, error) { return nil, nil }
+	_, err = c.Create(t.Context(), sandbox.Spec{Egress: []sandbox.HostPort{{Host: "v6only.example.com", Port: 443}}})
+	if !errors.Is(err, sandbox.ErrRefused) {
+		t.Errorf("no IPv4: err = %v, want ErrRefused", err)
+	}
+	c.Resolve = func(context.Context, string) ([]netip.Addr, error) { return nil, errors.New("no such host") }
+	_, err = c.Create(t.Context(), sandbox.Spec{Egress: []sandbox.HostPort{{Host: "gone.example.com", Port: 443}}})
+	if err == nil || errors.Is(err, sandbox.ErrRefused) {
+		t.Errorf("lookup failure: err = %v, want a plain error", err)
 	}
 }

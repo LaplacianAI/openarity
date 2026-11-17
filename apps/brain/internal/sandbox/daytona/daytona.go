@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -43,6 +45,12 @@ type Client struct {
 	// PollEvery and StartTimeout bound the wait for a new room to start.
 	PollEvery    time.Duration
 	StartTimeout time.Duration
+	// DomainFirewall says this Daytona enforces domain allow lists. Cloud
+	// does; a self-hosted one does not, so it is on only for Daytona cloud.
+	// See egress.go.
+	DomainFirewall bool
+	// Resolve looks up host names for a Daytona without a domain firewall.
+	Resolve Resolver
 }
 
 var _ sandbox.Rooms = (*Client)(nil)
@@ -57,12 +65,18 @@ func New(apiURL, apiKey string, client *http.Client) *Client {
 		client = &http.Client{Timeout: time.Minute}
 	}
 	return &Client{
-		apiURL:       strings.TrimRight(apiURL, "/"),
-		apiKey:       apiKey,
-		http:         client,
-		PollEvery:    time.Second,
-		StartTimeout: 3 * time.Minute,
+		apiURL:         strings.TrimRight(apiURL, "/"),
+		apiKey:         apiKey,
+		http:           client,
+		PollEvery:      time.Second,
+		StartTimeout:   3 * time.Minute,
+		DomainFirewall: strings.TrimRight(apiURL, "/") == CloudAPI,
+		Resolve:        lookupIPv4,
 	}
+}
+
+func lookupIPv4(ctx context.Context, host string) ([]netip.Addr, error) {
+	return net.DefaultResolver.LookupNetIP(ctx, "ip4", host)
 }
 
 type createRequest struct {
@@ -90,7 +104,7 @@ type sandboxView struct {
 // Create makes a room, from the spec's image, and waits until it is started.
 // The room never auto-stops: a stopped room has lost the shim in it.
 func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
-	n, err := mapEgress(s.Egress)
+	n, err := mapEgress(ctx, s.Egress, c.DomainFirewall, c.Resolve)
 	if err != nil {
 		return "", err
 	}
@@ -292,7 +306,7 @@ func (c *Client) scrub(err error, secrets []string) error {
 	for _, s := range secrets {
 		msg = strings.ReplaceAll(msg, s, "[redacted]")
 	}
-	return errors.New(truncate(msg))
+	return &scrubbed{msg: truncate(msg), err: err}
 }
 
 func secretsOf(s sandbox.Spec) []string {
@@ -337,3 +351,13 @@ func shellJoin(argv []string) string {
 	}
 	return strings.Join(q, " ")
 }
+
+// scrubbed is an error whose text has had secrets taken out, and whose cause is
+// kept for errors.Is, such as a deadline.
+type scrubbed struct {
+	msg string
+	err error
+}
+
+func (e *scrubbed) Error() string { return e.msg }
+func (e *scrubbed) Unwrap() error { return e.err }
