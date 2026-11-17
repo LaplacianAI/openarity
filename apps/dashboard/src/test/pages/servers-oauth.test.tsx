@@ -158,6 +158,25 @@ describe("signing in from the servers screen", () => {
     expect(within(sheet).getByText("needs sign-in")).toBeInTheDocument();
   });
 
+  it("offers Discover only once a server that signs in is connected", async () => {
+    brain({ ...team(["tool:write"]), ...serving(gmail(null)) });
+    showServers();
+
+    await userEvent.click(await screen.findByRole("button", { name: "gmail" }));
+    const sheet = await screen.findByRole("dialog", { name: /gmail/ });
+    expect(within(sheet).queryByRole("button", { name: /^discover$/i })).toBeNull();
+    expect(within(sheet).getByRole("button", { name: /^connect$/i })).toBeInTheDocument();
+  });
+
+  it("offers Discover on a server that signs in once it is connected", async () => {
+    brain({ ...team(["tool:write"]), ...serving(gmail(live)) });
+    showServers();
+
+    await userEvent.click(await screen.findByRole("button", { name: "gmail" }));
+    const sheet = await screen.findByRole("dialog", { name: /gmail/ });
+    expect(within(sheet).getByRole("button", { name: /^discover$/i })).toBeInTheDocument();
+  });
+
   it("offers no sign-in action without tool:write", async () => {
     brain({ ...team([]), ...serving(gmail(null)) });
     showServers();
