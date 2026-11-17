@@ -1,0 +1,9 @@
+[
+  {
+    "id": "GHSA-fc5q-39xc-vjpf",
+    "package": "picomatch",
+    "latest": "4.0.7",
+    "reason": "No release fixes it: every picomatch up to 4.0.7, the newest, is affected. It is reached only through vite, vitest and the router plugin, which match globs from this repository's own config; the slowdown needs an attacker to supply the glob itself.",
+    "review_by": "2026-12-17"
+  }
+]
