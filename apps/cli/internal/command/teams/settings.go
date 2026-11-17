@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -20,12 +21,17 @@ var settingFlags = []string{
 	"model", "max-tokens", "temperature", "no-model",
 	"search", "search-url", "search-key-stdin", "no-search-key",
 	"learning", "compaction-messages", "hub", "no-hub",
+	"sandbox", "sandbox-url", "sandbox-image", "no-sandbox-image", "sandbox-key-stdin",
 }
+
+// sandboxFlags are the ones that send a sandbox at all. Without any, the
+// request leaves it out and the brain keeps the stored one, key and all.
+var sandboxFlags = []string{"sandbox", "sandbox-url", "sandbox-image", "no-sandbox-image", "sandbox-key-stdin"}
 
 func newSettingsCmd(opts *cli.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "settings",
-		Short: "A team's model, web search, learning, compaction and hub",
+		Short: "A team's model, web search, sandbox, learning, compaction and hub",
 		Long: "Every member can read a team's settings. Changing them needs\n" +
 			"team:settings in the team, which only admin holds by default.",
 	}
@@ -70,6 +76,12 @@ type settingsFlags struct {
 	compaction  int32
 	hub         string
 	noHub       bool
+
+	sandbox         string
+	sandboxURL      string
+	sandboxImage    string
+	noSandboxImage  bool
+	sandboxKeyStdin bool
 }
 
 func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
@@ -80,11 +92,14 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 		Short: "Change a team's settings",
 		Long: "Reads the current settings, changes only the flags given, and saves\n" +
 			"the whole. A stored search key is kept unless a new one is given, the\n" +
-			"provider changes, or a self-hosted provider's URL moves.\n\n" +
+			"provider changes, or a self-hosted provider's URL moves. The sandbox\n" +
+			"key follows the same rule.\n\n" +
 			"The key comes from stdin and nowhere else:\n\n" +
 			"    printf %s \"$BRAVE_KEY\" | oa teams settings set platform \\\n" +
 			"        --search brave --search-key-stdin\n\n" +
-			"There is deliberately no --search-key flag. Arguments are readable by\n" +
+			"    printf %s \"$E2B_KEY\" | oa teams settings set platform \\\n" +
+			"        --sandbox e2b --sandbox-key-stdin\n\n" +
+			"There is deliberately no --search-key or --sandbox-key flag. Arguments are readable by\n" +
 			"every process on the machine through ps, and they land in shell\n" +
 			"history.",
 		Args: cobra.ExactArgs(1),
@@ -96,10 +111,11 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 
 			// Read before any request, so an empty pipe fails without the
 			// brain ever being asked.
-			var key *string
+			var key, sandboxKey *string
 			switch {
 			case f.keyStdin:
-				k, err := readKey(cmd.InOrStdin())
+				k, err := readKey(cmd.InOrStdin(), "search key",
+					"pipe the key in, or use --no-search-key for an instance without one")
 				if err != nil {
 					return err
 				}
@@ -107,6 +123,13 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 			case f.noKey:
 				empty := ""
 				key = &empty
+			}
+			if f.sandboxKeyStdin {
+				k, err := readKey(cmd.InOrStdin(), "sandbox key", "pipe the key in")
+				if err != nil {
+					return err
+				}
+				sandboxKey = &k
 			}
 
 			api, err := opts.API(cmd.Context())
@@ -124,7 +147,7 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 			}
 
 			saved, err := cli.Result(api.SaveTeamSettingsWithResponse(cmd.Context(), team,
-				f.apply(changed, current, key)))
+				f.apply(changed, current, key, sandboxKey)))
 			if err != nil {
 				return cli.Needs(err, "team:settings")
 			}
@@ -141,6 +164,15 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().StringVar(&f.searchURL, "search-url", "", "a self-hosted provider's address: searxng or firecrawl-oss")
 	cmd.Flags().BoolVar(&f.keyStdin, "search-key-stdin", false, "read the provider's key from stdin")
 	cmd.Flags().BoolVar(&f.noKey, "no-search-key", false, "firecrawl-oss only: run the instance with no key")
+	cmd.Flags().StringVar(&f.sandbox, "sandbox", "",
+		"where command MCP servers run: none, e2b, daytona or sandboxd")
+	cmd.Flags().StringVar(&f.sandboxURL, "sandbox-url", "",
+		"a self-hosted provider's API address: sandboxd, or a self-hosted daytona")
+	cmd.Flags().StringVar(&f.sandboxImage, "sandbox-image", "",
+		"what rooms start from, in the provider's terms: an E2B template, a Daytona or sandboxd image")
+	cmd.Flags().BoolVar(&f.noSandboxImage, "no-sandbox-image", false, "return rooms to the provider's default image")
+	cmd.Flags().BoolVar(&f.sandboxKeyStdin, "sandbox-key-stdin", false,
+		"read the sandbox provider's key, or sandboxd's token, from stdin")
 	cmd.Flags().StringVar(&f.learning, "learning", "", "on or off")
 	cmd.Flags().Int32Var(&f.compaction, "compaction-messages", 0, "messages before a transcript compacts, 10 to 10000")
 	cmd.Flags().StringVar(&f.hub, "hub", "", "the agent every message reaches first, by name")
@@ -160,6 +192,12 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return errors.New("--no-model cannot be combined with --model, --max-tokens or --temperature")
 	case f.keyStdin && f.noKey:
 		return errors.New("--search-key-stdin and --no-search-key contradict each other")
+	case f.sandboxKeyStdin && f.keyStdin:
+		return errors.New("stdin holds one key: set the search key and the sandbox key in two commands")
+	case changed("sandbox-image") && f.noSandboxImage:
+		return errors.New("--sandbox-image and --no-sandbox-image contradict each other")
+	case changed("sandbox-image") && strings.TrimSpace(f.sandboxImage) == "":
+		return errors.New("--sandbox-image takes an image; --no-sandbox-image returns to the provider's default")
 	case changed("learning") && f.learning != "on" && f.learning != "off":
 		return fmt.Errorf("--learning takes on or off, not %q", f.learning)
 	case changed("hub") && f.noHub:
@@ -172,9 +210,10 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 
 // apply starts from what is stored and changes only what was asked. A new
 // provider leaves the old URL behind; --search-url, applied after, can give
-// it one in the same command.
+// it one in the same command. A new sandbox provider leaves the old image
+// behind too: it is named in the old provider's terms.
 func (f *settingsFlags) apply(
-	changed func(string) bool, cur *client.TeamSettings, key *string,
+	changed func(string) bool, cur *client.TeamSettings, key, sandboxKey *string,
 ) client.TeamSettingsRequest {
 	req := client.TeamSettingsRequest{
 		Model:              cur.Model,
@@ -234,21 +273,47 @@ func (f *settingsFlags) apply(
 		name := strings.TrimSpace(f.hub)
 		req.Hub = &name
 	}
+	req.Sandbox = f.applySandbox(changed, cur.Sandbox, sandboxKey)
 	return req
 }
 
-func readKey(in io.Reader) (string, error) {
+func (f *settingsFlags) applySandbox(
+	changed func(string) bool, cur client.SandboxSettings, key *string,
+) *client.SandboxSettingsRequest {
+	if !slices.ContainsFunc(sandboxFlags, changed) {
+		return nil
+	}
+	s := client.SandboxSettingsRequest{Provider: cur.Provider, URL: cur.URL, Image: cur.Image, APIKey: key}
+	if changed("sandbox") && client.SandboxProvider(f.sandbox) != cur.Provider {
+		s.Provider = client.SandboxProvider(f.sandbox)
+		s.URL, s.Image = nil, nil
+	}
+	if changed("sandbox-url") {
+		u := f.sandboxURL
+		s.URL = &u
+	}
+	switch {
+	case f.noSandboxImage:
+		s.Image = nil
+	case changed("sandbox-image"):
+		img := strings.TrimSpace(f.sandboxImage)
+		s.Image = &img
+	}
+	return &s
+}
+
+func readKey(in io.Reader, what, hint string) (string, error) {
 	raw, err := io.ReadAll(io.LimitReader(in, maxKeyBytes+1))
 	if err != nil {
-		return "", fmt.Errorf("read the search key from stdin: %w", err)
+		return "", fmt.Errorf("read the %s from stdin: %w", what, err)
 	}
 	if len(raw) > maxKeyBytes {
-		return "", fmt.Errorf("the search key on stdin is over %d bytes — is that the right pipe?", maxKeyBytes)
+		return "", fmt.Errorf("the %s on stdin is over %d bytes — is that the right pipe?", what, maxKeyBytes)
 	}
 
 	key := strings.TrimRight(string(raw), "\r\n")
 	if strings.TrimSpace(key) == "" {
-		return "", errors.New("nothing arrived on stdin — pipe the key in, or use --no-search-key for an instance without one")
+		return "", errors.New("nothing arrived on stdin — " + hint)
 	}
 	return key, nil
 }
@@ -278,6 +343,8 @@ func printSettings(opts *cli.Options, s *client.TeamSettings) error {
 			}
 			table.Row(label("key"), value(key))
 
+			printSandbox(table, opts, s.Sandbox)
+
 			learning := "off"
 			if s.Learning {
 				learning = "on"
@@ -291,4 +358,28 @@ func printSettings(opts *cli.Options, s *client.TeamSettings) error {
 			}
 		},
 	})
+}
+
+// printSandbox prints nothing for a brain that predates sandboxes, which
+// sends none, rather than a blank provider with a key "not set".
+func printSandbox(table *printer.Table, opts *cli.Options, s client.SandboxSettings) {
+	if s.Provider == "" {
+		return
+	}
+	label, value := opts.Styles.Label.Render, opts.Styles.Value.Render
+
+	table.Row(label("sandbox"), value(string(s.Provider)))
+	if s.URL != nil {
+		table.Row(label("sandbox url"), value(cli.Safe(*s.URL)))
+	}
+	if s.Image != nil {
+		table.Row(label("sandbox image"), value(cli.Safe(*s.Image)))
+	}
+	if s.Provider != client.SandboxProviderNone {
+		key := "not set"
+		if s.KeySet {
+			key = "set"
+		}
+		table.Row(label("sandbox key"), value(key))
+	}
 }
