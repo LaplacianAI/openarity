@@ -60,7 +60,9 @@ better answer than returning forty things that read alike.
     run's `graph` tool searches it, scoped to what the caller can reach before
     anything is scored. The hub finds the agent to hand work to that way.
     Learnings are not in it yet, and a run still receives the tools its agent was
-    granted rather than the ones a walk would select. What runs is in
+    granted rather than the ones a walk would select. A ReWOO agent with many
+    tools is the exception: it plans with the tools the graph picks for its
+    task, and gets every tool when there is no graph or nothing is picked. What runs is in
     [Platform](../platform/index.md).
 
 ## This is graph engineering, not GraphRAG

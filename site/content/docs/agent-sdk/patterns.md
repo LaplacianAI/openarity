@@ -65,6 +65,12 @@ Steps refer to earlier ones by position:
 `#E1` is substituted with step one's output before step two runs. A forward
 reference is refused by name rather than sent as literal text.
 
+A plan can only use tools it was sent. When the run's tools are too many to send
+(see [Tools found by search](tools-and-skills.md#tools-found-by-search)), ReWOO
+cannot search midway, so it plans with the tools `Discovery.Select` picks for
+the task, and with every tool when there is no `Select`, it fails or it picks
+none.
+
 !!! info
 
     ReWOO only *saves* tokens on a dependent chain like the one above. Current
