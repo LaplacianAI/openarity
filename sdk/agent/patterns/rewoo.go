@@ -23,10 +23,12 @@ func (rewoo) Name() agent.PatternName { return agent.PatternReWOO }
 
 const PlanToolName = "submit_plan"
 
-var (
-	ErrNoPlan    = errors.New("the planning call did not submit a plan")
-	ErrEmptyPlan = errors.New("the plan has no steps")
-)
+// ErrNoPlan is a plan submitted that cannot be read. A planning turn that
+// submits none, or one of no steps, is not an error: the model found nothing
+// a tool is needed for, as a greeting has, and the run goes to the answer.
+var ErrNoPlan = errors.New("the planning call did not submit a readable plan")
+
+var errNothingToPlan = errors.New("the planning call found nothing to plan")
 
 func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 	if in.Model == nil {
@@ -43,6 +45,16 @@ func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 	in.Emit(ctx, agent.StepEvent{Step: 1})
 	plan, call, resp, err := l.plan(ctx, in)
 	result.Steps = 1
+	if errors.Is(err, errNothingToPlan) {
+		// Answered as after a plan, with no evidence: the planning turn's
+		// own words were never shown, so they are not kept as the answer.
+		in.Emit(ctx, agent.StepEvent{Step: 2})
+		answer, err := l.solve(ctx, in, slices.Clone(in.Messages))
+		result.Steps = 2
+		result.Messages = append(slices.Clone(in.Messages), answer.msgs...)
+		result.Output = answer.text
+		return result, err
+	}
 	if err != nil {
 		return result, err
 	}
@@ -104,7 +116,7 @@ func (l rewoo) plan(ctx context.Context, in agent.Input) ([]step, agent.ToolCall
 		}
 	}
 	if call.Name == "" {
-		return nil, call, resp, ErrNoPlan
+		return nil, call, resp, errNothingToPlan
 	}
 
 	var submitted struct {
@@ -114,7 +126,7 @@ func (l rewoo) plan(ctx context.Context, in agent.Input) ([]step, agent.ToolCall
 		return nil, call, resp, fmt.Errorf("%w: its arguments were not valid JSON: %w", ErrNoPlan, err)
 	}
 	if len(submitted.Steps) == 0 {
-		return nil, call, resp, ErrEmptyPlan
+		return nil, call, resp, errNothingToPlan
 	}
 	if n := len(submitted.Steps); n > in.Spec.MaxSteps {
 		return nil, call, resp, fmt.Errorf("%w: the plan asks for %d steps against a ceiling of %d",
