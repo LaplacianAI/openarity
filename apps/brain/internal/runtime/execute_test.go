@@ -1,10 +1,12 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -926,6 +928,53 @@ func TestAModelThatAnswersAnErrorFailsWithItsStatus(t *testing.T) {
 				t.Errorf("the %s event carries %q: %s", e.Kind, leak, e.Payload)
 			}
 		}
+	}
+}
+
+// A failed run says so in the worker's log, naming the model: a provider's own
+// words are never kept, so a model the gateway cannot route is otherwise only
+// a status in the run's row, and nothing in the logs at all.
+func TestAFailedRunIsLoggedNamingItsModel(t *testing.T) {
+	f := newExecFixture(t, newScripted())
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"Unable to determine provider; key sk-live-HUNTER2","code":"bad_model"}}`)
+	}))
+	t.Cleanup(refusing.Close)
+	f.exec = f.executor(t, openaicompat.Factory(), agent.Endpoint{BaseURL: refusing.URL + "/v1", APIKey: "test"})
+	var logged bytes.Buffer
+	f.exec.logger = slog.New(slog.NewJSONHandler(&logged, nil))
+
+	f.mustExecute(t)
+
+	var line map[string]any
+	for _, raw := range bytes.Split(logged.Bytes(), []byte("\n")) {
+		var l map[string]any
+		if json.Unmarshal(raw, &l) == nil && l["msg"] == "Run failed" {
+			line = l
+		}
+	}
+	if line == nil {
+		t.Fatalf("no Run failed line in the log:\n%s", logged.String())
+	}
+	if line["level"] != "WARN" || line["run"] != f.run.String() || line["model"] != "test/model" || line["agent"] != "triage" {
+		t.Errorf("logged %v; want a warning naming the run, the agent and the model", line)
+	}
+	if !strings.Contains(fmt.Sprint(line["error"]), "400") || strings.Contains(logged.String(), "HUNTER2") {
+		t.Errorf("error = %v; want the status, and never the provider's words", line["error"])
+	}
+}
+
+func TestASucceededRunLogsNoFailure(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("done", 1, 1)))
+	var logged bytes.Buffer
+	f.exec.logger = slog.New(slog.NewJSONHandler(&logged, nil))
+
+	f.mustExecute(t)
+
+	if strings.Contains(logged.String(), "Run failed") {
+		t.Errorf("a run that succeeded was logged as failed:\n%s", logged.String())
 	}
 }
 
