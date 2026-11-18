@@ -191,7 +191,7 @@ func record(ctx context.Context, q Queries, row db.McpServer, tools []discovery.
 		names[i] = t.Name
 		err := q.UpsertMCPTool(ctx, db.UpsertMCPToolParams{
 			McpServerID: row.ID, TeamID: row.TeamID, Name: t.Name,
-			Description: t.Description, InputSchema: t.InputSchema,
+			Description: t.Description, InputSchema: t.InputSchema, Annotations: t.Annotations,
 		})
 		if err != nil {
 			return err

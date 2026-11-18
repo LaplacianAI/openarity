@@ -61,7 +61,7 @@ WHERE teams.id = $1
   AND teams.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM runs
                   WHERE runs.team_id = teams.id
-                    AND runs.status IN ('queued', 'running'));
+                    AND runs.status IN ('queued', 'running', 'waiting'));
 
 -- A live team that now holds the same name makes this fail with 23505.
 -- name: RestoreTeam :one

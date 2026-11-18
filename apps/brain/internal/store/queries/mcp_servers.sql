@@ -66,3 +66,10 @@ WHERE id = sqlc.arg('id') AND updated_at = sqlc.arg('updated_at');
 -- name: RecordMCPServerDiscoveryFailure :execrows
 UPDATE mcp_servers SET last_discovery_error = sqlc.arg('error')::text, last_discovery_at = now()
 WHERE id = sqlc.arg('id') AND updated_at = sqlc.arg('updated_at');
+
+-- Whether the server's own read-only and destructive hints are believed. Not
+-- an edit of the server: updated_at is what a running discovery checks it
+-- found the same server by, and trusting hints changes nothing it found.
+-- name: SetServerTrustHints :execrows
+UPDATE mcp_servers SET trust_hints = sqlc.arg('trust_hints')
+WHERE id = sqlc.arg('id') AND team_id = sqlc.arg('team_id');

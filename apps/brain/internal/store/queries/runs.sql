@@ -79,25 +79,27 @@ WHERE id = sqlc.arg('id') AND worker = sqlc.arg('worker')::text AND status = 'ru
 -- worker's next heartbeat. Finished: no row, which the handler answers 409.
 -- A queued run can still have children running, left by a worker that
 -- stopped mid-delegation; it will never run again to end them, so they are
--- cancelled with it, at any depth. A running run's children are its own to end.
+-- cancelled with it, at any depth. A waiting run holds no worker either, and
+-- is cancelled at once as a queued one is, with its children running or
+-- waiting beneath it. A running run's children are its own to end.
 -- name: RequestRunCancel :one
 WITH RECURSIVE below AS (
     SELECT r.id FROM runs r
     WHERE r.parent_run_id = sqlc.arg('id')::uuid
-      AND EXISTS (SELECT 1 FROM runs q WHERE q.id = sqlc.arg('id')::uuid AND q.status = 'queued')
+      AND EXISTS (SELECT 1 FROM runs q WHERE q.id = sqlc.arg('id')::uuid AND q.status IN ('queued', 'waiting'))
     UNION ALL
     SELECT r.id FROM runs r JOIN below b ON r.parent_run_id = b.id
 ), ended AS (
     UPDATE runs SET status = 'cancelled', finished_at = now(),
                     cancel_requested_at = coalesce(cancel_requested_at, now())
-    WHERE runs.id IN (SELECT below.id FROM below) AND runs.status = 'running'
+    WHERE runs.id IN (SELECT below.id FROM below) AND runs.status IN ('running', 'waiting')
     RETURNING runs.id
 )
 UPDATE runs SET
     cancel_requested_at = coalesce(cancel_requested_at, now()),
-    status      = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
-    finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END
-WHERE runs.id = sqlc.arg('id')::uuid AND runs.status IN ('queued', 'running')
+    status      = CASE WHEN status IN ('queued', 'waiting') THEN 'cancelled' ELSE status END,
+    finished_at = CASE WHEN status IN ('queued', 'waiting') THEN now() ELSE finished_at END
+WHERE runs.id = sqlc.arg('id')::uuid AND runs.status IN ('queued', 'running', 'waiting')
 RETURNING *, (SELECT coalesce(array_agg(ended.id), '{}') FROM ended)::uuid[] AS ended_children;
 
 -- name: ListUnstartedRuns :many
@@ -243,7 +245,7 @@ RETURNING *;
 -- row.
 -- name: ActiveSessionRun :one
 SELECT id FROM runs
-WHERE session_id = $1 AND parent_run_id IS NULL AND status IN ('queued', 'running')
+WHERE session_id = $1 AND parent_run_id IS NULL AND status IN ('queued', 'running', 'waiting')
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
 

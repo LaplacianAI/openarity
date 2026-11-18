@@ -16,7 +16,7 @@ const createMCPServer = `-- name: CreateMCPServer :one
 INSERT INTO mcp_servers (team_id, name, url, command, env, auth_secret_ref, bare, vars, egress)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
         COALESCE($8::jsonb, '{}'), COALESCE($9::jsonb, '[]'))
-RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes, vars, egress
+RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes, vars, egress, trust_hints
 `
 
 type CreateMCPServerParams struct {
@@ -64,6 +64,7 @@ func (q *Queries) CreateMCPServer(ctx context.Context, arg CreateMCPServerParams
 		&i.OauthScopes,
 		&i.Vars,
 		&i.Egress,
+		&i.TrustHints,
 	)
 	return i, err
 }
@@ -78,7 +79,7 @@ func (q *Queries) DeleteMCPServer(ctx context.Context, id uuid.UUID) error {
 }
 
 const getMCPServer = `-- name: GetMCPServer :one
-SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes, vars, egress FROM mcp_servers WHERE id = $1
+SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes, vars, egress, trust_hints FROM mcp_servers WHERE id = $1
 `
 
 func (q *Queries) GetMCPServer(ctx context.Context, id uuid.UUID) (McpServer, error) {
@@ -104,12 +105,13 @@ func (q *Queries) GetMCPServer(ctx context.Context, id uuid.UUID) (McpServer, er
 		&i.OauthScopes,
 		&i.Vars,
 		&i.Egress,
+		&i.TrustHints,
 	)
 	return i, err
 }
 
 const listMCPServersByTeam = `-- name: ListMCPServersByTeam :many
-SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes, vars, egress FROM mcp_servers
+SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes, vars, egress, trust_hints FROM mcp_servers
 WHERE team_id = $1
   AND strpos(lower(name), lower($2::text)) > 0
   AND (NOT $3::bool
@@ -163,6 +165,7 @@ func (q *Queries) ListMCPServersByTeam(ctx context.Context, arg ListMCPServersBy
 			&i.OauthScopes,
 			&i.Vars,
 			&i.Egress,
+			&i.TrustHints,
 		); err != nil {
 			return nil, err
 		}
@@ -217,6 +220,28 @@ func (q *Queries) RecordMCPServerDiscoveryFailure(ctx context.Context, arg Recor
 	return result.RowsAffected(), nil
 }
 
+const setServerTrustHints = `-- name: SetServerTrustHints :execrows
+UPDATE mcp_servers SET trust_hints = $1
+WHERE id = $2 AND team_id = $3
+`
+
+type SetServerTrustHintsParams struct {
+	TrustHints bool
+	ID         uuid.UUID
+	TeamID     uuid.UUID
+}
+
+// Whether the server's own read-only and destructive hints are believed. Not
+// an edit of the server: updated_at is what a running discovery checks it
+// found the same server by, and trusting hints changes nothing it found.
+func (q *Queries) SetServerTrustHints(ctx context.Context, arg SetServerTrustHintsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setServerTrustHints, arg.TrustHints, arg.ID, arg.TeamID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateMCPServer = `-- name: UpdateMCPServer :one
 UPDATE mcp_servers SET
     name            = $1,
@@ -244,7 +269,7 @@ UPDATE mcp_servers SET
     END,
     updated_at      = now()
 WHERE id = $9
-RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes, vars, egress
+RETURNING id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes, vars, egress, trust_hints
 `
 
 type UpdateMCPServerParams struct {
@@ -297,6 +322,7 @@ func (q *Queries) UpdateMCPServer(ctx context.Context, arg UpdateMCPServerParams
 		&i.OauthScopes,
 		&i.Vars,
 		&i.Egress,
+		&i.TrustHints,
 	)
 	return i, err
 }

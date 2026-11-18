@@ -722,7 +722,7 @@ func TestActionsForReturnsTheRolePermissions(t *testing.T) {
 		t.Fatalf("ActionsFor: %v", err)
 	}
 	slices.Sort(actions)
-	if !slices.Equal(actions, []string{"agent:write", "run:write", "skill:write", "tool:write"}) {
+	if !slices.Equal(actions, []string{"agent:write", "approval:read", "approval:self", "run:write", "skill:write", "tool:write"}) {
 		t.Errorf("member actions = %v", actions)
 	}
 }

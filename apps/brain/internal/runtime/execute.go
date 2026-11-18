@@ -490,6 +490,8 @@ func runOf(r db.ClaimRunRow) db.Run {
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, TokenBudget: r.TokenBudget,
 		Hub: r.Hub, MessageID: r.MessageID, ReplyToChannel: r.ReplyToChannel, Builder: r.Builder,
 		Transcript: r.Transcript, TranscriptFrom: r.TranscriptFrom,
+		Attempt: r.Attempt, Unattended: r.Unattended, WaitedSeconds: r.WaitedSeconds,
+		WaitingSince: r.WaitingSince,
 	}
 }
 

@@ -63,6 +63,18 @@
     {
       "name": "team:settings",
       "description": "Change a team's settings: its model, web search and learning"
+    },
+    {
+      "name": "approval:read",
+      "description": "See the tool calls a team's runs are waiting on, and what was decided"
+    },
+    {
+      "name": "approval:decide",
+      "description": "Approve or deny any tool call a team's run is waiting on"
+    },
+    {
+      "name": "approval:self",
+      "description": "Approve or deny a tool call made for yourself"
     }
   ],
   "roles": [
@@ -80,19 +92,25 @@
         "membership:write",
         "user:read",
         "run:write",
-        "team:settings"
+        "team:settings",
+        "approval:read",
+        "approval:decide",
+        "approval:self"
       ]
     },
     {
       "name": "approver",
-      "description": "Everything a member can do, and letting in the senders waiting on the team's channels",
+      "description": "Everything a member can do, letting in the senders waiting on the team's channels, and deciding the tool calls its runs wait on",
       "permissions": [
         "agent:write",
         "skill:write",
         "tool:write",
         "run:write",
         "channel:read",
-        "sender:approve"
+        "sender:approve",
+        "approval:read",
+        "approval:decide",
+        "approval:self"
       ]
     },
     {
@@ -102,7 +120,9 @@
         "agent:write",
         "skill:write",
         "tool:write",
-        "run:write"
+        "run:write",
+        "approval:read",
+        "approval:self"
       ]
     },
     {

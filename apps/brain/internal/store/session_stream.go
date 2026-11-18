@@ -31,8 +31,8 @@ func (s *Store) AppendRunEvent(ctx context.Context, arg db.AppendRunEventParams)
 	return seq, err
 }
 
-// RequestRunCancel cancels a queued run at once, with every child it left
-// running, and flags a running one for its worker. Each run it ends says so
+// RequestRunCancel cancels a queued or waiting run at once, with every child
+// it left running or waiting, and flags a running one for its worker. Each run it ends says so
 // with a finished event, since no worker is there to write one.
 func (s *Store) RequestRunCancel(ctx context.Context, id uuid.UUID) (db.Run, error) {
 	var run db.Run

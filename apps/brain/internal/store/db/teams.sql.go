@@ -234,7 +234,7 @@ WHERE teams.id = $1
   AND teams.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM runs
                   WHERE runs.team_id = teams.id
-                    AND runs.status IN ('queued', 'running'))
+                    AND runs.status IN ('queued', 'running', 'waiting'))
 `
 
 // Refused while a run is queued or running. Run only after
