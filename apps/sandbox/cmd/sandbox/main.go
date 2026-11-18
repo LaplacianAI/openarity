@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -104,6 +105,12 @@ func runServe(ctx context.Context, cmd command, logger *slog.Logger) error {
 	s := cmd.serve
 	engine := docker.New(s.socket)
 	if err := engine.Ping(ctx); err != nil {
+		// A rootless daemon's socket belongs to its owner, who is root inside
+		// the daemon's containers: sandboxd run as anyone else cannot open it.
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("the Docker daemon at %s refused uid %d: %w; "+
+				"on a rootless daemon run sandboxd as uid 0, which is the daemon's owner outside", s.socket, os.Getuid(), err)
+		}
 		return fmt.Errorf("the Docker daemon at %s: %w", s.socket, err)
 	}
 	g := guard.New(logger)

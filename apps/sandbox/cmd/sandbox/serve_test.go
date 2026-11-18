@@ -1,6 +1,12 @@
 package main
 
 import (
+	"errors"
+	"io/fs"
+	"log/slog"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -70,5 +76,38 @@ func TestServeRefusesWhatItCannotRunWith(t *testing.T) {
 	}
 	if _, err := parse([]string{"serve", "extra"}, envOf(serveEnv(nil))); err == nil {
 		t.Error("stray arguments were accepted")
+	}
+}
+
+// A socket sandboxd may not open says what to do, rather than restarting
+// with a bare "permission denied": on a rootless daemon that is the uid.
+func TestASocketThatRefusesTheUserSaysToRunAsZero(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root opens any socket, so nothing is refused")
+	}
+	dir, err := os.MkdirTemp("", "perm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	if err := os.Chmod(sock, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := parse([]string{"serve", "--listen", "127.0.0.1:0"}, envOf(serveEnv(map[string]string{
+		"SANDBOXD_DOCKER_SOCKET": sock,
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runServe(t.Context(), c, slog.New(slog.DiscardHandler))
+	if err == nil || !strings.Contains(err.Error(), "run sandboxd as uid 0") || !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("err = %v, want a refusal that says to run as uid 0", err)
 	}
 }

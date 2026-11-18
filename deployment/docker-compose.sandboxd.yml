@@ -42,7 +42,6 @@
 #
 #   SANDBOXD_TOKEN=<openssl rand -hex 32>   # what the brain sends; required
 #   SANDBOXD_BIND=<a private address>       # where the brain reaches it; required
-#   SANDBOXD_UID=<id -u>                     # the user that owns the daemon's socket
 #   SANDBOXD_DOCKER_SOCKET=/run/user/<uid>/docker.sock
 #   SANDBOXD_MEMORY_BUDGET=1610612736        # bytes, across every room; default 3 GiB
 #   SANDBOXD_IMAGES=ghcr.io/laplacianai/openarity-sandbox   # optional, the default
@@ -90,9 +89,11 @@ services:
       context: ../apps/sandbox
       target: sandboxd
     image: openarity/sandboxd:latest
-    # The user that owns the daemon's socket. Not root: the socket is the
-    # only privilege sandboxd has, and it is the rootless daemon's.
-    user: "${SANDBOXD_UID:-1000}"
+    # uid 0 inside a rootless daemon's container is the daemon's owner
+    # outside: an unprivileged user, and the only one the socket opens for.
+    # Any other uid is one of that user's subordinate ids and is refused.
+    # Capabilities, a writable root and new privileges are all still off.
+    user: "0:0"
     environment:
       SANDBOXD_TOKEN: ${SANDBOXD_TOKEN:?set SANDBOXD_TOKEN in deployment/.env}
       # Where the brain reaches it, and so the base of every room's proxy URL.
