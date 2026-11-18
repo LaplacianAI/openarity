@@ -16,6 +16,8 @@ export type ServerDraft = {
   token: string;
   /** A url server's way in: a static token or none, or a sign-in. */
   auth: "token" | "oauth";
+  /** A sign-in's client: one openarity registers itself, or one registered by hand. */
+  client: "auto" | "own";
   clientId: string;
   /** A confidential client's secret to write to the secret store; never read back. */
   clientSecret: string;
@@ -37,6 +39,7 @@ export const EMPTY_SERVER: ServerDraft = {
   bare: false,
   token: "",
   auth: "token",
+  client: "auto",
   clientId: "",
   clientSecret: "",
   clientSecretRef: "",
@@ -63,10 +66,15 @@ export function serverRequest(d: ServerDraft): MCPServerRequest | string {
     if (!d.url.trim()) return "A url server needs its URL.";
     body.url = d.url.trim();
     if (d.auth === "oauth") {
-      if (!d.clientId.trim()) return "A server that signs in needs its OAuth client ID.";
       body.auth_kind = "oauth";
-      body.oauth_client_id = d.clientId.trim();
-      if (d.clientSecretRef.trim()) body.oauth_client_secret_ref = d.clientSecretRef.trim();
+      // Registered automatically, the server names no client: the brain
+      // registers one at the first Connect.
+      if (d.client === "own") {
+        if (!d.clientId.trim())
+          return "Add the client ID you registered, or let openarity register one.";
+        body.oauth_client_id = d.clientId.trim();
+        if (d.clientSecretRef.trim()) body.oauth_client_secret_ref = d.clientSecretRef.trim();
+      }
       const scopes = scopesOf(d.scopes);
       if (scopes.length > 0) body.oauth_scopes = scopes;
       return body;
@@ -171,6 +179,7 @@ export function draftOf(s: MCPServer): ServerDraft {
     bare: s.bare,
     token: "",
     auth: s.auth_kind === "oauth" ? "oauth" : "token",
+    client: s.oauth_client_id ? "own" : "auto",
     clientId: s.oauth_client_id ?? "",
     clientSecret: "",
     clientSecretRef: s.oauth_client_secret_ref ?? "",
@@ -229,7 +238,7 @@ export function editRequest(current: MCPServer, d: ServerDraft): MCPServerReques
     if (form.auth_kind === "oauth") {
       delete body.auth_secret_ref;
       body.auth_kind = "oauth";
-      body.oauth_client_id = form.oauth_client_id;
+      if (form.oauth_client_id) body.oauth_client_id = form.oauth_client_id;
       if (form.oauth_client_secret_ref) body.oauth_client_secret_ref = form.oauth_client_secret_ref;
       if (form.oauth_scopes) body.oauth_scopes = form.oauth_scopes;
     }

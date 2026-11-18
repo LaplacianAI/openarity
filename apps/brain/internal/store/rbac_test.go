@@ -631,9 +631,10 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// agents can call, so it is a write, not a read.
 		"POST /teams/{id}/mcp-servers/{serverID}/discover": "team tool:write",
 		// Beginning a sign-in is editing the server: whoever may change it may connect it.
-		"DELETE /teams/{id}/mcp-servers/{serverID}/oauth":     "team tool:write",
-		"POST /teams/{id}/mcp-servers/{serverID}/oauth/start": "team tool:write",
-		"PUT /teams/{id}/mcp-secrets/{name}":                  "team tool:write",
+		"DELETE /teams/{id}/mcp-servers/{serverID}/oauth":              "team tool:write",
+		"POST /teams/{id}/mcp-servers/{serverID}/oauth/start":          "team tool:write",
+		"DELETE /teams/{id}/mcp-servers/{serverID}/oauth/registration": "team tool:write",
+		"PUT /teams/{id}/mcp-secrets/{name}":                           "team tool:write",
 
 		"GET /users":  "any_team user:read",
 		"GET /whoami": "authenticated",

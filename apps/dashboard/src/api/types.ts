@@ -619,6 +619,8 @@ export type MCPServer = {
   oauth_scopes?: string[];
   /** Its sign-in, null until one is made. Never its tokens. */
   connection?: MCPServerConnection | null;
+  /** The client openarity registered, for a server with no client of its own. Never its secret. */
+  oauth_registration?: MCPServerOAuthRegistration | null;
   bare: boolean;
   discovered_at?: string | null;
   /** Why the last discovery failed, as the caller was told; null once one works. */
@@ -638,6 +640,12 @@ export type MCPServerConnection = {
   connected_at: string;
   scopes_granted: string[];
   access_expires_at?: string | null;
+};
+
+/** A client openarity registered with a server's sign-in. */
+export type MCPServerOAuthRegistration = {
+  client_id: string;
+  registered_at: string;
 };
 
 /** One place a command server's room may connect to. */

@@ -50,6 +50,7 @@ const servers = {
 
 const base = {
   name: "github",
+  client: "auto" as const,
   transport: "url" as const,
   url: "",
   authRef: "",

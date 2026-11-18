@@ -43,11 +43,15 @@ type Store interface {
 	TakeOAuthPending(ctx context.Context, stateHash []byte) (db.McpOauthPending, error)
 	PruneOAuthPending(ctx context.Context) (int64, error)
 	UpsertOAuthConnection(ctx context.Context, arg db.UpsertOAuthConnectionParams) (db.McpOauthConnection, error)
+	GetOAuthClient(ctx context.Context, server uuid.UUID) (db.McpOauthClient, error)
+	ReplaceOAuthClient(ctx context.Context, arg db.ReplaceOAuthClientParams) (db.ReplaceOAuthClientRow, error)
+	ForgetOAuthClient(ctx context.Context, arg db.ForgetOAuthClientParams) (int64, error)
 }
 
 type Discoverer interface {
 	DiscoverAuth(ctx context.Context, serverURL string) (discovery.AuthServer, error)
 	Exchange(ctx context.Context, as discovery.AuthServer, c discovery.Client, redirect, code, verifier string) (discovery.Tokens, error)
+	Register(ctx context.Context, as discovery.AuthServer, redirect string) (discovery.Registration, error)
 }
 
 type Secrets interface {
@@ -70,14 +74,15 @@ type flow struct {
 	publicURL string
 }
 
-// New is the two halves of a sign-in: the team's route that begins it, and
-// the public callback that ends it. publicURL is the dashboard's origin, and
-// with none no sign-in can begin.
+// New is the two halves of a sign-in: the team's routes that begin it and
+// forget a registered client, and the public callback that ends it.
+// publicURL is the dashboard's origin, and with none no sign-in can begin.
 func New(logger *slog.Logger, s Store, d Discoverer, sec Secrets, r Refresher, publicURL string) (start, callback *api.Router) {
 	f := &flow{logger: logger, store: s, disc: d, secrets: sec, refresher: r, publicURL: strings.TrimSuffix(publicURL, "/")}
 
 	start = api.NewRouter("/teams")
 	start.Post("/{id}/mcp-servers/{serverID}/oauth/start", f.start)
+	start.Delete("/{id}/mcp-servers/{serverID}/oauth/registration", f.forget)
 
 	callback = api.NewPublicRouter("/oauth/mcp")
 	callback.Get("/callback", f.callback)
@@ -111,9 +116,6 @@ func (f *flow) start(w http.ResponseWriter, r *http.Request) {
 	case f.publicURL == "":
 		http.Error(w, "this brain has no PUBLIC_URL, so a sign-in would have nowhere to come back to", http.StatusConflict)
 		return
-	case row.OauthClientID == nil:
-		http.Error(w, "the server has no OAuth client: set its client id, and its secret if it has one", http.StatusConflict)
-		return
 	}
 
 	as, err := f.disc.DiscoverAuth(r.Context(), *row.Url)
@@ -127,7 +129,8 @@ func (f *flow) start(w http.ResponseWriter, r *http.Request) {
 			len(as.Scopes)), http.StatusConflict)
 		return
 	}
-	client, ok := f.client(w, r, row)
+	redirect := f.publicURL + CallbackPath
+	client, ok := f.clientFor(w, r, row, as, redirect)
 	if !ok {
 		return
 	}
@@ -138,7 +141,6 @@ func (f *flow) start(w http.ResponseWriter, r *http.Request) {
 		f.logger.Warn("mcp oauth: expired sign-ins not cleared", "error", err)
 	}
 
-	redirect := f.publicURL + CallbackPath
 	begun, err := discovery.AuthorizeURL(as, client, redirect, row.OauthScopes)
 	if err != nil {
 		api.Fail(w, f.logger, u, "failed to begin the sign-in", err)
@@ -179,14 +181,125 @@ func (f *flow) server(w http.ResponseWriter, r *http.Request, teamID uuid.UUID) 
 	return row, true
 }
 
-func (f *flow) client(w http.ResponseWriter, r *http.Request, row db.McpServer) (discovery.Client, bool) {
-	c, err := discovery.ClientOf(r.Context(), f.secrets, row)
+// clientFor is the client a sign-in begins with: the one set on the server,
+// else the one registered for it while it still fits, else one registered
+// now. Two sign-ins registering at once keep the first registration, and the
+// second signs in with it.
+func (f *flow) clientFor(w http.ResponseWriter, r *http.Request, row db.McpServer, as discovery.AuthServer, redirect string) (discovery.Client, bool) {
+	ctx := r.Context()
+	if row.OauthClientID != nil {
+		c, err := discovery.ClientOf(ctx, f.secrets, f.store, row)
+		if err != nil {
+			f.logger.Warn("mcp oauth: the client secret could not be read", "server_id", row.ID, "error", err)
+			http.Error(w, "the server's client secret could not be read; set it again", http.StatusConflict)
+			return discovery.Client{}, false
+		}
+		return c, true
+	}
+
+	var expected *string
+	reg, err := f.store.GetOAuthClient(ctx, row.ID)
+	switch {
+	case err == nil && discovery.Usable(reg, as.Issuer, redirect, time.Now()):
+		return f.registered(w, r, reg)
+	case err == nil:
+		expected = &reg.ClientID
+	case !errors.Is(err, pgx.ErrNoRows):
+		api.Fail(w, f.logger, api.Caller(r), "failed to read the server's client", err)
+		return discovery.Client{}, false
+	}
+
+	issued, err := f.disc.Register(ctx, as, redirect)
+	switch {
+	case errors.Is(err, discovery.ErrNoRegistration):
+		http.Error(w, err.Error(), http.StatusConflict)
+		return discovery.Client{}, false
+	case errors.Is(err, discovery.ErrRegistrationRefused):
+		var refused *discovery.RegistrationError
+		_ = errors.As(err, &refused)
+		f.logger.Warn("mcp oauth: registration refused", "server_id", row.ID, "issuer", as.Issuer, "error", err, "cause", refused.Cause)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return discovery.Client{}, false
+	case err != nil:
+		api.Fail(w, f.logger, api.Caller(r), "failed to register with the server's sign-in", err)
+		return discovery.Client{}, false
+	}
+
+	params := db.ReplaceOAuthClientParams{
+		ServerID: row.ID, TeamID: row.TeamID, Issuer: as.Issuer, RedirectUri: redirect,
+		ClientID: issued.ClientID, ExpectedClientID: expected,
+	}
+	if issued.ClientSecret != "" {
+		id := uuid.New()
+		if err := f.secrets.PutAll(ctx, secrets.Path(row.TeamID, secrets.KindMCPOAuthClient, id),
+			map[string]string{discovery.OAuthClientSecretKey: issued.ClientSecret}); err != nil {
+			api.Fail(w, f.logger, api.Caller(r), "failed to keep the registered client's secret", err)
+			return discovery.Client{}, false
+		}
+		params.SecretID = &id
+		if !issued.SecretExpiresAt.IsZero() {
+			params.SecretExpiresAt = &issued.SecretExpiresAt
+		}
+	}
+	saved, err := f.store.ReplaceOAuthClient(ctx, params)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Another sign-in registered first: its client is the one kept.
+		if reg, err = f.store.GetOAuthClient(ctx, row.ID); err != nil {
+			api.Fail(w, f.logger, api.Caller(r), "failed to read the server's client", err)
+			return discovery.Client{}, false
+		}
+		return f.registered(w, r, reg)
+	}
 	if err != nil {
-		f.logger.Warn("mcp oauth: the client secret could not be read", "server_id", row.ID, "error", err)
-		http.Error(w, "the server's client secret could not be read; set it again", http.StatusConflict)
+		api.Fail(w, f.logger, api.Caller(r), "failed to keep the registered client", err)
+		return discovery.Client{}, false
+	}
+	f.logger.Info("mcp oauth: client registered", "server_id", row.ID, "issuer", as.Issuer, "client_id", saved.ClientID)
+	return discovery.Client{ID: saved.ClientID, Secret: issued.ClientSecret}, true
+}
+
+func (f *flow) registered(w http.ResponseWriter, r *http.Request, reg db.McpOauthClient) (discovery.Client, bool) {
+	c, err := discovery.RegisteredClient(r.Context(), f.secrets, reg)
+	if err != nil {
+		f.logger.Warn("mcp oauth: the registered client's secret could not be read", "server_id", reg.ServerID, "error", err)
+		http.Error(w, "the server's registered client could not be read; register it again", http.StatusConflict)
 		return discovery.Client{}, false
 	}
 	return c, true
+}
+
+// forget drops the client the brain registered for a server, and the sign-in
+// made with it, so the next Connect registers anew: for an authorization
+// server that stopped accepting the client on its own page, which never
+// sends the browser back to say so.
+func (f *flow) forget(w http.ResponseWriter, r *http.Request) {
+	teamID, ok := api.RequireTeam(w, r, f.logger)
+	if !ok {
+		return
+	}
+	row, ok := f.server(w, r, teamID)
+	if !ok {
+		return
+	}
+	if row.AuthKind != "oauth" || row.OauthClientID != nil {
+		http.Error(w, "this server signs in with a client set on it, not one openarity registered", http.StatusConflict)
+		return
+	}
+	reg, err := f.store.GetOAuthClient(r.Context(), row.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		api.Fail(w, f.logger, api.Caller(r), "failed to read the server's client", err)
+		return
+	}
+	if _, err := f.store.ForgetOAuthClient(r.Context(), db.ForgetOAuthClientParams{ServerID: row.ID, ClientID: reg.ClientID}); err != nil {
+		api.Fail(w, f.logger, api.Caller(r), "failed to forget the server's client", err)
+		return
+	}
+	f.logger.Info("mcp oauth: registered client forgotten", "subject", api.Caller(r).Subject, "server_id", row.ID)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func hashOf(state string) []byte {
@@ -198,10 +311,13 @@ func hashOf(state string) []byte {
 const (
 	outcomeConnected = "connected"
 	outcomeNoTools   = "connected-no-tools"
-	outcomeExpired   = "expired"
-	outcomeDenied    = "denied"
-	outcomeRefused   = "refused"
-	outcomeFailed    = "failed"
+	// outcomeUnregistered is a registered client the authorization server
+	// refused, now forgotten: the next Connect registers anew.
+	outcomeUnregistered = "unregistered"
+	outcomeExpired      = "expired"
+	outcomeDenied       = "denied"
+	outcomeRefused      = "refused"
+	outcomeFailed       = "failed"
 )
 
 // callback ends a sign-in. The request comes from a browser with no
@@ -227,7 +343,12 @@ func (f *flow) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	server := pending.ServerID
 
-	if q.Get("error") != "" || q.Get("code") == "" {
+	if e := q.Get("error"); e != "" || q.Get("code") == "" {
+		if e == "invalid_client" || e == "unauthorized_client" {
+			f.forgetRefused(r.Context(), server)
+			f.back(w, r, server, outcomeUnregistered)
+			return
+		}
 		f.back(w, r, server, outcomeDenied)
 		return
 	}
@@ -250,7 +371,7 @@ func (f *flow) callback(w http.ResponseWriter, r *http.Request) {
 		f.back(w, r, server, outcomeRefused)
 		return
 	}
-	client, err := discovery.ClientOf(r.Context(), f.secrets, row)
+	client, err := discovery.ClientOf(r.Context(), f.secrets, f.store, row)
 	if err != nil {
 		f.logger.Warn("mcp oauth: the client secret could not be read", "server_id", server, "error", err)
 		f.back(w, r, server, outcomeFailed)
@@ -260,6 +381,15 @@ func (f *flow) callback(w http.ResponseWriter, r *http.Request) {
 	tokens, err := f.disc.Exchange(r.Context(), as, client, pending.RedirectUri, q.Get("code"), pending.Verifier)
 	if errors.Is(err, discovery.ErrSignInAgain) {
 		f.back(w, r, server, outcomeRefused)
+		return
+	}
+	if errors.Is(err, discovery.ErrClientRefused) {
+		if row.OauthClientID != nil {
+			f.back(w, r, server, outcomeFailed)
+			return
+		}
+		f.forgetClient(r.Context(), row.ID, client.ID)
+		f.back(w, r, server, outcomeUnregistered)
 		return
 	}
 	if err != nil {
@@ -282,6 +412,30 @@ func (f *flow) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.back(w, r, server, outcomeConnected)
+}
+
+// forgetRefused forgets the registered client of a server whose
+// authorization server refused it before any code was issued.
+func (f *flow) forgetRefused(ctx context.Context, server uuid.UUID) {
+	row, err := f.store.GetMCPServer(ctx, server)
+	if err != nil || row.OauthClientID != nil {
+		return
+	}
+	reg, err := f.store.GetOAuthClient(ctx, server)
+	if err != nil {
+		return
+	}
+	f.forgetClient(ctx, server, reg.ClientID)
+}
+
+// forgetClient drops one registered client. A failure leaves it to the next
+// refusal, and is logged rather than told: the outcome is the same sentence.
+func (f *flow) forgetClient(ctx context.Context, server uuid.UUID, clientID string) {
+	if _, err := f.store.ForgetOAuthClient(ctx, db.ForgetOAuthClientParams{ServerID: server, ClientID: clientID}); err != nil {
+		f.logger.Warn("mcp oauth: a refused client could not be forgotten", "server_id", server, "error", err)
+		return
+	}
+	f.logger.Info("mcp oauth: refused client forgotten", "server_id", server)
 }
 
 // keep stores the tokens, then the connection: a connection naming tokens

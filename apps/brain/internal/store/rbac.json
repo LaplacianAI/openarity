@@ -512,6 +512,12 @@
       "permission": "tool:write"
     },
     {
+      "method": "DELETE",
+      "path": "/teams/{id}/mcp-servers/{serverID}/oauth/registration",
+      "scope": "team",
+      "permission": "tool:write"
+    },
+    {
       "method": "PUT",
       "path": "/teams/{id}/mcp-secrets/{name}",
       "scope": "team",

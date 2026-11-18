@@ -388,6 +388,37 @@ func TestTheShippedPolicyServesATeamsSearchKey(t *testing.T) {
 	}
 }
 
+// A registered OAuth client's secret: written once when the brain registers,
+// read to sign in, and destroyed by the sweep once the registration is
+// replaced. Never overwritten: every registration has a fresh path, so a
+// tombstone left for the old one cannot reach the new.
+func TestTheShippedPolicyServesARegisteredClientsSecret(t *testing.T) {
+	t.Parallel()
+
+	reader, writer, _, _ := brainStore(t)
+	path := secrets.Path(uuid.New(), secrets.KindMCPOAuthClient, uuid.New())
+
+	if err := writer.Put(t.Context(), path, "client_secret", "s3cret"); err != nil {
+		t.Fatalf("saving a registered client's secret: %v", err)
+	}
+	got, err := reader.Get(t.Context(), path, "client_secret")
+	if err != nil {
+		t.Fatalf("reading the client secret: %v", err)
+	}
+	if got != "s3cret" {
+		t.Errorf("secret = %q, want %q", got, "s3cret")
+	}
+	if err := writer.Put(t.Context(), path, "client_secret", "other"); err == nil {
+		t.Error("a registered client's secret was overwritten; the policy grants it no update")
+	}
+	if err := writer.Delete(t.Context(), path); err != nil {
+		t.Fatalf("destroying a replaced client's secret: %v", err)
+	}
+	if _, err := reader.Get(t.Context(), path, "client_secret"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Errorf("after destroying the secret, err = %v, want secrets.ErrNotFound", err)
+	}
+}
+
 // A team's sandbox key and each room's token are written once, read, and
 // destroyed when replaced, under the policy that ships. The room token is one
 // level deeper than the key; a policy granting only sandbox/+ failed its first
@@ -525,6 +556,8 @@ func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
 		`path "secret/data/teams/+/mcp/+"`,
 		`path "secret/data/teams/+/search/+"`,
 		`path "secret/metadata/teams/+/search/+"`,
+		`path "secret/data/teams/+/mcp-oauth-client/+"`,
+		`path "secret/metadata/teams/+/mcp-oauth-client/+"`,
 		`path "secret/data/teams/+/sandbox/+"`,
 		`path "secret/metadata/teams/+/sandbox/+"`,
 		`path "secret/data/teams/+/sandbox/rooms/+"`,

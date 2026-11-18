@@ -1,3 +1,4 @@
+import { CopyId } from "@/components/facts";
 import { Field, TextArea } from "@/components/registry-bits";
 import { Input } from "@/components/ui/input";
 import { SwitchField } from "@/components/ui/switch";
@@ -220,9 +221,10 @@ function AuthRef({
 }
 
 /**
- * A server that signs in: the OAuth client registered for it, and the scopes
- * to ask for. The client is registered with the server's provider, with this
- * dashboard's callback as its redirect URI.
+ * A server that signs in: the client it signs in as, and the scopes to ask
+ * for. Most servers register openarity on their own at the first Connect, so
+ * that is the default; a client registered by hand is for a provider that
+ * registers nobody, and only then is its redirect URI worth showing.
  */
 function SignInFields({
   draft,
@@ -234,13 +236,81 @@ function SignInFields({
   secretSet: boolean;
 }) {
   const callback = `${window.location.origin}/oauth/mcp/callback`;
+  const options = [
+    {
+      value: "auto",
+      label: "Register automatically",
+      hint: "openarity registers itself with the server's sign-in when you connect. Nothing to copy.",
+    },
+    {
+      value: "own",
+      label: "Use a client you registered",
+      hint: "For a provider that needs a client registered by hand.",
+    },
+  ] as const;
   return (
     <>
-      <p className="text-xs text-muted-foreground">
-        Register an OAuth client with the server's provider, with{" "}
-        <Mono className="break-all text-foreground">{callback}</Mono> as its redirect URI. Connect
-        the server once it is saved.
-      </p>
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">Client</legend>
+        {options.map((o) => (
+          <label key={o.value} className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="radio"
+              name="client"
+              checked={draft.client === o.value}
+              onChange={() => set({ client: o.value })}
+              aria-describedby={`server-client-${o.value}-hint`}
+              className="mt-0.5 size-4 shrink-0 accent-primary"
+            />
+            <span className="min-w-0">
+              {o.label}
+              <span
+                id={`server-client-${o.value}-hint`}
+                className="block text-xs text-muted-foreground"
+              >
+                {o.hint}
+              </span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      {draft.client === "own" ? (
+        <OwnClientFields draft={draft} set={set} secretSet={secretSet} callback={callback} />
+      ) : null}
+      <Field
+        label="Scopes"
+        htmlFor="server-scopes"
+        hint="Optional, separated by spaces. Empty asks for what the server offers, which a server offering many refuses."
+      >
+        <TextArea
+          id="server-scopes"
+          value={draft.scopes}
+          spellCheck={false}
+          onChange={(e) => set({ scopes: e.target.value })}
+        />
+      </Field>
+    </>
+  );
+}
+
+/** A client registered by hand: its id, its secret if it is a confidential one, and where it sends people back. */
+function OwnClientFields({
+  draft,
+  set,
+  secretSet,
+  callback,
+}: {
+  draft: ServerDraft;
+  set: (patch: Partial<ServerDraft>) => void;
+  secretSet: boolean;
+  callback: string;
+}) {
+  return (
+    <>
+      <div className="space-y-1">
+        <p className="text-xs text-muted-foreground">Register the client with this redirect URI:</p>
+        <CopyId value={callback} label="redirect URI" />
+      </div>
       <Field label="Client ID" htmlFor="server-client-id">
         <Input
           id="server-client-id"
@@ -267,18 +337,6 @@ function SignInFields({
           spellCheck={false}
           placeholder={secretSet ? "••••••••" : ""}
           onChange={(e) => set({ clientSecret: e.target.value })}
-        />
-      </Field>
-      <Field
-        label="Scopes"
-        htmlFor="server-scopes"
-        hint="Separated by spaces. Empty asks for what the server offers, which a server offering many refuses."
-      >
-        <TextArea
-          id="server-scopes"
-          value={draft.scopes}
-          spellCheck={false}
-          onChange={(e) => set({ scopes: e.target.value })}
         />
       </Field>
     </>

@@ -1676,7 +1676,7 @@ type MCPSecretWrite struct {
 type MCPServer struct {
 	// AuthKind How the server is reached: `static`, with `auth_secret_ref` or no
 	// token at all, or `oauth`, signed in to on the dashboard as the
-	// client named here.
+	// client named here, or with none named, as one the brain registers.
 	AuthKind MCPServerAuthKind `json:"auth_kind" yaml:"auth_kind"`
 
 	// AuthSecretRef A url server's bearer token. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
@@ -1729,11 +1729,18 @@ type MCPServer struct {
 	// Examples: github
 	Name string `json:"name" yaml:"name"`
 
-	// OauthClientID The OAuth client a server that signs in signs in as
+	// OauthClientID The OAuth client a server that signs in signs in as, when one was
+	// registered for it by hand. Absent, the brain registers its own; see
+	// `oauth_registration`.
 	OauthClientID *string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
 
 	// OauthClientSecretRef The client's secret, when it is a confidential client. A secret reference; the value is never returned.
 	OauthClientSecretRef *string `json:"oauth_client_secret_ref,omitempty" yaml:"oauth_client_secret_ref,omitempty"`
+
+	// OauthRegistration The client the brain registered for a server with no
+	// `oauth_client_id` of its own, or null when it has registered none.
+	// Never its secret. Always sent.
+	OauthRegistration *MCPServerOAuthRegistration `json:"oauth_registration,omitempty" yaml:"oauth_registration,omitempty"`
 
 	// OauthScopes The scopes a sign-in asks for. Absent, the ones the server's metadata offers.
 	OauthScopes *[]string          `json:"oauth_scopes,omitempty" yaml:"oauth_scopes,omitempty"`
@@ -1753,7 +1760,7 @@ type MCPServer struct {
 
 // MCPServerAuthKind How the server is reached: `static`, with `auth_secret_ref` or no
 // token at all, or `oauth`, signed in to on the dashboard as the
-// client named here.
+// client named here, or with none named, as one the brain registers.
 type MCPServerAuthKind string
 
 // MCPServerConnection A server's sign-in, or null when it has none: never made, or
@@ -1789,6 +1796,15 @@ type MCPServerGrant struct {
 	ID openapi_types.UUID `json:"id" yaml:"id"`
 }
 
+// MCPServerOAuthRegistration The client the brain registered for a server with no
+// `oauth_client_id` of its own, or null when it has registered none.
+// Never its secret. Always sent.
+type MCPServerOAuthRegistration struct {
+	// ClientID As the authorization server issued it, and shows on its consent screen
+	ClientID     string    `json:"client_id" yaml:"client_id"`
+	RegisteredAt time.Time `json:"registered_at" yaml:"registered_at"`
+}
+
 // MCPServerPage defines model for MCPServerPage.
 type MCPServerPage struct {
 	Items []MCPServer `json:"items" yaml:"items"`
@@ -1801,8 +1817,10 @@ type MCPServerPage struct {
 // is a secret reference rather than the secret, so none reaches the
 // database.
 type MCPServerRequest struct {
-	// AuthKind `oauth` for a url server signed in to on the dashboard: it takes
-	// `oauth_client_id` and no `auth_secret_ref`. Changing the url, the
+	// AuthKind `oauth` for a url server signed in to on the dashboard: it takes no
+	// `auth_secret_ref`, and `oauth_client_id` only for a client
+	// registered by hand; without one, the brain registers its own at the
+	// first sign-in. Changing the url, the
 	// client or the kind ends a sign-in already made; changing only the
 	// scopes keeps it, and connecting again asks for them.
 	AuthKind *MCPServerRequestAuthKind `json:"auth_kind,omitempty" yaml:"auth_kind,omitempty"`
@@ -1828,10 +1846,10 @@ type MCPServerRequest struct {
 	// Name Examples: github
 	Name string `json:"name" yaml:"name"`
 
-	// OauthClientID Only with `auth_kind` oauth. The OAuth client registered with the server's authorization server, its redirect URI `<PUBLIC_URL>/oauth/mcp/callback`.
+	// OauthClientID Only with `auth_kind` oauth, and optional there. A client registered by hand with the server's authorization server, its redirect URI `<PUBLIC_URL>/oauth/mcp/callback`. Absent, the brain registers one itself.
 	OauthClientID *string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
 
-	// OauthClientSecretRef Only with `auth_kind` oauth, for a confidential client. A secret reference in this team.
+	// OauthClientSecretRef Only with `oauth_client_id`, for a confidential client. A secret reference in this team.
 	OauthClientSecretRef *string `json:"oauth_client_secret_ref,omitempty" yaml:"oauth_client_secret_ref,omitempty"`
 
 	// OauthScopes Only with `auth_kind` oauth. The scopes to ask for, in place of the ones the server's metadata offers.
@@ -1848,8 +1866,10 @@ type MCPServerRequest struct {
 	Vars *map[string]string `json:"vars,omitempty" yaml:"vars,omitempty"`
 }
 
-// MCPServerRequestAuthKind `oauth` for a url server signed in to on the dashboard: it takes
-// `oauth_client_id` and no `auth_secret_ref`. Changing the url, the
+// MCPServerRequestAuthKind `oauth` for a url server signed in to on the dashboard: it takes no
+// `auth_secret_ref`, and `oauth_client_id` only for a client
+// registered by hand; without one, the brain registers its own at the
+// first sign-in. Changing the url, the
 // client or the kind ends a sign-in already made; changing only the
 // scopes keeps it, and connecting again asks for them.
 type MCPServerRequestAuthKind string
@@ -4104,19 +4124,38 @@ type ClientInterface interface {
 	// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID}/oauth (the `DisconnectMCPServerOAuth` operationId).
 	DisconnectMCPServerOAuth(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ForgetMCPServerOAuthRegistration Forget the client openarity registered for a server
+	//
+	// Requires `tool:write` in this team. Forgets the client the brain
+	// registered for a server with no client of its own, and ends the
+	// sign-in made with it, so the next sign-in registers a new one: for an
+	// authorization server that stopped accepting the client on its own
+	// page, which never sends the person back to say so. 204 also when
+	// nothing was registered. 409 for a server with a client of its own, or
+	// one that does not sign in.
+	//
+	// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID}/oauth/registration (the `ForgetMCPServerOAuthRegistration` operationId).
+	ForgetMCPServerOAuthRegistration(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// StartMCPServerOAuth Begin signing in to a server
 	//
 	// Requires `tool:write` in this team. For a server that signs in
-	// (`auth_kind` oauth, with an OAuth client), the brain finds its
-	// authorization server as the MCP authorization spec lays out, begins a
-	// sign-in with PKCE that lasts ten minutes, and answers with the URL to
-	// send the person to. They come back to `/oauth/mcp/callback`, which must
-	// be the client's registered redirect URI, under `PUBLIC_URL`.
+	// (`auth_kind` oauth), the brain finds its authorization server as the
+	// MCP authorization spec lays out, begins a sign-in with PKCE that lasts
+	// ten minutes, and answers with the URL to send the person to. They come
+	// back to `/oauth/mcp/callback`, under `PUBLIC_URL`.
 	//
-	// 409 when the server is reached with a token, is a command server, has
-	// no OAuth client, offers more than five scopes with none chosen on it,
-	// or when this brain has no `PUBLIC_URL`. 502 when the server's sign-in
-	// cannot be found or offers no PKCE with S256.
+	// The client is the server's own `oauth_client_id` when it has one.
+	// Without one, the brain registers a client with the authorization
+	// server (RFC 7591) at the first sign-in, a public one where it may,
+	// and keeps it for every later sign-in, refresh and revocation while the
+	// authorization server and the redirect URI stay the same.
+	//
+	// 409 when the server is reached with a token, is a command server,
+	// offers more than five scopes with none chosen on it, has no client and
+	// its authorization server registers none, or when this brain has no
+	// `PUBLIC_URL`. 502 when the server's sign-in cannot be found, offers no
+	// PKCE with S256, or refused the registration, with its reason.
 	//
 	// Corresponds with POST /teams/{id}/mcp-servers/{serverID}/oauth/start (the `StartMCPServerOAuth` operationId).
 	StartMCPServerOAuth(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6199,19 +6238,48 @@ func (c *Client) DisconnectMCPServerOAuth(ctx context.Context, id TeamID, server
 	return c.Client.Do(req)
 }
 
+// ForgetMCPServerOAuthRegistration Forget the client openarity registered for a server
+//
+// Requires `tool:write` in this team. Forgets the client the brain
+// registered for a server with no client of its own, and ends the
+// sign-in made with it, so the next sign-in registers a new one: for an
+// authorization server that stopped accepting the client on its own
+// page, which never sends the person back to say so. 204 also when
+// nothing was registered. 409 for a server with a client of its own, or
+// one that does not sign in.
+//
+// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID}/oauth/registration (the `ForgetMCPServerOAuthRegistration` operationId).
+func (c *Client) ForgetMCPServerOAuthRegistration(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewForgetMCPServerOAuthRegistrationRequest(c.Server, id, serverID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // StartMCPServerOAuth Begin signing in to a server
 //
 // Requires `tool:write` in this team. For a server that signs in
-// (`auth_kind` oauth, with an OAuth client), the brain finds its
-// authorization server as the MCP authorization spec lays out, begins a
-// sign-in with PKCE that lasts ten minutes, and answers with the URL to
-// send the person to. They come back to `/oauth/mcp/callback`, which must
-// be the client's registered redirect URI, under `PUBLIC_URL`.
+// (`auth_kind` oauth), the brain finds its authorization server as the
+// MCP authorization spec lays out, begins a sign-in with PKCE that lasts
+// ten minutes, and answers with the URL to send the person to. They come
+// back to `/oauth/mcp/callback`, under `PUBLIC_URL`.
 //
-// 409 when the server is reached with a token, is a command server, has
-// no OAuth client, offers more than five scopes with none chosen on it,
-// or when this brain has no `PUBLIC_URL`. 502 when the server's sign-in
-// cannot be found or offers no PKCE with S256.
+// The client is the server's own `oauth_client_id` when it has one.
+// Without one, the brain registers a client with the authorization
+// server (RFC 7591) at the first sign-in, a public one where it may,
+// and keeps it for every later sign-in, refresh and revocation while the
+// authorization server and the redirect URI stay the same.
+//
+// 409 when the server is reached with a token, is a command server,
+// offers more than five scopes with none chosen on it, has no client and
+// its authorization server registers none, or when this brain has no
+// `PUBLIC_URL`. 502 when the server's sign-in cannot be found, offers no
+// PKCE with S256, or refused the registration, with its reason.
 //
 // Corresponds with POST /teams/{id}/mcp-servers/{serverID}/oauth/start (the `StartMCPServerOAuth` operationId).
 func (c *Client) StartMCPServerOAuth(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9438,6 +9506,47 @@ func NewDisconnectMCPServerOAuthRequest(server string, id TeamID, serverID Serve
 	return req, nil
 }
 
+// NewForgetMCPServerOAuthRegistrationRequest constructs an http.Request for the ForgetMCPServerOAuthRegistration method
+func NewForgetMCPServerOAuthRegistrationRequest(server string, id TeamID, serverID ServerID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "serverID", serverID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-servers/%s/oauth/registration", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewStartMCPServerOAuthRequest constructs an http.Request for the StartMCPServerOAuth method
 func NewStartMCPServerOAuthRequest(server string, id TeamID, serverID ServerID) (*http.Request, error) {
 	var err error
@@ -12487,19 +12596,40 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID}/oauth (the `DisconnectMCPServerOAuth` operationId).
 	DisconnectMCPServerOAuthWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*DisconnectMCPServerOAuthResponse, error)
 
+	// ForgetMCPServerOAuthRegistrationWithResponse Forget the client openarity registered for a server
+	//
+	// Requires `tool:write` in this team. Forgets the client the brain
+	// registered for a server with no client of its own, and ends the
+	// sign-in made with it, so the next sign-in registers a new one: for an
+	// authorization server that stopped accepting the client on its own
+	// page, which never sends the person back to say so. 204 also when
+	// nothing was registered. 409 for a server with a client of its own, or
+	// one that does not sign in.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID}/oauth/registration (the `ForgetMCPServerOAuthRegistration` operationId).
+	ForgetMCPServerOAuthRegistrationWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*ForgetMCPServerOAuthRegistrationResponse, error)
+
 	// StartMCPServerOAuthWithResponse Begin signing in to a server
 	//
 	// Requires `tool:write` in this team. For a server that signs in
-	// (`auth_kind` oauth, with an OAuth client), the brain finds its
-	// authorization server as the MCP authorization spec lays out, begins a
-	// sign-in with PKCE that lasts ten minutes, and answers with the URL to
-	// send the person to. They come back to `/oauth/mcp/callback`, which must
-	// be the client's registered redirect URI, under `PUBLIC_URL`.
+	// (`auth_kind` oauth), the brain finds its authorization server as the
+	// MCP authorization spec lays out, begins a sign-in with PKCE that lasts
+	// ten minutes, and answers with the URL to send the person to. They come
+	// back to `/oauth/mcp/callback`, under `PUBLIC_URL`.
 	//
-	// 409 when the server is reached with a token, is a command server, has
-	// no OAuth client, offers more than five scopes with none chosen on it,
-	// or when this brain has no `PUBLIC_URL`. 502 when the server's sign-in
-	// cannot be found or offers no PKCE with S256.
+	// The client is the server's own `oauth_client_id` when it has one.
+	// Without one, the brain registers a client with the authorization
+	// server (RFC 7591) at the first sign-in, a public one where it may,
+	// and keeps it for every later sign-in, refresh and revocation while the
+	// authorization server and the redirect URI stay the same.
+	//
+	// 409 when the server is reached with a token, is a command server,
+	// offers more than five scopes with none chosen on it, has no client and
+	// its authorization server registers none, or when this brain has no
+	// `PUBLIC_URL`. 502 when the server's sign-in cannot be found, offers no
+	// PKCE with S256, or refused the registration, with its reason.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15034,6 +15164,47 @@ func (r DisconnectMCPServerOAuthResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DisconnectMCPServerOAuthResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ForgetMCPServerOAuthRegistrationResponse401Headers the declared response headers of an HTTP 401 response for ForgetMCPServerOAuthRegistration
+type ForgetMCPServerOAuthRegistrationResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ForgetMCPServerOAuthRegistrationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ForgetMCPServerOAuthRegistrationResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r ForgetMCPServerOAuthRegistrationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ForgetMCPServerOAuthRegistrationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ForgetMCPServerOAuthRegistrationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ForgetMCPServerOAuthRegistrationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -18054,19 +18225,46 @@ func (c *ClientWithResponses) DisconnectMCPServerOAuthWithResponse(ctx context.C
 	return ParseDisconnectMCPServerOAuthResponse(rsp)
 }
 
+// ForgetMCPServerOAuthRegistrationWithResponse Forget the client openarity registered for a server
+//
+// Requires `tool:write` in this team. Forgets the client the brain
+// registered for a server with no client of its own, and ends the
+// sign-in made with it, so the next sign-in registers a new one: for an
+// authorization server that stopped accepting the client on its own
+// page, which never sends the person back to say so. 204 also when
+// nothing was registered. 409 for a server with a client of its own, or
+// one that does not sign in.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id}/mcp-servers/{serverID}/oauth/registration (the `ForgetMCPServerOAuthRegistration` operationId).
+func (c *ClientWithResponses) ForgetMCPServerOAuthRegistrationWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*ForgetMCPServerOAuthRegistrationResponse, error) {
+	rsp, err := c.ForgetMCPServerOAuthRegistration(ctx, id, serverID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseForgetMCPServerOAuthRegistrationResponse(rsp)
+}
+
 // StartMCPServerOAuthWithResponse Begin signing in to a server
 //
 // Requires `tool:write` in this team. For a server that signs in
-// (`auth_kind` oauth, with an OAuth client), the brain finds its
-// authorization server as the MCP authorization spec lays out, begins a
-// sign-in with PKCE that lasts ten minutes, and answers with the URL to
-// send the person to. They come back to `/oauth/mcp/callback`, which must
-// be the client's registered redirect URI, under `PUBLIC_URL`.
+// (`auth_kind` oauth), the brain finds its authorization server as the
+// MCP authorization spec lays out, begins a sign-in with PKCE that lasts
+// ten minutes, and answers with the URL to send the person to. They come
+// back to `/oauth/mcp/callback`, under `PUBLIC_URL`.
 //
-// 409 when the server is reached with a token, is a command server, has
-// no OAuth client, offers more than five scopes with none chosen on it,
-// or when this brain has no `PUBLIC_URL`. 502 when the server's sign-in
-// cannot be found or offers no PKCE with S256.
+// The client is the server's own `oauth_client_id` when it has one.
+// Without one, the brain registers a client with the authorization
+// server (RFC 7591) at the first sign-in, a public one where it may,
+// and keeps it for every later sign-in, refresh and revocation while the
+// authorization server and the redirect URI stay the same.
+//
+// 409 when the server is reached with a token, is a command server,
+// offers more than five scopes with none chosen on it, has no client and
+// its authorization server registers none, or when this brain has no
+// `PUBLIC_URL`. 502 when the server's sign-in cannot be found, offers no
+// PKCE with S256, or refused the registration, with its reason.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -20489,6 +20687,35 @@ func ParseDisconnectMCPServerOAuthResponse(rsp *http.Response) (*DisconnectMCPSe
 	switch {
 	case rsp.StatusCode == 401:
 		var headers DisconnectMCPServerOAuthResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseForgetMCPServerOAuthRegistrationResponse parses an HTTP response from a ForgetMCPServerOAuthRegistrationWithResponse call
+func ParseForgetMCPServerOAuthRegistrationResponse(rsp *http.Response) (*ForgetMCPServerOAuthRegistrationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ForgetMCPServerOAuthRegistrationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ForgetMCPServerOAuthRegistrationResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

@@ -42,7 +42,7 @@ func (h *handler) endingOf(ctx context.Context, row db.McpServer) *ending {
 		h.logger.Warn("mcp oauth: the sign-in's discovery is unreadable", "server_id", row.ID, "error", err)
 		return nil
 	}
-	if e.client, err = discovery.ClientOf(ctx, h.ending.Secrets, row); err != nil {
+	if e.client, err = discovery.ClientOf(ctx, h.ending.Secrets, h.store, row); err != nil {
 		h.logger.Warn("mcp oauth: the client secret could not be read", "server_id", row.ID, "error", err)
 		return nil
 	}

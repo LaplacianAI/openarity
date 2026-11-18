@@ -30,6 +30,15 @@ func (s oauthConnections) Connection(ctx context.Context, server uuid.UUID) (db.
 	return c, err
 }
 
+func (s oauthConnections) GetOAuthClient(ctx context.Context, server uuid.UUID) (db.McpOauthClient, error) {
+	return s.store.GetOAuthClient(ctx, server)
+}
+
+func (s oauthConnections) ForgetClient(ctx context.Context, server uuid.UUID, clientID string) error {
+	_, err := s.store.ForgetOAuthClient(ctx, db.ForgetOAuthClientParams{ServerID: server, ClientID: clientID})
+	return err
+}
+
 // Renew holds the row for the whole of renew, the token request included, so
 // a refresh token is spent once however many workers find it due. The tokens
 // are written before the commit: the secret is what calls are made with, and

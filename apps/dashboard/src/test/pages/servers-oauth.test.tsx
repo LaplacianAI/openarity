@@ -83,6 +83,7 @@ const draft = {
   bare: false,
   token: "",
   auth: "oauth" as const,
+  client: "own" as const,
   clientId: " client-1 ",
   clientSecret: "",
   clientSecretRef: "",
@@ -104,8 +105,25 @@ describe("a server that signs in, as the form sends it", () => {
     });
   });
 
-  it("refuses one with no client before anything is sent", () => {
+  it("refuses a client registered by hand with no ID before anything is sent", () => {
     expect(serverRequest({ ...draft, clientId: "  " })).toMatch(/client ID/);
+  });
+
+  // Registered automatically, the server names no client and no secret: the
+  // brain registers one when it is first connected.
+  it("sends no client when openarity is to register one", () => {
+    expect(
+      serverRequest({
+        ...draft,
+        client: "auto",
+        clientSecretRef: "teams/t/mcp/gmail-oauth#client_secret",
+      }),
+    ).toEqual({
+      name: "gmail",
+      url: "https://gmailmcp.example/mcp/v1",
+      auth_kind: "oauth",
+      oauth_scopes: ["gmail.readonly", "gmail.send", "openid"],
+    });
   });
 
   it("reads scopes split by spaces, commas and lines", () => {
@@ -232,6 +250,7 @@ describe("signing in from the servers screen", () => {
       "https://gmailmcp.example/mcp/v1",
     );
     await userEvent.click(screen.getByRole("radio", { name: /oauth/i }));
+    await userEvent.click(screen.getByRole("radio", { name: /use a client you registered/i }));
     await userEvent.type(screen.getByLabelText(/^client id$/i), "client-1");
     await userEvent.type(screen.getByLabelText(/^client secret$/i), "the-client-secret");
     await userEvent.type(screen.getByLabelText(/^scopes$/i), "gmail.readonly");
@@ -259,6 +278,207 @@ describe("signing in from the servers screen", () => {
   });
 });
 
+/** A server that signs in with no client of its own: openarity registers one. */
+function cloud(connection: MCPServer["connection"], registeredAs?: string): MCPServer {
+  const { oauth_client_id: _own, ...rest } = gmail(connection);
+  return {
+    ...rest,
+    id: "m3",
+    name: "cloud",
+    url: "https://cloud.example/mcp",
+    oauth_registration: registeredAs ? { client_id: registeredAs, registered_at: STAMP } : null,
+  };
+}
+
+describe("a client openarity registers itself", () => {
+  it("is the default, and asks for nothing to copy", async () => {
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...serving(),
+      "POST /teams/{id}/mcp-servers": { status: 201, body: cloud(null) },
+    });
+    showServers();
+
+    await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "cloud");
+    await userEvent.type(
+      screen.getByRole("textbox", { name: /^url$/i }),
+      "https://cloud.example/mcp",
+    );
+    await userEvent.click(screen.getByRole("radio", { name: /oauth/i }));
+
+    expect(screen.getByRole("radio", { name: /register automatically/i })).toBeChecked();
+    expect(screen.queryByLabelText(/^client id$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/redirect uri/i)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^register$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+    const writes = seen.filter((s) => s.method !== "GET");
+    expect(writes.map((s) => `${s.method} ${s.path}`)).toEqual([`POST /teams/${TEAM}/mcp-servers`]);
+    expect(JSON.parse(String(writes[0]?.body))).toEqual({
+      name: "cloud",
+      url: "https://cloud.example/mcp",
+      auth_kind: "oauth",
+    });
+  });
+
+  // A secret typed for a client registered by hand, then the choice changed
+  // back: the brain refuses a secret with no client to go with it.
+  it("drops a typed client secret once the choice goes back to registering automatically", async () => {
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...serving(),
+      "PUT /teams/{id}/mcp-secrets/{name}": { status: 204 },
+      "POST /teams/{id}/mcp-servers": { status: 201, body: cloud(null) },
+    });
+    showServers();
+
+    await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "cloud");
+    await userEvent.type(
+      screen.getByRole("textbox", { name: /^url$/i }),
+      "https://cloud.example/mcp",
+    );
+    await userEvent.click(screen.getByRole("radio", { name: /oauth/i }));
+    await userEvent.click(screen.getByRole("radio", { name: /use a client you registered/i }));
+    await userEvent.type(screen.getByLabelText(/^client secret$/i), "typed-then-dropped");
+    await userEvent.click(screen.getByRole("radio", { name: /register automatically/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^register$/i }));
+
+    await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+    const writes = seen.filter((s) => s.method !== "GET");
+    expect(writes.map((s) => `${s.method} ${s.path}`)).toEqual([`POST /teams/${TEAM}/mcp-servers`]);
+    expect(String(writes[0]?.body)).not.toContain("client_secret");
+  });
+
+  it("shows the redirect URI only for a client registered by hand", async () => {
+    vi.stubGlobal("location", { ...window.location, origin: "https://dash.example" });
+    brain({ ...team(["tool:write"]), ...serving() });
+    showServers();
+
+    await userEvent.click(await screen.findByRole("button", { name: /register server/i }));
+    await userEvent.click(screen.getByRole("radio", { name: /oauth/i }));
+    await userEvent.click(screen.getByRole("radio", { name: /use a client you registered/i }));
+
+    expect(screen.getByLabelText(/^client id$/i)).toBeInTheDocument();
+    expect(screen.getByText("https://dash.example/oauth/mcp/callback")).toBeInTheDocument();
+  });
+
+  it("opens an edit on the client it already uses", async () => {
+    brain({ ...team(["tool:write"]), ...serving(gmail(null), cloud(null, "reg-1")) });
+    showServers();
+
+    await userEvent.click(await screen.findByRole("button", { name: "gmail" }));
+    let sheet = await screen.findByRole("dialog", { name: /gmail/ });
+    await userEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
+    expect(
+      await screen.findByRole("radio", { name: /use a client you registered/i }),
+    ).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    await userEvent.click(await screen.findByRole("button", { name: "cloud" }));
+    sheet = await screen.findByRole("dialog", { name: /cloud/ });
+    await userEvent.click(within(sheet).getByRole("button", { name: /^edit$/i }));
+    expect(await screen.findByRole("radio", { name: /register automatically/i })).toBeChecked();
+  });
+
+  it("says in its sheet which client was registered, and when", async () => {
+    brain({ ...team(["tool:write"]), ...serving(cloud(live, "reg-1")) });
+    showServers();
+
+    await userEvent.click(await screen.findByRole("button", { name: "cloud" }));
+    const sheet = await screen.findByRole("dialog", { name: /cloud/ });
+    expect(within(sheet).getByText(/registered automatically/i)).toBeInTheDocument();
+    expect(within(sheet).getByText("reg-1")).toBeInTheDocument();
+  });
+
+  it("registers again once confirmed, then sends the browser to sign in", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign, origin: "https://dash.example" });
+    const seen = brain({
+      ...team(["tool:write"]),
+      ...serving(cloud(live, "reg-1")),
+      "DELETE /teams/{id}/mcp-servers/{sid}/oauth/registration": { status: 204 },
+      "POST /teams/{id}/mcp-servers/{sid}/oauth/start": {
+        body: { authorize_url: "https://accounts.example/auth?state=s" },
+      },
+    });
+    showServers();
+
+    await userEvent.click(await screen.findByRole("button", { name: "cloud" }));
+    const sheet = await screen.findByRole("dialog", { name: /cloud/ });
+    await userEvent.click(within(sheet).getByRole("button", { name: /^register again$/i }));
+    expect(seen.some((s) => s.method === "DELETE")).toBe(false);
+
+    const confirm = await screen.findByRole("dialog", { name: /register cloud again/i });
+    await userEvent.click(within(confirm).getByRole("button", { name: /^register again$/i }));
+
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith("https://accounts.example/auth?state=s"),
+    );
+    expect(seen.filter((s) => s.method !== "GET").map((s) => `${s.method} ${s.path}`)).toEqual([
+      `DELETE /teams/${TEAM}/mcp-servers/m3/oauth/registration`,
+      `POST /teams/${TEAM}/mcp-servers/m3/oauth/start`,
+    ]);
+  });
+
+  it("offers no Register again for a client registered by hand", async () => {
+    brain({ ...team(["tool:write"]), ...serving(gmail(live)) });
+    showServers();
+
+    await userEvent.click(await screen.findByRole("button", { name: "gmail" }));
+    const sheet = await screen.findByRole("dialog", { name: /gmail/ });
+    expect(
+      within(sheet).queryByRole("button", { name: /register again/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers a client of its own when the server's sign-in registers nobody", async () => {
+    brain({
+      ...team(["tool:write"]),
+      ...serving(cloud(null)),
+      "POST /teams/{id}/mcp-servers/{sid}/oauth/start": {
+        status: 409,
+        text: "the server's sign-in does not let apps register themselves: register a client with it and set its client id on the server",
+      },
+    });
+    showServers();
+
+    await screen.findByRole("button", { name: "cloud" });
+    await userEvent.click(within(rowOf("cloud")).getByRole("button", { name: /^connect$/i }));
+
+    await waitFor(() => expect(toasts.error).toHaveBeenCalled());
+    const [text, options] = toasts.error.mock.calls[0] ?? [];
+    expect(text).toMatch(/can't register automatically/);
+    expect(options?.action?.label).toBe("Edit server");
+
+    options.action.onClick();
+    expect(
+      await screen.findByRole("radio", { name: /use a client you registered/i }),
+    ).toBeChecked();
+  });
+
+  it("says why any other refused Connect was refused", async () => {
+    brain({
+      ...team(["tool:write"]),
+      ...serving(cloud(null)),
+      "POST /teams/{id}/mcp-servers/{sid}/oauth/start": {
+        status: 502,
+        text: "the server's sign-in did not accept openarity's registration: redirect not allowed",
+      },
+    });
+    showServers();
+
+    await screen.findByRole("button", { name: "cloud" });
+    await userEvent.click(within(rowOf("cloud")).getByRole("button", { name: /^connect$/i }));
+
+    await waitFor(() => expect(toasts.error).toHaveBeenCalled());
+    const [text, options] = toasts.error.mock.calls[0] ?? [];
+    expect(text).toMatch(/redirect not allowed/);
+    expect(options).toBeUndefined();
+  });
+});
+
 describe("back from a sign-in", () => {
   it.each([
     ["connected", true, /gmail is connected/],
@@ -267,6 +487,7 @@ describe("back from a sign-in", () => {
     ["expired", false, /ten minutes/],
     ["refused", false, /refused/],
     ["failed", false, /could not be finished/],
+    ["unregistered", false, /no longer accepts openarity's registration/],
   ] as const)("tells %s in its own words", (outcome, ok, said) => {
     const m = outcomeMessage(outcome, "gmail");
     expect(m.ok).toBe(ok);

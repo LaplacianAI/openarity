@@ -625,7 +625,7 @@ func wantKeys(t *testing.T, what string, got map[string]bool, want ...string) {
 	}
 }
 
-var commonKeys = []string{"id", "team_id", "name", "env", "auth_kind", "connection", "bare", "discovered_at", "last_discovery_error", "last_discovery_at", "created_at", "updated_at"}
+var commonKeys = []string{"id", "team_id", "name", "env", "auth_kind", "connection", "oauth_registration", "bare", "discovered_at", "last_discovery_error", "last_discovery_at", "created_at", "updated_at"}
 
 // The wire shape is a contract. A server shows its own transport's fields and
 // never the other's, and discovered_at is present as null until discovery
