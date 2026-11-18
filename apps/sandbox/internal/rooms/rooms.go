@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/LaplacianAI/openarity/apps/sandbox/internal/docker"
 	"github.com/LaplacianAI/openarity/apps/sandbox/internal/guard"
@@ -32,6 +33,9 @@ var (
 	ErrBusy = errors.New("the sandbox is busy")
 	// ErrRefused is a spec sandboxd cannot honour. The error wrapping it says why.
 	ErrRefused = errors.New("the spec cannot be honoured")
+	// ErrUnavailable is a room that cannot be made now: its image could not be
+	// pulled. The error wrapping it names the image and says why.
+	ErrUnavailable = errors.New("the sandbox cannot do that now")
 	// ErrStarted is a start of a room that has already started.
 	ErrStarted = errors.New("the room has already started")
 )
@@ -84,6 +88,8 @@ type Engine interface {
 	StartContainer(ctx context.Context, name string) error
 	RemoveContainer(ctx context.Context, name string) error
 	ContainerID(ctx context.Context, nameOrID string) (string, error)
+	HasImage(ctx context.Context, ref string) (bool, error)
+	PullImage(ctx context.Context, ref string) error
 }
 
 // Egress is the guard.
@@ -98,8 +104,12 @@ type Service struct {
 	egress Egress
 	logger *slog.Logger
 	limits Limits
-	self   string // sandboxd's own container
-	key    []byte // derives each room's proxy token
+	self   string   // sandboxd's own container
+	key    []byte   // derives each room's proxy token
+	images []string // the repository prefixes a room's image may be under
+
+	pmu   sync.Mutex
+	pulls map[string]*pull // by image, while one is under way
 
 	mu     sync.Mutex // serialises the budget check with the create
 	selfID string
@@ -107,11 +117,122 @@ type Service struct {
 
 // New returns a service. self names sandboxd's own container, which joins
 // every room's network.
-func New(e Engine, g Egress, logger *slog.Logger, l Limits, self string, key []byte) *Service {
+//
+// images are the repository prefixes a room's image may be under: sandboxd
+// pulls and runs nothing else, so a leaked token cannot run any image.
+func New(e Engine, g Egress, logger *slog.Logger, l Limits, self string, key []byte, images []string) *Service {
 	if logger == nil {
 		panic("rooms: a nil logger")
 	}
-	return &Service{engine: e, egress: g, logger: logger, limits: l, self: self, key: key}
+	return &Service{
+		engine: e, egress: g, logger: logger, limits: l, self: self, key: key,
+		images: images, pulls: map[string]*pull{},
+	}
+}
+
+// Allowed reports whether image is under one of the repository prefixes. A
+// prefix ends at a boundary of the reference: the end, a tag, a digest or a
+// path segment, so "a/room" allows "a/room:1" and "a/room/sub" but not
+// "a/room-evil" or "a/roomx".
+func Allowed(image string, prefixes []string) bool {
+	for _, p := range prefixes {
+		rest, ok := strings.CutPrefix(image, p)
+		if !ok {
+			continue
+		}
+		switch {
+		case rest == "", rest[0] == '@', rest[0] == '/':
+			return true
+		case rest[0] == ':':
+			// a tag, unless a path follows: then it was a registry's port
+			if !strings.Contains(rest, "/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Service) allow(image string) error {
+	if !Allowed(image, s.images) {
+		return fmt.Errorf("%w: the image %q is not one this sandbox runs", ErrRefused, image)
+	}
+	return nil
+}
+
+// pull is one pull under way, which everyone who wants the image waits on.
+type pull struct {
+	done chan struct{}
+	err  error
+}
+
+// pullTimeout bounds a pull that nobody's request owns.
+const pullTimeout = 10 * time.Minute
+
+// ensureImage makes sure the daemon holds image, pulling it if not. Callers
+// for the same image share one pull. The pull outlives the request that
+// started it: if that one gives up, the others waiting on it must not fail
+// for it, and the next one finds the layers already there.
+func (s *Service) ensureImage(ctx context.Context, image string) error {
+	s.pmu.Lock()
+	p, ok := s.pulls[image]
+	if !ok {
+		p = &pull{done: make(chan struct{})}
+		s.pulls[image] = p
+		go s.runPull(ctx, image, p)
+	}
+	s.pmu.Unlock()
+	select {
+	case <-p.done:
+		return p.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Service) runPull(parent context.Context, image string, p *pull) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), pullTimeout)
+	defer cancel()
+	p.err = s.fetch(ctx, image)
+	s.pmu.Lock()
+	delete(s.pulls, image)
+	s.pmu.Unlock()
+	close(p.done)
+}
+
+// fetch checks again inside the shared pull: a caller that came just after
+// one finished finds the image and pulls nothing.
+func (s *Service) fetch(ctx context.Context, image string) error {
+	have, err := s.engine.HasImage(ctx, image)
+	if err != nil {
+		return fmt.Errorf("%w: looking for the image %q: %w", ErrUnavailable, image, err)
+	}
+	if have {
+		return nil
+	}
+	s.logger.Info("pulling an image", "image", image)
+	if err := s.engine.PullImage(ctx, image); err != nil {
+		return fmt.Errorf("%w: pulling the image %q failed: %w", ErrUnavailable, image, err)
+	}
+	return nil
+}
+
+// Warm pulls each image that is missing, one after another, and logs the
+// outcome of each. It returns when the last is done or ctx ends; a failure
+// is logged and goes no further, so a registry that is down at start does
+// not stop sandboxd serving.
+func (s *Service) Warm(ctx context.Context, images []string) {
+	for _, image := range images {
+		if err := s.allow(image); err != nil {
+			s.logger.Error("not pulling an image", "image", image, "err", err.Error())
+			continue
+		}
+		if err := s.ensureImage(ctx, image); err != nil {
+			s.logger.Error("warming an image failed", "image", image, "err", err.Error())
+			continue
+		}
+		s.logger.Info("image ready", "image", image)
+	}
 }
 
 // Token is what the proxy accepts for a room. It is derived from sandboxd's
@@ -158,6 +279,9 @@ func Validate(sp Spec) error {
 // Create makes the room's network, joins sandboxd to it, and opens the guard.
 func (s *Service) Create(ctx context.Context, sp Spec) (string, error) {
 	if err := Validate(sp); err != nil {
+		return "", err
+	}
+	if err := s.allow(sp.Image); err != nil {
 		return "", err
 	}
 	spec, err := json.Marshal(sp)
@@ -301,6 +425,14 @@ func (s *Service) Start(ctx context.Context, id string, argv []string) error {
 		if c.Name == containerName(id) {
 			return ErrStarted
 		}
+	}
+	// The room's spec is on the daemon, so it outlives a change to the allowed
+	// images: check again here.
+	if err := s.allow(sp.Image); err != nil {
+		return err
+	}
+	if err := s.ensureImage(ctx, sp.Image); err != nil {
+		return err
 	}
 	ct := Harden(id, sp, argv, m.IPv4, s.limits)
 	if _, err := s.engine.CreateContainer(ctx, containerName(id), ct); err != nil {

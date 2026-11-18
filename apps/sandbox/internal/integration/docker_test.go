@@ -38,6 +38,9 @@ const (
 	shimTok  = "integration-shim-token"
 	roomImg  = "sandboxd-it-room:test"
 	sbdImg   = "sandboxd-it:test"
+	// pullRepo is a small public image the pull test removes and sandboxd
+	// fetches again.
+	pullRepo = "docker.io/library/alpine"
 )
 
 var built sync.Once
@@ -114,6 +117,7 @@ func setup(t *testing.T, memoryBudget string) *env {
 		"-e", "SANDBOXD_PUBLIC_URL="+e.base,
 		"-e", "SANDBOXD_DOCKER_SOCKET=/var/run/docker.sock",
 		"-e", "SANDBOXD_MEMORY_BUDGET="+memoryBudget,
+		"-e", "SANDBOXD_IMAGES=sandboxd-it-room,"+pullRepo,
 		sbdImg)
 	t.Cleanup(func() {
 		if t.Failed() {

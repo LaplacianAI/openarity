@@ -107,7 +107,7 @@ func runServe(ctx context.Context, cmd command, logger *slog.Logger) error {
 		return fmt.Errorf("the Docker daemon at %s: %w", s.socket, err)
 	}
 	g := guard.New(logger)
-	svc := rooms.New(engine, g, logger, s.limits, s.self, []byte(s.token))
+	svc := rooms.New(engine, g, logger, s.limits, s.self, []byte(s.token), s.images)
 	if err := svc.Reconcile(ctx); err != nil {
 		return fmt.Errorf("finding the rooms again: %w", err)
 	}
@@ -122,6 +122,8 @@ func runServe(ctx context.Context, cmd command, logger *slog.Logger) error {
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(l) }()
 	logger.Info("sandboxd serving", "addr", l.Addr().String())
+	// Warming never delays serving, and a failure of it is only logged.
+	go svc.Warm(ctx, s.pull)
 
 	var end error
 	select {
