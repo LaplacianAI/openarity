@@ -10,12 +10,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
+	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/keeper"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -41,11 +45,13 @@ type Ensurer interface {
 
 // Rooms runs command servers in their team's sandbox.
 type Rooms struct {
-	keeper Ensurer
+	keeper  Ensurer
+	secrets secrets.Store
 }
 
-func New(k Ensurer) *Rooms {
-	return &Rooms{keeper: k}
+// New takes the secret store a server's env references are read from.
+func New(k Ensurer, sec secrets.Store) *Rooms {
+	return &Rooms{keeper: k, secrets: sec}
 }
 
 // Ensure is the endpoint of the server's room, its address at /mcp and the
@@ -53,6 +59,9 @@ func New(k Ensurer) *Rooms {
 func (r *Rooms) Ensure(ctx context.Context, team uuid.UUID, s db.McpServer) (sandbox.Endpoint, error) {
 	w, err := Want(s)
 	if err != nil {
+		return sandbox.Endpoint{}, err
+	}
+	if w.Secrets, err = r.resolve(ctx, s); err != nil {
 		return sandbox.Endpoint{}, err
 	}
 	return r.keeper.Ensure(ctx, keeper.Owner{Kind: OwnerKind, ID: s.ID}, team, w)
@@ -105,4 +114,35 @@ func unmarshalOrEmpty(b []byte, v any) error {
 		return nil
 	}
 	return json.Unmarshal(b, v)
+}
+
+// resolve reads each of the server's env references, path#key, from the
+// secret store: the values the command reads, such as a mailbox's password.
+// An error names the variable and never its value.
+func (r *Rooms) resolve(ctx context.Context, s db.McpServer) (map[string]string, error) {
+	var refs map[string]string
+	if err := unmarshalOrEmpty(s.Env, &refs); err != nil {
+		return nil, fmt.Errorf("reading the server's env: %w", err)
+	}
+	if len(refs) == 0 {
+		return nil, nil
+	}
+
+	out := make(map[string]string, len(refs))
+	for _, name := range slices.Sorted(maps.Keys(refs)) {
+		ref := refs[name]
+		i := strings.LastIndexByte(ref, '#')
+		if i < 0 {
+			return nil, fmt.Errorf("env %s is not a path#key reference", name)
+		}
+		v, err := r.secrets.Get(ctx, ref[:i], ref[i+1:])
+		if err == nil && v == "" {
+			err = secrets.ErrNotFound
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading env %s: %w", name, err)
+		}
+		out[name] = v
+	}
+	return out, nil
 }

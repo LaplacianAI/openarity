@@ -15,6 +15,7 @@ package keeper
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -73,8 +74,13 @@ type Want struct {
 	// Argv is the command the room runs, in the background.
 	Argv []string
 	// Env is the environment of the command; the token is added to it.
-	Env    map[string]string
-	Egress []sandbox.HostPort
+	Env map[string]string
+	// Secrets are more of the environment, whose values are secrets: they
+	// reach the room as Env does, but the stored spec hash holds them only as
+	// an HMAC keyed by the room's own token, never as a digest anyone with
+	// the database could test a guessed password against.
+	Secrets map[string]string `json:"-"`
+	Egress  []sandbox.HostPort
 	// Port is the room's port that is served, Path the part of its address
 	// that callers use, and HealthPath what answers 200 when it is ready.
 	Port       int
@@ -211,10 +217,6 @@ func (k *Keeper) ensure(ctx context.Context, o Owner, team uuid.UUID, w Want) (s
 	}
 
 	w.Image = k.image(w, cfg)
-	hash, err := specHash(w)
-	if err != nil {
-		return sandbox.Endpoint{}, err
-	}
 
 	old, err := k.store.GetSandboxRoom(ctx, db.GetSandboxRoomParams{OwnerKind: o.Kind, OwnerID: o.ID})
 	var row *db.SandboxRoom
@@ -226,12 +228,12 @@ func (k *Keeper) ensure(ctx context.Context, o Owner, team uuid.UUID, w Want) (s
 	}
 
 	if row != nil {
-		if ep, ok, err := k.reuse(ctx, rooms, row, cfg, hash, team, w); err != nil || ok {
+		if ep, ok, err := k.reuse(ctx, rooms, row, cfg, team, w); err != nil || ok {
 			return ep, err
 		}
 		k.discard(ctx, rooms, row, cfg)
 	}
-	return k.start(ctx, rooms, row, o, team, cfg, hash, w)
+	return k.start(ctx, rooms, row, o, team, cfg, w)
 }
 
 // reuse is the owner's room as it is, when it is the one wanted and it
@@ -240,9 +242,9 @@ func (k *Keeper) ensure(ctx context.Context, o Owner, team uuid.UUID, w Want) (s
 // room on a provider that is only down would pile up rooms.
 func (k *Keeper) reuse(
 	ctx context.Context, rooms sandbox.Rooms, row *db.SandboxRoom, cfg teamSandbox,
-	hash string, team uuid.UUID, w Want,
+	team uuid.UUID, w Want,
 ) (sandbox.Endpoint, bool, error) {
-	if row.SpecHash != hash || !cfg.owns(row) {
+	if !cfg.owns(row) {
 		return sandbox.Endpoint{}, false, nil
 	}
 
@@ -252,6 +254,9 @@ func (k *Keeper) reuse(
 	}
 	if err != nil {
 		return sandbox.Endpoint{}, false, fmt.Errorf("reading the room's token: %w", err)
+	}
+	if hash, err := specHash(w, token); err != nil || row.SpecHash != hash {
+		return sandbox.Endpoint{}, false, err
 	}
 
 	base, err := rooms.URL(ctx, row.RoomID, w.Port)
@@ -295,10 +300,14 @@ func (k *Keeper) discard(ctx context.Context, rooms sandbox.Rooms, row *db.Sandb
 // so is its token: nothing is left behind by a start that failed.
 func (k *Keeper) start(
 	ctx context.Context, rooms sandbox.Rooms, old *db.SandboxRoom, o Owner, team uuid.UUID,
-	cfg teamSandbox, hash string, w Want,
+	cfg teamSandbox, w Want,
 ) (sandbox.Endpoint, error) {
 	id := uuid.New()
 	token, err := newToken()
+	if err != nil {
+		return sandbox.Endpoint{}, err
+	}
+	hash, err := specHash(w, token)
 	if err != nil {
 		return sandbox.Endpoint{}, err
 	}
@@ -335,8 +344,11 @@ func (k *Keeper) start(
 }
 
 func (k *Keeper) create(ctx context.Context, rooms sandbox.Rooms, o Owner, team uuid.UUID, w Want, token string) (string, error) {
-	env := make(map[string]string, len(w.Env)+1)
+	env := make(map[string]string, len(w.Env)+len(w.Secrets)+1)
 	for name, v := range w.Env {
+		env[name] = v
+	}
+	for name, v := range w.Secrets {
 		env[name] = v
 	}
 	// Set last, so nothing a caller passes can replace it.
@@ -532,13 +544,26 @@ func join(base, path string) string {
 // stored, and a room is reused only while it equals what is wanted now. The
 // encoding is JSON of a struct, whose maps encoding/json writes in key order,
 // so the same Want always gives the same digest.
-func specHash(w Want) (string, error) {
+//
+// The secrets are in it as an HMAC keyed by the room's token, which lives in
+// the secret store: a rotated secret still replaces the room, and the
+// database alone cannot confirm a guess at one.
+func specHash(w Want, token string) (string, error) {
 	b, err := json.Marshal(w)
 	if err != nil {
 		return "", fmt.Errorf("hashing what the room is made from: %w", err)
 	}
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:]), nil
+	s, err := json.Marshal(w.Secrets)
+	if err != nil {
+		return "", fmt.Errorf("hashing what the room is made from: %w", err)
+	}
+	mac := hmac.New(sha256.New, []byte(token))
+	mac.Write(s)
+
+	h := sha256.New()
+	h.Write(b)
+	h.Write(mac.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func newToken() (string, error) {

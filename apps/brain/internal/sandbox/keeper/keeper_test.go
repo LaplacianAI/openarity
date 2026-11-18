@@ -281,6 +281,7 @@ func TestAChangedSpecReplacesTheRoom(t *testing.T) {
 	changes := map[string]func(*keeper.Want){
 		"argv":   func(w *keeper.Want) { w.Argv = append(w.Argv, "--verbose") },
 		"env":    func(w *keeper.Want) { w.Env = map[string]string{"IMAP_HOST": "other.example"} },
+		"secret": func(w *keeper.Want) { w.Secrets = map[string]string{"EMAIL_PASS": "rotated"} },
 		"egress": func(w *keeper.Want) { w.Egress = nil },
 		"image":  func(w *keeper.Want) { w.Image = "registry.example/other:1" },
 		"port":   func(w *keeper.Want) { w.Port = 9999 },
@@ -315,6 +316,47 @@ func TestAChangedSpecReplacesTheRoom(t *testing.T) {
 				t.Errorf("the old token has %d tombstones, want 1", n)
 			}
 		})
+	}
+}
+
+// A secret reaches the room's environment beside the settings, and the token
+// is still the room's own.
+func TestASecretReachesTheRoom(t *testing.T) {
+	t.Parallel()
+
+	w := newWorld(t)
+	k := w.keeper()
+	ws := want()
+	ws.Secrets = map[string]string{"EMAIL_PASS": "hunter2", tokenEnv: "forged"}
+	w.ensure(k, ws)
+
+	created := w.rooms.Created()
+	if len(created) != 1 {
+		t.Fatalf("created %d rooms, want 1", len(created))
+	}
+	env := created[0].Env
+	if env["EMAIL_PASS"] != "hunter2" || env["IMAP_HOST"] != "imap.example" {
+		t.Errorf("env = %v, want the secret beside the settings", env)
+	}
+	if env[tokenEnv] == "forged" {
+		t.Error("a secret named like the token replaced it")
+	}
+}
+
+// The stored hash holds the secrets keyed by each room's own token, so two
+// rooms made from the same settings and password store different hashes, and
+// the database cannot be used to test a guess at the password.
+func TestTheStoredHashIsKeyedByTheRoom(t *testing.T) {
+	t.Parallel()
+
+	ws := want()
+	ws.Secrets = map[string]string{"EMAIL_PASS": "hunter2"}
+	a, b := newWorld(t), newWorld(t)
+	a.ensure(a.keeper(), ws)
+	b.ensure(b.keeper(), ws)
+
+	if rowOf(t, a).SpecHash == rowOf(t, b).SpecHash {
+		t.Error("two rooms with the same secret stored the same hash")
 	}
 }
 

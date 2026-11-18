@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/keeper"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -107,9 +109,9 @@ func TestTheServersSettingsAndEgressAreTheRoomsOwn(t *testing.T) {
 	}
 }
 
-// What a server holds as references to secrets is not put in the room; only
-// what it holds as plain settings is.
-func TestSecretReferencesAreNotPutInTheRoom(t *testing.T) {
+// Want is pure: a server's env references are not settings, so they are
+// not in its Env; Ensure resolves them into Secrets.
+func TestSecretReferencesAreNotSettings(t *testing.T) {
 	t.Parallel()
 
 	s := server("uvx", "pkg")
@@ -121,6 +123,65 @@ func TestSecretReferencesAreNotPutInTheRoom(t *testing.T) {
 	}
 	if _, ok := w.Env["PASSWORD"]; ok {
 		t.Errorf("env = %v, holds a reference's variable", w.Env)
+	}
+}
+
+// fakeSecrets answers path#key from a map, and counts what it was asked.
+type fakeSecrets map[string]string
+
+func (f fakeSecrets) Get(_ context.Context, path, key string) (string, error) {
+	v, ok := f[path+"#"+key]
+	if !ok {
+		return "", secrets.ErrNotFound
+	}
+	return v, nil
+}
+
+// The room is given what the server's references name, as secrets, so the
+// command can read its password and the keeper never stores it as a setting.
+func TestEnsureGivesTheRoomTheServersSecrets(t *testing.T) {
+	t.Parallel()
+
+	k := &recordingKeeper{}
+	s := server("npx", "mail-mcp")
+	s.Env = []byte(`{"EMAIL_PASS":"teams/t/mcp/gmail#app_password"}`)
+
+	if _, err := New(k, fakeSecrets{"teams/t/mcp/gmail#app_password": "hunter2"}).Ensure(t.Context(), s.TeamID, s); err != nil {
+		t.Fatal(err)
+	}
+	if k.want.Secrets["EMAIL_PASS"] != "hunter2" {
+		t.Errorf("secrets = %v, want EMAIL_PASS resolved", k.want.Secrets)
+	}
+	if _, ok := k.want.Env["EMAIL_PASS"]; ok {
+		t.Error("the secret is in Env, which the spec hash holds in the clear")
+	}
+}
+
+// A reference that names nothing, or names an empty value, stops the start
+// before the keeper is asked, and the error names the variable, not a value.
+func TestEnsureRefusesASecretItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	for name, env := range map[string]string{
+		"missing": `{"EMAIL_PASS":"teams/t/mcp/gmail#app_password"}`,
+		"empty":   `{"EMAIL_PASS":"teams/t/mcp/gmail#empty"}`,
+		"not ref": `{"EMAIL_PASS":"hunter2"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			k := &recordingKeeper{}
+			s := server("npx", "mail-mcp")
+			s.Env = []byte(env)
+
+			_, err := New(k, fakeSecrets{"teams/t/mcp/gmail#empty": ""}).Ensure(t.Context(), s.TeamID, s)
+			if err == nil || !strings.Contains(err.Error(), "EMAIL_PASS") || strings.Contains(err.Error(), "hunter2") {
+				t.Errorf("err = %v, want one naming EMAIL_PASS and no value", err)
+			}
+			if k.owner != (keeper.Owner{}) {
+				t.Error("the keeper was asked")
+			}
+		})
 	}
 }
 
@@ -155,7 +216,7 @@ func TestEnsureAsksTheKeeperForTheServersRoom(t *testing.T) {
 	k := &recordingKeeper{ep: sandbox.Endpoint{URL: "https://room.example/mcp"}}
 	s := server("uvx", "pkg")
 
-	ep, err := New(k).Ensure(t.Context(), s.TeamID, s)
+	ep, err := New(k, fakeSecrets{}).Ensure(t.Context(), s.TeamID, s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +229,7 @@ func TestEnsureAsksTheKeeperForTheServersRoom(t *testing.T) {
 	}
 
 	k.err = sandbox.ErrNoProvider
-	if _, err := New(k).Ensure(t.Context(), s.TeamID, s); !errors.Is(err, sandbox.ErrNoProvider) {
+	if _, err := New(k, fakeSecrets{}).Ensure(t.Context(), s.TeamID, s); !errors.Is(err, sandbox.ErrNoProvider) {
 		t.Errorf("err = %v, want the keeper's", err)
 	}
 }
@@ -178,7 +239,7 @@ func TestEnsureRefusesAServerWithNoCommandBeforeAskingTheKeeper(t *testing.T) {
 
 	k := &recordingKeeper{}
 	s := server()
-	if _, err := New(k).Ensure(t.Context(), s.TeamID, s); !errors.Is(err, ErrNotACommand) {
+	if _, err := New(k, fakeSecrets{}).Ensure(t.Context(), s.TeamID, s); !errors.Is(err, ErrNotACommand) {
 		t.Errorf("err = %v, want ErrNotACommand", err)
 	}
 	if k.owner != (keeper.Owner{}) {

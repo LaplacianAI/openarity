@@ -91,7 +91,7 @@ type roomSecrets struct {
 // sandbox. When there is no keeper it leaves it refusing them.
 func runCommandsInRooms(d *discovery.Discoverer, cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store) {
 	if k := newKeeper(cfg, logger, dbStore, secretStore); k != nil {
-		d.RunsCommandsIn(mcproom.New(k))
+		d.RunsCommandsIn(mcproom.New(k, secretStore))
 	}
 }
 
