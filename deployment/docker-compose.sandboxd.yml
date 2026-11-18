@@ -3,72 +3,77 @@
 # reaches the server through it. Nothing here is needed unless a team chooses
 # sandboxd as its sandbox provider.
 #
-#   cd deployment
-#   cp .env.example .env                        # then fill in the sandboxd block below
-#   docker compose -f docker-compose.yml -f docker-compose.sandboxd.yml up -d
-#
-# Variables, in deployment/.env:
-#
-#   SANDBOXD_TOKEN=<a long random string>   # what the brain sends; required
-#   SANDBOXD_UID=1000                       # the user that owns the daemon's socket
-#   SANDBOXD_DOCKER_SOCKET=/run/user/1000/docker.sock   # the rootless daemon's socket
-#   SANDBOXD_MEMORY_BUDGET=3221225472       # bytes, across every room; default 3 GiB
-#   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.242/32
+# It is a project of its own, not an overlay on the brain's: the brain reaches
+# sandboxd only at the URL a team saves in its settings, as it reaches E2B or
+# Daytona, and sandboxd proxies every request to a room itself. So sandboxd
+# runs on a rootless Docker daemon while the brain's stack stays where it is,
+# on this machine or another.
 #
 # ROOTLESS DOCKER, ONCE, ON THE HOST
 #
 # sandboxd makes containers from what a team's server asks for, so whoever can
 # reach the daemon's socket can run containers on it. Point it at a rootless
-# Docker daemon, never the system one: in a rootless daemon, root inside a
-# container is an unprivileged user on the host, so an escape from a room
-# lands in an account with no more rights than the one running the daemon.
-# sandboxd already drops every capability, runs rooms as 65534 on a read-only
-# root with no new privileges; a rootless daemon is what makes a bug in that
-# list survivable. Setup, as the user that will own it (not root):
+# daemon owned by a user of its own, never the system daemon and never a user
+# in the docker group: in a rootless daemon, root inside a container is an
+# unprivileged user on the host, so an escape from a room lands in an account
+# with no more rights than that user's. sandboxd already drops every
+# capability and runs rooms as 65534 on a read-only root with no new
+# privileges; the rootless daemon is what makes a bug in that list survivable.
 #
+#   sudo useradd --create-home --shell /bin/bash sandboxd
 #   sudo apt-get install -y docker-ce-rootless-extras uidmap
+#   sudo loginctl enable-linger sandboxd      # keep its daemon running after logout
+#   sudo -iu sandboxd
 #   dockerd-rootless-setuptool.sh install
 #   systemctl --user enable --now docker
-#   sudo loginctl enable-linger "$USER"      # keep it running after logout
-#   echo "$XDG_RUNTIME_DIR/docker.sock"      # SANDBOXD_DOCKER_SOCKET
+#   export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
 #
-# Run the whole stack on that daemon, not just this file:
+# THEN, AS THAT USER, IN ITS OWN CHECKOUT
 #
-#   DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock docker compose -f ... up -d
+#   git clone https://github.com/LaplacianAI/openarity.git && cd openarity/deployment
+#   docker pull ghcr.io/laplacianai/openarity-sandbox:latest   # the room image; sandboxd never pulls
+#   docker compose -f docker-compose.sandboxd.yml up -d --build
+#   curl -s http://$SANDBOXD_BIND:9090/healthz                 # 200
 #
-# That is required, not a preference. sandboxd's own container has to join
-# each room's network (that is how a room reaches the one thing it may dial,
-# sandboxd's egress guard), and a container can only join a network of the
-# daemon it runs on. Rootless daemons cannot bind ports below 1024 and have
-# slower networking than the system one; the stack uses neither.
+# Variables, in that checkout's deployment/.env:
+#
+#   SANDBOXD_TOKEN=<openssl rand -hex 32>   # what the brain sends; required
+#   SANDBOXD_BIND=<a private address>       # where the brain reaches it; required
+#   SANDBOXD_UID=<id -u>                     # the user that owns the daemon's socket
+#   SANDBOXD_DOCKER_SOCKET=/run/user/<uid>/docker.sock
+#   SANDBOXD_MEMORY_BUDGET=1610612736        # bytes, across every room; default 3 GiB
+#
+# SANDBOXD_BIND is an address the brain's containers can reach and the
+# internet cannot: a private interface or a tailnet address, never 0.0.0.0.
+# Every route but /healthz needs the token, but the token is no reason to
+# expose the port.
+#
+# IN THE BRAIN'S deployment/.env
 #
 # The brain refuses to dial a private address unless MCP_PRIVATE_NETWORKS
-# names it, and a container's address is private. Naming the compose network
-# would also open Postgres and OpenBao to any URL a team saves, so sandboxd
-# sits on a network of its own at a fixed address, shared only with the brain
-# and the worker, and only that address is named:
+# names it. Name sandboxd's address alone, beside any other already there:
 #
-#   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.242/32
+#   OPENARITY_MCP_PRIVATE_NETWORKS=<SANDBOXD_BIND>/32
 #
-# The worker dials a room's shim (that is where the agents run) and the brain
-# dials it for discovery, so both are on the network. The brain reaches
-# sandboxd at http://sandboxd:9090 with SANDBOXD_TOKEN, and is told each
-# room's proxy address by sandboxd itself.
+# and a team chooses it in Settings -> Sandbox, or:
+#
+#   printf %s "$SANDBOXD_TOKEN" | oa teams settings set <team> \
+#       --sandbox sandboxd --sandbox-url http://<SANDBOXD_BIND>:9090 --sandbox-key-stdin
+#
+# with ghcr.io/laplacianai/openarity-sandbox:latest as its sandbox image.
 #
 # Memory is budgeted: a room gets 256 MiB, and a create that would take the
-# running rooms past SANDBOXD_MEMORY_BUDGET is refused with 503. Rooms are
-# removed by the brain; if sandboxd is restarted its rooms keep running, and
-# it finds them again from the daemon's labels.
+# rooms past SANDBOXD_MEMORY_BUDGET is refused with 503. Rooms are removed by
+# the brain; if sandboxd is restarted its rooms keep running, and it finds
+# them again from the daemon's labels.
 #
 # A room can reach sandboxd's port on its own network, as it can reach
 # nothing else; every route needs a token a room does not have.
 
-name: openarity
+name: openarity-sandboxd
 
 services:
   sandboxd:
-    # Built from apps/sandbox; the `room` target of the same Dockerfile makes a
-    # room image with Node and the shim in it.
     build:
       context: ../apps/sandbox
       target: sandboxd
@@ -78,7 +83,8 @@ services:
     user: "${SANDBOXD_UID:-1000}"
     environment:
       SANDBOXD_TOKEN: ${SANDBOXD_TOKEN:?set SANDBOXD_TOKEN in deployment/.env}
-      SANDBOXD_PUBLIC_URL: http://sandboxd:9090
+      # Where the brain reaches it, and so the base of every room's proxy URL.
+      SANDBOXD_PUBLIC_URL: http://${SANDBOXD_BIND:?set SANDBOXD_BIND in deployment/.env}:9090
       SANDBOXD_DOCKER_SOCKET: /var/run/docker.sock
       SANDBOXD_MEMORY_BUDGET: ${SANDBOXD_MEMORY_BUDGET:-3221225472}
       # sandboxd joins every room's network as this container.
@@ -86,35 +92,11 @@ services:
     container_name: openarity-sandboxd
     volumes:
       - ${SANDBOXD_DOCKER_SOCKET:?set SANDBOXD_DOCKER_SOCKET in deployment/.env}:/var/run/docker.sock
-    networks:
-      sandbox:
-        ipv4_address: 172.31.255.242
-    # No published port: only the brain and the worker reach it, on `sandbox`.
+    ports:
+      - "${SANDBOXD_BIND}:9090:9090"
     # distroless has no shell or wget, so the probe is the binary itself being
     # up; compose restarts it if it exits, and a bad socket makes it exit.
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-
-  brain:
-    networks:
-      - default
-      - sandbox
-
-  worker:
-    networks:
-      - default
-      - sandbox
-
-networks:
-  # A /29 holds six addresses: the gateway, sandboxd, the brain and the
-  # worker, with room for either to be recreated without waiting for its old
-  # address. If it collides with a network on this machine, change both the
-  # subnet and sandboxd's address, and the /32 in MCP_PRIVATE_NETWORKS with
-  # them. It is next to the SearXNG network, 172.31.255.248/29, so the two
-  # overlays can run together.
-  sandbox:
-    ipam:
-      config:
-        - subnet: 172.31.255.240/29
