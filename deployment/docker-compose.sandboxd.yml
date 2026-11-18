@@ -72,7 +72,7 @@
 #   printf %s "$SANDBOXD_TOKEN" | oa teams settings set <team> \
 #       --sandbox sandboxd --sandbox-url http://<SANDBOXD_BIND>:9090 --sandbox-key-stdin
 #
-# with ghcr.io/laplacianai/openarity-sandbox:latest as its sandbox image.
+# The brain chooses the image; a team never names one.
 #
 # Memory is budgeted: a room gets 256 MiB, and a create that would take the
 # rooms past SANDBOXD_MEMORY_BUDGET is refused with 503. Rooms are removed by

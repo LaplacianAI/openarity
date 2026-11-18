@@ -237,17 +237,16 @@ system daemon (openarity, CI deploys here)     rootless daemon (sandboxd)
 
    The next deploy, or `make staging`, picks it up.
 
-4. A team chooses it in Settings → Sandbox (sandboxd, the address, the token,
-   and `ghcr.io/laplacianai/openarity-sandbox:latest` as the image), or:
+4. A team chooses it in Settings → Sandbox (sandboxd, the address and the
+   token; the brain chooses the image), or:
 
    ```sh
    printf %s "$SANDBOXD_TOKEN" | oa teams settings set <team> \
-       --sandbox sandboxd --sandbox-url "http://<SANDBOXD_BIND>:9090" \
-       --sandbox-image ghcr.io/laplacianai/openarity-sandbox:latest --sandbox-key-stdin
+       --sandbox sandboxd --sandbox-url "http://<SANDBOXD_BIND>:9090" --sandbox-key-stdin
    ```
 
-To update it, pull its checkout and `up -d --build` again; a room image that
-a team's setting now names is pulled by the next room that uses it. A pull request deployed to staging can read the brain's environment,
+To update it, pull its checkout and `up -d --build` again; a newer room image
+is pulled by the first room that needs it. A pull request deployed to staging can read the brain's environment,
 the sandboxd token among the team's secrets with it, and so can make rooms:
 keep the budget small and the token staging's own.
 
