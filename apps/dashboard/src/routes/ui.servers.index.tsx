@@ -130,15 +130,14 @@ function useConnect(teamId: string, server: MCPServer) {
 }
 
 /**
- * What needs the reader: servers whose last discovery failed, else the URL
- * servers nobody has asked, whose tools no one here has seen. A command
- * server cannot be asked, so it is not counted.
+ * What needs the reader: servers whose last discovery failed, else the
+ * servers nobody has asked, whose tools no one here has seen.
  */
 export function serversFinding(failing: number, rows: MCPServer[]): string | null {
   if (failing > 0) {
     return `${count(failing, "server")} failed ${failing === 1 ? "its" : "their"} last discovery.`;
   }
-  const unasked = rows.filter((s) => s.url && discoveryOf(s) === "not discovered").length;
+  const unasked = rows.filter((s) => discoveryOf(s) === "not discovered").length;
   if (unasked === 0) return null;
   return `${count(unasked, "server")} ${unasked === 1 ? "has" : "have"} never been asked for ${unasked === 1 ? "its" : "their"} tools.`;
 }
@@ -381,7 +380,7 @@ function ServerRow({
       </TableCell>
       {canWrite ? (
         <TableCell className="text-right">
-          {/* The brain reaches a URL to ask; it does not start a command to. */}
+          {/* A command server is asked in the team's sandbox, which starts it. */}
           {signIn && signIn !== "connected" ? (
             <Button
               variant="outline"
@@ -391,7 +390,7 @@ function ServerRow({
             >
               {signIn === "needs sign-in" ? "Reconnect" : "Connect"}
             </Button>
-          ) : server.url ? (
+          ) : (
             <Button
               variant="outline"
               size="sm"
@@ -400,10 +399,6 @@ function ServerRow({
             >
               Discover
             </Button>
-          ) : (
-            <span className="text-xs whitespace-nowrap text-muted-foreground">
-              Not run by the brain: use an HTTP bridge
-            </span>
           )}
         </TableCell>
       ) : null}
@@ -490,25 +485,23 @@ function ServerDetail({
         <h3 id="server-discovery" className="text-sm font-medium">
           Discovery
         </h3>
-        {server.url ? (
-          <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
-            <StatusPill status={discoveryOf(server)} className="text-sm text-foreground" />
-            {tried ? (
-              <span>
-                last tried <Time iso={tried} />
-              </span>
-            ) : (
-              <span>Never tried.</span>
-            )}
-          </p>
-        ) : (
+        <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+          <StatusPill status={discoveryOf(server)} className="text-sm text-foreground" />
+          {tried ? (
+            <span>
+              last tried <Time iso={tried} />
+            </span>
+          ) : (
+            <span>Never tried.</span>
+          )}
+        </p>
+        {server.command ? (
           <p className="text-sm text-muted-foreground">
-            The brain does not run command servers, so this one is never asked for its tools. Run it
-            behind a stdio-to-HTTP bridge, such as Supergateway, and register the bridge's URL as a
-            server instead.
+            It runs in the team's sandbox, chosen in Settings. The first discovery starts it, which
+            can take a minute and a half.
           </p>
-        )}
-        {server.url && server.last_discovery_error ? (
+        ) : null}
+        {server.last_discovery_error ? (
           // The brain's words, as the caller was told them.
           <p className="rounded-lg bg-failed/8 px-3 py-2 font-mono text-xs text-failed">
             {server.last_discovery_error}
@@ -581,7 +574,7 @@ function ServerDetail({
         <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-rule pt-4">
           {/* A server that signs in has nothing to say until it is connected:
               Connect, above, is what finds its tools. */}
-          {server.url && (signInOf(server) ?? "connected") === "connected" ? (
+          {(signInOf(server) ?? "connected") === "connected" ? (
             <Button
               variant="outline"
               loading={discover.isPending}

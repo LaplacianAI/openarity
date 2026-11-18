@@ -155,9 +155,6 @@ export function AgentForm({
     ...new Set([teamModel, ...names.agents.map((a) => a.model?.name)].filter(Boolean)),
   ] as string[];
   const modelsId = useId();
-  // A command server has no address to reach, and the brain does not start one
-  // yet, so granting it grants nothing. Known from the team's first page.
-  const commandServers = new Set(names.servers.filter((x) => x.command).map((x) => x.id));
   // Names learned from a pick, so a chip says what it is before any read.
   const [learned, setLearned] = useState<Map<string, string>>(new Map());
   const learn = (picked: Picked[]) =>
@@ -297,10 +294,7 @@ export function AgentForm({
             searchKey={["mcp-servers", teamId, drafted?.servers ?? []]}
             extra={(p) =>
               // Not created yet, so it has no tools to limit: granted whole.
-              isDraftId(p.id) ? null : commandServers.has(p.id) ? (
-                // Granted, but a run starts without it: said on the chip itself.
-                <span className="px-1 text-warning">not run by the brain</span>
-              ) : (
+              isDraftId(p.id) ? null : (
                 <ToolLimit
                   teamId={teamId}
                   server={p}
@@ -312,12 +306,6 @@ export function AgentForm({
               )
             }
           />
-          {servers.some((p) => commandServers.has(p.id)) ? (
-            <p className="mt-1.5 text-xs text-muted-foreground">
-              The brain does not run command servers, so a run of this agent starts without them.
-              Register each through an HTTP bridge instead.
-            </p>
-          ) : null}
         </div>
         <div>
           <p className="mb-1.5 text-sm font-medium">Skills</p>
