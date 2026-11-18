@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	sandboxpkg "github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -32,7 +33,13 @@ func validate(req settingsRequest, stored *db.TeamSetting, allow func(netip.Addr
 	if req.CompactionMessages < minCompaction || req.CompactionMessages > maxCompaction {
 		return fmt.Errorf("compaction_messages must be between %d and %d", minCompaction, maxCompaction)
 	}
-	return checkSearch(req.Search, stored, allow)
+	if err := checkSearch(req.Search, stored, allow); err != nil {
+		return err
+	}
+	if req.Sandbox != nil {
+		return checkSandbox(*req.Sandbox, stored, allow)
+	}
+	return nil
 }
 
 func checkModel(m modelRef) error {
@@ -64,12 +71,12 @@ func checkSearch(s searchRequest, stored *db.TeamSetting, allow func(netip.Addr)
 		if s.URL == nil {
 			return errors.New("search.url is required for searxng")
 		}
-		return checkSelfHostedURL(*s.URL, allow)
+		return checkSelfHostedURL("search", *s.URL, allow)
 	case providerFirecrawlOSS:
 		if s.URL == nil {
 			return errors.New("search.url is required for firecrawl-oss")
 		}
-		if err := checkSelfHostedURL(*s.URL, allow); err != nil {
+		if err := checkSelfHostedURL("search", *s.URL, allow); err != nil {
 			return err
 		}
 		if s.APIKey == nil {
@@ -82,7 +89,7 @@ func checkSearch(s searchRequest, stored *db.TeamSetting, allow func(netip.Addr)
 		if *s.APIKey == "" {
 			return nil
 		}
-		return checkKey(*s.APIKey)
+		return checkKey("search", *s.APIKey)
 	case providerBrave, providerTavily, providerFirecrawlCloud:
 		if s.URL != nil {
 			return errUnwantedURL
@@ -93,7 +100,7 @@ func checkSearch(s searchRequest, stored *db.TeamSetting, allow func(netip.Addr)
 			}
 			return fmt.Errorf("search.api_key is required: no %s key is saved", s.Provider)
 		}
-		return checkKey(*s.APIKey)
+		return checkKey("search", *s.APIKey)
 	default:
 		return errors.New("search.provider must be none, searxng, brave, tavily, firecrawl-cloud or firecrawl-oss")
 	}
@@ -116,34 +123,82 @@ func sameURL(a, b *string) bool {
 	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
-func checkKey(key string) error {
+func checkKey(field, key string) error {
 	switch {
 	case key == "":
-		return errors.New("search.api_key must not be empty")
+		return fmt.Errorf("%s.api_key must not be empty", field)
 	case len(key) > maxKeyBytes:
-		return fmt.Errorf("search.api_key must be at most %d bytes", maxKeyBytes)
+		return fmt.Errorf("%s.api_key must be at most %d bytes", field, maxKeyBytes)
 	case strings.ContainsRune(key, 0):
-		return errors.New("search.api_key must not contain a NUL character")
+		return fmt.Errorf("%s.api_key must not contain a NUL character", field)
 	}
 	return nil
 }
 
-func checkSelfHostedURL(raw string, allow func(netip.Addr) bool) error {
+func checkSelfHostedURL(field, raw string, allow func(netip.Addr) bool) error {
 	u, err := url.Parse(raw)
 	switch {
 	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "":
-		return errors.New("search.url must be an http or https URL with a host")
+		return fmt.Errorf("%s.url must be an http or https URL with a host", field)
 	case u.User != nil:
-		return errors.New("search.url must not carry credentials")
+		return fmt.Errorf("%s.url must not carry credentials", field)
 	case u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
-		return errors.New("search.url must not have a query or a fragment")
+		return fmt.Errorf("%s.url must not have a query or a fragment", field)
 	}
 
 	if addr, err := netip.ParseAddr(u.Hostname()); err == nil {
 		addr = addr.Unmap()
 		if addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || !allow(addr) {
-			return errors.New("search.url must not point at a private, loopback or link-local address")
+			return fmt.Errorf("%s.url must not point at a private, loopback or link-local address", field)
 		}
 	}
 	return nil
+}
+
+const maxImageBytes = 512
+
+// checkSandbox is where the team's command servers run. Every provider takes
+// a key; sandboxd also its URL, Daytona one when self-hosted, E2B none. A key
+// is sent again when the provider or its URL changes, so a key is never sent
+// somewhere it was not saved for.
+func checkSandbox(s sandboxRequest, stored *db.TeamSetting, allow func(netip.Addr) bool) error {
+	switch s.Provider {
+	case string(sandboxpkg.None):
+		if s.URL != nil || s.Image != nil || s.APIKey != nil {
+			return errors.New("sandbox.url, sandbox.image and sandbox.api_key are for a sandbox provider; none takes none")
+		}
+		return nil
+	case string(sandboxpkg.E2B), string(sandboxpkg.Daytona), string(sandboxpkg.Sandboxd):
+	default:
+		return errors.New("sandbox.provider must be none, e2b, daytona or sandboxd")
+	}
+
+	switch {
+	case s.URL != nil && s.Provider == string(sandboxpkg.E2B):
+		return errors.New("sandbox.url is for daytona or sandboxd: e2b is hosted only")
+	case s.URL == nil && s.Provider == string(sandboxpkg.Sandboxd):
+		return errors.New("sandbox.url is required for sandboxd: where it runs")
+	case s.URL != nil:
+		if err := checkSelfHostedURL("sandbox", *s.URL, allow); err != nil {
+			return err
+		}
+	}
+	if s.Image != nil {
+		img := *s.Image
+		if img == "" || len(img) > maxImageBytes || strings.TrimSpace(img) != img || strings.ContainsAny(img, " \t\n\x00") {
+			return fmt.Errorf("sandbox.image must name an image or template, at most %d bytes, with no spaces", maxImageBytes)
+		}
+	}
+	if s.APIKey == nil {
+		if keepsSandboxKey(stored, s) {
+			return nil
+		}
+		return fmt.Errorf("sandbox.api_key is required: no %s key is saved for this provider and url", s.Provider)
+	}
+	return checkKey("sandbox", *s.APIKey)
+}
+
+func keepsSandboxKey(stored *db.TeamSetting, s sandboxRequest) bool {
+	return stored != nil && stored.SandboxSecretID != nil && stored.SandboxProvider == s.Provider &&
+		sameURL(stored.SandboxUrl, s.URL)
 }

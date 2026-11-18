@@ -150,7 +150,7 @@ func (p *planned) planServers(t team, specs []serverSpec, m may) {
 // relative reference placed under the team's own secrets.
 func serverFields(teamID uuid.UUID, s serverSpec) (mcpservers.Fields, error) {
 	root := secrets.TeamPath(teamID, secrets.KindMCP) + "/"
-	req := mcpservers.Request{Name: s.Name, URL: s.URL, Command: s.Command, Bare: s.Bare}
+	req := mcpservers.Request{Name: s.Name, URL: s.URL, Command: s.Command, Bare: s.Bare, Vars: s.Vars, Egress: s.Egress}
 
 	if s.AuthSecret != nil {
 		ref, err := teamRef(root, "auth_secret", *s.AuthSecret)
@@ -189,6 +189,14 @@ func teamRef(root, field, ref string) (string, error) {
 	return root + rel, nil
 }
 
+// orEmpty is a stored column, or empty where a row built in Go left it unset.
+func orEmpty(b []byte, empty string) []byte {
+	if len(b) == 0 {
+		return []byte(empty)
+	}
+	return b
+}
+
 func serverDiff(cur db.McpServer, f mcpservers.Fields) []string {
 	var fields []string
 	add := func(changed bool, name string) {
@@ -201,6 +209,8 @@ func serverDiff(cur db.McpServer, f mcpservers.Fields) []string {
 	add(!jsonEqual(cur.Env, f.Env), "env")
 	add(!equalPtr(cur.AuthSecretRef, f.AuthSecretRef), "auth_secret")
 	add(cur.Bare != f.Bare, "bare")
+	add(!jsonEqual(orEmpty(cur.Vars, "{}"), f.Vars), "vars")
+	add(!jsonEqual(orEmpty(cur.Egress, "[]"), f.Egress), "egress")
 	return fields
 }
 

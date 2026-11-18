@@ -70,6 +70,10 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		Learning:           p.Learning,
 		CompactionMessages: p.CompactionMessages,
 		HubAgentID:         p.HubAgentID,
+		SandboxProvider:    p.SandboxProvider,
+		SandboxUrl:         p.SandboxUrl,
+		SandboxSecretID:    p.SandboxSecretID,
+		SandboxImage:       p.SandboxImage,
 		UpdatedAt:          time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
 	}
 	f.row = &row
@@ -111,10 +115,15 @@ type put struct{ path, key, value string }
 type fakeSecrets struct {
 	puts   []put
 	putErr error
+	// putErrAfter, when set, fails every write after that many.
+	putErrAfter int
 }
 
 func (f *fakeSecrets) Put(_ context.Context, path, key, value string) error {
 	f.puts = append(f.puts, put{path, key, value})
+	if f.putErrAfter > 0 && len(f.puts) > f.putErrAfter {
+		return errAny
+	}
 	return f.putErr
 }
 
@@ -242,6 +251,12 @@ type wire struct {
 		URL      *string `json:"url"`
 		KeySet   bool    `json:"key_set"`
 	} `json:"search"`
+	Sandbox struct {
+		Provider string  `json:"provider"`
+		URL      *string `json:"url"`
+		Image    *string `json:"image"`
+		KeySet   bool    `json:"key_set"`
+	} `json:"sandbox"`
 	Learning           bool  `json:"learning"`
 	CompactionMessages int32 `json:"compaction_messages"`
 	Hub                *struct {

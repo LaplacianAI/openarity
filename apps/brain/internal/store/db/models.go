@@ -175,6 +175,8 @@ type McpServer struct {
 	OauthClientID        *string
 	OauthClientSecretRef *string
 	OauthScopes          []string
+	Vars                 []byte
+	Egress               []byte
 }
 
 type McpTool struct {
@@ -401,6 +403,10 @@ type TeamSetting struct {
 	CompactionMessages int32
 	UpdatedAt          time.Time
 	HubAgentID         *uuid.UUID
+	SandboxProvider    string
+	SandboxUrl         *string
+	SandboxSecretID    *uuid.UUID
+	SandboxImage       *string
 }
 
 type User struct {

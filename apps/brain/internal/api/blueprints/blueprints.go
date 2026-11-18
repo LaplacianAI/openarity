@@ -208,12 +208,12 @@ func writeServers(ctx context.Context, q Queries, teamID uuid.UUID, p *planned, 
 		if s.id == uuid.Nil {
 			row, err = q.CreateMCPServer(ctx, db.CreateMCPServerParams{
 				TeamID: teamID, Name: f.Name, Url: f.URL, Command: f.Command, Env: f.Env,
-				AuthSecretRef: f.AuthSecretRef, Bare: f.Bare,
+				AuthSecretRef: f.AuthSecretRef, Bare: f.Bare, Vars: f.Vars, Egress: f.Egress,
 			})
 		} else {
 			row, err = q.UpdateMCPServer(ctx, db.UpdateMCPServerParams{
 				ID: s.id, Name: f.Name, Url: f.URL, Command: f.Command, Env: f.Env,
-				AuthSecretRef: f.AuthSecretRef, Bare: f.Bare,
+				AuthSecretRef: f.AuthSecretRef, Bare: f.Bare, Vars: f.Vars, Egress: f.Egress,
 			})
 		}
 		if err != nil {

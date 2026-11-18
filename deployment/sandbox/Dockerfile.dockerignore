@@ -1,0 +1,7 @@
+# The build needs apps/sandbox and nothing else. Everything is excluded, then
+# the one directory is let back in.
+*
+!apps/sandbox
+**/bin
+**/*.test
+**/coverage.out

@@ -78,6 +78,8 @@ const draft = {
   authRef: "teams/t/mcp/x#token",
   command: "",
   env: "",
+  vars: "",
+  egress: "",
   bare: false,
   token: "",
   auth: "oauth" as const,

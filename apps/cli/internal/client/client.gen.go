@@ -432,6 +432,30 @@ func (e RunStatus) Valid() bool {
 	}
 }
 
+// Defines values for SandboxProvider.
+const (
+	SandboxProviderDaytona  SandboxProvider = "daytona"
+	SandboxProviderE2B      SandboxProvider = "e2b"
+	SandboxProviderNone     SandboxProvider = "none"
+	SandboxProviderSandboxd SandboxProvider = "sandboxd"
+)
+
+// Valid indicates whether the value is a known member of the SandboxProvider enum.
+func (e SandboxProvider) Valid() bool {
+	switch e {
+	case SandboxProviderDaytona:
+		return true
+	case SandboxProviderE2B:
+		return true
+	case SandboxProviderNone:
+		return true
+	case SandboxProviderSandboxd:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SearchProvider.
 const (
 	SearchProviderBrave          SearchProvider = "brave"
@@ -1396,6 +1420,17 @@ type CreatedChannelReplyMode string
 // agent works alone, and a PUT replaces the whole agent.
 type Delegation string
 
+// Egress defines model for Egress.
+type Egress struct {
+	// Host A host name, or a public address; never private, loopback or link-local
+	//
+	// Examples: imap.gmail.com
+	Host string `json:"host" yaml:"host"`
+
+	// Port Examples: 993
+	Port int `json:"port" yaml:"port"`
+}
+
 // GraphEdge defines model for GraphEdge.
 type GraphEdge struct {
 	From openapi_types.UUID `json:"from" yaml:"from"`
@@ -1665,6 +1700,9 @@ type MCPServer struct {
 	// rather than as the zero time.
 	DiscoveredAt *time.Time `json:"discovered_at,omitempty" yaml:"discovered_at,omitempty"`
 
+	// Egress Where a command server's room may connect; it reaches nothing else. Absent when there is nowhere.
+	Egress *[]Egress `json:"egress,omitempty" yaml:"egress,omitempty"`
+
 	// Env Variables set for a command server, each a secret reference.
 	// Always an object; empty for a url server.
 	//
@@ -1706,6 +1744,11 @@ type MCPServer struct {
 	//
 	// Examples: https://mcp.example.com/v1
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+
+	// Vars A command server's plain settings, set as they are in its room. Absent when there are none.
+	//
+	// Examples: {"IMAP_HOST":"imap.gmail.com"}
+	Vars *map[string]string `json:"vars,omitempty" yaml:"vars,omitempty"`
 }
 
 // MCPServerAuthKind How the server is reached: `static`, with `auth_secret_ref` or no
@@ -1773,6 +1816,12 @@ type MCPServerRequest struct {
 	// Command The program and its arguments; the first is not empty
 	Command *[]string `json:"command,omitempty" yaml:"command,omitempty"`
 
+	// Egress Only with `command`. Where its room may connect, each once: a host
+	// name or a public address, and a port. Name the package registry
+	// too, `registry.npmjs.org:443`, for a command that installs as it
+	// starts.
+	Egress *[]Egress `json:"egress,omitempty" yaml:"egress,omitempty"`
+
 	// Env Only with `command`. Each key is a variable name and each value a secret reference.
 	Env *map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 
@@ -1792,6 +1841,11 @@ type MCPServerRequest struct {
 	//
 	// Examples: https://mcp.example.com/v1
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+
+	// Vars Only with `command`. Plain settings for its room, shown as they
+	// are; a secret goes in `env` as a reference. A name is in one or
+	// the other, never both.
+	Vars *map[string]string `json:"vars,omitempty" yaml:"vars,omitempty"`
 }
 
 // MCPServerRequestAuthKind `oauth` for a url server signed in to on the dashboard: it takes
@@ -2184,6 +2238,49 @@ type Said struct {
 	Unanswered *string `json:"unanswered,omitempty" yaml:"unanswered,omitempty"`
 }
 
+// SandboxProvider `none` runs no command servers. `e2b` is hosted and takes a key and no
+// url; `daytona` takes a key, and a url when self-hosted; `sandboxd` is
+// self-hosted and takes a url and its token as the key.
+type SandboxProvider string
+
+// SandboxSettings Where the team's command MCP servers run.
+type SandboxSettings struct {
+	// Image What rooms start from, in the provider's own terms (an E2B template, a Daytona or sandboxd image); null for the default
+	Image *string `json:"image,omitempty" yaml:"image,omitempty"`
+
+	// KeySet Whether a key is stored. The key itself is never returned.
+	KeySet bool `json:"key_set" yaml:"key_set"`
+
+	// Provider `none` runs no command servers. `e2b` is hosted and takes a key and no
+	// url; `daytona` takes a key, and a url when self-hosted; `sandboxd` is
+	// self-hosted and takes a url and its token as the key.
+	Provider SandboxProvider `json:"provider" yaml:"provider"`
+
+	// URL A self-hosted provider's API address, for sandboxd and a self-hosted Daytona; null otherwise
+	//
+	// Examples: http://sandboxd:8090
+	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
+// SandboxSettingsRequest Absent from a request, the stored sandbox is kept.
+type SandboxSettingsRequest struct {
+	// APIKey The provider's key, or sandboxd's token: required for every
+	// provider but none. Omit it to keep the stored one while the
+	// provider and its url are unchanged.
+	APIKey *string `json:"api_key,omitempty" yaml:"api_key,omitempty"`
+
+	// Image Optional; refused for none
+	Image *string `json:"image,omitempty" yaml:"image,omitempty"`
+
+	// Provider `none` runs no command servers. `e2b` is hosted and takes a key and no
+	// url; `daytona` takes a key, and a url when self-hosted; `sandboxd` is
+	// self-hosted and takes a url and its token as the key.
+	Provider SandboxProvider `json:"provider" yaml:"provider"`
+
+	// URL Required for sandboxd, optional for daytona, refused for e2b and none
+	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
 // SayRequest defines model for SayRequest.
 type SayRequest struct {
 	// Builder On a new conversation only: the team's builder answers it rather
@@ -2572,8 +2669,11 @@ type TeamSettings struct {
 	Learning bool `json:"learning" yaml:"learning"`
 
 	// Model The model the team's built-in agents run on. Null until chosen, and until then they do not run.
-	Model  *ModelRef      `json:"model,omitempty" yaml:"model,omitempty"`
-	Search SearchSettings `json:"search" yaml:"search"`
+	Model *ModelRef `json:"model,omitempty" yaml:"model,omitempty"`
+
+	// Sandbox Where the team's command MCP servers run.
+	Sandbox SandboxSettings `json:"sandbox" yaml:"sandbox"`
+	Search  SearchSettings  `json:"search" yaml:"search"`
 
 	// UpdatedAt Null for a team that never saved
 	UpdatedAt *time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
@@ -2592,8 +2692,11 @@ type TeamSettingsRequest struct {
 	Learning bool    `json:"learning" yaml:"learning"`
 
 	// Model Null or absent for no model, which stops the built-in agents running.
-	Model  *ModelRef             `json:"model,omitempty" yaml:"model,omitempty"`
-	Search SearchSettingsRequest `json:"search" yaml:"search"`
+	Model *ModelRef `json:"model,omitempty" yaml:"model,omitempty"`
+
+	// Sandbox Absent from a request, the stored sandbox is kept.
+	Sandbox *SandboxSettingsRequest `json:"sandbox,omitempty" yaml:"sandbox,omitempty"`
+	Search  SearchSettingsRequest   `json:"search" yaml:"search"`
 }
 
 // TeamSummary defines model for TeamSummary.

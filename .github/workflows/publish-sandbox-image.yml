@@ -1,0 +1,81 @@
+# Publishes the room image: what every sandbox provider starts a command MCP
+# server's room from. It builds and pushes; it deploys nothing and knows about
+# no provider.
+name: sandbox-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/sandbox/**'
+      - 'deployment/sandbox/Dockerfile'
+      - 'deployment/sandbox/Dockerfile.dockerignore'
+      - '.github/workflows/publish-sandbox-image.yml'
+  workflow_dispatch:
+
+# `paths:` on the trigger is safe here in a way it is not in ci.yml: nothing
+# waits on this job's conclusion, so a run that never happens blocks nothing.
+
+concurrency:
+  group: sandbox-image-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Every third-party action is pinned to a commit. A tag is mutable, and
+      # this workflow holds a token that can write packages.
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Scoped to this run and expires with it. No personal access token
+          # is stored anywhere.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/openarity-sandbox
+          # `latest` is the newest build of main. The sha tag is what makes a
+          # room reproducible and a rollback possible, since latest will have
+          # moved on. Which of them anything follows is not decided here.
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          # The repository root: the Dockerfile copies apps/sandbox, so a
+          # context of deployment/sandbox cannot see it.
+          context: .
+          file: deployment/sandbox/Dockerfile
+          # Daytona and sandboxd run the image on whatever host a team has,
+          # and an amd64-only image does not start on an ARM one. The
+          # Dockerfile cross-compiles the shim rather than emulating it.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Without this the Go module download runs on every push.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo '### published'
+            echo '```'
+            echo '${{ steps.meta.outputs.tags }}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,42 @@
+# Minimal values for Daytona's official Helm chart, daytona 0.0.26
+# (app version v0.184.0-k8s-oss.3). See README.md in this directory.
+#
+# Everything here overrides a key that exists in the chart's own values.yaml.
+# Replace every CHANGE_ME and the base domain before installing; the chart's
+# defaults for those are public placeholder values.
+
+# The API is served at https://<baseDomain>, and a room's preview at
+# https://<port>-<sandbox id>.<baseDomain>, so the certificate and the DNS
+# record both need the wildcard *.<baseDomain>.
+baseDomain: "daytona.example.com"
+
+services:
+  api:
+    ingress:
+      className: "nginx"
+      tls: true
+      # true makes the chart issue a self-signed certificate with the wildcard.
+      # Leave it false with cert-manager, or bring your own certificate.
+      selfSigned: false
+    env:
+      # 32 random characters, and a random salt:
+      #   openssl rand -base64 32 | head -c 32
+      ENCRYPTION_KEY: "CHANGE_ME_32_CHARACTER_SECRET_K!"
+      ENCRYPTION_SALT: "CHANGE_ME_RANDOM_SALT_VALUE"
+      RUNNER_MANAGER_API_KEY: "CHANGE_ME_RUNNER_MANAGER_KEY"
+  runner:
+    env:
+      API_TOKEN: "CHANGE_ME_RUNNER_TOKEN"
+      SYSTEM_API_TOKEN: "CHANGE_ME_SYSTEM_TOKEN"
+
+# The chart's Dex is the sign-in for the dashboard. Its one default user,
+# dev@daytona.io, has a published password: replace it with a bcrypt hash of
+# your own (htpasswd -nbBC 10 "" 'your password' | cut -d: -f2) or point the
+# chart at your own OIDC provider.
+dex:
+  config:
+    staticPasswords:
+      - email: "admin@example.com"
+        username: "admin"
+        password: "CHANGE_ME_BCRYPT_HASH"
+        userID: "1234"

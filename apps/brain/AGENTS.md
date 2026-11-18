@@ -146,6 +146,8 @@ apps/brain/
   internal/webfetch/   the port: Page, Fetcher, and a client that dials public addresses only
     plain/             the brain's own read: readability, then markdown
     firecrawl/         a team's Firecrawl: /v2/scrape
+  internal/sandbox/    the port: Rooms, Spec, Endpoint; where a team's command MCP servers run
+    <provider>/        e2b, daytona, sandboxd: each exports New
   internal/worker/     the background process: a registry of Jobs, and Run
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary

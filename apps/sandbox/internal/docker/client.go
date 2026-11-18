@@ -1,0 +1,266 @@
+// Package docker is the small part of the Docker Engine API sandboxd uses,
+// spoken over the daemon's unix socket with net/http. The moby client would
+// bring a few dozen modules for six calls.
+package docker
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+// apiVersion is the oldest Engine API a current daemon still serves.
+const apiVersion = "v1.44"
+
+// Error is the daemon refusing a call.
+type Error struct {
+	Status  int
+	Message string
+}
+
+func (e *Error) Error() string { return fmt.Sprintf("docker answered %d: %s", e.Status, e.Message) }
+
+// IsNotFound reports whether err is the daemon saying a thing does not exist.
+func IsNotFound(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && e.Status == http.StatusNotFound
+}
+
+// Client talks to one daemon.
+type Client struct {
+	http *http.Client
+}
+
+// New returns a client for the daemon listening on the unix socket.
+func New(socket string) *Client {
+	d := &net.Dialer{Timeout: 5 * time.Second}
+	return &Client{http: &http.Client{
+		Timeout: 2 * time.Minute,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return d.DialContext(ctx, "unix", socket)
+			},
+		},
+	}}
+}
+
+// Container is the part of a container's configuration the daemon is given.
+// sandboxd builds every one itself, so there are no fields a request could
+// reach: this is the whole of what can be set.
+type Container struct {
+	Image      string
+	Entrypoint []string
+	Env        []string
+	Labels     map[string]string
+	User       string
+	HostConfig HostConfig
+}
+
+// HostConfig is the hardening.
+type HostConfig struct {
+	ReadonlyRootfs bool
+	Privileged     bool
+	Tmpfs          map[string]string
+	CapDrop        []string
+	SecurityOpt    []string
+	PidsLimit      int64
+	Memory         int64
+	MemorySwap     int64
+	NanoCPUs       int64
+	NetworkMode    string
+	ExtraHosts     []string
+	RestartPolicy  RestartPolicy
+}
+
+type RestartPolicy struct{ Name string }
+
+// Network is a network as the daemon reports it.
+type Network struct {
+	ID         string
+	Name       string
+	Labels     map[string]string
+	Internal   bool
+	Containers map[string]Member // by container id
+}
+
+// Member is a container on a network.
+type Member struct {
+	Name string
+	IPv4 string // an address, without the prefix length
+}
+
+// CreateNetwork makes an internal bridge network: containers on it reach
+// each other and nothing outside.
+func (c *Client) CreateNetwork(ctx context.Context, name string, labels map[string]string) error {
+	body := map[string]any{"Name": name, "Driver": "bridge", "Internal": true, "Labels": labels, "CheckDuplicate": true}
+	return c.do(ctx, http.MethodPost, "/networks/create", nil, body, nil)
+}
+
+func (c *Client) InspectNetwork(ctx context.Context, name string) (Network, error) {
+	var raw networkJSON
+	if err := c.do(ctx, http.MethodGet, "/networks/"+url.PathEscape(name), nil, nil, &raw); err != nil {
+		return Network{}, err
+	}
+	return raw.network(), nil
+}
+
+// ListNetworks returns the networks carrying every one of the labels.
+func (c *Client) ListNetworks(ctx context.Context, label string) ([]Network, error) {
+	f, _ := json.Marshal(map[string][]string{"label": {label}})
+	var raw []networkJSON
+	if err := c.do(ctx, http.MethodGet, "/networks", url.Values{"filters": {string(f)}}, nil, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]Network, 0, len(raw))
+	for _, r := range raw {
+		out = append(out, r.network())
+	}
+	return out, nil
+}
+
+func (c *Client) ConnectNetwork(ctx context.Context, network, container string) error {
+	body := map[string]any{"Container": container}
+	err := c.do(ctx, http.MethodPost, "/networks/"+url.PathEscape(network)+"/connect", nil, body, nil)
+	var e *Error
+	if errors.As(err, &e) && e.Status == http.StatusForbidden && strings.Contains(e.Message, "already exists") {
+		return nil
+	}
+	return err
+}
+
+func (c *Client) DisconnectNetwork(ctx context.Context, network, container string) error {
+	body := map[string]any{"Container": container, "Force": true}
+	return c.do(ctx, http.MethodPost, "/networks/"+url.PathEscape(network)+"/disconnect", nil, body, nil)
+}
+
+func (c *Client) RemoveNetwork(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/networks/"+url.PathEscape(name), nil, nil, nil)
+}
+
+// CreateContainer returns the new container's id.
+func (c *Client) CreateContainer(ctx context.Context, name string, ct Container) (string, error) {
+	var out struct{ Id string } //nolint:revive,staticcheck // the daemon's spelling
+	err := c.do(ctx, http.MethodPost, "/containers/create", url.Values{"name": {name}}, ct.json(), &out)
+	return out.Id, err
+}
+
+func (c *Client) StartContainer(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(name)+"/start", nil, nil, nil)
+}
+
+// ContainerID resolves a name, or a short id, to the full id.
+func (c *Client) ContainerID(ctx context.Context, nameOrID string) (string, error) {
+	var out struct{ Id string } //nolint:revive,staticcheck // the daemon's spelling
+	err := c.do(ctx, http.MethodGet, "/containers/"+url.PathEscape(nameOrID)+"/json", nil, nil, &out)
+	return out.Id, err
+}
+
+// RemoveContainer stops and removes it; a container already gone is an
+// IsNotFound error.
+func (c *Client) RemoveContainer(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/containers/"+url.PathEscape(name), url.Values{"force": {"1"}, "v": {"1"}}, nil, nil)
+}
+
+// Ping fails unless the daemon answers.
+func (c *Client) Ping(ctx context.Context) error {
+	return c.do(ctx, http.MethodGet, "/_ping", nil, nil, nil)
+}
+
+func (c *Client) do(ctx context.Context, method, path string, q url.Values, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(b)
+	}
+	u := "http://docker/" + apiVersion + path
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, body)
+	if err != nil {
+		return err
+	}
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("docker %s %s: %w", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode/100 != 2 {
+		var e struct{ Message string }
+		_ = json.Unmarshal(raw, &e)
+		if e.Message == "" {
+			e.Message = strings.TrimSpace(string(raw))
+		}
+		return &Error{Status: resp.StatusCode, Message: e.Message}
+	}
+	if out != nil {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+type networkJSON struct {
+	ID         string
+	Name       string
+	Labels     map[string]string
+	Internal   bool
+	Containers map[string]struct {
+		Name        string
+		IPv4Address string
+	}
+}
+
+func (n networkJSON) network() Network {
+	out := Network{ID: n.ID, Name: n.Name, Labels: n.Labels, Internal: n.Internal, Containers: map[string]Member{}}
+	for id, m := range n.Containers {
+		ip, _, _ := strings.Cut(m.IPv4Address, "/")
+		out.Containers[id] = Member{Name: m.Name, IPv4: ip}
+	}
+	return out
+}
+
+// json is the create body. Field names are the daemon's.
+func (ct Container) json() map[string]any {
+	h := ct.HostConfig
+	return map[string]any{
+		"Image":      ct.Image,
+		"Entrypoint": ct.Entrypoint,
+		"Cmd":        []string{},
+		"Env":        ct.Env,
+		"Labels":     ct.Labels,
+		"User":       ct.User,
+		"HostConfig": map[string]any{
+			"ReadonlyRootfs": h.ReadonlyRootfs,
+			"Privileged":     h.Privileged,
+			"Tmpfs":          h.Tmpfs,
+			"CapDrop":        h.CapDrop,
+			"SecurityOpt":    h.SecurityOpt,
+			"PidsLimit":      h.PidsLimit,
+			"Memory":         h.Memory,
+			"MemorySwap":     h.MemorySwap,
+			"NanoCpus":       h.NanoCPUs,
+			"NetworkMode":    h.NetworkMode,
+			"ExtraHosts":     h.ExtraHosts,
+			"RestartPolicy":  map[string]string{"Name": h.RestartPolicy.Name},
+		},
+		"NetworkingConfig": map[string]any{},
+	}
+}

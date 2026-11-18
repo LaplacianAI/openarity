@@ -16,6 +16,23 @@ SHIM_TOKEN=… sandbox shim --listen :8080 -- npx --offline mcp-mail-server@2.1.
 It starts the server once and shares it between every caller. It exits
 non-zero when the server does.
 
+## sandboxd
+
+`sandbox serve` is the optional self-hosted sandbox provider: it makes rooms
+on a (rootless) Docker daemon, runs the shim in them, and gives each one an
+egress guard that lets it reach only the hosts it lists.
+
+```sh
+SANDBOXD_TOKEN=… SANDBOXD_PUBLIC_URL=http://sandboxd:9090 \
+SANDBOXD_DOCKER_SOCKET=/run/user/1000/docker.sock sandbox serve --listen :9090
+```
+
+`POST /v1/rooms`, `POST /v1/rooms/{id}/start`, `GET /v1/rooms/{id}/ports/{port}`,
+`ANY /v1/rooms/{id}/ports/{port}/proxy/...`, `DELETE /v1/rooms/{id}` and
+`GET /healthz`. Deploy it with `deployment/docker-compose.sandboxd.yml`, or
+`deployment/k8s/sandboxd/`. Settings are `SANDBOXD_*`; `sandbox serve` with
+none set prints which are required.
+
 ## Build and test
 
 ```sh
@@ -24,6 +41,7 @@ make check      # what CI runs
 ```
 
 Requires Go 1.27.4. The tests need nothing else: the test binary plays the
-MCP server.
+MCP server. The integration tests, which run Docker, are skipped unless
+`SANDBOXD_TEST_DOCKER` names a Docker socket.
 
 For working on the module, read [AGENTS.md](AGENTS.md).

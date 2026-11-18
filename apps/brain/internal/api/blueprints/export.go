@@ -115,6 +115,12 @@ func serverOf(t team, row db.McpServer) (serverSpec, error) {
 			s.Env[k] = strings.TrimPrefix(ref, root)
 		}
 	}
+	if err := json.Unmarshal(orEmpty(row.Vars, "{}"), &s.Vars); err != nil {
+		return serverSpec{}, err
+	}
+	if err := json.Unmarshal(orEmpty(row.Egress, "[]"), &s.Egress); err != nil {
+		return serverSpec{}, err
+	}
 	return s, nil
 }
 

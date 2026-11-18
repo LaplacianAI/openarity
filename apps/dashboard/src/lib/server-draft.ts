@@ -1,4 +1,4 @@
-import type { MCPServer, MCPServerRequest } from "@/api/types";
+import type { Egress, MCPServer, MCPServerRequest } from "@/api/types";
 
 export type ServerDraft = {
   name: string;
@@ -7,6 +7,10 @@ export type ServerDraft = {
   authRef: string;
   command: string;
   env: string;
+  /** NAME=value, one per line: plain settings, shown as they are. */
+  vars: string;
+  /** host:port, one per line: where its sandbox room may connect. */
+  egress: string;
   bare: boolean;
   /** A bearer token to write to the secret store; never read back, so never filled in. */
   token: string;
@@ -28,6 +32,8 @@ export const EMPTY_SERVER: ServerDraft = {
   authRef: "",
   command: "",
   env: "",
+  vars: "",
+  egress: "",
   bare: false,
   token: "",
   auth: "token",
@@ -86,7 +92,57 @@ export function serverRequest(d: ServerDraft): MCPServerRequest | string {
     env[line.slice(0, at).trim()] = line.slice(at + 1).trim();
   }
   body.env = env;
+
+  const vars: Record<string, string> = {};
+  for (const line of lines(d.vars)) {
+    const at = line.indexOf("=");
+    if (at <= 0) return `"${line}" is not NAME=value.`;
+    const k = line.slice(0, at).trim();
+    if (k in env) return `${k} is in both the environment and the settings; keep it in one.`;
+    vars[k] = line.slice(at + 1).trim();
+  }
+  if (Object.keys(vars).length > 0) body.vars = vars;
+
+  const egress: Egress[] = [];
+  for (const line of lines(d.egress)) {
+    const place = egressOf(line);
+    if (!place) return `"${line}" is not host:port.`;
+    egress.push(place);
+  }
+  if (egress.length > 0) body.egress = egress;
   return body;
+}
+
+function lines(typed: string): string[] {
+  return typed
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+/** host:port, a port from 1 to 65535. Which hosts are allowed is the brain's to say. */
+export function egressOf(line: string): Egress | null {
+  const at = line.lastIndexOf(":");
+  if (at <= 0) return null;
+  let host = line.slice(0, at).trim();
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  const raw = line.slice(at + 1).trim();
+  if (!host || !/^\d{1,5}$/.test(raw)) return null;
+  const port = Number(raw);
+  return port >= 1 && port <= 65535 ? { host, port } : null;
+}
+
+/** The registry npx installs from; a room that cannot reach it never starts. */
+export const NPM_REGISTRY = "registry.npmjs.org:443";
+
+/** Whether a command run through npx has no way to its registry. */
+export function missesRegistry(d: ServerDraft): boolean {
+  const first = lines(d.command)[0];
+  if (first !== "npx" && first !== "npm") return false;
+  return !lines(d.egress).some((l) => {
+    const e = egressOf(l);
+    return e?.host.toLowerCase() === "registry.npmjs.org" && e.port === 443;
+  });
 }
 
 /** A server as the form shows it. */
@@ -99,6 +155,12 @@ export function draftOf(s: MCPServer): ServerDraft {
     command: (s.command ?? []).join("\n"),
     env: Object.entries(s.env ?? {})
       .map(([k, v]) => `${k}=${v}`)
+      .join("\n"),
+    vars: Object.entries(s.vars ?? {})
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n"),
+    egress: (s.egress ?? [])
+      .map((e) => `${e.host.includes(":") ? `[${e.host}]` : e.host}:${e.port}`)
       .join("\n"),
     bare: s.bare,
     token: "",
@@ -169,6 +231,9 @@ export function editRequest(current: MCPServer, d: ServerDraft): MCPServerReques
     delete body.url;
     body.command = form.command;
     body.env = form.env;
+    // The form shows both, so what it leaves empty is cleared.
+    if (form.vars) body.vars = form.vars;
+    if (form.egress) body.egress = form.egress;
   }
   return body;
 }

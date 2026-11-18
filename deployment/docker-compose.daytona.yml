@@ -1,0 +1,285 @@
+# Self-hosted Daytona, for a team that picks Daytona as its sandbox provider
+# and wants the rooms on its own machine.
+#
+# Adapted from Daytona's own compose, docker/docker-compose.yaml at
+# https://github.com/daytonaio/daytona (tag v0.190.0, AGPL-3.0). What changed:
+#   - every image is pinned (upstream leaves most on no tag or :latest). The
+#     daytona-* images are v0.187.0, the newest release published to Docker
+#     Hub as a multi-arch image when this was written; v0.188 to v0.190 exist
+#     in the repository but not as images;
+#   - the parts that only help someone developing Daytona are gone: pgAdmin,
+#     the registry UI, MailDev, Jaeger, the OpenTelemetry collector, and the
+#     SSH gateway;
+#   - MinIO is coollabsio/minio, a community build of the last MinIO source
+#     release: MinIO stopped publishing images to Docker Hub and Quay;
+#   - Dex's config is inline, so this file stands alone;
+#   - every port is bound to this machine's loopback and moved off the ones
+#     the brain's own stack uses.
+#
+# Upstream says of its setup: "not safe to use in production". Keep that in
+# mind. The api and the runner run privileged (the runner starts the
+# sandboxes with its own Docker daemon), and the secrets below are fixed
+# development values. Override them in your shell or an env file for
+# anything beyond a laptop:
+#   DAYTONA_ENCRYPTION_KEY  DAYTONA_ENCRYPTION_SALT  DAYTONA_DB_PASSWORD
+#   DAYTONA_RUNNER_TOKEN    DAYTONA_PROXY_API_KEY    DAYTONA_S3_PASSWORD
+#   DAYTONA_SSH_API_KEY (it must differ from the proxy one: the api reads a key equal to both as the SSH gateway)
+#
+# Start it on its own, apart from the brain's stack:
+#
+#   docker compose -f deployment/docker-compose.daytona.yml up -d
+#
+# The first start pulls the default sandbox snapshot (about 1.3 GB, pushed to
+# the registry here and pulled back by the runner): it took about 20 minutes
+# on a laptop, and a room cannot be made until it is done. Then:
+#   1. Open http://localhost:13000/dashboard and sign in as dev@daytona.io
+#      with the password "password" (the Dex user below; change it before
+#      sharing this machine).
+#   2. Set the organization's default region to "us" (the dashboard asks;
+#      without it, creating a room fails with "does not have a default
+#      region"). Check that the default snapshot is Active under Snapshots.
+#   3. Create an API key under API Keys. Give it permission to write and
+#      delete sandboxes.
+#   4. In the dashboard of Openarity: Settings, Sandbox, Daytona. API URL
+#      http://localhost:13000/api (use the host name the brain can reach
+#      when the brain runs in a container, e.g. http://host.docker.internal:13000/api),
+#      and the API key.
+#
+# The brain also has to resolve and reach the preview address of a room,
+# http://<port>-<sandbox id>.proxy.localhost:14000 . On a laptop,
+# *.localhost already means loopback. A brain in a container needs a
+# resolvable name instead: set DAYTONA_PROXY_DOMAIN and
+# DAYTONA_PROXY_TEMPLATE_URL below to a wildcard name that points at this
+# host.
+#
+# Egress: this Daytona enforces a room's IPv4 allow list on every port, and
+# block-all. It accepts a domain allow list and does not enforce it (probed
+# at v0.187.0: every host stayed reachable). So the brain's client resolves
+# the hosts a team allows to addresses and sends those; see
+# internal/sandbox/daytona/egress.go.
+#
+# Tear down, including its volumes:
+#   docker compose -f deployment/docker-compose.daytona.yml down -v
+
+name: daytona
+
+x-environment: &api-environment
+  NODE_ENV: production
+  PORT: "3000"
+  ENVIRONMENT: docker-compose
+  DEFAULT_SNAPSHOT: daytonaio/sandbox:0.5.0-slim
+  ENCRYPTION_KEY: ${DAYTONA_ENCRYPTION_KEY:-dev-only-encryption-key-change-me}
+  ENCRYPTION_SALT: ${DAYTONA_ENCRYPTION_SALT:-dev-only-encryption-salt-change-me}
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_USERNAME: daytona
+  DB_PASSWORD: ${DAYTONA_DB_PASSWORD:-dev-only-db-password}
+  DB_DATABASE: daytona
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  OIDC_CLIENT_ID: daytona
+  OIDC_ISSUER_BASE_URL: http://dex:5556/dex
+  PUBLIC_OIDC_DOMAIN: http://localhost:15556/dex
+  OIDC_AUDIENCE: daytona
+  DASHBOARD_URL: http://localhost:13000/dashboard
+  DASHBOARD_BASE_API_URL: http://localhost:13000
+  TRANSIENT_REGISTRY_URL: http://registry:6000
+  TRANSIENT_REGISTRY_ADMIN: admin
+  TRANSIENT_REGISTRY_PASSWORD: password
+  TRANSIENT_REGISTRY_PROJECT_ID: daytona
+  INTERNAL_REGISTRY_URL: http://registry:6000
+  INTERNAL_REGISTRY_ADMIN: admin
+  INTERNAL_REGISTRY_PASSWORD: password
+  INTERNAL_REGISTRY_PROJECT_ID: daytona
+  S3_ENDPOINT: http://minio:9000
+  S3_STS_ENDPOINT: http://minio:9000/minio/v1/assume-role
+  S3_REGION: us-east-1
+  S3_ACCESS_KEY: daytona
+  S3_SECRET_KEY: ${DAYTONA_S3_PASSWORD:-dev-only-s3-password}
+  S3_DEFAULT_BUCKET: daytona
+  S3_ACCOUNT_ID: /
+  S3_ROLE_NAME: /
+  MAX_AUTO_ARCHIVE_INTERVAL: "43200"
+  MAINTENANCE_MODE: "false"
+  PROXY_DOMAIN: ${DAYTONA_PROXY_DOMAIN:-proxy.localhost:14000}
+  PROXY_PROTOCOL: http
+  PROXY_API_KEY: ${DAYTONA_PROXY_API_KEY:-dev-only-proxy-key}
+  PROXY_TEMPLATE_URL: ${DAYTONA_PROXY_TEMPLATE_URL:-http://{{PORT}}-{{sandboxId}}.proxy.localhost:14000}
+  DEFAULT_RUNNER_DOMAIN: runner:3003
+  DEFAULT_RUNNER_API_URL: http://runner:3003
+  DEFAULT_RUNNER_PROXY_URL: http://runner:3003
+  DEFAULT_RUNNER_API_KEY: ${DAYTONA_RUNNER_TOKEN:-dev-only-runner-token}
+  DEFAULT_RUNNER_CPU: "4"
+  DEFAULT_RUNNER_MEMORY: "8"
+  DEFAULT_RUNNER_DISK: "50"
+  DEFAULT_RUNNER_NAME: default
+  DEFAULT_REGION_ID: us
+  DEFAULT_REGION_NAME: us
+  DEFAULT_REGION_ENFORCE_QUOTAS: "false"
+  DEFAULT_ORG_QUOTA_TOTAL_CPU_QUOTA: "10000"
+  DEFAULT_ORG_QUOTA_TOTAL_MEMORY_QUOTA: "10000"
+  DEFAULT_ORG_QUOTA_TOTAL_DISK_QUOTA: "100000"
+  DEFAULT_ORG_QUOTA_MAX_CPU_PER_SANDBOX: "100"
+  DEFAULT_ORG_QUOTA_MAX_MEMORY_PER_SANDBOX: "100"
+  DEFAULT_ORG_QUOTA_MAX_DISK_PER_SANDBOX: "1000"
+  DEFAULT_ORG_QUOTA_SNAPSHOT_QUOTA: "1000"
+  DEFAULT_ORG_QUOTA_MAX_SNAPSHOT_SIZE: "1000"
+  DEFAULT_ORG_QUOTA_VOLUME_QUOTA: "10000"
+  RUNNER_DECLARATIVE_BUILD_SCORE_THRESHOLD: "10"
+  RUNNER_AVAILABILITY_SCORE_THRESHOLD: "10"
+  RUNNER_START_SCORE_THRESHOLD: "3"
+  SKIP_USER_EMAIL_VERIFICATION: "true"
+  RUN_MIGRATIONS: "true"
+  # The SSH gateway is not run here, but the api refuses every call without a
+  # key for it.
+  SSH_GATEWAY_API_KEY: ${DAYTONA_SSH_API_KEY:-dev-only-ssh-key}
+  HEALTH_CHECK_API_KEY: ${DAYTONA_PROXY_API_KEY:-dev-only-proxy-key}
+
+services:
+  api:
+    image: daytonaio/daytona-api:v0.187.0
+    environment: *api-environment
+    ports:
+      - "127.0.0.1:13000:3000"
+    privileged: true
+    restart: unless-stopped
+    networks: [daytona]
+    depends_on:
+      - db
+      - redis
+      - dex
+      - registry
+      - runner
+
+  proxy:
+    image: daytonaio/daytona-proxy:v0.187.0
+    environment:
+      DAYTONA_API_URL: http://api:3000/api
+      PROXY_PORT: "4000"
+      PROXY_API_KEY: ${DAYTONA_PROXY_API_KEY:-dev-only-proxy-key}
+      PROXY_PROTOCOL: http
+      OIDC_CLIENT_ID: daytona
+      OIDC_CLIENT_SECRET: ""
+      OIDC_DOMAIN: http://dex:5556/dex
+      OIDC_PUBLIC_DOMAIN: http://localhost:15556/dex
+      OIDC_AUDIENCE: daytona
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      TOOLBOX_ONLY_MODE: "false"
+      PREVIEW_WARNING_ENABLED: "false"
+    ports:
+      - "127.0.0.1:14000:4000"
+    restart: unless-stopped
+    networks: [daytona]
+
+  runner:
+    image: daytonaio/daytona-runner:v0.187.0
+    environment:
+      ENVIRONMENT: development
+      API_PORT: "3003"
+      DAYTONA_RUNNER_TOKEN: ${DAYTONA_RUNNER_TOKEN:-dev-only-runner-token}
+      LOG_FILE_PATH: /home/daytona/runner/runner.log
+      RESOURCE_LIMITS_DISABLED: "true"
+      AWS_ENDPOINT_URL: http://minio:9000
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: daytona
+      AWS_SECRET_ACCESS_KEY: ${DAYTONA_S3_PASSWORD:-dev-only-s3-password}
+      AWS_DEFAULT_BUCKET: daytona
+      DAYTONA_API_URL: http://api:3000/api
+      RUNNER_DOMAIN: runner
+      SSH_GATEWAY_ENABLE: "false"
+      INTER_SANDBOX_NETWORK_ENABLED: "false"
+    ports:
+      - "127.0.0.1:13003:3003"
+    privileged: true
+    restart: unless-stopped
+    networks: [daytona]
+
+  dex:
+    image: dexidp/dex:v2.42.0
+    entrypoint: ["sh", "-c", "touch /var/dex/dex.db && exec dex serve /etc/dex/config.yaml"]
+    configs:
+      - source: dex_config
+        target: /etc/dex/config.yaml
+    volumes:
+      - dex_db:/var/dex
+    ports:
+      - "127.0.0.1:15556:5556"
+    restart: unless-stopped
+    networks: [daytona]
+
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: daytona
+      POSTGRES_PASSWORD: ${DAYTONA_DB_PASSWORD:-dev-only-db-password}
+      POSTGRES_DB: daytona
+    volumes:
+      - db_data:/var/lib/postgresql
+    restart: unless-stopped
+    networks: [daytona]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    networks: [daytona]
+
+  registry:
+    image: registry:2.8.2
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+      REGISTRY_HTTP_ADDR: registry:6000
+    volumes:
+      - registry:/var/lib/registry
+    restart: unless-stopped
+    networks: [daytona]
+
+  minio:
+    image: coollabsio/minio:RELEASE.2025-10-15T17-29-55Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: daytona
+      MINIO_ROOT_PASSWORD: ${DAYTONA_S3_PASSWORD:-dev-only-s3-password}
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    networks: [daytona]
+
+configs:
+  dex_config:
+    content: |
+      issuer: http://localhost:15556/dex
+      storage:
+        type: sqlite3
+        config:
+          file: /var/dex/dex.db
+      web:
+        http: 0.0.0.0:5556
+        allowedOrigins: ['*']
+        allowedHeaders: ['x-requested-with']
+      staticClients:
+        - id: daytona
+          redirectURIs:
+            - 'http://localhost:13000'
+            - 'http://localhost:13000/dashboard'
+            - 'http://localhost:13000/api/oauth2-redirect.html'
+            - 'http://proxy.localhost:14000/callback'
+          name: 'Daytona'
+          public: true
+      enablePasswordDB: true
+      staticPasswords:
+        # The password is "password", as in Daytona's own compose.
+        - email: 'dev@daytona.io'
+          hash: '$$2a$$10$$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W'
+          username: 'admin'
+          userID: '1234'
+
+volumes:
+  db_data: {}
+  dex_db: {}
+  registry: {}
+  minio_data: {}
+
+networks:
+  daytona:
+    driver: bridge

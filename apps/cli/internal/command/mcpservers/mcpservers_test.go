@@ -123,6 +123,12 @@ func TestADefinitionTheAPICannotExpressIsRefusedBeforeAnyRequest(t *testing.T) {
 		"env on a url server":      {"create", "platform", "x", "--url", "https://a.b", "--env", "A=b"},
 		"a reference on a command": {"create", "platform", "x", "--auth-secret-ref", "r#k", "--", "npx"},
 		"env without =":            {"create", "platform", "x", "--env", "A", "--", "npx"},
+		"a var on a url server":    {"create", "platform", "x", "--url", "https://a.b", "--var", "A=b"},
+		"egress on a url server":   {"create", "platform", "x", "--url", "https://a.b", "--egress", "a.b:443"},
+		"a var without =":          {"create", "platform", "x", "--var", "A", "--", "npx"},
+		"egress without a port":    {"create", "platform", "x", "--egress", "a.b", "--", "npx"},
+		"egress with a named port": {"create", "platform", "x", "--egress", "a.b:https", "--", "npx"},
+		"egress with no host":      {"create", "platform", "x", "--egress", ":443", "--", "npx"},
 		"a blank name":             {"create", "platform", " ", "--url", "https://a.b"},
 	} {
 		t.Run(name, func(t *testing.T) {

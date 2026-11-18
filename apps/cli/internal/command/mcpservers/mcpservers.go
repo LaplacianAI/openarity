@@ -3,6 +3,9 @@ package mcpservers
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"net"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -123,6 +126,8 @@ type definition struct {
 	url     string
 	authRef string
 	env     []string
+	vars    []string
+	egress  []string
 	bare    bool
 
 	oauth     bool
@@ -137,6 +142,10 @@ func (d *definition) flags(cmd *cobra.Command) {
 		"with --url: the bearer token's reference, teams/<team_id>/mcp/<name>#<key>")
 	cmd.Flags().StringArrayVar(&d.env, "env", nil,
 		"with a command: NAME=teams/<team_id>/mcp/<name>#<key>, once per variable")
+	cmd.Flags().StringArrayVar(&d.vars, "var", nil,
+		"with a command: NAME=value, a plain setting shown as it is, once per variable; secrets go in --env")
+	cmd.Flags().StringArrayVar(&d.egress, "egress", nil,
+		"with a command: host:port its sandbox room may reach, once per place; npx needs registry.npmjs.org:443")
 	cmd.Flags().BoolVar(&d.bare, "bare", false,
 		"tools reach the model as <tool> rather than <server>__<tool>")
 	cmd.Flags().BoolVar(&d.oauth, "oauth", false,
@@ -171,8 +180,8 @@ func (d *definition) request(name string, argv []string) (client.MCPServerReques
 		if err := d.signIn(&body); err != nil {
 			return body, err
 		}
-		if len(d.env) > 0 {
-			return body, errors.New("--env sets variables for a command server; a url server takes --auth-secret-ref")
+		if len(d.env) > 0 || len(d.vars) > 0 || len(d.egress) > 0 {
+			return body, errors.New("--env, --var and --egress are for a command server; a url server takes --auth-secret-ref")
 		}
 	case len(argv) > 0:
 		if d.signsIn() {
@@ -191,10 +200,51 @@ func (d *definition) request(name string, argv []string) (client.MCPServerReques
 			env[strings.TrimSpace(k)] = strings.TrimSpace(v)
 		}
 		body.Env = &env
+
+		vars, err := pairs("--var", "NAME=value", d.vars)
+		if err != nil {
+			return body, err
+		}
+		if len(vars) > 0 {
+			body.Vars = &vars
+		}
+		egress, err := places(d.egress)
+		if err != nil {
+			return body, err
+		}
+		if len(egress) > 0 {
+			body.Egress = &egress
+		}
 	default:
 		return body, errors.New("give --url, or the command to start after --")
 	}
 	return body, nil
+}
+
+func pairs(flag, shape string, raw []string) (map[string]string, error) {
+	out := make(map[string]string, len(raw))
+	for _, kv := range raw {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || strings.TrimSpace(k) == "" {
+			return nil, fmt.Errorf("%s %q is not %s", flag, kv, shape)
+		}
+		out[strings.TrimSpace(k)] = v
+	}
+	return out, nil
+}
+
+// places parses host:port; the brain decides which hosts are allowed.
+func places(raw []string) ([]client.Egress, error) {
+	out := make([]client.Egress, 0, len(raw))
+	for _, hp := range raw {
+		host, p, err := net.SplitHostPort(strings.TrimSpace(hp))
+		port, perr := strconv.Atoi(p)
+		if err != nil || perr != nil || host == "" {
+			return nil, fmt.Errorf("--egress %q is not host:port", hp)
+		}
+		out = append(out, client.Egress{Host: host, Port: port})
+	}
+	return out, nil
 }
 
 func (d *definition) signsIn() bool {
@@ -452,6 +502,16 @@ func printServer(opts *cli.Options, s *client.MCPServer, did string) error {
 			}
 			for k, v := range s.Env {
 				table.Row("env", cli.Safe(k), cli.Safe(v))
+			}
+			if s.Vars != nil {
+				for _, k := range slices.Sorted(maps.Keys(*s.Vars)) {
+					table.Row("var", cli.Safe(k), cli.Safe((*s.Vars)[k]))
+				}
+			}
+			if s.Egress != nil {
+				for _, e := range *s.Egress {
+					table.Row("egress", cli.Safe(net.JoinHostPort(e.Host, strconv.Itoa(e.Port))), "")
+				}
 			}
 			table.Row("discovered", discovered(*s), "")
 			if s.LastDiscoveryError != nil && s.LastDiscoveryAt != nil {

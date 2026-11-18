@@ -212,7 +212,7 @@ UPDATE mcp_servers s SET
     updated_at              = now()
 FROM current
 WHERE s.id = current.id
-RETURNING s.id, s.team_id, s.name, s.url, s.command, s.env, s.auth_secret_ref, s.bare, s.discovered_at, s.created_at, s.updated_at, s.last_discovery_error, s.last_discovery_at, s.auth_kind, s.oauth_client_id, s.oauth_client_secret_ref, s.oauth_scopes
+RETURNING s.id, s.team_id, s.name, s.url, s.command, s.env, s.auth_secret_ref, s.bare, s.discovered_at, s.created_at, s.updated_at, s.last_discovery_error, s.last_discovery_at, s.auth_kind, s.oauth_client_id, s.oauth_client_secret_ref, s.oauth_scopes, s.vars, s.egress
 `
 
 type SetMCPServerAuthParams struct {
@@ -261,6 +261,8 @@ func (q *Queries) SetMCPServerAuth(ctx context.Context, arg SetMCPServerAuthPara
 		&i.OauthClientID,
 		&i.OauthClientSecretRef,
 		&i.OauthScopes,
+		&i.Vars,
+		&i.Egress,
 	)
 	return i, err
 }

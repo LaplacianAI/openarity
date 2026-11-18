@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 )
 
@@ -28,6 +30,8 @@ type Fields struct {
 	Env           []byte
 	AuthSecretRef *string
 	Bare          bool
+	Vars          []byte
+	Egress        []byte
 
 	AuthKind        string
 	ClientID        *string
@@ -64,17 +68,29 @@ func Parse(teamID uuid.UUID, req Request) (Fields, error) {
 		return Fields{}, err
 	}
 
-	env := req.Env
+	// Stored as given, never null: an empty object or list.
+	env, vars := req.Env, req.Vars
 	if env == nil {
 		env = map[string]string{}
+	}
+	if vars == nil {
+		vars = map[string]string{}
 	}
 	encoded, err := json.Marshal(env)
 	if err != nil {
 		return Fields{}, err
 	}
+	varsJSON, err := json.Marshal(vars)
+	if err != nil {
+		return Fields{}, err
+	}
+	egress, err := json.Marshal(normalEgress(req.Egress))
+	if err != nil {
+		return Fields{}, err
+	}
 
 	return Fields{
-		Name: req.Name, URL: req.URL, Command: req.Command, Env: encoded,
+		Name: req.Name, URL: req.URL, Command: req.Command, Env: encoded, Vars: varsJSON, Egress: egress,
 		AuthSecretRef: req.AuthSecretRef, Bare: req.Bare,
 		AuthKind: req.AuthKind, ClientID: req.OAuthClientID, ClientSecretRef: req.OAuthClientSecretRef, Scopes: req.OAuthScopes,
 	}, nil
@@ -130,6 +146,8 @@ func checkURLServer(teamID uuid.UUID, req Request) error {
 		return errors.New("url may not carry a #fragment")
 	case len(req.Env) > 0:
 		return errors.New("env is for a command server; a url server takes auth_secret_ref")
+	case len(req.Vars) > 0 || len(req.Egress) > 0:
+		return errors.New("vars and egress are for a command server, which runs in the team's sandbox; a url server runs where it is")
 	case req.AuthSecretRef != nil:
 		return checkRef(teamID, "auth_secret_ref", *req.AuthSecretRef)
 	}
@@ -151,7 +169,85 @@ func checkCommandServer(teamID uuid.UUID, req Request) error {
 			return err
 		}
 	}
+	if err := checkVars(req.Vars, req.Env); err != nil {
+		return err
+	}
+	return checkEgress(req.Egress)
+}
+
+const (
+	maxVars      = 64
+	maxVarBytes  = 4096
+	maxEgress    = 32
+	maxHostBytes = 253
+)
+
+// checkVars are a command server's plain settings. A name is in vars or in
+// env, never both: which one the room is given would be a guess.
+func checkVars(vars, env map[string]string) error {
+	if len(vars) > maxVars {
+		return fmt.Errorf("vars holds at most %d settings", maxVars)
+	}
+	for _, k := range slices.Sorted(maps.Keys(vars)) {
+		v := vars[k]
+		switch {
+		case !envKeyPattern.MatchString(k):
+			return fmt.Errorf("vars key %q is not an environment variable name", k)
+		case env[k] != "":
+			return fmt.Errorf("%s is in both vars and env: a secret goes in env as a reference, a plain setting in vars", k)
+		case len(v) > maxVarBytes:
+			return fmt.Errorf("vars %s is longer than %d bytes", k, maxVarBytes)
+		case strings.ContainsRune(v, 0):
+			return fmt.Errorf("vars %s holds a NUL character", k)
+		}
+	}
 	return nil
+}
+
+// checkEgress is where a command server's room may connect: a host name or a
+// public address, and a port, each once. The room reaches nothing else.
+func checkEgress(egress []sandbox.HostPort) error {
+	if len(egress) > maxEgress {
+		return fmt.Errorf("egress holds at most %d hosts", maxEgress)
+	}
+	seen := map[sandbox.HostPort]bool{}
+	for _, e := range egress {
+		host := normalHost(e.Host)
+		switch {
+		case e.Port < 1 || e.Port > 65535:
+			return fmt.Errorf("egress %s: the port must be between 1 and 65535", e.Host)
+		case !hostPattern.MatchString(host) || len(host) > maxHostBytes:
+			return fmt.Errorf("egress %q is not a host name or an address", e.Host)
+		}
+		if addr, err := netip.ParseAddr(host); err == nil {
+			addr = addr.Unmap()
+			if !addr.IsGlobalUnicast() || addr.IsPrivate() {
+				return fmt.Errorf("egress %s is not a public address: a room never reaches a private network", e.Host)
+			}
+		} else if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+			return fmt.Errorf("egress %s is this machine, which a room never reaches", e.Host)
+		}
+		key := sandbox.HostPort{Host: host, Port: e.Port}
+		if seen[key] {
+			return fmt.Errorf("egress names %s:%d twice", host, e.Port)
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
+// hostPattern is a DNS name or an address literal; brackets are not taken.
+var hostPattern = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$|^[0-9a-f:.]+$`)
+
+func normalHost(h string) string { return strings.ToLower(strings.TrimSuffix(h, ".")) }
+
+// normalEgress is egress as stored: hosts in lower case, never null.
+func normalEgress(egress []sandbox.HostPort) []sandbox.HostPort {
+	out := make([]sandbox.HostPort, 0, len(egress))
+	for _, e := range egress {
+		out = append(out, sandbox.HostPort{Host: normalHost(e.Host), Port: e.Port})
+	}
+	return out
 }
 
 func checkRef(teamID uuid.UUID, field, ref string) error {

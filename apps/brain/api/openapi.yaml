@@ -5166,6 +5166,17 @@ components:
             Variables set for a command server, each a secret reference.
             Always an object; empty for a url server.
           examples: [{"GITHUB_TOKEN": "teams/<team_id>/mcp/github#token"}]
+        vars:
+          type: object
+          additionalProperties:
+            type: string
+          description: A command server's plain settings, set as they are in its room. Absent when there are none.
+          examples: [{"IMAP_HOST": "imap.gmail.com"}]
+        egress:
+          type: array
+          items:
+            $ref: "#/components/schemas/Egress"
+          description: Where a command server's room may connect; it reaches nothing else. Absent when there is nowhere.
         auth_secret_ref:
           type: string
           description: |
@@ -5297,6 +5308,28 @@ components:
           pattern: "^teams/[0-9a-f-]{36}/mcp/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*#[A-Za-z0-9_-]+$"
           description: Only with `url`. A secret reference, `teams/<team_id>/mcp/<name>#<key>`, in this team. The brain reads the secret when it connects; the value is never stored or returned.
           examples: ["teams/<team_id>/mcp/github#token"]
+        vars:
+          type: object
+          maxProperties: 64
+          additionalProperties:
+            type: string
+            maxLength: 4096
+          propertyNames:
+            pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+          description: |
+            Only with `command`. Plain settings for its room, shown as they
+            are; a secret goes in `env` as a reference. A name is in one or
+            the other, never both.
+        egress:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/Egress"
+          description: |
+            Only with `command`. Where its room may connect, each once: a host
+            name or a public address, and a port. Name the package registry
+            too, `registry.npmjs.org:443`, for a command that installs as it
+            starts.
         bare:
           type: boolean
           default: false
@@ -5325,6 +5358,22 @@ components:
             type: string
             minLength: 1
           description: Only with `auth_kind` oauth. The scopes to ask for, in place of the ones the server's metadata offers.
+
+    Egress:
+      type: object
+      required: [host, port]
+      additionalProperties: false
+      properties:
+        host:
+          type: string
+          maxLength: 253
+          description: A host name, or a public address; never private, loopback or link-local
+          examples: ["imap.gmail.com"]
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          examples: [993]
 
     MCPServerPage:
       type: object
@@ -5982,7 +6031,7 @@ components:
 
     TeamSettings:
       type: object
-      required: [search, learning, compaction_messages]
+      required: [search, sandbox, learning, compaction_messages]
       description: |
         `model`, `hub` and `updated_at` are always sent, null when unset;
         optional here only so a generated client decodes null as absent
@@ -5994,6 +6043,8 @@ components:
           description: The model the team's built-in agents run on. Null until chosen, and until then they do not run.
         search:
           $ref: "#/components/schemas/SearchSettings"
+        sandbox:
+          $ref: "#/components/schemas/SandboxSettings"
         learning:
           type: boolean
           description: Whether the learner writes learnings after each run, for approval
@@ -6053,6 +6104,34 @@ components:
         `brave`, `tavily` and `firecrawl-cloud` take a key and no url.
         `firecrawl-oss` takes a key only if the instance requires one.
 
+    SandboxSettings:
+      type: object
+      required: [provider, key_set]
+      description: Where the team's command MCP servers run.
+      properties:
+        provider:
+          $ref: "#/components/schemas/SandboxProvider"
+        url:
+          type: string
+          nullable: true
+          description: A self-hosted provider's API address, for sandboxd and a self-hosted Daytona; null otherwise
+          examples: ["http://sandboxd:8090"]
+        image:
+          type: string
+          nullable: true
+          description: What rooms start from, in the provider's own terms (an E2B template, a Daytona or sandboxd image); null for the default
+        key_set:
+          type: boolean
+          description: Whether a key is stored. The key itself is never returned.
+
+    SandboxProvider:
+      type: string
+      enum: [none, e2b, daytona, sandboxd]
+      description: |
+        `none` runs no command servers. `e2b` is hosted and takes a key and no
+        url; `daytona` takes a key, and a url when self-hosted; `sandboxd` is
+        self-hosted and takes a url and its token as the key.
+
     TeamSettingsRequest:
       type: object
       additionalProperties: false
@@ -6064,6 +6143,8 @@ components:
           description: Null or absent for no model, which stops the built-in agents running.
         search:
           $ref: "#/components/schemas/SearchSettingsRequest"
+        sandbox:
+          $ref: "#/components/schemas/SandboxSettingsRequest"
         learning:
           type: boolean
         compaction_messages:
@@ -6099,6 +6180,30 @@ components:
             to keep the stored one while the provider is unchanged. For
             firecrawl-oss an empty string removes the stored key; for the
             others it is refused.
+
+    SandboxSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [provider]
+      description: Absent from a request, the stored sandbox is kept.
+      properties:
+        provider:
+          $ref: "#/components/schemas/SandboxProvider"
+        url:
+          type: string
+          description: Required for sandboxd, optional for daytona, refused for e2b and none
+        image:
+          type: string
+          maxLength: 512
+          description: Optional; refused for none
+        api_key:
+          type: string
+          writeOnly: true
+          maxLength: 4096
+          description: |
+            The provider's key, or sandboxd's token: required for every
+            provider but none. Omit it to keep the stored one while the
+            provider and its url are unchanged.
 
     RunRequest:
       type: object

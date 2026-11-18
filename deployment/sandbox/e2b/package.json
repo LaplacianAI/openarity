@@ -1,0 +1,16 @@
+{
+  "name": "openarity-sandbox-template",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsx build.ts"
+  },
+  "dependencies": {
+    "e2b": "2.60.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.1",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  }
+}

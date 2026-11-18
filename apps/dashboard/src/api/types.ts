@@ -607,6 +607,10 @@ export type MCPServer = {
   url?: string;
   command?: string[];
   env: Record<string, string>;
+  /** A command server's plain settings, shown as they are. Absent when there are none. */
+  vars?: Record<string, string>;
+  /** Where a command server's sandbox room may connect. Absent when nowhere. */
+  egress?: Egress[];
   auth_secret_ref?: string;
   /** static: a token or none; oauth: signed in to on the dashboard. */
   auth_kind: "static" | "oauth";
@@ -636,11 +640,16 @@ export type MCPServerConnection = {
   access_expires_at?: string | null;
 };
 
+/** One place a command server's room may connect to. */
+export type Egress = { host: string; port: number };
+
 export type MCPServerRequest = {
   name: string;
   url?: string;
   command?: string[];
   env?: Record<string, string>;
+  vars?: Record<string, string>;
+  egress?: Egress[];
   auth_secret_ref?: string;
   bare?: boolean;
   auth_kind?: "static" | "oauth";
@@ -709,6 +718,12 @@ export type SearchProvider =
   | "firecrawl-oss";
 
 /**
+ * Where a team's command MCP servers run. E2B is hosted; Daytona is hosted or
+ * self-hosted at a URL; sandboxd is self-hosted and takes a URL.
+ */
+export type SandboxProvider = "none" | "e2b" | "daytona" | "sandboxd";
+
+/**
  * GET /teams/{id}/settings. A team that never saved reads the defaults, with
  * `updated_at` null. The search key is never returned; `key_set` says
  * whether there is one.
@@ -716,6 +731,13 @@ export type SearchProvider =
 export type TeamSettings = {
   model: { name: string; max_tokens: number; temperature?: number } | null;
   search: { provider: SearchProvider; url: string | null; key_set: boolean };
+  /** The key, like the search key, is never returned. */
+  sandbox: {
+    provider: SandboxProvider;
+    url: string | null;
+    image: string | null;
+    key_set: boolean;
+  };
   learning: boolean;
   compaction_messages: number;
   /** The agent every message reaches first; null for the built-in orchestrator. */
@@ -730,6 +752,11 @@ export type TeamSettings = {
 export type TeamSettingsRequest = {
   model: { name: string; max_tokens: number; temperature?: number } | null;
   search: { provider: SearchProvider; url?: string; api_key?: string };
+  /**
+   * Left out, the stored sandbox stays. `api_key` left out keeps the stored
+   * key while the provider and its URL are unchanged.
+   */
+  sandbox?: { provider: SandboxProvider; url?: string; image?: string; api_key?: string };
   learning: boolean;
   compaction_messages: number;
   /** An agent's name in the team; null for the built-in orchestrator. */

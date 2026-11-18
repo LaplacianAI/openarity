@@ -170,6 +170,82 @@ To turn it off, run `make searxng-down` first and then remove the secret.
 The overlay needs the secret even to stop the container. Deploys check for
 the secret on every run, so the next one leaves SearXNG out.
 
+### Command servers with sandboxd
+
+A command MCP server (`npx`, `uvx`) runs in a sandbox, never in the brain.
+E2B and Daytona are hosts a team only needs a key for. sandboxd is the
+self-hosted one, and on staging it runs **beside** the stack rather than in
+it: on a rootless Docker daemon of its own, owned by a user of its own.
+
+- **CI never touches it.** `deploy.sh` swaps the brain on the system daemon;
+  sandboxd is reached by the URL a team saves, like E2B, so a deploy has
+  nothing to restart.
+- **Not the `openarity` user.** That user is in the `docker` group, which is
+  root on the host. sandboxd runs whatever a team's server asks for, so its
+  daemon belongs to a user with no other rights.
+- **Not the whole stack on rootless.** That would mean moving every volume,
+  and a rootless daemon cannot bind Caddy's 443.
+
+```
+system daemon (openarity, CI deploys here)     rootless daemon (sandboxd)
+  brain, worker, postgres, ...  ── http + token ──▶  sandboxd :9090
+                                                       └─ a room per server
+```
+
+1. As root, make the user and its daemon:
+
+   ```sh
+   sudo useradd --create-home --shell /bin/bash sandboxd
+   sudo apt-get install -y docker-ce-rootless-extras uidmap
+   sudo loginctl enable-linger sandboxd
+   sudo -iu sandboxd
+   dockerd-rootless-setuptool.sh install
+   systemctl --user enable --now docker
+   echo 'export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock' >> ~/.bashrc
+   ```
+
+2. As `sandboxd`, in a checkout of its own, set `deployment/.env`:
+
+   ```sh
+   SANDBOXD_TOKEN=<openssl rand -hex 32>
+   SANDBOXD_BIND=<the server's private or tailnet address>
+   SANDBOXD_UID=<id -u>
+   SANDBOXD_DOCKER_SOCKET=/run/user/<id -u>/docker.sock
+   SANDBOXD_MEMORY_BUDGET=1610612736   # 1.5 GiB across every room; a room takes 256 MiB
+   ```
+
+   and start it:
+
+   ```sh
+   git clone https://github.com/LaplacianAI/openarity.git && cd openarity/deployment
+   docker pull ghcr.io/laplacianai/openarity-sandbox:latest   # the room image; sandboxd never pulls
+   docker compose -f docker-compose.sandboxd.yml up -d --build
+   curl -s "http://<SANDBOXD_BIND>:9090/healthz"               # 200
+   ```
+
+3. As `openarity`, let the brain dial that one address, beside SearXNG's if
+   it is there, in its `deployment/.env`:
+
+   ```sh
+   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.250/32,<SANDBOXD_BIND>/32
+   ```
+
+   The next deploy, or `make staging`, picks it up.
+
+4. A team chooses it in Settings → Sandbox (sandboxd, the address, the token,
+   and `ghcr.io/laplacianai/openarity-sandbox:latest` as the image), or:
+
+   ```sh
+   printf %s "$SANDBOXD_TOKEN" | oa teams settings set <team> \
+       --sandbox sandboxd --sandbox-url "http://<SANDBOXD_BIND>:9090" \
+       --sandbox-image ghcr.io/laplacianai/openarity-sandbox:latest --sandbox-key-stdin
+   ```
+
+To update it, pull its checkout and the room image, then `up -d --build`
+again. A pull request deployed to staging can read the brain's environment,
+the sandboxd token among the team's secrets with it, and so can make rooms:
+keep the budget small and the token staging's own.
+
 ### Logs in Grafana
 
 Optional, as everywhere: leave it off if the logs go to a stack of your own

@@ -5,7 +5,12 @@ import { type ReactNode, useId, useState } from "react";
 import { getTeamSettings, listAgents, saveTeamSettings } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
-import type { SearchProvider, TeamSettings, TeamSettingsRequest } from "@/api/types";
+import type {
+  SandboxProvider,
+  SearchProvider,
+  TeamSettings,
+  TeamSettingsRequest,
+} from "@/api/types";
 import { DeleteTeamDialog } from "@/components/delete-team-dialog";
 import { type Picked, Picker } from "@/components/picker";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
@@ -39,6 +44,31 @@ const PROVIDERS: { value: SearchProvider; label: string }[] = [
 const SELF_HOSTED: SearchProvider[] = ["searxng", "firecrawl-oss"];
 const KEY_REQUIRED: SearchProvider[] = ["brave", "tavily", "firecrawl-cloud"];
 
+/**
+ * Where command servers run, and what each provider does with a server's
+ * network list: said beside the choice, since it is what a team is choosing.
+ */
+const SANDBOXES: { value: SandboxProvider; label: string; about: string }[] = [
+  { value: "none", label: "Off", about: "Command servers do not run." },
+  {
+    value: "e2b",
+    label: "E2B",
+    about:
+      "Hosted. Web ports (80 and 443) are allowed by name; any other port is allowed by the addresses its host has when the sandbox is made.",
+  },
+  {
+    value: "daytona",
+    label: "Daytona",
+    about:
+      "Hosted, or your own instance at its API address. Hosts are allowed by the addresses they have when the sandbox is made, on every port; hosted Daytona allows a list of web hosts (port 443) by name instead.",
+  },
+  {
+    value: "sandboxd",
+    label: "sandboxd (self-hosted)",
+    about: "Your own sandboxd at its address, with its token as the key.",
+  },
+];
+
 /** How many agents one search for the hub offers. */
 const PICK_PAGE = 20;
 
@@ -63,7 +93,7 @@ function Settings() {
       <PageHeader
         title={teamName ? `Team settings — ${teamName}` : "Team settings"}
         finding={settings.data && settings.data.model === null ? NO_MODEL : null}
-        description="For this team only: the model its built-in agents run on, how they search the web, and what they learn. Each team has its own."
+        description="For this team only: the model its built-in agents run on, how they search the web, where its command servers run, and what they learn. Each team has its own."
       />
 
       {teamId && !perms.isPending && !canWrite ? (
@@ -128,6 +158,11 @@ export type SettingsDraft = {
   url: string;
   key: string;
   dropKey: boolean;
+  sandbox: SandboxProvider;
+  sandboxURL: string;
+  sandboxImage: string;
+  /** Typed only; the stored key is never read back. */
+  sandboxKey: string;
   learning: boolean;
   compaction: string;
   /** The chosen hub agent; null for the built-in orchestrator. */
@@ -144,6 +179,11 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     url: s.search.url ?? "",
     key: "",
     dropKey: false,
+    // A brain from before sandboxes sends none: the team has none.
+    sandbox: s.sandbox?.provider ?? "none",
+    sandboxURL: s.sandbox?.url ?? "",
+    sandboxImage: s.sandbox?.image ?? "",
+    sandboxKey: "",
     learning: s.learning,
     compaction: String(s.compaction_messages),
     hub: s.hub,
@@ -151,13 +191,14 @@ export function draftOf(s: TeamSettings): SettingsDraft {
 }
 
 /** The groups of the page, each saved on its own. */
-export type Group = "model" | "hub" | "search" | "learning";
+export type Group = "model" | "hub" | "search" | "sandbox" | "learning";
 
 /** Which of the draft's fields each group owns. */
 const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
   model: ["modelOn", "modelName", "maxTokens", "temperature"],
   hub: ["hub", "compaction"],
   search: ["provider", "url", "key", "dropKey"],
+  sandbox: ["sandbox", "sandboxURL", "sandboxImage", "sandboxKey"],
   learning: ["learning"],
 };
 
@@ -258,14 +299,48 @@ export function settingsRequest(
     }
   }
 
+  const sandbox = sandboxRequest(d, stored);
+  if (typeof sandbox === "string") return sandbox;
+
   return {
     model,
     search,
+    sandbox,
     learning: d.learning,
     compaction_messages: compaction,
     // Whole, as the rest is: null sends the team back to the built-in orchestrator.
     hub: d.hub?.name ?? null,
   };
+}
+
+/**
+ * The sandbox as the brain takes it. Its key is kept as the search key is:
+ * left out, it stays while the provider and its URL are unchanged.
+ */
+function sandboxRequest(
+  d: SettingsDraft,
+  stored: TeamSettings,
+): TeamSettingsRequest["sandbox"] | string {
+  const sandbox: NonNullable<TeamSettingsRequest["sandbox"]> = { provider: d.sandbox };
+  if (d.sandbox === "none") return sandbox;
+
+  const url = d.sandboxURL.trim();
+  if (d.sandbox === "sandboxd" && url === "") return "sandboxd needs its address.";
+  if (d.sandbox !== "e2b" && url !== "") sandbox.url = url;
+  const image = d.sandboxImage.trim();
+  if (image !== "") sandbox.image = image;
+
+  const was = stored.sandbox;
+  const keeps =
+    was?.key_set && was.provider === d.sandbox && (was.url ?? "") === (sandbox.url ?? "");
+  if (d.sandboxKey !== "") {
+    sandbox.api_key = d.sandboxKey;
+  } else if (!keeps) {
+    return was?.key_set && was.provider === d.sandbox
+      ? "The key stays with the old address. Paste it again."
+      : "Paste the provider's key. A key is never carried from one provider to another.";
+  }
+  return sandbox;
 }
 
 /** One group: what it decides, its fields, and its own Save. */
@@ -342,7 +417,7 @@ function Section({
   );
 }
 
-const GROUPS: Group[] = ["model", "hub", "search", "learning"];
+const GROUPS: Group[] = ["model", "hub", "search", "sandbox", "learning"];
 
 function SettingsForm({
   teamId,
@@ -369,6 +444,9 @@ function SettingsForm({
   const selfHosted = SELF_HOSTED.includes(draft.provider);
   const takesKey = KEY_REQUIRED.includes(draft.provider) || draft.provider === "firecrawl-oss";
   const keyKept = stored.search.key_set && stored.search.provider === draft.provider;
+  const sandboxKeyKept =
+    stored.sandbox?.key_set === true && stored.sandbox.provider === draft.sandbox;
+  const sandboxAbout = SANDBOXES.find((p) => p.value === draft.sandbox)?.about;
 
   // A plain call rather than useMutation: a mutation keeps its variables in
   // the query client's cache, and they can hold the key.
@@ -559,6 +637,86 @@ function SettingsForm({
             checked={draft.dropKey}
             onCheckedChange={(dropKey) => set("search", { dropKey, key: "" })}
           />
+        ) : null}
+      </Section>
+
+      <Section
+        title="Sandbox"
+        about="Where the team's command MCP servers run, each in a sandbox of its own that reaches only the network its server lists."
+        {...props("sandbox")}
+      >
+        <Field label="Sandbox provider" htmlFor="settings-sandbox" hint={sandboxAbout}>
+          <select
+            id="settings-sandbox"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={draft.sandbox}
+            onChange={(e) =>
+              // The address, image and key are the old provider's.
+              set("sandbox", {
+                sandbox: e.target.value as SandboxProvider,
+                sandboxURL: "",
+                sandboxImage: "",
+                sandboxKey: "",
+              })
+            }
+          >
+            {SANDBOXES.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {draft.sandbox === "daytona" || draft.sandbox === "sandboxd" ? (
+          <Field
+            label="API address"
+            htmlFor="settings-sandbox-url"
+            hint={
+              draft.sandbox === "daytona"
+                ? "Empty for Daytona's hosted service; your instance's API address otherwise."
+                : "Where the brain reaches it, such as http://sandboxd:8080."
+            }
+          >
+            <Input
+              id="settings-sandbox-url"
+              value={draft.sandboxURL}
+              onChange={(e) => set("sandbox", { sandboxURL: e.target.value })}
+            />
+          </Field>
+        ) : null}
+        {draft.sandbox !== "none" ? (
+          <>
+            <Field
+              label="Image"
+              htmlFor="settings-sandbox-image"
+              hint="What sandboxes start from, in the provider's own terms. Empty for the default."
+            >
+              <Input
+                id="settings-sandbox-image"
+                spellCheck={false}
+                value={draft.sandboxImage}
+                onChange={(e) => set("sandbox", { sandboxImage: e.target.value })}
+              />
+            </Field>
+            <Field
+              label={draft.sandbox === "sandboxd" ? "Token" : "API key"}
+              htmlFor="settings-sandbox-key"
+              hint={
+                sandboxKeyKept
+                  ? "A key is set. Leave this empty to keep it."
+                  : "Kept in the secret store and never shown again."
+              }
+            >
+              <Input
+                id="settings-sandbox-key"
+                type="password"
+                autoComplete="new-password"
+                spellCheck={false}
+                value={draft.sandboxKey}
+                onChange={(e) => set("sandbox", { sandboxKey: e.target.value })}
+              />
+            </Field>
+          </>
         ) : null}
       </Section>
 

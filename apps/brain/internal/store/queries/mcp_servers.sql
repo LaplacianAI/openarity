@@ -1,6 +1,7 @@
 -- name: CreateMCPServer :one
-INSERT INTO mcp_servers (team_id, name, url, command, env, auth_secret_ref, bare)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO mcp_servers (team_id, name, url, command, env, auth_secret_ref, bare, vars, egress)
+VALUES (sqlc.arg('team_id'), sqlc.arg('name'), sqlc.narg('url'), sqlc.narg('command'), sqlc.arg('env'), sqlc.narg('auth_secret_ref'), sqlc.arg('bare'),
+        COALESCE(sqlc.narg('vars')::jsonb, '{}'), COALESCE(sqlc.narg('egress')::jsonb, '[]'))
 RETURNING *;
 
 -- name: GetMCPServer :one
@@ -28,6 +29,8 @@ UPDATE mcp_servers SET
     env             = sqlc.arg('env'),
     auth_secret_ref = sqlc.narg('auth_secret_ref'),
     bare            = sqlc.arg('bare'),
+    vars            = COALESCE(sqlc.narg('vars')::jsonb, '{}'),
+    egress          = COALESCE(sqlc.narg('egress')::jsonb, '[]'),
     discovered_at   = CASE
         WHEN url IS NOT DISTINCT FROM sqlc.narg('url')
          AND command IS NOT DISTINCT FROM sqlc.narg('command')::text[]

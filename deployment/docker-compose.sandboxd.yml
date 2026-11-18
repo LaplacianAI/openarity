@@ -1,0 +1,102 @@
+# sandboxd, the optional self-hosted sandbox provider: it runs a command MCP
+# server (npx, uvx) in a hardened container of its own, a room, and the brain
+# reaches the server through it. Nothing here is needed unless a team chooses
+# sandboxd as its sandbox provider.
+#
+# It is a project of its own, not an overlay on the brain's: the brain reaches
+# sandboxd only at the URL a team saves in its settings, as it reaches E2B or
+# Daytona, and sandboxd proxies every request to a room itself. So sandboxd
+# runs on a rootless Docker daemon while the brain's stack stays where it is,
+# on this machine or another.
+#
+# ROOTLESS DOCKER, ONCE, ON THE HOST
+#
+# sandboxd makes containers from what a team's server asks for, so whoever can
+# reach the daemon's socket can run containers on it. Point it at a rootless
+# daemon owned by a user of its own, never the system daemon and never a user
+# in the docker group: in a rootless daemon, root inside a container is an
+# unprivileged user on the host, so an escape from a room lands in an account
+# with no more rights than that user's. sandboxd already drops every
+# capability and runs rooms as 65534 on a read-only root with no new
+# privileges; the rootless daemon is what makes a bug in that list survivable.
+#
+#   sudo useradd --create-home --shell /bin/bash sandboxd
+#   sudo apt-get install -y docker-ce-rootless-extras uidmap
+#   sudo loginctl enable-linger sandboxd      # keep its daemon running after logout
+#   sudo -iu sandboxd
+#   dockerd-rootless-setuptool.sh install
+#   systemctl --user enable --now docker
+#   export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
+#
+# THEN, AS THAT USER, IN ITS OWN CHECKOUT
+#
+#   git clone https://github.com/LaplacianAI/openarity.git && cd openarity/deployment
+#   docker pull ghcr.io/laplacianai/openarity-sandbox:latest   # the room image; sandboxd never pulls
+#   docker compose -f docker-compose.sandboxd.yml up -d --build
+#   curl -s http://$SANDBOXD_BIND:9090/healthz                 # 200
+#
+# Variables, in that checkout's deployment/.env:
+#
+#   SANDBOXD_TOKEN=<openssl rand -hex 32>   # what the brain sends; required
+#   SANDBOXD_BIND=<a private address>       # where the brain reaches it; required
+#   SANDBOXD_UID=<id -u>                     # the user that owns the daemon's socket
+#   SANDBOXD_DOCKER_SOCKET=/run/user/<uid>/docker.sock
+#   SANDBOXD_MEMORY_BUDGET=1610612736        # bytes, across every room; default 3 GiB
+#
+# SANDBOXD_BIND is an address the brain's containers can reach and the
+# internet cannot: a private interface or a tailnet address, never 0.0.0.0.
+# Every route but /healthz needs the token, but the token is no reason to
+# expose the port.
+#
+# IN THE BRAIN'S deployment/.env
+#
+# The brain refuses to dial a private address unless MCP_PRIVATE_NETWORKS
+# names it. Name sandboxd's address alone, beside any other already there:
+#
+#   OPENARITY_MCP_PRIVATE_NETWORKS=<SANDBOXD_BIND>/32
+#
+# and a team chooses it in Settings -> Sandbox, or:
+#
+#   printf %s "$SANDBOXD_TOKEN" | oa teams settings set <team> \
+#       --sandbox sandboxd --sandbox-url http://<SANDBOXD_BIND>:9090 --sandbox-key-stdin
+#
+# with ghcr.io/laplacianai/openarity-sandbox:latest as its sandbox image.
+#
+# Memory is budgeted: a room gets 256 MiB, and a create that would take the
+# rooms past SANDBOXD_MEMORY_BUDGET is refused with 503. Rooms are removed by
+# the brain; if sandboxd is restarted its rooms keep running, and it finds
+# them again from the daemon's labels.
+#
+# A room can reach sandboxd's port on its own network, as it can reach
+# nothing else; every route needs a token a room does not have.
+
+name: openarity-sandboxd
+
+services:
+  sandboxd:
+    build:
+      context: ../apps/sandbox
+      target: sandboxd
+    image: openarity/sandboxd:latest
+    # The user that owns the daemon's socket. Not root: the socket is the
+    # only privilege sandboxd has, and it is the rootless daemon's.
+    user: "${SANDBOXD_UID:-1000}"
+    environment:
+      SANDBOXD_TOKEN: ${SANDBOXD_TOKEN:?set SANDBOXD_TOKEN in deployment/.env}
+      # Where the brain reaches it, and so the base of every room's proxy URL.
+      SANDBOXD_PUBLIC_URL: http://${SANDBOXD_BIND:?set SANDBOXD_BIND in deployment/.env}:9090
+      SANDBOXD_DOCKER_SOCKET: /var/run/docker.sock
+      SANDBOXD_MEMORY_BUDGET: ${SANDBOXD_MEMORY_BUDGET:-3221225472}
+      # sandboxd joins every room's network as this container.
+      SANDBOXD_CONTAINER: openarity-sandboxd
+    container_name: openarity-sandboxd
+    volumes:
+      - ${SANDBOXD_DOCKER_SOCKET:?set SANDBOXD_DOCKER_SOCKET in deployment/.env}:/var/run/docker.sock
+    ports:
+      - "${SANDBOXD_BIND}:9090:9090"
+    # distroless has no shell or wget, so the probe is the binary itself being
+    # up; compose restarts it if it exits, and a bad socket makes it exit.
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]

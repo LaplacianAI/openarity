@@ -18,6 +18,14 @@ type search struct {
 	KeySet   bool    `json:"key_set"`
 }
 
+// sandbox is where the team's command MCP servers run. The key is never shown.
+type sandbox struct {
+	Provider string  `json:"provider"`
+	URL      *string `json:"url"`
+	Image    *string `json:"image"`
+	KeySet   bool    `json:"key_set"`
+}
+
 type hubRef struct {
 	ID   uuid.UUID `json:"id"`
 	Name string    `json:"name"`
@@ -26,6 +34,7 @@ type hubRef struct {
 type settings struct {
 	Model              *modelRef  `json:"model"`
 	Search             search     `json:"search"`
+	Sandbox            sandbox    `json:"sandbox"`
 	Learning           bool       `json:"learning"`
 	CompactionMessages int32      `json:"compaction_messages"`
 	Hub                *hubRef    `json:"hub"`
@@ -38,10 +47,20 @@ type searchRequest struct {
 	APIKey   *string `json:"api_key"`
 }
 
+// sandboxRequest is the sandbox to save. Left out of a request, the stored one
+// stays: a client that predates sandboxes cannot clear a team's.
+type sandboxRequest struct {
+	Provider string  `json:"provider"`
+	URL      *string `json:"url"`
+	Image    *string `json:"image"`
+	APIKey   *string `json:"api_key"`
+}
+
 type settingsRequest struct {
-	Model              *modelRef     `json:"model"`
-	Search             searchRequest `json:"search"`
-	Learning           bool          `json:"learning"`
-	CompactionMessages int32         `json:"compaction_messages"`
-	Hub                *string       `json:"hub"`
+	Model              *modelRef       `json:"model"`
+	Search             searchRequest   `json:"search"`
+	Sandbox            *sandboxRequest `json:"sandbox"`
+	Learning           bool            `json:"learning"`
+	CompactionMessages int32           `json:"compaction_messages"`
+	Hub                *string         `json:"hub"`
 }

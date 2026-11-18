@@ -5,6 +5,7 @@ one binary, roles as arguments:
 
 | Role | What it is |
 | --- | --- |
+| `sandbox serve` | sandboxd, the optional self-hosted provider: rooms on a rootless Docker daemon, an egress guard for each, and a proxy to their ports |
 | `sandbox shim` | Inside a sandbox: serves an MCP server that speaks stdio over Streamable HTTP, so the brain can reach it at a URL |
 
 The brain never imports this module and this module never imports the brain.
@@ -26,12 +27,42 @@ code; every edit handed over with a link to its file and line.
 apps/sandbox/
   cmd/sandbox/
     main.go         run(): parse, then the role; the shim serves until its server exits
-    command.go      argument parsing: pure, no dependencies
+    command.go      argument parsing: pure, no dependencies; serve's settings from the environment
   internal/shim/
     child.go        the server on stdio: one MCP session, ids of the shim's own, answers routed back
     sessions.go     the callers sharing it: session ids, idle expiry, requests in flight
     handler.go      the HTTP side: POST, DELETE, the bearer token, /healthz
+  internal/api/     sandboxd's HTTP: the rooms API (bearer), the proxy to a room's port (X-Sandboxd-Token)
+  internal/rooms/   rooms on Docker: create, start, delete, the memory budget, Harden (every container's fixed settings)
+  internal/guard/   the egress guard: a listener per room and port, SNI routing, the private-address refusal
+  internal/docker/  the Engine API over the unix socket, with net/http
+  internal/integration/  tests against a real daemon; skipped unless SANDBOXD_TEST_DOCKER names its socket
+  Dockerfile        targets: sandboxd (default), room (Node and the shim)
 ```
+
+## How sandboxd works
+
+It keeps no state the daemon does not hold. A room is a network `oa-sb-<id>`
+whose labels carry its spec; `start` adds the container to it. Restart
+sandboxd and `Reconcile` opens each room's egress guard again.
+
+- **Every container is built by `rooms.Harden`**: read-only root, tmpfs
+  `/tmp` and `/home/sandbox`, cap-drop ALL, no-new-privileges, default
+  seccomp, user 65534, pids, memory and CPU limits, an `--internal` network of
+  its own. A request chooses the image, env, labels and egress hosts, and
+  nothing else; a body with any other field is refused with 422.
+- **The egress guard** listens on sandboxd's address in the room's network,
+  for each egress port. The room's `/etc/hosts` points each listed host at
+  that address. One host on a port: that host. Several: the TLS SNI, and a
+  name not listed is refused. A port whose protocol is not TLS from its first
+  byte (25, 80, 587, ...) serves one host only; two are refused at create.
+  The dialer refuses a private, loopback or link-local address after
+  resolving, so a listed name that resolves inward gets nothing.
+- **The proxy** to a room's port is authenticated by `X-Sandboxd-Token`, an
+  HMAC of the room id under `SANDBOXD_TOKEN`, because `Authorization` is the
+  brain's bearer token for the shim and must pass through untouched.
+- **Run it against a rootless daemon**, so root in a room is an unprivileged
+  user on the host. `deployment/docker-compose.sandboxd.yml` says how.
 
 ## How the shim works
 
@@ -78,3 +109,7 @@ rather than sleep.
 - **Every SDK call in a test has a deadline** (`quick`). An answer routed to
   the wrong caller never arrives, and a test without a deadline hangs instead
   of failing.
+- **The integration tests run sandboxd in a container**, as it runs in
+  production: it has to be a member of each room's network. They need the
+  internet (the npm registry, one public host).
+  `SANDBOXD_TEST_DOCKER=<socket> go test ./internal/integration/`.

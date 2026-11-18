@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
+	sandboxpkg "github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -113,11 +114,22 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	saved, err := h.store.UpsertTeamSettings(r.Context(), params(teamID, req, secretID, hub))
-	if err != nil {
+	box, boxWritten, ok := h.sandboxOf(w, r, teamID, req.Sandbox, stored)
+	if !ok {
 		if written != "" {
 			h.forget(r.Context(), teamID, written)
+		}
+		return
+	}
+
+	p := params(teamID, req, secretID, hub)
+	p.SandboxProvider, p.SandboxUrl, p.SandboxImage, p.SandboxSecretID = box.provider, box.url, box.image, box.secretID
+	saved, err := h.store.UpsertTeamSettings(r.Context(), p)
+	if err != nil {
+		for _, path := range []string{written, boxWritten} {
+			if path != "" {
+				h.forget(r.Context(), teamID, path)
+			}
 		}
 		api.Fail(w, h.logger, u, "failed to save team settings", err)
 		return
@@ -189,10 +201,50 @@ func (h *handler) searchKey(
 	}
 }
 
+// stored sandbox, as the row keeps it.
+type sandboxRow struct {
+	provider string
+	url      *string
+	image    *string
+	secretID *uuid.UUID
+}
+
+// sandboxOf is the sandbox to save, and the path of a key it wrote. A request
+// without one keeps what is stored; a key is written fresh, or kept when the
+// provider and its URL are the same.
+func (h *handler) sandboxOf(
+	w http.ResponseWriter, r *http.Request, teamID uuid.UUID, s *sandboxRequest, stored *db.TeamSetting,
+) (sandboxRow, string, bool) {
+	if s == nil {
+		if stored == nil {
+			return sandboxRow{provider: string(sandboxpkg.None)}, "", true
+		}
+		return sandboxRow{stored.SandboxProvider, stored.SandboxUrl, stored.SandboxImage, stored.SandboxSecretID}, "", true
+	}
+	row := sandboxRow{provider: s.Provider, url: s.URL, image: s.Image}
+	switch {
+	case s.Provider == string(sandboxpkg.None):
+		return row, "", true
+	case s.APIKey != nil:
+		id := uuid.New()
+		path := secrets.Path(teamID, secrets.KindSandbox, id)
+		if err := h.secrets.Put(r.Context(), path, KeyAPI, *s.APIKey); err != nil {
+			h.logger.Warn("sandbox key not stored", "team", teamID, "error", err)
+			http.Error(w, "the secret store is unavailable", http.StatusServiceUnavailable)
+			return sandboxRow{}, "", false
+		}
+		row.secretID = &id
+		return row, path, true
+	default:
+		row.secretID = stored.SandboxSecretID // validate made sure it is kept
+		return row, "", true
+	}
+}
+
 func (h *handler) forget(ctx context.Context, teamID uuid.UUID, path string) {
 	err := h.store.RecordDeletedSecret(ctx, db.RecordDeletedSecretParams{Path: path, TeamID: teamID})
 	if err != nil {
-		h.logger.Error("a search key outlived its failed save", "team", teamID, "error", err)
+		h.logger.Error("a key outlived its failed save", "team", teamID, "error", err)
 	}
 }
 
@@ -221,6 +273,12 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 			URL:      row.SearchUrl,
 			KeySet:   row.SearchSecretID != nil,
 		},
+		Sandbox: sandbox{
+			Provider: row.SandboxProvider,
+			URL:      row.SandboxUrl,
+			Image:    row.SandboxImage,
+			KeySet:   row.SandboxSecretID != nil,
+		},
 		Learning:           row.Learning,
 		CompactionMessages: row.CompactionMessages,
 		Hub:                hub,
@@ -235,6 +293,7 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 func defaults() settings {
 	return settings{
 		Search:             search{Provider: providerNone},
+		Sandbox:            sandbox{Provider: string(sandboxpkg.None)},
 		CompactionMessages: defaultCompaction,
 	}
 }
