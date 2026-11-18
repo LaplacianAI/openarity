@@ -42,7 +42,13 @@ COPY apps/brain/ ./
 #
 # -trimpath keeps build paths out of panics; the ldflags drop DWARF and the
 # symbol table, which is most of the binary size and nothing a container needs.
-RUN go build -trimpath -ldflags="-s -w" -o /brain ./cmd/brain
+#
+# REVISION is the commit this image is built from. The build context holds
+# apps/brain and not .git, so Go cannot stamp it itself, and the brain needs it
+# to name the room image published with it (openarity-sandbox:sha-<commit>).
+# Without it the brain falls back to the room image's latest.
+ARG REVISION=
+RUN go build -trimpath -ldflags="-s -w -X main.revision=${REVISION}" -o /brain ./cmd/brain
 
 # Distroless: no shell, no package manager, nothing to exec into. Debugging
 # happens through logs and the probes.

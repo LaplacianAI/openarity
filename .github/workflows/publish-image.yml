@@ -92,6 +92,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The brain names its room image by this commit: the sandbox job
+          # below publishes openarity-sandbox:sha-<this commit>.
+          build-args: REVISION=${{ github.sha }}
           # Without this the Go module download runs on every push.
           cache-from: type=gha
           cache-to: type=gha,mode=max
