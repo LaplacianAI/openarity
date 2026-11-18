@@ -655,6 +655,15 @@ Grafana is at `http://<BIND_ADDR>:13000`, signed in as `admin`, with the
 sweep, files not kept, webhooks refused, warnings and errors by service, and
 every line, searchable by a run's id. Loki keeps seven days.
 
+Alerts are rules in Grafana, made by `make grafana-alerts` from
+`logs/grafana/alerts.py`: runs stuck or left queued, replies given up, the
+brain or worker gone quiet, the graph falling behind, cleanup that will not
+drain, and token spend. They need a PostgreSQL data source on the `openarity`
+database with a read-only user, added in Grafana, and they go where the
+default notification policy sends them, so set a contact point there first.
+Run it again to put a rule back. `GRAFANA_ROOT_URL` in `.env` is the address
+a notification links to.
+
 Alloy reads the containers through the Docker API, and the Docker socket is
 root on the machine, so Alloy never holds it: a socket proxy does, and
 answers only reads of containers, their logs and networks. The logs stay on
