@@ -24,7 +24,7 @@ afterEach(() => {
 const SETTINGS: TeamSettings = {
   model: null,
   search: { provider: "none", url: null, key_set: false },
-  sandbox: { provider: "none", url: null, image: null, key_set: false },
+  sandbox: { provider: "none", url: null, key_set: false },
   learning: false,
   compaction_messages: 100,
   hub: null,

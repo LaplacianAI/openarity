@@ -12,37 +12,36 @@ docker build -f deployment/sandbox/Dockerfile -t openarity/sandbox .
 ```
 
 CI publishes `ghcr.io/laplacianai/openarity-sandbox:latest` and `:sha-<commit>`
-on every push to `main` that touches `apps/sandbox/` or the image's files
-(`.github/workflows/publish-sandbox-image.yml`). Use the `sha-` tag when a room
-must be one known image.
+beside the brain's image, in the same workflow
+(`.github/workflows/publish-image.yml`), for every commit of `main` that has a
+brain image. A brain starts rooms from the sandbox image of its own commit.
 
-## Daytona and sandboxd
+## Which image a room starts from
 
-Both start rooms from the image directly. Put the image reference, such as
-`ghcr.io/laplacianai/openarity-sandbox:latest`, in the team's sandbox image
-field in settings. Nothing else is built.
+The brain's choice, never a team's: a team picks a provider, its address and
+its key, and nothing else.
 
-## E2B
+- **sandboxd** pulls the image itself the first time a room needs it, and only
+  an image under its `SANDBOXD_IMAGES` prefixes.
+- **Daytona** is sent the image reference and builds and caches it itself.
+- **E2B** does not run an image by name; it runs a template built in the
+  team's own E2B account, and it is the one provider a team says something
+  about: the template's name, in Settings or with `oa teams settings set
+  --e2b-template`. Left empty, the brain uses `openarity-sandbox`, which is
+  what `e2b/` builds by default:
 
-E2B does not run an image by name; it runs a template built in your own E2B
-account. `e2b/` builds one from the published image with E2B's template SDK
-(`Template().fromImage(...)`), the method E2B's current docs describe.
+  ```sh
+  cd deployment/sandbox/e2b
+  npm ci
+  E2B_API_KEY=e2b_... npm run build
+  ```
 
-```sh
-cd deployment/sandbox/e2b
-npm ci
-E2B_API_KEY=e2b_... npm run build
-```
-
-- `SANDBOX_IMAGE` builds from another tag, for example
-  `ghcr.io/laplacianai/openarity-sandbox:sha-<commit>`. The default is `latest`.
-- `TEMPLATE_NAME` names the template; the default is `openarity-sandbox`.
-- The build prints the template's name and ID. E2B accepts either wherever it
-  asks for a template.
-
-Then, in the team's settings, choose E2B, give the API key and put the template
-name or ID in the sandbox image field. Build again to pick up a newer image: a
-template is a snapshot, and does not follow `latest` by itself.
+  - `SANDBOX_IMAGE` builds from another tag, for example
+    `ghcr.io/laplacianai/openarity-sandbox:sha-<commit>`. The default is `latest`.
+  - `TEMPLATE_NAME` names the template; the default is `openarity-sandbox`.
+  - Another team's public template is named `owner/name`
+    ([public templates](https://e2b.dev/docs/faq/public-templates)).
+  - Build again for a newer image: a template is a snapshot.
 
 E2B sandboxes cannot reach the internet unless the team's egress rules allow
 it, and `npx` has to fetch its package: the rules must include the npm registry

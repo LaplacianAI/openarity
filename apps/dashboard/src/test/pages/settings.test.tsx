@@ -28,7 +28,7 @@ afterEach(() => {
 const NEVER: TeamSettings = {
   model: null,
   search: { provider: "none", url: null, key_set: false },
-  sandbox: { provider: "none", url: null, image: null, key_set: false },
+  sandbox: { provider: "none", url: null, key_set: false },
   learning: false,
   compaction_messages: 100,
   hub: null,
@@ -38,7 +38,7 @@ const NEVER: TeamSettings = {
 const BRAVE: TeamSettings = {
   model: { name: "gpt-5", max_tokens: 4096, temperature: 0.2 },
   search: { provider: "brave", url: null, key_set: true },
-  sandbox: { provider: "none", url: null, image: null, key_set: false },
+  sandbox: { provider: "none", url: null, key_set: false },
   learning: false,
   compaction_messages: 250,
   hub: null,
@@ -503,7 +503,6 @@ const DAYTONA: TeamSettings = {
   sandbox: {
     provider: "daytona",
     url: "https://daytona.example/api",
-    image: "mcp-room:1",
     key_set: true,
   },
   updated_at: "2026-11-18T09:00:00Z",
@@ -511,9 +510,9 @@ const DAYTONA: TeamSettings = {
 
 describe("the sandbox the form sends", () => {
   it("keeps the stored key while the provider and address are unchanged", () => {
-    const body = settingsRequest({ ...draftOf(DAYTONA), sandboxImage: "mcp-room:2" }, DAYTONA);
+    const body = settingsRequest({ ...draftOf(DAYTONA), learning: true }, DAYTONA);
     expect(body).toMatchObject({
-      sandbox: { provider: "daytona", url: "https://daytona.example/api", image: "mcp-room:2" },
+      sandbox: { provider: "daytona", url: "https://daytona.example/api" },
     });
     expect((body as { sandbox: object }).sandbox).not.toHaveProperty("api_key");
   });
@@ -569,5 +568,32 @@ describe("the sandbox the form sends", () => {
       BRAVE,
     );
     expect(body).toMatchObject({ search: { provider: "brave" }, sandbox: { provider: "e2b" } });
+  });
+});
+
+describe("an E2B team's template", () => {
+  const e2b = (patch: Partial<ReturnType<typeof draftOf>>) =>
+    settingsRequest({ ...draftOf(NEVER), sandbox: "e2b", sandboxKey: "k", ...patch }, NEVER);
+
+  it("sends a named template, trimmed", () => {
+    expect(e2b({ sandboxTemplate: " acme/openarity-sandbox " })).toMatchObject({
+      sandbox: { provider: "e2b", template: "acme/openarity-sandbox" },
+    });
+  });
+
+  it("sends none when it is left empty, for the default", () => {
+    expect((e2b({}) as { sandbox: object }).sandbox).not.toHaveProperty("template");
+  });
+
+  it("refuses a template that is not a name", () => {
+    expect(e2b({ sandboxTemplate: "my template" })).toMatch(/E2B template/);
+  });
+
+  it("is never sent for another provider", () => {
+    const body = settingsRequest(
+      { ...draftOf(NEVER), sandbox: "daytona", sandboxKey: "k", sandboxTemplate: "x" },
+      NEVER,
+    );
+    expect((body as { sandbox: object }).sandbox).not.toHaveProperty("template");
   });
 });

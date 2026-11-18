@@ -69,6 +69,11 @@ const SANDBOXES: { value: SandboxProvider; label: string; about: string }[] = [
   },
 ];
 
+/** What an E2B team's rooms start from when it names no template; the build script's default. */
+const E2B_DEFAULT_TEMPLATE = "openarity-sandbox";
+/** The brain's own rule: a name, or owner/name for another team's public template. */
+const E2B_TEMPLATE = /^[a-z0-9][a-z0-9_.-]*(\/[a-z0-9][a-z0-9_.-]*)?$/;
+
 /** How many agents one search for the hub offers. */
 const PICK_PAGE = 20;
 
@@ -160,7 +165,8 @@ export type SettingsDraft = {
   dropKey: boolean;
   sandbox: SandboxProvider;
   sandboxURL: string;
-  sandboxImage: string;
+  /** E2B only; empty for the default template. */
+  sandboxTemplate: string;
   /** Typed only; the stored key is never read back. */
   sandboxKey: string;
   learning: boolean;
@@ -182,7 +188,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     // A brain from before sandboxes sends none: the team has none.
     sandbox: s.sandbox?.provider ?? "none",
     sandboxURL: s.sandbox?.url ?? "",
-    sandboxImage: s.sandbox?.image ?? "",
+    sandboxTemplate: s.sandbox?.template ?? "",
     sandboxKey: "",
     learning: s.learning,
     compaction: String(s.compaction_messages),
@@ -198,7 +204,7 @@ const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
   model: ["modelOn", "modelName", "maxTokens", "temperature"],
   hub: ["hub", "compaction"],
   search: ["provider", "url", "key", "dropKey"],
-  sandbox: ["sandbox", "sandboxURL", "sandboxImage", "sandboxKey"],
+  sandbox: ["sandbox", "sandboxURL", "sandboxTemplate", "sandboxKey"],
   learning: ["learning"],
 };
 
@@ -327,8 +333,13 @@ function sandboxRequest(
   const url = d.sandboxURL.trim();
   if (d.sandbox === "sandboxd" && url === "") return "sandboxd needs its address.";
   if (d.sandbox !== "e2b" && url !== "") sandbox.url = url;
-  const image = d.sandboxImage.trim();
-  if (image !== "") sandbox.image = image;
+  const template = d.sandboxTemplate.trim();
+  if (d.sandbox === "e2b" && template !== "") {
+    if (!E2B_TEMPLATE.test(template)) {
+      return "An E2B template is a name such as openarity-sandbox, or owner/name for a public one.";
+    }
+    sandbox.template = template;
+  }
 
   const was = stored.sandbox;
   const keeps =
@@ -651,11 +662,11 @@ function SettingsForm({
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={draft.sandbox}
             onChange={(e) =>
-              // The address, image and key are the old provider's.
+              // The address and key are the old provider's.
               set("sandbox", {
                 sandbox: e.target.value as SandboxProvider,
                 sandboxURL: "",
-                sandboxImage: "",
+                sandboxTemplate: "",
                 sandboxKey: "",
               })
             }
@@ -684,39 +695,40 @@ function SettingsForm({
             />
           </Field>
         ) : null}
+        {draft.sandbox === "e2b" ? (
+          <Field
+            label="Template"
+            htmlFor="settings-sandbox-template"
+            hint={`Built in your E2B account from deployment/sandbox/e2b. Empty for ${E2B_DEFAULT_TEMPLATE}.`}
+          >
+            <Input
+              id="settings-sandbox-template"
+              spellCheck={false}
+              placeholder={E2B_DEFAULT_TEMPLATE}
+              value={draft.sandboxTemplate}
+              onChange={(e) => set("sandbox", { sandboxTemplate: e.target.value })}
+            />
+          </Field>
+        ) : null}
         {draft.sandbox !== "none" ? (
-          <>
-            <Field
-              label="Image"
-              htmlFor="settings-sandbox-image"
-              hint="What sandboxes start from, in the provider's own terms. Empty for the default."
-            >
-              <Input
-                id="settings-sandbox-image"
-                spellCheck={false}
-                value={draft.sandboxImage}
-                onChange={(e) => set("sandbox", { sandboxImage: e.target.value })}
-              />
-            </Field>
-            <Field
-              label={draft.sandbox === "sandboxd" ? "Token" : "API key"}
-              htmlFor="settings-sandbox-key"
-              hint={
-                sandboxKeyKept
-                  ? "A key is set. Leave this empty to keep it."
-                  : "Kept in the secret store and never shown again."
-              }
-            >
-              <Input
-                id="settings-sandbox-key"
-                type="password"
-                autoComplete="new-password"
-                spellCheck={false}
-                value={draft.sandboxKey}
-                onChange={(e) => set("sandbox", { sandboxKey: e.target.value })}
-              />
-            </Field>
-          </>
+          <Field
+            label={draft.sandbox === "sandboxd" ? "Token" : "API key"}
+            htmlFor="settings-sandbox-key"
+            hint={
+              sandboxKeyKept
+                ? "A key is set. Leave this empty to keep it."
+                : "Kept in the secret store and never shown again."
+            }
+          >
+            <Input
+              id="settings-sandbox-key"
+              type="password"
+              autoComplete="new-password"
+              spellCheck={false}
+              value={draft.sandboxKey}
+              onChange={(e) => set("sandbox", { sandboxKey: e.target.value })}
+            />
+          </Field>
         ) : null}
       </Section>
 

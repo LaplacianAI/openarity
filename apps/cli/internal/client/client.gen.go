@@ -2243,11 +2243,9 @@ type Said struct {
 // self-hosted and takes a url and its token as the key.
 type SandboxProvider string
 
-// SandboxSettings Where the team's command MCP servers run.
+// SandboxSettings Where the team's command MCP servers run. What a room starts from is
+// the brain's choice, but for an E2B team's template.
 type SandboxSettings struct {
-	// Image What rooms start from, in the provider's own terms (an E2B template, a Daytona or sandboxd image); null for the default
-	Image *string `json:"image,omitempty" yaml:"image,omitempty"`
-
 	// KeySet Whether a key is stored. The key itself is never returned.
 	KeySet bool `json:"key_set" yaml:"key_set"`
 
@@ -2255,6 +2253,11 @@ type SandboxSettings struct {
 	// url; `daytona` takes a key, and a url when self-hosted; `sandboxd` is
 	// self-hosted and takes a url and its token as the key.
 	Provider SandboxProvider `json:"provider" yaml:"provider"`
+
+	// Template E2B only: the template rooms start from, built in the team's E2B
+	// account; null for the brain's default, openarity-sandbox. Every
+	// other provider is given the brain's own image.
+	Template *string `json:"template,omitempty" yaml:"template,omitempty"`
 
 	// URL A self-hosted provider's API address, for sandboxd and a self-hosted Daytona; null otherwise
 	//
@@ -2269,13 +2272,15 @@ type SandboxSettingsRequest struct {
 	// provider and its url are unchanged.
 	APIKey *string `json:"api_key,omitempty" yaml:"api_key,omitempty"`
 
-	// Image Optional; refused for none
-	Image *string `json:"image,omitempty" yaml:"image,omitempty"`
-
 	// Provider `none` runs no command servers. `e2b` is hosted and takes a key and no
 	// url; `daytona` takes a key, and a url when self-hosted; `sandboxd` is
 	// self-hosted and takes a url and its token as the key.
 	Provider SandboxProvider `json:"provider" yaml:"provider"`
+
+	// Template E2B only, optional; a template name, or owner/name for another team's public one
+	//
+	// Examples: openarity-sandbox
+	Template *string `json:"template,omitempty" yaml:"template,omitempty"`
 
 	// URL Required for sandboxd, optional for daytona, refused for e2b and none
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
@@ -2671,7 +2676,8 @@ type TeamSettings struct {
 	// Model The model the team's built-in agents run on. Null until chosen, and until then they do not run.
 	Model *ModelRef `json:"model,omitempty" yaml:"model,omitempty"`
 
-	// Sandbox Where the team's command MCP servers run.
+	// Sandbox Where the team's command MCP servers run. What a room starts from is
+	// the brain's choice, but for an E2B team's template.
 	Sandbox SandboxSettings `json:"sandbox" yaml:"sandbox"`
 	Search  SearchSettings  `json:"search" yaml:"search"`
 

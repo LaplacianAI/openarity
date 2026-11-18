@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/LaplacianAI/openarity/apps/sandbox/internal/rooms"
 )
@@ -40,7 +41,12 @@ type serveSettings struct {
 	socket    string
 	self      string
 	limits    rooms.Limits
+	images    []string // repository prefixes a room's image may be under
+	pull      []string // images to pull in the background at start
 }
+
+// defaultImages is the room image Openarity publishes.
+const defaultImages = "ghcr.io/laplacianai/openarity-sandbox"
 
 const usage = `usage: sandbox shim [--listen ADDR] -- COMMAND [ARGS...]
        sandbox serve [--listen ADDR]
@@ -49,6 +55,10 @@ const usage = `usage: sandbox shim [--listen ADDR] -- COMMAND [ARGS...]
          Environment: SANDBOXD_TOKEN, SANDBOXD_PUBLIC_URL, SANDBOXD_DOCKER_SOCKET
          (required); SANDBOXD_CONTAINER (default $HOSTNAME), SANDBOXD_MEMORY_BUDGET,
          SANDBOXD_ROOM_MEMORY, SANDBOXD_ROOM_PIDS, SANDBOXD_ROOM_CPUS (optional)
+         SANDBOXD_IMAGES: the image prefixes a room may run, comma-separated
+         (default ghcr.io/laplacianai/openarity-sandbox); SANDBOXD_PULL: images
+         to pull in the background at start, each one allowed (optional);
+         sandboxd pulls an allowed image it does not have
 
   shim   serve an MCP server that speaks stdio over Streamable HTTP, at /mcp;
          SHIM_TOKEN is the bearer token every caller must send`
@@ -144,6 +154,54 @@ func parseServe(args []string, env func(string) string) (command, error) {
 	if s.limits.Memory > s.limits.MemoryBudget {
 		return command{}, errors.New("SANDBOXD_ROOM_MEMORY is more than SANDBOXD_MEMORY_BUDGET: no room could be made")
 	}
+	if s.images, err = parseImages(env("SANDBOXD_IMAGES")); err != nil {
+		return command{}, err
+	}
+	if s.pull, err = parsePull(env("SANDBOXD_PULL"), s.images); err != nil {
+		return command{}, err
+	}
 	c.serve = s
 	return c, nil
+}
+
+// parseImages reads SANDBOXD_IMAGES: repository prefixes, with no tag or
+// digest, because a prefix with one could never match a boundary.
+func parseImages(v string) ([]string, error) {
+	if strings.TrimSpace(v) == "" {
+		v = defaultImages
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		p = strings.TrimSpace(p)
+		switch {
+		case p == "":
+			return nil, errors.New("SANDBOXD_IMAGES has an empty entry: check for a stray comma")
+		case strings.ContainsAny(p, " \t@") || strings.HasSuffix(p, "/"):
+			return nil, fmt.Errorf("SANDBOXD_IMAGES entry %q is not a repository prefix: no digest, spaces or trailing slash", p)
+		case strings.Contains(p[strings.LastIndex(p, "/")+1:], ":"):
+			return nil, fmt.Errorf("SANDBOXD_IMAGES entry %q has a tag: list the repository, such as ghcr.io/org/room", p)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// parsePull reads SANDBOXD_PULL: full image references, each of which
+// sandboxd would run, so a warm-up cannot pull what a create would refuse.
+func parsePull(v string, allowed []string) ([]string, error) {
+	if strings.TrimSpace(v) == "" {
+		return nil, nil
+	}
+	var out []string
+	for _, ref := range strings.Split(v, ",") {
+		ref = strings.TrimSpace(ref)
+		switch {
+		case ref == "":
+			return nil, errors.New("SANDBOXD_PULL has an empty entry: check for a stray comma")
+		case !rooms.Allowed(ref, allowed):
+			return nil, fmt.Errorf("SANDBOXD_PULL entry %q is not under SANDBOXD_IMAGES (%s)", ref, strings.Join(allowed, ", "))
+		}
+		out = append(out, ref)
+	}
+	return out, nil
 }

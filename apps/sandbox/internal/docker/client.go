@@ -37,19 +37,23 @@ func IsNotFound(err error) bool {
 // Client talks to one daemon.
 type Client struct {
 	http *http.Client
+	// pull has no overall timeout: a pull is as long as the image is large,
+	// and ends with its context.
+	pull *http.Client
 }
 
 // New returns a client for the daemon listening on the unix socket.
 func New(socket string) *Client {
 	d := &net.Dialer{Timeout: 5 * time.Second}
-	return &Client{http: &http.Client{
-		Timeout: 2 * time.Minute,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return d.DialContext(ctx, "unix", socket)
-			},
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return d.DialContext(ctx, "unix", socket)
 		},
-	}}
+	}
+	return &Client{
+		http: &http.Client{Timeout: 2 * time.Minute, Transport: tr},
+		pull: &http.Client{Transport: tr},
+	}
 }
 
 // Container is the part of a container's configuration the daemon is given.
@@ -167,6 +171,88 @@ func (c *Client) ContainerID(ctx context.Context, nameOrID string) (string, erro
 // IsNotFound error.
 func (c *Client) RemoveContainer(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/containers/"+url.PathEscape(name), url.Values{"force": {"1"}, "v": {"1"}}, nil, nil)
+}
+
+// SplitRef splits an image reference into the repository and the tag or
+// digest the Engine API takes apart: "host:5000/a/b:t" is "host:5000/a/b" and
+// "t"; "a/b@sha256:..." is "a/b" and "sha256:..."; no tag means "latest",
+// because an empty tag would pull every tag of the repository.
+func SplitRef(ref string) (repo, tag string) {
+	if r, d, ok := strings.Cut(ref, "@"); ok {
+		// the digest decides; a tag beside it is dropped
+		repo, _ = SplitRef(r)
+		return repo, d
+	}
+	// A colon is a tag's only after the last slash: before it, it is the
+	// registry's port.
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		return ref[:i], ref[i+1:]
+	}
+	return ref, "latest"
+}
+
+func imagePath(ref string) string {
+	parts := strings.Split(ref, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return "/images/" + strings.Join(parts, "/") + "/json"
+}
+
+// HasImage reports whether the daemon holds the image.
+func (c *Client) HasImage(ctx context.Context, ref string) (bool, error) {
+	err := c.do(ctx, http.MethodGet, imagePath(ref), nil, nil, nil)
+	if IsNotFound(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// PullImage pulls the image and reads the progress to its end. The daemon
+// answers 200 as soon as the pull starts and reports a failure after that as
+// a message in the stream, so a 200 alone says nothing: the stream is the
+// answer. A failure before the stream starts (the repository does not
+// exist) is a plain error status.
+func (c *Client) PullImage(ctx context.Context, ref string) error {
+	repo, tag := SplitRef(ref)
+	u := "http://docker/" + apiVersion + "/images/create?" + url.Values{"fromImage": {repo}, "tag": {tag}}.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.pull.Do(req)
+	if err != nil {
+		return fmt.Errorf("docker POST /images/create: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode/100 != 2 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		var e struct{ Message string }
+		_ = json.Unmarshal(raw, &e)
+		if e.Message == "" {
+			e.Message = strings.TrimSpace(string(raw))
+		}
+		return &Error{Status: resp.StatusCode, Message: e.Message}
+	}
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var m struct {
+			Error       string
+			ErrorDetail struct{ Message string }
+		}
+		if err := dec.Decode(&m); errors.Is(err, io.EOF) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("reading the pull's progress: %w", err)
+		}
+		if m.Error != "" || m.ErrorDetail.Message != "" {
+			msg := m.ErrorDetail.Message
+			if msg == "" {
+				msg = m.Error
+			}
+			return &Error{Status: http.StatusOK, Message: msg}
+		}
+	}
 }
 
 // Ping fails unless the daemon answers.

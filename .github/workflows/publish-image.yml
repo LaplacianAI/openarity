@@ -1,6 +1,11 @@
 # Publishes the brain as a container image, so running Openarity does not
-# require a Go toolchain. It builds and pushes; it deploys nothing and knows
-# about no environment.
+# require a Go toolchain, and the sandbox image its command MCP servers' rooms
+# start from, tagged with the same commit: a brain starts rooms from the
+# sandbox image of its own commit, so the two are published together. It
+# builds and pushes; it deploys nothing and knows about no environment.
+#
+# staging-deploy.yml runs when this workflow completes, so by then both
+# images of the commit it deploys exist.
 name: image
 
 on:
@@ -13,6 +18,9 @@ on:
       - 'sdk/stream/**'
       - 'deployment/Dockerfile'
       - 'deployment/Dockerfile.dockerignore'
+      - 'apps/sandbox/**'
+      - 'deployment/sandbox/Dockerfile'
+      - 'deployment/sandbox/Dockerfile.dockerignore'
       - '.github/workflows/publish-image.yml'
   workflow_dispatch:
 
@@ -87,6 +95,53 @@ jobs:
           # Without this the Go module download runs on every push.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo '### published'
+            echo '```'
+            echo '${{ steps.meta.outputs.tags }}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Every commit that has a brain image has a sandbox image, even when nothing
+  # in the sandbox changed: the brain names the sandbox image by its own sha.
+  sandbox:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/openarity-sandbox
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          # The repository root: the Dockerfile copies apps/sandbox.
+          context: .
+          file: deployment/sandbox/Dockerfile
+          # Daytona and sandboxd run it on whatever host a team has, ARM too.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Unchanged sandbox sources rebuild from the cache in seconds.
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandbox
 
       - name: Summary
         run: |

@@ -31,9 +31,12 @@
 # THEN, AS THAT USER, IN ITS OWN CHECKOUT
 #
 #   git clone https://github.com/LaplacianAI/openarity.git && cd openarity/deployment
-#   docker pull ghcr.io/laplacianai/openarity-sandbox:latest   # the room image; sandboxd never pulls
 #   docker compose -f docker-compose.sandboxd.yml up -d --build
 #   curl -s http://$SANDBOXD_BIND:9090/healthz                 # 200
+#
+# There is no room image to pull by hand: sandboxd pulls an allowed image
+# the first time a room starts from it, and says in the error, naming the
+# image, when it cannot (503).
 #
 # Variables, in that checkout's deployment/.env:
 #
@@ -42,6 +45,15 @@
 #   SANDBOXD_UID=<id -u>                     # the user that owns the daemon's socket
 #   SANDBOXD_DOCKER_SOCKET=/run/user/<uid>/docker.sock
 #   SANDBOXD_MEMORY_BUDGET=1610612736        # bytes, across every room; default 3 GiB
+#   SANDBOXD_IMAGES=ghcr.io/laplacianai/openarity-sandbox   # optional, the default
+#   SANDBOXD_PULL=ghcr.io/laplacianai/openarity-sandbox:latest   # optional
+#
+# SANDBOXD_IMAGES is the only place a room's image may come from: a comma
+# separated list of repository prefixes, with no tag. A create for any other
+# image is refused with 422 before anything is made, so a leaked token cannot
+# run an arbitrary image. SANDBOXD_PULL lists full references (each under
+# SANDBOXD_IMAGES) that sandboxd pulls in the background when it starts, so
+# the first room does not wait for the download; a failure is only logged.
 #
 # SANDBOXD_BIND is an address the brain's containers can reach and the
 # internet cannot: a private interface or a tailnet address, never 0.0.0.0.
@@ -60,7 +72,7 @@
 #   printf %s "$SANDBOXD_TOKEN" | oa teams settings set <team> \
 #       --sandbox sandboxd --sandbox-url http://<SANDBOXD_BIND>:9090 --sandbox-key-stdin
 #
-# with ghcr.io/laplacianai/openarity-sandbox:latest as its sandbox image.
+# The brain chooses the image; a team never names one.
 #
 # Memory is budgeted: a room gets 256 MiB, and a create that would take the
 # rooms past SANDBOXD_MEMORY_BUDGET is refused with 503. Rooms are removed by
@@ -87,6 +99,8 @@ services:
       SANDBOXD_PUBLIC_URL: http://${SANDBOXD_BIND:?set SANDBOXD_BIND in deployment/.env}:9090
       SANDBOXD_DOCKER_SOCKET: /var/run/docker.sock
       SANDBOXD_MEMORY_BUDGET: ${SANDBOXD_MEMORY_BUDGET:-3221225472}
+      SANDBOXD_IMAGES: ${SANDBOXD_IMAGES:-ghcr.io/laplacianai/openarity-sandbox}
+      SANDBOXD_PULL: ${SANDBOXD_PULL:-}
       # sandboxd joins every room's network as this container.
       SANDBOXD_CONTAINER: openarity-sandboxd
     container_name: openarity-sandboxd

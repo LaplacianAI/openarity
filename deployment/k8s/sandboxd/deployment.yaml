@@ -57,6 +57,8 @@ spec:
                 -e SANDBOXD_TOKEN \
                 -e SANDBOXD_PUBLIC_URL \
                 -e SANDBOXD_MEMORY_BUDGET \
+                -e SANDBOXD_IMAGES \
+                -e SANDBOXD_PULL \
                 -e SANDBOXD_DOCKER_SOCKET=/var/run/docker.sock \
                 -e SANDBOXD_CONTAINER=sandboxd \
                 "${SANDBOXD_IMAGE}"
@@ -68,6 +70,13 @@ spec:
               value: http://sandboxd.openarity.svc.cluster.local:9090
             - name: SANDBOXD_MEMORY_BUDGET
               value: "3221225472"
+            # The repository prefixes a room's image may come from; sandboxd
+            # pulls an allowed image it lacks. SANDBOXD_PULL names full
+            # references to pull in the background at start.
+            - name: SANDBOXD_IMAGES
+              value: ghcr.io/laplacianai/openarity-sandbox
+            - name: SANDBOXD_PULL
+              value: ""
             - name: SANDBOXD_TOKEN
               valueFrom:
                 secretKeyRef:

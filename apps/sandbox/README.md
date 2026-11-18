@@ -29,7 +29,12 @@ SANDBOXD_DOCKER_SOCKET=/run/user/1000/docker.sock sandbox serve --listen :9090
 
 `POST /v1/rooms`, `POST /v1/rooms/{id}/start`, `GET /v1/rooms/{id}/ports/{port}`,
 `ANY /v1/rooms/{id}/ports/{port}/proxy/...`, `DELETE /v1/rooms/{id}` and
-`GET /healthz`. Deploy it with `deployment/docker-compose.sandboxd.yml`, or
+`GET /healthz`. A room's image must be under a repository prefix in
+`SANDBOXD_IMAGES` (default `ghcr.io/laplacianai/openarity-sandbox`), or the
+create is refused with `422` before anything is made; sandboxd pulls an
+allowed image it does not have when the room starts, and answers `503`
+naming the image if it cannot. `SANDBOXD_PULL` lists images to pull in the
+background at start. Deploy it with `deployment/docker-compose.sandboxd.yml`, or
 `deployment/k8s/sandboxd/`. Settings are `SANDBOXD_*`; `sandbox serve` with
 none set prints which are required.
 

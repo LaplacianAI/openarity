@@ -18,11 +18,12 @@ type search struct {
 	KeySet   bool    `json:"key_set"`
 }
 
-// sandbox is where the team's command MCP servers run. The key is never shown.
+// sandbox is where the team's command MCP servers run. The key is never
+// shown; what a room starts from is the brain's choice, not the team's.
 type sandbox struct {
 	Provider string  `json:"provider"`
 	URL      *string `json:"url"`
-	Image    *string `json:"image"`
+	Template *string `json:"template"`
 	KeySet   bool    `json:"key_set"`
 }
 
@@ -52,7 +53,7 @@ type searchRequest struct {
 type sandboxRequest struct {
 	Provider string  `json:"provider"`
 	URL      *string `json:"url"`
-	Image    *string `json:"image"`
+	Template *string `json:"template"`
 	APIKey   *string `json:"api_key"`
 }
 

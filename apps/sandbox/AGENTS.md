@@ -33,7 +33,7 @@ apps/sandbox/
     sessions.go     the callers sharing it: session ids, idle expiry, requests in flight
     handler.go      the HTTP side: POST, DELETE, the bearer token, /healthz
   internal/api/     sandboxd's HTTP: the rooms API (bearer), the proxy to a room's port (X-Sandboxd-Token)
-  internal/rooms/   rooms on Docker: create, start, delete, the memory budget, Harden (every container's fixed settings)
+  internal/rooms/   rooms on Docker: create, start, delete, the memory budget, the image allow-list and pulls, Harden (every container's fixed settings)
   internal/guard/   the egress guard: a listener per room and port, SNI routing, the private-address refusal
   internal/docker/  the Engine API over the unix socket, with net/http
   internal/integration/  tests against a real daemon; skipped unless SANDBOXD_TEST_DOCKER names its socket
@@ -51,6 +51,19 @@ sandboxd and `Reconcile` opens each room's egress guard again.
   seccomp, user 65534, pids, memory and CPU limits, an `--internal` network of
   its own. A request chooses the image, env, labels and egress hosts, and
   nothing else; a body with any other field is refused with 422.
+- **Only allowed images, pulled on demand.** `SANDBOXD_IMAGES` is a list of
+  repository prefixes; `rooms.Allowed` matches on a boundary (the end, `:`,
+  `@` or `/`, and a `:` followed by a `/` is a registry's port, not a tag), so
+  `a/room` allows `a/room:1` and not `a/room-evil`. `Create` refuses any other
+  image with 422 before the daemon is asked anything, and `Start` checks again
+  because the spec outlives the setting. `Start` is where the image is first
+  needed: it pulls through `docker.Client.PullImage` if `HasImage` says it is
+  missing, once per image however many starts wait (`ensureImage`), on a
+  context of its own so one caller giving up does not fail the others. The
+  Engine API answers 200 and reports a failed pull as an `error` message in
+  the stream, so `PullImage` reads the stream to its end. A failed pull is
+  `ErrUnavailable`, 503 with the image named. `SANDBOXD_PULL` is warmed in a
+  goroutine at start (`Service.Warm`) and only logged.
 - **The egress guard** listens on sandboxd's address in the room's network,
   for each egress port. The room's `/etc/hosts` points each listed host at
   that address. One host on a port: that host. Several: the TLS SNI, and a
@@ -111,5 +124,6 @@ rather than sleep.
   of failing.
 - **The integration tests run sandboxd in a container**, as it runs in
   production: it has to be a member of each room's network. They need the
-  internet (the npm registry, one public host).
+  internet (the npm registry, one public host, and Docker Hub for the pull
+  test, which removes `alpine:3.20` from the daemon).
   `SANDBOXD_TEST_DOCKER=<socket> go test ./internal/integration/`.

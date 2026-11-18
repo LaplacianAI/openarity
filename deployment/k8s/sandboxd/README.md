@@ -57,9 +57,11 @@ arrangement sandboxd runs in.
   limit has to cover it plus the daemon: `deployment.yaml` sets 4 GiB.
 - **Slower networking.** Rootless networking goes through a user-space stack
   (`vpnkit` here). It is fine for MCP traffic and not for bulk transfer.
-- **Rooms pull their images from a registry.** The rooms' images, and
-  `npx -y pkg@version` inside a room, need the daemon and the room's egress
-  list to reach the registry. The first create of an image is slow.
+- **sandboxd pulls its rooms' images from a registry**, only from
+  `SANDBOXD_IMAGES` (default `ghcr.io/laplacianai/openarity-sandbox`). The
+  daemon has to reach the registry, and the first start of an image is slow:
+  list it in `SANDBOXD_PULL` to have it pulled at start. `npx -y
+  pkg@version` inside a room needs the room's egress list to reach npm.
 
 ## How it is put together
 

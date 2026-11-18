@@ -168,6 +168,7 @@ func TestServiceErrorsMapToStatuses(t *testing.T) {
 	}{
 		{rooms.ErrBusy, 503, `{"error":"the sandbox is busy"}`},
 		{fmt.Errorf("%w: two hosts", rooms.ErrRefused), 422, "two hosts"},
+		{fmt.Errorf("%w: pulling the image \"ghcr.io/o/r:1\" failed: docker answered 404: not found", rooms.ErrUnavailable), 503, "ghcr.io/o/r:1"},
 		{rooms.ErrNotFound, 404, "no such room"},
 		{rooms.ErrStarted, 409, ""},
 		{errors.New("docker: secret detail"), 500, "the sandbox failed"},

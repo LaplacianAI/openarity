@@ -24,6 +24,42 @@ type fakeEngine struct {
 	containers map[string]docker.Container
 	nextIP     int
 	removed    []string
+
+	absent   map[string]bool // images the daemon lacks, until pulled
+	pulled   []string
+	pullWait chan struct{} // when set, a pull blocks until it is closed
+	pullErr  error
+	calls    int // every call of the engine, for the tests that expect none
+}
+
+func (f *fakeEngine) HasImage(_ context.Context, ref string) (bool, error) {
+	f.mu.Lock()
+	f.calls++
+	defer f.mu.Unlock()
+	return !f.absent[ref], nil
+}
+
+func (f *fakeEngine) PullImage(ctx context.Context, ref string) error {
+	f.mu.Lock()
+	f.calls++
+	f.pulled = append(f.pulled, ref)
+	wait, err := f.pullWait, f.pullErr
+	f.mu.Unlock()
+	if wait != nil {
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.calls++
+	delete(f.absent, ref)
+	f.mu.Unlock()
+	return nil
 }
 
 func newEngine() *fakeEngine {
@@ -32,6 +68,7 @@ func newEngine() *fakeEngine {
 
 func (f *fakeEngine) CreateNetwork(_ context.Context, name string, labels map[string]string) error {
 	f.mu.Lock()
+	f.calls++
 	defer f.mu.Unlock()
 	f.networks[name] = &docker.Network{Name: name, Labels: labels, Internal: true, Containers: map[string]docker.Member{}}
 	return nil
@@ -39,6 +76,7 @@ func (f *fakeEngine) CreateNetwork(_ context.Context, name string, labels map[st
 
 func (f *fakeEngine) InspectNetwork(_ context.Context, name string) (docker.Network, error) {
 	f.mu.Lock()
+	f.calls++
 	defer f.mu.Unlock()
 	n, ok := f.networks[name]
 	if !ok {
@@ -54,6 +92,7 @@ func (f *fakeEngine) InspectNetwork(_ context.Context, name string) (docker.Netw
 
 func (f *fakeEngine) ListNetworks(_ context.Context, label string) ([]docker.Network, error) {
 	f.mu.Lock()
+	f.calls++
 	defer f.mu.Unlock()
 	var out []docker.Network
 	for _, n := range f.networks {
@@ -66,6 +105,7 @@ func (f *fakeEngine) ListNetworks(_ context.Context, label string) ([]docker.Net
 
 func (f *fakeEngine) ConnectNetwork(_ context.Context, network, container string) error {
 	f.mu.Lock()
+	f.calls++
 	defer f.mu.Unlock()
 	n := f.networks[network]
 	n.Containers[container] = docker.Member{Name: "self", IPv4: "10.9.0.2"}
@@ -74,6 +114,7 @@ func (f *fakeEngine) ConnectNetwork(_ context.Context, network, container string
 
 func (f *fakeEngine) DisconnectNetwork(_ context.Context, network, container string) error {
 	f.mu.Lock()
+	f.calls++
 	defer f.mu.Unlock()
 	if n := f.networks[network]; n != nil {
 		delete(n.Containers, container)
@@ -83,6 +124,7 @@ func (f *fakeEngine) DisconnectNetwork(_ context.Context, network, container str
 
 func (f *fakeEngine) RemoveNetwork(_ context.Context, name string) error {
 	f.mu.Lock()
+	f.calls++
 	defer f.mu.Unlock()
 	if _, ok := f.networks[name]; !ok {
 		return &docker.Error{Status: 404}
@@ -93,6 +135,7 @@ func (f *fakeEngine) RemoveNetwork(_ context.Context, name string) error {
 
 func (f *fakeEngine) CreateContainer(_ context.Context, name string, c docker.Container) (string, error) {
 	f.mu.Lock()
+	f.calls++
 	defer f.mu.Unlock()
 	f.containers[name] = c
 	if n := f.networks[c.HostConfig.NetworkMode]; n != nil {
@@ -101,10 +144,16 @@ func (f *fakeEngine) CreateContainer(_ context.Context, name string, c docker.Co
 	return name + "-id", nil
 }
 
-func (f *fakeEngine) StartContainer(context.Context, string) error { return nil }
+func (f *fakeEngine) StartContainer(context.Context, string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return nil
+}
 
 func (f *fakeEngine) RemoveContainer(_ context.Context, name string) error {
 	f.mu.Lock()
+	f.calls++
 	defer f.mu.Unlock()
 	f.removed = append(f.removed, name)
 	c, ok := f.containers[name]
@@ -118,7 +167,12 @@ func (f *fakeEngine) RemoveContainer(_ context.Context, name string) error {
 	return nil
 }
 
-func (f *fakeEngine) ContainerID(context.Context, string) (string, error) { return selfID, nil }
+func (f *fakeEngine) ContainerID(context.Context, string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return selfID, nil
+}
 
 type fakeEgress struct {
 	mu     sync.Mutex
@@ -144,7 +198,7 @@ func (e *fakeEgress) Close(id string) {
 
 func service(l Limits) (*Service, *fakeEngine, *fakeEgress) {
 	e, g := newEngine(), &fakeEgress{}
-	return New(e, g, slog.New(slog.NewTextHandler(io.Discard, nil)), l, "sandboxd", []byte("key")), e, g
+	return New(e, g, slog.New(slog.NewTextHandler(io.Discard, nil)), l, "sandboxd", []byte("key"), []string{"room", "x"}), e, g
 }
 
 func TestCreateMakesAnInternalNetworkJoinsSandboxdAndOpensTheGuard(t *testing.T) {
@@ -370,7 +424,7 @@ func TestReconcileOpensTheGuardForEveryRoomTheDaemonHolds(t *testing.T) {
 	id, _ := s.Create(t.Context(), Spec{Image: "x", Egress: []guard.Host{{Name: "a.example.com", Port: 443}}})
 
 	g2 := &fakeEgress{}
-	again := New(e, g2, slog.New(slog.NewTextHandler(io.Discard, nil)), DefaultLimits(), "sandboxd", []byte("key"))
+	again := New(e, g2, slog.New(slog.NewTextHandler(io.Discard, nil)), DefaultLimits(), "sandboxd", []byte("key"), []string{"room"})
 	delete(e.networks[networkName(id)].Containers, selfID) // sandboxd was recreated
 	if err := again.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
@@ -386,7 +440,7 @@ func TestReconcileOpensTheGuardForEveryRoomTheDaemonHolds(t *testing.T) {
 func TestTheProxyTokenIsPerRoomAndDerivedFromTheKey(t *testing.T) {
 	t.Parallel()
 	a, _, _ := service(DefaultLimits())
-	b := New(newEngine(), &fakeEgress{}, slog.New(slog.NewTextHandler(io.Discard, nil)), DefaultLimits(), "x", []byte("other"))
+	b := New(newEngine(), &fakeEgress{}, slog.New(slog.NewTextHandler(io.Discard, nil)), DefaultLimits(), "x", []byte("other"), nil)
 	if a.Token("r1") == a.Token("r2") || a.Token("r1") == b.Token("r1") || a.Token("r1") == "key" {
 		t.Fatal("tokens collide or leak the key")
 	}
