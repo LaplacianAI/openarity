@@ -18,6 +18,9 @@ type ToolCallEvent struct {
 	ID        string
 	Name      string
 	Arguments json.RawMessage
+	// ParentID is the call this one was made inside, such as a script's;
+	// empty for a call the model made itself.
+	ParentID string
 }
 
 type ToolResultEvent struct {
@@ -26,6 +29,7 @@ type ToolResultEvent struct {
 	Output   string
 	Err      string
 	Duration time.Duration
+	ParentID string
 }
 
 type UsageEvent struct {

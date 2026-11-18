@@ -66,7 +66,7 @@ func Attached(results map[string][]Content, order []ToolCall) (Message, bool) {
 	if len(parts) == 0 {
 		return Message{}, false
 	}
-	return Message{Role: RoleUser, Content: parts}, true
+	return Message{Role: RoleUser, Content: parts, Attached: true}, true
 }
 
 type toolCallKey struct{}

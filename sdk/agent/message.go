@@ -34,6 +34,10 @@ type Message struct {
 	// one folded into a summary is sent again after it. A turn's opening
 	// message, which says when it was asked, is the one to pin.
 	Pinned bool `json:"pinned,omitempty"`
+	// Attached marks the user message that carries what a turn's tools
+	// attached, which follows the turn's results. A run resumed in the middle
+	// of a turn puts the results still to come before it.
+	Attached bool `json:"attached,omitempty"`
 }
 
 // Reasoning is a model's thinking, kept as the provider sent it. A provider

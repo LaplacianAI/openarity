@@ -205,6 +205,18 @@ That granularity has a cost worth stating: a run that dies mid-step resumes
 from the step before and **redoes the one it was in, tool calls included**. A
 tool with a side effect can therefore run twice.
 
+A tool can also stop a run on purpose: returning `agent.Suspend("why")` ends
+it after the results it already has, with an error matching
+`agent.ErrSuspended` and the transcript ending in the turn whose call is
+still open. Run that transcript again and the open calls are made first, in
+order, with the call ids they had (`agent.ToolCallID`), so the tool can see
+what changed — a person approved it, a job finished — before the model is
+asked anything. The same goes for any transcript that ends with calls left
+unanswered: they are made, not refused, so a caller that does not want a
+call cut off by a crash made again closes it with a result of its own before
+resuming. ReAct, Plan and Reflection wait; ReWOO cannot, and returns
+`patterns.ErrCannotWait`.
+
 Five stores ship — `memory`, `sqlite`, `postgres`, `mysql`, `mongodb` — and
 each takes the connection you already have rather than a DSN. The drivers live
 in subpackages so the core cannot link them, so importing `agent` still costs

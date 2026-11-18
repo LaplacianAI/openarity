@@ -42,6 +42,7 @@ nav = [
     "docs/agent-sdk/mcp.md",
     "docs/agent-sdk/tools-and-skills.md",
     "docs/agent-sdk/steering.md",
+    "docs/agent-sdk/suspending.md",
     "docs/agent-sdk/structured-output.md",
     "docs/agent-sdk/sessions.md",
     "docs/agent-sdk/compaction.md",
