@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 )
 
 const issueSchema = `{"type":"object","properties":{"repo":{"type":"string"},"n":{"type":"integer"}},` +
@@ -263,7 +264,7 @@ func TestReWOOPlansWithTheToolsPickedForItsTask(t *testing.T) {
 	}
 
 	got := names(spec.Tools)
-	if gotTask != "label the open issues" || gotLimit != SelectLimit {
+	if gotTask != "label the open issues\nhi\nhello" || gotLimit != SelectLimit {
 		t.Errorf("Select was asked for %q, %d", gotTask, gotLimit)
 	}
 	if search != "" || got[0] != "graph" || got[1] != "srv__t07" || got[2] != "srv__t03" {
@@ -274,6 +275,45 @@ func TestReWOOPlansWithTheToolsPickedForItsTask(t *testing.T) {
 	}
 	if slices.Contains(got, "not-a-tool") {
 		t.Error("a name that is not one of the run's tools was sent")
+	}
+}
+
+// A follow-up names nothing; the turns before it say what it is about, so
+// tools are picked for those too, the person's latest message first.
+func TestAFollowUpIsPickedForWithTheTurnsBeforeIt(t *testing.T) {
+	t.Parallel()
+
+	var gotTask string
+	d := many(40, func(_ context.Context, task string, _ int) ([]string, error) {
+		gotTask = task
+		return []string{"srv__t01"}, nil
+	})
+	msgs := asked(
+		"what is the weather",
+		"sunny",
+		"list today's unread mail",
+		"It failed: the response was too large. Retry with headers only?",
+		"yes do it",
+	)
+	if _, _, err := withDiscovery(t.Context(), Spec{Pattern: PatternReWOO, Tools: []Tool{search()}, Discovery: d}, msgs); err != nil {
+		t.Fatal(err)
+	}
+	want := "yes do it\nIt failed: the response was too large. Retry with headers only?\nlist today's unread mail\nsunny"
+	if gotTask != want {
+		t.Errorf("Select was asked for %q, want %q", gotTask, want)
+	}
+}
+
+// One long turn cannot crowd out the rest: each is cut to its share, on a
+// rune boundary.
+func TestEachTurnIsClipped(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("é", turnChars)
+	got := recentText(asked("first", long, "last"))
+	parts := strings.Split(got, "\n")
+	if len(parts) != 3 || parts[0] != "last" || len(parts[1]) > turnChars || !utf8.ValidString(parts[1]) {
+		t.Errorf("recentText = %d parts, middle %d bytes, valid %v", len(parts), len(parts[1]), utf8.ValidString(parts[1]))
 	}
 }
 

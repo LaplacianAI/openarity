@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -102,14 +103,14 @@ func withDiscovery(ctx context.Context, spec Spec, msgs []Message) (Spec, string
 	return spec, d.Search, nil
 }
 
-// selected is the Discovery tools Select picks for the last thing the user
-// said, best first. None when there is no Select, no text to pick for, or
+// selected is the Discovery tools Select picks for the conversation's latest
+// turns, best first. None when there is no Select, no text to pick for, or
 // Select fails: the caller then sends every tool rather than plan with less.
 func selected(ctx context.Context, d *Discovery, msgs []Message) []Tool {
 	if d.Select == nil {
 		return nil
 	}
-	task := lastUserText(msgs)
+	task := recentText(msgs)
 	if task == "" {
 		return nil
 	}
@@ -137,15 +138,54 @@ func selected(ctx context.Context, d *Discovery, msgs []Message) []Tool {
 	return picked
 }
 
-func lastUserText(msgs []Message) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == RoleUser && msgs[i].Compaction == nil {
-			if text := strings.TrimSpace(msgs[i].Text()); text != "" {
-				return text
-			}
+const (
+	// recentTurns is how many of the latest spoken turns tools are picked
+	// for: the person's last message and what led up to it.
+	recentTurns = 4
+	// turnChars bounds each turn's share, so one long answer does not drown
+	// the message that asked for something.
+	turnChars = 500
+)
+
+// recentText is what tools are picked for: the person's last message first,
+// then the turns before it, newest first. A follow-up such as "yes, do it"
+// names nothing, and the turn before it says what "it" is. Empty when the
+// person has said nothing yet, so nothing is picked for the run's own words.
+func recentText(msgs []Message) string {
+	var turns []string
+	heard := false
+	for i := len(msgs) - 1; i >= 0 && len(turns) < recentTurns; i-- {
+		m := msgs[i]
+		if (m.Role != RoleUser && m.Role != RoleAssistant) || m.Compaction != nil {
+			continue
 		}
+		text := strings.TrimSpace(m.Text())
+		if text == "" {
+			continue
+		}
+		if m.Role == RoleUser && !heard {
+			// The person's latest message leads, whatever came after it.
+			heard = true
+			turns = append([]string{clip(text, turnChars)}, turns...)
+			continue
+		}
+		turns = append(turns, clip(text, turnChars))
 	}
-	return ""
+	if !heard {
+		return ""
+	}
+	return strings.Join(turns, "\n")
+}
+
+// clip is s cut to at most n bytes, at a rune boundary.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 func checkDiscovery(tools []Tool, d *Discovery) error {
