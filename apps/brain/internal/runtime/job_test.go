@@ -186,12 +186,12 @@ func TestEnqueuingARunTwiceRunsItOnce(t *testing.T) {
 	d, _, _ := f.worker(t, "w1")
 
 	for range 2 {
-		if err := enqueue(d, f.run); err != nil {
+		if err := enqueue(d, f.run, 0); err != nil {
 			t.Fatalf("enqueue: %v", err)
 		}
 	}
 	f.waitForStatus(t, f.run, "succeeded")
-	if err := enqueue(d, f.run); err != nil {
+	if err := enqueue(d, f.run, 0); err != nil {
 		t.Fatalf("enqueue after it finished: %v", err)
 	}
 	time.Sleep(2 * time.Second)
@@ -253,7 +253,7 @@ func (f *execFixture) killMidRun(t *testing.T) {
 	t.Helper()
 
 	a, _, stopA := f.worker(t, "worker-a")
-	if err := enqueue(a, f.run); err != nil {
+	if err := enqueue(a, f.run, 0); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	for range 2 {
@@ -342,7 +342,7 @@ func TestAResumedRunEndsAsAnUninterruptedOne(t *testing.T) {
 	t.Run("straight", func(t *testing.T) {
 		f := newJobFixture(t, newScripted(callTool("c1", "nope", `{"q":1}`), answer("done", 1, 1)))
 		d, _, _ := f.worker(t, "worker-a")
-		if err := enqueue(d, f.run); err != nil {
+		if err := enqueue(d, f.run, 0); err != nil {
 			t.Fatalf("enqueue: %v", err)
 		}
 		f.waitForStatus(t, f.run, "succeeded")
@@ -405,7 +405,7 @@ func TestTheWorkerRunsAtMostFourRunsAtOnce(t *testing.T) {
 		runs = append(runs, f.anotherRun(t))
 	}
 	for _, id := range runs {
-		if err := enqueue(d, id); err != nil {
+		if err := enqueue(d, id, 0); err != nil {
 			t.Fatalf("enqueue: %v", err)
 		}
 	}
@@ -447,11 +447,11 @@ func (f *execFixture) anotherRun(t *testing.T) uuid.UUID {
 	return r.ID
 }
 
-type sweepRows struct{ unstarted []uuid.UUID }
+type sweepRows struct{ unstarted []db.ListUnstartedRunsRow }
 
 func (*sweepRows) TakeOverStaleRuns(context.Context, float64) ([]uuid.UUID, error) { return nil, nil }
 
-func (s *sweepRows) ListUnstartedRuns(context.Context, float64) ([]uuid.UUID, error) {
+func (s *sweepRows) ListUnstartedRuns(context.Context, float64) ([]db.ListUnstartedRunsRow, error) {
 	return s.unstarted, nil
 }
 
@@ -460,12 +460,12 @@ func (s *sweepRows) ListUnstartedRuns(context.Context, float64) ([]uuid.UUID, er
 func TestOneRunThatCannotBeRestartedDoesNotHoldUpTheOthers(t *testing.T) {
 	t.Parallel()
 
-	queued := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	queued := []db.ListUnstartedRunsRow{{ID: uuid.New()}, {ID: uuid.New(), Attempt: 2}, {ID: uuid.New()}}
 	j := RunJob(nil, &sweepRows{unstarted: queued}, quietLogger())
-	var tried []uuid.UUID
-	j.restart = func(id uuid.UUID) error {
-		tried = append(tried, id)
-		if id == queued[0] {
+	var tried []db.ListUnstartedRunsRow
+	j.restart = func(id uuid.UUID, attempt int32) error {
+		tried = append(tried, db.ListUnstartedRunsRow{ID: id, Attempt: attempt})
+		if id == queued[0].ID {
 			return errors.New("enqueue refused")
 		}
 		return nil
@@ -474,7 +474,7 @@ func TestOneRunThatCannotBeRestartedDoesNotHoldUpTheOthers(t *testing.T) {
 	err := j.sweepOnce(t.Context())
 
 	if !slices.Equal(tried, queued) {
-		t.Errorf("tried %v, want every queued run %v", tried, queued)
+		t.Errorf("tried %v, want every queued run, each at its attempt, %v", tried, queued)
 	}
 	if err == nil || !strings.Contains(err.Error(), "enqueue refused") {
 		t.Errorf("sweepOnce = %v, want the failure reported", err)

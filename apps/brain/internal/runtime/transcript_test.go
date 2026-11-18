@@ -31,16 +31,16 @@ func answered(id string) agent.Message {
 func TestACallLeftWithoutAResultIsClosed(t *testing.T) {
 	t.Parallel()
 
-	got := closeCalls([]agent.Message{userSaid("go"), asked("c1", "c2"), answered("c1")})
+	got := closeCalls([]agent.Message{userSaid("go"), asked("c1", "c2"), answered("c1")}, nil)
 	if len(got) != 4 || got[3].ToolCallID != "c2" || got[3].Text() != endedMidCall {
 		t.Fatalf("closeCalls gave %d messages, the last %+v; want c2 closed as ended mid-call", len(got), got[len(got)-1])
 	}
 
 	whole := []agent.Message{userSaid("go"), asked("c1"), answered("c1"), {Role: agent.RoleAssistant, Content: []agent.Content{{Type: agent.ContentText, Text: "done"}}}}
-	if got := closeCalls(whole); len(got) != len(whole) {
+	if got := closeCalls(whole, nil); len(got) != len(whole) {
 		t.Errorf("a finished transcript gained %d messages", len(got)-len(whole))
 	}
-	if got := closeCalls(nil); len(got) != 0 {
+	if got := closeCalls(nil, nil); len(got) != 0 {
 		t.Errorf("an empty transcript gained %d messages", len(got))
 	}
 }

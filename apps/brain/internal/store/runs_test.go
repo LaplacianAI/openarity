@@ -471,7 +471,7 @@ func TestListUnstartedRunsSkipsFreshAndStartedRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListUnstartedRuns: %v", err)
 	}
-	if !slices.Equal(got, []uuid.UUID{lost.ID}) {
+	if !slices.Equal(got, []db.ListUnstartedRunsRow{{ID: lost.ID}}) {
 		t.Errorf("unstarted = %v, want only the one queued for a minute (%s), not %s or %s",
 			got, lost.ID, fresh.ID, started.ID)
 	}

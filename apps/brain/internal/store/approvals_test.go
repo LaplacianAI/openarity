@@ -498,7 +498,7 @@ func TestTheApprovalsMigrationRollsBackWithDataInIt(t *testing.T) {
 		t.Fatalf("CreateApprovalRule: %v", err)
 	}
 
-	for range 3 { // the index, the validation, then the tables and columns
+	for range 4 { // require_other, the index, the validation, then the tables and columns
 		if err := s.Rollback(t.Context()); err != nil {
 			t.Fatalf("Rollback: %v", err)
 		}
@@ -570,5 +570,25 @@ func TestEveryUnfinishedClauseNamesWaiting(t *testing.T) {
 		if !seen[name] {
 			t.Errorf("%s is listed as not naming waiting, and has no such status list any more", name)
 		}
+	}
+}
+
+// Time spent waiting for a person is not the run's: a run that waited an
+// hour has its six hours, less only what it ran.
+func TestWaitingDoesNotSpendTheWallClock(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	f := newRunFixture(t, s, "clock")
+	r := mustInsertRun(t, s, inState(f.root(), "queued"))
+	exec(t, s, `UPDATE runs SET started_at = now() - interval '2 hours', waited_seconds = 5400 WHERE id = '`+r.String()+`'`)
+
+	row, err := s.ClaimRun(t.Context(), db.ClaimRunParams{ID: r, Worker: "worker-1", WallClockSeconds: 6 * 3600})
+	if err != nil {
+		t.Fatalf("ClaimRun: %v", err)
+	}
+	// Ran 30 minutes of the two hours: five and a half left.
+	if left := row.RemainingSeconds; left < 5.4*3600 || left > 5.6*3600 {
+		t.Errorf("remaining %.0fs, want about 5.5 hours", left)
 	}
 }

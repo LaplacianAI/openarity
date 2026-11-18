@@ -47,7 +47,8 @@ func newRunJob(
 	runCommandsInRooms(discoverer, cfg, logger, dbStore, secretStore)
 	builder := runtime.NewBuilder(dbStore, attachments, discoverer, graphDeps, search,
 		newFetch(searchClient, net.DefaultResolver)).
-		WithWorkshop(workshop{blueprints.NewWorkshop(blueprintStore{dbStore}, discoverer, runtime.Loops())})
+		WithWorkshop(workshop{blueprints.NewWorkshop(blueprintStore{dbStore}, discoverer, runtime.Loops())}).
+		WithApprovals(dbStore)
 	if reg := newMCPRegistry(cfg); reg != nil {
 		builder.WithRegistry(reg)
 	}

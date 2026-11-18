@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
@@ -59,6 +60,7 @@ type Builder struct {
 	delegates      *DelegateDeps
 	workshop       Workshop
 	registry       Registry
+	approvals      ApprovalStore
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 }
@@ -131,13 +133,17 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	}
 	built := Built{Spec: specOf(a), Agent: a.Name, servers: &runServers{b: b}}
 	built.Spec.Session = session
+	gates, err := b.policyFor(ctx, run, settings, built.Spec.Pattern, l)
+	if err != nil {
+		return Built{}, err
+	}
 	built.Spec.Compaction = compactionFor(settings.CompactionMessages, budgetOf(run.TokenBudget))
 
 	// The builder reads the web for servers' docs and a skill's source.
 	web := run.Hub || a.Web || run.Builder
 	var held catalogue
 	if a.ID != uuid.Nil {
-		held, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, web, &built)
+		held, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, web, gates, &built)
 		if err != nil {
 			built.Close()
 			return Built{}, err
@@ -212,7 +218,20 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	if web {
 		tools, unavailable := b.webTools(ctx, run.TeamID, settings)
 		built.Unavailable = append(built.Unavailable, unavailable...)
-		built.Spec.Tools = append(built.Spec.Tools, tools...)
+		for _, t := range tools {
+			// Reaching the internet is a read for a person who is there, and a
+			// write for a guest or a run nobody is present for.
+			var actor approval.Actor
+			if gates != nil {
+				actor = gates.actor
+			}
+			gated, refused := gates.gate(t, target{name: t.Name, class: approval.ClassFor(approval.Egress, actor)})
+			if refused != nil {
+				built.Unavailable = append(built.Unavailable, *refused)
+				continue
+			}
+			built.Spec.Tools = append(built.Spec.Tools, gated)
+		}
 	}
 
 	if a.ID != uuid.Nil {
@@ -296,7 +315,7 @@ type catalogue struct {
 	byServer map[string][]uuid.UUID
 }
 
-func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hub, web bool, built *Built) (catalogue, error) {
+func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hub, web bool, gates *policy, built *Built) (catalogue, error) {
 	grants, err := b.store.ListGrantedMCPServers(ctx, agentID)
 	if err != nil {
 		return catalogue{}, fmt.Errorf("reading the agent's MCP servers: %w", err)
@@ -360,7 +379,14 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 				return catalogue{}, fmt.Errorf("the MCP servers %q and %q both offer %q", first, s.Name, name)
 			}
 			owner[name] = s.Name
-			out.tools = append(out.tools, limited(server.tool(name, row)))
+			t, refused := gates.gate(limited(server.tool(name, row)), target{
+				name: s.Name + "__" + row.Name, server: s.Name, class: approval.ClassOf(row.Annotations, s.TrustHints),
+			})
+			if refused != nil {
+				built.Unavailable = append(built.Unavailable, *refused)
+				continue
+			}
+			out.tools = append(out.tools, t)
 			out.names[row.ID] = name
 			out.byServer[s.Name] = append(out.byServer[s.Name], row.ID)
 			group.Tools = append(group.Tools, name)

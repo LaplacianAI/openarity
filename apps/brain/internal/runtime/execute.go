@@ -35,6 +35,8 @@ type Store interface {
 	GetRun(ctx context.Context, id uuid.UUID) (db.Run, error)
 	RunShowsEvents(ctx context.Context, runID uuid.UUID) (bool, error)
 	InsertEventReply(ctx context.Context, arg db.InsertEventReplyParams) (int64, error)
+	TxStore
+	ListRunApprovals(ctx context.Context, runID uuid.UUID) ([]db.Approval, error)
 }
 
 const (
@@ -87,7 +89,7 @@ type Executor struct {
 
 	// enqueue hands a run this executor started to the workers. Nil leaves it
 	// to the sweep, which starts any queued run within a minute.
-	enqueue func(uuid.UUID) error
+	enqueue func(uuid.UUID, int32) error
 
 	// kickReply has a channel run's reply sent now. Nil leaves it to the
 	// reply sweep, a minute at most.
@@ -224,6 +226,11 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 	cause := context.Cause(runCtx)
 	if errors.Is(cause, ErrLostRun) {
 		return nil
+	}
+	// A tool asked a person and the run waits for the answer, holding
+	// nothing. A cancel or a limit that came first wins: cause is set.
+	if cause == nil && errors.Is(runErr, agent.ErrSuspended) && row.ParentRunID == nil {
+		return e.park(ctx, row, l)
 	}
 	status, failure := outcome(runErr, cause)
 	if status == "failed" {
@@ -452,7 +459,7 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 		return fmt.Errorf("ending what run %s left running: %w", runID, err)
 	}
 	if followUp != uuid.Nil && e.enqueue != nil {
-		if err := e.enqueue(followUp); err != nil {
+		if err := e.enqueue(followUp, 0); err != nil {
 			e.logger.WarnContext(ctx, "run not enqueued; the sweep will start it", "run", followUp, "err", err)
 		}
 	}

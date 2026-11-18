@@ -7,11 +7,11 @@
 -- name: InsertApproval :one
 INSERT INTO approvals (
     team_id, run_id, root_run_id, call_id, tool, class,
-    arguments, summary, code, requested_for, expires_at
+    arguments, summary, code, requested_for, expires_at, require_other
 ) VALUES (
     sqlc.arg(team_id), sqlc.arg(run_id), sqlc.arg(root_run_id), sqlc.arg(call_id),
     sqlc.arg(tool), sqlc.arg(class), sqlc.arg(arguments), sqlc.arg(summary),
-    sqlc.arg(code), sqlc.narg(requested_for), sqlc.arg(expires_at)
+    sqlc.arg(code), sqlc.narg(requested_for), sqlc.arg(expires_at), sqlc.arg(require_other)
 )
 ON CONFLICT (run_id, call_id) DO NOTHING
 RETURNING *;
@@ -87,3 +87,20 @@ RETURNING a.*;
 UPDATE approvals SET status = 'cancelled', decided_via = 'sweep', decided_at = now()
 WHERE root_run_id = $1 AND status = 'pending'
 RETURNING *;
+
+-- An approval for the rest of the run: this tool, any arguments, granted on
+-- an earlier call of the same run tree.
+-- name: FindRunScopedApproval :one
+SELECT * FROM approvals
+WHERE root_run_id = $1 AND tool = $2 AND status = 'approved' AND decision_scope = 'run'
+ORDER BY decided_at
+LIMIT 1;
+
+-- Every request a run made, for a resume to tell which of its open calls a
+-- decision is waiting to be acted on.
+-- name: ListRunApprovals :many
+SELECT * FROM approvals WHERE run_id = $1 ORDER BY created_at, id;
+
+-- Whether anything of a run tree still waits for a person.
+-- name: CountPendingApprovals :one
+SELECT count(*) FROM approvals WHERE root_run_id = $1 AND status = 'pending';
