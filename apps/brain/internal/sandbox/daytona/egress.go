@@ -26,19 +26,20 @@ import (
 //   - Tier 1 and 2 organizations on Daytona cloud cannot override the
 //     organization's policy per sandbox at all.
 //
-// So a Spec.Egress is honoured only where Daytona can keep to it:
+// So on Daytona cloud a Spec.Egress maps to:
 //
 //	no entries                     -> networkBlockAll
 //	hostnames, every port 443      -> domainAllowList (ports on a host cannot
 //	                                  be narrowed, but HTTPS is all it opens)
-//	IP literals, any port          -> networkAllowList /32 (every port on that
-//	                                  address is open: wider than asked)
-//	a hostname on another port     -> ErrRefused: the domain list is HTTPS
-//	                                  only, and the CIDR list has no names
-//	hostnames and IPs together     -> ErrRefused: the lists are exclusive
+//	anything else                  -> networkAllowList: each host resolved to
+//	                                  its IPv4 /32s, each IP literal its /32,
+//	                                  every port on them open (wider than
+//	                                  asked, as on self-hosted below)
 //
-// A mail server over IMAPS or SMTPS (993, 465) is therefore refused on
-// Daytona cloud rather than made with a room that cannot reach it.
+// The domain list is the narrower and is used whenever it can say all of it;
+// one entry it cannot say (IMAPS on 993, an IP literal) moves the whole room
+// to the address list, since the two are exclusive. An organization that
+// cannot override its policy per sandbox gets Daytona's own refusal.
 //
 // Self-hosted Daytona (the open-source runner, probed at v0.187.0) accepts
 // domainAllowList and does not enforce it: a room made with one reached every
@@ -74,6 +75,7 @@ func mapEgress(ctx context.Context, egress []sandbox.HostPort, domainFirewall bo
 	}
 	domains := map[string]bool{}
 	cidrs := map[string]bool{}
+	byName := domainFirewall && allHTTPSNames(egress)
 	for _, e := range egress {
 		if e.Port < 1 || e.Port > 65535 {
 			return network{}, refuse("egress port %d is not a port", e.Port)
@@ -89,25 +91,17 @@ func mapEgress(ctx context.Context, egress []sandbox.HostPort, domainFirewall bo
 		if !domainPattern.MatchString(host) {
 			return network{}, refuse("egress host %q is not a domain name Daytona can allow", e.Host)
 		}
-		if !domainFirewall {
-			addrs, err := resolveV4(ctx, resolve, host)
-			if err != nil {
-				return network{}, err
-			}
-			for _, a := range addrs {
-				cidrs[a.String()+"/32"] = true
-			}
+		if byName {
+			domains[host] = true
 			continue
 		}
-		if e.Port != httpsPort {
-			return network{}, refuse(
-				"egress %s:%d: Daytona's domain allow list covers HTTPS only, and its IP allow list cannot name a host",
-				host, e.Port)
+		addrs, err := resolveV4(ctx, resolve, host)
+		if err != nil {
+			return network{}, err
 		}
-		domains[host] = true
-	}
-	if len(domains) > 0 && len(cidrs) > 0 {
-		return network{}, refuse("Daytona takes a domain allow list or an IP allow list, not both")
+		for _, a := range addrs {
+			cidrs[a.String()+"/32"] = true
+		}
 	}
 	n := network{domains: keys(domains), cidrs: keys(cidrs)}
 	if len(n.domains) > maxDomains {
@@ -119,12 +113,23 @@ func mapEgress(ctx context.Context, egress []sandbox.HostPort, domainFirewall bo
 	return n, nil
 }
 
+// allHTTPSNames says every entry is a host name on 443: what a domain allow
+// list can say whole.
+func allHTTPSNames(egress []sandbox.HostPort) bool {
+	for _, e := range egress {
+		if _, err := netip.ParseAddr(strings.TrimSpace(e.Host)); err == nil || e.Port != httpsPort {
+			return false
+		}
+	}
+	return true
+}
+
 // A Resolver looks up the addresses of a host name.
 type Resolver func(ctx context.Context, host string) ([]netip.Addr, error)
 
 func resolveV4(ctx context.Context, resolve Resolver, host string) ([]netip.Addr, error) {
 	if strings.HasPrefix(host, "*.") {
-		return nil, refuse("egress %q: a wildcard cannot be turned into addresses, and this Daytona does not enforce domain lists", host)
+		return nil, refuse("egress %q: a wildcard cannot be turned into addresses", host)
 	}
 	addrs, err := resolve(ctx, host)
 	if err != nil {

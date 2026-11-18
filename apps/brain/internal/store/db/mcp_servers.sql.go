@@ -225,8 +225,8 @@ UPDATE mcp_servers SET
     env             = $4,
     auth_secret_ref = $5,
     bare            = $6,
-    vars            = $7,
-    egress          = $8,
+    vars            = COALESCE($7::jsonb, '{}'),
+    egress          = COALESCE($8::jsonb, '[]'),
     discovered_at   = CASE
         WHEN url IS NOT DISTINCT FROM $2
          AND command IS NOT DISTINCT FROM $3::text[]

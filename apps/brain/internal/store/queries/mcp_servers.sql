@@ -29,8 +29,8 @@ UPDATE mcp_servers SET
     env             = sqlc.arg('env'),
     auth_secret_ref = sqlc.narg('auth_secret_ref'),
     bare            = sqlc.arg('bare'),
-    vars            = sqlc.arg('vars'),
-    egress          = sqlc.arg('egress'),
+    vars            = COALESCE(sqlc.narg('vars')::jsonb, '{}'),
+    egress          = COALESCE(sqlc.narg('egress')::jsonb, '[]'),
     discovered_at   = CASE
         WHEN url IS NOT DISTINCT FROM sqlc.narg('url')
          AND command IS NOT DISTINCT FROM sqlc.narg('command')::text[]

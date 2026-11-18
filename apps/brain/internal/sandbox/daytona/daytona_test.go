@@ -207,15 +207,13 @@ func TestCreateFromAnImageBuildsFromADockerfile(t *testing.T) {
 
 func TestEgressThatDaytonaCannotHonourIsRefusedBeforeAnyCall(t *testing.T) {
 	cases := map[string][]sandbox.HostPort{
-		"imaps":      {{Host: "imap.gmail.com", Port: 993}},
-		"smtps":      {{Host: "smtp.gmail.com", Port: 465}},
-		"mixed":      {{Host: "api.example.com", Port: 443}, {Host: "203.0.113.7", Port: 443}},
-		"ipv6":       {{Host: "2001:db8::1", Port: 443}},
-		"one label":  {{Host: "localhost", Port: 443}},
-		"bad port":   {{Host: "api.example.com", Port: 0}},
-		"bad image":  nil,
-		"too many":   manyHosts(101),
-		"many cidrs": manyIPs(11),
+		"a wildcard beside another port": {{Host: "*.example.com", Port: 443}, {Host: "imap.gmail.com", Port: 993}},
+		"ipv6":                           {{Host: "2001:db8::1", Port: 443}},
+		"one label":                      {{Host: "localhost", Port: 443}},
+		"bad port":                       {{Host: "api.example.com", Port: 0}},
+		"bad image":                      nil,
+		"too many":                       manyHosts(101),
+		"many cidrs":                     manyIPs(11),
 	}
 	for name, egress := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -509,5 +507,49 @@ func TestSelfHostedEgressThatCannotBeResolvedIsRefusedOrFails(t *testing.T) {
 	_, err = c.Create(t.Context(), sandbox.Spec{Egress: []sandbox.HostPort{{Host: "gone.example.com", Port: 443}}})
 	if err == nil || errors.Is(err, sandbox.ErrRefused) {
 		t.Errorf("lookup failure: err = %v, want a plain error", err)
+	}
+}
+
+// On Daytona cloud a list its domain firewall can say whole goes there; one
+// entry it cannot say moves every host to resolved addresses.
+func TestDaytonaCloudResolvesHostsWhenTheDomainListCannotSayItAll(t *testing.T) {
+	resolve := func(_ context.Context, host string) ([]netip.Addr, error) {
+		return map[string][]netip.Addr{
+			"imap.gmail.com":     {netip.MustParseAddr("192.0.2.9")},
+			"registry.npmjs.org": {netip.MustParseAddr("192.0.2.20")},
+		}[host], nil
+	}
+	cases := map[string]struct {
+		egress  []sandbox.HostPort
+		domains any
+		cidrs   any
+	}{
+		"https names only": {
+			egress:  []sandbox.HostPort{{Host: "registry.npmjs.org", Port: 443}},
+			domains: "registry.npmjs.org",
+		},
+		"imaps beside https": {
+			egress: []sandbox.HostPort{{Host: "imap.gmail.com", Port: 993}, {Host: "registry.npmjs.org", Port: 443}},
+			cidrs:  "192.0.2.20/32,192.0.2.9/32",
+		},
+		"a name beside an address": {
+			egress: []sandbox.HostPort{{Host: "registry.npmjs.org", Port: 443}, {Host: "203.0.113.7", Port: 443}},
+			cidrs:  "192.0.2.20/32,203.0.113.7/32",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFake(t)
+			c := f.client()
+			c.Resolve = resolve
+			if _, err := c.Create(t.Context(), sandbox.Spec{Egress: tc.egress}); err != nil {
+				t.Fatal(err)
+			}
+			b := f.last(http.MethodPost).Body
+			if b["domainAllowList"] != tc.domains || b["networkAllowList"] != tc.cidrs {
+				t.Errorf("domainAllowList = %v, networkAllowList = %v; want %v and %v",
+					b["domainAllowList"], b["networkAllowList"], tc.domains, tc.cidrs)
+			}
+		})
 	}
 }

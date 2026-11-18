@@ -60,7 +60,7 @@ const SANDBOXES: { value: SandboxProvider; label: string; about: string }[] = [
     value: "daytona",
     label: "Daytona",
     about:
-      "Hosted, or your own instance at its API address. Hosted allows hosts on port 443 only; self-hosted allows the addresses each host has when the sandbox is made, on every port.",
+      "Hosted, or your own instance at its API address. Hosts are allowed by the addresses they have when the sandbox is made, on every port; hosted Daytona allows a list of web hosts (port 443) by name instead.",
   },
   {
     value: "sandboxd",
