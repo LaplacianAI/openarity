@@ -86,7 +86,7 @@ carrying the first run's messages.
 ## Step 5 — a tool error is not a run error
 
 ```go
-out, failure := invoke(ctx, byName, call)
+out, failure, attach, suspended := invoke(ctx, byName, call)
 ```
 
 Every failure becomes text the model reads and can recover from: an unknown
@@ -101,6 +101,31 @@ if ctx.Err() != nil {
 
 Checked **after** `Invoke`, not before. Before, and a tool that took the whole
 remaining deadline reports success on a run that is already over.
+
+## Step 5b — a suspension is neither
+
+A tool that returns an error matching `agent.ErrSuspended` is saying "stop
+here, ask me again later" (a person to approve it, a job to finish).
+`invoke` hands that back as its own value, never as result text:
+
+```go
+out, failure, attach, suspended := invoke(ctx, byName, call)
+```
+
+Check the context first, then the suspension: a run cancelled while a tool
+waits ends cancelled, not parked. A pattern that can wait does what ReAct's
+`dispatch` does: keep the results before the suspended call (and the files
+message, marked `Attached`, when they attached any), make none after it, and
+return the error so `errors.Is(err, agent.ErrSuspended)` holds. On the next
+run the transcript ends in that open turn, so before its first model call
+the pattern finishes it — `openTurn` and `finishTurn` in `resume.go` — or, if
+it wraps ReAct, lets ReAct do it and skips whatever it would have done first
+(Plan skips planning).
+
+A pattern that cannot resume a turn — ReWOO plans every call and keeps
+nothing between them — returns an error that does **not** wrap
+`ErrSuspended`, as `ErrCannotWait` does, so no caller parks a run that cannot
+go on.
 
 ## Step 6 — accumulate usage, and report the step
 

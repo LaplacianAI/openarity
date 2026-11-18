@@ -2,7 +2,7 @@
 title: Examples
 ---
 
-Eleven runnable agents live in [`sdk/agent/examples`](https://github.com/LaplacianAI/openarity/tree/main/sdk/agent/examples).
+Fourteen runnable agents live in [`sdk/agent/examples`](https://github.com/LaplacianAI/openarity/tree/main/sdk/agent/examples).
 Every one of them runs with nothing installed and no key.
 
 ```sh
@@ -31,6 +31,9 @@ ones, which is also why CI runs all of them on every push.
 | `steering-limits` | where steering stops: a plan already fixed, and a steer with no request left |
 | `structured`      | a schema the model answers in, and a parser model turning prose into one      |
 | `sessions`        | a steer reaching a run nothing is holding, and a resume in a runner that produced none of it |
+| `discovery`       | forty tools, sent whole and then found by search: what each request reads, side by side |
+| `compaction`      | a review that outgrows its budget: a large result previewed, old turns cleared and folded into a summary |
+| `approval`        | a run that stops on a tool call until a person says yes, then carries on from the same transcript |
 
 `examples/gateway` is not an example. It is the stub and the printing the
 others share, and `make example` — which runs every one of them — skips it by

@@ -17,6 +17,7 @@ go run ./examples/steering-limits
 go run ./examples/sessions
 go run ./examples/compaction
 go run ./examples/discovery
+go run ./examples/approval
 ```
 
 Or run every one of them:
@@ -40,6 +41,7 @@ make example
 | `sessions`   | a steer that reaches a run nothing is holding, and a resume in a runner that produced none of it |
 | `discovery`  | forty tools, sent whole and then found by search: what each request reads, side by side |
 | `compaction` | a review that outgrows its budget: a 280 KiB result previewed and read back in parts, old turns cleared and folded into a summary, and a wrap-up that gets an answer before the budget is gone |
+| `approval`   | a run that stops on a tool call until a person says yes, then carries on from the same transcript |
 | `gateway`  | not an example: the stub and the printing the others share            |
 
 ## Against a real gateway
