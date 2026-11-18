@@ -3,6 +3,7 @@ package rooms
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/netip"
@@ -263,6 +264,9 @@ func TestHardenFixesEverythingARequestCouldWant(t *testing.T) {
 			t.Errorf("tmpfs %s = %q", p, h.Tmpfs[p])
 		}
 	}
+	if !strings.Contains(h.Tmpfs["/tmp"], "noexec") || !strings.Contains(h.Tmpfs["/home/sandbox"], ",exec,") {
+		t.Errorf("exec: /tmp must be noexec and the home directory exec, got %v", h.Tmpfs)
+	}
 	if got := strings.Join(c.Env, ","); got != "HOME=/home/sandbox,A=1,B=2" {
 		t.Errorf("env = %s: HOME must be fixed and the rest ordered", got)
 	}
@@ -389,5 +393,26 @@ func TestTheProxyTokenIsPerRoomAndDerivedFromTheKey(t *testing.T) {
 	first := a.Token("r1")
 	if first != a.Token("r1") {
 		t.Fatal("not stable")
+	}
+}
+
+type busyEgress struct{ fakeEgress }
+
+func (*busyEgress) Open(string, netip.Addr, []guard.Host) error {
+	return fmt.Errorf("%w: port 9090", guard.ErrUnavailable)
+}
+
+// An egress port that is taken is a spec this sandboxd cannot honour, so it
+// is the caller's 422, and the half-made room is removed.
+func TestAnEgressPortSandboxdCannotListenOnIsRefusedAndLeavesNothing(t *testing.T) {
+	t.Parallel()
+	s, e, _ := service(DefaultLimits())
+	s.egress = &busyEgress{}
+	_, err := s.Create(t.Context(), Spec{Image: "x", Egress: []guard.Host{{Name: "a.example.com", Port: 9090}}})
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(e.networks) != 0 {
+		t.Fatal("a network was left behind")
 	}
 }

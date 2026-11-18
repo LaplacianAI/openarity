@@ -49,7 +49,7 @@ type env struct {
 }
 
 func (e *env) docker(args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(e.t.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(e.t.Context()), 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Env = append(os.Environ(), "DOCKER_HOST=unix://"+e.socket)
@@ -116,6 +116,10 @@ func setup(t *testing.T, memoryBudget string) *env {
 		"-e", "SANDBOXD_MEMORY_BUDGET="+memoryBudget,
 		sbdImg)
 	t.Cleanup(func() {
+		if t.Failed() {
+			logs, _ := e.docker("logs", "--tail", "40", name)
+			t.Logf("sandboxd logs:\n%s", logs)
+		}
 		e.cleanRooms()
 		_, _ = e.docker("rm", "-f", name)
 	})
@@ -196,6 +200,10 @@ func (e *env) room(egr []egress, argv ...string) (id, container string) {
 			"IMAP_HOST": "imap.example.invalid", "IMAP_PORT": "993", "IMAP_SECURE": "true",
 			"SMTP_HOST": "smtp.example.invalid", "SMTP_PORT": "465", "SMTP_SECURE": "true",
 			"EMAIL_USER": "fake@example.invalid", "EMAIL_PASS": "fake",
+			// npm's audit and update check are more work than half a CPU
+			// does in the time its lock allows ("Lock compromised"); a
+			// room that runs npx should turn them off.
+			"npm_config_audit": "false", "npm_config_fund": "false", "npm_config_update_notifier": "false",
 		},
 		"egress": egr, "labels": map[string]string{"test": "it"},
 	})
@@ -252,6 +260,16 @@ func TestARoomIsReadOnlyNonRootAndHardened(t *testing.T) {
 	if out, err := e.exec(c, "sh", "-c", "echo hi > /tmp/x && echo hi > /home/sandbox/x && echo $HOME"); err != nil || out != "/home/sandbox" {
 		t.Errorf("tmpfs or HOME: %q %v", out, err)
 	}
+	if out, _ := e.exec(c, "sh", "-c", "grep ' / ' /proc/mounts"); !strings.Contains(out, " ro,") && !strings.Contains(out, " ro ") {
+		t.Errorf("the root mount is not read-only: %q", out)
+	}
+	// /tmp is noexec; only the home directory, where npx unpacks, may run code.
+	if out, err := e.exec(c, "sh", "-c", "printf '#!/bin/sh\\necho ran\\n' > /tmp/f && chmod +x /tmp/f && /tmp/f"); err == nil {
+		t.Errorf("a binary ran from /tmp: %s", out)
+	}
+	if out, err := e.exec(c, "sh", "-c", "printf '#!/bin/sh\\necho ran\\n' > /home/sandbox/f && chmod +x /home/sandbox/f && /home/sandbox/f"); err != nil {
+		t.Errorf("a binary could not run from the home directory: %s %v", out, err)
+	}
 	// A tmpfs of 64 MiB, not more.
 	if out, err := e.exec(c, "sh", "-c", "dd if=/dev/zero of=/tmp/big bs=1M count=80 2>&1; echo done"); err != nil || !strings.Contains(out, "No space left") {
 		t.Errorf("/tmp is not bounded: %q %v", out, err)
@@ -295,6 +313,13 @@ func TestARoomReachesOnlyItsListedHosts(t *testing.T) {
 	if got := e.fetch(c, "https://registry.npmjs.org/mcp-mail-server"); !strings.HasPrefix(got, "STATUS 200") {
 		t.Errorf("the second host on the same port was not reached (SNI routing): %q", got)
 	}
+	// Dial a listed host, name another in the handshake: the guard reads the
+	// name and refuses one that is not listed.
+	js := `const r=require('https').get('https://example.com',{servername:'example.org',timeout:8000},r=>{console.log('STATUS '+r.statusCode);process.exit(0)});` +
+		`r.on('timeout',()=>{console.log('TIMEOUT');process.exit(0)});r.on('error',e=>{console.log('ERR '+e.code);process.exit(0)})`
+	if got, _ := e.exec(c, "node", "-e", js); !strings.HasPrefix(got, "ERR") {
+		t.Errorf("a listed address with an unlisted name was relayed: %q", got)
+	}
 	if got := e.fetch(c, "https://example.org"); !strings.HasPrefix(got, "ERR") {
 		t.Errorf("an unlisted host was reached: %q", got)
 	}
@@ -311,12 +336,12 @@ func TestTheGuardRefusesAListedHostThatIsPrivate(t *testing.T) {
 	e := setup(t, "")
 	// localhost resolves, in sandboxd, to loopback: listing it must not
 	// open a path to sandboxd's own ports.
-	_, c := e.room([]egress{{"localhost", 9090}})
-	got := e.reach(c, "localhost", 9090)
+	_, c := e.room([]egress{{"localhost", 9443}})
+	got := e.reach(c, "localhost", 9443)
 	if got == "CONNECTED" {
 		// The TCP handshake with the guard succeeds; what matters is that
 		// nothing is relayed, so ask sandboxd's API through it.
-		js := `const s=require('net').connect({host:'localhost',port:9090},()=>{s.write('GET /healthz HTTP/1.0\r\n\r\n')});` +
+		js := `const s=require('net').connect({host:'localhost',port:9443},()=>{s.write('GET /healthz HTTP/1.0\r\n\r\n')});` +
 			`let d='';s.on('data',x=>d+=x);s.on('close',()=>{console.log(d.includes('200')?'RELAYED':'CLOSED');process.exit(0)});` +
 			`s.on('error',()=>{console.log('CLOSED');process.exit(0)});setTimeout(()=>{console.log('CLOSED');process.exit(0)},5000)`
 		out, _ := e.exec(c, "node", "-e", js)

@@ -35,6 +35,10 @@ var plaintextPorts = map[int]bool{
 	3306: true, 5432: true, 6379: true,
 }
 
+// ErrUnavailable is a port the guard cannot listen on, as when it is the
+// port sandboxd itself serves on: the spec cannot be honoured here.
+var ErrUnavailable = errors.New("egress cannot listen on that port")
+
 // MaxHosts bounds a room's list.
 const MaxHosts = 32
 
@@ -124,7 +128,7 @@ func (g *Guard) Open(id string, bind netip.Addr, hosts []Host) error {
 		l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
 		if err != nil {
 			r.close()
-			return fmt.Errorf("listening for egress on port %d: %w", h.Port, err)
+			return fmt.Errorf("%w: port %d: %w", ErrUnavailable, h.Port, err)
 		}
 		r.listeners = append(r.listeners, l)
 		go g.accept(r, l, h.Port)

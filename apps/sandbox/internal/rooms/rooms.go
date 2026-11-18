@@ -211,6 +211,9 @@ func (s *Service) open(ctx context.Context, id string, egress []guard.Host) erro
 	}
 	if len(egress) > 0 {
 		if err := s.egress.Open(id, addr, egress); err != nil {
+			if errors.Is(err, guard.ErrUnavailable) {
+				return fmt.Errorf("%w: %w", ErrRefused, err)
+			}
 			return err
 		}
 	}
@@ -390,7 +393,10 @@ func Harden(id string, sp Spec, argv []string, selfIP string, l Limits) docker.C
 		}
 	}
 
-	tmpfs := "rw,nosuid,nodev,size=" + strconv.FormatInt(l.TmpfsBytes, 10)
+	// Docker mounts a tmpfs noexec unless told otherwise. /tmp keeps that.
+	// The home directory is where npx and uvx unpack what they fetch and then
+	// run it, so it is the one place a room may execute from.
+	size := ",size=" + strconv.FormatInt(l.TmpfsBytes, 10)
 	return docker.Container{
 		Image:      sp.Image,
 		Entrypoint: argv,
@@ -401,8 +407,8 @@ func Harden(id string, sp Spec, argv []string, selfIP string, l Limits) docker.C
 			ReadonlyRootfs: true,
 			Privileged:     false,
 			Tmpfs: map[string]string{
-				"/tmp":  tmpfs,
-				HomeDir: tmpfs + ",uid=65534,gid=65534,mode=0700",
+				"/tmp":  "rw,noexec,nosuid,nodev" + size,
+				HomeDir: "rw,exec,nosuid,nodev" + size + ",uid=65534,gid=65534,mode=0700",
 			},
 			CapDrop:       []string{"ALL"},
 			SecurityOpt:   []string{"no-new-privileges"},
