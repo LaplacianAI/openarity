@@ -149,6 +149,24 @@ wait_healthy() {
 	refuse "the brain did not answer /healthz within two minutes"
 }
 
+# OpenBao keeps the brain's policy as it was when OpenBao was provisioned,
+# and a brain whose policy-brain.hcl has grown since is refused the new
+# paths: a team's sandbox key, for one, saved as "the secret store is
+# unavailable". So the policy is written again before every swap, as
+# `make bao-policy` does, from this checkout, which is main's: a pull request
+# cannot widen what the brain may reach. A policy is checked by name on every
+# request, so the running brain's token has it at once. The root token goes
+# to the container through the environment, never on a command line.
+write_policy() {
+	local keys=$DEPLOYMENT/openbao/keys/init-keys.json
+	[ -f "$keys" ] || refuse "no OpenBao keys at $keys; run make bao-init on the server"
+	command -v jq >/dev/null || refuse "jq is needed to read OpenBao's root token"
+	BAO_TOKEN=$(jq -r .root_token "$keys") compose exec -T \
+		-e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN openbao \
+		bao policy write brain /openbao/config/policy-brain.hcl \
+		|| refuse "OpenBao did not take the brain's policy; the brain was not replaced"
+}
+
 # Migrate this database with this image, then replace brain and worker, and
 # WhatsApp's role when it runs.
 #
@@ -160,6 +178,7 @@ switch() {
 	local slot=$1 tag=$2 digest=$3
 
 	export BRAIN_TAG="$tag@$digest" OPENARITY_DATABASE="$DATABASE"
+	write_policy
 	compose pull migrate "${brains[@]}"
 	compose run --rm --no-deps migrate || refuse "the migration of $DATABASE failed; the brain was not replaced"
 	# Started, not recreated: running already, it is left alone, so a deploy
