@@ -32,6 +32,16 @@ func (l plan) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 		return agent.Result{}, fmt.Errorf("%w: this pattern plans before it acts, so it needs at least two", agent.ErrNoMaxSteps)
 	}
 
+	// Resumed after a tool suspended it: the plan is already in the
+	// transcript, and the turn it stopped in is ReAct's to finish.
+	if _, ok := openTurn(in.Messages); ok {
+		spec := in.Spec
+		spec.MaxSteps--
+		return react{stream: l.stream}.Run(ctx, agent.Input{
+			Spec: spec, Messages: in.Messages, Model: in.Model, Events: in.Events,
+		})
+	}
+
 	in.Emit(ctx, agent.StepEvent{Step: 1})
 
 	ask := in

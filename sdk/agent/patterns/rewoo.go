@@ -28,6 +28,12 @@ const PlanToolName = "submit_plan"
 // a tool is needed for, as a greeting has, and the run goes to the answer.
 var ErrNoPlan = errors.New("the planning call did not submit a readable plan")
 
+// ErrCannotWait is a step whose tool suspended the run. ReWOO plans every
+// call before it makes one and keeps nothing between them, so it has no turn
+// to resume, and the run ends instead. It does not match agent.ErrSuspended:
+// a caller that parks suspended runs must not park one that cannot go on.
+var ErrCannotWait = errors.New("a tool suspended the run, and a planned run cannot wait")
+
 var errNothingToPlan = errors.New("the planning call found nothing to plan")
 
 func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
@@ -170,7 +176,7 @@ func (l rewoo) execute(ctx context.Context, in agent.Input, plan []step) (string
 		in.Emit(ctx, agent.ToolCallEvent{ID: id, Name: s.Tool, Arguments: args})
 
 		started := time.Now()
-		out, failure, attach := invoke(ctx, byName, call)
+		out, failure, attach, suspended := invoke(ctx, byName, call)
 		if len(attach) > 0 {
 			files.byCall[id] = attach
 			files.order = append(files.order, agent.ToolCall{ID: id, Name: s.Tool})
@@ -178,6 +184,9 @@ func (l rewoo) execute(ctx context.Context, in agent.Input, plan []step) (string
 
 		if ctx.Err() != nil {
 			return "", files, ctx.Err()
+		}
+		if suspended != nil {
+			return "", files, fmt.Errorf("%w: step %s, %s: %s", ErrCannotWait, id, s.Tool, suspended.Error())
 		}
 
 		in.Emit(ctx, agent.ToolResultEvent{
