@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- Who wrote a message, as the platform named them, so a conversation read
 -- back has speakers: a channel sender has no email, and was "someone". The
@@ -11,6 +11,6 @@ ALTER TABLE messages
     ADD CONSTRAINT messages_sender_name_bounded CHECK (char_length(sender_name) <= 64);
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 ALTER TABLE messages DROP COLUMN sender_name;

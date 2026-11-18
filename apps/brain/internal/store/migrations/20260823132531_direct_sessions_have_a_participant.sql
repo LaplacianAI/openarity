@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- Who a conversation is with, and the whole of what makes a direct session
 -- private. Every session was readable by every member of the team, which is

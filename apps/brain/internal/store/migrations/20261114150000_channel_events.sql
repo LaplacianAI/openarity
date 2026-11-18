@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A channel says what it is sent while a run works: its answer alone, or each
 -- step a person would follow as a message of its own, then the answer.
@@ -22,7 +22,7 @@ CREATE UNIQUE INDEX replies_one_per_run ON replies (run_id) WHERE event_seq IS N
 CREATE UNIQUE INDEX replies_one_per_event ON replies (run_id, event_seq) WHERE event_seq IS NOT NULL;
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- Events were never more than a view of a run's steps; the answers stay.
 DELETE FROM replies WHERE kind = 'event';

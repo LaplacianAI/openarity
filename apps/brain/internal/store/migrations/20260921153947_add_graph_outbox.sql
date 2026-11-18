@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- The graph is behind until a row here is drained. Postgres and FalkorDB
 -- cannot share a transaction, so what commits with the change is the record

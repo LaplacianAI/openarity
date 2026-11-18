@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- Permissions become data. An enterprise composing a role in a dashboard
 -- picks from these rows, and adding one is a row rather than a deploy.

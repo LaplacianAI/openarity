@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A sender is keyed on the channel, never on the provider: Slack user ids are
 -- unique only within a workspace, and "agent-17" in a partner's channel has

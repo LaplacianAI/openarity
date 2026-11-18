@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- Tool-call approvals: a run can be made to ask a person before a call, and
 -- wait for the answer without holding a worker. Nothing reads any of this
@@ -122,7 +122,7 @@ CREATE UNIQUE INDEX approvals_pending_code_key ON approvals (root_run_id, code)
     WHERE status = 'pending';
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 DROP TABLE approvals;
 DROP TABLE approval_rules;

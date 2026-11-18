@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- The action is a plain text column with no foreign key behind it, so this
 -- statement is the whole of that rename. Only admin holds it today.
@@ -20,7 +20,7 @@ UPDATE team_members SET role = 'member' WHERE role = 'developer';
 DELETE FROM roles WHERE name = 'developer';
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 INSERT INTO roles (name, description) VALUES
     ('developer', 'Create and change agents and tools');

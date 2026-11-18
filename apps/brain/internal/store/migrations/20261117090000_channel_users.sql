@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A channel user is a sender approved as someone new: a user of their own,
 -- with issuer openarity:channel, whom no token ever resolves to. It has no
@@ -10,6 +10,6 @@ ALTER TABLE users
     ADD CONSTRAINT users_name_bounded CHECK (char_length(name) BETWEEN 1 AND 64);
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 ALTER TABLE users DROP COLUMN name;

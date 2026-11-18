@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A run is the hub's when it is a POST /runs that names no agent (and, from
 -- slice E, a message's root run). A hub run with no agent is the built-in
@@ -20,7 +20,7 @@ ALTER TABLE run_events ADD CONSTRAINT run_events_kind_known CHECK (kind IN (
     'tool_unavailable', 'finished', 'delegated', 'plan')) NOT VALID;
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 DELETE FROM run_events WHERE kind = 'plan';
 ALTER TABLE run_events DROP CONSTRAINT run_events_kind_known;

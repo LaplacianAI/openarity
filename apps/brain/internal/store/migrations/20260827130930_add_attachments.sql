@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- What a message arrived with, and where the bytes went. The bytes themselves
 -- are in the object store, encrypted under the team's key before they left the

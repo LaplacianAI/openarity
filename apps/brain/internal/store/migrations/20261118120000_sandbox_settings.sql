@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A team's sandbox: where its command MCP servers run. A provider, the URL of
 -- a self-hosted one, the image rooms start from, and a key, kept as web
@@ -74,7 +74,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION team_settings_record_replaced_secret() RETURNS trigger

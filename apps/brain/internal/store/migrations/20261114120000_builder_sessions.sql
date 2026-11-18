@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- The builder is an agent on the dashboard channel: a conversation with it is
 -- a dashboard conversation like any other, and every message in it has its
@@ -28,7 +28,7 @@ ALTER TABLE sessions ADD CONSTRAINT sessions_builder_on_a_channel
     CHECK (NOT builder OR channel_id IS NOT NULL);
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- The moved conversations stay on the dashboard channel, where they may now
 -- hold messages; taking them off it would leave those messages in a session

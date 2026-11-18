@@ -16,7 +16,7 @@
 -- to rule out.
 
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 ALTER TABLE runs
     ADD COLUMN message_id uuid,
@@ -75,7 +75,7 @@ CREATE INDEX replies_due ON replies (next_attempt_at) WHERE status = 'pending';
 CREATE INDEX replies_session_order ON replies (session_id, id) WHERE status = 'pending';
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 DROP TABLE replies;
 

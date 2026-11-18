@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- messages is a stand-in for the orchestrator, which owns conversation state
 -- once it exists. It holds the least a reader needs to see that the path works

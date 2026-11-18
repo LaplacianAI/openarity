@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 ALTER TABLE agents DROP CONSTRAINT agents_pattern_known;
 
@@ -9,7 +9,7 @@ ALTER TABLE agents ADD CONSTRAINT agents_pattern_named
     CHECK (pattern ~ '^[a-z][a-z0-9-]{0,63}$') NOT VALID;
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 ALTER TABLE agents DROP CONSTRAINT agents_pattern_named;
 

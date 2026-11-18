@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- "Every attachment in this session" is what an agent asks to build context: a
 -- message can name a file that arrived twenty messages earlier. No index

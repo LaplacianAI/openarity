@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A WhatsApp channel's linked device, and who holds its connection. A
 -- connection has one owner: a `brain whatsapp` role leases the row, renews
@@ -49,7 +49,7 @@ CREATE INDEX whatsapp_sent_sent_at_idx ON whatsapp_sent (sent_at);
 CREATE SCHEMA IF NOT EXISTS whatsmeow;
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- Rolling back unlinks nothing on the phones: the devices' keys go, and each
 -- phone shows a device that never connects again until it is removed there.

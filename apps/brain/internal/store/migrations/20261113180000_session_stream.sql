@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A session's stream is its messages and the events of every run in it, in
 -- one order. session_seq is that order: taken from the session's counter
@@ -109,7 +109,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 DROP TRIGGER teams_dashboard_channel ON teams;
 DROP FUNCTION teams_dashboard_channel();
