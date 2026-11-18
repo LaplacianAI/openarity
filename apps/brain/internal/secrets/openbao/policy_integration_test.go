@@ -388,6 +388,46 @@ func TestTheShippedPolicyServesATeamsSearchKey(t *testing.T) {
 	}
 }
 
+// A team's sandbox key and each room's token are written once, read, and
+// destroyed when replaced, under the policy that ships. The room token is one
+// level deeper than the key; a policy granting only sandbox/+ failed its first
+// write in staging with a 403, which is what this would have caught.
+func TestTheShippedPolicyServesSandboxKeysAndRoomTokens(t *testing.T) {
+	t.Parallel()
+
+	reader, writer, _, _ := brainStore(t)
+	team := uuid.New()
+	for name, path := range map[string]string{
+		"key":   secrets.Path(team, secrets.KindSandbox, uuid.New()),
+		"token": secrets.RoomPath(team, uuid.New()),
+	} {
+		if err := writer.Put(t.Context(), path, "v", "s3cret"); err != nil {
+			t.Fatalf("saving a sandbox %s: %v", name, err)
+		}
+		if got, err := reader.Get(t.Context(), path, "v"); err != nil || got != "s3cret" {
+			t.Fatalf("reading the sandbox %s = %q, %v", name, got, err)
+		}
+		if err := writer.Delete(t.Context(), path); err != nil {
+			t.Fatalf("destroying a replaced sandbox %s: %v", name, err)
+		}
+		if _, err := reader.Get(t.Context(), path, "v"); !errors.Is(err, secrets.ErrNotFound) {
+			t.Errorf("after destroying the %s, err = %v, want secrets.ErrNotFound", name, err)
+		}
+	}
+}
+
+// The two sandbox rules are one segment each: nothing deeper under a team's
+// sandbox is the brain's to write.
+func TestTheSandboxRulesCannotBeWalkedOutOf(t *testing.T) {
+	t.Parallel()
+
+	_, writer, _, _ := brainStore(t)
+	deeper := secrets.RoomPath(uuid.New(), uuid.New()) + "/extra"
+	if err := writer.Put(t.Context(), deeper, "v", "x"); err == nil {
+		t.Errorf("wrote %s, below a room's token", deeper)
+	}
+}
+
 // Connecting to a team's MCP server reads the credential its row refers to,
 // under the policy that ships. A reference may nest, which is why the rule is
 // a glob; both shapes are read here so narrowing it to `+` fails a test rather
@@ -485,6 +525,10 @@ func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
 		`path "secret/data/teams/+/mcp/+"`,
 		`path "secret/data/teams/+/search/+"`,
 		`path "secret/metadata/teams/+/search/+"`,
+		`path "secret/data/teams/+/sandbox/+"`,
+		`path "secret/metadata/teams/+/sandbox/+"`,
+		`path "secret/data/teams/+/sandbox/rooms/+"`,
+		`path "secret/metadata/teams/+/sandbox/rooms/+"`,
 	} {
 		if !strings.Contains(hcl, want) {
 			t.Errorf("policy-brain.hcl no longer contains %s — the tests above are\n"+

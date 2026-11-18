@@ -177,14 +177,24 @@ path "secret/metadata/teams/+/search/+" {
   capabilities = ["delete"]
 }
 
-# A team's sandbox key, and each room's shim token, live under
-# teams/<team_id>/sandbox/<id>: a fresh path per key or token, tombstoned and
-# swept as the search key is. The room's own copy of a token is in the room.
+# A team's sandbox key lives at teams/<team_id>/sandbox/<id>, and each room's
+# bearer token at teams/<team_id>/sandbox/rooms/<room_id>: a fresh path per
+# key or token, tombstoned and swept as the search key is. The room's own copy
+# of a token is in the room. Two rules of one segment each, not a glob, so
+# nothing deeper under sandbox/ is reachable.
 path "secret/data/teams/+/sandbox/+" {
   capabilities = ["read", "create"]
 }
 
 path "secret/metadata/teams/+/sandbox/+" {
+  capabilities = ["delete"]
+}
+
+path "secret/data/teams/+/sandbox/rooms/+" {
+  capabilities = ["read", "create"]
+}
+
+path "secret/metadata/teams/+/sandbox/rooms/+" {
   capabilities = ["delete"]
 }
 
