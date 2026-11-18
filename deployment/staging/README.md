@@ -218,10 +218,15 @@ system daemon (openarity, CI deploys here)     rootless daemon (sandboxd)
 
    ```sh
    git clone https://github.com/LaplacianAI/openarity.git && cd openarity/deployment
-   docker pull ghcr.io/laplacianai/openarity-sandbox:latest   # the room image; sandboxd never pulls
    docker compose -f docker-compose.sandboxd.yml up -d --build
    curl -s "http://<SANDBOXD_BIND>:9090/healthz"               # 200
    ```
+
+   sandboxd pulls the room image itself, the first time a room starts from
+   it, and only from `SANDBOXD_IMAGES` (default
+   `ghcr.io/laplacianai/openarity-sandbox`). To have it ready before that,
+   set `SANDBOXD_PULL=ghcr.io/laplacianai/openarity-sandbox:latest` in the
+   same `.env`: it is pulled in the background at start.
 
 3. As `openarity`, let the brain dial that one address, beside SearXNG's if
    it is there, in its `deployment/.env`:
@@ -241,8 +246,8 @@ system daemon (openarity, CI deploys here)     rootless daemon (sandboxd)
        --sandbox-image ghcr.io/laplacianai/openarity-sandbox:latest --sandbox-key-stdin
    ```
 
-To update it, pull its checkout and the room image, then `up -d --build`
-again. A pull request deployed to staging can read the brain's environment,
+To update it, pull its checkout and `up -d --build` again; a room image that
+a team's setting now names is pulled by the next room that uses it. A pull request deployed to staging can read the brain's environment,
 the sandboxd token among the team's secrets with it, and so can make rooms:
 keep the budget small and the token staging's own.
 
