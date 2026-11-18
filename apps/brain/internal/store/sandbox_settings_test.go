@@ -96,3 +96,39 @@ func TestAURLServerHoldsNoVarsOrEgress(t *testing.T) {
 		t.Errorf("insert = %v, want mcp_servers_room_fields_command_only", err)
 	}
 }
+
+const beforeSandboxSettings = 20261118090000
+
+// Rolling back drops the columns and tombstones a saved sandbox key first, so
+// no key is left that nothing names; the team's settings and its search key
+// survive, and migrating again works.
+func TestSandboxSettingsRollBack(t *testing.T) {
+	s := migrationStore(t)
+	if _, err := s.Migrate(t.Context()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	team := mustCreate(t, s, "sandbox-down")
+	key, search := uuid.New(), uuid.New()
+	row := keyed(team.ID, "brave", search)
+	row.SandboxProvider, row.SandboxSecretID = "e2b", &key
+	mustUpsertSettings(t, s, row)
+
+	downTo(t, s, beforeSandboxSettings)
+	if n := count(t, s, `SELECT count(*) FROM information_schema.columns
+		WHERE (table_name = 'team_settings' AND column_name LIKE 'sandbox_%')
+		   OR (table_name = 'mcp_servers' AND column_name IN ('vars', 'egress'))`); n != 0 {
+		t.Errorf("rolled back, %d sandbox columns are still there", n)
+	}
+	if !slices.Contains(secretPaths(t, s), sandboxKeyPath(team.ID, key)) {
+		t.Error("rolled back, the saved sandbox key has no tombstone")
+	}
+	if slices.Contains(secretPaths(t, s), searchKeyPath(team.ID, search)) {
+		t.Error("rolling back tombstoned the search key, which is still in use")
+	}
+	if n := count(t, s, `SELECT count(*) FROM team_settings WHERE team_id = $1`, team.ID); n != 1 {
+		t.Error("rolling back lost the team's settings")
+	}
+	if _, err := s.Migrate(t.Context()); err != nil {
+		t.Fatalf("Migrate after rolling back: %v", err)
+	}
+}
