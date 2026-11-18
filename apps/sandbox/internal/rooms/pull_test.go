@@ -121,7 +121,10 @@ func TestARoomWhoseImageIsNoLongerAllowedDoesNotStart(t *testing.T) {
 func TestConcurrentStartsOfOneImagePullItOnce(t *testing.T) {
 	t.Parallel()
 	const n = 6
-	s, e, _ := service(DefaultLimits())
+	// Room for all six: this is about the pull, not the budget.
+	l := DefaultLimits()
+	l.MemoryBudget = n * l.Memory
+	s, e, _ := service(l)
 	e.absent = map[string]bool{"room:1": true}
 	e.pullWait = make(chan struct{})
 	ids := make([]string, n)

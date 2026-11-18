@@ -57,6 +57,8 @@ spec:
                 -e SANDBOXD_TOKEN \
                 -e SANDBOXD_PUBLIC_URL \
                 -e SANDBOXD_MEMORY_BUDGET \
+                -e SANDBOXD_ROOM_MEMORY \
+                -e SANDBOXD_ROOM_HOME \
                 -e SANDBOXD_IMAGES \
                 -e SANDBOXD_PULL \
                 -e SANDBOXD_DOCKER_SOCKET=/var/run/docker.sock \
@@ -103,7 +105,7 @@ spec:
               cpu: 500m
               memory: 512Mi
             limits:
-              # Rooms are 256 MiB each and count against the budget, so the
+              # Rooms are 768 MiB each and count against the budget, so the
               # limit is the budget, the daemon and sandboxd.
               memory: 4Gi
           securityContext:

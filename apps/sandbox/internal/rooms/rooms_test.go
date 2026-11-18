@@ -307,15 +307,16 @@ func TestHardenFixesEverythingARequestCouldWant(t *testing.T) {
 			t.Errorf("seccomp must be the default: %v", h.SecurityOpt)
 		}
 	}
-	if h.PidsLimit != 256 || h.Memory != 256<<20 || h.MemorySwap != 256<<20 || h.NanoCPUs != 500_000_000 {
+	if h.PidsLimit != 256 || h.Memory != 768<<20 || h.MemorySwap != 768<<20 || h.NanoCPUs != 500_000_000 {
 		t.Errorf("limits = %+v", h)
 	}
 	if h.NetworkMode != "oa-sb-abc" {
 		t.Errorf("network = %q", h.NetworkMode)
 	}
-	for _, p := range []string{"/tmp", "/home/sandbox"} {
-		if !strings.Contains(h.Tmpfs[p], "size=67108864") {
-			t.Errorf("tmpfs %s = %q", p, h.Tmpfs[p])
+	// /tmp stays small; the home holds an npx package and its cache.
+	for p, size := range map[string]string{"/tmp": "size=67108864", "/home/sandbox": "size=536870912"} {
+		if !strings.Contains(h.Tmpfs[p], size) {
+			t.Errorf("tmpfs %s = %q, want %s", p, h.Tmpfs[p], size)
 		}
 	}
 	if !strings.Contains(h.Tmpfs["/tmp"], "noexec") || !strings.Contains(h.Tmpfs["/home/sandbox"], ",exec,") {
