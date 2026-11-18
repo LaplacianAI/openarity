@@ -245,6 +245,12 @@ grafana:
 	  "grafana    http://$${GRAFANA_BIND:-$${BIND_ADDR:-127.0.0.1}}:$${GRAFANA_PORT:-13000}  (admin, GRAFANA_ADMIN_PASSWORD)" \
 	  "dashboard  Openarity / Openarity brain"
 
+## grafana-alerts: create the alert rules in Grafana, or put them back — see logs/grafana/alerts.py
+grafana-alerts:
+	@GRAFANA_ADMIN_PASSWORD="$$(sed -n 's/^GRAFANA_ADMIN_PASSWORD=//p' .env | tail -1)" \
+	  GRAFANA_URL="$${GRAFANA_URL:-http://127.0.0.1:$$(sed -n 's/^GRAFANA_PORT=//p' .env | tail -1 | grep . || echo 13000)}" \
+	  python3 logs/grafana/alerts.py
+
 ## grafana-down: stop Loki, Alloy and Grafana, keeping the logs
 grafana-down:
 	$(COMPOSE) $(GRAFANA) stop grafana alloy loki socket-proxy
