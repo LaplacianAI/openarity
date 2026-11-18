@@ -10,7 +10,7 @@ import (
 
 const daytonaSaved = `{"model":null,
   "search":{"provider":"none","url":null,"key_set":false},
-  "sandbox":{"provider":"daytona","url":"https://daytona.example","image":"mcp-room:1","key_set":true},
+  "sandbox":{"provider":"daytona","url":"https://daytona.example","key_set":true},
   "learning":false,"compaction_messages":100,"updated_at":"2026-11-18T09:00:00Z"}`
 
 func sandbox(t *testing.T, body map[string]any) map[string]any {
@@ -53,25 +53,8 @@ func TestSettingsSetReadsTheSandboxKeyFromStdin(t *testing.T) {
 	}
 }
 
-func TestChangingOnlyTheSandboxImageKeepsTheRest(t *testing.T) {
-	script := settingsRoutes(t, daytonaSaved, http.StatusOK)
-
-	if _, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID,
-		"--sandbox-image", " mcp-room:2 "); err != nil {
-		t.Fatalf("teams settings set: %v", err)
-	}
-	s := sandbox(t, put(t, script))
-	if s["provider"] != "daytona" || s["url"] != "https://daytona.example" || s["image"] != "mcp-room:2" {
-		t.Errorf("sandbox = %v, want daytona at its url with the new image", s)
-	}
-	if _, ok := s["api_key"]; ok {
-		t.Error("sent a key, which would replace the stored one")
-	}
-}
-
-// The URL and image are the old provider's: an E2B room cannot start from a
-// Daytona image, and E2B takes no URL at all.
-func TestSwitchingSandboxProviderLeavesItsURLAndImageBehind(t *testing.T) {
+// The URL is the old provider's, and E2B takes none.
+func TestSwitchingSandboxProviderLeavesItsURLBehind(t *testing.T) {
 	script := settingsRoutes(t, daytonaSaved, http.StatusOK)
 
 	if _, err := clitest.ExecuteWithStdin(t, commands, "k\n", "teams", "settings", "set", teamID,
@@ -79,19 +62,8 @@ func TestSwitchingSandboxProviderLeavesItsURLAndImageBehind(t *testing.T) {
 		t.Fatalf("teams settings set: %v", err)
 	}
 	s := sandbox(t, put(t, script))
-	if s["url"] != nil || s["image"] != nil {
-		t.Errorf("sandbox = %v, want no url and no image", s)
-	}
-}
-
-func TestNoSandboxImageClearsIt(t *testing.T) {
-	script := settingsRoutes(t, daytonaSaved, http.StatusOK)
-
-	if _, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--no-sandbox-image"); err != nil {
-		t.Fatalf("teams settings set: %v", err)
-	}
-	if img := sandbox(t, put(t, script))["image"]; img != nil {
-		t.Errorf("image = %v, want none", img)
+	if s["url"] != nil {
+		t.Errorf("sandbox = %v, want no url", s)
 	}
 }
 
@@ -102,7 +74,7 @@ func TestSettingsShowNamesTheSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("teams settings show: %v", err)
 	}
-	for _, want := range []string{"daytona", "https://daytona.example", "mcp-room:1", "sandbox key"} {
+	for _, want := range []string{"daytona", "https://daytona.example", "sandbox key"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}

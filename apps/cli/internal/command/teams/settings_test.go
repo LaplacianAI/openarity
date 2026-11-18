@@ -284,8 +284,6 @@ func TestSettingsSetRefusesBeforeSending(t *testing.T) {
 		"a key and no key":            {"--search-key-stdin", "--no-search-key"},
 		"learning that is not on/off": {"--learning", "maybe"},
 		"two keys on one stdin":       {"--search-key-stdin", "--sandbox-key-stdin"},
-		"an image and no image":       {"--sandbox-image", "x", "--no-sandbox-image"},
-		"an empty image":              {"--sandbox-image", " "},
 	} {
 		t.Run(name, func(t *testing.T) {
 			script := settingsRoutes(t, braveSaved, http.StatusOK)

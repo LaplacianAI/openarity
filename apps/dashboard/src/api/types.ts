@@ -735,7 +735,6 @@ export type TeamSettings = {
   sandbox: {
     provider: SandboxProvider;
     url: string | null;
-    image: string | null;
     key_set: boolean;
   };
   learning: boolean;
@@ -756,7 +755,7 @@ export type TeamSettingsRequest = {
    * Left out, the stored sandbox stays. `api_key` left out keeps the stored
    * key while the provider and its URL are unchanged.
    */
-  sandbox?: { provider: SandboxProvider; url?: string; image?: string; api_key?: string };
+  sandbox?: { provider: SandboxProvider; url?: string; api_key?: string };
   learning: boolean;
   compaction_messages: number;
   /** An agent's name in the team; null for the built-in orchestrator. */

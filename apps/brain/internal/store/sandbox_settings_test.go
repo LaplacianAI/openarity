@@ -57,21 +57,18 @@ func TestASandboxThatCannotWorkIsRefused(t *testing.T) {
 		provider   string
 		url        *string
 		secret     *uuid.UUID
-		image      *string
 		constraint string
 	}{
-		"an unknown provider":    {"modal", nil, &id, nil, "team_settings_sandbox_provider_known"},
-		"e2b with a url":         {"e2b", &url, &id, nil, "team_settings_sandbox_url_allowed"},
-		"sandboxd with no url":   {"sandboxd", nil, &id, nil, "team_settings_sandbox_url_required"},
-		"a provider with no key": {"daytona", nil, nil, nil, "team_settings_sandbox_secret_iff_provider"},
-		"none with a key":        {"none", nil, &id, nil, "team_settings_sandbox_secret_iff_provider"},
-		"none with an image":     {"none", nil, nil, ptrTo("img"), "team_settings_sandbox_image_allowed"},
-		"an empty image":         {"e2b", nil, &id, ptrTo(""), "team_settings_sandbox_image_allowed"},
+		"an unknown provider":    {"modal", nil, &id, "team_settings_sandbox_provider_known"},
+		"e2b with a url":         {"e2b", &url, &id, "team_settings_sandbox_url_allowed"},
+		"sandboxd with no url":   {"sandboxd", nil, &id, "team_settings_sandbox_url_required"},
+		"a provider with no key": {"daytona", nil, nil, "team_settings_sandbox_secret_iff_provider"},
+		"none with a key":        {"none", nil, &id, "team_settings_sandbox_secret_iff_provider"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			team := mustCreate(t, s, "refused-"+name)
 			p := settings(team.ID)
-			p.SandboxProvider, p.SandboxUrl, p.SandboxSecretID, p.SandboxImage = tc.provider, tc.url, tc.secret, tc.image
+			p.SandboxProvider, p.SandboxUrl, p.SandboxSecretID = tc.provider, tc.url, tc.secret
 			_, err := s.UpsertTeamSettings(t.Context(), p)
 
 			var pgErr *pgconn.PgError
@@ -127,6 +124,29 @@ func TestSandboxSettingsRollBack(t *testing.T) {
 	}
 	if n := count(t, s, `SELECT count(*) FROM team_settings WHERE team_id = $1`, team.ID); n != 1 {
 		t.Error("rolling back lost the team's settings")
+	}
+	if _, err := s.Migrate(t.Context()); err != nil {
+		t.Fatalf("Migrate after rolling back: %v", err)
+	}
+}
+
+const beforeSandboxImageDropped = 20261118120000
+
+// The image is the brain's, so the column goes; rolling back brings it back
+// empty, which the old code reads as the provider's default.
+func TestTheSandboxImageColumnIsGoneAndComesBack(t *testing.T) {
+	s := migrationStore(t)
+	if _, err := s.Migrate(t.Context()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	const column = `SELECT count(*) FROM information_schema.columns
+		WHERE table_name = 'team_settings' AND column_name = 'sandbox_image'`
+	if n := count(t, s, column); n != 0 {
+		t.Fatal("migrated, team_settings still has sandbox_image")
+	}
+	downTo(t, s, beforeSandboxImageDropped)
+	if n := count(t, s, column); n != 1 {
+		t.Fatal("rolled back, sandbox_image is not there")
 	}
 	if _, err := s.Migrate(t.Context()); err != nil {
 		t.Fatalf("Migrate after rolling back: %v", err)

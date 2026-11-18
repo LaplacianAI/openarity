@@ -107,7 +107,7 @@ func TestTurningTheSandboxOffDropsItsKey(t *testing.T) {
 	e.storedSandbox("e2b", &id, nil)
 
 	got := decode(t, e.save(t, withSandbox(`{"provider":"none"}`)))
-	if p := e.store.upserts[0]; p.SandboxSecretID != nil || p.SandboxUrl != nil || p.SandboxImage != nil {
+	if p := e.store.upserts[0]; p.SandboxSecretID != nil || p.SandboxUrl != nil {
 		t.Errorf("saved %+v, want nothing but none", p)
 	}
 	if got.Sandbox.KeySet {
@@ -126,8 +126,8 @@ func TestABadSandboxIsRefused(t *testing.T) {
 		"none with a key":        {`{"provider":"none","api_key":"k"}`, "none takes none"},
 		"a url with credentials": {`{"provider":"daytona","url":"https://u:p@d.example","api_key":"k"}`, "must not carry credentials"},
 		"a private address":      {`{"provider":"sandboxd","url":"http://10.0.0.5:8090","api_key":"k"}`, "private"},
-		"an image with a space":  {`{"provider":"e2b","image":"my template","api_key":"k"}`, "sandbox.image"},
-		"an empty image":         {`{"provider":"e2b","image":"","api_key":"k"}`, "sandbox.image"},
+		// What a room starts from is the brain's to choose.
+		"an image": {`{"provider":"e2b","image":"attacker/miner:1","api_key":"k"}`, "invalid request body"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv()

@@ -21,12 +21,12 @@ var settingFlags = []string{
 	"model", "max-tokens", "temperature", "no-model",
 	"search", "search-url", "search-key-stdin", "no-search-key",
 	"learning", "compaction-messages", "hub", "no-hub",
-	"sandbox", "sandbox-url", "sandbox-image", "no-sandbox-image", "sandbox-key-stdin",
+	"sandbox", "sandbox-url", "sandbox-key-stdin",
 }
 
 // sandboxFlags are the ones that send a sandbox at all. Without any, the
 // request leaves it out and the brain keeps the stored one, key and all.
-var sandboxFlags = []string{"sandbox", "sandbox-url", "sandbox-image", "no-sandbox-image", "sandbox-key-stdin"}
+var sandboxFlags = []string{"sandbox", "sandbox-url", "sandbox-key-stdin"}
 
 func newSettingsCmd(opts *cli.Options) *cobra.Command {
 	cmd := &cobra.Command{
@@ -79,8 +79,6 @@ type settingsFlags struct {
 
 	sandbox         string
 	sandboxURL      string
-	sandboxImage    string
-	noSandboxImage  bool
 	sandboxKeyStdin bool
 }
 
@@ -168,9 +166,6 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 		"where command MCP servers run: none, e2b, daytona or sandboxd")
 	cmd.Flags().StringVar(&f.sandboxURL, "sandbox-url", "",
 		"a self-hosted provider's API address: sandboxd, or a self-hosted daytona")
-	cmd.Flags().StringVar(&f.sandboxImage, "sandbox-image", "",
-		"what rooms start from, in the provider's terms: an E2B template, a Daytona or sandboxd image")
-	cmd.Flags().BoolVar(&f.noSandboxImage, "no-sandbox-image", false, "return rooms to the provider's default image")
 	cmd.Flags().BoolVar(&f.sandboxKeyStdin, "sandbox-key-stdin", false,
 		"read the sandbox provider's key, or sandboxd's token, from stdin")
 	cmd.Flags().StringVar(&f.learning, "learning", "", "on or off")
@@ -194,10 +189,6 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return errors.New("--search-key-stdin and --no-search-key contradict each other")
 	case f.sandboxKeyStdin && f.keyStdin:
 		return errors.New("stdin holds one key: set the search key and the sandbox key in two commands")
-	case changed("sandbox-image") && f.noSandboxImage:
-		return errors.New("--sandbox-image and --no-sandbox-image contradict each other")
-	case changed("sandbox-image") && strings.TrimSpace(f.sandboxImage) == "":
-		return errors.New("--sandbox-image takes an image; --no-sandbox-image returns to the provider's default")
 	case changed("learning") && f.learning != "on" && f.learning != "off":
 		return fmt.Errorf("--learning takes on or off, not %q", f.learning)
 	case changed("hub") && f.noHub:
@@ -210,8 +201,7 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 
 // apply starts from what is stored and changes only what was asked. A new
 // provider leaves the old URL behind; --search-url, applied after, can give
-// it one in the same command. A new sandbox provider leaves the old image
-// behind too: it is named in the old provider's terms.
+// it one in the same command, as --sandbox-url does for a new sandbox provider.
 func (f *settingsFlags) apply(
 	changed func(string) bool, cur *client.TeamSettings, key, sandboxKey *string,
 ) client.TeamSettingsRequest {
@@ -283,21 +273,14 @@ func (f *settingsFlags) applySandbox(
 	if !slices.ContainsFunc(sandboxFlags, changed) {
 		return nil
 	}
-	s := client.SandboxSettingsRequest{Provider: cur.Provider, URL: cur.URL, Image: cur.Image, APIKey: key}
+	s := client.SandboxSettingsRequest{Provider: cur.Provider, URL: cur.URL, APIKey: key}
 	if changed("sandbox") && client.SandboxProvider(f.sandbox) != cur.Provider {
 		s.Provider = client.SandboxProvider(f.sandbox)
-		s.URL, s.Image = nil, nil
+		s.URL = nil
 	}
 	if changed("sandbox-url") {
 		u := f.sandboxURL
 		s.URL = &u
-	}
-	switch {
-	case f.noSandboxImage:
-		s.Image = nil
-	case changed("sandbox-image"):
-		img := strings.TrimSpace(f.sandboxImage)
-		s.Image = &img
 	}
 	return &s
 }
@@ -371,9 +354,6 @@ func printSandbox(table *printer.Table, opts *cli.Options, s client.SandboxSetti
 	table.Row(label("sandbox"), value(string(s.Provider)))
 	if s.URL != nil {
 		table.Row(label("sandbox url"), value(cli.Safe(*s.URL)))
-	}
-	if s.Image != nil {
-		table.Row(label("sandbox image"), value(cli.Safe(*s.Image)))
 	}
 	if s.Provider != client.SandboxProviderNone {
 		key := "not set"

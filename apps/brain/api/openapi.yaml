@@ -6107,7 +6107,9 @@ components:
     SandboxSettings:
       type: object
       required: [provider, key_set]
-      description: Where the team's command MCP servers run.
+      description: |
+        Where the team's command MCP servers run. What a room starts from is
+        the brain's choice, not the team's.
       properties:
         provider:
           $ref: "#/components/schemas/SandboxProvider"
@@ -6116,10 +6118,6 @@ components:
           nullable: true
           description: A self-hosted provider's API address, for sandboxd and a self-hosted Daytona; null otherwise
           examples: ["http://sandboxd:8090"]
-        image:
-          type: string
-          nullable: true
-          description: What rooms start from, in the provider's own terms (an E2B template, a Daytona or sandboxd image); null for the default
         key_set:
           type: boolean
           description: Whether a key is stored. The key itself is never returned.
@@ -6192,10 +6190,6 @@ components:
         url:
           type: string
           description: Required for sandboxd, optional for daytona, refused for e2b and none
-        image:
-          type: string
-          maxLength: 512
-          description: Optional; refused for none
         api_key:
           type: string
           writeOnly: true

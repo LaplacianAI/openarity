@@ -155,8 +155,6 @@ func checkSelfHostedURL(field, raw string, allow func(netip.Addr) bool) error {
 	return nil
 }
 
-const maxImageBytes = 512
-
 // checkSandbox is where the team's command servers run. Every provider takes
 // a key; sandboxd also its URL, Daytona one when self-hosted, E2B none. A key
 // is sent again when the provider or its URL changes, so a key is never sent
@@ -164,8 +162,8 @@ const maxImageBytes = 512
 func checkSandbox(s sandboxRequest, stored *db.TeamSetting, allow func(netip.Addr) bool) error {
 	switch s.Provider {
 	case string(sandboxpkg.None):
-		if s.URL != nil || s.Image != nil || s.APIKey != nil {
-			return errors.New("sandbox.url, sandbox.image and sandbox.api_key are for a sandbox provider; none takes none")
+		if s.URL != nil || s.APIKey != nil {
+			return errors.New("sandbox.url and sandbox.api_key are for a sandbox provider; none takes none")
 		}
 		return nil
 	case string(sandboxpkg.E2B), string(sandboxpkg.Daytona), string(sandboxpkg.Sandboxd):
@@ -181,12 +179,6 @@ func checkSandbox(s sandboxRequest, stored *db.TeamSetting, allow func(netip.Add
 	case s.URL != nil:
 		if err := checkSelfHostedURL("sandbox", *s.URL, allow); err != nil {
 			return err
-		}
-	}
-	if s.Image != nil {
-		img := *s.Image
-		if img == "" || len(img) > maxImageBytes || strings.TrimSpace(img) != img || strings.ContainsAny(img, " \t\n\x00") {
-			return fmt.Errorf("sandbox.image must name an image or template, at most %d bytes, with no spaces", maxImageBytes)
 		}
 	}
 	if s.APIKey == nil {
