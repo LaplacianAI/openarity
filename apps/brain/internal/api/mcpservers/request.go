@@ -158,6 +158,11 @@ func checkCommandServer(teamID uuid.UUID, req Request) error {
 	if len(req.Command) == 0 || req.Command[0] == "" {
 		return errors.New("command must name a program to run")
 	}
+	// A command is run as argv, with no shell, so a program named with a
+	// space is a whole command line given as one item: it can never start.
+	if strings.ContainsAny(req.Command[0], " \t\n") {
+		return fmt.Errorf("command[0] is %q, a program name with a space in it: give each argument as an item of its own, such as [\"npx\", \"-y\", \"some-package\"]", req.Command[0])
+	}
 	if req.AuthSecretRef != nil {
 		return errors.New("auth_secret_ref is for a url server; a command server takes env")
 	}

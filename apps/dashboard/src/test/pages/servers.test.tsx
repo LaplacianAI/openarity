@@ -90,6 +90,15 @@ describe("the register form", () => {
 
   // A line per argument: splitting on spaces would break any argument that
   // holds one, such as a path.
+  it("refuses a whole command line on its first line, and names the fix", () => {
+    const said = serverRequest({
+      ...base,
+      transport: "command",
+      command: "npx -y mcp-mail-server",
+    });
+    expect(said).toMatch(/on its own line/);
+  });
+
   it("sends a command one argument per line, and its environment", () => {
     expect(
       serverRequest({
@@ -135,6 +144,9 @@ describe("where a server's discovery stands", () => {
     [{ last_discovery_error: "timed out" }, "failed"],
     [{ last_discovery_error: "timed out", discovered_at: null }, "failed"],
     [{ discovered_at: null, last_discovery_at: null }, "not discovered"],
+    // A command server runs in the team's sandbox, so it is asked like any other.
+    [{ url: undefined, command: ["npx", "srv"] }, "answered"],
+    [{ url: undefined, command: ["npx", "srv"], last_discovery_error: "not ready" }, "failed"],
   ])("%o is %s", (patch, said) => {
     expect(discoveryOf({ ...github, ...patch } as MCPServer)).toBe(said);
   });

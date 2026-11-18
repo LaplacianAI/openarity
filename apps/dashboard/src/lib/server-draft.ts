@@ -80,6 +80,12 @@ export function serverRequest(d: ServerDraft): MCPServerRequest | string {
     .map((a) => a.trim())
     .filter(Boolean);
   if (argv.length === 0) return "A command server needs its command, one argument per line.";
+  // Run without a shell, a first line with a space names a program that
+  // cannot exist; later arguments may hold spaces.
+  const program = argv[0] ?? "";
+  if (/\s/.test(program)) {
+    return `Put each argument of "${program}" on its own line: the first line is only the program, such as npx.`;
+  }
   body.command = argv;
 
   const env: Record<string, string> = {};
@@ -255,8 +261,6 @@ export function signInOf(s: MCPServer): SignIn | null {
 }
 
 export function discoveryOf(s: MCPServer): Discovery {
-  // The brain does not run a command server, so it is never asked.
-  if (!s.url) return "not discovered";
   if (s.last_discovery_error) return "failed";
   if (s.discovered_at) return "answered";
   return "not discovered";
