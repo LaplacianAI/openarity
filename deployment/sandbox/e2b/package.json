@@ -6,11 +6,11 @@
     "build": "tsx build.ts"
   },
   "dependencies": {
-    "e2b": "2.60.0"
+    "e2b": "2.63.0"
   },
   "devDependencies": {
     "@types/node": "22.19.1",
-    "tsx": "4.21.0",
+    "tsx": "4.23.15",
     "typescript": "5.9.3"
   }
 }
