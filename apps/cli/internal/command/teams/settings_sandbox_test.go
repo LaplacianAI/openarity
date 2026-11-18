@@ -108,3 +108,56 @@ func TestTwoKeysOnOneStdinSayWhy(t *testing.T) {
 		t.Fatalf("err = %v, want it to say to use two commands", err)
 	}
 }
+
+func TestSettingsSetSendsAnE2BTemplate(t *testing.T) {
+	script := settingsRoutes(t, neverSaved, http.StatusOK)
+
+	if _, err := clitest.ExecuteWithStdin(t, commands, "k\n", "teams", "settings", "set", teamID,
+		"--sandbox", "e2b", "--sandbox-key-stdin", "--e2b-template", " acme/openarity-sandbox "); err != nil {
+		t.Fatalf("teams settings set: %v", err)
+	}
+	if got := sandbox(t, put(t, script))["template"]; got != "acme/openarity-sandbox" {
+		t.Errorf("template = %v, want acme/openarity-sandbox", got)
+	}
+}
+
+const e2bSaved = `{"model":null,
+  "search":{"provider":"none","url":null,"key_set":false},
+  "sandbox":{"provider":"e2b","url":null,"template":"acme/openarity-sandbox","key_set":true},
+  "learning":false,"compaction_messages":100,"updated_at":"2026-11-18T09:00:00Z"}`
+
+// A template is E2B's: switching away leaves it behind, and clearing it
+// returns to the default.
+func TestAnE2BTemplateGoesWithItsProviderOrWhenCleared(t *testing.T) {
+	for name, args := range map[string][]string{
+		"switched": {"--sandbox", "daytona", "--sandbox-key-stdin"},
+		"cleared":  {"--no-e2b-template"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script := settingsRoutes(t, e2bSaved, http.StatusOK)
+			if _, err := clitest.ExecuteWithStdin(t, commands, "k\n",
+				append([]string{"teams", "settings", "set", teamID}, args...)...); err != nil {
+				t.Fatal(err)
+			}
+			if got := sandbox(t, put(t, script))["template"]; got != nil {
+				t.Errorf("template = %v, want none", got)
+			}
+		})
+	}
+}
+
+func TestSettingsShowNamesTheE2BTemplateOrItsDefault(t *testing.T) {
+	for stored, want := range map[string]string{
+		e2bSaved: "acme/openarity-sandbox",
+		strings.Replace(e2bSaved, `"template":"acme/openarity-sandbox",`, ``, 1): "openarity-sandbox (default)",
+	} {
+		settingsRoutes(t, stored, http.StatusOK)
+		out, err := clitest.Execute(t, commands, "teams", "settings", "show", teamID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+}

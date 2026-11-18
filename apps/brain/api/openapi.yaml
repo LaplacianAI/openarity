@@ -6109,7 +6109,7 @@ components:
       required: [provider, key_set]
       description: |
         Where the team's command MCP servers run. What a room starts from is
-        the brain's choice, not the team's.
+        the brain's choice, but for an E2B team's template.
       properties:
         provider:
           $ref: "#/components/schemas/SandboxProvider"
@@ -6118,6 +6118,13 @@ components:
           nullable: true
           description: A self-hosted provider's API address, for sandboxd and a self-hosted Daytona; null otherwise
           examples: ["http://sandboxd:8090"]
+        template:
+          type: string
+          nullable: true
+          description: |
+            E2B only: the template rooms start from, built in the team's E2B
+            account; null for the brain's default, openarity-sandbox. Every
+            other provider is given the brain's own image.
         key_set:
           type: boolean
           description: Whether a key is stored. The key itself is never returned.
@@ -6190,6 +6197,12 @@ components:
         url:
           type: string
           description: Required for sandboxd, optional for daytona, refused for e2b and none
+        template:
+          type: string
+          maxLength: 128
+          pattern: '^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)?$'
+          description: E2B only, optional; a template name, or owner/name for another team's public one
+          examples: ["openarity-sandbox"]
         api_key:
           type: string
           writeOnly: true

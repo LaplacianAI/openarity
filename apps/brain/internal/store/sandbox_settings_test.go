@@ -57,18 +57,21 @@ func TestASandboxThatCannotWorkIsRefused(t *testing.T) {
 		provider   string
 		url        *string
 		secret     *uuid.UUID
+		template   *string
 		constraint string
 	}{
-		"an unknown provider":    {"modal", nil, &id, "team_settings_sandbox_provider_known"},
-		"e2b with a url":         {"e2b", &url, &id, "team_settings_sandbox_url_allowed"},
-		"sandboxd with no url":   {"sandboxd", nil, &id, "team_settings_sandbox_url_required"},
-		"a provider with no key": {"daytona", nil, nil, "team_settings_sandbox_secret_iff_provider"},
-		"none with a key":        {"none", nil, &id, "team_settings_sandbox_secret_iff_provider"},
+		"an unknown provider":    {"modal", nil, &id, nil, "team_settings_sandbox_provider_known"},
+		"e2b with a url":         {"e2b", &url, &id, nil, "team_settings_sandbox_url_allowed"},
+		"sandboxd with no url":   {"sandboxd", nil, &id, nil, "team_settings_sandbox_url_required"},
+		"a provider with no key": {"daytona", nil, nil, nil, "team_settings_sandbox_secret_iff_provider"},
+		"none with a key":        {"none", nil, &id, nil, "team_settings_sandbox_secret_iff_provider"},
+		"a template for daytona": {"daytona", nil, &id, ptrTo("openarity-sandbox"), "team_settings_sandbox_template_e2b_only"},
+		"an empty e2b template":  {"e2b", nil, &id, ptrTo(""), "team_settings_sandbox_template_e2b_only"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			team := mustCreate(t, s, "refused-"+name)
 			p := settings(team.ID)
-			p.SandboxProvider, p.SandboxUrl, p.SandboxSecretID = tc.provider, tc.url, tc.secret
+			p.SandboxProvider, p.SandboxUrl, p.SandboxSecretID, p.SandboxTemplate = tc.provider, tc.url, tc.secret, tc.template
 			_, err := s.UpsertTeamSettings(t.Context(), p)
 
 			var pgErr *pgconn.PgError
@@ -130,22 +133,43 @@ func TestSandboxSettingsRollBack(t *testing.T) {
 	}
 }
 
-const beforeSandboxImageDropped = 20261118120000
+const beforeSandboxTemplate = 20261118120000
 
-// The image is the brain's, so the column goes; rolling back brings it back
-// empty, which the old code reads as the provider's default.
-func TestTheSandboxImageColumnIsGoneAndComesBack(t *testing.T) {
+// A team's image becomes an E2B template: kept for an E2B team, dropped for
+// any other, since the brain chooses every other provider's image. Rolling
+// back brings the column back under its old name.
+func TestTheSandboxImageBecomesAnE2BTemplate(t *testing.T) {
 	s := migrationStore(t)
 	if _, err := s.Migrate(t.Context()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	const column = `SELECT count(*) FROM information_schema.columns
-		WHERE table_name = 'team_settings' AND column_name = 'sandbox_image'`
-	if n := count(t, s, column); n != 0 {
-		t.Fatal("migrated, team_settings still has sandbox_image")
+	downTo(t, s, beforeSandboxTemplate)
+	e2b, daytona := mustCreate(t, s, "e2b-team"), mustCreate(t, s, "daytona-team")
+	key := uuid.New()
+	for _, tc := range []struct {
+		team     uuid.UUID
+		provider string
+	}{{e2b.ID, "e2b"}, {daytona.ID, "daytona"}} {
+		if _, err := s.pool.Exec(t.Context(), `INSERT INTO team_settings
+			(team_id, search_provider, learning, compaction_messages, sandbox_provider, sandbox_secret_id, sandbox_image)
+			VALUES ($1, 'none', false, 100, $2, $3, 'their-image')`, tc.team, tc.provider, key); err != nil {
+			t.Fatalf("seeding %s: %v", tc.provider, err)
+		}
 	}
-	downTo(t, s, beforeSandboxImageDropped)
-	if n := count(t, s, column); n != 1 {
+
+	if _, err := s.Migrate(t.Context()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM team_settings WHERE team_id = $1 AND sandbox_template = 'their-image'`, e2b.ID); n != 1 {
+		t.Error("the E2B team's template was lost")
+	}
+	if n := count(t, s, `SELECT count(*) FROM team_settings WHERE team_id = $1 AND sandbox_template IS NULL`, daytona.ID); n != 1 {
+		t.Error("the Daytona team kept an image the brain now chooses")
+	}
+
+	downTo(t, s, beforeSandboxTemplate)
+	if n := count(t, s, `SELECT count(*) FROM information_schema.columns
+		WHERE table_name = 'team_settings' AND column_name = 'sandbox_image'`); n != 1 {
 		t.Fatal("rolled back, sandbox_image is not there")
 	}
 	if _, err := s.Migrate(t.Context()); err != nil {

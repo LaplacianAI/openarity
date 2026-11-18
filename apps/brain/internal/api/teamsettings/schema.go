@@ -23,6 +23,7 @@ type search struct {
 type sandbox struct {
 	Provider string  `json:"provider"`
 	URL      *string `json:"url"`
+	Template *string `json:"template"`
 	KeySet   bool    `json:"key_set"`
 }
 
@@ -52,6 +53,7 @@ type searchRequest struct {
 type sandboxRequest struct {
 	Provider string  `json:"provider"`
 	URL      *string `json:"url"`
+	Template *string `json:"template"`
 	APIKey   *string `json:"api_key"`
 }
 

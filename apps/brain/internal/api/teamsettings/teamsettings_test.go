@@ -73,6 +73,7 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		SandboxProvider:    p.SandboxProvider,
 		SandboxUrl:         p.SandboxUrl,
 		SandboxSecretID:    p.SandboxSecretID,
+		SandboxTemplate:    p.SandboxTemplate,
 		UpdatedAt:          time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
 	}
 	f.row = &row
@@ -253,6 +254,7 @@ type wire struct {
 	Sandbox struct {
 		Provider string  `json:"provider"`
 		URL      *string `json:"url"`
+		Template *string `json:"template"`
 		KeySet   bool    `json:"key_set"`
 	} `json:"sandbox"`
 	Learning           bool  `json:"learning"`

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"strings"
 
 	sandboxpkg "github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
@@ -162,8 +163,8 @@ func checkSelfHostedURL(field, raw string, allow func(netip.Addr) bool) error {
 func checkSandbox(s sandboxRequest, stored *db.TeamSetting, allow func(netip.Addr) bool) error {
 	switch s.Provider {
 	case string(sandboxpkg.None):
-		if s.URL != nil || s.APIKey != nil {
-			return errors.New("sandbox.url and sandbox.api_key are for a sandbox provider; none takes none")
+		if s.URL != nil || s.APIKey != nil || s.Template != nil {
+			return errors.New("sandbox.url, sandbox.template and sandbox.api_key are for a sandbox provider; none takes none")
 		}
 		return nil
 	case string(sandboxpkg.E2B), string(sandboxpkg.Daytona), string(sandboxpkg.Sandboxd):
@@ -171,6 +172,9 @@ func checkSandbox(s sandboxRequest, stored *db.TeamSetting, allow func(netip.Add
 		return errors.New("sandbox.provider must be none, e2b, daytona or sandboxd")
 	}
 
+	if err := checkTemplate(s); err != nil {
+		return err
+	}
 	switch {
 	case s.URL != nil && s.Provider == string(sandboxpkg.E2B):
 		return errors.New("sandbox.url is for daytona or sandboxd: e2b is hosted only")
@@ -193,4 +197,24 @@ func checkSandbox(s sandboxRequest, stored *db.TeamSetting, allow func(netip.Add
 func keepsSandboxKey(stored *db.TeamSetting, s sandboxRequest) bool {
 	return stored != nil && stored.SandboxSecretID != nil && stored.SandboxProvider == s.Provider &&
 		sameURL(stored.SandboxUrl, s.URL)
+}
+
+const maxTemplateBytes = 128
+
+// templateName is what E2B calls a template: its name, or another team's
+// public one as owner/name.
+var templateName = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)?$`)
+
+// checkTemplate allows a template for E2B alone: every other provider is
+// given the brain's own image, and E2B cannot be handed an image at all.
+func checkTemplate(s sandboxRequest) error {
+	switch {
+	case s.Template == nil:
+		return nil
+	case s.Provider != string(sandboxpkg.E2B):
+		return errors.New("sandbox.template is for e2b; the brain chooses every other provider's image")
+	case len(*s.Template) > maxTemplateBytes || !templateName.MatchString(*s.Template):
+		return fmt.Errorf("sandbox.template must be an E2B template name, such as openarity-sandbox, at most %d bytes", maxTemplateBytes)
+	}
+	return nil
 }

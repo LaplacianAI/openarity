@@ -11,13 +11,13 @@ INSERT INTO team_settings (
     model_name, model_max_tokens, model_temperature,
     search_provider, search_url, search_secret_id,
     learning, compaction_messages, hub_agent_id,
-    sandbox_provider, sandbox_url, sandbox_secret_id
+    sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template
 ) VALUES (
     sqlc.arg(team_id),
     sqlc.narg(model_name), sqlc.narg(model_max_tokens), sqlc.narg(model_temperature),
     sqlc.arg(search_provider), sqlc.narg(search_url), sqlc.narg(search_secret_id),
     sqlc.arg(learning), sqlc.arg(compaction_messages), sqlc.narg(hub_agent_id),
-    sqlc.arg(sandbox_provider), sqlc.narg(sandbox_url), sqlc.narg(sandbox_secret_id)
+    sqlc.arg(sandbox_provider), sqlc.narg(sandbox_url), sqlc.narg(sandbox_secret_id), sqlc.narg(sandbox_template)
 )
 ON CONFLICT (team_id) DO UPDATE SET
     model_name          = EXCLUDED.model_name,
@@ -32,6 +32,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     sandbox_provider    = EXCLUDED.sandbox_provider,
     sandbox_url         = EXCLUDED.sandbox_url,
     sandbox_secret_id   = EXCLUDED.sandbox_secret_id,
+    sandbox_template    = EXCLUDED.sandbox_template,
     updated_at          = now()
 RETURNING *;
 

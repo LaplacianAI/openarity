@@ -406,6 +406,7 @@ type TeamSetting struct {
 	SandboxProvider    string
 	SandboxUrl         *string
 	SandboxSecretID    *uuid.UUID
+	SandboxTemplate    *string
 }
 
 type User struct {

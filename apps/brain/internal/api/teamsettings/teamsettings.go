@@ -123,7 +123,7 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := params(teamID, req, secretID, hub)
-	p.SandboxProvider, p.SandboxUrl, p.SandboxSecretID = box.provider, box.url, box.secretID
+	p.SandboxProvider, p.SandboxUrl, p.SandboxTemplate, p.SandboxSecretID = box.provider, box.url, box.template, box.secretID
 	saved, err := h.store.UpsertTeamSettings(r.Context(), p)
 	if err != nil {
 		for _, path := range []string{written, boxWritten} {
@@ -205,6 +205,7 @@ func (h *handler) searchKey(
 type sandboxRow struct {
 	provider string
 	url      *string
+	template *string
 	secretID *uuid.UUID
 }
 
@@ -218,9 +219,9 @@ func (h *handler) sandboxOf(
 		if stored == nil {
 			return sandboxRow{provider: string(sandboxpkg.None)}, "", true
 		}
-		return sandboxRow{stored.SandboxProvider, stored.SandboxUrl, stored.SandboxSecretID}, "", true
+		return sandboxRow{stored.SandboxProvider, stored.SandboxUrl, stored.SandboxTemplate, stored.SandboxSecretID}, "", true
 	}
-	row := sandboxRow{provider: s.Provider, url: s.URL}
+	row := sandboxRow{provider: s.Provider, url: s.URL, template: s.Template}
 	switch {
 	case s.Provider == string(sandboxpkg.None):
 		return row, "", true
@@ -275,6 +276,7 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 		Sandbox: sandbox{
 			Provider: row.SandboxProvider,
 			URL:      row.SandboxUrl,
+			Template: row.SandboxTemplate,
 			KeySet:   row.SandboxSecretID != nil,
 		},
 		Learning:           row.Learning,

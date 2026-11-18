@@ -2244,7 +2244,7 @@ type Said struct {
 type SandboxProvider string
 
 // SandboxSettings Where the team's command MCP servers run. What a room starts from is
-// the brain's choice, not the team's.
+// the brain's choice, but for an E2B team's template.
 type SandboxSettings struct {
 	// KeySet Whether a key is stored. The key itself is never returned.
 	KeySet bool `json:"key_set" yaml:"key_set"`
@@ -2253,6 +2253,11 @@ type SandboxSettings struct {
 	// url; `daytona` takes a key, and a url when self-hosted; `sandboxd` is
 	// self-hosted and takes a url and its token as the key.
 	Provider SandboxProvider `json:"provider" yaml:"provider"`
+
+	// Template E2B only: the template rooms start from, built in the team's E2B
+	// account; null for the brain's default, openarity-sandbox. Every
+	// other provider is given the brain's own image.
+	Template *string `json:"template,omitempty" yaml:"template,omitempty"`
 
 	// URL A self-hosted provider's API address, for sandboxd and a self-hosted Daytona; null otherwise
 	//
@@ -2271,6 +2276,11 @@ type SandboxSettingsRequest struct {
 	// url; `daytona` takes a key, and a url when self-hosted; `sandboxd` is
 	// self-hosted and takes a url and its token as the key.
 	Provider SandboxProvider `json:"provider" yaml:"provider"`
+
+	// Template E2B only, optional; a template name, or owner/name for another team's public one
+	//
+	// Examples: openarity-sandbox
+	Template *string `json:"template,omitempty" yaml:"template,omitempty"`
 
 	// URL Required for sandboxd, optional for daytona, refused for e2b and none
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
@@ -2667,7 +2677,7 @@ type TeamSettings struct {
 	Model *ModelRef `json:"model,omitempty" yaml:"model,omitempty"`
 
 	// Sandbox Where the team's command MCP servers run. What a room starts from is
-	// the brain's choice, not the team's.
+	// the brain's choice, but for an E2B team's template.
 	Sandbox SandboxSettings `json:"sandbox" yaml:"sandbox"`
 	Search  SearchSettings  `json:"search" yaml:"search"`
 

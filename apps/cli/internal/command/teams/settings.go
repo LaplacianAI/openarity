@@ -17,16 +17,20 @@ import (
 
 const maxKeyBytes = 4096
 
+// defaultE2BTemplate is what the brain starts an E2B team's rooms from when
+// the team names none, and what deployment/sandbox/e2b builds by default.
+const defaultE2BTemplate = "openarity-sandbox"
+
 var settingFlags = []string{
 	"model", "max-tokens", "temperature", "no-model",
 	"search", "search-url", "search-key-stdin", "no-search-key",
 	"learning", "compaction-messages", "hub", "no-hub",
-	"sandbox", "sandbox-url", "sandbox-key-stdin",
+	"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template",
 }
 
 // sandboxFlags are the ones that send a sandbox at all. Without any, the
 // request leaves it out and the brain keeps the stored one, key and all.
-var sandboxFlags = []string{"sandbox", "sandbox-url", "sandbox-key-stdin"}
+var sandboxFlags = []string{"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template"}
 
 func newSettingsCmd(opts *cli.Options) *cobra.Command {
 	cmd := &cobra.Command{
@@ -80,6 +84,8 @@ type settingsFlags struct {
 	sandbox         string
 	sandboxURL      string
 	sandboxKeyStdin bool
+	e2bTemplate     string
+	noE2BTemplate   bool
 }
 
 func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
@@ -166,6 +172,9 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 		"where command MCP servers run: none, e2b, daytona or sandboxd")
 	cmd.Flags().StringVar(&f.sandboxURL, "sandbox-url", "",
 		"a self-hosted provider's API address: sandboxd, or a self-hosted daytona")
+	cmd.Flags().StringVar(&f.e2bTemplate, "e2b-template", "",
+		"e2b only: the template rooms start from, built in your E2B account; default openarity-sandbox")
+	cmd.Flags().BoolVar(&f.noE2BTemplate, "no-e2b-template", false, "e2b only: return to the default template")
 	cmd.Flags().BoolVar(&f.sandboxKeyStdin, "sandbox-key-stdin", false,
 		"read the sandbox provider's key, or sandboxd's token, from stdin")
 	cmd.Flags().StringVar(&f.learning, "learning", "", "on or off")
@@ -187,6 +196,10 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return errors.New("--no-model cannot be combined with --model, --max-tokens or --temperature")
 	case f.keyStdin && f.noKey:
 		return errors.New("--search-key-stdin and --no-search-key contradict each other")
+	case changed("e2b-template") && f.noE2BTemplate:
+		return errors.New("--e2b-template and --no-e2b-template contradict each other")
+	case changed("e2b-template") && strings.TrimSpace(f.e2bTemplate) == "":
+		return errors.New("--e2b-template takes a template's name; --no-e2b-template returns to the default")
 	case f.sandboxKeyStdin && f.keyStdin:
 		return errors.New("stdin holds one key: set the search key and the sandbox key in two commands")
 	case changed("learning") && f.learning != "on" && f.learning != "off":
@@ -273,14 +286,21 @@ func (f *settingsFlags) applySandbox(
 	if !slices.ContainsFunc(sandboxFlags, changed) {
 		return nil
 	}
-	s := client.SandboxSettingsRequest{Provider: cur.Provider, URL: cur.URL, APIKey: key}
+	s := client.SandboxSettingsRequest{Provider: cur.Provider, URL: cur.URL, Template: cur.Template, APIKey: key}
 	if changed("sandbox") && client.SandboxProvider(f.sandbox) != cur.Provider {
 		s.Provider = client.SandboxProvider(f.sandbox)
-		s.URL = nil
+		s.URL, s.Template = nil, nil
 	}
 	if changed("sandbox-url") {
 		u := f.sandboxURL
 		s.URL = &u
+	}
+	switch {
+	case f.noE2BTemplate:
+		s.Template = nil
+	case changed("e2b-template"):
+		t := strings.TrimSpace(f.e2bTemplate)
+		s.Template = &t
 	}
 	return &s
 }
@@ -354,6 +374,13 @@ func printSandbox(table *printer.Table, opts *cli.Options, s client.SandboxSetti
 	table.Row(label("sandbox"), value(string(s.Provider)))
 	if s.URL != nil {
 		table.Row(label("sandbox url"), value(cli.Safe(*s.URL)))
+	}
+	if s.Provider == client.SandboxProviderE2B {
+		if s.Template != nil {
+			table.Row(label("e2b template"), value(cli.Safe(*s.Template)))
+		} else {
+			table.Row(label("e2b template"), opts.Styles.Muted.Render(defaultE2BTemplate+" (default)"))
+		}
 	}
 	if s.Provider != client.SandboxProviderNone {
 		key := "not set"

@@ -24,9 +24,11 @@ its key, and nothing else.
 - **sandboxd** pulls the image itself the first time a room needs it, and only
   an image under its `SANDBOXD_IMAGES` prefixes.
 - **Daytona** is sent the image reference and builds and caches it itself.
-- **E2B** does not run an image by name; it runs a template. One template,
-  built from this image and made public, serves every team's key as
-  `<owner>/openarity-sandbox`. `e2b/` builds it with E2B's template SDK:
+- **E2B** does not run an image by name; it runs a template built in the
+  team's own E2B account, and it is the one provider a team says something
+  about: the template's name, in Settings or with `oa teams settings set
+  --e2b-template`. Left empty, the brain uses `openarity-sandbox`, which is
+  what `e2b/` builds by default:
 
   ```sh
   cd deployment/sandbox/e2b
@@ -37,9 +39,9 @@ its key, and nothing else.
   - `SANDBOX_IMAGE` builds from another tag, for example
     `ghcr.io/laplacianai/openarity-sandbox:sha-<commit>`. The default is `latest`.
   - `TEMPLATE_NAME` names the template; the default is `openarity-sandbox`.
-  - Publish it once, so other teams' keys can start it
-    ([public templates](https://e2b.dev/docs/faq/public-templates)), and build
-    again for a newer image: a template is a snapshot.
+  - Another team's public template is named `owner/name`
+    ([public templates](https://e2b.dev/docs/faq/public-templates)).
+  - Build again for a newer image: a template is a snapshot.
 
 E2B sandboxes cannot reach the internet unless the team's egress rules allow
 it, and `npx` has to fetch its package: the rules must include the npm registry
