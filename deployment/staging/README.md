@@ -277,8 +277,12 @@ the network. The name, like every other, stays in `caddy/sites/` and `.env`.
 
 ### 2. Keep the checkout on main
 
-`deploy.sh` and the compose files are read from this checkout, never from a
-pull request. Update it when main changes them:
+`deploy.sh`, the compose files and OpenBao's `policy-brain.hcl` are read
+from this checkout, never from a pull request. Every deploy writes the policy
+to OpenBao again before it swaps the brain, so a path the brain gained (a
+team's sandbox key, say) is allowed by the time the brain uses it; a pull
+request that adds one is refused it on staging until it merges and this
+checkout has it. Update the checkout when main changes them:
 
 ```sh
 sudo -iu openarity git -C ~/openarity pull --ff-only
