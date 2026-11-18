@@ -37,7 +37,7 @@ apps/sandbox/
   internal/guard/   the egress guard: a listener per room and port, SNI routing, the private-address refusal
   internal/docker/  the Engine API over the unix socket, with net/http
   internal/integration/  tests against a real daemon; skipped unless SANDBOXD_TEST_DOCKER names its socket
-  Dockerfile        targets: sandboxd (default), room (Node and the shim)
+  Dockerfile        sandboxd; the room image is deployment/sandbox/Dockerfile
 ```
 
 ## How sandboxd works

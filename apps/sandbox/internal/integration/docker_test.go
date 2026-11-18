@@ -99,9 +99,11 @@ func setup(t *testing.T, memoryBudget string) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The room image is built from the repository root, as it is published.
+	repoDir := filepath.Join(appDir, "..", "..")
 	// Building compiles the module, a minute on a cold cache: once per run.
 	built.Do(func() {
-		e.mustDocker("build", "-q", "--target", "room", "-t", roomImg, appDir)
+		e.mustDocker("build", "-q", "-f", filepath.Join(repoDir, "deployment", "sandbox", "Dockerfile"), "-t", roomImg, repoDir)
 		e.mustDocker("build", "-q", "--target", "sandboxd", "-t", sbdImg, appDir)
 	})
 
