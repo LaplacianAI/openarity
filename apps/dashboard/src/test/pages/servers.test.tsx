@@ -226,9 +226,9 @@ describe("what may be done", () => {
     }
   });
 
-  // Discovery reaches a URL; the brain does not start a command to ask it.
-  it("offers discovery only for a url server", async () => {
-    brain({
+  // A command server runs in the team's sandbox, so it is asked as a URL is.
+  it("discovers a command server from its row", async () => {
+    const seen = brain({
       ...team(["tool:write"]),
       ...servers,
       "GET /teams/{id}/mcp-servers": {
@@ -236,15 +236,18 @@ describe("what may be done", () => {
           items: [{ ...github, id: "m2", name: "files", url: undefined, command: ["npx", "srv"] }],
         },
       },
+      "POST /teams/{id}/mcp-servers/{sid}/discover": { body: { items: [] } },
     });
     showServers();
 
     await screen.findByRole("button", { name: "files" });
-    expect(screen.queryByRole("button", { name: /^discover$/i })).toBeNull();
-    // The reason is said where the button would be, not left as a gap.
-    expect(
-      within(rowOf("files")).getByText("Not run by the brain: use an HTTP bridge"),
-    ).toBeVisible();
+    await userEvent.click(within(rowOf("files")).getByRole("button", { name: /^discover$/i }));
+    await waitFor(() =>
+      expect(seen.find((s) => s.method === "POST")?.path).toBe(
+        `/teams/${TEAM}/mcp-servers/m2/discover`,
+      ),
+    );
+    expect(screen.queryByText(/HTTP bridge/)).toBeNull();
   });
 
   it("says under its title which servers nobody has asked, when none failed", async () => {
@@ -263,7 +266,10 @@ describe("what may be done", () => {
       },
     });
     showServers();
-    expect(await screen.findByText("1 server has never been asked for its tools.")).toBeVisible();
+    // The command server is counted: it can be asked now.
+    expect(
+      await screen.findByText("2 servers have never been asked for their tools."),
+    ).toBeVisible();
   });
 
   it("puts a failed discovery before servers nobody has asked", () => {
