@@ -657,7 +657,7 @@ every line, searchable by a run's id. Loki keeps seven days.
 
 Alerts are rules in Grafana, made by `make grafana-alerts` from
 `logs/grafana/alerts.py`: runs stuck or left queued, replies given up, the
-brain or worker gone quiet, the graph falling behind, cleanup that will not
+brain unreachable or the worker gone quiet, the graph falling behind, cleanup that will not
 drain, and token spend. They need a PostgreSQL data source on the `openarity`
 database with a read-only user, added in Grafana, and they go where the
 default notification policy sends them, so set a contact point there first.

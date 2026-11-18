@@ -110,11 +110,17 @@ GROUPS = {
             "SELECT count(*) AS value FROM replies WHERE status = 'pending' "
             "AND created_at < now() - interval '10 minutes'"),
             "gt", 0, "0s", "critical", "Replies have been pending for over 10 minutes"),
-        # Silence is no data rather than 0, so no data is what fires.
-        rule("oa-brain-silent", C, "Brain silent", loki('sum(count_over_time({service="brain"}[10m]))'),
-             "lt", 1, "5m", "critical", "The brain has logged nothing for 10 minutes", no_data="Alerting"),
-        rule("oa-worker-silent", C, "Worker silent", loki('sum(count_over_time({service="worker"}[10m]))'),
-             "lt", 1, "5m", "critical", "The worker has logged nothing for 10 minutes", no_data="Alerting"),
+        # The brain logs only when asked something, so its silence says
+        # nothing; Caddy failing to dial it does. A restart refuses for a
+        # second, inside the 2m window; the 3m pending lets that pass.
+        rule("oa-brain-unreachable", C, "Brain unreachable", loki(
+            'sum(count_over_time({service="caddy"} |~ "dial tcp(: lookup brain | [0-9.]+:2112[01]: )" [2m]))'),
+             "gt", 0, "3m", "critical", "Caddy cannot reach the brain"),
+        # The worker's sweeps log every 15 minutes even when idle, so 30
+        # minutes is two missed. Silence is no data rather than 0, so no data
+        # is what fires.
+        rule("oa-worker-silent", C, "Worker silent", loki('sum(count_over_time({service="worker"}[30m]))'),
+             "lt", 1, "5m", "critical", "The worker has logged nothing for 30 minutes", no_data="Alerting"),
         rule("oa-whatsapp-lease", C, "WhatsApp lost its lease", sql(
             "SELECT count(*) AS value FROM whatsapp_accounts WHERE state = 'connected' "
             "AND (held_by IS NULL OR heartbeat_at < now() - interval '2 minutes')"),
