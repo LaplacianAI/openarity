@@ -67,6 +67,39 @@ type AgentSteer struct {
 	CreatedAt time.Time
 }
 
+type Approval struct {
+	ID            uuid.UUID
+	TeamID        uuid.UUID
+	RunID         uuid.UUID
+	RootRunID     uuid.UUID
+	CallID        string
+	Tool          string
+	Class         string
+	Arguments     []byte
+	Summary       string
+	Status        string
+	Code          string
+	RequestedFor  *uuid.UUID
+	DecidedBy     *uuid.UUID
+	DecidedVia    *string
+	DecisionScope *string
+	Reason        *string
+	ExpiresAt     time.Time
+	DecidedAt     *time.Time
+	UsedAt        *time.Time
+	CreatedAt     time.Time
+}
+
+type ApprovalRule struct {
+	ID           uuid.UUID
+	TeamID       uuid.UUID
+	TargetKind   string
+	Target       string
+	Mode         string
+	RequireOther bool
+	CreatedAt    time.Time
+}
+
 type Attachment struct {
 	ID         uuid.UUID
 	MessageID  uuid.UUID
@@ -189,6 +222,7 @@ type McpServer struct {
 	OauthScopes          []string
 	Vars                 []byte
 	Egress               []byte
+	TrustHints           bool
 }
 
 type McpTool struct {
@@ -200,6 +234,7 @@ type McpTool struct {
 	InputSchema []byte
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	Annotations []byte
 }
 
 type Message struct {
@@ -333,6 +368,10 @@ type Run struct {
 	Builder           bool
 	Transcript        *string
 	TranscriptFrom    *int32
+	Attempt           int32
+	Unattended        bool
+	WaitedSeconds     int32
+	WaitingSince      *time.Time
 }
 
 type RunEvent struct {
@@ -433,6 +472,8 @@ type TeamSetting struct {
 	SandboxUrl         *string
 	SandboxSecretID    *uuid.UUID
 	SandboxTemplate    *string
+	ApprovalMode       string
+	ApprovalTtlMinutes int32
 }
 
 type User struct {

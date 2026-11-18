@@ -30,7 +30,7 @@ func (q *Queries) DeleteMCPToolsNotIn(ctx context.Context, arg DeleteMCPToolsNot
 }
 
 const getMCPTool = `-- name: GetMCPTool :one
-SELECT id, mcp_server_id, team_id, name, description, input_schema, created_at, updated_at FROM mcp_tools WHERE id = $1
+SELECT id, mcp_server_id, team_id, name, description, input_schema, created_at, updated_at, annotations FROM mcp_tools WHERE id = $1
 `
 
 func (q *Queries) GetMCPTool(ctx context.Context, id uuid.UUID) (McpTool, error) {
@@ -45,12 +45,13 @@ func (q *Queries) GetMCPTool(ctx context.Context, id uuid.UUID) (McpTool, error)
 		&i.InputSchema,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Annotations,
 	)
 	return i, err
 }
 
 const listMCPToolsByServer = `-- name: ListMCPToolsByServer :many
-SELECT id, mcp_server_id, team_id, name, description, input_schema, created_at, updated_at FROM mcp_tools WHERE mcp_server_id = $1 ORDER BY name
+SELECT id, mcp_server_id, team_id, name, description, input_schema, created_at, updated_at, annotations FROM mcp_tools WHERE mcp_server_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListMCPToolsByServer(ctx context.Context, mcpServerID uuid.UUID) ([]McpTool, error) {
@@ -71,6 +72,7 @@ func (q *Queries) ListMCPToolsByServer(ctx context.Context, mcpServerID uuid.UUI
 			&i.InputSchema,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Annotations,
 		); err != nil {
 			return nil, err
 		}
@@ -83,14 +85,15 @@ func (q *Queries) ListMCPToolsByServer(ctx context.Context, mcpServerID uuid.UUI
 }
 
 const upsertMCPTool = `-- name: UpsertMCPTool :exec
-INSERT INTO mcp_tools (mcp_server_id, team_id, name, description, input_schema)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO mcp_tools (mcp_server_id, team_id, name, description, input_schema, annotations)
+VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (mcp_server_id, name) DO UPDATE SET
     description  = EXCLUDED.description,
     input_schema = EXCLUDED.input_schema,
+    annotations  = EXCLUDED.annotations,
     updated_at   = now()
-WHERE (mcp_tools.description, mcp_tools.input_schema)
-      IS DISTINCT FROM (EXCLUDED.description, EXCLUDED.input_schema)
+WHERE (mcp_tools.description, mcp_tools.input_schema, mcp_tools.annotations)
+      IS DISTINCT FROM (EXCLUDED.description, EXCLUDED.input_schema, EXCLUDED.annotations)
 `
 
 type UpsertMCPToolParams struct {
@@ -99,9 +102,10 @@ type UpsertMCPToolParams struct {
 	Name        string
 	Description string
 	InputSchema []byte
+	Annotations []byte
 }
 
-// A tool whose description and schema are unchanged is not rewritten, so a
+// A tool whose description, schema and hints are unchanged is not rewritten, so a
 // discovery that finds nothing new leaves nothing in the outbox and costs the
 // projector nothing.
 func (q *Queries) UpsertMCPTool(ctx context.Context, arg UpsertMCPToolParams) error {
@@ -111,6 +115,7 @@ func (q *Queries) UpsertMCPTool(ctx context.Context, arg UpsertMCPToolParams) er
 		arg.Name,
 		arg.Description,
 		arg.InputSchema,
+		arg.Annotations,
 	)
 	return err
 }

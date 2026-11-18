@@ -12,7 +12,7 @@ import (
 )
 
 const getTeamSettings = `-- name: GetTeamSettings :one
-SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template FROM team_settings WHERE team_id = $1
+SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes FROM team_settings WHERE team_id = $1
 `
 
 // No row means the team never saved: the caller reads that as the defaults.
@@ -35,6 +35,8 @@ func (q *Queries) GetTeamSettings(ctx context.Context, teamID uuid.UUID) (TeamSe
 		&i.SandboxUrl,
 		&i.SandboxSecretID,
 		&i.SandboxTemplate,
+		&i.ApprovalMode,
+		&i.ApprovalTtlMinutes,
 	)
 	return i, err
 }
@@ -55,6 +57,50 @@ type RecordDeletedSecretParams struct {
 func (q *Queries) RecordDeletedSecret(ctx context.Context, arg RecordDeletedSecretParams) error {
 	_, err := q.db.Exec(ctx, recordDeletedSecret, arg.Path, arg.TeamID)
 	return err
+}
+
+const setTeamApproval = `-- name: SetTeamApproval :one
+INSERT INTO team_settings (team_id, approval_mode, approval_ttl_minutes)
+VALUES ($1, $2, $3)
+ON CONFLICT (team_id) DO UPDATE SET
+    approval_mode        = EXCLUDED.approval_mode,
+    approval_ttl_minutes = EXCLUDED.approval_ttl_minutes,
+    updated_at           = now()
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes
+`
+
+type SetTeamApprovalParams struct {
+	TeamID             uuid.UUID
+	ApprovalMode       string
+	ApprovalTtlMinutes int32
+}
+
+// Only the approval columns: a team that never saved its settings gets a row
+// holding the defaults for everything else, and UpsertTeamSettings, which
+// writes the rest, leaves these alone.
+func (q *Queries) SetTeamApproval(ctx context.Context, arg SetTeamApprovalParams) (TeamSetting, error) {
+	row := q.db.QueryRow(ctx, setTeamApproval, arg.TeamID, arg.ApprovalMode, arg.ApprovalTtlMinutes)
+	var i TeamSetting
+	err := row.Scan(
+		&i.TeamID,
+		&i.ModelName,
+		&i.ModelMaxTokens,
+		&i.ModelTemperature,
+		&i.SearchProvider,
+		&i.SearchUrl,
+		&i.SearchSecretID,
+		&i.Learning,
+		&i.CompactionMessages,
+		&i.UpdatedAt,
+		&i.HubAgentID,
+		&i.SandboxProvider,
+		&i.SandboxUrl,
+		&i.SandboxSecretID,
+		&i.SandboxTemplate,
+		&i.ApprovalMode,
+		&i.ApprovalTtlMinutes,
+	)
+	return i, err
 }
 
 const upsertTeamSettings = `-- name: UpsertTeamSettings :one
@@ -86,7 +132,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     sandbox_secret_id   = EXCLUDED.sandbox_secret_id,
     sandbox_template    = EXCLUDED.sandbox_template,
     updated_at          = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes
 `
 
 type UpsertTeamSettingsParams struct {
@@ -143,6 +189,8 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		&i.SandboxUrl,
 		&i.SandboxSecretID,
 		&i.SandboxTemplate,
+		&i.ApprovalMode,
+		&i.ApprovalTtlMinutes,
 	)
 	return i, err
 }

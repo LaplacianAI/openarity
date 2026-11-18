@@ -447,6 +447,33 @@ func toolsOf(ts ...*sdk.Tool) iter.Seq2[*sdk.Tool, error] {
 	}
 }
 
+// A server's hints reach the store as it sent them, and a tool without any
+// has none rather than an empty object that would read as "no hints were
+// false". An omitted readOnlyHint is false in the SDK, an omitted
+// destructiveHint absent, and both read as "may write, may destroy".
+func TestAToolsHintsAreKeptAndNoHintsAreNone(t *testing.T) {
+	t.Parallel()
+
+	no := false
+	got, err := collect(toolsOf(
+		&sdk.Tool{Name: "plain"},
+		&sdk.Tool{Name: "lookup", Annotations: &sdk.ToolAnnotations{ReadOnlyHint: true}},
+		&sdk.Tool{Name: "create", Annotations: &sdk.ToolAnnotations{DestructiveHint: &no}},
+	))
+	if err != nil || len(got) != 3 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	if got[0].Annotations != nil {
+		t.Errorf("a tool without hints has %s, want none", got[0].Annotations)
+	}
+	if string(got[1].Annotations) != `{"idempotentHint":false,"readOnlyHint":true}` {
+		t.Errorf("read-only hints = %s", got[1].Annotations)
+	}
+	if string(got[2].Annotations) != `{"destructiveHint":false,"idempotentHint":false,"readOnlyHint":false}` {
+		t.Errorf("non-destructive hints = %s", got[2].Annotations)
+	}
+}
+
 func TestAToolWithNoSchemaTakesAnObject(t *testing.T) {
 	t.Parallel()
 

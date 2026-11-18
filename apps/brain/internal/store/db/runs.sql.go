@@ -14,7 +14,7 @@ import (
 
 const activeSessionRun = `-- name: ActiveSessionRun :one
 SELECT id FROM runs
-WHERE session_id = $1 AND parent_run_id IS NULL AND status IN ('queued', 'running')
+WHERE session_id = $1 AND parent_run_id IS NULL AND status IN ('queued', 'running', 'waiting')
 ORDER BY created_at DESC, id DESC
 LIMIT 1
 `
@@ -103,7 +103,7 @@ UPDATE runs SET
     started_at   = coalesce(started_at, now())
 WHERE id = $2
   AND (status = 'queued' OR (status = 'running' AND worker = $1::text))
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from,
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since,
     extract(epoch FROM started_at
         + make_interval(secs => $3::float8) - now())::float8
         AS remaining_seconds
@@ -145,6 +145,10 @@ type ClaimRunRow struct {
 	Builder           bool
 	Transcript        *string
 	TranscriptFrom    *int32
+	Attempt           int32
+	Unattended        bool
+	WaitedSeconds     int32
+	WaitingSince      *time.Time
 	RemainingSeconds  float64
 }
 
@@ -184,6 +188,10 @@ func (q *Queries) ClaimRun(ctx context.Context, arg ClaimRunParams) (ClaimRunRow
 		&i.Builder,
 		&i.Transcript,
 		&i.TranscriptFrom,
+		&i.Attempt,
+		&i.Unattended,
+		&i.WaitedSeconds,
+		&i.WaitingSince,
 		&i.RemainingSeconds,
 	)
 	return i, err
@@ -210,7 +218,7 @@ WHERE t.id = $6::uuid
   AND ($5::uuid IS NULL OR EXISTS (
         SELECT 1 FROM messages m
         WHERE m.id = $5::uuid AND m.session_id = $2::uuid))
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since
 `
 
 type CreateChannelRunParams struct {
@@ -267,6 +275,10 @@ func (q *Queries) CreateChannelRun(ctx context.Context, arg CreateChannelRunPara
 		&i.Builder,
 		&i.Transcript,
 		&i.TranscriptFrom,
+		&i.Attempt,
+		&i.Unattended,
+		&i.WaitedSeconds,
+		&i.WaitingSince,
 	)
 	return i, err
 }
@@ -278,7 +290,7 @@ SELECT $1::uuid, p.team_id, p.session_id, $1::uuid, p.agent_id, p.agent_name,
        p.user_id, $2::text, p.token_budget, p.hub, p.builder, p.transcript
 FROM runs p
 WHERE p.id = $3::uuid
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since
 `
 
 type CreateFollowUpRunParams struct {
@@ -323,6 +335,10 @@ func (q *Queries) CreateFollowUpRun(ctx context.Context, arg CreateFollowUpRunPa
 		&i.Builder,
 		&i.Transcript,
 		&i.TranscriptFrom,
+		&i.Attempt,
+		&i.Unattended,
+		&i.WaitedSeconds,
+		&i.WaitingSince,
 	)
 	return i, err
 }
@@ -336,7 +352,7 @@ FROM teams t
 LEFT JOIN team_settings s ON s.team_id = t.id
 LEFT JOIN agents a ON a.id = s.hub_agent_id AND a.team_id = t.id
 WHERE t.id = $5::uuid
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since
 `
 
 type CreateHubRunParams struct {
@@ -389,6 +405,10 @@ func (q *Queries) CreateHubRun(ctx context.Context, arg CreateHubRunParams) (Run
 		&i.Builder,
 		&i.Transcript,
 		&i.TranscriptFrom,
+		&i.Attempt,
+		&i.Unattended,
+		&i.WaitedSeconds,
+		&i.WaitingSince,
 	)
 	return i, err
 }
@@ -400,7 +420,7 @@ SELECT $1::uuid, a.team_id, $2::uuid, $1::uuid,
        'session:' || $2::uuid::text
 FROM agents a
 WHERE a.id = $5 AND a.team_id = $6
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since
 `
 
 type CreateRunParams struct {
@@ -454,6 +474,10 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 		&i.Builder,
 		&i.Transcript,
 		&i.TranscriptFrom,
+		&i.Attempt,
+		&i.Unattended,
+		&i.WaitedSeconds,
+		&i.WaitingSince,
 	)
 	return i, err
 }
@@ -490,7 +514,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from FROM runs WHERE id = $1
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since FROM runs WHERE id = $1
 `
 
 func (q *Queries) GetRun(ctx context.Context, id uuid.UUID) (Run, error) {
@@ -526,12 +550,16 @@ func (q *Queries) GetRun(ctx context.Context, id uuid.UUID) (Run, error) {
 		&i.Builder,
 		&i.Transcript,
 		&i.TranscriptFrom,
+		&i.Attempt,
+		&i.Unattended,
+		&i.WaitedSeconds,
+		&i.WaitingSince,
 	)
 	return i, err
 }
 
 const getRunVisible = `-- name: GetRunVisible :one
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from FROM runs r
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since FROM runs r
 WHERE r.id = $1 AND r.team_id = $2
   AND EXISTS (
     SELECT 1 FROM sessions s
@@ -587,6 +615,10 @@ func (q *Queries) GetRunVisible(ctx context.Context, arg GetRunVisibleParams) (R
 		&i.Builder,
 		&i.Transcript,
 		&i.TranscriptFrom,
+		&i.Attempt,
+		&i.Unattended,
+		&i.WaitedSeconds,
+		&i.WaitingSince,
 	)
 	return i, err
 }
@@ -726,7 +758,7 @@ func (q *Queries) ListRunDelegates(ctx context.Context, runIds []uuid.UUID) ([]L
 }
 
 const listRunsBySession = `-- name: ListRunsBySession :many
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from FROM runs
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since FROM runs
 WHERE session_id = $1
   AND id = root_run_id
   AND (NOT $2::bool
@@ -789,6 +821,10 @@ func (q *Queries) ListRunsBySession(ctx context.Context, arg ListRunsBySessionPa
 			&i.Builder,
 			&i.Transcript,
 			&i.TranscriptFrom,
+			&i.Attempt,
+			&i.Unattended,
+			&i.WaitedSeconds,
+			&i.WaitingSince,
 		); err != nil {
 			return nil, err
 		}
@@ -801,7 +837,7 @@ func (q *Queries) ListRunsBySession(ctx context.Context, arg ListRunsBySessionPa
 }
 
 const listRunsByTeam = `-- name: ListRunsByTeam :many
-SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from FROM runs r
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since FROM runs r
 WHERE r.team_id = $1
   AND r.id = r.root_run_id
   AND EXISTS (
@@ -894,6 +930,10 @@ func (q *Queries) ListRunsByTeam(ctx context.Context, arg ListRunsByTeamParams) 
 			&i.Builder,
 			&i.Transcript,
 			&i.TranscriptFrom,
+			&i.Attempt,
+			&i.Unattended,
+			&i.WaitedSeconds,
+			&i.WaitingSince,
 		); err != nil {
 			return nil, err
 		}
@@ -1002,21 +1042,21 @@ const requestRunCancel = `-- name: RequestRunCancel :one
 WITH RECURSIVE below AS (
     SELECT r.id FROM runs r
     WHERE r.parent_run_id = $1::uuid
-      AND EXISTS (SELECT 1 FROM runs q WHERE q.id = $1::uuid AND q.status = 'queued')
+      AND EXISTS (SELECT 1 FROM runs q WHERE q.id = $1::uuid AND q.status IN ('queued', 'waiting'))
     UNION ALL
     SELECT r.id FROM runs r JOIN below b ON r.parent_run_id = b.id
 ), ended AS (
     UPDATE runs SET status = 'cancelled', finished_at = now(),
                     cancel_requested_at = coalesce(cancel_requested_at, now())
-    WHERE runs.id IN (SELECT below.id FROM below) AND runs.status = 'running'
+    WHERE runs.id IN (SELECT below.id FROM below) AND runs.status IN ('running', 'waiting')
     RETURNING runs.id
 )
 UPDATE runs SET
     cancel_requested_at = coalesce(cancel_requested_at, now()),
-    status      = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
-    finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END
-WHERE runs.id = $1::uuid AND runs.status IN ('queued', 'running')
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, (SELECT coalesce(array_agg(ended.id), '{}') FROM ended)::uuid[] AS ended_children
+    status      = CASE WHEN status IN ('queued', 'waiting') THEN 'cancelled' ELSE status END,
+    finished_at = CASE WHEN status IN ('queued', 'waiting') THEN now() ELSE finished_at END
+WHERE runs.id = $1::uuid AND runs.status IN ('queued', 'running', 'waiting')
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since, (SELECT coalesce(array_agg(ended.id), '{}') FROM ended)::uuid[] AS ended_children
 `
 
 type RequestRunCancelRow struct {
@@ -1049,6 +1089,10 @@ type RequestRunCancelRow struct {
 	Builder           bool
 	Transcript        *string
 	TranscriptFrom    *int32
+	Attempt           int32
+	Unattended        bool
+	WaitedSeconds     int32
+	WaitingSince      *time.Time
 	EndedChildren     []uuid.UUID
 }
 
@@ -1056,7 +1100,9 @@ type RequestRunCancelRow struct {
 // worker's next heartbeat. Finished: no row, which the handler answers 409.
 // A queued run can still have children running, left by a worker that
 // stopped mid-delegation; it will never run again to end them, so they are
-// cancelled with it, at any depth. A running run's children are its own to end.
+// cancelled with it, at any depth. A waiting run holds no worker either, and
+// is cancelled at once as a queued one is, with its children running or
+// waiting beneath it. A running run's children are its own to end.
 func (q *Queries) RequestRunCancel(ctx context.Context, id uuid.UUID) (RequestRunCancelRow, error) {
 	row := q.db.QueryRow(ctx, requestRunCancel, id)
 	var i RequestRunCancelRow
@@ -1090,6 +1136,10 @@ func (q *Queries) RequestRunCancel(ctx context.Context, id uuid.UUID) (RequestRu
 		&i.Builder,
 		&i.Transcript,
 		&i.TranscriptFrom,
+		&i.Attempt,
+		&i.Unattended,
+		&i.WaitedSeconds,
+		&i.WaitingSince,
 		&i.EndedChildren,
 	)
 	return i, err
@@ -1123,7 +1173,7 @@ SELECT $1::uuid, p.team_id, p.session_id, p.id, p.root_run_id,
 FROM runs p
 JOIN agents a ON a.id = $6::uuid AND a.team_id = p.team_id
 WHERE p.id = $7::uuid AND p.team_id = $8::uuid
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since
 `
 
 type StartChildRunParams struct {
@@ -1183,6 +1233,10 @@ func (q *Queries) StartChildRun(ctx context.Context, arg StartChildRunParams) (R
 		&i.Builder,
 		&i.Transcript,
 		&i.TranscriptFrom,
+		&i.Attempt,
+		&i.Unattended,
+		&i.WaitedSeconds,
+		&i.WaitingSince,
 	)
 	return i, err
 }

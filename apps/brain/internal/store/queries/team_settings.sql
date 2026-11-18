@@ -42,3 +42,15 @@ RETURNING *;
 INSERT INTO deleted_secrets (path, team_id)
 VALUES (sqlc.arg(path), sqlc.arg(team_id))
 ON CONFLICT (path) DO NOTHING;
+
+-- name: SetTeamApproval :one
+-- Only the approval columns: a team that never saved its settings gets a row
+-- holding the defaults for everything else, and UpsertTeamSettings, which
+-- writes the rest, leaves these alone.
+INSERT INTO team_settings (team_id, approval_mode, approval_ttl_minutes)
+VALUES (sqlc.arg(team_id), sqlc.arg(approval_mode), sqlc.arg(approval_ttl_minutes))
+ON CONFLICT (team_id) DO UPDATE SET
+    approval_mode        = EXCLUDED.approval_mode,
+    approval_ttl_minutes = EXCLUDED.approval_ttl_minutes,
+    updated_at           = now()
+RETURNING *;

@@ -39,6 +39,10 @@ type Tool struct {
 	Name        string
 	Description string
 	InputSchema json.RawMessage
+	// Annotations are the server's hints about the tool, as MCP's
+	// ToolAnnotations put them, or nil when it gave none. They are believed
+	// only for a server an admin trusts.
+	Annotations json.RawMessage
 }
 
 type Secrets interface {
@@ -285,5 +289,14 @@ func convert(t *sdk.Tool) (Tool, error) {
 		return Tool{}, fmt.Errorf("%w: %s contains a NUL character", ErrUnusable, t.Name)
 	}
 
-	return Tool{Name: t.Name, Description: t.Description, InputSchema: schema}, nil
+	var hints json.RawMessage
+	if t.Annotations != nil {
+		raw, err := json.Marshal(t.Annotations)
+		if err != nil {
+			return Tool{}, fmt.Errorf("%w: %s has annotations that are not JSON", ErrUnusable, t.Name)
+		}
+		hints = raw
+	}
+
+	return Tool{Name: t.Name, Description: t.Description, InputSchema: schema, Annotations: hints}, nil
 }

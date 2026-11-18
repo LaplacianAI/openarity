@@ -446,7 +446,7 @@ func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamPara
 }
 
 const listGrantedMCPServers = `-- name: ListGrantedMCPServers :many
-SELECT s.id, s.team_id, s.name, s.url, s.command, s.env, s.auth_secret_ref, s.bare, s.discovered_at, s.created_at, s.updated_at, s.last_discovery_error, s.last_discovery_at, s.auth_kind, s.oauth_client_id, s.oauth_client_secret_ref, s.oauth_scopes, s.vars, s.egress, g.allow, c.status AS oauth_status
+SELECT s.id, s.team_id, s.name, s.url, s.command, s.env, s.auth_secret_ref, s.bare, s.discovered_at, s.created_at, s.updated_at, s.last_discovery_error, s.last_discovery_at, s.auth_kind, s.oauth_client_id, s.oauth_client_secret_ref, s.oauth_scopes, s.vars, s.egress, s.trust_hints, g.allow, c.status AS oauth_status
 FROM agent_mcp_servers g
 JOIN mcp_servers s ON s.id = g.mcp_server_id
 LEFT JOIN mcp_oauth_connections c ON c.server_id = s.id
@@ -491,6 +491,7 @@ func (q *Queries) ListGrantedMCPServers(ctx context.Context, agentID uuid.UUID) 
 			&i.McpServer.OauthScopes,
 			&i.McpServer.Vars,
 			&i.McpServer.Egress,
+			&i.McpServer.TrustHints,
 			&i.Allow,
 			&i.OauthStatus,
 		); err != nil {
@@ -505,7 +506,7 @@ func (q *Queries) ListGrantedMCPServers(ctx context.Context, agentID uuid.UUID) 
 }
 
 const listGrantedMCPTools = `-- name: ListGrantedMCPTools :many
-SELECT t.id, t.mcp_server_id, t.name, t.description, t.input_schema
+SELECT t.id, t.mcp_server_id, t.name, t.description, t.input_schema, t.annotations
 FROM agent_mcp_servers g
 JOIN mcp_tools t ON t.mcp_server_id = g.mcp_server_id
 WHERE g.agent_id = $1 AND (g.allow IS NULL OR t.name = ANY (g.allow))
@@ -518,6 +519,7 @@ type ListGrantedMCPToolsRow struct {
 	Name        string
 	Description string
 	InputSchema []byte
+	Annotations []byte
 }
 
 // What a run's MCP tools are, as discovery last found them, so a run binds
@@ -538,6 +540,7 @@ func (q *Queries) ListGrantedMCPTools(ctx context.Context, agentID uuid.UUID) ([
 			&i.Name,
 			&i.Description,
 			&i.InputSchema,
+			&i.Annotations,
 		); err != nil {
 			return nil, err
 		}

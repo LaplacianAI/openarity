@@ -139,7 +139,7 @@ func (q *Queries) ListTeamAgents(ctx context.Context, teamID uuid.UUID) ([]Agent
 }
 
 const listTeamMCPServers = `-- name: ListTeamMCPServers :many
-SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes, vars, egress FROM mcp_servers WHERE team_id = $1 ORDER BY name
+SELECT id, team_id, name, url, command, env, auth_secret_ref, bare, discovered_at, created_at, updated_at, last_discovery_error, last_discovery_at, auth_kind, oauth_client_id, oauth_client_secret_ref, oauth_scopes, vars, egress, trust_hints FROM mcp_servers WHERE team_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListTeamMCPServers(ctx context.Context, teamID uuid.UUID) ([]McpServer, error) {
@@ -171,6 +171,7 @@ func (q *Queries) ListTeamMCPServers(ctx context.Context, teamID uuid.UUID) ([]M
 			&i.OauthScopes,
 			&i.Vars,
 			&i.Egress,
+			&i.TrustHints,
 		); err != nil {
 			return nil, err
 		}
