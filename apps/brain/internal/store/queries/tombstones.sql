@@ -59,12 +59,24 @@ LIMIT 1;
 -- than duplicated into a second file: they are one mechanism with two
 -- destinations, and reading them together is what stops the two drifting.
 --
+-- A sandbox key waits while a room is still made with it: a live room, or one
+-- whose deletion is still owed. Destroying the key first would leave the room
+-- at a provider the brain can no longer authenticate to, and so could never
+-- delete. The spelling of the path matches secrets.Path; the room rows name
+-- the key by its id.
+--
 -- name: ClaimDeletedSecrets :many
 UPDATE deleted_secrets
 SET attempts = attempts + 1, last_attempt_at = now()
 WHERE path IN (
     SELECT d.path FROM deleted_secrets d
-    WHERE d.last_attempt_at IS NULL OR d.last_attempt_at < sqlc.arg('retry_before')
+    WHERE (d.last_attempt_at IS NULL OR d.last_attempt_at < sqlc.arg('retry_before'))
+      AND NOT EXISTS (
+          SELECT 1 FROM sandbox_rooms r
+          WHERE d.path = 'teams/' || r.team_id || '/sandbox/' || r.sandbox_secret_id)
+      AND NOT EXISTS (
+          SELECT 1 FROM deleted_rooms r
+          WHERE d.path = 'teams/' || r.team_id || '/sandbox/' || r.sandbox_secret_id)
     ORDER BY d.last_attempt_at NULLS FIRST, d.deleted_at
     LIMIT sqlc.arg('batch_size')
     FOR UPDATE SKIP LOCKED

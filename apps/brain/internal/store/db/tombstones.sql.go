@@ -75,7 +75,13 @@ UPDATE deleted_secrets
 SET attempts = attempts + 1, last_attempt_at = now()
 WHERE path IN (
     SELECT d.path FROM deleted_secrets d
-    WHERE d.last_attempt_at IS NULL OR d.last_attempt_at < $1
+    WHERE (d.last_attempt_at IS NULL OR d.last_attempt_at < $1)
+      AND NOT EXISTS (
+          SELECT 1 FROM sandbox_rooms r
+          WHERE d.path = 'teams/' || r.team_id || '/sandbox/' || r.sandbox_secret_id)
+      AND NOT EXISTS (
+          SELECT 1 FROM deleted_rooms r
+          WHERE d.path = 'teams/' || r.team_id || '/sandbox/' || r.sandbox_secret_id)
     ORDER BY d.last_attempt_at NULLS FIRST, d.deleted_at
     LIMIT $2
     FOR UPDATE SKIP LOCKED
@@ -91,6 +97,12 @@ type ClaimDeletedSecretsParams struct {
 // The same three, for the secret store. Kept beside the object ones rather
 // than duplicated into a second file: they are one mechanism with two
 // destinations, and reading them together is what stops the two drifting.
+//
+// A sandbox key waits while a room is still made with it: a live room, or one
+// whose deletion is still owed. Destroying the key first would leave the room
+// at a provider the brain can no longer authenticate to, and so could never
+// delete. The spelling of the path matches secrets.Path; the room rows name
+// the key by its id.
 func (q *Queries) ClaimDeletedSecrets(ctx context.Context, arg ClaimDeletedSecretsParams) ([]DeletedSecret, error) {
 	rows, err := q.db.Query(ctx, claimDeletedSecrets, arg.RetryBefore, arg.BatchSize)
 	if err != nil {

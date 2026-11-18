@@ -3074,8 +3074,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: |
-            A command server, which the brain does not run: it is registered
-            through a stdio-to-HTTP bridge instead. Or a server that signs in
+            A command server whose team has chosen no sandbox to run it in:
+            choose one in Settings, or register a URL instead. Or a server that signs in
             and is not connected, or one edited while it was being discovered.
             Nothing was stored, and none of these is recorded as a failed
             discovery.

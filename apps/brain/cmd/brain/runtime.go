@@ -44,6 +44,7 @@ func newRunJob(
 	searchClient := websearch.NewClient(reachable(cfg.MCPPrivateNetworks))
 	search := &runtime.SearchDeps{Secrets: secretStore, New: newSearchers(searchClient)}
 	discoverer := newDiscoverer(cfg, secretStore, dbStore)
+	runCommandsInRooms(discoverer, cfg, logger, dbStore, secretStore)
 	builder := runtime.NewBuilder(dbStore, attachments, discoverer, graphDeps, search,
 		newFetch(searchClient, net.DefaultResolver)).
 		WithWorkshop(workshop{blueprints.NewWorkshop(blueprintStore{dbStore}, discoverer, runtime.Loops())})

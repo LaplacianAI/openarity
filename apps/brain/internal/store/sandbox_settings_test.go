@@ -119,10 +119,10 @@ func TestSandboxSettingsRollBack(t *testing.T) {
 		   OR (table_name = 'mcp_servers' AND column_name IN ('vars', 'egress'))`); n != 0 {
 		t.Errorf("rolled back, %d sandbox columns are still there", n)
 	}
-	if !slices.Contains(secretPaths(t, s), sandboxKeyPath(team.ID, key)) {
+	if !slices.Contains(rawSecretPaths(t, s), sandboxKeyPath(team.ID, key)) {
 		t.Error("rolled back, the saved sandbox key has no tombstone")
 	}
-	if slices.Contains(secretPaths(t, s), searchKeyPath(team.ID, search)) {
+	if slices.Contains(rawSecretPaths(t, s), searchKeyPath(team.ID, search)) {
 		t.Error("rolling back tombstoned the search key, which is still in use")
 	}
 	if n := count(t, s, `SELECT count(*) FROM team_settings WHERE team_id = $1`, team.ID); n != 1 {

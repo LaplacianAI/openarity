@@ -43,13 +43,17 @@ of the run with a `tool_unavailable` event rather than shadowing the brain's.
 ## A command server
 
 Many MCP servers are a command, such as `npx mcp-mail-server`, spoken to over
-stdio. **The brain does not run them.** A command a team chose would run beside
-the database's credentials and every other team's data, so the brain only
-calls servers at a URL. Dify and NemoClaw draw the same line.
+stdio. **The brain never runs one itself**: a command a team chose would run
+beside the database's credentials and every other team's data. A team that has
+chosen a sandbox in Settings (E2B, Daytona or sandboxd) has its command servers
+run there instead: the brain makes a room on the first call to the server,
+keeps it while it is used, and deletes it after `OPENARITY_SANDBOX_IDLE`
+(thirty minutes by default) without a call. A team with no sandbox is told to
+choose one, and its command servers are not run.
 
-To use one, run it behind a stdio-to-HTTP bridge, where you choose and control
-the machine, and register the bridge's URL. [Supergateway](https://github.com/supercorp-ai/supergateway)
-is one:
+Without a sandbox, run the command behind a stdio-to-HTTP bridge, where you
+choose and control the machine, and register the bridge's URL.
+[Supergateway](https://github.com/supercorp-ai/supergateway) is one:
 
 ```sh
 docker run -d --name mail-mcp --restart unless-stopped \

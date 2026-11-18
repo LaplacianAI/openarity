@@ -106,6 +106,20 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	return b.next.RoundTrip(r)
 }
 
+// headers sets a room's headers on every request to it.
+type headers struct {
+	h    http.Header
+	next http.RoundTripper
+}
+
+func (h headers) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	for name, vs := range h.h {
+		r.Header[name] = vs
+	}
+	return h.next.RoundTrip(r)
+}
+
 type capped struct {
 	next http.RoundTripper
 }

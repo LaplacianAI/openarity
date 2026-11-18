@@ -581,7 +581,7 @@ func TestAListingErrorReturnsNothing(t *testing.T) {
 func runClient(t *testing.T, sec Secrets, p Policy, row db.McpServer) *http.Client {
 	t.Helper()
 
-	c, err := New(sec, p, 5*time.Second).Client(t.Context(), row)
+	_, c, err := New(sec, p, 5*time.Second).Reach(t.Context(), row)
 	if err != nil {
 		t.Fatalf("Client: %v", err)
 	}
@@ -643,7 +643,7 @@ func TestEachRunReadsTheTokenAfresh(t *testing.T) {
 		sec.values[ref] = token
 		sec.mu.Unlock()
 
-		c, err := d.Client(t.Context(), row)
+		_, c, err := d.Reach(t.Context(), row)
 		if err != nil {
 			t.Fatalf("Client: %v", err)
 		}
@@ -744,7 +744,7 @@ func TestACommandServerHasNoRunClient(t *testing.T) {
 	ref := "teams/t1/mcp/local#token"
 	row.AuthSecretRef = &ref
 
-	if _, err := New(sec, Policy{Allow: allowAll}, time.Second).Client(t.Context(), row); !errors.Is(err, ErrCommandServer) {
+	if _, _, err := New(sec, Policy{Allow: allowAll}, time.Second).Reach(t.Context(), row); !errors.Is(err, ErrCommandServer) {
 		t.Errorf("err = %v, want ErrCommandServer", err)
 	}
 	if len(sec.asked) != 0 {
@@ -759,7 +759,7 @@ func TestAMissingTokenRefusesARunsClient(t *testing.T) {
 	ref := "teams/t1/mcp/github#token"
 	row.AuthSecretRef = &ref
 
-	if _, err := New(&fakeSecrets{}, Policy{Allow: allowAll}, time.Second).Client(t.Context(), row); !errors.Is(err, secrets.ErrNotFound) {
+	if _, _, err := New(&fakeSecrets{}, Policy{Allow: allowAll}, time.Second).Reach(t.Context(), row); !errors.Is(err, secrets.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
@@ -794,7 +794,7 @@ func TestARunsClientSitsOnTheCallsTransport(t *testing.T) {
 	withToken.AuthSecretRef = &ref
 
 	for name, row := range map[string]db.McpServer{"no token": bare, "a token": withToken} {
-		c, err := d.Client(t.Context(), row)
+		_, c, err := d.Reach(t.Context(), row)
 		if err != nil {
 			t.Fatalf("%s: Client: %v", name, err)
 		}

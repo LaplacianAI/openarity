@@ -110,6 +110,18 @@ type DeletedObject struct {
 	ClaimableAfter time.Time
 }
 
+type DeletedRoom struct {
+	ID              uuid.UUID
+	TeamID          uuid.UUID
+	Provider        string
+	ProviderUrl     *string
+	RoomID          string
+	SandboxSecretID uuid.UUID
+	DeletedAt       time.Time
+	Attempts        int32
+	LastAttemptAt   *time.Time
+}
+
 type DeletedSecret struct {
 	Path          string
 	TeamID        uuid.UUID
@@ -331,6 +343,20 @@ type RunEvent struct {
 	CreatedAt  time.Time
 	SessionID  *uuid.UUID
 	SessionSeq *int64
+}
+
+type SandboxRoom struct {
+	ID              uuid.UUID
+	TeamID          uuid.UUID
+	OwnerKind       string
+	OwnerID         uuid.UUID
+	Provider        string
+	ProviderUrl     *string
+	RoomID          string
+	SpecHash        string
+	SandboxSecretID uuid.UUID
+	LastUsedAt      time.Time
+	CreatedAt       time.Time
 }
 
 type Session struct {

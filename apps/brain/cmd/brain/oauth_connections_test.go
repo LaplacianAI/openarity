@@ -237,7 +237,7 @@ func TestTheDiscovererTheRolesBuildKnowsASignInHasEnded(t *testing.T) {
 	if err := w.si.MarkNeedsSignIn(t.Context(), w.server.ID, w.conn.ConnectedAt, "revoked"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newDiscoverer(&config.Config{}, sec, w.s).Client(t.Context(), w.server); !errors.Is(err, discovery.ErrNeedsSignIn) {
-		t.Errorf("Client = %v, want ErrNeedsSignIn", err)
+	if _, _, err := newDiscoverer(&config.Config{}, sec, w.s).Reach(t.Context(), w.server); !errors.Is(err, discovery.ErrNeedsSignIn) {
+		t.Errorf("Reach = %v, want ErrNeedsSignIn", err)
 	}
 }

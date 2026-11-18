@@ -63,3 +63,11 @@ func Path(teamID uuid.UUID, kind Kind, id uuid.UUID) string {
 func TeamPath(teamID uuid.UUID, kind Kind) string {
 	return "teams/" + teamID.String() + "/" + string(kind)
 }
+
+// RoomPath is where a sandbox room's own bearer token is kept, under its
+// row's id: teams/<team>/sandbox/rooms/<id>. It is beneath the sandbox key's
+// kind but is not a Kind, which is a single segment, and an id there is never
+// a key's.
+func RoomPath(teamID, roomID uuid.UUID) string {
+	return TeamPath(teamID, KindSandbox) + "/rooms/" + roomID.String()
+}
