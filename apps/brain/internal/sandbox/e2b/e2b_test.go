@@ -577,3 +577,31 @@ func TestAgainstE2B(t *testing.T) {
 		t.Fatalf("without the token: %d, want 403", resp2.StatusCode)
 	}
 }
+
+// A start request too large for its frame is refused before envd is called.
+func TestStartRefusesACommandTooLargeToFrame(t *testing.T) {
+	f := &fake{
+		api: func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == "GET" {
+				writeJSON(w, 200, map[string]any{"sandboxID": sandboxID, "envdAccessToken": envdToken})
+				return
+			}
+			okCreate(w, r)
+		},
+		envd: func(w http.ResponseWriter, _ *http.Request) {
+			connectStream(w, startEvent(42))
+		},
+	}
+	c, room := createRoom(t, f)
+	err := c.Start(t.Context(), room, []string{"echo", strings.Repeat("x", maxStartRequest)})
+	if !errors.Is(err, sandbox.ErrRefused) {
+		t.Fatalf("err = %v, want ErrRefused", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, call := range f.calls {
+		if call.Path == "/process.Process/Start" {
+			t.Fatal("envd was sent a start request over the bound")
+		}
+	}
+}

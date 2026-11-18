@@ -53,6 +53,9 @@ type processEvent struct {
 	} `json:"event"`
 }
 
+// maxStartRequest bounds the start request envd is sent.
+const maxStartRequest = 1 << 20
+
 // startProcess asks envd to run argv, waits for its start event and lets go of
 // the stream. envd keeps the process running when the stream is dropped, as it
 // does for E2B's own SDKs' background commands.
@@ -64,8 +67,13 @@ func (c *Client) startProcess(ctx context.Context, r room, token string, argv []
 	if err != nil {
 		return fmt.Errorf("e2b: encode the start request: %w", err)
 	}
+	// A command is a few hundred bytes; the bound keeps the frame's length
+	// field, and the allocation, from ever overflowing.
+	if len(msg) > maxStartRequest {
+		return fmt.Errorf("%w: the command is %d bytes, over %d", sandbox.ErrRefused, len(msg), maxStartRequest)
+	}
 	frame := make([]byte, 5, 5+len(msg))
-	binary.BigEndian.PutUint32(frame[1:], uint32(len(msg))) //nolint:gosec // G115: a start request is a few hundred bytes
+	binary.BigEndian.PutUint32(frame[1:], uint32(len(msg))) //nolint:gosec // G115: bounded by maxStartRequest above
 	frame = append(frame, msg...)
 
 	// Dropping the stream is how Start returns; cancelling it ends the read.
