@@ -434,9 +434,9 @@ func newDiscoverCmd(opts *cli.Options) *cobra.Command {
 		Use:   "discover <team> <server>",
 		Short: "Ask an MCP server for its tools now, and record them",
 		Long: "Needs tool:write in the team. The brain connects, from where it runs,\n" +
-			"and only to a public address or a range its operator allowed. The brain\n" +
-			"does not run command servers: run one behind a stdio-to-HTTP bridge,\n" +
-			"such as Supergateway, and register the bridge's URL.",
+			"and only to a public address or a range its operator allowed. A command\n" +
+			"server runs in the team's sandbox, chosen with oa teams settings set\n" +
+			"--sandbox; the first discovery starts it, which can take a minute and a half.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			api, err := opts.API(cmd.Context())

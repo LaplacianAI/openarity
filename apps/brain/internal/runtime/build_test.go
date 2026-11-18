@@ -182,6 +182,9 @@ type fakeClients struct {
 	client *http.Client
 	err    error
 	asked  []string
+	// rooms is where a command server is reached, by its name, as the
+	// team's sandbox would give it.
+	rooms map[string]string
 }
 
 func (f *fakeClients) Reach(_ context.Context, s db.McpServer) (string, *http.Client, error) {
@@ -191,7 +194,7 @@ func (f *fakeClients) Reach(_ context.Context, s db.McpServer) (string, *http.Cl
 	if f.err != nil {
 		return "", nil, f.err
 	}
-	address := ""
+	address := f.rooms[s.Name]
 	if s.Url != nil {
 		address = *s.Url
 	}
@@ -616,26 +619,39 @@ func TestToolsAreThoseGrantedWhenTheRunStarts(t *testing.T) {
 	}
 }
 
-func TestACommandServerIsReportedNotBound(t *testing.T) {
+// A command server runs in the team's sandbox, so its discovered tools are
+// offered as a URL server's are. The build starts nothing: the first call
+// reaches the server where the sandbox serves it.
+func TestACommandServerIsBoundAndReachedOnItsFirstCall(t *testing.T) {
 	f := newFixture()
-	f.store.grants = []db.ListGrantedMCPServersRow{
-		commandServer("filesystem"),
-		urlServer("web", serve(t, "fetch").url, true),
-	}
+	room := serve(t, "search_messages")
+	mail := commandServer("mail")
+	mail.McpServer.Bare = true
+	f.store.catalogue = []db.ListGrantedMCPToolsRow{{
+		McpServerID: mail.McpServer.ID, Name: "search_messages", Description: "search",
+		InputSchema: []byte(`{"type":"object"}`),
+	}}
+	f.store.grants = []db.ListGrantedMCPServersRow{mail}
+	f.clients.rooms = map[string]string{"mail": room.url}
 
 	built := f.build(t)
 
-	// Shown to everyone who reads the run, so it says what the reader can act
-	// on and nothing of the brain's own plans.
-	want := []Unavailable{{Name: "filesystem", Reason: "the brain does not run command servers; register it through an HTTP bridge"}}
-	if !reflect.DeepEqual(built.Unavailable, want) {
-		t.Errorf("unavailable = %+v, want %+v", built.Unavailable, want)
+	if len(built.Unavailable) != 0 {
+		t.Errorf("unavailable = %+v, want the command server offered", built.Unavailable)
 	}
-	if got := toolNames(built); !slices.Equal(got, []string{"fetch"}) {
-		t.Errorf("tools = %v, want only the URL server's", got)
+	if got := toolNames(built); !slices.Equal(got, []string{"search_messages"}) {
+		t.Errorf("tools = %v, want the command server's", got)
 	}
 	if len(f.clients.asked) != 0 {
 		t.Errorf("clients were asked for %v; a build reaches no server", f.clients.asked)
+	}
+
+	got, err := tool(t, built, "search_messages").Invoke(t.Context(), json.RawMessage(`{}`))
+	if err != nil || got != "search_messages ran" {
+		t.Errorf("search_messages = %q, %v; want the room's answer", got, err)
+	}
+	if !slices.Equal(f.clients.asked, []string{"mail"}) {
+		t.Errorf("asked = %v, want the command server reached once", f.clients.asked)
 	}
 }
 

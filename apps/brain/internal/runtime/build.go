@@ -314,13 +314,9 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 	out := catalogue{names: map[uuid.UUID]string{}, byServer: map[string][]uuid.UUID{}}
 	owner := map[string]string{}
 	for _, g := range grants {
+		// A command server is offered like a URL server: its room in the
+		// team's sandbox is started by the first call to one of its tools.
 		s := g.McpServer
-		if s.Url == nil {
-			built.Unavailable = append(built.Unavailable, Unavailable{
-				Name: s.Name, Reason: "the brain does not run command servers; register it through an HTTP bridge",
-			})
-			continue
-		}
 		// One that needs signing in again keeps its tools: a call to one
 		// fails saying so, and the agent can tell the person why.
 		if s.AuthKind == "oauth" && g.OauthStatus == nil {
