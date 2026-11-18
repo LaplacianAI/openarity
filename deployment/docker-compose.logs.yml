@@ -84,6 +84,9 @@ services:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # The address a notification links back to (a silence, a panel); unset,
+      # Grafana writes http://localhost:3000, which is no port it is served on.
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:${GRAFANA_PORT:-13000}}
     volumes:
       - ./logs/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./logs/grafana/dashboards:/var/lib/grafana/dashboards:ro
