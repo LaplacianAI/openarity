@@ -54,7 +54,7 @@ const usage = `usage: sandbox shim [--listen ADDR] -- COMMAND [ARGS...]
   serve  the self-hosted sandbox provider: rooms on a rootless Docker daemon.
          Environment: SANDBOXD_TOKEN, SANDBOXD_PUBLIC_URL, SANDBOXD_DOCKER_SOCKET
          (required); SANDBOXD_CONTAINER (default $HOSTNAME), SANDBOXD_MEMORY_BUDGET,
-         SANDBOXD_ROOM_MEMORY, SANDBOXD_ROOM_PIDS, SANDBOXD_ROOM_CPUS (optional)
+         SANDBOXD_ROOM_MEMORY, SANDBOXD_ROOM_HOME, SANDBOXD_ROOM_PIDS, SANDBOXD_ROOM_CPUS (optional)
          SANDBOXD_IMAGES: the image prefixes a room may run, comma-separated
          (default ghcr.io/laplacianai/openarity-sandbox); SANDBOXD_PULL: images
          to pull in the background at start, each one allowed (optional);
@@ -138,6 +138,7 @@ func parseServe(args []string, env func(string) string) (command, error) {
 	}{
 		{"SANDBOXD_MEMORY_BUDGET", &s.limits.MemoryBudget, 1},
 		{"SANDBOXD_ROOM_MEMORY", &s.limits.Memory, 1},
+		{"SANDBOXD_ROOM_HOME", &s.limits.HomeBytes, 1},
 		{"SANDBOXD_ROOM_PIDS", &s.limits.PidsLimit, 1},
 		{"SANDBOXD_ROOM_CPUS", &s.limits.NanoCPUs, 1e9},
 	} {
@@ -153,6 +154,11 @@ func parseServe(args []string, env func(string) string) (command, error) {
 	}
 	if s.limits.Memory > s.limits.MemoryBudget {
 		return command{}, errors.New("SANDBOXD_ROOM_MEMORY is more than SANDBOXD_MEMORY_BUDGET: no room could be made")
+	}
+	// A tmpfs is memory charged to the room, so a home larger than the room
+	// would be killed for filling it rather than told it is full.
+	if s.limits.HomeBytes > s.limits.Memory {
+		return command{}, errors.New("SANDBOXD_ROOM_HOME is more than SANDBOXD_ROOM_MEMORY: the home directory is memory, charged to the room")
 	}
 	if s.images, err = parseImages(env("SANDBOXD_IMAGES")); err != nil {
 		return command{}, err

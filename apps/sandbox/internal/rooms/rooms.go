@@ -59,12 +59,21 @@ type Limits struct {
 	PidsLimit    int64
 	NanoCPUs     int64
 	MemoryBudget int64 // bytes, across rooms
-	TmpfsBytes   int64
+	TmpBytes     int64 // the size of /tmp
+	// HomeBytes is the size of the home directory, where npx and uvx keep a
+	// package's download and its unpacked copy. A tmpfs is memory, charged to
+	// the room's own limit, so it can never be filled past Memory.
+	HomeBytes int64
 }
 
-// DefaultLimits are 256 MiB, 256 pids, half a CPU, 64 MiB tmpfs, 3 GiB in all.
+// DefaultLimits are 768 MiB, 256 pids, half a CPU, a 512 MiB home and a
+// 64 MiB /tmp, 3 GiB in all. An npx server's package and its cache can pass
+// 64 MiB on their own, which a smaller home refused with nothing logged.
 func DefaultLimits() Limits {
-	return Limits{Memory: 256 << 20, PidsLimit: 256, NanoCPUs: 500_000_000, MemoryBudget: 3 << 30, TmpfsBytes: 64 << 20}
+	return Limits{
+		Memory: 768 << 20, PidsLimit: 256, NanoCPUs: 500_000_000, MemoryBudget: 3 << 30,
+		TmpBytes: 64 << 20, HomeBytes: 512 << 20,
+	}
 }
 
 // Spec is what a request may say about a room: nothing else reaches the
@@ -528,7 +537,8 @@ func Harden(id string, sp Spec, argv []string, selfIP string, l Limits) docker.C
 	// Docker mounts a tmpfs noexec unless told otherwise. /tmp keeps that.
 	// The home directory is where npx and uvx unpack what they fetch and then
 	// run it, so it is the one place a room may execute from.
-	size := ",size=" + strconv.FormatInt(l.TmpfsBytes, 10)
+	tmp := ",size=" + strconv.FormatInt(l.TmpBytes, 10)
+	home := ",size=" + strconv.FormatInt(l.HomeBytes, 10)
 	return docker.Container{
 		Image:      sp.Image,
 		Entrypoint: argv,
@@ -539,8 +549,8 @@ func Harden(id string, sp Spec, argv []string, selfIP string, l Limits) docker.C
 			ReadonlyRootfs: true,
 			Privileged:     false,
 			Tmpfs: map[string]string{
-				"/tmp":  "rw,noexec,nosuid,nodev" + size,
-				HomeDir: "rw,exec,nosuid,nodev" + size + ",uid=65534,gid=65534,mode=0700",
+				"/tmp":  "rw,noexec,nosuid,nodev" + tmp,
+				HomeDir: "rw,exec,nosuid,nodev" + home + ",uid=65534,gid=65534,mode=0700",
 			},
 			CapDrop:       []string{"ALL"},
 			SecurityOpt:   []string{"no-new-privileges"},

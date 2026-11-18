@@ -210,7 +210,7 @@ system daemon (openarity, CI deploys here)     rootless daemon (sandboxd)
    SANDBOXD_TOKEN=<openssl rand -hex 32>
    SANDBOXD_BIND=<the server's private or tailnet address>
    SANDBOXD_DOCKER_SOCKET=/run/user/<id -u>/docker.sock
-   SANDBOXD_MEMORY_BUDGET=1610612736   # 1.5 GiB across every room; a room takes 256 MiB
+   SANDBOXD_MEMORY_BUDGET=2415919104   # 2.25 GiB across every room: three rooms of 768 MiB
    ```
 
    and start it:
