@@ -104,8 +104,12 @@ x-brain-env: &brain-env
   OPENARITY_TEAM_PURGE_AFTER: ${OPENARITY_TEAM_PURGE_AFTER-168h}
 
 services:
+  # The three data stores restart with everything else. Without a policy,
+  # a restart of the Docker daemon (an apt upgrade of docker-ce is enough)
+  # brings back the brain, which restarts, and not the database it needs.
   postgres:
     image: postgres:18-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -149,6 +153,7 @@ services:
   # and recreating the container discarded the graph whatever REDIS_ARGS said.
   falkordb:
     image: falkordb/falkordb:v4.20.6
+    restart: unless-stopped
     environment:
       REDIS_ARGS: "--appendonly yes --appendfsync always"
     ports:
@@ -163,6 +168,7 @@ services:
 
   redis:
     image: redis:8-alpine
+    restart: unless-stopped
     command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
