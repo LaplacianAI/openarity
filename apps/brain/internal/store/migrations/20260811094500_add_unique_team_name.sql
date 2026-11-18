@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 ALTER TABLE teams ADD CONSTRAINT teams_name_key UNIQUE (name);
 

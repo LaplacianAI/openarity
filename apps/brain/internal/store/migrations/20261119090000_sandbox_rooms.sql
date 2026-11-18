@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A room a team's sandbox made for something that needs one to run in. The
 -- first owner is a command MCP server; agent code, workspaces and skill
@@ -145,7 +145,7 @@ CREATE TRIGGER team_settings_tombstone_rooms
     EXECUTE FUNCTION team_settings_drop_rooms();
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 DROP TRIGGER team_settings_tombstone_rooms ON team_settings;
 DROP FUNCTION team_settings_drop_rooms();

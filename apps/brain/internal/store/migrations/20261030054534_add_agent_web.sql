@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- Gives the agent web_search and web_fetch. The hub has both whatever this
 -- says, so the column is about every other agent. False keeps each agent
@@ -7,6 +7,6 @@ SET lock_timeout = '3s';
 ALTER TABLE agents ADD COLUMN web boolean NOT NULL DEFAULT false;
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 ALTER TABLE agents DROP COLUMN web;

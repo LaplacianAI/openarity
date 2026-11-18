@@ -162,6 +162,14 @@ func TestAMemberChangeWaitsForTheTeamsLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// pg_stat_activity is read once per transaction and then cached, so the
+	// wait is watched for from a connection of its own, outside the holder's.
+	watcher, err := pgx.Connect(t.Context(), w.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = watcher.Close(t.Context()) }()
+
 	done := make(chan error, 1)
 	go func() {
 		done <- w.store.UpdateMember(t.Context(), w.team, admin, teams.MemberChange{Role: ptr("member")})
@@ -177,7 +185,7 @@ func TestAMemberChangeWaitsForTheTeamsLock(t *testing.T) {
 		default:
 		}
 		var waiting int
-		if err := holder.QueryRow(t.Context(), `SELECT count(*) FROM pg_stat_activity
+		if err := watcher.QueryRow(t.Context(), `SELECT count(*) FROM pg_stat_activity
 			WHERE datname = current_database() AND wait_event_type = 'Lock'
 			AND query LIKE '%FROM teams WHERE id = $1 FOR UPDATE%'`).Scan(&waiting); err != nil {
 			t.Fatal(err)

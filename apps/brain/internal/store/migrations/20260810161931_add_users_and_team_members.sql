@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 CREATE TABLE users (
     id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),

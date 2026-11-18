@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- Deleting an attachment row does not delete its object: a Postgres cascade
 -- does not reach a bucket. Every route that deletes a team, a channel or a

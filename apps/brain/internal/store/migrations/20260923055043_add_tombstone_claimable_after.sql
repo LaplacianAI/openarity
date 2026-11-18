@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A tombstone can now be written before its object exists. An upload reserves
 -- the keys it is about to write, so a crash anywhere leaves only objects the

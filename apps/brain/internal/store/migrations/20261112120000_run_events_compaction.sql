@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A run compacting its context, and being asked to finish before its budget
 -- or its time runs out. A migration of its own, as text's was, so a database
@@ -11,7 +11,7 @@ ALTER TABLE run_events ADD CONSTRAINT run_events_kind_known CHECK (kind IN (
     'compacted', 'wrap_up')) NOT VALID;
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 DELETE FROM run_events WHERE kind IN ('compacted', 'wrap_up');
 ALTER TABLE run_events DROP CONSTRAINT run_events_kind_known;

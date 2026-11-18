@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A builder run is the team's built-in builder answering at the root: it reads
 -- the team and proposes blueprints, and writes nothing. Never also the hub.
@@ -38,7 +38,7 @@ ALTER TABLE run_events ADD CONSTRAINT run_events_kind_known CHECK (kind IN (
     'tool_unavailable', 'finished', 'delegated', 'plan', 'proposed')) NOT VALID;
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 DELETE FROM run_events WHERE kind = 'proposed';
 ALTER TABLE run_events DROP CONSTRAINT run_events_kind_known;

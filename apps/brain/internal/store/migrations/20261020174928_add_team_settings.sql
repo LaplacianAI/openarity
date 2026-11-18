@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A team's settings: the model its built-in agents run on, its web search
 -- provider, whether the learner runs, and when a transcript compacts. No row

@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A command server was once recorded as a discovery that failed, though the
 -- brain never asks one anything. It is no longer recorded, and what was

@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- How a server is reached: static, with the token in auth_secret_ref or none
 -- at all, as every server was until now; or oauth, with a sign-in a person
@@ -101,7 +101,7 @@ CREATE TRIGGER mcp_oauth_tombstone_deleted_secrets
     EXECUTE FUNCTION mcp_oauth_record_deleted_secret();
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 DROP TRIGGER mcp_oauth_tombstone_deleted_secrets ON mcp_oauth_connections;
 DROP FUNCTION mcp_oauth_record_deleted_secret();

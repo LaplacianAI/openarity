@@ -5,7 +5,7 @@
 -- what the stranger wrote.
 
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 ALTER TABLE channels ADD COLUMN notify_strangers boolean NOT NULL DEFAULT true;
 
@@ -49,7 +49,7 @@ CREATE INDEX notices_due ON notices (next_attempt_at) WHERE status = 'pending';
 CREATE INDEX notices_conversation_order ON notices (channel_id, session_ref, id) WHERE status = 'pending';
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 DROP TABLE notices;
 

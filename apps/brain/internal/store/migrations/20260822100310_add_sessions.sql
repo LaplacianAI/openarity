@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- A session is the thing an agent works inside: one conversation, and later
 -- the workspace, sandbox and files that belong to it. Everything else points

@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- What a room starts from is the brain's choice, the image it was built
 -- with, not a team's. E2B alone cannot be handed an image: it starts rooms
@@ -15,7 +15,7 @@ ALTER TABLE team_settings ADD CONSTRAINT team_settings_sandbox_template_e2b_only
     sandbox_template IS NULL OR (sandbox_provider = 'e2b' AND sandbox_template <> ''));
 
 -- +goose Down
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 ALTER TABLE team_settings DROP CONSTRAINT team_settings_sandbox_template_e2b_only;
 ALTER TABLE team_settings RENAME COLUMN sandbox_template TO sandbox_image;

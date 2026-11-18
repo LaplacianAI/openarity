@@ -1,5 +1,5 @@
 -- +goose Up
-SET lock_timeout = '3s';
+SET LOCAL lock_timeout = '3s';
 
 -- sender_name was bounded when these tables were created; sender_ref was not,
 -- and it is the more exposed of the two. Both arrive from an unauthenticated
