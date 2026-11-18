@@ -50,7 +50,7 @@ WHERE id = sqlc.arg('id')
   AND (status = 'queued' OR (status = 'running' AND worker = sqlc.arg('worker')::text))
 RETURNING *,
     extract(epoch FROM started_at
-        + make_interval(secs => sqlc.arg('wall_clock_seconds')::float8) - now())::float8
+        + make_interval(secs => sqlc.arg('wall_clock_seconds')::float8 + waited_seconds) - now())::float8
         AS remaining_seconds;
 
 -- No row means this worker no longer holds the run.
@@ -103,7 +103,7 @@ WHERE runs.id = sqlc.arg('id')::uuid AND runs.status IN ('queued', 'running', 'w
 RETURNING *, (SELECT coalesce(array_agg(ended.id), '{}') FROM ended)::uuid[] AS ended_children;
 
 -- name: ListUnstartedRuns :many
-SELECT id FROM runs
+SELECT id, attempt FROM runs
 WHERE status = 'queued'
   AND created_at < now() - make_interval(secs => sqlc.arg('older_than_seconds')::float8)
 ORDER BY created_at
@@ -334,3 +334,22 @@ SELECT EXISTS (
     WHERE tm.team_id = sqlc.arg('team_id') AND tm.user_id = sqlc.arg('user_id')
       AND rp.action = sqlc.arg('action')::text
 )::bool AS may;
+
+-- A run a tool suspended is parked: no worker holds it while it waits for a
+-- person. Only the worker that holds it parks it.
+-- name: ParkRun :execrows
+UPDATE runs SET status = 'waiting', worker = NULL, heartbeat_at = NULL, waiting_since = now()
+WHERE id = sqlc.arg('id') AND worker = sqlc.arg('worker')::text AND status = 'running';
+
+-- A parked run whose tree waits on nothing more is queued again, under its
+-- next attempt: a finished DBOS workflow id never runs again, so each resume
+-- is a workflow of its own. The time spent waiting is not the run's.
+-- name: RequeueAnswered :one
+UPDATE runs SET
+    status         = 'queued',
+    attempt        = attempt + 1,
+    waited_seconds = waited_seconds + greatest(0, extract(epoch FROM now() - waiting_since))::int,
+    waiting_since  = NULL
+WHERE runs.id = $1 AND runs.status = 'waiting'
+  AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.root_run_id = runs.id AND a.status = 'pending')
+RETURNING runs.id, runs.attempt;

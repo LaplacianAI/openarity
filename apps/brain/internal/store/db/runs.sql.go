@@ -105,7 +105,7 @@ WHERE id = $2
   AND (status = 'queued' OR (status = 'running' AND worker = $1::text))
 RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since,
     extract(epoch FROM started_at
-        + make_interval(secs => $3::float8) - now())::float8
+        + make_interval(secs => $3::float8 + waited_seconds) - now())::float8
         AS remaining_seconds
 `
 
@@ -946,26 +946,31 @@ func (q *Queries) ListRunsByTeam(ctx context.Context, arg ListRunsByTeamParams) 
 }
 
 const listUnstartedRuns = `-- name: ListUnstartedRuns :many
-SELECT id FROM runs
+SELECT id, attempt FROM runs
 WHERE status = 'queued'
   AND created_at < now() - make_interval(secs => $1::float8)
 ORDER BY created_at
 LIMIT 100
 `
 
-func (q *Queries) ListUnstartedRuns(ctx context.Context, olderThanSeconds float64) ([]uuid.UUID, error) {
+type ListUnstartedRunsRow struct {
+	ID      uuid.UUID
+	Attempt int32
+}
+
+func (q *Queries) ListUnstartedRuns(ctx context.Context, olderThanSeconds float64) ([]ListUnstartedRunsRow, error) {
 	rows, err := q.db.Query(ctx, listUnstartedRuns, olderThanSeconds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []uuid.UUID
+	var items []ListUnstartedRunsRow
 	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i ListUnstartedRunsRow
+		if err := rows.Scan(&i.ID, &i.Attempt); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -998,6 +1003,26 @@ func (q *Queries) MemberMay(ctx context.Context, arg MemberMayParams) (bool, err
 	var may bool
 	err := row.Scan(&may)
 	return may, err
+}
+
+const parkRun = `-- name: ParkRun :execrows
+UPDATE runs SET status = 'waiting', worker = NULL, heartbeat_at = NULL, waiting_since = now()
+WHERE id = $1 AND worker = $2::text AND status = 'running'
+`
+
+type ParkRunParams struct {
+	ID     uuid.UUID
+	Worker string
+}
+
+// A run a tool suspended is parked: no worker holds it while it waits for a
+// person. Only the worker that holds it parks it.
+func (q *Queries) ParkRun(ctx context.Context, arg ParkRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, parkRun, arg.ID, arg.Worker)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const reapChildren = `-- name: ReapChildren :many
@@ -1142,6 +1167,32 @@ func (q *Queries) RequestRunCancel(ctx context.Context, id uuid.UUID) (RequestRu
 		&i.WaitingSince,
 		&i.EndedChildren,
 	)
+	return i, err
+}
+
+const requeueAnswered = `-- name: RequeueAnswered :one
+UPDATE runs SET
+    status         = 'queued',
+    attempt        = attempt + 1,
+    waited_seconds = waited_seconds + greatest(0, extract(epoch FROM now() - waiting_since))::int,
+    waiting_since  = NULL
+WHERE runs.id = $1 AND runs.status = 'waiting'
+  AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.root_run_id = runs.id AND a.status = 'pending')
+RETURNING runs.id, runs.attempt
+`
+
+type RequeueAnsweredRow struct {
+	ID      uuid.UUID
+	Attempt int32
+}
+
+// A parked run whose tree waits on nothing more is queued again, under its
+// next attempt: a finished DBOS workflow id never runs again, so each resume
+// is a workflow of its own. The time spent waiting is not the run's.
+func (q *Queries) RequeueAnswered(ctx context.Context, id uuid.UUID) (RequeueAnsweredRow, error) {
+	row := q.db.QueryRow(ctx, requeueAnswered, id)
+	var i RequeueAnsweredRow
+	err := row.Scan(&i.ID, &i.Attempt)
 	return i, err
 }
 

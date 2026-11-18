@@ -9,6 +9,8 @@ import (
 
 	"github.com/dbos-inc/dbos-transact-golang/dbos"
 	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 const (
@@ -24,7 +26,7 @@ const (
 )
 
 type SweepStore interface {
-	ListUnstartedRuns(ctx context.Context, olderThanSeconds float64) ([]uuid.UUID, error)
+	ListUnstartedRuns(ctx context.Context, olderThanSeconds float64) ([]db.ListUnstartedRunsRow, error)
 	TakeOverStaleRuns(ctx context.Context, staleSeconds float64) ([]uuid.UUID, error)
 }
 
@@ -33,7 +35,7 @@ type Job struct {
 	store     SweepStore
 	logger    *slog.Logger
 	dbos      dbos.Context
-	restart   func(uuid.UUID) error
+	restart   func(uuid.UUID, int32) error
 	kick      func(dbos.Client, uuid.UUID) error
 	kickEvent func(dbos.Client, uuid.UUID, int32) error
 }
@@ -65,7 +67,7 @@ func (j *Job) Register(d dbos.Context) ([]dbos.ScheduleSpec, error) {
 	dbos.RegisterWorkflow(d, j.run, dbos.WithWorkflowName(RunWorkflow))
 	dbos.RegisterWorkflow(d, j.sweep, dbos.WithWorkflowName(sweepWorkflow))
 	j.dbos = d
-	j.executor.enqueue = func(id uuid.UUID) error { return enqueue(d, id) }
+	j.executor.enqueue = func(id uuid.UUID, attempt int32) error { return enqueue(d, id, attempt) }
 	if j.kick != nil {
 		j.executor.kickReply = func(id uuid.UUID) error { return j.kick(d, id) }
 	}
@@ -118,26 +120,37 @@ func (j *Job) sweepOnce(ctx context.Context) error {
 	}
 
 	var failed []error
-	for _, id := range queued {
-		if err := j.restart(id); err != nil {
+	for _, r := range queued {
+		if err := j.restart(r.ID, r.Attempt); err != nil {
 			failed = append(failed, err)
 		}
 	}
 	return errors.Join(failed...)
 }
 
-func (j *Job) restartRun(id uuid.UUID) error {
-	if err := enqueue(j.dbos, id); err != nil {
+func (j *Job) restartRun(id uuid.UUID, attempt int32) error {
+	if err := enqueue(j.dbos, id, attempt); err != nil {
 		return err
 	}
-	if _, err := dbos.ResumeWorkflow[string](j.dbos, id.String(), dbos.WithResumeQueue(RunQueue)); err != nil {
+	if _, err := dbos.ResumeWorkflow[string](j.dbos, workflowID(id, attempt), dbos.WithResumeQueue(RunQueue)); err != nil {
 		return fmt.Errorf("resuming run %s: %w", id, err)
 	}
 	return nil
 }
 
-func enqueue(c dbos.Client, id uuid.UUID) error {
-	_, err := dbos.Enqueue[string](c, RunQueue, RunWorkflow, id.String(), dbos.WithEnqueueWorkflowID(id.String()))
+// workflowID is the DBOS workflow a run's attempt runs as. A finished
+// workflow's id is an idempotency key and never runs again, so a run resumed
+// after waiting for an approval is a workflow of its own: the run's id for
+// its first attempt, and the id and the attempt after.
+func workflowID(id uuid.UUID, attempt int32) string {
+	if attempt == 0 {
+		return id.String()
+	}
+	return fmt.Sprintf("%s:%d", id, attempt)
+}
+
+func enqueue(c dbos.Client, id uuid.UUID, attempt int32) error {
+	_, err := dbos.Enqueue[string](c, RunQueue, RunWorkflow, id.String(), dbos.WithEnqueueWorkflowID(workflowID(id, attempt)))
 	if err != nil {
 		return fmt.Errorf("enqueuing run %s: %w", id, err)
 	}
@@ -151,5 +164,10 @@ type Enqueuer struct {
 func NewEnqueuer(c dbos.Client) *Enqueuer { return &Enqueuer{client: c} }
 
 func (q *Enqueuer) Enqueue(_ context.Context, runID uuid.UUID) error {
-	return enqueue(q.client, runID)
+	return enqueue(q.client, runID, 0)
+}
+
+// Resume hands a run that waited back to the workers, as its next attempt.
+func (q *Enqueuer) Resume(_ context.Context, runID uuid.UUID, attempt int32) error {
+	return enqueue(q.client, runID, attempt)
 }

@@ -244,6 +244,8 @@ type mcpServer struct {
 	opened atomic.Int32
 	// refuse, while set, answers every request 503.
 	refuse atomic.Bool
+	// calls counts the tool calls it answered.
+	calls atomic.Int32
 }
 
 // offered is what each test server offers, by its address, for the fake
@@ -260,15 +262,16 @@ func offer(url string, tools ...string) string {
 func serve(t *testing.T, tools ...string) *mcpServer {
 	t.Helper()
 
+	s := &mcpServer{}
 	server := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "v1"}, nil)
 	for _, name := range tools {
 		server.AddTool(&sdk.Tool{Name: name, InputSchema: json.RawMessage(`{"type":"object"}`)},
 			func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+				s.calls.Add(1)
 				return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: name + " ran"}}}, nil
 			})
 	}
 
-	s := &mcpServer{}
 	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.requests.Add(1)

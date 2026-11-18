@@ -107,6 +107,7 @@ apps/brain/
     inmemory/          the in-process fallback; attachments die with the process
   internal/skill/      a skill as the Agent Skills specification lays it out
     hub/               importing one: GitHub, or a zip from an allowed host
+  internal/approval/   the approval policy, pure: a call's class, allow, ask or deny, and the summary a person reads
   internal/discovery/  asking an MCP server for its tools, and what it may reach
   internal/mcpregistry/ looking MCP servers up in a registry with the official registry's API
   internal/graph/      FalkorDB as an index over Postgres
@@ -129,6 +130,10 @@ apps/brain/
     resolve.go         Resolving: the model client that fetches those files' bytes for each request
     history.go         history(before, limit): the conversation read back, its people and the top-level runs' answers
     compaction.go      when a run compacts, and the budget's soft lines (compact, then wrap up)
+    gate.go            tool-call approvals: each MCP and web tool's verdict when the run is built; a call that asks, suspended until answered
+    approvals.go       parking a suspended run, and answering a request: each one transaction, the session taken first
+    decide.go          Decide: the one way a request is answered, from the API or the chat; who may answer
+    park.go            a suspended run parked rather than finished, and queued again if its answer came first
     delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run
     events.go          what a run does, as run_events, within its token budget; its text and reasoning, gathered
     execute.go         one run: claim, heartbeat, run to the end, finish

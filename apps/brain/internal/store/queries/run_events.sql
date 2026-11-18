@@ -12,6 +12,17 @@ HAVING EXISTS (
     WHERE id = sqlc.arg('run_id')::uuid AND worker = sqlc.arg('worker')::text)
 RETURNING seq;
 
+-- One of the brain's own events on a run no worker is writing to, or one a
+-- worker is: the caller holds the run's session (LockRunSession), which every
+-- writer of a run's events takes, so the next seq is the caller's alone.
+-- name: AppendBrainRunEvent :one
+INSERT INTO run_events (run_id, seq, kind, payload)
+SELECT sqlc.arg('run_id')::uuid, coalesce(max(e.seq), 0) + 1,
+       sqlc.arg('kind')::text, sqlc.arg('payload')::jsonb
+FROM run_events e
+WHERE e.run_id = sqlc.arg('run_id')::uuid
+RETURNING seq;
+
 -- name: ListRunEvents :many
 SELECT * FROM run_events
 WHERE run_id = sqlc.arg('run_id') AND seq > sqlc.arg('after')::int

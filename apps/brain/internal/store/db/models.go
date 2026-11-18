@@ -88,6 +88,7 @@ type Approval struct {
 	DecidedAt     *time.Time
 	UsedAt        *time.Time
 	CreatedAt     time.Time
+	RequireOther  bool
 }
 
 type ApprovalRule struct {

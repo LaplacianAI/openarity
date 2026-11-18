@@ -11,6 +11,31 @@ import (
 	"github.com/google/uuid"
 )
 
+const appendBrainRunEvent = `-- name: AppendBrainRunEvent :one
+INSERT INTO run_events (run_id, seq, kind, payload)
+SELECT $1::uuid, coalesce(max(e.seq), 0) + 1,
+       $2::text, $3::jsonb
+FROM run_events e
+WHERE e.run_id = $1::uuid
+RETURNING seq
+`
+
+type AppendBrainRunEventParams struct {
+	RunID   uuid.UUID
+	Kind    string
+	Payload []byte
+}
+
+// One of the brain's own events on a run no worker is writing to, or one a
+// worker is: the caller holds the run's session (LockRunSession), which every
+// writer of a run's events takes, so the next seq is the caller's alone.
+func (q *Queries) AppendBrainRunEvent(ctx context.Context, arg AppendBrainRunEventParams) (int32, error) {
+	row := q.db.QueryRow(ctx, appendBrainRunEvent, arg.RunID, arg.Kind, arg.Payload)
+	var seq int32
+	err := row.Scan(&seq)
+	return seq, err
+}
+
 const appendRunEvent = `-- name: AppendRunEvent :one
 INSERT INTO run_events (run_id, seq, kind, payload)
 SELECT $1::uuid, coalesce(max(e.seq), 0) + 1,
