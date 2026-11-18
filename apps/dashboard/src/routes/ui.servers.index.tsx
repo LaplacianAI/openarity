@@ -8,13 +8,14 @@ import {
   deleteMCPServer,
   disconnectMCPServerOAuth,
   discoverMCPServer,
+  forgetMCPServerOAuthRegistration,
   listMCPServers,
   listMCPTools,
   putMCPSecret,
   replaceMCPServer,
   startMCPServerOAuth,
 } from "@/api";
-import { nextCursorOf } from "@/api/client";
+import { ApiError, nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import { useTeamSummary } from "@/api/summary";
@@ -75,6 +76,7 @@ const OUTCOMES = [
   "denied",
   "refused",
   "failed",
+  "unregistered",
 ] as const;
 type Outcome = (typeof OUTCOMES)[number];
 
@@ -117,15 +119,42 @@ export function outcomeMessage(outcome: Outcome, name: string): { ok: boolean; t
       };
     case "failed":
       return { ok: false, text: `The sign-in to ${name} could not be finished. Connect again.` };
+    case "unregistered":
+      return {
+        ok: false,
+        text: `${name} no longer accepts openarity's registration. Connect again to register anew.`,
+      };
   }
 }
 
-/** Sends the browser to sign in: the brain begins it and says where. */
-function useConnect(teamId: string, server: MCPServer) {
+/** Whether a Connect was refused because the server's sign-in registers no apps. */
+function registersNobody(err: Error): boolean {
+  return (
+    err instanceof ApiError && err.status === 409 && err.message.includes("register themselves")
+  );
+}
+
+/**
+ * Sends the browser to sign in: the brain begins it, registering openarity
+ * with the server's sign-in first when it has to, and says where. A server
+ * whose sign-in registers nobody is offered the way to a client of its own.
+ */
+function useConnect(teamId: string, server: MCPServer, onNeedsClient?: (s: MCPServer) => void) {
   return useMutation({
     mutationFn: () => startMCPServerOAuth(teamId, server.id),
     onSuccess: ({ authorize_url }) => window.location.assign(authorize_url),
-    onError: (err: Error) => toast.error(`${server.name} could not be connected: ${err.message}`),
+    onError: (err: Error) => {
+      if (registersNobody(err)) {
+        toast.error(
+          `${server.name} can't register automatically: its sign-in needs a client you register yourself.`,
+          onNeedsClient
+            ? { action: { label: "Edit server", onClick: () => onNeedsClient(server) } }
+            : undefined,
+        );
+        return;
+      }
+      toast.error(`${server.name} could not be connected: ${err.message}`);
+    },
   });
 }
 
@@ -158,6 +187,15 @@ function Servers() {
   const [shown, setShown] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<MCPServer | null>(null);
+  // Opened from a Connect that needs a client registered by hand: the form
+  // starts there rather than on registering automatically.
+  const [editOwnClient, setEditOwnClient] = useState(false);
+  const edit = (s: MCPServer, ownClient = false) => {
+    setShown(null);
+    setEditOwnClient(ownClient);
+    setEditing(s);
+  };
+  const needsClient = (s: MCPServer) => edit(s, true);
   const { oauth, server: signedInto } = Route.useSearch();
   const navigate = Route.useNavigate();
 
@@ -251,6 +289,7 @@ function Servers() {
                   teamId={teamId}
                   canWrite={canWrite}
                   onOpen={() => setShown(s.id)}
+                  onNeedsClient={needsClient}
                   onChanged={changed}
                 />
               ))}
@@ -271,10 +310,8 @@ function Servers() {
           server={open}
           canWrite={canWrite}
           onClose={() => setShown(null)}
-          onEdit={(s) => {
-            setShown(null);
-            setEditing(s);
-          }}
+          onEdit={(s) => edit(s)}
+          onNeedsClient={needsClient}
           onChanged={changed}
         />
       ) : null}
@@ -296,6 +333,7 @@ function Servers() {
           key={editing.id}
           teamId={teamId}
           server={editing}
+          ownClient={editOwnClient}
           open
           onClose={() => setEditing(null)}
           onSaved={(s) => {
@@ -332,16 +370,18 @@ function ServerRow({
   teamId,
   canWrite,
   onOpen,
+  onNeedsClient,
   onChanged,
 }: {
   server: MCPServer;
   teamId: string;
   canWrite: boolean;
   onOpen: () => void;
+  onNeedsClient: (s: MCPServer) => void;
   onChanged: () => void;
 }) {
   const discover = useDiscover(teamId, server, onChanged);
-  const connect = useConnect(teamId, server);
+  const connect = useConnect(teamId, server, onNeedsClient);
   const tried = server.last_discovery_at ?? server.discovered_at;
   const signIn = signInOf(server);
 
@@ -416,6 +456,7 @@ function ServerSheet({
   canWrite,
   onClose,
   onEdit,
+  onNeedsClient,
   onChanged,
 }: {
   teamId: string;
@@ -423,6 +464,7 @@ function ServerSheet({
   canWrite: boolean;
   onClose: () => void;
   onEdit: (s: MCPServer) => void;
+  onNeedsClient: (s: MCPServer) => void;
   onChanged: () => void;
 }) {
   return (
@@ -434,6 +476,7 @@ function ServerSheet({
             server={server}
             canWrite={canWrite}
             onEdit={() => onEdit(server)}
+            onNeedsClient={onNeedsClient}
             onDeleted={() => {
               onChanged();
               onClose();
@@ -451,6 +494,7 @@ function ServerDetail({
   server,
   canWrite,
   onEdit,
+  onNeedsClient,
   onDeleted,
   onChanged,
 }: {
@@ -458,6 +502,7 @@ function ServerDetail({
   server: MCPServer;
   canWrite: boolean;
   onEdit: () => void;
+  onNeedsClient: (s: MCPServer) => void;
   onDeleted: () => void;
   onChanged: () => void;
 }) {
@@ -515,7 +560,13 @@ function ServerDetail({
       </section>
 
       {signInOf(server) ? (
-        <SignInSection teamId={teamId} server={server} canWrite={canWrite} onChanged={onChanged} />
+        <SignInSection
+          teamId={teamId}
+          server={server}
+          canWrite={canWrite}
+          onNeedsClient={onNeedsClient}
+          onChanged={onChanged}
+        />
       ) : null}
 
       {server.auth_secret_ref || env.length > 0 ? (
@@ -601,14 +652,17 @@ function SignInSection({
   teamId,
   server,
   canWrite,
+  onNeedsClient,
   onChanged,
 }: {
   teamId: string;
   server: MCPServer;
   canWrite: boolean;
+  onNeedsClient: (s: MCPServer) => void;
   onChanged: () => void;
 }) {
-  const connect = useConnect(teamId, server);
+  const connect = useConnect(teamId, server, onNeedsClient);
+  const registration = server.oauth_client_id ? null : server.oauth_registration;
   const signIn = signInOf(server) ?? "not connected";
   const c = server.connection;
 
@@ -635,7 +689,14 @@ function SignInSection({
           <li>
             Client <Mono className="text-foreground">{server.oauth_client_id}</Mono>
           </li>
-        ) : null}
+        ) : registration ? (
+          <li>
+            Registered automatically <Time iso={registration.registered_at} /> · client{" "}
+            <Mono className="text-foreground">{registration.client_id}</Mono>
+          </li>
+        ) : (
+          <li>openarity registers a client with its sign-in when you connect.</li>
+        )}
         {c && c.scopes_granted.length > 0 ? (
           <li>
             Granted <Mono className="text-foreground">{c.scopes_granted.join(" ")}</Mono>
@@ -657,6 +718,16 @@ function SignInSection({
             {signIn === "not connected" ? "Connect" : "Reconnect"}
           </Button>
           {c ? <DisconnectServer teamId={teamId} server={server} onChanged={onChanged} /> : null}
+          {registration ? (
+            <RegisterAgain
+              teamId={teamId}
+              server={server}
+              onForgotten={() => {
+                onChanged();
+                connect.mutate();
+              }}
+            />
+          ) : null}
         </div>
       ) : null}
     </section>
@@ -731,6 +802,69 @@ function DisconnectServer({
   );
 }
 
+/**
+ * Forgets the client openarity registered and connects again, registering a
+ * new one: for a provider that stopped accepting the old client on its own
+ * page, which never sends the person back to say so.
+ */
+function RegisterAgain({
+  teamId,
+  server,
+  onForgotten,
+}: {
+  teamId: string;
+  server: MCPServer;
+  onForgotten: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const forget = useMutation({
+    mutationFn: () => forgetMCPServerOAuthRegistration(teamId, server.id),
+    onSuccess: () => {
+      setOpen(false);
+      onForgotten();
+    },
+  });
+
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
+        Register again
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) forget.reset();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Register {server.name} again?</DialogTitle>
+            <DialogDescription>
+              openarity forgets the client it registered and ends the current sign-in, then
+              registers a new client and sends you to sign in. Use this when the sign-in page says
+              it doesn't know openarity.
+            </DialogDescription>
+          </DialogHeader>
+          {forget.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {forget.error.message}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Keep it
+            </Button>
+            <Button type="button" loading={forget.isPending} onClick={() => forget.mutate()}>
+              Register again
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 function DeleteServer({
   teamId,
   server,
@@ -797,17 +931,24 @@ function DeleteServer({
 function ServerDialog({
   teamId,
   server,
+  ownClient = false,
   open,
   onClose,
   onSaved,
 }: {
   teamId: string;
   server?: MCPServer;
+  /** Start on a client registered by hand: the server's sign-in registers nobody. */
+  ownClient?: boolean;
   open: boolean;
   onClose: () => void;
   onSaved: (s: MCPServer) => void;
 }) {
-  const [draft, setDraft] = useState<ServerDraft>(() => (server ? draftOf(server) : EMPTY_SERVER));
+  const [draft, setDraft] = useState<ServerDraft>(() => {
+    if (!server) return EMPTY_SERVER;
+    const d = draftOf(server);
+    return ownClient ? { ...d, client: "own" } : d;
+  });
   const [problem, setProblem] = useState<string | null>(null);
   const set = (patch: Partial<ServerDraft>) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -880,7 +1021,10 @@ function ServerDialog({
             }
             const url = draft.transport === "url";
             const token = url && draft.auth === "token" ? draft.token.trim() : "";
-            const clientSecret = url && draft.auth === "oauth" ? draft.clientSecret.trim() : "";
+            const clientSecret =
+              url && draft.auth === "oauth" && draft.client === "own"
+                ? draft.clientSecret.trim()
+                : "";
             if ((token || clientSecret) && !SECRET_NAME.test(clientSecretName(body.name))) {
               setProblem(
                 "To keep a secret here, the server's name is letters, digits, _ and - only.",

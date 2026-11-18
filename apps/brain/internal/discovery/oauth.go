@@ -32,7 +32,16 @@ var (
 	// ErrSignInAgain is a grant the authorization server refused: revoked,
 	// expired, or a code already used. Only a new sign-in mends it.
 	ErrSignInAgain = errors.New("the authorization server refused the sign-in; connect the server again")
+	// ErrClientRefused is the client itself refused: unknown to the
+	// authorization server, or no longer allowed. A registered one is
+	// registered again; one set on the server is the person's to fix.
+	ErrClientRefused = errors.New("the authorization server no longer accepts the server's OAuth client; connect the server again")
 )
+
+// refusesClient is a token error naming the client rather than the grant.
+func refusesClient(code string) bool {
+	return code == "invalid_client" || code == "unauthorized_client"
+}
 
 // AuthServer is where a server is signed in to, as discovery found it.
 type AuthServer struct {
@@ -287,6 +296,9 @@ func (d *Discoverer) Exchange(ctx context.Context, as AuthServer, c Client, redi
 		if errors.As(err, &re) && re.ErrorCode == "invalid_grant" {
 			return Tokens{}, ErrSignInAgain
 		}
+		if errors.As(err, &re) && refusesClient(re.ErrorCode) {
+			return Tokens{}, ErrClientRefused
+		}
 		return Tokens{}, fmt.Errorf("exchanging the code: %w", err)
 	}
 	scope, _ := tok.Extra("scope").(string)
@@ -340,6 +352,8 @@ func (d *Discoverer) Refresh(ctx context.Context, as AuthServer, c Client, refre
 	switch {
 	case body.Error == "invalid_grant":
 		return Tokens{}, ErrSignInAgain
+	case refusesClient(body.Error):
+		return Tokens{}, ErrClientRefused
 	case resp.StatusCode != http.StatusOK || body.Access == "":
 		// Never the body: it may echo what was sent.
 		return Tokens{}, fmt.Errorf("refreshing: the authorization server answered %d %s", resp.StatusCode, body.Error)

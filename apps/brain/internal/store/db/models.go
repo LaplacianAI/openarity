@@ -174,6 +174,17 @@ type GraphOutbox struct {
 	LastAttemptAt *time.Time
 }
 
+type McpOauthClient struct {
+	ServerID        uuid.UUID
+	TeamID          uuid.UUID
+	Issuer          string
+	RedirectUri     string
+	ClientID        string
+	SecretID        *uuid.UUID
+	SecretExpiresAt *time.Time
+	RegisteredAt    time.Time
+}
+
 type McpOauthConnection struct {
 	ServerID           uuid.UUID
 	TeamID             uuid.UUID

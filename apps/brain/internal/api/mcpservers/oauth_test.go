@@ -28,6 +28,7 @@ type oauthFakes struct {
 	ended     []uuid.UUID
 	authErr   error
 	listErr   error
+	clients   map[uuid.UUID]db.McpOauthClient
 	deleteErr error
 }
 
@@ -50,6 +51,28 @@ func (s *fakeStore) ListOAuthConnectionsOf(_ context.Context, ids []uuid.UUID) (
 	var out []db.McpOauthConnection
 	for _, id := range ids {
 		if c, ok := s.oauth.conns[id]; ok {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeStore) GetOAuthClient(_ context.Context, id uuid.UUID) (db.McpOauthClient, error) {
+	s.oauth.mu.Lock()
+	defer s.oauth.mu.Unlock()
+	c, ok := s.oauth.clients[id]
+	if !ok {
+		return c, pgx.ErrNoRows
+	}
+	return c, nil
+}
+
+func (s *fakeStore) ListOAuthClientsOf(_ context.Context, ids []uuid.UUID) ([]db.McpOauthClient, error) {
+	s.oauth.mu.Lock()
+	defer s.oauth.mu.Unlock()
+	var out []db.McpOauthClient
+	for _, id := range ids {
+		if c, ok := s.oauth.clients[id]; ok {
 			out = append(out, c)
 		}
 	}
@@ -196,6 +219,61 @@ func TestAServerIsStaticUnlessItSaysOtherwise(t *testing.T) {
 	}
 }
 
+// A server with no client of its own is one openarity registers a client
+// for, at its first Connect.
+func TestAServerThatSignsInMayLeaveItsClientToOpenarity(t *testing.T) {
+	t.Parallel()
+	teamID := uuid.New()
+	s := newFakeStore()
+
+	rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(teamID), http.MethodPost, "/teams/"+teamID.String()+"/mcp-servers",
+		map[string]any{"name": "cloud", "url": "https://cloud.example/mcp", "auth_kind": "oauth"})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var got server
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if got.AuthKind != authOAuth || got.OAuthClientID != nil || got.Registration != nil {
+		t.Errorf("server = %+v; want oauth with no client, none registered yet", got)
+	}
+}
+
+// The registered client is shown while it is the one in use: a client set on
+// the server since wins, and the registration it outlived is not shown.
+func TestAServerShowsTheClientRegisteredForIt(t *testing.T) {
+	t.Parallel()
+	teamID := uuid.New()
+	u := "https://cloud.example/mcp"
+	own := "client-1"
+	registered := db.McpServer{ID: uuid.New(), TeamID: teamID, Name: "cloud", Url: &u, AuthKind: authOAuth, Env: []byte(`{}`)}
+	withOwn := db.McpServer{ID: uuid.New(), TeamID: teamID, Name: "gmail", Url: &u, AuthKind: authOAuth, OauthClientID: &own, Env: []byte(`{}`)}
+	s := newFakeStore(registered, withOwn)
+	at := time.Now().Truncate(time.Second)
+	s.oauth.clients = map[uuid.UUID]db.McpOauthClient{
+		registered.ID: {ServerID: registered.ID, TeamID: teamID, ClientID: "reg-1", RegisteredAt: at},
+		withOwn.ID:    {ServerID: withOwn.ID, TeamID: teamID, ClientID: "reg-old", RegisteredAt: at},
+	}
+
+	rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(teamID), http.MethodGet, "/teams/"+teamID.String()+"/mcp-servers", nil)
+	var page struct{ Items []server }
+	_ = json.Unmarshal(rec.Body.Bytes(), &page)
+	if len(page.Items) != 2 {
+		t.Fatalf("items = %d: %s", len(page.Items), rec.Body)
+	}
+	for _, got := range page.Items {
+		switch got.ID {
+		case registered.ID:
+			if got.Registration == nil || got.Registration.ClientID != "reg-1" || !got.Registration.RegisteredAt.Equal(at) {
+				t.Errorf("cloud's registration = %+v, want reg-1", got.Registration)
+			}
+		case withOwn.ID:
+			if got.Registration != nil {
+				t.Errorf("gmail shows %+v; its own client wins", got.Registration)
+			}
+		}
+	}
+}
+
 // Each of these is refused before anything is written.
 func TestAServerThatSignsInIsRefusedWhatItCannotBe(t *testing.T) {
 	t.Parallel()
@@ -204,7 +282,7 @@ func TestAServerThatSignsInIsRefusedWhatItCannotBe(t *testing.T) {
 	cases := map[string]map[string]any{
 		"an unknown kind":          {"name": "x", "url": "https://m.example/mcp", "auth_kind": "magic"},
 		"a command server":         {"name": "x", "command": []string{"npx", "x"}, "auth_kind": "oauth", "oauth_client_id": "c"},
-		"no client":                {"name": "x", "url": "https://m.example/mcp", "auth_kind": "oauth"},
+		"a secret with no client":  {"name": "x", "url": "https://m.example/mcp", "auth_kind": "oauth", "oauth_client_secret_ref": refIn(teamID, "x")},
 		"a blank client":           {"name": "x", "url": "https://m.example/mcp", "auth_kind": "oauth", "oauth_client_id": "  "},
 		"a static token as well":   {"name": "x", "url": "https://m.example/mcp", "auth_kind": "oauth", "oauth_client_id": "c", "auth_secret_ref": refIn(teamID, "x")},
 		"another team's secret":    {"name": "x", "url": "https://m.example/mcp", "auth_kind": "oauth", "oauth_client_id": "c", "oauth_client_secret_ref": other},

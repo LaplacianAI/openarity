@@ -115,6 +115,19 @@ func TestGetSaysAServerNeverConnectedIsNot(t *testing.T) {
 	}
 }
 
+func TestGetShowsAClientOpenarityRegistered(t *testing.T) {
+	registered := strings.Replace(gmail("null"), `"oauth_client_id":"client-1",`,
+		`"oauth_registration":{"client_id":"reg-1","registered_at":"2026-11-19T10:00:00Z"},`, 1)
+	clitest.Routes(t, routes(map[string]clitest.Reply{
+		"GET /teams/{id}/mcp-servers/{serverID}": {Status: http.StatusOK, Body: registered},
+	}))
+
+	out, err := clitest.Execute(t, commands, "mcp-servers", "get", "platform", serverID)
+	if err != nil || !strings.Contains(out, "reg-1") || !strings.Contains(out, "registered by openarity 2026-11-19 10:00") {
+		t.Errorf("out = %s, %v", out, err)
+	}
+}
+
 const startReply = `{"authorize_url":"https://accounts.example/o/oauth2/auth?state=s"}`
 
 // Connect prints the address and waits for a sign-in made since it began:

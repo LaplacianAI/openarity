@@ -3149,16 +3149,22 @@ paths:
       summary: Begin signing in to a server
       description: |
         Requires `tool:write` in this team. For a server that signs in
-        (`auth_kind` oauth, with an OAuth client), the brain finds its
-        authorization server as the MCP authorization spec lays out, begins a
-        sign-in with PKCE that lasts ten minutes, and answers with the URL to
-        send the person to. They come back to `/oauth/mcp/callback`, which must
-        be the client's registered redirect URI, under `PUBLIC_URL`.
+        (`auth_kind` oauth), the brain finds its authorization server as the
+        MCP authorization spec lays out, begins a sign-in with PKCE that lasts
+        ten minutes, and answers with the URL to send the person to. They come
+        back to `/oauth/mcp/callback`, under `PUBLIC_URL`.
 
-        409 when the server is reached with a token, is a command server, has
-        no OAuth client, offers more than five scopes with none chosen on it,
-        or when this brain has no `PUBLIC_URL`. 502 when the server's sign-in
-        cannot be found or offers no PKCE with S256.
+        The client is the server's own `oauth_client_id` when it has one.
+        Without one, the brain registers a client with the authorization
+        server (RFC 7591) at the first sign-in, a public one where it may,
+        and keeps it for every later sign-in, refresh and revocation while the
+        authorization server and the redirect URI stay the same.
+
+        409 when the server is reached with a token, is a command server,
+        offers more than five scopes with none chosen on it, has no client and
+        its authorization server registers none, or when this brain has no
+        `PUBLIC_URL`. 502 when the server's sign-in cannot be found, offers no
+        PKCE with S256, or refused the registration, with its reason.
       responses:
         "200":
           description: The sign-in, begun
@@ -3183,7 +3189,35 @@ paths:
         "409":
           description: The server cannot be signed in to as it is
         "502":
-          description: The server's sign-in could not be found
+          description: The server's sign-in could not be found, or refused the registration
+
+  /teams/{id}/mcp-servers/{serverID}/oauth/registration:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ServerID"
+    delete:
+      operationId: forgetMCPServerOAuthRegistration
+      tags: [mcp-servers]
+      summary: Forget the client openarity registered for a server
+      description: |
+        Requires `tool:write` in this team. Forgets the client the brain
+        registered for a server with no client of its own, and ends the
+        sign-in made with it, so the next sign-in registers a new one: for an
+        authorization server that stopped accepting the client on its own
+        page, which never sends the person back to say so. 204 also when
+        nothing was registered. 409 for a server with a client of its own, or
+        one that does not sign in.
+      responses:
+        "204":
+          description: Forgotten, or there was nothing to forget
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The server signs in with a client of its own, or does not sign in
 
   /teams/{id}/mcp-secrets/{name}:
     parameters:
@@ -5187,10 +5221,13 @@ components:
           description: |
             How the server is reached: `static`, with `auth_secret_ref` or no
             token at all, or `oauth`, signed in to on the dashboard as the
-            client named here.
+            client named here, or with none named, as one the brain registers.
         oauth_client_id:
           type: string
-          description: The OAuth client a server that signs in signs in as
+          description: |
+            The OAuth client a server that signs in signs in as, when one was
+            registered for it by hand. Absent, the brain registers its own; see
+            `oauth_registration`.
         oauth_client_secret_ref:
           type: string
           description: The client's secret, when it is a confidential client. A secret reference; the value is never returned.
@@ -5201,6 +5238,8 @@ components:
           description: The scopes a sign-in asks for. Absent, the ones the server's metadata offers.
         connection:
           $ref: "#/components/schemas/MCPServerConnection"
+        oauth_registration:
+          $ref: "#/components/schemas/MCPServerOAuthRegistration"
         bare:
           type: boolean
           description: Tools reach the model as `<tool>` rather than `<name>__<tool>`
@@ -5232,6 +5271,22 @@ components:
           type: string
           format: date-time
         updated_at:
+          type: string
+          format: date-time
+
+    MCPServerOAuthRegistration:
+      type: object
+      nullable: true
+      required: [client_id, registered_at]
+      description: |
+        The client the brain registered for a server with no
+        `oauth_client_id` of its own, or null when it has registered none.
+        Never its secret. Always sent.
+      properties:
+        client_id:
+          type: string
+          description: As the authorization server issued it, and shows on its consent screen
+        registered_at:
           type: string
           format: date-time
 
@@ -5338,19 +5393,21 @@ components:
           enum: [static, oauth]
           default: static
           description: |
-            `oauth` for a url server signed in to on the dashboard: it takes
-            `oauth_client_id` and no `auth_secret_ref`. Changing the url, the
+            `oauth` for a url server signed in to on the dashboard: it takes no
+            `auth_secret_ref`, and `oauth_client_id` only for a client
+            registered by hand; without one, the brain registers its own at the
+            first sign-in. Changing the url, the
             client or the kind ends a sign-in already made; changing only the
             scopes keeps it, and connecting again asks for them.
         oauth_client_id:
           type: string
           minLength: 1
           maxLength: 512
-          description: Only with `auth_kind` oauth. The OAuth client registered with the server's authorization server, its redirect URI `<PUBLIC_URL>/oauth/mcp/callback`.
+          description: Only with `auth_kind` oauth, and optional there. A client registered by hand with the server's authorization server, its redirect URI `<PUBLIC_URL>/oauth/mcp/callback`. Absent, the brain registers one itself.
         oauth_client_secret_ref:
           type: string
           pattern: "^teams/[0-9a-f-]{36}/mcp/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*#[A-Za-z0-9_-]+$"
-          description: Only with `auth_kind` oauth, for a confidential client. A secret reference in this team.
+          description: Only with `oauth_client_id`, for a confidential client. A secret reference in this team.
         oauth_scopes:
           type: array
           maxItems: 50

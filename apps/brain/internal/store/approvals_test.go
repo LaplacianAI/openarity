@@ -498,11 +498,9 @@ func TestTheApprovalsMigrationRollsBackWithDataInIt(t *testing.T) {
 		t.Fatalf("CreateApprovalRule: %v", err)
 	}
 
-	for range 4 { // require_other, the index, the validation, then the tables and columns
-		if err := s.Rollback(t.Context()); err != nil {
-			t.Fatalf("Rollback: %v", err)
-		}
-	}
+	// To the migration before them, by version: counting steps back breaks
+	// as soon as a later migration lands above the four of approvals.
+	downTo(t, s, 20261119090000)
 	if tableExists(t, s, "approvals") || tableExists(t, s, "approval_rules") {
 		t.Error("the approval tables survived the rollback")
 	}

@@ -36,6 +36,48 @@ type fakeStore struct {
 	connected []db.UpsertOAuthConnectionParams
 	pruned    int
 	insertErr error
+	clients   map[uuid.UUID]db.McpOauthClient
+	forgotten []string
+}
+
+func (s *fakeStore) GetOAuthClient(_ context.Context, server uuid.UUID) (db.McpOauthClient, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.clients[server]
+	if !ok {
+		return db.McpOauthClient{}, pgx.ErrNoRows
+	}
+	return c, nil
+}
+
+// ReplaceOAuthClient keeps a registration only over the one expected, as
+// the query's conflict clause does: none expected and none there inserts.
+func (s *fakeStore) ReplaceOAuthClient(_ context.Context, p db.ReplaceOAuthClientParams) (db.ReplaceOAuthClientRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.clients == nil {
+		s.clients = map[uuid.UUID]db.McpOauthClient{}
+	}
+	if cur, ok := s.clients[p.ServerID]; ok && (p.ExpectedClientID == nil || *p.ExpectedClientID != cur.ClientID) {
+		return db.ReplaceOAuthClientRow{}, pgx.ErrNoRows
+	}
+	c := db.McpOauthClient{
+		ServerID: p.ServerID, TeamID: p.TeamID, Issuer: p.Issuer, RedirectUri: p.RedirectUri,
+		ClientID: p.ClientID, SecretID: p.SecretID, SecretExpiresAt: p.SecretExpiresAt, RegisteredAt: time.Now(),
+	}
+	s.clients[p.ServerID] = c
+	return db.ReplaceOAuthClientRow(c), nil
+}
+
+func (s *fakeStore) ForgetOAuthClient(_ context.Context, p db.ForgetOAuthClientParams) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.clients[p.ServerID]; !ok || c.ClientID != p.ClientID {
+		return 0, nil
+	}
+	delete(s.clients, p.ServerID)
+	s.forgotten = append(s.forgotten, p.ClientID)
+	return 1, nil
 }
 
 func (s *fakeStore) GetMCPServer(_ context.Context, id uuid.UUID) (db.McpServer, error) {
@@ -97,6 +139,23 @@ type fakeDisc struct {
 	exchErr    error
 	exchanged  []string // code|verifier|redirect
 	discovered int
+	issued     discovery.Registration
+	regErr     error
+	registered []string // redirect
+	onRegister func()
+}
+
+// Register answers as the real one does for a server with no registration
+// endpoint, and otherwise with what the test set.
+func (d *fakeDisc) Register(_ context.Context, as discovery.AuthServer, redirect string) (discovery.Registration, error) {
+	if as.RegisterURL == "" {
+		return discovery.Registration{}, discovery.ErrNoRegistration
+	}
+	d.registered = append(d.registered, redirect)
+	if d.onRegister != nil {
+		d.onRegister()
+	}
+	return d.issued, d.regErr
 }
 
 func (d *fakeDisc) DiscoverAuth(context.Context, string) (discovery.AuthServer, error) {
@@ -128,6 +187,10 @@ func (s *fakeSecrets) PutAll(_ context.Context, path string, values map[string]s
 		return s.putErr
 	}
 	s.written[path] = values
+	// What is written can be read back, as from the store.
+	for k, v := range values {
+		s.values[path+"#"+k] = v
+	}
 	return nil
 }
 
@@ -199,6 +262,9 @@ func (w *world) mux(t *testing.T) *http.ServeMux {
 	rs := authz.NewRoutes()
 	write := "tool:write"
 	if err := rs.Add("POST", "/teams/{id}/mcp-servers/{serverID}/oauth/start", "team", &write); err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.Add("DELETE", "/teams/{id}/mcp-servers/{serverID}/oauth/registration", "team", &write); err != nil {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewJSONHandler(&w.logged, nil))
@@ -299,7 +365,6 @@ func TestAStartThatCannotWorkIsRefusedAndWritesNothing(t *testing.T) {
 		"a static server":    {func(w *world) { w.edit(func(s *db.McpServer) { s.AuthKind = "static" }) }, http.StatusConflict},
 		"a command server":   {func(w *world) { w.edit(func(s *db.McpServer) { s.Url = nil }) }, http.StatusConflict},
 		"no PUBLIC_URL":      {func(w *world) { w.publicURL = "" }, http.StatusConflict},
-		"no OAuth client":    {func(w *world) { w.edit(func(s *db.McpServer) { s.OauthClientID = nil }) }, http.StatusConflict},
 		"another team's":     {func(w *world) { w.edit(func(s *db.McpServer) { s.TeamID = uuid.New() }) }, http.StatusNotFound},
 		"no such server":     {func(w *world) { w.store.servers = map[uuid.UUID]db.McpServer{} }, http.StatusNotFound},
 		"without tool:write": {func(w *world) { w.allowed = false }, http.StatusForbidden},

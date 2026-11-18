@@ -24,6 +24,7 @@ type server struct {
 	OAuthClientSecret  *string            `json:"oauth_client_secret_ref,omitempty"`
 	OAuthScopes        []string           `json:"oauth_scopes,omitempty"`
 	Connection         *connection        `json:"connection"`
+	Registration       *registration      `json:"oauth_registration"`
 	Bare               bool               `json:"bare"`
 	DiscoveredAt       *time.Time         `json:"discovered_at"`
 	LastDiscoveryError *string            `json:"last_discovery_error"`
@@ -47,7 +48,8 @@ type Request struct {
 	Egress []sandbox.HostPort `json:"egress"`
 
 	// AuthKind is static, the default, or oauth: signed in to on the
-	// dashboard with the client named here.
+	// dashboard with the client named here, or, with none named, one the
+	// brain registers itself at the first Connect.
 	AuthKind             string   `json:"auth_kind"`
 	OAuthClientID        *string  `json:"oauth_client_id"`
 	OAuthClientSecretRef *string  `json:"oauth_client_secret_ref"`
@@ -62,6 +64,13 @@ type connection struct {
 	ConnectedAt     time.Time  `json:"connected_at"`
 	ScopesGranted   []string   `json:"scopes_granted"`
 	AccessExpiresAt *time.Time `json:"access_expires_at"`
+}
+
+// registration is the client the brain registered for a server with no
+// client of its own: its id, which the authorization server shows, and when.
+type registration struct {
+	ClientID     string    `json:"client_id"`
+	RegisteredAt time.Time `json:"registered_at"`
 }
 
 type tool struct {

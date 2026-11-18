@@ -167,6 +167,9 @@ func authOf(s client.MCPServer) string {
 func printSignIn(opts *cli.Options, table *printer.Table, s *client.MCPServer) {
 	if s.OauthClientID != nil {
 		table.Row("client", cli.Safe(*s.OauthClientID), "")
+	} else if r := s.OauthRegistration; r != nil {
+		table.Row("client", cli.Safe(r.ClientID)+opts.Styles.Muted.Render(
+			", registered by openarity "+r.RegisteredAt.UTC().Format("2006-01-02 15:04")), "")
 	}
 	if s.OauthClientSecretRef != nil {
 		table.Row("secret", cli.Safe(*s.OauthClientSecretRef), "")

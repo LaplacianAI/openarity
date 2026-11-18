@@ -29,6 +29,8 @@ type Store interface {
 	DeleteMCPServer(ctx context.Context, id uuid.UUID) error
 	GetOAuthConnection(ctx context.Context, serverID uuid.UUID) (db.McpOauthConnection, error)
 	ListOAuthConnectionsOf(ctx context.Context, serverIDs []uuid.UUID) ([]db.McpOauthConnection, error)
+	GetOAuthClient(ctx context.Context, serverID uuid.UUID) (db.McpOauthClient, error)
+	ListOAuthClientsOf(ctx context.Context, serverIDs []uuid.UUID) ([]db.McpOauthClient, error)
 	DeleteOAuthConnection(ctx context.Context, serverID uuid.UUID) (int64, error)
 	ListMCPToolsByServer(ctx context.Context, mcpServerID uuid.UUID) ([]db.McpTool, error)
 	RecordMCPServerDiscoveryFailure(ctx context.Context, arg db.RecordMCPServerDiscoveryFailureParams) (int64, error)
@@ -417,8 +419,9 @@ func (h *handler) viewOne(ctx context.Context, row db.McpServer) (server, error)
 	return out[0], nil
 }
 
-// viewAll reads the page's sign-ins in one query: only a server that signs in
-// can have one, so a page of static servers asks for none.
+// viewAll reads the page's sign-ins and registered clients in one query
+// each: only a server that signs in can have either, so a page of static
+// servers asks for none.
 func (h *handler) viewAll(ctx context.Context, rows []db.McpServer) ([]server, error) {
 	var signing []uuid.UUID
 	for _, row := range rows {
@@ -436,6 +439,16 @@ func (h *handler) viewAll(ctx context.Context, rows []db.McpServer) ([]server, e
 			byServer[c.ServerID] = c
 		}
 	}
+	registered := map[uuid.UUID]db.McpOauthClient{}
+	if len(signing) > 0 {
+		clients, err := h.store.ListOAuthClientsOf(ctx, signing)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range clients {
+			registered[c.ServerID] = c
+		}
+	}
 
 	out := make([]server, len(rows))
 	for i, row := range rows {
@@ -448,6 +461,11 @@ func (h *handler) viewAll(ctx context.Context, rows []db.McpServer) ([]server, e
 				Status: c.Status, Reason: c.Reason, ConnectedBy: c.ConnectedBy, ConnectedAt: c.ConnectedAt,
 				ScopesGranted: c.ScopesGranted, AccessExpiresAt: c.AccessExpiresAt,
 			}
+		}
+		// A client set on the server wins, so a registration it outlived is
+		// not the one in use and is not shown.
+		if c, ok := registered[row.ID]; ok && row.OauthClientID == nil {
+			s.Registration = &registration{ClientID: c.ClientID, RegisteredAt: c.RegisteredAt}
 		}
 		out[i] = s
 	}

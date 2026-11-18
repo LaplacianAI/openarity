@@ -150,7 +150,7 @@ func (d *definition) flags(cmd *cobra.Command) {
 		"tools reach the model as <tool> rather than <server>__<tool>")
 	cmd.Flags().BoolVar(&d.oauth, "oauth", false,
 		"with --url: sign in with OAuth rather than a static token; connect it afterwards")
-	cmd.Flags().StringVar(&d.clientID, "client-id", "", "with --oauth: the OAuth client registered for the server")
+	cmd.Flags().StringVar(&d.clientID, "client-id", "", "with --oauth: an OAuth client registered for the server by hand; left out, openarity registers one when connecting")
 	cmd.Flags().StringVar(&d.secretRef, "client-secret-ref", "",
 		"with --oauth, for a confidential client: its secret's reference, teams/<team_id>/mcp/<name>#<key>")
 	cmd.Flags().StringArrayVar(&d.scopes, "scope", nil,
@@ -289,6 +289,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"    oa mcp-servers create platform github --url https://api.githubcopilot.com/mcp/ \\\n" +
 			"        --auth-secret-ref teams/<team_id>/mcp/github#token\n" +
 			"    oa mcp-servers create platform files -- npx -y @modelcontextprotocol/server-filesystem /data\n" +
+			"    oa mcp-servers create platform drive --url https://mcp.example.com/mcp --oauth\n" +
 			"    oa mcp-servers create platform gmail --url https://gmailmcp.googleapis.com/mcp/v1 \\\n" +
 			"        --oauth --client-id <id> --client-secret-ref teams/<team_id>/mcp/google#secret \\\n" +
 			"        --scope https://www.googleapis.com/auth/gmail.readonly",

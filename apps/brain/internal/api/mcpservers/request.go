@@ -119,8 +119,10 @@ func checkAuth(teamID uuid.UUID, req *Request) error {
 		return errors.New("a server that signs in needs a url: a command server is given env")
 	case req.AuthSecretRef != nil:
 		return errors.New("a server that signs in carries no auth_secret_ref: its token comes from the sign-in")
-	case req.OAuthClientID == nil || strings.TrimSpace(*req.OAuthClientID) == "" || len(*req.OAuthClientID) > 512:
-		return errors.New("a server that signs in needs oauth_client_id, the OAuth client registered for it")
+	case req.OAuthClientID != nil && (strings.TrimSpace(*req.OAuthClientID) == "" || len(*req.OAuthClientID) > 512):
+		return errors.New("oauth_client_id, when set, is the OAuth client registered for the server: leave it out to have openarity register one")
+	case req.OAuthClientID == nil && req.OAuthClientSecretRef != nil:
+		return errors.New("oauth_client_secret_ref is the secret of the client named in oauth_client_id, which is not set")
 	case len(req.OAuthScopes) > maxScopes:
 		return fmt.Errorf("oauth_scopes may name at most %d scopes", maxScopes)
 	}

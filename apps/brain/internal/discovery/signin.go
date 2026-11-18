@@ -26,10 +26,14 @@ var ErrNeedsSignIn = errors.New("the server needs signing in again: reconnect it
 // a call that is slow to start does not arrive with one just gone.
 const refreshBefore = 2 * time.Minute
 
-// Connections is where a server's sign-in is kept. Renew holds the sign-in
-// while renew runs and stores the tokens renew returns before letting go;
-// renew returning none stores nothing.
+// Connections is where a server's sign-in is kept, and the client the brain
+// registered for it. Renew holds the sign-in while renew runs and stores the
+// tokens renew returns before letting go; renew returning none stores
+// nothing. ForgetClient drops a registered client the authorization server
+// refused, and the sign-in made with it, so the next Connect registers anew.
 type Connections interface {
+	Clients
+	ForgetClient(ctx context.Context, server uuid.UUID, clientID string) error
 	Connection(ctx context.Context, server uuid.UUID) (db.McpOauthConnection, error)
 	Renew(ctx context.Context, server uuid.UUID, renew func(ctx context.Context, c db.McpOauthConnection) (*Tokens, error)) error
 	MarkNeedsSignIn(ctx context.Context, server uuid.UUID, connectedAt time.Time, reason string) error
@@ -43,13 +47,14 @@ func (d *Discoverer) SignsInWith(s Connections) *Discoverer {
 	return d
 }
 
-// ClientOf is the OAuth client a server signs in as: its id, and its secret
-// when it is a confidential one.
-func ClientOf(ctx context.Context, sec Secrets, row db.McpServer) (Client, error) {
-	c := Client{}
-	if row.OauthClientID != nil {
-		c.ID = *row.OauthClientID
+// ClientOf is the OAuth client a server signs in as: the one set on the
+// server, which always wins, else the one the brain registered for it. Its
+// secret comes with it when it is a confidential one.
+func ClientOf(ctx context.Context, sec Secrets, clients Clients, row db.McpServer) (Client, error) {
+	if row.OauthClientID == nil {
+		return registeredOf(ctx, sec, clients, row)
 	}
+	c := Client{ID: *row.OauthClientID}
 	if row.OauthClientSecretRef == nil {
 		return c, nil
 	}
@@ -76,6 +81,9 @@ type tokens struct {
 	access      string
 	expiry      time.Time
 	connectedAt time.Time
+	// client is the one the last renewal was made with, so a refusal can
+	// forget that one and not one registered since.
+	client string
 }
 
 func lasts(expiry time.Time) bool {
@@ -113,6 +121,10 @@ func (t *tokens) get(ctx context.Context, stale string) (string, error) {
 		t.mark(ctx, err.Error())
 		return "", ErrNeedsSignIn
 	}
+	if errors.Is(err, ErrClientRefused) {
+		t.refused(ctx, err.Error())
+		return "", ErrNeedsSignIn
+	}
 	if err != nil {
 		return "", err
 	}
@@ -145,10 +157,11 @@ func (t *tokens) renew(ctx context.Context, c db.McpOauthConnection, stale strin
 	if err := json.Unmarshal(c.Auth, &as); err != nil {
 		return nil, fmt.Errorf("reading the sign-in's discovery: %w", err)
 	}
-	client, err := ClientOf(ctx, t.d.secrets, t.s)
+	client, err := ClientOf(ctx, t.d.secrets, t.d.connections, t.s)
 	if err != nil {
 		return nil, fmt.Errorf("reading the server's client secret: %w", err)
 	}
+	t.client = client.ID
 	renewed, err := t.d.Refresh(ctx, as, client, refresh)
 	if err != nil {
 		return nil, err
@@ -187,6 +200,19 @@ func (t *tokens) mark(ctx context.Context, reason string) {
 		return
 	}
 	_ = t.d.connections.MarkNeedsSignIn(context.WithoutCancel(ctx), t.s.ID, t.connectedAt, reason)
+	t.access = ""
+}
+
+// refused ends a sign-in whose client was refused, after Renew has let go of
+// the sign-in's row. A registered client is forgotten with the sign-in, so
+// the next Connect registers again rather than meeting the same refusal; a
+// client set on the server is marked, and its person fixes it.
+func (t *tokens) refused(ctx context.Context, reason string) {
+	if t.s.OauthClientID != nil || t.client == "" {
+		t.mark(ctx, reason)
+		return
+	}
+	_ = t.d.connections.ForgetClient(context.WithoutCancel(ctx), t.s.ID, t.client)
 	t.access = ""
 }
 

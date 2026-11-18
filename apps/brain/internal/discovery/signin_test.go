@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -36,7 +37,9 @@ type renewWorld struct {
 	rotate    bool   // a new refresh token with each access token
 	refuseAll bool   // the MCP endpoint answers 401 to everything
 	needScope string // the MCP endpoint answers 403 insufficient_scope
+	badClient bool   // the token endpoint answers invalid_client
 	seen      []string
+	clients   []string // the client_id of every token request
 
 	row         db.McpServer
 	secrets     *lockedSecrets
@@ -52,7 +55,13 @@ func newRenewWorld(t *testing.T) *renewWorld {
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		w.asked++
+		w.clients = append(w.clients, r.PostForm.Get("client_id"))
 		rw.Header().Set("Content-Type", "application/json")
+		if w.badClient {
+			rw.WriteHeader(http.StatusUnauthorized)
+			_, _ = rw.Write([]byte(`{"error":"invalid_client"}`))
+			return
+		}
 		if w.revoked || r.PostForm.Get("refresh_token") != w.refresh {
 			rw.WriteHeader(http.StatusBadRequest)
 			_, _ = rw.Write([]byte(`{"error":"invalid_grant"}`))
@@ -175,6 +184,36 @@ type fakeConnections struct {
 	secrets *lockedSecrets
 	path    string
 	marks   []string
+	// client is the registered one, if any; forgot is every client
+	// forgotten, and heldRow one forgotten while the row was held, which
+	// against Postgres waits on itself forever.
+	client  *db.McpOauthClient
+	forgot  []string
+	heldRow bool
+}
+
+func (f *fakeConnections) GetOAuthClient(context.Context, uuid.UUID) (db.McpOauthClient, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.client == nil {
+		return db.McpOauthClient{}, pgx.ErrNoRows
+	}
+	return *f.client, nil
+}
+
+func (f *fakeConnections) ForgetClient(_ context.Context, _ uuid.UUID, clientID string) error {
+	if f.row.TryLock() {
+		f.row.Unlock()
+	} else {
+		f.heldRow = true
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.client != nil && f.client.ClientID == clientID {
+		f.client = nil
+		f.forgot = append(f.forgot, clientID)
+	}
+	return nil
 }
 
 func (f *fakeConnections) Connection(context.Context, uuid.UUID) (db.McpOauthConnection, error) {
@@ -433,5 +472,63 @@ func TestAStaticServerIsCalledWithItsTokenAsBefore(t *testing.T) {
 	}
 	if n, seen := w.counts(); n != 0 || len(seen) != 1 || seen[0] != "at-0" {
 		t.Errorf("refreshes = %d, seen %v; want its static token", n, seen)
+	}
+}
+
+// registeredWorld signs in with a client the brain registered: the server has
+// none of its own.
+func registeredWorld(t *testing.T) *renewWorld {
+	t.Helper()
+	w := newRenewWorld(t)
+	w.row.OauthClientID = nil
+	w.connections.client = &db.McpOauthClient{ServerID: w.row.ID, TeamID: w.row.TeamID, ClientID: "reg-1"}
+	w.store("at-0", "rt-0", time.Now().Add(30*time.Second))
+	return w
+}
+
+func TestARenewalUsesTheRegisteredClient(t *testing.T) {
+	w := registeredWorld(t)
+	if err := w.call(t.Context(), w.discoverer()); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.clients) != 1 || w.clients[0] != "reg-1" {
+		t.Errorf("token requests as %v, want one as reg-1", w.clients)
+	}
+}
+
+// An authorization server that forgot the client refuses it at every
+// refresh. Forgotten, the next Connect registers again instead of meeting the
+// same refusal on the consent screen.
+func TestARegisteredClientRefusedAtRenewalIsForgotten(t *testing.T) {
+	w := registeredWorld(t)
+	w.badClient = true
+
+	if err := w.call(t.Context(), w.discoverer()); !errors.Is(err, ErrNeedsSignIn) {
+		t.Fatalf("err = %v, want ErrNeedsSignIn", err)
+	}
+	if len(w.connections.forgot) != 1 || w.connections.forgot[0] != "reg-1" {
+		t.Errorf("forgot %v, want reg-1", w.connections.forgot)
+	}
+	if w.connections.heldRow {
+		t.Error("forgot the client while the sign-in's row was held")
+	}
+	if _, marks := w.connections.status(); len(marks) != 0 {
+		t.Errorf("marks %v; the forgotten sign-in is ended with its client, not marked", marks)
+	}
+}
+
+func TestAClientSetOnTheServerRefusedAtRenewalNeedsSigningIn(t *testing.T) {
+	w := newRenewWorld(t)
+	w.store("at-0", "rt-0", time.Now().Add(30*time.Second))
+	w.badClient = true
+
+	if err := w.call(t.Context(), w.discoverer()); !errors.Is(err, ErrNeedsSignIn) {
+		t.Fatalf("err = %v, want ErrNeedsSignIn", err)
+	}
+	if status, marks := w.connections.status(); status != "needs_sign_in" || len(marks) != 1 {
+		t.Errorf("status = %s, marks %v; want needs_sign_in", status, marks)
+	}
+	if len(w.connections.forgot) != 0 {
+		t.Errorf("forgot %v; a client set on the server is its person's", w.connections.forgot)
 	}
 }

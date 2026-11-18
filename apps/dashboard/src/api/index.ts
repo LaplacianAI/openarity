@@ -728,6 +728,13 @@ export function disconnectMCPServerOAuth(teamId: string, serverId: string): Prom
   return request<void>(`/teams/${teamId}/mcp-servers/${serverId}/oauth`, { method: "DELETE" });
 }
 
+/** Forgets the client openarity registered for a server, and the sign-in made with it. */
+export function forgetMCPServerOAuthRegistration(teamId: string, serverId: string): Promise<void> {
+  return request<void>(`/teams/${teamId}/mcp-servers/${serverId}/oauth/registration`, {
+    method: "DELETE",
+  });
+}
+
 export function discoverMCPServer(teamId: string, serverId: string): Promise<{ items: MCPTool[] }> {
   return request<{ items: MCPTool[] }>(`/teams/${teamId}/mcp-servers/${serverId}/discover`, {
     method: "POST",

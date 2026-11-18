@@ -16,12 +16,13 @@ var (
 type Kind string
 
 const (
-	KindChannel     Kind = "channels"
-	KindAttachments Kind = "attachments"
-	KindMCP         Kind = "mcp"
-	KindSearch      Kind = "search"
-	KindMCPOAuth    Kind = "mcp-oauth"
-	KindSandbox     Kind = "sandbox"
+	KindChannel        Kind = "channels"
+	KindAttachments    Kind = "attachments"
+	KindMCP            Kind = "mcp"
+	KindSearch         Kind = "search"
+	KindMCPOAuth       Kind = "mcp-oauth"
+	KindMCPOAuthClient Kind = "mcp-oauth-client"
+	KindSandbox        Kind = "sandbox"
 )
 
 var AllKinds = []Kind{
@@ -30,6 +31,7 @@ var AllKinds = []Kind{
 	KindMCP,
 	KindSearch,
 	KindMCPOAuth,
+	KindMCPOAuthClient,
 	KindSandbox,
 }
 

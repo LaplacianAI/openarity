@@ -169,6 +169,16 @@ path "secret/data/teams/+/mcp-oauth/+" {
 path "secret/metadata/teams/+/mcp-oauth/+" {
   capabilities = ["delete"]
 }
+# The secret of an OAuth client the brain registered for an MCP server, when
+# the authorization server issued one. A fresh path per registration, as a
+# search key's: read to sign in, create when registering, delete on metadata/
+# for the sweep once a registration is replaced. No update.
+path "secret/data/teams/+/mcp-oauth-client/+" {
+  capabilities = ["read", "create"]
+}
+path "secret/metadata/teams/+/mcp-oauth-client/+" {
+  capabilities = ["delete"]
+}
 path "secret/data/teams/+/search/+" {
   capabilities = ["read", "create"]
 }
