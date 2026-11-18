@@ -664,6 +664,11 @@ default notification policy sends them, so set a contact point there first.
 Run it again to put a rule back. `GRAFANA_ROOT_URL` in `.env` is the address
 a notification links to.
 
+The **Openarity usage** dashboard reads the same PostgreSQL data source:
+runs and how they ended, tokens by agent and team, run and queue times, the
+largest delegation trees, the last failures with their errors, and channel
+delivery. Its Team and Agent filters apply to every panel.
+
 Alloy reads the containers through the Docker API, and the Docker socket is
 root on the machine, so Alloy never holds it: a socket proxy does, and
 answers only reads of containers, their logs and networks. The logs stay on
