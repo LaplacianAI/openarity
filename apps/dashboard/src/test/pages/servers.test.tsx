@@ -55,6 +55,8 @@ const base = {
   authRef: "",
   command: "",
   env: "",
+  vars: "",
+  egress: "",
   bare: false,
   token: "",
   auth: "token" as const,

@@ -28,6 +28,7 @@ afterEach(() => {
 const NEVER: TeamSettings = {
   model: null,
   search: { provider: "none", url: null, key_set: false },
+  sandbox: { provider: "none", url: null, image: null, key_set: false },
   learning: false,
   compaction_messages: 100,
   hub: null,
@@ -37,6 +38,7 @@ const NEVER: TeamSettings = {
 const BRAVE: TeamSettings = {
   model: { name: "gpt-5", max_tokens: 4096, temperature: 0.2 },
   search: { provider: "brave", url: null, key_set: true },
+  sandbox: { provider: "none", url: null, image: null, key_set: false },
   learning: false,
   compaction_messages: 250,
   hub: null,
@@ -69,6 +71,7 @@ describe("the request the form sends", () => {
     expect(settingsRequest(draftOf(BRAVE), BRAVE)).toEqual({
       model: { name: "gpt-5", max_tokens: 4096, temperature: 0.2 },
       search: { provider: "brave" },
+      sandbox: { provider: "none" },
       learning: false,
       compaction_messages: 250,
       hub: null,
@@ -177,6 +180,7 @@ describe("each group on its own", () => {
     expect(groupRequest("learning", d, BRAVE)).toEqual({
       model: { name: "gpt-5", max_tokens: 4096, temperature: 0.2 },
       search: { provider: "brave" },
+      sandbox: { provider: "none" },
       learning: true,
       compaction_messages: 250,
       hub: null,
@@ -261,6 +265,7 @@ it("saves the learning switch without touching the key", async () => {
   expect(put(seen)).toEqual({
     model: { name: "gpt-5", max_tokens: 4096, temperature: 0.2 },
     search: { provider: "brave" },
+    sandbox: { provider: "none" },
     learning: true,
     compaction_messages: 250,
     hub: null,
@@ -490,5 +495,79 @@ describe("the hub", () => {
 
     await waitFor(() => expect(put(seen)).toBeDefined());
     expect(put(seen).hub).toBe("billing");
+  });
+});
+
+const DAYTONA: TeamSettings = {
+  ...NEVER,
+  sandbox: {
+    provider: "daytona",
+    url: "https://daytona.example/api",
+    image: "mcp-room:1",
+    key_set: true,
+  },
+  updated_at: "2026-11-18T09:00:00Z",
+};
+
+describe("the sandbox the form sends", () => {
+  it("keeps the stored key while the provider and address are unchanged", () => {
+    const body = settingsRequest({ ...draftOf(DAYTONA), sandboxImage: "mcp-room:2" }, DAYTONA);
+    expect(body).toMatchObject({
+      sandbox: { provider: "daytona", url: "https://daytona.example/api", image: "mcp-room:2" },
+    });
+    expect((body as { sandbox: object }).sandbox).not.toHaveProperty("api_key");
+  });
+
+  it("asks for the key again when a self-hosted Daytona moves", () => {
+    expect(
+      settingsRequest({ ...draftOf(DAYTONA), sandboxURL: "https://other.example/api" }, DAYTONA),
+    ).toMatch(/old address/);
+  });
+
+  it("never carries a key from one provider to another", () => {
+    expect(
+      settingsRequest({ ...draftOf(DAYTONA), sandbox: "e2b", sandboxURL: "" }, DAYTONA),
+    ).toMatch(/never carried/);
+  });
+
+  it("sends a typed key exactly as typed, and no address to E2B", () => {
+    expect(
+      settingsRequest(
+        { ...draftOf(NEVER), sandbox: "e2b", sandboxURL: "http://left-over", sandboxKey: " k " },
+        NEVER,
+      ),
+    ).toMatchObject({ sandbox: { provider: "e2b", api_key: " k " } });
+    const body = settingsRequest(
+      { ...draftOf(NEVER), sandbox: "e2b", sandboxURL: "http://left-over", sandboxKey: "k" },
+      NEVER,
+    );
+    expect((body as { sandbox: object }).sandbox).not.toHaveProperty("url");
+  });
+
+  it("refuses sandboxd with no address", () => {
+    expect(
+      settingsRequest({ ...draftOf(NEVER), sandbox: "sandboxd", sandboxKey: "t" }, NEVER),
+    ).toMatch(/address/);
+  });
+
+  it("sends only the provider when the sandbox is off", () => {
+    expect(settingsRequest({ ...draftOf(DAYTONA), sandbox: "none" }, DAYTONA)).toMatchObject({
+      sandbox: { provider: "none" },
+    });
+  });
+
+  // A brain from before sandboxes sends no sandbox at all.
+  it("reads a team with no sandbox field as having none", () => {
+    const { sandbox: _, ...old } = NEVER;
+    expect(draftOf(old as TeamSettings).sandbox).toBe("none");
+  });
+
+  it("saves the sandbox on its own, leaving the search as stored", () => {
+    const body = groupRequest(
+      "sandbox",
+      { ...draftOf(BRAVE), provider: "tavily", sandbox: "e2b", sandboxKey: "k" },
+      BRAVE,
+    );
+    expect(body).toMatchObject({ search: { provider: "brave" }, sandbox: { provider: "e2b" } });
   });
 });

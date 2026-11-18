@@ -2,7 +2,7 @@ import { Field, TextArea } from "@/components/registry-bits";
 import { Input } from "@/components/ui/input";
 import { SwitchField } from "@/components/ui/switch";
 import { Mono } from "@/components/ui-bits";
-import type { ServerDraft } from "@/lib/server-draft";
+import { missesRegistry, NPM_REGISTRY, type ServerDraft } from "@/lib/server-draft";
 
 /**
  * An MCP server's fields, as the Servers screen registers and edits one and
@@ -141,6 +141,49 @@ export function ServerFields({
               onChange={(e) => set({ env: e.target.value })}
             />
           </Field>
+          <Field
+            label="Settings"
+            htmlFor="server-vars"
+            hint="NAME=value, one per line: plain values such as a host or a port, shown as they are. Secrets go in the environment."
+          >
+            <TextArea
+              id="server-vars"
+              value={draft.vars}
+              spellCheck={false}
+              onChange={(e) => set({ vars: e.target.value })}
+            />
+          </Field>
+          <Field
+            label="Network"
+            htmlFor="server-egress"
+            hint="host:port, one per line: where its sandbox may connect. It reaches nothing else."
+          >
+            <TextArea
+              id="server-egress"
+              value={draft.egress}
+              spellCheck={false}
+              onChange={(e) => set({ egress: e.target.value })}
+            />
+          </Field>
+          {missesRegistry(draft) ? (
+            <p className="text-sm text-muted-foreground">
+              npx installs the server when its sandbox starts, so it needs{" "}
+              <Mono>{NPM_REGISTRY}</Mono>.{" "}
+              <button
+                type="button"
+                className="underline underline-offset-2"
+                onClick={() =>
+                  set({
+                    egress: draft.egress.trim()
+                      ? `${draft.egress.trimEnd()}\n${NPM_REGISTRY}`
+                      : NPM_REGISTRY,
+                  })
+                }
+              >
+                Add it
+              </button>
+            </p>
+          ) : null}
         </>
       )}
       <SwitchField
