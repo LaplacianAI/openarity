@@ -60,6 +60,8 @@ func TestLoadDefaults(t *testing.T) {
 		"EmbeddingModel":         "",
 		"EmbeddingDimensions":    "0",
 		"TeamPurgeAfter":         "168h0m0s",
+		"SandboxImage":           "",
+		"SandboxIdle":            "30m0s",
 	}
 	got := map[string]string{
 		"Environment":            string(cfg.Environment),
@@ -100,6 +102,8 @@ func TestLoadDefaults(t *testing.T) {
 		"EmbeddingModel":         cfg.EmbeddingModel,
 		"EmbeddingDimensions":    strconv.Itoa(cfg.EmbeddingDimensions),
 		"TeamPurgeAfter":         cfg.TeamPurgeAfter.String(),
+		"SandboxImage":           cfg.SandboxImage,
+		"SandboxIdle":            cfg.SandboxIdle.String(),
 	}
 	for k, w := range want {
 		if got[k] != w {

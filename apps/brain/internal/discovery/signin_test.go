@@ -117,7 +117,7 @@ func (w *renewWorld) discoverer() *Discoverer {
 // call is one request to the MCP endpoint with a client built as a run
 // builds one.
 func (w *renewWorld) call(ctx context.Context, d *Discoverer) error {
-	c, err := d.Client(ctx, w.row)
+	_, c, err := d.Reach(ctx, w.row)
 	if err != nil {
 		return err
 	}
@@ -402,7 +402,7 @@ func TestAnOldSignInsRefusalLeavesANewOneAlone(t *testing.T) {
 	w := newRenewWorld(t)
 	w.needScope = "files:write"
 	d := w.discoverer()
-	c, err := d.Client(t.Context(), w.row)
+	_, c, err := d.Reach(t.Context(), w.row)
 	if err != nil {
 		t.Fatal(err)
 	}

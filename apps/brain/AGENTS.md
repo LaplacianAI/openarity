@@ -119,6 +119,7 @@ apps/brain/
     job.go             the drain as background work
   internal/reaper/     the sweep: one loop, one Effect per outside system
     job.go             the reaper as background work: SweepAll, and its Job
+    rooms.go           the room effect: idle rooms expired, rooms deleted with the key that made them
   internal/purge/      erasing deleted teams once TEAM_PURGE_AFTER has passed
   internal/whatsapp/   WhatsApp numbers linked as devices: leases, connections, pairing, paced sending
   internal/runtime/    a run: the agent built from its row, executed, recorded
@@ -148,6 +149,9 @@ apps/brain/
     firecrawl/         a team's Firecrawl: /v2/scrape
   internal/sandbox/    the port: Rooms, Spec, Endpoint; where a team's command MCP servers run
     <provider>/        e2b, daytona, sandboxd: each exports New
+    keeper/            a team's rooms, for any owner: the lock, the spec hash, the health wait, the token; Ensure
+    mcproom/           a command MCP server's Want for the keeper: the shim, npx's settings
+    sandboxtest/       a provider for tests whose rooms are HTTP servers that answer as the shim does
   internal/worker/     the background process: a registry of Jobs, and Run
   internal/store/      Postgres: pool, migrations, queries
     migrations/        goose .sql files, embedded into the binary

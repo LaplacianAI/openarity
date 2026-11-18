@@ -80,6 +80,16 @@ type Config struct {
 	// nothing up; empty is unset, so it cannot say that.
 	MCPRegistryURL string `env:"MCP_REGISTRY_URL" envDefault:"https://registry.modelcontextprotocol.io"`
 
+	/* Sandbox Configuration */
+	// SandboxImage overrides the image a team's command MCP server's room
+	// starts from on sandboxd and Daytona. Empty means the brain's own choice:
+	// the room image built with this very brain, or latest when it does not
+	// know which commit it is. E2B starts rooms from the team's template.
+	SandboxImage string `env:"SANDBOX_IMAGE" envDefault:""`
+	// SandboxIdle is how long a room may go unused before the reaper deletes
+	// it; the next call to its server starts a fresh one.
+	SandboxIdle time.Duration `env:"SANDBOX_IDLE" envDefault:"30m"`
+
 	/* Embedding Configuration */
 	EmbeddingBaseURL    string `env:"EMBEDDING_BASE_URL" envDefault:""`
 	EmbeddingAPIKey     string `env:"EMBEDDING_API_KEY" envDefault:""`
@@ -100,7 +110,7 @@ func (c *Config) String() string {
 			"SecretsBackend:%s SecretsAddr:%s "+
 			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
 			"LLMBaseURL:%s SkillImportHosts:%v MCPPrivateNetworks:%v MCPRegistryURL:%s "+
-			"EmbeddingBaseURL:%s EmbeddingModel:%s EmbeddingDimensions:%d TeamPurgeAfter:%s}",
+			"EmbeddingBaseURL:%s EmbeddingModel:%s EmbeddingDimensions:%d TeamPurgeAfter:%s SandboxImage:%s SandboxIdle:%s}",
 		c.Environment,
 		c.LogLevel,
 		c.APIBind,
@@ -124,6 +134,8 @@ func (c *Config) String() string {
 		c.EmbeddingModel,
 		c.EmbeddingDimensions,
 		c.TeamPurgeAfter,
+		c.SandboxImage,
+		c.SandboxIdle,
 	)
 }
 

@@ -91,6 +91,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	enqueuer := runtime.NewEnqueuer(runQueue)
 	notices := gateway.NewNoticeKicker(runQueue)
 	discoverer := newDiscoverer(cfg, secretStore, dbStore)
+	runCommandsInRooms(discoverer, cfg, logger, dbStore, secretStore)
 	routers := newRouters(cfg, logger, dbStore, authorizer, secretStore, secretWriter, registry, attachments, newImporter(cfg), discoverer, graphs, enqueuer, notices, discoverer)
 	// A provider's files are fetched with the reply client: the same public
 	// addresses only, and no redirect followed somewhere unchecked.

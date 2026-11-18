@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -25,8 +27,10 @@ const (
 )
 
 var (
-	ErrCommandServer = errors.New("the brain does not run command servers: run it behind a stdio-to-HTTP bridge, such as Supergateway, and register the bridge's URL instead")
+	ErrCommandServer = errors.New("this server runs a command, and its team has no sandbox to run it in: choose one in Settings, or register a URL instead")
 	ErrUnusable      = errors.New("the server offers something that cannot be stored")
+	// ErrRoom is a command server whose room could not be made or started.
+	ErrRoom = errors.New("the server could not be run in its sandbox")
 )
 
 var toolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -47,6 +51,32 @@ type Discoverer struct {
 	calls       http.RoundTripper
 	timeout     time.Duration
 	connections Connections
+	rooms       Rooms
+}
+
+// Rooms is where a command server runs: Ensure returns the address of the
+// server in its team's sandbox, which is started if it is not running. A cold
+// start can take longer than a discovery's own timeout, so it is waited for
+// before that timeout starts.
+type Rooms interface {
+	Ensure(ctx context.Context, team uuid.UUID, s db.McpServer) (sandbox.Endpoint, error)
+}
+
+// RunsCommandsIn gives the discoverer somewhere to run command servers. Without
+// it a command server is refused with ErrCommandServer.
+func (d *Discoverer) RunsCommandsIn(r Rooms) *Discoverer {
+	d.rooms = r
+	return d
+}
+
+// PlainClient is a client for calls that carry no server's credentials, such
+// as asking a sandbox room whether it is ready, or a sandbox provider for a
+// room: it dials only what the policy allows, takes no redirect and reads at
+// most 8 MiB.
+func PlainClient(p Policy) *http.Client {
+	// A provider can take minutes to answer a request that makes a room, so
+	// this waits as long as a tool call does; each caller bounds its own.
+	return newClient(newTransport(p, callHeaderTimeout), "", time.Time{})
 }
 
 func New(sec Secrets, p Policy, timeout time.Duration) *Discoverer {
@@ -58,12 +88,54 @@ func New(sec Secrets, p Policy, timeout time.Duration) *Discoverer {
 	}
 }
 
-func (d *Discoverer) Client(ctx context.Context, s db.McpServer) (*http.Client, error) {
-	if s.Url == nil {
+// Reach is where a run calls a server, and the client to call it with. A URL
+// server is its URL. A command server is started in its team's sandbox, if it
+// is not running, and is that room's address, called with the headers the
+// provider and the room want.
+func (d *Discoverer) Reach(ctx context.Context, s db.McpServer) (string, *http.Client, error) {
+	room, err := d.room(ctx, s)
+	if err != nil {
+		return "", nil, err
+	}
+	return d.dial(ctx, s, room, d.calls, time.Time{})
+}
+
+// room is a command server's endpoint, or nil for a URL server.
+func (d *Discoverer) room(ctx context.Context, s db.McpServer) (*sandbox.Endpoint, error) {
+	if s.Url != nil {
+		return nil, nil
+	}
+	if d.rooms == nil {
 		return nil, ErrCommandServer
 	}
 
-	return d.httpClient(ctx, s, d.calls, time.Time{})
+	ep, err := d.rooms.Ensure(ctx, s.TeamID, s)
+	if errors.Is(err, sandbox.ErrNoProvider) {
+		return nil, ErrCommandServer
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrRoom, err)
+	}
+	return &ep, nil
+}
+
+// dial is the address and the client of a server, once its room, if it has
+// one, is ready.
+func (d *Discoverer) dial(
+	ctx context.Context, s db.McpServer, room *sandbox.Endpoint, base http.RoundTripper, deadline time.Time,
+) (string, *http.Client, error) {
+	if room == nil {
+		c, err := d.httpClient(ctx, s, base, deadline)
+		return *s.Url, c, err
+	}
+
+	// A room is called with the headers its provider and its own token ask
+	// for, whatever the scheme: the address is the provider's, which the
+	// transport's policy has already allowed, and the token is the room's own
+	// and reaches nothing else.
+	c := newClient(base, "", deadline)
+	c.Transport = headers{h: room.Header, next: c.Transport}
+	return room.URL, c, nil
 }
 
 // httpClient calls a server as it is reached: with its sign-in's token,
@@ -87,22 +159,24 @@ func (d *Discoverer) httpClient(ctx context.Context, s db.McpServer, base http.R
 }
 
 func (d *Discoverer) Discover(ctx context.Context, s db.McpServer) ([]Tool, error) {
-	if s.Url == nil {
-		return nil, ErrCommandServer
+	// Before the timeout starts: a room's cold start is not the server being slow.
+	room, err := d.room(ctx, s)
+	if err != nil {
+		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 
-	httpClient, err := d.httpClient(ctx, s, d.transport, deadline)
+	endpoint, httpClient, err := d.dial(ctx, s, room, d.transport, deadline)
 	if err != nil {
 		return nil, err
 	}
 
 	client := sdk.NewClient(&sdk.Implementation{Name: "openarity-brain", Version: "v0.1.0"}, nil)
 	session, err := client.Connect(ctx, &sdk.StreamableClientTransport{
-		Endpoint:             *s.Url,
+		Endpoint:             endpoint,
 		HTTPClient:           httpClient,
 		MaxRetries:           -1,
 		DisableStandaloneSSE: true,

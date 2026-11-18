@@ -184,14 +184,18 @@ type fakeClients struct {
 	asked  []string
 }
 
-func (f *fakeClients) Client(_ context.Context, s db.McpServer) (*http.Client, error) {
+func (f *fakeClients) Reach(_ context.Context, s db.McpServer) (string, *http.Client, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.asked = append(f.asked, s.Name)
 	if f.err != nil {
-		return nil, f.err
+		return "", nil, f.err
 	}
-	return f.client, nil
+	address := ""
+	if s.Url != nil {
+		address = *s.Url
+	}
+	return address, f.client, nil
 }
 
 // deadlines records the deadline of every request the run's client sends, so

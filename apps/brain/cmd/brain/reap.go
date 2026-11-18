@@ -30,10 +30,17 @@ func newEffects(
 		return nil, err
 	}
 
-	return []reaper.Effect{
+	// Rooms before the keys they were made with: a key's tombstone waits for
+	// its rooms, so deleting them first lets one sweep finish both.
+	effects := []reaper.Effect{}
+	if k := newKeeper(cfg, logger, dbStore, secretStore); k != nil {
+		effects = append(effects, reaper.Rooms(dbStore, k, cfg.SandboxIdle))
+	}
+
+	return append(effects,
 		reaper.Secrets(dbStore, secretWriter),
 		reaper.Objects(dbStore, attachments),
-	}, nil
+	), nil
 }
 
 func reap(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore *store.Store) error {

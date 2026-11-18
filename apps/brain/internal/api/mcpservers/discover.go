@@ -8,6 +8,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/discovery"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -110,6 +111,15 @@ func (rf *Refresher) failure(row db.McpServer, err error) (f *Failure, ours bool
 		}, false
 	case errors.Is(err, discovery.ErrUnusable):
 		return &Failure{err.Error(), http.StatusUnprocessableEntity}, false
+	case errors.Is(err, discovery.ErrRoom):
+		if errors.Is(err, secrets.ErrUnavailable) {
+			return nil, true
+		}
+		rf.logger.Warn("MCP server room failed", "server", row.ID, "error", err)
+		if errors.Is(err, sandbox.ErrNotReady) {
+			return &Failure{"the server's sandbox room did not start in time", http.StatusGatewayTimeout}, false
+		}
+		return &Failure{"the team's sandbox could not run the server: check the sandbox in Settings", http.StatusBadGateway}, false
 	case errors.Is(err, secrets.ErrNotFound):
 		return &Failure{"auth_secret_ref names a secret that is not in the secret store, or is empty", http.StatusUnprocessableEntity}, false
 	case errors.Is(err, secrets.ErrUnavailable):

@@ -270,6 +270,14 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("TEAM_PURGE_AFTER is %s, and must be between 1h and 2160h", c.TeamPurgeAfter))
 	}
 
+	if c.SandboxIdle <= 0 {
+		errs = append(errs, fmt.Errorf("SANDBOX_IDLE is %s, and must be longer than zero", c.SandboxIdle))
+	}
+
+	if c.SandboxImage != "" && strings.ContainsAny(c.SandboxImage, " \t\r\n") {
+		errs = append(errs, errors.New("SANDBOX_IMAGE must be an image reference, with no whitespace"))
+	}
+
 	if c.DevToken != "" && c.Environment != EnvironmentDevelopment {
 		errs = append(errs, fmt.Errorf("DEV_TOKEN must not be set outside development, got ENVIRONMENT=%s", c.Environment))
 	}

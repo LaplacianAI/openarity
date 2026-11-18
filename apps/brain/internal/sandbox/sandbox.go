@@ -72,4 +72,10 @@ var (
 	ErrNotFound = errors.New("the sandbox has no such room")
 	// ErrRefused is a spec the provider cannot honour.
 	ErrRefused = errors.New("the sandbox provider cannot make that room")
+	// ErrNoProvider is a team that has chosen no sandbox: nothing can be run
+	// for it until it chooses one in Settings.
+	ErrNoProvider = errors.New("the team has no sandbox: choose one in Settings to run command MCP servers")
+	// ErrNotReady is a room that was made and did not answer in time. The
+	// room is deleted, and the next call starts another.
+	ErrNotReady = errors.New("the sandbox room did not start in time")
 )

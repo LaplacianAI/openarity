@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/discovery"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -138,6 +139,7 @@ func TestAFailedDiscoveryLeavesThePreviousTools(t *testing.T) {
 		"store down": fmt.Errorf("reading the server's token: %w", secrets.ErrUnavailable),
 		"not MCP":    errors.New("connecting: unexpected status 404"),
 		"command":    discovery.ErrCommandServer,
+		"a room":     fmt.Errorf("%w: %w", discovery.ErrRoom, sandbox.ErrNotReady),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -179,6 +181,22 @@ func TestEachDiscoveryFailureHasItsStatus(t *testing.T) {
 		"the deadline":      {fmt.Errorf("listing tools: %w", context.DeadlineExceeded), http.StatusGatewayTimeout, "in time"},
 		"not an MCP server": {errors.New("connecting: broken pipe"), http.StatusBadGateway, "did not answer as an MCP server"},
 		"the store is down": {fmt.Errorf("reading the server's token: %w", secrets.ErrUnavailable), http.StatusInternalServerError, "internal server error"},
+		"a room that did not start": {
+			fmt.Errorf("%w: %w: the room answered 503 from vault.corp", discovery.ErrRoom, sandbox.ErrNotReady),
+			http.StatusGatewayTimeout, "sandbox room did not start in time",
+		},
+		"a room the provider refused": {
+			fmt.Errorf("%w: making the room: %w", discovery.ErrRoom, sandbox.ErrRefused),
+			http.StatusBadGateway, "check the sandbox in Settings",
+		},
+		"a room and a missing sandbox key": {
+			fmt.Errorf("%w: reading the team's sandbox key: %w", discovery.ErrRoom, secrets.ErrNotFound),
+			http.StatusBadGateway, "check the sandbox in Settings",
+		},
+		"a room and a secret store that is down": {
+			fmt.Errorf("%w: reading the team's sandbox key: %w", discovery.ErrRoom, secrets.ErrUnavailable),
+			http.StatusInternalServerError, "internal server error",
+		},
 		"deadline and refusal": {
 			fmt.Errorf("%w: %w", context.DeadlineExceeded, discovery.ErrRefused), http.StatusGatewayTimeout, "in time",
 		},
@@ -301,17 +319,18 @@ func TestAFailedWriteRecordsNothing(t *testing.T) {
 	}
 }
 
-// A command server is never asked anything, so it is told how to be reached
-// instead, and nothing is recorded against it: it did not fail a discovery.
-func TestACommandServerIsToldToUseABridgeAndNotRecorded(t *testing.T) {
+// A command server whose team has no sandbox is never asked anything, so it
+// is told to choose one in Settings, and nothing is recorded against it: it
+// did not fail a discovery.
+func TestACommandServerWithNoSandboxIsToldToChooseOneAndNotRecorded(t *testing.T) {
 	t.Parallel()
 
 	row := aCommandServer(uuid.New(), "fs")
 	s := newFakeStore(row)
 	code, body := discoverWith(t, s, &fakeDiscoverer{err: discovery.ErrCommandServer}, row)
 
-	if code != http.StatusConflict || !strings.Contains(body, "bridge") {
-		t.Errorf("status %d, body %q; want 409 naming the bridge", code, body)
+	if code != http.StatusConflict || !strings.Contains(body, "choose one in Settings") {
+		t.Errorf("status %d, body %q; want 409 telling the team to choose a sandbox", code, body)
 	}
 	if len(s.failures) != 0 || s.servers[row.ID].LastDiscoveryError != nil {
 		t.Errorf("recorded %+v; a command server did not fail a discovery", s.failures)

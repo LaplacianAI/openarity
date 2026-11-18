@@ -593,6 +593,33 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   Postgres job queue has the second; Temporal cannot have the first, because
   starting a workflow is an RPC rather than a row — it sits behind an outbox
   rather than replacing one. `deployment/SCHEDULING.md` carries the measurements.
+- **A sandbox room has one owner, and rooms are kept by one package that knows
+  nothing of what runs in them.** `sandbox_rooms` holds one row per
+  `(owner_kind, owner_id)`; a command MCP server is the first owner kind, and
+  agent code and skill scripts will be others, each added to the CHECK by its
+  own migration with a trigger on its own table that deletes its rooms. The
+  keeper (`internal/sandbox/keeper`) owns everything that makes a room
+  correct: a Postgres advisory lock per owner, so concurrent callers in every
+  brain wait for one cold start; a hash of what the room was made from; the
+  health wait; the token. `mcproom` is the thin caller that says what a
+  command server needs. A caller in one brain waits on a mutex in the process
+  and not on the database lock, which holds a pooled connection for as long as
+  a cold start takes.
+- **A room is deleted with the credentials that made it.** The row keeps the
+  provider, its address and the id of the key; deleting a row (a deleted
+  owner, a replaced room, an idle one, a team that changed provider, address
+  or key) writes a `deleted_rooms` tombstone carrying them, and the reaper's
+  `rooms` effect deletes the room with that key. A key's own tombstone is not
+  claimed while any live row or owed tombstone names it: otherwise the room
+  would be left at a provider nothing can authenticate to. A room's token is
+  `teams/<team>/sandbox/rooms/<row id>`: the row id is new for every room, so
+  a tombstoned token can never be a live room's.
+- **The brain chooses a room's image, a team never names one.** sandboxd and
+  Daytona start from `openarity-sandbox:sha-<the brain's commit>` (the image
+  build passes it as `REVISION`, since its context has no `.git`), or `:latest`
+  when the commit is unknown; `OPENARITY_SANDBOX_IMAGE` overrides it. E2B alone
+  starts from a template in the team's account, so it takes the team's
+  template or `openarity-sandbox`.
 - **The scheduler is a seam because scheduling has no specification.** Auth is a
   port over OIDC, so authentik is swappable for Dex or Okta by changing one
   variable. River, Temporal, DBOS and Restate agree on no model at all, and an

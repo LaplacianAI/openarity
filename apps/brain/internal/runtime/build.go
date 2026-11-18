@@ -44,7 +44,9 @@ type Objects interface {
 }
 
 type MCPClients interface {
-	Client(ctx context.Context, s db.McpServer) (*http.Client, error)
+	// Reach is where a server is called and the client to call it with: its
+	// URL, or its room's address when it is a command server.
+	Reach(ctx context.Context, s db.McpServer) (string, *http.Client, error)
 }
 
 type Builder struct {
@@ -396,7 +398,7 @@ func reserved(name string, hub, web bool) bool {
 }
 
 func (b *Builder) connect(ctx context.Context, s db.McpServer) (*mcp.Session, error) {
-	client, err := b.mcp.Client(ctx, s)
+	address, client, err := b.mcp.Reach(ctx, s)
 	if err != nil {
 		return nil, fmt.Errorf("the MCP server %q: %w", s.Name, err)
 	}
@@ -404,7 +406,7 @@ func (b *Builder) connect(ctx context.Context, s db.McpServer) (*mcp.Session, er
 	ctx, cancel := context.WithTimeout(ctx, b.connectTimeout)
 	defer cancel()
 
-	live, err := mcp.Connect(ctx, mcp.Server{Name: s.Name, URL: *s.Url, HTTPClient: client, Bare: s.Bare})
+	live, err := mcp.Connect(ctx, mcp.Server{Name: s.Name, URL: address, HTTPClient: client, Bare: s.Bare})
 	if err != nil {
 		return nil, &serverDown{name: s.Name, err: err}
 	}
