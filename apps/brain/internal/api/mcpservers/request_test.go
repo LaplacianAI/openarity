@@ -184,6 +184,23 @@ func TestACommandMustNameAProgram(t *testing.T) {
 	}
 }
 
+// A command line given as one item, as typed on one line, is refused: run as
+// argv it names a program that cannot exist. Spaces in later arguments are
+// theirs to have.
+func TestACommandLineInOneItemIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, cmd := range [][]string{{"npx -y mcp-mail-server"}, {"npx\t-y"}, {"uvx pkg", "--flag"}} {
+		req := Request{Name: "fs", Command: cmd}
+		if _, err := Parse(team, req); err == nil || !strings.Contains(err.Error(), "an item of its own") {
+			t.Errorf("command %q: err = %v", cmd, err)
+		}
+	}
+	if _, err := Parse(team, Request{Name: "fs", Command: []string{"npx", "/srv/My Files"}}); err != nil {
+		t.Errorf("an argument with a space was refused: %v", err)
+	}
+}
+
 func TestEnvKeysMustBeVariableNames(t *testing.T) {
 	t.Parallel()
 
