@@ -666,6 +666,25 @@ refused. Anything outside `1h` to `2160h` (90 days) fails the start. A deleted
 team's purge date is computed from it rather than stored, so changing it and
 restarting moves every pending purge at once.
 
+### Sandbox rooms
+
+A team's command MCP servers (`npx`, `uvx`) run in rooms of the sandbox the team
+chose in Settings. The brain makes a room on the first call to a server and
+keeps it while it is used.
+
+| Variable                 | Default | What it does                                                                 |
+| ------------------------ | ------- | ---------------------------------------------------------------------------- |
+| `OPENARITY_SANDBOX_IDLE` | `30m`   | How long a room may go unused before the reaper deletes it                   |
+| `OPENARITY_SANDBOX_IMAGE`| empty   | The room image for sandboxd and Daytona, in place of the brain's own choice  |
+
+`OPENARITY_SANDBOX_IDLE` is a Go duration longer than zero; the reaper sweeps
+every fifteen minutes, so a room goes at the first sweep after it has been idle
+that long. Empty `OPENARITY_SANDBOX_IMAGE` means the image published with this
+brain, `ghcr.io/laplacianai/openarity-sandbox:sha-<commit>`, or `:latest` when
+the brain was built without knowing its commit. E2B starts rooms from the
+team's own template, `openarity-sandbox` unless the team names one, and ignores
+it. The image build passes the commit as `REVISION`.
+
 ### Secrets and object storage
 
 Both pick an implementation by name. Nothing is inferred from which other
