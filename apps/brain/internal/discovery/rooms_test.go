@@ -204,7 +204,11 @@ func TestThePlainClientHoldsThePolicy(t *testing.T) {
 	m := newMCPServer(t, false, nil)
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, m.URL, http.NoBody)
 
-	if _, err := PlainClient(Policy{Allow: func(netip.Addr) bool { return false }}).Do(req); !errors.Is(err, ErrRefused) {
+	refused, err := PlainClient(Policy{Allow: func(netip.Addr) bool { return false }}).Do(req)
+	if refused != nil {
+		_ = refused.Body.Close()
+	}
+	if !errors.Is(err, ErrRefused) {
 		t.Errorf("err = %v, want ErrRefused", err)
 	}
 	resp, err := PlainClient(m.policy()).Do(req)

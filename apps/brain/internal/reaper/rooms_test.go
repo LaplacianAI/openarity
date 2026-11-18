@@ -70,8 +70,12 @@ func newRoomsWorld(t *testing.T) *roomsWorld {
 		t.Fatal(err)
 	}
 	st := static.New()
+	writer, ok := st.(secrets.Writer)
+	if !ok {
+		t.Fatal("the static store cannot write")
+	}
 	w := &roomsWorld{
-		t: t, store: s, secrets: bothSecrets{st, st.(secrets.Writer)},
+		t: t, store: s, secrets: bothSecrets{st, writer},
 		rooms: sandboxtest.New(t, tokenEnv), team: team.ID,
 	}
 	w.keeper = keeper.New(s, w.secrets, func(_ sandbox.Provider, _, key string) (sandbox.Rooms, error) {

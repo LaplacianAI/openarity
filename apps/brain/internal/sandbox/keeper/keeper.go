@@ -262,7 +262,7 @@ func (k *Keeper) reuse(
 		return sandbox.Endpoint{}, false, fmt.Errorf("finding the room: %w", err)
 	}
 
-	if err := k.healthy(ctx, base, w, token); err != nil {
+	if answers := k.healthy(ctx, base, w, token) == nil; !answers {
 		k.logger.InfoContext(ctx, "keeper: a room does not answer, replacing it",
 			"owner_kind", row.OwnerKind, "owner_id", row.OwnerID, "room", row.RoomID)
 		return sandbox.Endpoint{}, false, nil
@@ -381,7 +381,7 @@ func (k *Keeper) await(ctx context.Context, rooms sandbox.Rooms, roomID string, 
 		case <-ctx.Done():
 			// The caller going away is theirs to hear, as it was.
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return sandbox.Endpoint{}, fmt.Errorf("%w: %v", sandbox.ErrNotReady, last)
+				return sandbox.Endpoint{}, fmt.Errorf("%w: %w", sandbox.ErrNotReady, last)
 			}
 			return sandbox.Endpoint{}, ctx.Err()
 		case <-time.After(k.pollEvery):

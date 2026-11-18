@@ -64,6 +64,8 @@ func roomImages(cfg *config.Config) keeper.Images {
 func newSandboxConnect(client *http.Client) keeper.Connect {
 	return func(p sandbox.Provider, url, key string) (sandbox.Rooms, error) {
 		switch p {
+		case sandbox.None:
+			return nil, fmt.Errorf("the team has no sandbox")
 		case sandbox.E2B:
 			return e2b.New(key, client), nil
 		case sandbox.Daytona:

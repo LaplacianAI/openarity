@@ -75,8 +75,12 @@ func newWorld(t *testing.T) *world {
 		t.Fatalf("CreateTeam: %v", err)
 	}
 	st := static.New()
+	writer, ok := st.(secrets.Writer)
+	if !ok {
+		t.Fatal("the static store cannot write")
+	}
 	w := &world{
-		t: t, store: s, secrets: secretsBoth{st, st.(secrets.Writer)},
+		t: t, store: s, secrets: secretsBoth{st, writer},
 		rooms: sandboxtest.New(t, tokenEnv), team: team.ID, keyID: uuid.New(),
 	}
 	w.useSandbox("sandboxd", "https://sbx.example")
