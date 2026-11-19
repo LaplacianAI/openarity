@@ -296,7 +296,7 @@ function RunTurnView({
       </div>
 
       {teamId && asked.length > 0 ? (
-        <ul aria-label="Requests" className="space-y-2">
+        <ul aria-label="Tool approvals" className="space-y-2">
           {asked.map((id) => {
             const r = c.requests[id];
             return r ? (

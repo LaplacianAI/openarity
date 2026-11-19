@@ -1031,7 +1031,7 @@ function ApprovalModeSection({
 
   return (
     <Section
-      title="Approvals"
+      title="Tool approvals"
       about="When the team's agents ask a person before making a call. Runs already started keep the settings they began with."
       canWrite={canWrite}
       dirty={dirty}
@@ -1139,7 +1139,7 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
 
   return (
     <Section
-      title="Approval rules"
+      title="Tool approval rules"
       about="A standing answer for one tool or every tool of a server, whatever the mode. The most specific rule wins."
       canWrite={canWrite}
       dirty={false}
@@ -1169,7 +1169,7 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
           No rules. The mode above decides for every call.
         </p>
       ) : (
-        <table className="w-full text-sm" aria-label="Approval rules">
+        <table className="w-full text-sm" aria-label="Tool approval rules">
           <thead className="text-left text-xs text-muted-foreground">
             <tr>
               <th className="py-1 pr-3 font-normal">Applies to</th>

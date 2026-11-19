@@ -44,7 +44,7 @@ function open() {
   return showAt("/ui/settings", [["/ui/settings", Route]]);
 }
 
-const approvals = () => screen.findByRole("region", { name: "Approvals" });
+const approvals = () => screen.findByRole("region", { name: "Tool approvals" });
 
 it("saves the mode and the wait through the approval route, apart from the settings", async () => {
   const seen = brain({
@@ -109,8 +109,8 @@ it("lists the rules, adds one and removes one", async () => {
     },
   });
   open();
-  const section = await screen.findByRole("region", { name: "Approval rules" });
-  const table = await within(section).findByRole("table", { name: "Approval rules" });
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  const table = await within(section).findByRole("table", { name: "Tool approval rules" });
   expect(within(table).getByText("github")).toBeInTheDocument();
   expect(within(table).getByText("Always ask")).toBeInTheDocument();
 
@@ -143,7 +143,7 @@ it("shows the brain's words when a target already has a rule", async () => {
     },
   });
   open();
-  const section = await screen.findByRole("region", { name: "Approval rules" });
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
   await userEvent.type(await within(section).findByLabelText("Target"), "github");
   await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
   expect(await within(section).findByRole("alert")).toHaveTextContent("already has a rule");
@@ -155,7 +155,7 @@ it("is read-only without team:settings: the rules are listed, nothing is offered
   const section = await approvals();
   expect(within(section).getByLabelText("Ask before")).toBeDisabled();
   expect(within(section).queryByRole("button", { name: /^save$/i })).toBeNull();
-  const rules = await screen.findByRole("region", { name: "Approval rules" });
+  const rules = await screen.findByRole("region", { name: "Tool approval rules" });
   expect(await within(rules).findByText("github")).toBeInTheDocument();
   expect(within(rules).queryByRole("button", { name: "Add rule" })).toBeNull();
   expect(within(rules).queryByRole("button", { name: /Remove the rule/ })).toBeNull();

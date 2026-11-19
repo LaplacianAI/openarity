@@ -78,7 +78,7 @@ function Requests() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Requests"
+        title="Tool approvals"
         finding={
           canRead && list.isSuccess && status === "pending"
             ? rows.length === 0
@@ -134,7 +134,7 @@ function Requests() {
             />
           ) : (
             <div>
-              <ul aria-label="Requests" className="space-y-2">
+              <ul aria-label="Tool approvals" className="space-y-2">
                 {rows.map((a) => (
                   <li key={a.id}>
                     <RequestCard

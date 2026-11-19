@@ -80,10 +80,15 @@ const SESSIONS: NavItem = {
   icon: MessagesSquare,
   exact: false,
 };
-const APPROVALS: NavItem = { to: "/ui/approvals", label: "Approvals", icon: Inbox, exact: false };
+const APPROVALS: NavItem = {
+  to: "/ui/approvals",
+  label: "Sender approvals",
+  icon: Inbox,
+  exact: false,
+};
 const REQUESTS: NavItem = {
   to: "/ui/requests",
-  label: "Requests",
+  label: "Tool approvals",
   icon: ShieldQuestion,
   exact: false,
 };
@@ -522,7 +527,7 @@ function Account({ rail }: { rail: boolean }) {
 }
 
 /**
- * A phone's navigation: Home, Runs and Approvals in a bar at the bottom,
+ * A phone's navigation: Home, Runs and Sender approvals in a bar at the bottom,
  * within a thumb's reach, and everything else under More.
  */
 function QuickBar({
