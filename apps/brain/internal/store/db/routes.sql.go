@@ -12,9 +12,12 @@ import (
 const listRoutePermissions = `-- name: ListRoutePermissions :many
 SELECT method, path, permission, scope
 FROM route_permissions
-ORDER BY path, method
+ORDER BY path COLLATE "C", method COLLATE "C"
 `
 
+// Byte order, as Go compares strings: a locale's collation skips punctuation,
+// so "approval-settings" and "approvals/" would come back in an order that
+// changes with the database's locale.
 func (q *Queries) ListRoutePermissions(ctx context.Context) ([]RoutePermission, error) {
 	rows, err := q.db.Query(ctx, listRoutePermissions)
 	if err != nil {
