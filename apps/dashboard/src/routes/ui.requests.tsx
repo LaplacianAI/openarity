@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
+import { useEffect } from "react";
 
 import { getRun, listToolApprovals } from "@/api";
 import { nextCursorOf } from "@/api/client";
@@ -23,14 +24,17 @@ const STATUSES: { value: ApprovalStatus; label: string }[] = [
   { value: "cancelled", label: "Cancelled" },
 ];
 
-type RequestsSearch = { status?: ApprovalStatus | undefined };
+type RequestsSearch = { status?: ApprovalStatus | undefined; request?: string | undefined };
 
 export const Route = createFileRoute("/ui/requests")({
-  // Which tab, in the URL so a link can open on what was declined.
+  // Which tab, in the URL so a link can open on what was declined; and one
+  // request, as a notification opens it.
   validateSearch: (search: Record<string, unknown>): RequestsSearch => ({
     status: STATUSES.some((s) => s.value === search.status)
       ? (search.status as ApprovalStatus)
       : undefined,
+    request:
+      typeof search.request === "string" && search.request !== "" ? search.request : undefined,
   }),
   component: Requests,
 });
@@ -60,7 +64,9 @@ function RunLink({ teamId, runId }: { teamId: string; runId: string }) {
 
 function Requests() {
   const { teamId } = useCurrentTeam();
-  const status: ApprovalStatus = Route.useSearch().status ?? "pending";
+  const search = Route.useSearch();
+  const status: ApprovalStatus = search.status ?? "pending";
+  const opened = search.request;
   const navigate = Route.useNavigate();
   const perms = usePermissions(teamId);
   const canRead = perms.can(READ);
@@ -74,11 +80,22 @@ function Requests() {
     enabled: Boolean(teamId) && canRead,
   });
   const rows = list.data?.pages.flatMap((p) => p.items) ?? [];
+  const found = opened !== undefined && rows.some((a) => a.id === opened);
+
+  // The request a link names is brought to the eye and to the keyboard, once
+  // it has arrived; one already answered, or past the first page, leaves the
+  // list as it is.
+  useEffect(() => {
+    if (!found) return;
+    const card = document.getElementById(`request-${opened}`);
+    card?.scrollIntoView?.({ block: "center" });
+    card?.focus({ preventScroll: true });
+  }, [found, opened]);
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Requests"
+        title="Tool approvals"
         finding={
           canRead && list.isSuccess && status === "pending"
             ? rows.length === 0
@@ -134,9 +151,21 @@ function Requests() {
             />
           ) : (
             <div>
-              <ul aria-label="Requests" className="space-y-2">
+              {opened !== undefined && !found && !list.hasNextPage ? (
+                <p className="mb-2 text-sm text-muted-foreground" role="status">
+                  The request you opened is not {status === "pending" ? "waiting" : "here"}: it may
+                  have been answered, or expired.
+                </p>
+              ) : null}
+              <ul aria-label="Tool approvals" className="space-y-2">
                 {rows.map((a) => (
-                  <li key={a.id}>
+                  <li
+                    key={a.id}
+                    id={`request-${a.id}`}
+                    tabIndex={a.id === opened ? -1 : undefined}
+                    aria-current={a.id === opened ? "true" : undefined}
+                    className="rounded-lg outline-none aria-[current=true]:ring-2 aria-[current=true]:ring-primary"
+                  >
                     <RequestCard
                       teamId={teamId}
                       request={fromApproval(a)}

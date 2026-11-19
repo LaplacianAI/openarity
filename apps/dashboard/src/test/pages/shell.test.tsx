@@ -65,7 +65,7 @@ describe("the navigation on a wide screen", () => {
           .map((a) => a.textContent),
       ]);
     expect(groups).toEqual([
-      ["Work", ["Home", "Runs", "Sessions", "Approvals", "Requests"]],
+      ["Work", ["Home", "Runs", "Sessions", "Sender approvals", "Tool approvals"]],
       ["Build", ["Agents", "Skills", "MCP servers", "Channels", "Builder", "Blueprint"]],
       ["Understand", ["Graph"]],
       ["Team", ["Team settings", "Teams"]],
@@ -77,8 +77,8 @@ describe("the navigation on a wide screen", () => {
   it("counts the senders waiting across every channel from the team's summary", async () => {
     widths(true, true);
     const seen = shell(3);
-    const approvals = await screen.findByRole("link", { name: /Approvals/ });
-    await waitFor(() => expect(approvals).toHaveTextContent("Approvals, 3 waiting"));
+    const approvals = await screen.findByRole("link", { name: /Sender approvals/ });
+    await waitFor(() => expect(approvals).toHaveTextContent("Sender approvals, 3 waiting"));
     expect(readAQueue(seen)).toBe(false);
   });
 
@@ -86,18 +86,18 @@ describe("the navigation on a wide screen", () => {
   it("shows no count to someone who may not see the queue", async () => {
     widths(true, true);
     const seen = shell(null, ["agent:write"]);
-    const approvals = await screen.findByRole("link", { name: /Approvals/ });
+    const approvals = await screen.findByRole("link", { name: /Sender approvals/ });
     await waitFor(() => expect(seen.some((s) => s.path.endsWith("/summary"))).toBe(true));
-    expect(approvals).toHaveTextContent(/^Approvals$/);
+    expect(approvals).toHaveTextContent(/^Sender approvals$/);
     expect(readAQueue(seen)).toBe(false);
   });
 
   it("shows no count when nobody is waiting", async () => {
     widths(true, true);
     const seen = shell(0);
-    const approvals = await screen.findByRole("link", { name: /Approvals/ });
+    const approvals = await screen.findByRole("link", { name: /Sender approvals/ });
     await waitFor(() => expect(seen.some((s) => s.path.endsWith("/summary"))).toBe(true));
-    expect(approvals).toHaveTextContent(/^Approvals$/);
+    expect(approvals).toHaveTextContent(/^Sender approvals$/);
   });
 
   it("names the team and the reader's role in it, and keeps the account in a menu", async () => {
@@ -124,7 +124,7 @@ describe("the navigation on a tablet", () => {
 });
 
 describe("the navigation on a phone", () => {
-  it("puts Home, the runs, Approvals and More in a bar at the bottom", async () => {
+  it("puts Home, the runs, Sender approvals and More in a bar at the bottom", async () => {
     widths(false, false);
     shell(1);
 
@@ -133,7 +133,7 @@ describe("the navigation on a phone", () => {
       within(bar)
         .getAllByRole("link")
         .map((a) => a.textContent),
-    ).toEqual(["Home", "Runs", expect.stringMatching(/^Approvals/)]);
+    ).toEqual(["Home", "Runs", expect.stringMatching(/^Sender approvals/)]);
     expect(within(bar).getByRole("button", { name: "More" })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Main" })).toBeNull();
   });

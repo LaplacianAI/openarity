@@ -105,7 +105,7 @@ function Approvals() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Approvals"
+        title="Sender approvals"
         finding={canRead && queue.isSuccess ? waitingFinding(total, rows[0]) : null}
         description="People who wrote in on one of the team's channels and have not been let in. Nothing they send reaches an agent until they are bound to a member, or let in as someone new: a guest of their own, who talks to the agents and changes nothing. There is no reject: someone never let in never reaches an agent."
       />

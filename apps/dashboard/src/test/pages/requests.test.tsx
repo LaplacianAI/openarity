@@ -59,7 +59,7 @@ it("lists what is waiting, each with its card and a way to its conversation", as
     "GET /teams/{id}/runs/{rid}": { body: { id: "r1", session_id: "s1" } },
   });
   at();
-  const list = await screen.findByRole("list", { name: "Requests" });
+  const list = await screen.findByRole("list", { name: "Tool approvals" });
   expect(await within(list).findAllByRole("button", { name: "Approve" })).toHaveLength(2);
   expect(screen.getByText("2 requests waiting for an answer.")).toBeInTheDocument();
   const link = (await within(list).findAllByRole("link", { name: /Open its conversation/ }))[0];
@@ -115,4 +115,35 @@ it("pages with the cursor", async () => {
   await userEvent.click(await screen.findByRole("button", { name: "Load more" }));
   await waitFor(() => expect(screen.getAllByText(/^title: /)).toHaveLength(2));
   expect(seen.some((s) => s.path.includes("cursor=c2"))).toBe(true);
+});
+
+it("brings the request a link names to the eye and the keyboard", async () => {
+  brain({
+    ...team(["approval:read", "approval:self"]),
+    "GET /whoami": { body: { id: "me" } },
+    [LIST]: { body: { items: [request("a1"), request("b2")] } },
+    "GET /teams/{id}/runs/{rid}": { body: { id: "r1", session_id: "s1" } },
+  });
+  at("/ui/requests?request=b2");
+  const list = await screen.findByRole("list", { name: "Tool approvals" });
+  const [first, second] = within(list).getAllByRole("listitem");
+  await waitFor(() => expect(second).toHaveFocus());
+  expect(second).toHaveAttribute("aria-current", "true");
+  expect(first).not.toHaveAttribute("aria-current");
+});
+
+it("says so when the request a link names is no longer waiting", async () => {
+  brain({
+    ...team(["approval:read", "approval:self"]),
+    "GET /whoami": { body: { id: "me" } },
+    [LIST]: { body: { items: [request("a1")] } },
+    "GET /teams/{id}/runs/{rid}": { body: { id: "r1", session_id: "s1" } },
+  });
+  at("/ui/requests?request=gone");
+  const list = await screen.findByRole("list", { name: "Tool approvals" });
+  expect(within(list).getByRole("listitem")).not.toHaveAttribute("aria-current");
+  expect(document.activeElement).toBe(document.body);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "The request you opened is not waiting: it may have been answered, or expired.",
+  );
 });
