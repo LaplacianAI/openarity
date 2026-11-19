@@ -225,8 +225,8 @@ type it:
 A reply over the limit waits and is sent later; it is never dropped. A long
 answer is split into messages of at most 4,000 characters, and a code block cut
 by a split is closed and reopened. The agent's Markdown is turned into
-WhatsApp's own: `**bold**` becomes `*bold*`, headings become bold lines, and
-code stays in backticks. An answer quotes the message it answers, when the
+WhatsApp's own: `**bold**` becomes `*bold*`, headings become bold lines, a
+table becomes one line a row, and code stays in backticks. An answer quotes the message it answers, when the
 connection still remembers it.
 
 **While it works**, on the channel's sheet, can send each step as its own
