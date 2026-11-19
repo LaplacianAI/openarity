@@ -162,19 +162,34 @@ func textOf(res *sdk.CallToolResult) string {
 		skipped int
 	)
 	for _, c := range res.Content {
-		if t, ok := c.(*sdk.TextContent); ok {
-			if b.Len() > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString(t.Text)
+		text, ok := textIn(c)
+		if !ok {
+			skipped++
 			continue
 		}
-		skipped++
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(text)
 	}
 	if skipped > 0 {
 		fmt.Fprintf(&b, "\n[%d non-text content block(s) omitted]", skipped)
 	}
 	return b.String()
+}
+
+// textIn is the text a content block carries: a text block's, or an embedded
+// resource's when it is text rather than a blob, as a file a server returns.
+func textIn(c sdk.Content) (string, bool) {
+	switch c := c.(type) {
+	case *sdk.TextContent:
+		return c.Text, true
+	case *sdk.EmbeddedResource:
+		if c.Resource != nil && c.Resource.Blob == nil {
+			return c.Resource.Text, true
+		}
+	}
+	return "", false
 }
 
 func (s *Session) Tools() []agent.Tool { return s.tools }

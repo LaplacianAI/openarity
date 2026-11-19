@@ -161,3 +161,51 @@ func TestARunThatFailsOnItsOwnKeepsNoOutput(t *testing.T) {
 		t.Fatalf("output = %q; only a run stopped at a limit keeps what it had", *r.Output)
 	}
 }
+
+// A run near its last step is asked to answer, its tools refuse, and it ends
+// with its answer rather than failing at MaxSteps.
+func TestARunNearItsLastStepIsAskedToWrapUpAndAnswers(t *testing.T) {
+	look := func(id string) turn { return callTool(id, GraphToolName, `{"query":"bugs"}`) }
+	f := newExecFixture(t, newScripted(look("c1"), look("c2"), look("c3"), look("c4"),
+		answer("what I found in the steps I had", 100, 10)))
+	f.mustExec(t, `UPDATE agents SET max_steps = 5 WHERE id = $1`, f.agent)
+
+	f.mustExecute(t)
+
+	r := f.row(t)
+	wantStatus(t, r, "succeeded", "")
+	if r.Output == nil || *r.Output != "what I found in the steps I had" {
+		t.Fatalf("output = %v, want the wrapped-up answer", r.Output)
+	}
+	e, ok := lastOf(f.events(t), "wrap_up")
+	if !ok || payload[wrapUpPayload](t, e).Reason != "steps" {
+		t.Fatalf("events = %v, want a wrap_up for the steps", kinds(f.events(t)))
+	}
+	asked := false
+	for _, req := range f.model.requests() {
+		asked = asked || strings.Contains(textOf(req.Messages), "of 5. Stop calling tools")
+	}
+	if !asked {
+		t.Fatal("no request told the model which step of its five it was at")
+	}
+}
+
+// A run that calls tools to its very last step fails at MaxSteps, and keeps
+// what it had, as a run stopped at its budget does.
+func TestARunStoppedAtItsLastStepKeepsWhatItHad(t *testing.T) {
+	look := func(id string) turn {
+		tt := callTool(id, GraphToolName, `{"query":"bugs"}`)
+		tt.resp.Message.Content = []agent.Content{{Type: agent.ContentText, Text: "still looking"}}
+		return tt
+	}
+	f := newExecFixture(t, newScripted(look("c1"), look("c2"), look("c3"), look("c4"), look("c5")))
+	f.mustExec(t, `UPDATE agents SET max_steps = 5 WHERE id = $1`, f.agent)
+
+	f.mustExecute(t)
+
+	r := f.row(t)
+	wantStatus(t, r, "failed", "MaxSteps")
+	if r.Output == nil || *r.Output != "still looking" {
+		t.Fatalf("output = %v; a run stopped at its last step keeps what it had", r.Output)
+	}
+}

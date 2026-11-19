@@ -13,6 +13,13 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   buy nothing. The cap still stops a run, which then keeps its latest summary
   as its output. A summary call's usage counts against the budget and is
   skipped by the wrap-up check, because it read the whole context.
+- **Steps wrap up as the budget does.** Two steps before `MaxSteps` the run
+  is told which step of how many it is at and to answer, and its tools
+  refuse, so a run near its limit ends with an answer rather than failing at
+  it. Two, because the recorder hears of a step as it starts and the ask can
+  land a step late; a run of fewer than four steps is never asked, as it
+  would lose its tools almost at once. One that still calls tools to the end
+  fails at `MaxSteps` and keeps what it had, as one stopped at its budget does.
 - **Compaction is the SDK's; the brain sets its thresholds and records it.**
   Past `compaction_messages`, or when the next request would read
   `min(100k, max(budget/10, 50k))` tokens. The 50k floor is there because a
@@ -290,11 +297,14 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   title folded to one line, and every `<page` or `</page` in the body escaped
   whatever its case. The body is kept whole, up to the 2 MiB the plain fetch
   reads, with a line saying so when it stopped there; it was cut at 32 KiB
-  until `read_output` could reach the rest. The tool's preview shows a page
-  past 32 KiB as its first 24 KiB and last 8 KiB, so the model always sees
-  both ends of the envelope. A line the page wrote
-  that starts like the brain's is escaped with a backslash, so only the
-  brain's says the page was cut. The url must be http or https, carry no
+  until `read_output` could reach the rest. A page is previewed like any
+  result, past 48 KiB as its first 4 KiB and last 2 KiB, so the model always
+  sees both ends of the envelope, and the opening tag's url and title are cut
+  so the tag fits in that head. Its own 32 KiB preview went with the SDK's
+  smaller sizes (#255), when large results resent on every call, read_output's
+  most, turned out to drive a run's spend; a page is not special. A line the
+  page wrote that starts like the brain's is escaped with a backslash, so
+  only the brain's says the page was cut. The url must be http or https, carry no
   user, name a host and fit in 2,048 bytes, and a host a browser would read
   as a number (`2130706433`, `0x7f.1`, `127.1`) is refused unless it is an IP
   address as written: resolvers and scrapers disagree on what it names.

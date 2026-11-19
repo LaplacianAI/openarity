@@ -253,8 +253,11 @@ run := runner.Start(ctx, spec, msgs, endpoint, events)
 run.WrapUp("Your token budget is nearly spent. Stop calling tools and answer now with what you have.")
 ```
 
-A tool result past 100 KiB is shown as its first 8 KiB and last 4 KiB, with
-`read_output` for the rest; `Compaction.Preview` sets the run's sizes, and a
+A tool result past 48 KiB is shown as its first 4 KiB and last 2 KiB, under a
+line saying it is only a part, with `read_output` for the rest; one turn's
+results are held to 192 KiB as near as previews can, the result a preview
+shortens most going first (a `read_output` result or a skill never is).
+`Compaction.Preview` and `Compaction.TurnResults` set the run's sizes, and a
 tool's own `Preview` sets its.
 
 `run.WrapUp` asks a run to finish, and every tool refuses from then on;

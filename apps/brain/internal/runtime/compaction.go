@@ -30,6 +30,11 @@ const (
 
 	budgetWrapUp = "Your token budget is nearly spent. Stop calling tools and answer now with what you have."
 	timeWrapUp   = "Your time is nearly up. Stop calling tools and answer now with what you have."
+	stepsWrapUp  = "You are at step %d of %d. Stop calling tools and answer now with what you have."
+	// stepsLeft is how many steps before MaxSteps a run is asked to finish:
+	// the recorder hears of a step as it starts, so the ask can land a step
+	// late, and the model still has a step to answer in.
+	stepsLeft = 2
 	// minReserve is the least the wrap-up keeps for the run's answer, before
 	// it has written anything to measure.
 	minReserve = 16_000
@@ -88,6 +93,8 @@ type handle interface {
 type softLines struct {
 	budget int64
 	maxOut int64
+	// steps is the run's MaxSteps, set before it starts; zero asks nothing.
+	steps int
 	// wrote is the most one of the run's calls has written: what an answer
 	// is measured by, rather than the model's max_tokens, which is often far
 	// more than any answer and would wrap a run up with much of its budget
@@ -143,6 +150,19 @@ func (l *softLines) spent(spent int64, e agent.UsageEvent) *wrapUpPayload {
 		return nil
 	}
 	return &wrapUpPayload{Reason: "budget", Left: left}
+}
+
+// stepped is called as each step starts. It returns the wrap-up to record
+// when this step is stepsLeft from the run's last. A run of so few steps that
+// the ask would refuse its tools almost at once is never asked.
+func (l *softLines) stepped(step int) *wrapUpPayload {
+	if l.steps <= 2*stepsLeft-1 || step < l.steps-stepsLeft {
+		return nil
+	}
+	if !l.wrap(fmt.Sprintf(stepsWrapUp, step, l.steps)) {
+		return nil
+	}
+	return &wrapUpPayload{Reason: "steps"}
 }
 
 // reserve is what one more call is kept for its answer: twice the most the
