@@ -569,3 +569,79 @@ func TestACodeFromABotOrFromBeforeTheBotAnswersNothing(t *testing.T) {
 		t.Errorf("the request is %s after a bot's or an old yes 7K2F", got.Status)
 	}
 }
+
+// A typed code is read only where the channel answers at all: a channel set
+// to answer in direct chats only decides nothing said in a group.
+func TestACodeInAGroupTheChannelDoesNotAnswerDecidesNothing(t *testing.T) {
+	w := newChatWorld(t, "member")
+	if _, err := w.raw.Exec(t.Context(), `UPDATE sessions SET kind = 'group', user_id = NULL WHERE id = $1`, w.session); err != nil {
+		t.Fatalf("make the conversation a group: %v", err)
+	}
+	w.channel.AnswersIn = gateway.AnswersInDirect
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+
+	w.say(t, w.user, "m-1", "yes 7K2F", nil)
+
+	if got := w.request(t, a); got.Status != "pending" {
+		t.Errorf("the request is %s after yes 7K2F where the channel does not answer", got.Status)
+	}
+	if n := w.notices(t); len(n) != 0 {
+		t.Errorf("notices %+v", n)
+	}
+}
+
+// earlier is a finished run in the same conversation, before the waiting one,
+// whose request with this code for this tool was answered as status says.
+func (w *chatWorld) earlier(t *testing.T, code, tool, status string, ago time.Duration) {
+	t.Helper()
+	id := uuid.New()
+	if _, err := w.raw.Exec(t.Context(), `
+		INSERT INTO runs (id, team_id, session_id, root_run_id, agent_name, input, hub, reply_to_channel, user_id,
+		                  status, created_at, started_at, finished_at)
+		VALUES ($1, $2, $3, $1, 'hub', 'an earlier ask', true, true, $4, 'succeeded', now() - $5::interval,
+		        now() - $5::interval, now() - $5::interval)`,
+		id, w.team, w.session, w.user, fmt.Sprintf("%d seconds", int(ago.Seconds()))); err != nil {
+		t.Fatalf("insert an earlier run: %v", err)
+	}
+	a, err := w.store.InsertApproval(t.Context(), db.InsertApprovalParams{
+		TeamID: w.team, RunID: id, RootRunID: id, CallID: "e1", Tool: tool, Class: "write",
+		Arguments: []byte(`{}`), Code: code, RequestedFor: &w.user, ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("InsertApproval: %v", err)
+	}
+	via := "dashboard"
+	if _, err := w.store.DecideApproval(t.Context(), db.DecideApprovalParams{
+		ID: a.ID, TeamID: w.team, Status: status, DecidedBy: &w.user, DecidedVia: &via,
+	}); err != nil {
+		t.Fatalf("DecideApproval: %v", err)
+	}
+	if _, err := w.raw.Exec(t.Context(), `UPDATE approvals SET created_at = now() - $2::interval WHERE id = $1`,
+		a.ID, fmt.Sprintf("%d seconds", int(ago.Seconds()))); err != nil {
+		t.Fatalf("date the earlier request: %v", err)
+	}
+}
+
+// A code comes round again across a conversation's runs. The one waiting is
+// the one it answers, even when an answered one is newer; with none waiting,
+// it names the newest answered.
+func TestARepeatedCodeNamesTheWaitingRequestThenTheNewest(t *testing.T) {
+	w := newChatWorld(t, "member")
+	w.earlier(t, "7K2F", "mail__send", "denied", 2*time.Hour)
+	w.earlier(t, "7K2F", "calendar__create_event", "approved", time.Hour)
+	waiting := w.ask(t, "c1", "7K2F", time.Hour, false)
+	if _, err := w.raw.Exec(t.Context(), `UPDATE approvals SET created_at = now() - interval '3 hours' WHERE id = $1`, waiting.ID); err != nil {
+		t.Fatalf("date the waiting request: %v", err)
+	}
+
+	w.say(t, w.user, "m-1", "yes 7K2F", nil)
+	if got := w.request(t, waiting); got.Status != "approved" {
+		t.Fatalf("the waiting request is %s, want approved by its code", got.Status)
+	}
+
+	w.say(t, w.user, "m-2", "no 7K2F", nil)
+	n := w.notices(t)
+	if len(n) != 2 || n[1].text != "7K2F is no longer waiting. Approved: create_event on calendar." {
+		t.Errorf("notices %+v, want the newest answered named", n)
+	}
+}

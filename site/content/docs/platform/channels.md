@@ -381,10 +381,11 @@ it will run with.
   (**Approve**, **Approve for this run**, **Decline…**, which asks for an
   optional reason), a keyboard in Telegram, a poll on WhatsApp. Typing
   `yes 7K2F` or `no 7K2F` works on every channel, in a group too without
-  mentioning the bot, and a bare `yes` or `no` when only one request waits
-  (in a group, only in a message that asks the bot). A code names only the
-  sender's own requests: `yes` and a word that is none of them is read as
-  what it says.
+  mentioning the bot (where the channel answers in groups at all), and a bare
+  `yes` or `no` when only one request waits (in a group, only in a message
+  that asks the bot). A code names only the sender's own requests, the waiting
+  one first: `yes` and a word that is none of them is read as what it says.
+  Another bot's message never answers.
 - **Anyone else** (a `guest`, or a request a rule wants someone else to
   answer) is told it went to an approver. No code is shown, and nothing typed
   in the chat decides it: approvers answer on the dashboard's **Tool

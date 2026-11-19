@@ -392,7 +392,11 @@ over. Any other word ("yes sure") is what they wrote. A lookup over everyone's
 requests would tell a group which codes are live, and a "no such code" reply
 would swallow an ordinary message. A typed code answers in a group without a
 mention, as the footer asks for it; a bare yes there must still ask the bot,
-since "yes" to a colleague is not an answer.
+since "yes" to a colleague is not an answer. Either is read only where the
+channel answers at all (`answersHere`, the part of `addressed` that is not
+about being asked), and never from a bot. A code can come round again across
+a conversation's runs: the waiting request is the one it names, else the
+newest answered.
 
 **The footer shows the call, not the agent's account of it.** Under each
 request go the stored call's own arguments (`approval.Summary`: the first

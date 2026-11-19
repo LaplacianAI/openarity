@@ -41,8 +41,8 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 	}
 	if !asksUs(ch, s, m) {
 		// "yes 7K2F" answers where its person writes it, a group thread
-		// without a mention too; never a bot's or one from before the bot.
-		if m.Author.IsBot || m.Historical {
+		// without a mention too, but only where the channel answers at all.
+		if !answersHere(ch.answering(), SessionKind(s.Kind), m.Inbound) {
 			return outcome{}, nil
 		}
 		out, _, err := answerTyped(ctx, c, false)
@@ -138,22 +138,34 @@ func asksUs(ch Channel, s db.Session, m Delivery) bool {
 // message that mentions us. The one rule for starting a run, steering one,
 // queueing a stranger and telling them so.
 func addressed(a Answering, kind SessionKind, in Inbound) bool {
-	if in.Author.IsBot || in.Historical {
+	if !answersHere(a, kind, in) {
 		return false
 	}
 	if in.ToSelf {
-		// Nobody else is in that conversation, so where the channel answers
-		// does not apply; a word, once set, does, so notes to self stay notes.
+		// A word, once set, applies, so notes to self stay notes.
 		return a.Trigger == "" || HasWord(in.Text, a.Trigger)
-	}
-	direct := kind == SessionDirect
-	if (direct && a.Where == AnswersInGroups) || (!direct && a.Where == AnswersInDirect) {
-		return false
 	}
 	if a.Trigger != "" {
 		return HasWord(in.Text, a.Trigger)
 	}
-	return direct || slices.ContainsFunc(in.Mentions, func(x Mention) bool { return x.IsUs })
+	return kind == SessionDirect || slices.ContainsFunc(in.Mentions, func(x Mention) bool { return x.IsUs })
+}
+
+// answersHere is whether the channel reads a message here at all: never a
+// bot's or one from before the bot was there, and never outside where the
+// channel answers. The owner writing to the account itself is read wherever
+// it answers: nobody else is in that conversation.
+func answersHere(a Answering, kind SessionKind, in Inbound) bool {
+	if in.Author.IsBot || in.Historical {
+		return false
+	}
+	if in.ToSelf {
+		return true
+	}
+	if kind == SessionDirect {
+		return a.Where != AnswersInGroups
+	}
+	return a.Where != AnswersInDirect
 }
 
 func steer(m Delivery) string {
