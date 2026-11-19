@@ -140,7 +140,8 @@ id: a line range, or the lines a regular expression (RE2) matches, with their
 numbers, under a line naming the tool they came from. One read returns at most
 32 KiB, about 8,000 tokens, since a read stays in the context like any result;
 a match broader than that says how many lines matched and how many it shows,
-so the model narrows it. A line longer than 4 KiB, a minified file's, is read
+and the line to match on from with `from_line`, so the model narrows it or
+reads the next page. A line longer than 4 KiB, a minified file's, is read
 in parts. It works after a compaction and after a resume.
 
 ## Finishing before the budget is gone

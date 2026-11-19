@@ -416,3 +416,77 @@ func TestAReadThatCannotBeMadeSaysWhy(t *testing.T) {
 		t.Errorf("a line past the end: %q, %v; want it said, not an error", out, err)
 	}
 }
+
+// A match broader than one read is paged with from_line: each page names the
+// line the next starts at, and the pages together show every match once.
+func TestABroadMatchIsReadInPagesFromTheLineItNames(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 3000; i++ {
+		if i%3 == 0 {
+			lines = append(lines, "skip")
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("hit %d %s", i, strings.Repeat("x", i%57)))
+	}
+	h := &compactHandle{}
+	h.setFull([]Message{say(RoleUser, "task"), called("c1", "get_diff"), result("c1", strings.Join(lines, "\n"))})
+	read := readOutputTool(h).Invoke
+
+	seen := map[int]int{}
+	from, pages := 1, 0
+	for {
+		out, err := read(context.Background(), json.RawMessage(fmt.Sprintf(`{"call":"c1","match":"^hit","from_line":%d}`, from)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(out) > readBytes+1024 {
+			t.Fatalf("page %d is %d bytes, over one read", pages, len(out))
+		}
+		for line := range strings.SplitSeq(out, "\n") {
+			var n int
+			if _, err := fmt.Sscanf(line, "%d: hit", &n); err == nil {
+				if n < from {
+					t.Fatalf("a page from line %d showed line %d", from, n)
+				}
+				seen[n]++
+			}
+		}
+		pages++
+		var next, shown, found int
+		i := strings.Index(out, "[stopped at")
+		if i < 0 {
+			break
+		}
+		if _, err := fmt.Sscanf(out[i:], "[stopped at 32 KiB: %d of the %d matching lines shown. Narrow the expression, or match on with from_line %d]", &shown, &found, &next); err != nil {
+			t.Fatalf("the stop note does not name the next line: %q (%v)", out[i:], err)
+		}
+		if next <= from || pages > 20 {
+			t.Fatalf("paging from line %d named line %d next", from, next)
+		}
+		from = next
+	}
+	if pages < 2 {
+		t.Fatalf("the match fit in one read, so paging was not tested")
+	}
+	for i, line := range lines {
+		want := 0
+		if strings.HasPrefix(line, "hit") {
+			want = 1
+		}
+		if seen[i+1] != want {
+			t.Fatalf("line %d was shown %d times over %d pages, want %d", i+1, seen[i+1], pages, want)
+		}
+	}
+}
+
+func TestAMatchFromPastTheEndSaysSo(t *testing.T) {
+	h := &compactHandle{}
+	h.setFull([]Message{say(RoleUser, "task"), called("c1", "get_diff"), result("c1", "one\ntwo\nthree")})
+	read := readOutputTool(h).Invoke
+	if out, err := read(context.Background(), json.RawMessage(`{"call":"c1","match":"o","from_line":9}`)); err != nil || !strings.Contains(out, "It has no line 9.") {
+		t.Errorf("a match from past the end: %q, %v", out, err)
+	}
+	if out, err := read(context.Background(), json.RawMessage(`{"call":"c1","match":"two","from_line":3}`)); err != nil || !strings.Contains(out, `No line from line 3 matches "two".`) {
+		t.Errorf("a match with nothing after from_line: %q, %v", out, err)
+	}
+}

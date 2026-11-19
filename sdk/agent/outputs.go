@@ -28,9 +28,9 @@ var readOutputSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
     "call": {"type": "string", "description": "the call id the output belongs to, as its preview or handle names it"},
-    "from_line": {"type": "integer", "minimum": 1, "description": "the first line to read; 1 when left out"},
-    "lines": {"type": "integer", "minimum": 1, "maximum": 2000, "description": "how many lines; 200 when left out"},
-    "match": {"type": "string", "description": "a regular expression (RE2); returns the matching lines with their numbers instead of a range"}
+    "from_line": {"type": "integer", "minimum": 1, "description": "the first line to read, or to match from; 1 when left out"},
+    "lines": {"type": "integer", "minimum": 1, "maximum": 2000, "description": "how many lines a range reads; 200 when left out"},
+    "match": {"type": "string", "description": "a regular expression (RE2); returns the lines from from_line on that match it, with their numbers, instead of a range"}
   },
   "required": ["call"],
   "additionalProperties": false
@@ -72,7 +72,7 @@ func readOutputTool(h *compactHandle) Tool {
 			lines := splitLines(text)
 			head := header(a.Call, toolNames(msgs)[a.Call], text, lines)
 			if a.Match != "" {
-				return matching(head, lines, a.Match)
+				return matching(head, lines, a.Match, a.FromLine)
 			}
 			return lineRange(head, lines, a.FromLine, a.Lines), nil
 		},
@@ -139,35 +139,46 @@ func lineRange(head string, lines []string, from, n int) string {
 	return fmt.Sprintf("%s Lines %d to %d:\n%s", head, from, last, b.String())
 }
 
-func matching(head string, lines []string, pattern string) (string, error) {
+func matching(head string, lines []string, pattern string, from int) (string, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return "", fmt.Errorf("match is not a regular expression: %w", err)
 	}
+	if from == 0 {
+		from = 1
+	}
+	if from > len(lines) {
+		return fmt.Sprintf("%s It has no line %d.", head, from), nil
+	}
 
 	var b strings.Builder
 	found, shown, next := 0, 0, 0
-	for i, line := range lines {
+	for i := from; i <= len(lines); i++ {
+		line := lines[i-1]
 		if !re.MatchString(line) {
 			continue
 		}
 		found++
-		out := fmt.Sprintf("%d: %s\n", i+1, line)
+		out := fmt.Sprintf("%d: %s\n", i, line)
 		if next > 0 || b.Len()+len(out) > readBytes {
 			if next == 0 {
-				next = i + 1
+				next = i
 			}
 			continue
 		}
 		shown++
 		b.WriteString(out)
 	}
-	if next > 0 {
-		fmt.Fprintf(&b, "[stopped at %s: %d of the %d matching lines shown. Narrow the expression, or read a range from the next match, line %d]\n",
-			size(readBytes), shown, found, next)
+	since := ""
+	if from > 1 {
+		since = fmt.Sprintf(" from line %d", from)
 	}
 	if found == 0 {
-		return fmt.Sprintf("%s No line matches %q.", head, pattern), nil
+		return fmt.Sprintf("%s No line%s matches %q.", head, since, pattern), nil
 	}
-	return fmt.Sprintf("%s Lines matching %q:\n%s", head, pattern, b.String()), nil
+	if next > 0 {
+		fmt.Fprintf(&b, "[stopped at %s: %d of the %d matching lines shown. Narrow the expression, or match on with from_line %d]\n",
+			size(readBytes), shown, found, next)
+	}
+	return fmt.Sprintf("%s Lines%s matching %q:\n%s", head, since, pattern, b.String()), nil
 }
