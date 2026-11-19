@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 )
 
@@ -230,6 +231,11 @@ type replyBody struct {
 	InReplyTo string `json:"in_reply_to,omitempty"`
 	Kind      string `json:"kind"`
 	Text      string `json:"text"`
+	// Approval is a prompt's requests (kind "approval"), for a receiver that
+	// draws its own controls: one with ask set is its person's to answer, by
+	// posting "yes <code>" or "no <code>" back as a message. Text already says
+	// so, for a receiver that shows text alone.
+	Approval *approval.Prompt `json:"approval,omitempty"`
 }
 
 // Reply is the signed POST of out to the channel's reply URL. The id lets the
@@ -246,7 +252,7 @@ func (provider) Reply(
 		return nil, errors.New("custom: no signing secret")
 	}
 
-	b := replyBody{ID: out.ID, InReplyTo: out.InReplyTo, Kind: out.Kind, Text: out.Text}
+	b := replyBody{ID: out.ID, InReplyTo: out.InReplyTo, Kind: out.Kind, Text: out.Text, Approval: out.Prompt}
 	b.Session.Ref, b.Session.Kind = out.Session.Ref, string(out.Session.Kind)
 	raw, err := json.Marshal(b)
 	if err != nil {

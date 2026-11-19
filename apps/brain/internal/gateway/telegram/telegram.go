@@ -67,6 +67,8 @@ func (p provider) Verify(req gateway.WebhookRequest, creds gateway.Credentials) 
 type update struct {
 	UpdateID int64    `json:"update_id"`
 	Message  *message `json:"message"`
+	// CallbackQuery is a tap on an inline button.
+	CallbackQuery *callbackQuery `json:"callback_query"`
 }
 
 type message struct {
@@ -131,13 +133,16 @@ type entity struct {
 	User   *user  `json:"user"`
 }
 
-// Parse reads a new message. Every other update (an edit, a channel post, a
-// button press) is nothing to do, and so is a message with no person behind
+// Parse reads a new message or a tap on one of our buttons. Every other
+// update (an edit, a channel post) is nothing to do, and so is a message with no person behind
 // it, such as one sent as the group itself.
 func (provider) Parse(req gateway.WebhookRequest, creds gateway.Credentials) (gateway.Result, error) {
 	var u update
 	if err := json.Unmarshal(req.Body, &u); err != nil {
 		return gateway.Result{}, fmt.Errorf("telegram: %w", err)
+	}
+	if u.CallbackQuery != nil {
+		return tap(u.CallbackQuery, req.ReceivedAt), nil
 	}
 	m := u.Message
 	if m == nil || m.From == nil {
@@ -301,6 +306,7 @@ type sendRichMessage struct {
 	MessageThreadID int64            `json:"message_thread_id,omitempty"`
 	RichMessage     richMessage      `json:"rich_message"`
 	ReplyParameters *replyParameters `json:"reply_parameters,omitempty"`
+	ReplyMarkup     *inlineKeyboard  `json:"reply_markup,omitempty"`
 }
 
 // RepliesWithEvents: each of a run's steps is a message of its own, sent as
@@ -309,7 +315,8 @@ func (provider) RepliesWithEvents() {}
 
 // Reply sends the answer as rich messages, so headings, lists, tables and
 // code read as they were written. One too long for a message is several, and
-// only the first quotes the message it answers.
+// only the first quotes the message it answers. An approval carries its
+// buttons on the last, and a notice is answered where the tap was made.
 func (provider) Reply(
 	_ gateway.Channel, out gateway.Outbound, creds gateway.Credentials, _ time.Time,
 ) ([]gateway.OutboundRequest, error) {
@@ -321,13 +328,21 @@ func (provider) Reply(
 	if err != nil {
 		return nil, err
 	}
+	switch {
+	case out.Kind == "notice" && out.Notice != nil && len(out.Notice.Handle) > 0:
+		return tapNotice(token, chatID, thread, out)
+	case out.Kind == "approval" && out.Prompt != nil:
+		return texts(token, chatID, thread, out, keyboardOf(out.Prompt))
+	}
+	return texts(token, chatID, thread, out, nil)
+}
+
+// texts is the answer's rich messages, with the keyboard, if any, on the last.
+func texts(token string, chatID, thread int64, out gateway.Outbound, keys *inlineKeyboard) ([]gateway.OutboundRequest, error) {
 	parts := Split(Sanitize(out.Text))
 	if len(parts) == 0 {
 		return nil, errors.New("telegram: nothing to send")
 	}
-
-	h := http.Header{}
-	h.Set("Content-Type", "application/json")
 	reqs := make([]gateway.OutboundRequest, 0, len(parts))
 	for i, part := range parts {
 		body := sendRichMessage{ChatID: chatID, MessageThreadID: thread, RichMessage: richMessage{Markdown: part}}
@@ -336,13 +351,25 @@ func (provider) Reply(
 				body.ReplyParameters = &replyParameters{MessageID: id, AllowSendingWithoutReply: true}
 			}
 		}
-		raw, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("telegram: encoding the reply: %w", err)
+		if i == len(parts)-1 {
+			body.ReplyMarkup = keys
 		}
-		reqs = append(reqs, gateway.OutboundRequest{URL: apiBase + token + "/sendRichMessage", Header: h, Body: raw})
+		req, err := call(token, "sendRichMessage", body)
+		if err != nil {
+			return nil, err
+		}
+		reqs = append(reqs, req)
 	}
 	return reqs, nil
+}
+
+// call is one Bot API request.
+func call(token, method string, body any) (gateway.OutboundRequest, error) {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return gateway.OutboundRequest{}, fmt.Errorf("telegram: encoding %s: %w", method, err)
+	}
+	return gateway.OutboundRequest{URL: apiBase + token + "/" + method, Header: jsonHeader(), Body: raw}, nil
 }
 
 // target reads back the chat and topic sessionOf named. The General topic is
@@ -376,6 +403,10 @@ func messageIn(externalID string, chatID int64) (int64, bool) {
 	return id, err == nil
 }
 
+// allowedUpdates is all the webhook asks for: a message, and a tap on one of
+// our buttons.
+var allowedUpdates = []string{"message", "callback_query"}
+
 type setWebhook struct {
 	URL            string   `json:"url"`
 	SecretToken    string   `json:"secret_token"`
@@ -383,7 +414,8 @@ type setWebhook struct {
 }
 
 // ConnectRequest points the bot at the channel: Telegram posts each new
-// message to hookURL with the channel's secret, and nothing else. Telegram
+// message and each tap on a button to hookURL with the channel's secret, and
+// nothing else. Telegram
 // posts only to https, so a brain without a public https address cannot be
 // pointed at; the person is shown the step instead.
 func (provider) ConnectRequest(hookURL string, creds gateway.Credentials) (gateway.OutboundRequest, error) {
@@ -396,7 +428,7 @@ func (provider) ConnectRequest(hookURL string, creds gateway.Credentials) (gatew
 	case !strings.HasPrefix(hookURL, "https://"):
 		return gateway.OutboundRequest{}, errors.New("telegram posts only to an https address")
 	}
-	raw, err := json.Marshal(setWebhook{URL: hookURL, SecretToken: secret, AllowedUpdates: []string{"message"}})
+	raw, err := json.Marshal(setWebhook{URL: hookURL, SecretToken: secret, AllowedUpdates: allowedUpdates})
 	if err != nil {
 		return gateway.OutboundRequest{}, fmt.Errorf("telegram: encoding setWebhook: %w", err)
 	}

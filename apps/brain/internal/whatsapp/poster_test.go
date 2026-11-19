@@ -141,3 +141,32 @@ func containsDuration(ds []time.Duration, want time.Duration) bool {
 }
 
 var _ = db.LeaseWhatsAppAccountsRow{}
+
+func TestAPollPartIsSentAsASingleChoicePoll(t *testing.T) {
+	f, ch, cli := connected(t)
+	options := gateway.PollOptions("7K2F")
+	body := `{"id":"run-1:1","to":"` + priya.String() + `","poll":{"question":"Allow create_issue on github? (7K2F)","options":["` + options[0] + `","` + options[1] + `"]}}`
+	if err := f.a.Post(t.Context(), ch, gateway.OutboundRequest{URL: gwa.SendURL, Body: []byte(body)}); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if len(cli.sent) != 1 {
+		t.Fatalf("sent %+v", cli.sent)
+	}
+	poll := cli.sent[0].msg.GetPollCreationMessage()
+	if poll == nil || poll.GetName() != "Allow create_issue on github? (7K2F)" || poll.GetSelectableOptionsCount() != 1 {
+		t.Fatalf("sent %+v; want a single-choice poll", cli.sent[0].msg)
+	}
+	var got []string
+	for _, o := range poll.GetOptions() {
+		got = append(got, o.GetOptionName())
+	}
+	if len(got) != 2 || got[0] != options[0] || got[1] != options[1] {
+		t.Errorf("options %q; want %q verbatim, as the vote is matched by their hash", got, options)
+	}
+	if len(cli.sent[0].msg.GetMessageContextInfo().GetMessageSecret()) != 32 {
+		t.Error("the poll carries no message secret, so a vote on it could not be decrypted")
+	}
+	if _, ok := f.store.sent[ch.String()+"/run-1:1"]; !ok {
+		t.Error("the poll was not recorded as sent")
+	}
+}

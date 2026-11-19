@@ -20,17 +20,39 @@ type outcome struct {
 	// resumed is the steered run, queued again because the message gave up
 	// what it was waiting for its sender to approve.
 	resumed *db.RequeueAnsweredRow
+	// notice is the message the brain queued a notice about, to send now.
+	notice uuid.UUID
 }
 
-// answer is what a stored message does: starts a run, or steers the one
-// already working. via is where it was written, dashboard or channel, as a
-// request it gives up records it.
+// answer is what a stored message does: answers a request its sender was
+// asked, starts a run, or steers the one already working. via is where it was
+// written, dashboard or channel, as a request it gives up records it.
+//
+// An answer comes first: a tap on the brain's own prompt asks it whatever the
+// channel's word or where it answers, as does a typed code, and a typed
+// answer is read before steering,
+// so a yes is never a steer, never the next run's input, and never gives up
+// the very request it answers. A message that answered is not marked as
+// asking, so no run ever takes it.
 func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery, messageID uuid.UUID, via string) (outcome, error) {
+	c := chat{q: q, ch: ch, s: s, m: m, message: messageID}
+	if m.Answer != nil {
+		return answerTap(ctx, c)
+	}
 	if !asksUs(ch, s, m) {
-		return outcome{}, nil
+		// "yes 7K2F" answers where its person writes it, a group thread
+		// without a mention too, but only where the channel answers at all.
+		if !answersHere(ch.answering(), SessionKind(s.Kind), m.Inbound) {
+			return outcome{}, nil
+		}
+		out, _, err := answerTyped(ctx, c, false)
+		return out, err
 	}
 	if strings.TrimSpace(m.Text) == "" && len(m.Files) == 0 && len(m.Missed) == 0 {
 		return outcome{unanswered: "the message has no text"}, nil
+	}
+	if out, handled, err := answerTyped(ctx, c, true); handled || err != nil {
+		return out, err
 	}
 
 	may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: ch.TeamID, UserID: m.UserID, Action: "run:write"})
@@ -116,22 +138,34 @@ func asksUs(ch Channel, s db.Session, m Delivery) bool {
 // message that mentions us. The one rule for starting a run, steering one,
 // queueing a stranger and telling them so.
 func addressed(a Answering, kind SessionKind, in Inbound) bool {
-	if in.Author.IsBot || in.Historical {
+	if !answersHere(a, kind, in) {
 		return false
 	}
 	if in.ToSelf {
-		// Nobody else is in that conversation, so where the channel answers
-		// does not apply; a word, once set, does, so notes to self stay notes.
+		// A word, once set, applies, so notes to self stay notes.
 		return a.Trigger == "" || HasWord(in.Text, a.Trigger)
-	}
-	direct := kind == SessionDirect
-	if (direct && a.Where == AnswersInGroups) || (!direct && a.Where == AnswersInDirect) {
-		return false
 	}
 	if a.Trigger != "" {
 		return HasWord(in.Text, a.Trigger)
 	}
-	return direct || slices.ContainsFunc(in.Mentions, func(x Mention) bool { return x.IsUs })
+	return kind == SessionDirect || slices.ContainsFunc(in.Mentions, func(x Mention) bool { return x.IsUs })
+}
+
+// answersHere is whether the channel reads a message here at all: never a
+// bot's or one from before the bot was there, and never outside where the
+// channel answers. The owner writing to the account itself is read wherever
+// it answers: nobody else is in that conversation.
+func answersHere(a Answering, kind SessionKind, in Inbound) bool {
+	if in.Author.IsBot || in.Historical {
+		return false
+	}
+	if in.ToSelf {
+		return true
+	}
+	if kind == SessionDirect {
+		return a.Where != AnswersInGroups
+	}
+	return a.Where != AnswersInDirect
 }
 
 func steer(m Delivery) string {

@@ -52,7 +52,11 @@ func New() gateway.Provider { return provider{} }
 
 func (provider) Name() string { return "slack" }
 
-func (provider) Routes() []gateway.Route { return []gateway.Route{{Method: http.MethodPost}} }
+// Routes are the Events API's Request URL and, beside it, the Interactivity
+// Request URL, which Slack posts a button tap and a modal submission to.
+func (provider) Routes() []gateway.Route {
+	return []gateway.Route{{Method: http.MethodPost}, {Method: http.MethodPost, Suffix: InteractivitySuffix}}
+}
 
 func (provider) Keys() []string {
 	return []string{gateway.KeySigning, KeyBotToken, KeyBotUserID}
@@ -135,11 +139,15 @@ type file struct {
 const maxChallenge = 256
 
 // Parse reads the URL check Slack sends when a Request URL is saved, and new
-// messages. Edits, deletes, joins and our own bot's messages are nothing to
+// messages; on the interactivity route, a tap on an approval's button and the
+// decline modal's submission. Edits, deletes, joins and our own bot's messages are nothing to
 // do, and so is a message at the top of a channel that does not name the
 // bot: a mention there starts a thread, so no conversation would ever read
 // what was said around it.
 func (provider) Parse(req gateway.WebhookRequest, creds gateway.Credentials) (gateway.Result, error) {
+	if req.Suffix == InteractivitySuffix {
+		return parseInteraction(req)
+	}
 	var env envelope
 	if err := json.Unmarshal(req.Body, &env); err != nil {
 		return gateway.Result{}, fmt.Errorf("slack: %w", err)
