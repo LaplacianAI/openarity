@@ -233,6 +233,11 @@ func (g *Ingest) send(ctx context.Context, out OutboundRequest) ([]byte, error) 
 		}
 		return nil, fmt.Errorf("reading the download: %w", err)
 	}
+	if out.Accepted != nil {
+		if err := out.Accepted(resp.StatusCode, got); err != nil {
+			return nil, err
+		}
+	}
 	return got, nil
 }
 

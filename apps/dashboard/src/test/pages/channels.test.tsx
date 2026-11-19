@@ -14,6 +14,8 @@ const {
   isQuiet,
   opensToLink,
   setWebhookCommand,
+  slackManifestURL,
+  SLACK_PLACEHOLDER_URL,
   triggerWordOK,
 } = await import("@/routes/ui.channels.index");
 const Channels = await pageOf(Route);
@@ -188,6 +190,57 @@ describe("the create form", () => {
         provider: "custom",
       });
     });
+  });
+
+  describe("for slack", () => {
+    const sl = { ...draft, provider: "slack", botToken: " xoxb-TEST-ONLY ", secret: " s3cret " };
+
+    it("sends the bot token as a credential and Slack's own secret as typed", () => {
+      expect(channelRequest(sl)).toEqual({
+        name: "support",
+        provider: "slack",
+        signing_secret: " s3cret ",
+        credentials: { bot_token: "xoxb-TEST-ONLY" },
+      });
+    });
+
+    it("refuses a missing token or secret before asking the brain", () => {
+      expect(channelRequest({ ...sl, botToken: " " })).toMatch(/bot token/i);
+      expect(channelRequest({ ...sl, secret: " " })).toMatch(/signing secret/i);
+    });
+  });
+
+  // Slack's create-from-manifest page, filled in: a bot that hears what it
+  // is sent and what is said where it is, answers, and reads shared files.
+  it("builds Slack's manifest link for the app", () => {
+    const url = new URL(slackManifestURL("  acme  "));
+    expect(url.origin + url.pathname).toBe("https://api.slack.com/apps");
+    expect(url.searchParams.get("new_app")).toBe("1");
+    const m = JSON.parse(url.searchParams.get("manifest_json") ?? "{}");
+    expect(m.display_information.name).toBe("acme");
+    expect(m.features.bot_user.display_name).toBe("acme");
+    expect(m.features.app_home.messages_tab_read_only_enabled).toBe(false);
+    expect(m.oauth_config.scopes.bot).toEqual([
+      "channels:history",
+      "groups:history",
+      "im:history",
+      "mpim:history",
+      "chat:write",
+      "files:read",
+    ]);
+    expect(m.settings.event_subscriptions).toEqual({
+      request_url: SLACK_PLACEHOLDER_URL,
+      bot_events: ["message.channels", "message.groups", "message.im", "message.mpim"],
+    });
+    expect(m.settings.socket_mode_enabled).toBe(false);
+    const unnamed = JSON.parse(
+      new URL(slackManifestURL(" ")).searchParams.get("manifest_json") ?? "{}",
+    );
+    expect(unnamed.display_information.name).toBe("Openarity");
+    const long = JSON.parse(
+      new URL(slackManifestURL("x".repeat(50))).searchParams.get("manifest_json") ?? "{}",
+    );
+    expect(long.display_information.name).toHaveLength(35);
   });
 
   it("names the path the provider posts to", () => {
@@ -623,6 +676,107 @@ describe("where a channel's replies go", () => {
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("must not have a query");
     expect(screen.getByRole("dialog", { name: "Replies from support" })).toBeInTheDocument();
+  });
+});
+
+describe("a slack channel", () => {
+  const TOKEN = "xoxb-TEST-ONLY-NOT-A-TOKEN";
+  const SECRET = "TEST-ONLY-signing-secret";
+  const SL_HOOK = "https://hooks.example.com/hooks/slack/s1";
+  const slack = {
+    ...support,
+    id: "s1",
+    provider: "slack",
+    name: "acme",
+    can_reply: true,
+    takes_reply_url: false,
+  };
+
+  async function chosen() {
+    Element.prototype.scrollIntoView = vi.fn();
+    onTestFinished(() => {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    });
+    await userEvent.click(await screen.findByRole("button", { name: /connect channel/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "acme");
+    screen.getByRole("combobox", { name: /^provider$/i }).focus();
+    await userEvent.keyboard("{ArrowDown}");
+    await userEvent.click(await screen.findByRole("option", { name: "Slack" }));
+  }
+
+  it("walks through making the app, and asks for both values as passwords", async () => {
+    brain({ ...team(["channel:write"]), "GET /teams/{id}/channels": { body: { items: [] } } });
+    show(Channels);
+    await chosen();
+    const steps = screen.getByRole("list", { name: /connecting slack/i });
+    expect(within(steps).getAllByRole("listitem")).toHaveLength(3);
+    const create = within(steps).getByRole("link", { name: /create the slack app/i });
+    expect(create).toHaveAttribute("target", "_blank");
+    expect(create).toHaveAttribute("rel", expect.stringContaining("noopener"));
+    expect(create.getAttribute("href")).toContain("manifest_json=");
+    expect(screen.getByLabelText(/^bot token$/i)).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText(/^signing secret$/i)).toHaveAttribute("type", "password");
+    expect(screen.queryByLabelText(/gave me a signing secret/i)).toBeNull();
+  });
+
+  it("sends both, then gives the Request URL to paste, and never shows either back", async () => {
+    const seen = brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [] } },
+      "POST /teams/{id}/channels": { status: 201, body: { ...slack, hook_url: SL_HOOK } },
+    });
+    show(Channels);
+    await chosen();
+    await userEvent.type(screen.getByLabelText(/^bot token$/i), TOKEN);
+    await userEvent.type(screen.getByLabelText(/^signing secret$/i), SECRET);
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /one step left in slack/i });
+    expect(posted(seen)).toEqual({
+      name: "acme",
+      provider: "slack",
+      signing_secret: SECRET,
+      credentials: { bot_token: TOKEN },
+    });
+    const text = dialog.textContent ?? "";
+    expect(text).toContain(SL_HOOK);
+    expect(text).toMatch(/event subscriptions/i);
+    expect(
+      within(dialog).getByRole("button", { name: `Copy the Request URL ${SL_HOOK}` }),
+    ).toBeInTheDocument();
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain(SECRET);
+  });
+
+  it("says Slack cannot reach a brain with no public address", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [] } },
+      "POST /teams/{id}/channels": { status: 201, body: slack },
+    });
+    show(Channels);
+    await chosen();
+    await userEvent.type(screen.getByLabelText(/^bot token$/i), TOKEN);
+    await userEvent.type(screen.getByLabelText(/^signing secret$/i), SECRET);
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    const dialog = await screen.findByRole("dialog", { name: /one step left in slack/i });
+    expect(dialog.textContent).toMatch(/no public address/i);
+    expect(dialog.textContent).toContain("/hooks/slack/s1");
+  });
+
+  it("keeps the form open with the brain's reason when Slack refuses the token", async () => {
+    brain({
+      ...team(["channel:write"]),
+      "GET /teams/{id}/channels": { body: { items: [] } },
+      "POST /teams/{id}/channels": { status: 400, body: "the bot token is not one Slack knows" },
+    });
+    show(Channels);
+    await chosen();
+    await userEvent.type(screen.getByLabelText(/^bot token$/i), TOKEN);
+    await userEvent.type(screen.getByLabelText(/^signing secret$/i), SECRET);
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("not one Slack knows");
+    expect(screen.getByLabelText(/^bot token$/i)).toHaveValue(TOKEN);
   });
 });
 

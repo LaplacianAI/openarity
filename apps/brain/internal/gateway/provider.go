@@ -121,6 +121,13 @@ type EventReplier interface {
 	RepliesWithEvents()
 }
 
+// SecretIssuer is a provider whose platform issues the signing secret, as
+// Slack's app settings do. The brain cannot generate one for it: a delivery
+// is signed with the platform's, so a channel is refused without it.
+type SecretIssuer interface {
+	IssuesSigningSecret()
+}
+
 // Socket is a provider that holds a connection to its platform instead of
 // taking webhooks: WhatsApp's linked device. Nothing arrives over HTTP to
 // verify, so it declares no routes and need declare no keys; its messages
@@ -177,6 +184,11 @@ type OutboundRequest struct {
 	URL    string
 	Header http.Header
 	Body   []byte
+	// Accepted reads a 2xx answer, for a provider that says no inside one:
+	// Slack answers 200 with "ok": false. It is called only on a 2xx, with
+	// at most the first 64 KiB of the body, and an error is the request
+	// failing. Nil takes every 2xx as done.
+	Accepted func(status int, body []byte) error
 }
 
 // Outbound is one reply, as a provider needs it.
@@ -203,13 +215,14 @@ type Registry struct {
 	connects  map[string]Connector
 	notifiers map[string]Notifier
 	sockets   map[string]bool
+	issuers   map[string]bool
 }
 
 func NewRegistry(providers ...Provider) (Registry, error) {
 	reg := Registry{
 		providers: map[string]Provider{}, repliers: map[string]Replier{}, setups: map[string]Setup{},
 		toURL: map[string]bool{}, events: map[string]bool{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
-		sockets: map[string]bool{},
+		sockets: map[string]bool{}, issuers: map[string]bool{},
 	}
 	for _, p := range providers {
 		name := p.Name()
@@ -248,6 +261,9 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		}
 		if n, ok := p.(Notifier); ok {
 			reg.notifiers[name] = n
+		}
+		if _, ok := p.(SecretIssuer); ok {
+			reg.issuers[name] = true
 		}
 		if s, ok := p.(Setup); ok {
 			for _, k := range s.Supplied() {
@@ -295,6 +311,10 @@ func (r Registry) Setup(name string) (Setup, bool) {
 	s, ok := r.setups[name]
 	return s, ok
 }
+
+// IssuesSigningSecret is whether the named provider's platform issues its
+// channels' signing secret, which a person then supplies.
+func (r Registry) IssuesSigningSecret(name string) bool { return r.issuers[name] }
 
 // HoldsConnection is whether the named provider's channels are a socket's,
 // sent by the process that holds it.

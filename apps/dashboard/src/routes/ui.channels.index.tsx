@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { TriangleAlert } from "lucide-react";
-import { useState } from "react";
+import { ExternalLink, TriangleAlert } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 
 import { createChannel, deleteChannel, listChannels, updateChannel } from "@/api";
@@ -16,7 +16,7 @@ import type {
   ReplyMode,
 } from "@/api/types";
 import { AnswersInChoice, answersInWords } from "@/components/answers-in";
-import { KeyValue, KeyValues, Time } from "@/components/facts";
+import { CopyId, KeyValue, KeyValues, Time } from "@/components/facts";
 import { LinkNumber } from "@/components/link-number";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
 import { ErrorState } from "@/components/states";
@@ -68,14 +68,17 @@ const READ_ALL = "session:read_all";
 /** The adapters this build ships, each with the name a person knows it by. */
 export const PROVIDERS: [value: string, word: string][] = [
   ["custom", "Custom webhook"],
+  ["slack", "Slack"],
   ["telegram", "Telegram"],
   ["whatsapp", "WhatsApp (linked device)"],
 ];
 
+const CUSTOM = "custom";
+const SLACK = "slack";
 const TELEGRAM = "telegram";
 const WHATSAPP = "whatsapp";
 /** The providers that can tell a sender nobody has let in that they wait. */
-const NOTIFIES = new Set([TELEGRAM, WHATSAPP]);
+const NOTIFIES = new Set([SLACK, TELEGRAM, WHATSAPP]);
 /** The dashboard's own channel: made with the team, written to from the dashboard, never deleted. */
 const DASHBOARD = "dashboard";
 
@@ -308,13 +311,20 @@ function ChannelDetail({
               <Mono className="break-all text-foreground">POST {hookAddress(channel)}</Mono>
             </KeyValue>
             <KeyValue label="Signing secret">
-              In the secret store. It was shown once, when the channel was connected.
+              {channel.provider === SLACK
+                ? "In the secret store, as pasted from the Slack app's settings."
+                : "In the secret store. It was shown once, when the channel was connected."}
             </KeyValue>
           </>
         )}
         {channel.provider === TELEGRAM && channel.can_reply ? (
           <KeyValue label="Replies to">
             Back into the Telegram chat each message came from.
+          </KeyValue>
+        ) : null}
+        {channel.provider === SLACK && channel.can_reply ? (
+          <KeyValue label="Replies to">
+            A direct message in place, and a channel in a thread under the message that asked.
           </KeyValue>
         ) : null}
         {builtIn ? null : (
@@ -809,7 +819,7 @@ export type ChannelDraft = {
   provider: string;
   ownSecret: boolean;
   secret: string;
-  /** Telegram's bot token, from @BotFather. */
+  /** Telegram's bot token, from @BotFather, or a Slack app's Bot User OAuth Token. */
   botToken: string;
   answersIn: AnswersIn;
   /** Whether strangers are told they wait, where the provider can tell them. */
@@ -872,10 +882,73 @@ export function channelRequest(d: ChannelDraft): CreateChannelRequest | string {
     if (d.botToken.trim() === "") return "Paste the bot token from @BotFather.";
     return { name, provider, credentials: { bot_token: d.botToken.trim() }, ...settings };
   }
+  // Slack signs with its own secret, so the brain cannot make one.
+  if (provider === SLACK) {
+    if (d.botToken.trim() === "")
+      return "Paste the bot token from the Slack app's OAuth & Permissions.";
+    if (d.secret.trim() === "")
+      return "Paste the signing secret from the Slack app's Basic Information.";
+    return {
+      name,
+      provider,
+      signing_secret: d.secret,
+      credentials: { bot_token: d.botToken.trim() },
+      ...settings,
+    };
+  }
   if (!d.ownSecret) return { name, provider, ...settings };
   if (d.secret.trim() === "")
     return "Paste the provider's signing secret, or let the brain make one.";
   return { name, provider, signing_secret: d.secret, ...settings };
+}
+
+/**
+ * Slack's own page for making an app from a manifest, filled in: a bot that
+ * reads the messages it is sent and the channels it is in, answers, and
+ * reads the files people share. Slack will not take events without a
+ * Request URL, and the real one exists only once the channel does, so the
+ * manifest holds a placeholder the person replaces as the last step.
+ */
+export const SLACK_PLACEHOLDER_URL = "https://example.com/replace-with-the-openarity-request-url";
+
+export function slackManifestURL(channelName: string): string {
+  const name = channelName.trim().slice(0, 35) || "Openarity";
+  const manifest = {
+    display_information: {
+      name,
+      description: "The team's agents, answering in Slack.",
+    },
+    features: {
+      app_home: {
+        home_tab_enabled: false,
+        messages_tab_enabled: true,
+        messages_tab_read_only_enabled: false,
+      },
+      bot_user: { display_name: name, always_online: true },
+    },
+    oauth_config: {
+      scopes: {
+        bot: [
+          "channels:history",
+          "groups:history",
+          "im:history",
+          "mpim:history",
+          "chat:write",
+          "files:read",
+        ],
+      },
+    },
+    settings: {
+      event_subscriptions: {
+        request_url: SLACK_PLACEHOLDER_URL,
+        bot_events: ["message.channels", "message.groups", "message.im", "message.mpim"],
+      },
+      org_deploy_enabled: false,
+      socket_mode_enabled: false,
+      token_rotation_enabled: false,
+    },
+  };
+  return `https://api.slack.com/apps?new_app=1&manifest_json=${encodeURIComponent(JSON.stringify(manifest))}`;
 }
 
 /** Where the provider sends this channel's webhooks, on the brain's webhook listener. */
@@ -1010,7 +1083,9 @@ function ConnectSheet({
               </SelectContent>
             </Select>
           </Field>
-          {draft.provider === TELEGRAM ? (
+          {draft.provider === SLACK ? (
+            <SlackSetup draft={draft} set={set} />
+          ) : draft.provider === TELEGRAM ? (
             <Field
               label="Bot token"
               htmlFor="channel-bot-token"
@@ -1038,7 +1113,7 @@ function ConnectSheet({
               onCheckedChange={(on) => set({ ownSecret: on, secret: "" })}
             />
           )}
-          {draft.provider !== TELEGRAM && draft.provider !== WHATSAPP && draft.ownSecret ? (
+          {draft.provider === CUSTOM && draft.ownSecret ? (
             <Field
               label="Signing secret"
               htmlFor="channel-secret"
@@ -1147,6 +1222,115 @@ function ConnectSheet({
   );
 }
 
+/** One numbered step of a setup, its number in the trace's step circle. */
+function SetupStep({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+  return (
+    <li className="grid grid-cols-[1.5rem_1fr] gap-x-3 gap-y-1.5">
+      <span
+        aria-hidden
+        className="flex size-6 items-center justify-center rounded-full bg-card text-xs font-medium tabular-nums shadow-[inset_0_0_0_1px_var(--color-sheet-edge)]"
+      >
+        {n}
+      </span>
+      <p className="self-center text-sm font-medium">{title}</p>
+      <div className="col-start-2 space-y-2">{children}</div>
+    </li>
+  );
+}
+
+/**
+ * Connecting Slack is a Slack app of the team's own: made from a manifest
+ * on Slack's page, installed, and its two values pasted back here. Both are
+ * credentials, so both are password fields that the browser never fills.
+ */
+function SlackSetup({
+  draft,
+  set,
+}: {
+  draft: ChannelDraft;
+  set: (patch: Partial<ChannelDraft>) => void;
+}) {
+  return (
+    <ol className="space-y-4" aria-label="Connecting Slack">
+      <SetupStep n={1} title="Create the app in Slack">
+        <p className="text-xs text-muted-foreground">
+          Opens Slack with everything filled in. Pick the workspace, then Create.
+        </p>
+        <Button asChild variant="outline" size="sm">
+          <a href={slackManifestURL(draft.name)} target="_blank" rel="noopener noreferrer">
+            Create the Slack app
+            <ExternalLink aria-hidden className="size-3.5" />
+          </a>
+        </Button>
+      </SetupStep>
+      <SetupStep n={2} title="Install it, then copy two values">
+        <p className="text-xs text-muted-foreground">
+          Choose Install to Workspace. The bot token is under OAuth & Permissions, the signing
+          secret under Basic Information.
+        </p>
+      </SetupStep>
+      <SetupStep n={3} title="Paste them here">
+        <Field label="Bot token" htmlFor="channel-bot-token" hint="Starts with xoxb-.">
+          <Input
+            id="channel-bot-token"
+            type="password"
+            autoComplete="new-password"
+            spellCheck={false}
+            value={draft.botToken}
+            onChange={(e) => set({ botToken: e.target.value })}
+          />
+        </Field>
+        <Field label="Signing secret" htmlFor="channel-secret" hint="Kept in the secret store.">
+          <Input
+            id="channel-secret"
+            type="password"
+            autoComplete="new-password"
+            spellCheck={false}
+            value={draft.secret}
+            onChange={(e) => set({ secret: e.target.value })}
+          />
+        </Field>
+      </SetupStep>
+    </ol>
+  );
+}
+
+/**
+ * The step Slack leaves to the person: the manifest's placeholder Request
+ * URL replaced with this channel's. Slack checks it at once, by the
+ * challenge the brain echoes back.
+ */
+function SlackLastStep({ channel }: { channel: CreatedChannel }) {
+  return (
+    <ol className="space-y-4 text-sm" aria-label="One step left in Slack">
+      <SetupStep n={1} title="Open Event Subscriptions in the app">
+        <p className="text-xs text-muted-foreground">
+          In the Slack app's settings, under Features.
+        </p>
+      </SetupStep>
+      <SetupStep n={2} title="Replace the Request URL with this one">
+        {channel.hook_url ? (
+          <CopyId value={channel.hook_url} label="Request URL" />
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            This brain has no public address, so Slack cannot reach it. The path is{" "}
+            <Mono className="break-all">{hookPath(channel)}</Mono> on its webhook listener.
+          </p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Slack checks it straight away and shows Verified.
+        </p>
+      </SetupStep>
+      <SetupStep n={3} title="Save Changes">
+        <p className="text-xs text-muted-foreground">
+          Then message the bot, or mention it in a channel it is in: someone writing for the first
+          time waits under Approvals until you let them in.
+        </p>
+      </SetupStep>
+    </ol>
+  );
+}
+
 /**
  * What to configure at the provider. A generated secret is shown here and
  * nowhere else: it lives in this dialog's props until it closes.
@@ -1198,6 +1382,23 @@ function CreatedDialog({
               </DialogDescription>
             </DialogHeader>
             <SetupWarnings warnings={channel.warnings} />
+            <DialogFooter>
+              <Button type="button" onClick={done}>
+                Done
+              </Button>
+            </DialogFooter>
+          </>
+        ) : channel?.provider === SLACK ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>One step left in Slack</DialogTitle>
+              <DialogDescription>
+                {channel.name} is connected here. Slack sends its messages once it has this
+                channel's Request URL.
+              </DialogDescription>
+            </DialogHeader>
+            <SetupWarnings warnings={channel.warnings} />
+            <SlackLastStep channel={channel} />
             <DialogFooter>
               <Button type="button" onClick={done}>
                 Done

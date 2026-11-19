@@ -76,6 +76,7 @@ type Providers interface {
 	Notifier(name string) (gateway.Notifier, bool)
 	TakesReplyURL(name string) bool
 	RepliesWithEvents(name string) bool
+	IssuesSigningSecret(name string) bool
 	HoldsConnection(name string) bool
 }
 
@@ -170,6 +171,13 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Slack signs with the secret its app settings show, so one the brain
+	// made would refuse every delivery.
+	if req.SigningSecret == nil && h.providers.IssuesSigningSecret(req.Provider) {
+		http.Error(w, "signing_secret is required for a "+req.Provider+" channel: paste the one the "+
+			req.Provider+" app's settings show", http.StatusBadRequest)
+		return
+	}
 	secret, generated, ok := h.signingSecret(w, req)
 	if !ok {
 		return
