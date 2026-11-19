@@ -56,12 +56,12 @@ func (a *Accounts) Post(ctx context.Context, channel uuid.UUID, req gateway.Outb
 		return err
 	}
 	_ = cli.SendChatPresence(ctx, to, types.ChatPresenceComposing, types.ChatPresenceMediaText)
-	if err := a.sleep(ctx, typing(p.Text, a.jitter())); err != nil {
+	if err := a.sleep(ctx, typing(spoken(p), a.jitter())); err != nil {
 		return err
 	}
 	id := cli.GenerateMessageID()
 	c.sending(id)
-	resp, err := cli.SendMessage(ctx, to, a.message(c, p), whatsmeow.SendRequestExtra{ID: id})
+	resp, err := cli.SendMessage(ctx, to, a.message(c, cli, p), whatsmeow.SendRequestExtra{ID: id})
 	_ = cli.SendChatPresence(ctx, to, types.ChatPresencePaused, types.ChatPresenceMediaText)
 	if err != nil {
 		return fmt.Errorf("sending: %w", err)
@@ -78,7 +78,12 @@ func (a *Accounts) Post(ctx context.Context, channel uuid.UUID, req gateway.Outb
 // message is a part as WhatsApp's extended text: the people it mentions, and
 // the message it quotes when this connection still remembers it. A quote it
 // cannot draw is left out rather than shown empty.
-func (a *Accounts) message(c *conn, p gwa.Part) *waE2E.Message {
+func (a *Accounts) message(c *conn, cli Client, p gwa.Part) *waE2E.Message {
+	if p.Poll != nil {
+		// Single choice. whatsmeow keeps the poll's secret when it sends it,
+		// which is what lets a vote on it be decrypted (SendMessage, send.go).
+		return cli.BuildPollCreation(p.Poll.Question, p.Poll.Options, 1)
+	}
 	ext := &waE2E.ExtendedTextMessage{Text: &p.Text}
 	ctxInfo := &waE2E.ContextInfo{}
 	set := false
@@ -95,6 +100,14 @@ func (a *Accounts) message(c *conn, p gwa.Part) *waE2E.Message {
 		ext.ContextInfo = ctxInfo
 	}
 	return &waE2E.Message{ExtendedTextMessage: ext}
+}
+
+// spoken is the words of a part, for how long typing them takes.
+func spoken(p gwa.Part) string {
+	if p.Poll != nil {
+		return p.Poll.Question
+	}
+	return p.Text
 }
 
 var sendable = map[string]bool{types.DefaultUserServer: true, types.HiddenUserServer: true, types.GroupServer: true}

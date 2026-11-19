@@ -94,11 +94,27 @@ func KickEvent(c dbos.Client, runID uuid.UUID, seq int32) error {
 	return nil
 }
 
+// KickNoticeReply has the brain's notice about one message (an answer given
+// in the chat) sent at once. The workflow id is the message's, so a delivery
+// repeated sends once.
+func KickNoticeReply(c dbos.Client, messageID uuid.UUID) error {
+	key := "reply:notice:" + messageID.String()
+	if _, err := dbos.Enqueue[string](c, replyQueue, replyWorkflow, key, dbos.WithEnqueueWorkflowID(key)); err != nil {
+		return fmt.Errorf("kicking the notice about message %s: %w", messageID, err)
+	}
+	return nil
+}
+
 // NoticeKicker has a notice sent at once, through the same queue and workflow
 // as a reply, rather than at the next sweep.
 type NoticeKicker struct{ c dbos.Client }
 
 func NewNoticeKicker(c dbos.Client) NoticeKicker { return NoticeKicker{c: c} }
+
+// KickNoticeReply has the notice about one message sent at once.
+func (k NoticeKicker) KickNoticeReply(_ context.Context, messageID uuid.UUID) error {
+	return KickNoticeReply(k.c, messageID)
+}
 
 func (k NoticeKicker) KickNotice(_ context.Context, noticeID int64) error {
 	key := "notice:" + strconv.FormatInt(noticeID, 10)

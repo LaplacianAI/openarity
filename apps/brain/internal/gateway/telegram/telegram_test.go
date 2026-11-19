@@ -3,6 +3,7 @@ package telegram_test
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -686,7 +687,8 @@ func connector(t *testing.T) gateway.Connector {
 }
 
 // setWebhook carries the channel's address and secret, and asks for new
-// messages only: edits and the rest would be posted to be dropped.
+// messages and taps on buttons only: edits and the rest would be posted to be
+// dropped, and without callback_query a tap would never arrive.
 func TestConnectPointsTheBotAtTheChannel(t *testing.T) {
 	t.Parallel()
 
@@ -706,7 +708,7 @@ func TestConnectPointsTheBotAtTheChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	if body.URL != "https://hooks.example.com/hooks/telegram/c-1" || body.SecretToken != secret ||
-		len(body.AllowedUpdates) != 1 || body.AllowedUpdates[0] != "message" {
+		!slices.Equal(body.AllowedUpdates, []string{"message", "callback_query"}) {
 		t.Errorf("body = %+v", body)
 	}
 }

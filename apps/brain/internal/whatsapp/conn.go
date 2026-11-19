@@ -176,6 +176,10 @@ func (c *conn) handle(ctx context.Context, evt any) {
 	log := c.a.logger.With("channel_id", c.channel.ID)
 	switch e := evt.(type) {
 	case *events.Message:
+		if e.Message.GetPollUpdateMessage() != nil {
+			c.vote(ctx, e)
+			return
+		}
 		if e.Info.IsFromMe && c.sentHere(e.Info.ID) {
 			return
 		}
@@ -214,6 +218,41 @@ func (c *conn) handle(ctx context.Context, evt any) {
 		log.Info("whatsapp: connected")
 	}
 }
+
+// vote decrypts a poll vote and offers it to the gateway as an answer. The
+// client does the decrypting, so it is here and not in the adapter. A vote
+// that cannot be decrypted (a poll this device did not send, or one whose
+// secret is gone) or that chose nothing (a retracted choice) is logged and
+// dropped: WhatsApp will not send it again, and nothing could be done with
+// it. Whether the voter may answer anything is the gateway's to decide.
+func (c *conn) vote(ctx context.Context, e *events.Message) {
+	log := c.a.logger.With("channel_id", c.channel.ID, "message_id", e.Info.ID)
+	if _, _, answers := c.words(); !answers {
+		return
+	}
+	cli := c.client()
+	if cli == nil {
+		return
+	}
+	v, err := cli.DecryptPollVote(ctx, e)
+	if err != nil {
+		// On a number several channels share, every channel's holder sees
+		// the vote and only the one whose device sent the poll holds its
+		// secret: the rest failing here is expected, not a warning.
+		log.Debug("whatsapp: a poll vote was not decrypted; dropped", "error", err)
+		return
+	}
+	in, ok := gwa.MapVote(e, c.self(), v.GetSelectedOptions())
+	if !ok {
+		log.Info("whatsapp: a poll vote chose nothing, or is not kept; dropped")
+		return
+	}
+	c.receive(ctx, []gateway.Inbound{in}, func(context.Context, gateway.Attachment) ([]byte, error) {
+		return nil, errVoteFiles
+	})
+}
+
+var errVoteFiles = errors.New("a poll vote has no file")
 
 func (c *conn) self() gwa.Self {
 	dev := c.device()

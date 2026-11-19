@@ -54,9 +54,9 @@ func TestAnAnswerThatBeatsTheParkQueuesTheRunAtThePark(t *testing.T) {
 	if again, err := f.decide(t, a, "approved", nil); err != nil || again != nil {
 		t.Fatalf("an answer while the run is held = %v, queued %v; want no requeue yet", err, again)
 	}
-	parked, again, err := parkRun(t.Context(), f.store, f.run, worker, false, nil, []byte(`{}`))
+	parked, again, _, err := parkAndAsk(t.Context(), f.store, f.run, worker, false, nil, []byte(`{}`))
 	if err != nil || !parked || again == nil || again.Attempt != 1 {
-		t.Fatalf("parkRun = %v, %v, %v; want parked and queued again at attempt 1", parked, again, err)
+		t.Fatalf("park = %v, %v, %v; want parked and queued again at attempt 1", parked, again, err)
 	}
 	if row := f.row(t); row.Status != "queued" || row.WaitingSince != nil || row.Worker != nil {
 		t.Errorf("the run is %s, waiting since %v, worker %v; want queued", row.Status, row.WaitingSince, row.Worker)
@@ -67,8 +67,8 @@ func TestAnAnswerThatBeatsTheParkQueuesTheRunAtThePark(t *testing.T) {
 func TestARunWaitsForEveryRequestOfItsTree(t *testing.T) {
 	f := newExecFixture(t, newScripted())
 	asked := f.held(t, "c1", "c2")
-	if parked, again, err := parkRun(t.Context(), f.store, f.run, worker, false, nil, []byte(`{}`)); err != nil || !parked || again != nil {
-		t.Fatalf("parkRun = %v, %v, %v; want parked and waiting", parked, again, err)
+	if parked, again, _, err := parkAndAsk(t.Context(), f.store, f.run, worker, false, nil, []byte(`{}`)); err != nil || !parked || again != nil {
+		t.Fatalf("park = %v, %v, %v; want parked and waiting", parked, again, err)
 	}
 
 	if again, err := f.decide(t, asked[0], "approved", nil); err != nil || again != nil {
@@ -84,7 +84,7 @@ func TestARunWaitsForEveryRequestOfItsTree(t *testing.T) {
 func TestOnlyTheHoldingWorkerParksARun(t *testing.T) {
 	f := newExecFixture(t, newScripted())
 	f.held(t, "c1")
-	parked, _, err := parkRun(t.Context(), f.store, f.run, "someone-else", false, nil, []byte(`{}`))
+	parked, _, _, err := parkAndAsk(t.Context(), f.store, f.run, "someone-else", false, nil, []byte(`{}`))
 	if err != nil || parked {
 		t.Fatalf("another worker's park = %v, %v; want nothing parked", parked, err)
 	}
@@ -98,7 +98,7 @@ func TestOnlyTheHoldingWorkerParksARun(t *testing.T) {
 func TestARefusedAnswerChangesNothing(t *testing.T) {
 	f := newExecFixture(t, newScripted())
 	a := f.held(t, "c1")[0]
-	if _, _, err := parkRun(t.Context(), f.store, f.run, worker, false, nil, []byte(`{}`)); err != nil {
+	if _, _, _, err := parkAndAsk(t.Context(), f.store, f.run, worker, false, nil, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 

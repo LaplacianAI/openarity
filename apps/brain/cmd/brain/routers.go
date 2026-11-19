@@ -109,6 +109,12 @@ func newWebhookRouters(
 	downloads *http.Client,
 ) []server.Router {
 	sink := gateway.NewInbox(inbox{dbStore}, runs, logger)
+	// An answer given in the chat is told at once, as a stranger's notice is.
+	if k, ok := notices.(interface {
+		KickNoticeReply(ctx context.Context, messageID uuid.UUID) error
+	}); ok {
+		sink.KickingNotices(k.KickNoticeReply)
+	}
 	ingest := gateway.NewIngest(attachments, dbStore, downloads, logger)
 
 	return []server.Router{

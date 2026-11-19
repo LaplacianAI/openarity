@@ -333,6 +333,7 @@ type Reply struct {
 	SentAt        *time.Time
 	PartsSent     int32
 	EventSeq      *int32
+	Detail        []byte
 }
 
 type Role struct {
