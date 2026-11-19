@@ -53,6 +53,7 @@ const listed: ListedAgent = {
   ...triage,
   delegation: "none",
   web: false,
+  browser: false,
   mcp_server_count: 1,
   skill_count: 1,
   delegate_count: 0,
@@ -114,6 +115,7 @@ const stored = {
   delegation: "none",
   delegates: [],
   web: false,
+  browser: false,
 };
 
 /** Picks a name in the picker that adds a noun, then closes it. */
@@ -154,6 +156,7 @@ const draft = {
   delegation: "none" as const,
   delegates: [] as string[],
   web: false,
+  browser: false,
 };
 
 describe("the draft as the API takes it", () => {
@@ -169,6 +172,7 @@ describe("the draft as the API takes it", () => {
       skills: ["s1"],
       delegation: "none",
       web: false,
+      browser: false,
     });
   });
 
@@ -252,6 +256,7 @@ describe("the PUT for an edit", () => {
       token_budget: 250000,
       delegation: "none",
       web: false,
+      browser: false,
     });
   });
 });
@@ -288,6 +293,7 @@ describe("the agents list", () => {
     mcp_server_count: 2,
     skill_count: 3,
     web: true,
+    browser: false,
     delegation: "listed",
     delegate_count: 1,
   };
@@ -304,7 +310,7 @@ describe("the agents list", () => {
     expect(within(row).getByText("Refunds")).toBeInTheDocument();
     expect(within(row).getByText("anthropic/claude-sonnet-5-5")).toBeInTheDocument();
     expect(within(row).getByText("2 servers, 3 skills")).toBeInTheDocument();
-    expect(within(row).getByText("On")).toBeInTheDocument();
+    expect(within(row).getByText("Search")).toBeInTheDocument();
     expect(within(row).getByText("1 agent")).toBeInTheDocument();
 
     const alone = screen.getByRole("link", { name: "triage" }).closest("tr") as HTMLElement;
@@ -628,6 +634,7 @@ describe("editing an agent", () => {
     token_budget: 250000,
     delegation: "none",
     web: false,
+    browser: false,
   };
 
   function editing(

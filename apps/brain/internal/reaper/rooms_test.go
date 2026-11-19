@@ -107,7 +107,7 @@ func (w *roomsWorld) saveSandbox(key string) uuid.UUID {
 	url := "https://sbx.example"
 	_, err := w.store.UpsertTeamSettings(w.t.Context(), db.UpsertTeamSettingsParams{
 		TeamID: w.team, SearchProvider: "none", CompactionMessages: 100,
-		SandboxProvider: "sandboxd", SandboxUrl: &url, SandboxSecretID: &id,
+		SandboxProvider: "sandboxd", BrowserProvider: "none", SandboxUrl: &url, SandboxSecretID: &id,
 	})
 	if err != nil {
 		w.t.Fatalf("UpsertTeamSettings: %v", err)
@@ -276,7 +276,7 @@ func TestTurningTheSandboxOffDeletesItsRooms(t *testing.T) {
 	w := newRoomsWorld(t)
 	room := w.ensure()
 	if _, err := w.store.UpsertTeamSettings(t.Context(), db.UpsertTeamSettingsParams{
-		TeamID: w.team, SearchProvider: "none", CompactionMessages: 100, SandboxProvider: "none",
+		TeamID: w.team, SearchProvider: "none", CompactionMessages: 100, SandboxProvider: "none", BrowserProvider: "none",
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,73 @@
+# Lightpanda, a headless browser built for automation, for the browser a
+# team's runs drive. No account and no key.
+#
+# Measured: a 244 MB image, about 50 MiB resident idle and 63 MiB after a
+# page, against 230 to 950 MiB for the Chrome-based browsers beside it. It
+# runs a page's scripts but draws nothing, and some sites do not work in it
+# yet; a team that needs one picks another browser.
+#
+#   cd deployment
+#   docker compose -f docker-compose.yml -f docker-compose.lightpanda.yml up -d
+#
+# A team chooses it in its settings, not here:
+#
+#   oa teams settings set <team> --browser lightpanda --browser-url ws://lightpanda:9222
+#
+# Lightpanda asks no one for a key, so nothing may reach it but the worker,
+# which runs the agents. It sits on a network of its own at a fixed address,
+# shared only with the worker, and only that address is named for the brain
+# to dial:
+#
+#   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.242/32
+#
+# Naming the compose network instead would open Postgres and OpenBao to any
+# URL a team saves. A page the browser opens may still try a private address;
+# the brain refuses each such request before the browser makes it.
+
+name: openarity
+
+services:
+  lightpanda:
+    image: lightpanda/browser:1.0.4
+    # Its CDP server on every interface of its own network, as the image's
+    # default does. It refuses a request whose Host is a name it was not
+    # told (a 403, measured), so the name the worker dials is advertised. A
+    # connection limit keeps one busy team from taking it all.
+    command:
+      - /bin/lightpanda
+      - serve
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9222"
+      - --advertise-host
+      - lightpanda
+      - --cdp-max-connections
+      - "16"
+    networks:
+      browser-lightpanda:
+        ipv4_address: 172.31.255.242
+    healthcheck:
+      # The image has no shell tools; the CDP server answering /json/version
+      # is the health, read by the browser itself.
+      test: ["CMD", "/bin/lightpanda", "fetch", "--dump", "html", "http://127.0.0.1:9222/json/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  worker:
+    networks:
+      - default
+      - browser-lightpanda
+
+networks:
+  # A /29: the gateway, Lightpanda and the worker, with room for the worker
+  # to be recreated without waiting for its old address. If it collides with
+  # a network on this machine, change the subnet, Lightpanda's address and
+  # the /32 in MCP_PRIVATE_NETWORKS together.
+  browser-lightpanda:
+    ipam:
+      config:
+        - subnet: 172.31.255.240/29

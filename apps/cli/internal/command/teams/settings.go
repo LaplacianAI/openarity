@@ -26,16 +26,20 @@ var settingFlags = []string{
 	"search", "search-url", "search-key-stdin", "no-search-key",
 	"learning", "compaction-messages", "hub", "no-hub",
 	"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template",
+	"browser", "browser-url", "browser-key-stdin", "no-browser-key",
 }
 
 // sandboxFlags are the ones that send a sandbox at all. Without any, the
 // request leaves it out and the brain keeps the stored one, key and all.
 var sandboxFlags = []string{"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template"}
 
+// browserFlags are the ones that send a browser, as sandboxFlags a sandbox.
+var browserFlags = []string{"browser", "browser-url", "browser-key-stdin", "no-browser-key"}
+
 func newSettingsCmd(opts *cli.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "settings",
-		Short: "A team's model, web search, sandbox, learning, compaction and hub",
+		Short: "A team's model, web search, sandbox, browser, learning, compaction and hub",
 		Long: "Every member can read a team's settings. Changing them needs\n" +
 			"team:settings in the team, which only admin holds by default.",
 	}
@@ -86,6 +90,11 @@ type settingsFlags struct {
 	sandboxKeyStdin bool
 	e2bTemplate     string
 	noE2BTemplate   bool
+
+	browser         string
+	browserURL      string
+	browserKeyStdin bool
+	noBrowserKey    bool
 }
 
 func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
@@ -97,13 +106,14 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 		Long: "Reads the current settings, changes only the flags given, and saves\n" +
 			"the whole. A stored search key is kept unless a new one is given, the\n" +
 			"provider changes, or a self-hosted provider's URL moves. The sandbox\n" +
-			"key follows the same rule.\n\n" +
+			"and browser keys follow the same rule.\n\n" +
 			"The key comes from stdin and nowhere else:\n\n" +
 			"    printf %s \"$BRAVE_KEY\" | oa teams settings set platform \\\n" +
 			"        --search brave --search-key-stdin\n\n" +
 			"    printf %s \"$E2B_KEY\" | oa teams settings set platform \\\n" +
 			"        --sandbox e2b --sandbox-key-stdin\n\n" +
-			"There is deliberately no --search-key or --sandbox-key flag. Arguments are readable by\n" +
+			"    oa teams settings set platform --browser lightpanda --browser-url ws://lightpanda:9222\n\n" +
+			"There is deliberately no --search-key, --sandbox-key or --browser-key flag. Arguments are readable by\n" +
 			"every process on the machine through ps, and they land in shell\n" +
 			"history.",
 		Args: cobra.ExactArgs(1),
@@ -115,7 +125,7 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 
 			// Read before any request, so an empty pipe fails without the
 			// brain ever being asked.
-			var key, sandboxKey *string
+			var key, sandboxKey, browserKey *string
 			switch {
 			case f.keyStdin:
 				k, err := readKey(cmd.InOrStdin(), "search key",
@@ -135,6 +145,18 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 				}
 				sandboxKey = &k
 			}
+			switch {
+			case f.browserKeyStdin:
+				k, err := readKey(cmd.InOrStdin(), "browser key",
+					"pipe the key in, or use --no-browser-key for a self-hosted browser without one")
+				if err != nil {
+					return err
+				}
+				browserKey = &k
+			case f.noBrowserKey:
+				empty := ""
+				browserKey = &empty
+			}
 
 			api, err := opts.API(cmd.Context())
 			if err != nil {
@@ -151,7 +173,7 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 			}
 
 			saved, err := cli.Result(api.SaveTeamSettingsWithResponse(cmd.Context(), team,
-				f.apply(changed, current, key, sandboxKey)))
+				f.apply(changed, current, keys{key, sandboxKey, browserKey})))
 			if err != nil {
 				return cli.Needs(err, "team:settings")
 			}
@@ -177,6 +199,13 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().BoolVar(&f.noE2BTemplate, "no-e2b-template", false, "e2b only: return to the default template")
 	cmd.Flags().BoolVar(&f.sandboxKeyStdin, "sandbox-key-stdin", false,
 		"read the sandbox provider's key, or sandboxd's token, from stdin")
+	cmd.Flags().StringVar(&f.browser, "browser", "",
+		"what runs drive pages in: none, browserless, steel, lightpanda, cdp, browserbase, hyperbrowser, anchor, kernel or brightdata")
+	cmd.Flags().StringVar(&f.browserURL, "browser-url", "",
+		"a self-hosted browser's address: browserless, steel or lightpanda of your own, or any cdp browser")
+	cmd.Flags().BoolVar(&f.browserKeyStdin, "browser-key-stdin", false,
+		"read the browser provider's key from stdin; brightdata's is the zone's USER:PASS")
+	cmd.Flags().BoolVar(&f.noBrowserKey, "no-browser-key", false, "a self-hosted browser only: reach it with no key")
 	cmd.Flags().StringVar(&f.learning, "learning", "", "on or off")
 	cmd.Flags().Int32Var(&f.compaction, "compaction-messages", 0, "messages before a transcript compacts, 10 to 10000")
 	cmd.Flags().StringVar(&f.hub, "hub", "", "the agent every message reaches first, by name")
@@ -200,8 +229,10 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return errors.New("--e2b-template and --no-e2b-template contradict each other")
 	case changed("e2b-template") && strings.TrimSpace(f.e2bTemplate) == "":
 		return errors.New("--e2b-template takes a template's name; --no-e2b-template returns to the default")
-	case f.sandboxKeyStdin && f.keyStdin:
-		return errors.New("stdin holds one key: set the search key and the sandbox key in two commands")
+	case f.browserKeyStdin && f.noBrowserKey:
+		return errors.New("--browser-key-stdin and --no-browser-key contradict each other")
+	case countTrue(f.keyStdin, f.sandboxKeyStdin, f.browserKeyStdin) > 1:
+		return errors.New("stdin holds one key: set the search, sandbox and browser keys in separate commands")
 	case changed("learning") && f.learning != "on" && f.learning != "off":
 		return fmt.Errorf("--learning takes on or off, not %q", f.learning)
 	case changed("hub") && f.noHub:
@@ -212,12 +243,28 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 	return nil
 }
 
+// keys are what was read from stdin, or an empty key meaning none, for each
+// part of the settings that takes one; nil keeps the stored key.
+type keys struct {
+	search, sandbox, browser *string
+}
+
+func countTrue(bs ...bool) int {
+	n := 0
+	for _, b := range bs {
+		if b {
+			n++
+		}
+	}
+	return n
+}
+
 // apply starts from what is stored and changes only what was asked. A new
 // provider leaves the old URL behind; --search-url, applied after, can give
-// it one in the same command, as --sandbox-url does for a new sandbox provider.
-func (f *settingsFlags) apply(
-	changed func(string) bool, cur *client.TeamSettings, key, sandboxKey *string,
-) client.TeamSettingsRequest {
+// it one in the same command, as --sandbox-url and --browser-url do for a new
+// sandbox or browser provider.
+func (f *settingsFlags) apply(changed func(string) bool, cur *client.TeamSettings, k keys) client.TeamSettingsRequest {
+	key := k.search
 	req := client.TeamSettingsRequest{
 		Model:              cur.Model,
 		Learning:           cur.Learning,
@@ -276,8 +323,27 @@ func (f *settingsFlags) apply(
 		name := strings.TrimSpace(f.hub)
 		req.Hub = &name
 	}
-	req.Sandbox = f.applySandbox(changed, cur.Sandbox, sandboxKey)
+	req.Sandbox = f.applySandbox(changed, cur.Sandbox, k.sandbox)
+	req.Browser = f.applyBrowser(changed, cur.Browser, k.browser)
 	return req
+}
+
+func (f *settingsFlags) applyBrowser(
+	changed func(string) bool, cur client.BrowserSettings, key *string,
+) *client.BrowserSettingsRequest {
+	if !slices.ContainsFunc(browserFlags, changed) {
+		return nil
+	}
+	b := client.BrowserSettingsRequest{Provider: cur.Provider, URL: cur.URL, APIKey: key}
+	if changed("browser") && client.BrowserProvider(f.browser) != cur.Provider {
+		b.Provider = client.BrowserProvider(f.browser)
+		b.URL = nil
+	}
+	if changed("browser-url") {
+		u := f.browserURL
+		b.URL = &u
+	}
+	return &b
 }
 
 func (f *settingsFlags) applySandbox(
@@ -347,6 +413,7 @@ func printSettings(opts *cli.Options, s *client.TeamSettings) error {
 			table.Row(label("key"), value(key))
 
 			printSandbox(table, opts, s.Sandbox)
+			printBrowser(table, opts, s.Browser)
 
 			learning := "off"
 			if s.Learning {
@@ -388,5 +455,26 @@ func printSandbox(table *printer.Table, opts *cli.Options, s client.SandboxSetti
 			key = "set"
 		}
 		table.Row(label("sandbox key"), value(key))
+	}
+}
+
+// printBrowser prints nothing for a brain that predates browsers, as
+// printSandbox does for sandboxes.
+func printBrowser(table *printer.Table, opts *cli.Options, b client.BrowserSettings) {
+	if b.Provider == "" {
+		return
+	}
+	label, value := opts.Styles.Label.Render, opts.Styles.Value.Render
+
+	table.Row(label("browser"), value(string(b.Provider)))
+	if b.URL != nil {
+		table.Row(label("browser url"), value(cli.Safe(*b.URL)))
+	}
+	if b.Provider != client.BrowserProviderNone {
+		key := "not set"
+		if b.KeySet {
+			key = "set"
+		}
+		table.Row(label("browser key"), value(key))
 	}
 }

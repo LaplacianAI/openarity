@@ -269,7 +269,9 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"    delegation: listed\n" +
 			"    delegates: [billing]   # by name or id; read only with listed\n" +
 			"    # web_search and web_fetch; off unless set\n" +
-			"    web: true\n\n" +
+			"    web: true\n" +
+			"    # a browser to drive, from the team's browser provider; off unless set\n" +
+			"    browser: false\n\n" +
 			"    oa agents create platform -f triage.yaml \\\n" +
 			"        --mcp-server github=search_code --skill pdf-processing",
 		Args: cobra.ExactArgs(1),
@@ -424,6 +426,11 @@ func printAgent(opts *cli.Options, a *client.Agent, did string) error {
 				table.Row("web", "on", "web_search and web_fetch")
 			} else {
 				table.Row("web", "off", "")
+			}
+			if a.Browser {
+				table.Row("browser", "on", "the team's browser")
+			} else {
+				table.Row("browser", "off", "")
 			}
 		},
 	})

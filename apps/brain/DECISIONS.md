@@ -226,6 +226,22 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   delegated to is only itself — hub prompt, `plan` and the hub's reach come
   from the run's flag, never from the agent's row, and a check keeps the flag
   on roots only.
+- **A browser is a grant of its own, and one provider port over CDP.** An
+  agent's `browser` is apart from `web`: a browser runs a page's scripts and
+  acts on it, where search and fetch only read. The hub has it whenever its
+  team has a browser. Every provider speaks the Chrome DevTools Protocol, so
+  `internal/browser` only finds the address: built from a URL and a key
+  (Browserless, Lightpanda, any `cdp` browser, Bright Data), or handed back
+  by a session the provider makes on request and ends when the run lets it
+  go (Steel, Browserbase, Hyperbrowser, Anchor, Kernel). A key is kept as the
+  search key is, at `teams/<team_id>/browser/<id>`, and sent again when the
+  provider or its URL changes. A self-hosted browser may have none: most ask
+  for none, which is why each compose overlay puts one on a network shared
+  only with the worker. None of the providers documents CDP request
+  interception, so it was measured on the four self-hosted images; all four
+  pause every request for the brain to allow. The staging browser is
+  Lightpanda, about 63 MiB after a page against 300 to 980 MiB for the
+  Chrome-based three.
 - **The hub's graph finds every agent, and only its own tools and skills.**
   Its reach is the team's other agents, to hand work to, and the tools and
   skills the hub agent holds, since those are all it can call or load; the

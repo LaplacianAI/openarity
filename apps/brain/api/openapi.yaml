@@ -2753,7 +2753,7 @@ paths:
       summary: Read a team's settings
       description: |
         Any member may read them. A team that never saved reads the
-        defaults: no model, search off, learning off, compaction at 100
+        defaults: no model, search off, no browser, learning off, compaction at 100
         messages, the built-in orchestrator as its hub, and `updated_at`
         null. The search key is never returned; `search.key_set` says
         whether there is one.
@@ -5961,7 +5961,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/AgentSummary"
         - type: object
-          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills, delegation, delegates, web]
+          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills, delegation, delegates, web, browser]
           properties:
             instructions:
               type: string
@@ -6007,6 +6007,11 @@ components:
               description: |
                 Whether the agent has web_search and web_fetch when it runs as
                 itself. The team's hub has both whatever this says.
+            browser:
+              type: boolean
+              description: |
+                Whether the agent may drive the team's browser when it runs as
+                itself. The team's hub may whatever this says.
 
     AgentRequest:
       type: object
@@ -6092,6 +6097,15 @@ components:
             provider; web_fetch needs nothing. Left out, it is false, and a
             PUT replaces the whole agent, so a replace that leaves it out
             takes the grant away.
+        browser:
+          type: boolean
+          default: false
+          description: |
+            Gives the agent a browser to drive: open a page, read it, click
+            and type. The team's hub has one whatever this says. It needs the
+            team's browser provider, and is apart from web: a browser runs a
+            page's scripts and acts on it. Left out, it is false, and a PUT
+            that leaves it out takes the grant away.
 
     Delegation:
       type: string
@@ -6111,13 +6125,16 @@ components:
       allOf:
         - $ref: "#/components/schemas/AgentSummary"
         - type: object
-          required: [delegation, web, mcp_server_count, skill_count, delegate_count]
+          required: [delegation, web, browser, mcp_server_count, skill_count, delegate_count]
           properties:
             delegation:
               $ref: "#/components/schemas/Delegation"
             web:
               type: boolean
               description: Whether it has web_search and web_fetch by its own grant
+            browser:
+              type: boolean
+              description: Whether it may drive the team's browser by its own grant
             mcp_server_count:
               type: integer
               format: int64
@@ -6305,6 +6322,8 @@ components:
           items:
             type: string
         web:
+          type: boolean
+        browser:
           type: boolean
 
     BlueprintServerGrant:
@@ -6522,7 +6541,7 @@ components:
 
     TeamSettings:
       type: object
-      required: [search, sandbox, learning, compaction_messages]
+      required: [search, sandbox, browser, learning, compaction_messages]
       description: |
         `model`, `hub` and `updated_at` are always sent, null when unset;
         optional here only so a generated client decodes null as absent
@@ -6536,6 +6555,8 @@ components:
           $ref: "#/components/schemas/SearchSettings"
         sandbox:
           $ref: "#/components/schemas/SandboxSettings"
+        browser:
+          $ref: "#/components/schemas/BrowserSettings"
         learning:
           type: boolean
           description: Whether the learner writes learnings after each run, for approval
@@ -6628,6 +6649,36 @@ components:
         url; `daytona` takes a key, and a url when self-hosted; `sandboxd` is
         self-hosted and takes a url and its token as the key.
 
+    BrowserSettings:
+      type: object
+      required: [provider, key_set]
+      description: What the team's runs drive pages in.
+      properties:
+        provider:
+          $ref: "#/components/schemas/BrowserProvider"
+        url:
+          type: string
+          nullable: true
+          description: |
+            A self-hosted browser's address, for browserless, steel,
+            lightpanda and cdp; null for a hosted one.
+          examples: ["ws://lightpanda:9222"]
+        key_set:
+          type: boolean
+          description: Whether a key is stored. The key itself is never returned.
+
+    BrowserProvider:
+      type: string
+      enum: [none, browserless, steel, lightpanda, cdp, browserbase, hyperbrowser, anchor, kernel, brightdata]
+      description: |
+        `none` gives runs no browser. `browserless`, `steel` and `lightpanda`
+        are hosted, taking a key and no url, or self-hosted at a url, where
+        a key is optional. `cdp` is any browser that speaks the Chrome
+        DevTools Protocol at a url, such as headless-shell, with an optional
+        token. `browserbase`, `hyperbrowser`, `anchor`, `kernel` and
+        `brightdata` are hosted only and take a key; Bright Data's is the
+        zone's `USER:PASS`.
+
     TeamSettingsRequest:
       type: object
       additionalProperties: false
@@ -6641,6 +6692,8 @@ components:
           $ref: "#/components/schemas/SearchSettingsRequest"
         sandbox:
           $ref: "#/components/schemas/SandboxSettingsRequest"
+        browser:
+          $ref: "#/components/schemas/BrowserSettingsRequest"
         learning:
           type: boolean
         compaction_messages:
@@ -6702,6 +6755,32 @@ components:
             The provider's key, or sandboxd's token: required for every
             provider but none. Omit it to keep the stored one while the
             provider and its url are unchanged.
+
+    BrowserSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [provider]
+      description: Absent from a request, the stored browser is kept.
+      properties:
+        provider:
+          $ref: "#/components/schemas/BrowserProvider"
+        url:
+          type: string
+          description: |
+            Required for cdp, optional for browserless, steel and lightpanda
+            (self-hosted), refused for every other provider. An http, https,
+            ws or wss URL with no credentials or query: a token is the key.
+          examples: ["ws://lightpanda:9222"]
+        api_key:
+          type: string
+          writeOnly: true
+          maxLength: 4096
+          description: |
+            The provider's key, sent as the provider wants it. Required for a
+            hosted browser; optional for a self-hosted one, where an empty
+            string removes the stored key. Omit it to keep the stored one
+            while the provider and its url are unchanged; a key is sent again
+            when either changes.
 
     RunRequest:
       type: object

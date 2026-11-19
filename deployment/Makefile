@@ -61,6 +61,14 @@ SEARXNG   := -f docker-compose.searxng.yml
 # staging takes SearXNG when .env opts into it, as deploy.sh does, so a stack
 # brought up by hand matches a deployed one.
 STAGING_SEARXNG := $(if $(shell grep -Eq "^SEARXNG_SECRET=[^\"'[:space:]]" .env 2>/dev/null && echo y),$(SEARXNG))
+#   A BROWSER is the one a team's runs drive, chosen by name: lightpanda,
+#   headless-shell, browserless or steel. Like SearXNG it puts the worker on
+#   its network, and Browserless's :? guard on its token keeps it out of down,
+#   ps and destroy for the same reason. staging takes the one BROWSER_STACK
+#   names in .env, as deploy.sh does.
+BROWSERS        := lightpanda headless-shell browserless steel
+BROWSER_STACK   := $(shell sed -n 's/^BROWSER_STACK=\([a-z-]*\).*/\1/p' .env 2>/dev/null)
+STAGING_BROWSER := $(if $(filter $(BROWSER_STACK),$(BROWSERS)),-f docker-compose.$(BROWSER_STACK).yml)
 #   GRAFANA is the stack's logs: Loki, Alloy and Grafana, kept on this
 #   machine. Optional, and only for a deployment with no logging of its own:
 #   the brain logs JSON to stdout, which any collector can read. Its :? guard
@@ -233,6 +241,31 @@ searxng-down:
 	$(COMPOSE) $(SEARXNG) stop searxng
 
 # ---------------------------------------------------------------------------
+# A browser for the team's runs. The worker dials it on a network of its own
+# at a fixed address, which is the one address MCP_PRIVATE_NETWORKS has to
+# name; each docker-compose.<name>.yml says which, and what it measured.
+#
+# A running worker is recreated onto that network, as for SearXNG.
+
+## browser: add a self-hosted browser — `make browser name=lightpanda`, or headless-shell, browserless (needs BROWSERLESS_TOKEN) or steel
+browser:
+	@case " $(BROWSERS) " in *" $(name) "*) ;; *) \
+	  echo "name= is one of: $(BROWSERS)" >&2; exit 2;; esac
+	$(COMPOSE) -f docker-compose.$(name).yml up -d --wait $(name)
+	@if [ -n "$$($(COMPOSE) $(PROFILE) ps -q worker)" ]; then \
+	  $(COMPOSE) -f docker-compose.$(name).yml $(PROFILE) up -d --no-deps worker; \
+	fi
+	@printf '\n%s\n%s\n\n' \
+	  "$(name)    on its own network; its address and the team setting are in docker-compose.$(name).yml" \
+	  "worker     OPENARITY_MCP_PRIVATE_NETWORKS needs that address, as a /32"
+
+## browser-down: stop a self-hosted browser — `make browser-down name=lightpanda`
+browser-down:
+	@case " $(BROWSERS) " in *" $(name) "*) ;; *) \
+	  echo "name= is one of: $(BROWSERS)" >&2; exit 2;; esac
+	$(COMPOSE) -f docker-compose.$(name).yml stop $(name)
+
+# ---------------------------------------------------------------------------
 # The stack's logs in Grafana, kept on this machine for seven days. Alloy
 # reads every container of the project through a read-only socket proxy; see
 # docker-compose.logs.yml. A deployment with logging of its own leaves this
@@ -276,7 +309,7 @@ image:
 # is the point. See OPENBAO.md; `make bao-approle` prints them.
 ## staging: published image, authentik, real OpenBao and SeaweedFS — needs .env
 staging:
-	$(COMPOSE) $(OIDC) $(IMAGE) $(BAO) $(OBJECTS) $(STAGING_SEARXNG) $(STAGING_GRAFANA) $(PROFILE) up -d
+	$(COMPOSE) $(OIDC) $(IMAGE) $(BAO) $(OBJECTS) $(STAGING_SEARXNG) $(STAGING_BROWSER) $(STAGING_GRAFANA) $(PROFILE) up -d
 
 ## restart: recreate every running container, keeping volumes
 restart:
@@ -373,6 +406,6 @@ bao:
 	$(COMPOSE) $(BAO) $(PROFILE) up -d --build
 
 .PHONY: help up objects dex dex-hash dex-down litellm litellm-down \
-        omniroute omniroute-down ollama ollama-down searxng searxng-down grafana grafana-down dev image staging restart \
+        omniroute omniroute-down ollama ollama-down searxng searxng-down browser browser-down grafana grafana-down dev image staging restart \
         pull ps logs down destroy bao-up bao-init bao-status bao-approle \
         bao-policy bao

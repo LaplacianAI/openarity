@@ -110,7 +110,7 @@ ensure_env_file() {
 	for key in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS \
 		AUTHENTIK_BOOTSTRAP_TOKEN OBJECTS_SECRET_KEY \
 		LITELLM_MASTER_KEY LITELLM_PG_PASS LITELLM_UI_PASSWORD OMNIROUTE_PASSWORD \
-		SEARXNG_SECRET; do
+		SEARXNG_SECRET BROWSERLESS_TOKEN; do
 		env_is_set "$key" || { env_set "$key" "$(secret)"; note "generated $key"; }
 	done
 

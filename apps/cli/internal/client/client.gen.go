@@ -357,6 +357,48 @@ func (e BlueprintRefusalKind) Valid() bool {
 	}
 }
 
+// Defines values for BrowserProvider.
+const (
+	BrowserProviderAnchor       BrowserProvider = "anchor"
+	BrowserProviderBrightdata   BrowserProvider = "brightdata"
+	BrowserProviderBrowserbase  BrowserProvider = "browserbase"
+	BrowserProviderBrowserless  BrowserProvider = "browserless"
+	BrowserProviderCdp          BrowserProvider = "cdp"
+	BrowserProviderHyperbrowser BrowserProvider = "hyperbrowser"
+	BrowserProviderKernel       BrowserProvider = "kernel"
+	BrowserProviderLightpanda   BrowserProvider = "lightpanda"
+	BrowserProviderNone         BrowserProvider = "none"
+	BrowserProviderSteel        BrowserProvider = "steel"
+)
+
+// Valid indicates whether the value is a known member of the BrowserProvider enum.
+func (e BrowserProvider) Valid() bool {
+	switch e {
+	case BrowserProviderAnchor:
+		return true
+	case BrowserProviderBrightdata:
+		return true
+	case BrowserProviderBrowserbase:
+		return true
+	case BrowserProviderBrowserless:
+		return true
+	case BrowserProviderCdp:
+		return true
+	case BrowserProviderHyperbrowser:
+		return true
+	case BrowserProviderKernel:
+		return true
+	case BrowserProviderLightpanda:
+		return true
+	case BrowserProviderNone:
+		return true
+	case BrowserProviderSteel:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ChannelReplyMode.
 const (
 	ChannelReplyModeEvents ChannelReplyMode = "events"
@@ -877,6 +919,9 @@ type AddMemberRequest struct {
 
 // Agent defines model for Agent.
 type Agent struct {
+	// Browser Whether the agent may drive the team's browser when it runs as
+	// itself. The team's hub may whatever this says.
+	Browser   bool      `json:"browser" yaml:"browser"`
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
 
 	// Delegates The agents it may delegate to when delegation is listed. Ordered by id
@@ -933,6 +978,13 @@ type AgentPage struct {
 
 // AgentRequest defines model for AgentRequest.
 type AgentRequest struct {
+	// Browser Gives the agent a browser to drive: open a page, read it, click
+	// and type. The team's hub has one whatever this says. It needs the
+	// team's browser provider, and is apart from web: a browser runs a
+	// page's scripts and acts on it. Left out, it is false, and a PUT
+	// that leaves it out takes the grant away.
+	Browser *bool `json:"browser,omitempty" yaml:"browser,omitempty"`
+
 	// Delegates Read only when delegation is listed, and refused otherwise. Agents
 	// of this team, by id, each once; never the agent itself.
 	Delegates *[]openapi_types.UUID `json:"delegates,omitempty" yaml:"delegates,omitempty"`
@@ -1247,6 +1299,8 @@ type Blueprint struct {
 // skills and delegates are named. Described whole: a field left out is
 // its default, so leaving out skills takes its skills away.
 type BlueprintAgent struct {
+	Browser *bool `json:"browser,omitempty" yaml:"browser,omitempty"`
+
 	// Delegates Agents by name, in this blueprint or already in the team
 	Delegates *[]string `json:"delegates,omitempty" yaml:"delegates,omitempty"`
 
@@ -1413,6 +1467,64 @@ type BlueprintSkillFile struct {
 
 	// Path Examples: SKILL.md
 	Path string `json:"path" yaml:"path"`
+}
+
+// BrowserProvider `none` gives runs no browser. `browserless`, `steel` and `lightpanda`
+// are hosted, taking a key and no url, or self-hosted at a url, where
+// a key is optional. `cdp` is any browser that speaks the Chrome
+// DevTools Protocol at a url, such as headless-shell, with an optional
+// token. `browserbase`, `hyperbrowser`, `anchor`, `kernel` and
+// `brightdata` are hosted only and take a key; Bright Data's is the
+// zone's `USER:PASS`.
+type BrowserProvider string
+
+// BrowserSettings What the team's runs drive pages in.
+type BrowserSettings struct {
+	// KeySet Whether a key is stored. The key itself is never returned.
+	KeySet bool `json:"key_set" yaml:"key_set"`
+
+	// Provider `none` gives runs no browser. `browserless`, `steel` and `lightpanda`
+	// are hosted, taking a key and no url, or self-hosted at a url, where
+	// a key is optional. `cdp` is any browser that speaks the Chrome
+	// DevTools Protocol at a url, such as headless-shell, with an optional
+	// token. `browserbase`, `hyperbrowser`, `anchor`, `kernel` and
+	// `brightdata` are hosted only and take a key; Bright Data's is the
+	// zone's `USER:PASS`.
+	Provider BrowserProvider `json:"provider" yaml:"provider"`
+
+	// URL A self-hosted browser's address, for browserless, steel,
+	// lightpanda and cdp; null for a hosted one.
+	//
+	//
+	// Examples: ws://lightpanda:9222
+	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
+// BrowserSettingsRequest Absent from a request, the stored browser is kept.
+type BrowserSettingsRequest struct {
+	// APIKey The provider's key, sent as the provider wants it. Required for a
+	// hosted browser; optional for a self-hosted one, where an empty
+	// string removes the stored key. Omit it to keep the stored one
+	// while the provider and its url are unchanged; a key is sent again
+	// when either changes.
+	APIKey *string `json:"api_key,omitempty" yaml:"api_key,omitempty"`
+
+	// Provider `none` gives runs no browser. `browserless`, `steel` and `lightpanda`
+	// are hosted, taking a key and no url, or self-hosted at a url, where
+	// a key is optional. `cdp` is any browser that speaks the Chrome
+	// DevTools Protocol at a url, such as headless-shell, with an optional
+	// token. `browserbase`, `hyperbrowser`, `anchor`, `kernel` and
+	// `brightdata` are hosted only and take a key; Bright Data's is the
+	// zone's `USER:PASS`.
+	Provider BrowserProvider `json:"provider" yaml:"provider"`
+
+	// URL Required for cdp, optional for browserless, steel and lightpanda
+	// (self-hosted), refused for every other provider. An http, https,
+	// ws or wss URL with no credentials or query: a token is the key.
+	//
+	//
+	// Examples: ws://lightpanda:9222
+	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
 }
 
 // Channel defines model for Channel.
@@ -1887,6 +1999,8 @@ type HubRef struct {
 // web and with other agents, and what it is granted, as counts. The
 // grants themselves are read from the agent.
 type ListedAgent struct {
+	// Browser Whether it may drive the team's browser by its own grant
+	Browser   bool      `json:"browser" yaml:"browser"`
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
 
 	// DelegateCount The agents it lists as delegates; read only when delegation is listed
@@ -3095,6 +3209,9 @@ type TeamPermissions struct {
 // optional here only so a generated client decodes null as absent
 // rather than as a zero value.
 type TeamSettings struct {
+	// Browser What the team's runs drive pages in.
+	Browser BrowserSettings `json:"browser" yaml:"browser"`
+
 	// CompactionMessages Messages in a run's request past which it compacts. A run also
 	// compacts when its next request would read more than a tenth of
 	// its token budget, or 100,000 tokens, whichever is less.
@@ -3122,7 +3239,9 @@ type TeamSettings struct {
 
 // TeamSettingsRequest defines model for TeamSettingsRequest.
 type TeamSettingsRequest struct {
-	CompactionMessages int32 `json:"compaction_messages" yaml:"compaction_messages"`
+	// Browser Absent from a request, the stored browser is kept.
+	Browser            *BrowserSettingsRequest `json:"browser,omitempty" yaml:"browser,omitempty"`
+	CompactionMessages int32                   `json:"compaction_messages" yaml:"compaction_messages"`
 
 	// Hub The name of an agent in this team, ignoring case. Null or absent
 	// for the built-in orchestrator.
@@ -5322,7 +5441,7 @@ type ClientInterface interface {
 	// GetTeamSettings Read a team's settings
 	//
 	// Any member may read them. A team that never saved reads the
-	// defaults: no model, search off, learning off, compaction at 100
+	// defaults: no model, search off, no browser, learning off, compaction at 100
 	// messages, the built-in orchestrator as its hub, and `updated_at`
 	// null. The search key is never returned; `search.key_set` says
 	// whether there is one.
@@ -8045,7 +8164,7 @@ func (c *Client) ListSessionRuns(ctx context.Context, id TeamID, sessionID opena
 // GetTeamSettings Read a team's settings
 //
 // Any member may read them. A team that never saved reads the
-// defaults: no model, search off, learning off, compaction at 100
+// defaults: no model, search off, no browser, learning off, compaction at 100
 // messages, the built-in orchestrator as its hub, and `updated_at`
 // null. The search key is never returned; `search.key_set` says
 // whether there is one.
@@ -14721,7 +14840,7 @@ type ClientWithResponsesInterface interface {
 	// GetTeamSettingsWithResponse Read a team's settings
 	//
 	// Any member may read them. A team that never saved reads the
-	// defaults: no model, search off, learning off, compaction at 100
+	// defaults: no model, search off, no browser, learning off, compaction at 100
 	// messages, the built-in orchestrator as its hub, and `updated_at`
 	// null. The search key is never returned; `search.key_set` says
 	// whether there is one.
@@ -21217,7 +21336,7 @@ func (c *ClientWithResponses) ListSessionRunsWithResponse(ctx context.Context, i
 // GetTeamSettingsWithResponse Read a team's settings
 //
 // Any member may read them. A team that never saved reads the
-// defaults: no model, search off, learning off, compaction at 100
+// defaults: no model, search off, no browser, learning off, compaction at 100
 // messages, the built-in orchestrator as its hub, and `updated_at`
 // null. The search key is never returned; `search.key_set` says
 // whether there is one.

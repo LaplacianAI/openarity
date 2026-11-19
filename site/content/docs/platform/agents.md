@@ -24,6 +24,7 @@ max_steps: 5
 delegation: listed      # none (the default), team, or listed
 delegates: [billing]    # read only with listed
 web: true               # web_search and web_fetch; off unless set
+browser: false          # the team's browser, to drive pages with; off unless set
 ```
 
 ```sh
@@ -45,6 +46,7 @@ oa runs start platform triage 'Sort the issues opened today.' --follow
 | `steer_continuations` | How many times a run may carry on for a message that arrived as it finished |
 | `delegation`    | Whom it may hand work to: `none`, any agent in the `team`, or the `listed` `delegates` |
 | `web`           | Gives it `web_search` and `web_fetch` — see [Web tools](web.md)  |
+| `browser`       | Lets it drive the team's browser — see [A browser](web.md#a-browser) |
 
 A `rewoo` agent plans every call before making one, so it cannot search for
 tools midway. When its granted tools are too many to send, it plans with the

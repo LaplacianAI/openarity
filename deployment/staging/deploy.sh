@@ -19,8 +19,8 @@
 #
 # Staging is one slot because the server is small: authentik, OpenBao,
 # SeaweedFS, Postgres and FalkorDB run once, and only migrate, brain and
-# worker are replaced. SearXNG, when the server's .env opts into it, is
-# started if it is not running and otherwise left alone.
+# worker are replaced. SearXNG and the browser, when the server's .env opts
+# into them, are started if they are not running and otherwise left alone.
 #
 # Main and every pull request share one database, so the teams, agents and
 # channels made on staging are there whatever is deployed. A pull request's
@@ -95,6 +95,17 @@ if grep -Eq "^SEARXNG_SECRET=[^\"'[:space:]]" "$DEPLOYMENT/.env" 2>/dev/null; th
 	files+=(-f "$DEPLOYMENT/docker-compose.searxng.yml")
 	searxng=1
 fi
+# A browser for the team's runs is the server's to opt into, by naming one
+# with BROWSER_STACK in .env: lightpanda, headless-shell, browserless or
+# steel. Its overlay puts the worker on its network, as SearXNG's does, so
+# once it is opted into, every deploy has to include it.
+browser=
+case "$(sed -n 's/^BROWSER_STACK=\([a-z-]*\).*/\1/p' "$DEPLOYMENT/.env" 2>/dev/null)" in
+lightpanda | headless-shell | browserless | steel)
+	browser=$(sed -n 's/^BROWSER_STACK=\([a-z-]*\).*/\1/p' "$DEPLOYMENT/.env")
+	files+=(-f "$DEPLOYMENT/docker-compose.$browser.yml")
+	;;
+esac
 # The logs are the server's to opt into too, by setting GRAFANA_ADMIN_PASSWORD
 # in .env. They change no brain service, so a deploy only starts them if they
 # are not running, and never interrupts what is being read.
@@ -185,6 +196,9 @@ switch() {
 	# never interrupts a search in flight.
 	if [ "$searxng" = 1 ]; then
 		compose up -d --no-deps searxng
+	fi
+	if [ -n "$browser" ]; then
+		compose up -d --no-deps "$browser"
 	fi
 	if [ "$grafana" = 1 ]; then
 		compose up -d --no-deps socket-proxy loki alloy grafana

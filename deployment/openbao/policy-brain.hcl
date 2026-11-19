@@ -200,6 +200,16 @@ path "secret/metadata/teams/+/sandbox/+" {
   capabilities = ["delete"]
 }
 
+# A team's browser key lives at teams/<team_id>/browser/<id>: a fresh path per
+# key, tombstoned and swept as the search key is.
+path "secret/data/teams/+/browser/+" {
+  capabilities = ["read", "create"]
+}
+
+path "secret/metadata/teams/+/browser/+" {
+  capabilities = ["delete"]
+}
+
 path "secret/data/teams/+/sandbox/rooms/+" {
   capabilities = ["read", "create"]
 }

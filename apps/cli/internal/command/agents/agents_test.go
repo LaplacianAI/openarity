@@ -540,3 +540,54 @@ func TestTheCreateHelpShowsTheWebGrant(t *testing.T) {
 		t.Errorf("the help does not show web: true:\n%s", out)
 	}
 }
+
+// A browser is its own grant, sent as the file writes it.
+func TestAFileSendsItsBrowserAsWritten(t *testing.T) {
+	for name, tc := range map[string]struct {
+		yaml string
+		want any
+	}{
+		"left out": {"", nil},
+		"on":       {"browser: true\n", true},
+		"off":      {"browser: false\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script, err := delegating(t, tc.yaml)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := sent(t, script, http.MethodPost)["browser"]; got != tc.want {
+				t.Errorf("browser = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAgentsGetSaysWhetherItHasABrowser(t *testing.T) {
+	for name, tc := range map[string]struct {
+		browser string
+		want    string
+	}{
+		"on":  {`"browser":true,`, "browser on the team's browser"},
+		"off": {`"browser":false,`, "browser off"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clitest.Routes(t, routes(map[string]clitest.Reply{
+				"GET /teams/{id}/agents/{agentID}": {Status: http.StatusOK, Body: strings.Replace(oneAgent, `"max_steps":5,`, `"max_steps":5,`+tc.browser, 1)},
+			}))
+			out, err := clitest.Execute(t, commands, "agents", "get", "platform", "triage")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var row string
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, "browser ") {
+					row = strings.Join(strings.Fields(line), " ")
+				}
+			}
+			if row != tc.want {
+				t.Errorf("browser row = %q, want %q:\n%s", row, tc.want, out)
+			}
+		})
+	}
+}

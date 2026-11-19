@@ -536,6 +536,7 @@ func agentDiff(cur db.Agent, p db.CreateAgentParams) []string {
 	add(!equalPtr(cur.TokenBudget, p.TokenBudget), "token_budget")
 	add(cur.Delegation != p.Delegation, "delegation")
 	add(cur.Web != p.Web, "web")
+	add(cur.Browser != p.Browser, "browser")
 	return fields
 }
 

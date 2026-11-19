@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	sandboxpkg "github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
@@ -38,7 +39,12 @@ func validate(req settingsRequest, stored *db.TeamSetting, allow func(netip.Addr
 		return err
 	}
 	if req.Sandbox != nil {
-		return checkSandbox(*req.Sandbox, stored, allow)
+		if err := checkSandbox(*req.Sandbox, stored, allow); err != nil {
+			return err
+		}
+	}
+	if req.Browser != nil {
+		return checkBrowser(*req.Browser, stored, allow)
 	}
 	return nil
 }
@@ -137,10 +143,17 @@ func checkKey(field, key string) error {
 }
 
 func checkSelfHostedURL(field, raw string, allow func(netip.Addr) bool) error {
+	return checkURL(field, raw, allow, "http", "https")
+}
+
+// checkURL is a self-hosted service's address: one of schemes, a host, no
+// credentials, query or fragment, and never a private address unless allow
+// says it may be.
+func checkURL(field, raw string, allow func(netip.Addr) bool, schemes ...string) error {
 	u, err := url.Parse(raw)
 	switch {
-	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "":
-		return fmt.Errorf("%s.url must be an http or https URL with a host", field)
+	case err != nil || !slices.Contains(schemes, u.Scheme) || u.Hostname() == "":
+		return fmt.Errorf("%s.url must be a URL with a host, over %s", field, strings.Join(schemes, " or "))
 	case u.User != nil:
 		return fmt.Errorf("%s.url must not carry credentials", field)
 	case u.RawQuery != "" || u.ForceQuery || u.Fragment != "":

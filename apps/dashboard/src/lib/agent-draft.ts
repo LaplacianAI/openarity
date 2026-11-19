@@ -17,12 +17,13 @@ export type Draft = {
   /** Kept while another choice is shown, and sent only with listed. */
   delegates: string[];
   web: boolean;
+  browser: boolean;
 };
 
 /** The brain refuses more; this only says so before the round trip. */
 const MAX_TOKEN_BUDGET = 100_000_000;
 
-/** A new agent: alone and off the web, as the brain's own defaults are. */
+/** A new agent: alone, off the web and with no browser, as the brain's own defaults are. */
 export const EMPTY: Draft = {
   name: "",
   description: "",
@@ -37,6 +38,7 @@ export const EMPTY: Draft = {
   delegation: "none",
   delegates: [],
   web: false,
+  browser: false,
 };
 
 /**
@@ -71,6 +73,7 @@ export function agentRequest(d: Draft): AgentRequest | string {
     delegation: d.delegation,
     ...(d.delegation === "listed" ? { delegates: d.delegates } : {}),
     web: d.web,
+    browser: d.browser,
   };
 }
 
@@ -90,6 +93,7 @@ export function draftOf(a: Agent): Draft {
     delegation: a.delegation,
     delegates: a.delegates,
     web: a.web === true,
+    browser: a.browser === true,
   };
 }
 
@@ -135,4 +139,12 @@ export function delegationWords(a: ListedAgent): string {
     default:
       return "No one";
   }
+}
+
+/** What an agent reaches on the web, in the one cell there is room for. */
+export function webWords(a: { web: boolean; browser?: boolean }): string {
+  if (a.web && a.browser) return "Search and browser";
+  if (a.web) return "Search";
+  if (a.browser) return "Browser";
+  return "Off";
 }
