@@ -180,6 +180,7 @@ describe("notifications of approvals", () => {
 
     act(() => shown[0]?.onclick?.());
     await waitFor(() => expect(router.state.location.pathname).toBe("/ui/requests"));
+    expect(router.state.location.search).toMatchObject({ request: "new" });
   });
 
   it("says nothing of a request someone else must answer", async () => {
@@ -375,6 +376,41 @@ describe("the switch in the account menu", () => {
     expect(
       await screen.findByRole("menuitem", { name: "Notify me of approvals" }),
     ).toBeInTheDocument();
+  });
+
+  it("is on a phone's More sheet too", async () => {
+    window.matchMedia = ((query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    window.localStorage.removeItem("oa.notifications");
+    permission = "default";
+    shell();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    await user.click(await screen.findByRole("button", { name: "More" }));
+    await user.click(await screen.findByRole("button", { name: "Notify me of approvals" }));
+    await waitFor(() => expect(window.localStorage.getItem("oa.notifications")).toBe("on"));
+    expect(
+      await screen.findByRole("button", { name: "Turn off notifications" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says on a phone how to allow them again once blocked", async () => {
+    window.matchMedia = ((query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    permission = "denied";
+    shell();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    await user.click(await screen.findByRole("button", { name: "More" }));
+    expect(await screen.findByText(/Allow them in this site's settings/)).toBeInTheDocument();
   });
 
   it("says when the browser has blocked them", async () => {

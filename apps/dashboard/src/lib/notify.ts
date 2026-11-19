@@ -228,15 +228,17 @@ export function useApprovalNotices({
     );
     seen.current.ids = new Set(mine.map((a) => a.id));
     const news = mine.filter((a) => ids.has(a.id));
-    const open = () => navigate({ to: "/ui/requests" });
     if (news.length > BURST) {
       const { title, body } = requestsNotice(news.length);
-      show(title, body, `approvals:${teamId}`, open, true);
+      show(title, body, `approvals:${teamId}`, () => navigate({ to: "/ui/requests" }), true);
       return;
     }
     for (const a of news) {
       const { title, body } = requestNotice(a);
-      show(title, body, `approval:${a.id}`, open);
+      // One request opens on itself; a burst, above, on the list.
+      show(title, body, `approval:${a.id}`, () =>
+        navigate({ to: "/ui/requests", search: { request: a.id } }),
+      );
     }
   }, [on, teamId, me, pending, navigate]);
 

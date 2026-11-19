@@ -116,3 +116,31 @@ it("pages with the cursor", async () => {
   await waitFor(() => expect(screen.getAllByText(/^title: /)).toHaveLength(2));
   expect(seen.some((s) => s.path.includes("cursor=c2"))).toBe(true);
 });
+
+it("brings the request a link names to the eye and the keyboard", async () => {
+  brain({
+    ...team(["approval:read", "approval:self"]),
+    "GET /whoami": { body: { id: "me" } },
+    [LIST]: { body: { items: [request("a1"), request("b2")] } },
+    "GET /teams/{id}/runs/{rid}": { body: { id: "r1", session_id: "s1" } },
+  });
+  at("/ui/requests?request=b2");
+  const list = await screen.findByRole("list", { name: "Tool approvals" });
+  const [first, second] = within(list).getAllByRole("listitem");
+  await waitFor(() => expect(second).toHaveFocus());
+  expect(second).toHaveAttribute("aria-current", "true");
+  expect(first).not.toHaveAttribute("aria-current");
+});
+
+it("leaves the list as it is when the request a link names is not in it", async () => {
+  brain({
+    ...team(["approval:read", "approval:self"]),
+    "GET /whoami": { body: { id: "me" } },
+    [LIST]: { body: { items: [request("a1")] } },
+    "GET /teams/{id}/runs/{rid}": { body: { id: "r1", session_id: "s1" } },
+  });
+  at("/ui/requests?request=gone");
+  const list = await screen.findByRole("list", { name: "Tool approvals" });
+  expect(within(list).getByRole("listitem")).not.toHaveAttribute("aria-current");
+  expect(document.activeElement).toBe(document.body);
+});

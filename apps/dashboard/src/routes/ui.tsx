@@ -535,6 +535,36 @@ function NotifyItem() {
   );
 }
 
+const SHEET_ITEM =
+  "flex min-h-11 w-full items-center gap-2.5 rounded-md px-2.5 text-sm text-muted-foreground hover:bg-sheet/60";
+
+/** The More sheet's notifications switch: the account menu's, for a phone. */
+function NotifyButton() {
+  const { state, turnOn, turnOff } = useNotifySwitch();
+  if (state === "unsupported") return null;
+  if (state === "blocked") {
+    return (
+      <div className="flex items-start gap-2.5 px-2.5 py-2 text-sm text-muted-foreground">
+        <BellOff aria-hidden className="mt-0.5 size-4 shrink-0" />
+        <p>
+          Notifications blocked by the browser. Allow them in this site's settings, then come back.
+        </p>
+      </div>
+    );
+  }
+  return state === "on" ? (
+    <button type="button" onClick={turnOff} className={SHEET_ITEM}>
+      <BellOff aria-hidden className="size-4" />
+      Turn off notifications
+    </button>
+  ) : (
+    <button type="button" onClick={() => void turnOn()} className={SHEET_ITEM}>
+      <Bell aria-hidden className="size-4" />
+      Notify me of approvals
+    </button>
+  );
+}
+
 /** Who is signed in, the theme, notifications, and signing out: one menu at the foot. */
 function Account({ rail }: { rail: boolean }) {
   const who = usePrincipal();
@@ -689,6 +719,7 @@ function QuickBar({
                   )}
                   {theme === "dark" ? "Light theme" : "Dark theme"}
                 </button>
+                <NotifyButton />
                 <button
                   type="button"
                   onClick={() => setToken(null)}
