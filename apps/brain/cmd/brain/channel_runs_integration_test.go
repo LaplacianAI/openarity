@@ -93,8 +93,10 @@ func TestAChannelMessageIsAnsweredInItsConversation(t *testing.T) {
 		t.Fatalf("giving the hub a model: %v", err)
 	}
 
+	// A custom channel answers only at a reply URL of its own; this one is
+	// never reached, as the test reads the outbox, not what was sent.
 	status, raw := b.call(t, http.MethodPost, "/teams/"+b.team.String()+"/channels",
-		map[string]string{"provider": "custom", "name": "support"})
+		map[string]string{"provider": "custom", "name": "support", "reply_url": "https://replies.example/support"})
 	if status != http.StatusCreated {
 		t.Fatalf("POST channels: %d %s", status, raw)
 	}
@@ -283,15 +285,16 @@ func TestAnAnswerIsPostedBackToTheChannel(t *testing.T) {
 	if got := hook(t, webhook, ch.ID, ch.SigningSecret, asks("m-2", "Was it the nightly one?")); got != http.StatusOK {
 		t.Fatalf("the second message was answered %d, want 200", got)
 	}
+	// With nowhere to post, the run answers and nothing is written to send.
 	deadline = time.Now().Add(90 * time.Second)
-	for b.count(t, `SELECT count(*) FROM replies WHERE status = 'failed'`) < 1 {
+	for b.count(t, `SELECT count(*) FROM runs WHERE status = 'succeeded'`) < 2 {
 		if time.Now().After(deadline) {
-			t.Fatal("the reply to a channel with no URL never failed")
+			t.Fatal("the run for the second message never finished")
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if n := b.count(t, `SELECT count(*) FROM replies WHERE status = 'failed' AND attempts = 1 AND last_error LIKE '%no reply URL%'`); n != 1 {
-		t.Errorf("%d replies failed at once for want of a URL, want 1", n)
+	if n := b.count(t, `SELECT count(*) FROM replies`); n != 1 {
+		t.Errorf("%d replies written, want only the first: a channel with no URL is written none", n)
 	}
 	if got, _ := rcv.received(); len(got) != 1 {
 		t.Errorf("the channel received %d replies after its URL was cleared, want still 1", len(got))
