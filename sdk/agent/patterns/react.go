@@ -16,8 +16,12 @@ func ReAct() agent.Pattern { return react{} }
 func ReActStreaming() agent.Pattern { return react{stream: true} }
 
 // aside marks a call a pattern makes for itself, a plan or a critique: what
-// the model writes there is reasoning, not said to the person waiting.
-type react struct{ stream, aside bool }
+// the model writes there is reasoning, not said to the person waiting. must is
+// the tool such a call asks the model to call.
+type react struct {
+	stream, aside bool
+	must          string
+}
 
 func (react) Name() agent.PatternName { return agent.PatternReAct }
 
@@ -105,6 +109,7 @@ func (l react) call(ctx context.Context, in agent.Input, msgs []agent.Message) (
 		System:   in.Spec.System,
 		Messages: msgs,
 		Tools:    in.Spec.Tools,
+		MustCall: l.must,
 	}
 
 	if !l.stream {

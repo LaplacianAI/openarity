@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/blueprints"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
@@ -111,13 +112,15 @@ func TestABuilderWithNoModelIsRefusedNamingTheSetting(t *testing.T) {
 	}
 }
 
-// The builder is no agent row, so its graph sees the whole team, as the
-// built-in orchestrator's does, rather than an empty agent's reach.
+// The builder is no agent row, and it designs the team rather than calling
+// any of it, so its graph sees every agent, tool and skill the team holds.
 func TestTheBuildersGraphSearchesTheWholeTeam(t *testing.T) {
 	f := newFixture()
 	f.asBuilder()
 	f.teamModel()
-	f.graph.reach.teamAgents = []uuid.UUID{uuid.New()}
+	r := f.graph.reach
+	r.teamAgents = []uuid.UUID{uuid.New()}
+	r.teamTools, r.teamSkills = []uuid.UUID{uuid.New(), uuid.New()}, []uuid.UUID{uuid.New()}
 
 	g := graphTools(f.build(t))
 	if len(g) != 1 {
@@ -128,6 +131,10 @@ func TestTheBuildersGraphSearchesTheWholeTeam(t *testing.T) {
 	}
 	if len(f.graph.reach.teamAsked) != 1 || len(f.graph.reach.agentsAsked) != 0 {
 		t.Errorf("team reach asked %d, agent reach %d; want the team's", len(f.graph.reach.teamAsked), len(f.graph.reach.agentsAsked))
+	}
+	want := graph.Reach{Agents: r.teamAgents, Tools: r.teamTools, Skills: r.teamSkills}
+	if got := f.graph.search.asked; len(got) != 1 || !reflect.DeepEqual(got[0].Reach, want) {
+		t.Errorf("searched %+v, want everything the team holds %+v", got, want)
 	}
 }
 

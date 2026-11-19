@@ -56,12 +56,15 @@ func (f *fakeEmbedder) Model() string { return "embed-model" }
 type fakeReach struct {
 	agents, tools, skills []uuid.UUID
 	agentsAsked           []db.ListReachableAgentIDsParams
+	toolsOf, skillsOf     []uuid.UUID
 	agentsErr, toolsErr   error
 	skillsErr             error
 
-	teamAgents []uuid.UUID
-	teamAsked  []db.ListTeamReachParams
-	teamErr    error
+	// teamAgents, teamTools and teamSkills are everything the team holds,
+	// apart from what one agent was granted.
+	teamAgents, teamTools, teamSkills []uuid.UUID
+	teamAsked                         []db.ListTeamReachParams
+	teamErr                           error
 }
 
 func (f *fakeReach) ListReachableAgentIDs(_ context.Context, arg db.ListReachableAgentIDsParams) ([]uuid.UUID, error) {
@@ -69,11 +72,13 @@ func (f *fakeReach) ListReachableAgentIDs(_ context.Context, arg db.ListReachabl
 	return f.agents, f.agentsErr
 }
 
-func (f *fakeReach) ListGrantedToolIDs(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+func (f *fakeReach) ListGrantedToolIDs(_ context.Context, agentID uuid.UUID) ([]uuid.UUID, error) {
+	f.toolsOf = append(f.toolsOf, agentID)
 	return f.tools, f.toolsErr
 }
 
-func (f *fakeReach) ListAgentSkills(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+func (f *fakeReach) ListAgentSkills(_ context.Context, agentID uuid.UUID) ([]uuid.UUID, error) {
+	f.skillsOf = append(f.skillsOf, agentID)
 	return f.skills, f.skillsErr
 }
 

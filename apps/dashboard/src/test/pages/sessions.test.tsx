@@ -991,7 +991,7 @@ describe("a run's trace", () => {
     expect(stream?.headers.get("Accept")).toBe("text/event-stream");
   });
 
-  it("says when a run compacted and was asked to wrap up, and labels what a stopped run kept", async () => {
+  it("says when a run compacted, was asked to wrap up and skipped a review, and labels what a stopped run kept", async () => {
     const wire =
       frame(1, "step", { step: 1 }) +
       frame(2, "compacted", {
@@ -1004,7 +1004,12 @@ describe("a run's trace", () => {
       }) +
       frame(3, "compacted", { reason: "tokens", error: "the summary call failed: 502" }) +
       frame(4, "wrap_up", { reason: "budget", left: 40000 }) +
-      frame(5, "finished", { status: "failed", error: "the run has spent its token budget" }) +
+      frame(5, "skipped", {
+        step: 2,
+        what: "critique",
+        reason: "reflecting on cycle 1: the reflecting call did not submit a critique",
+      }) +
+      frame(6, "finished", { status: "failed", error: "the run has spent its token budget" }) +
       END;
     listed({
       [RUNS]: {
@@ -1028,7 +1033,9 @@ describe("a run's trace", () => {
     const notes = Array.from(detail.querySelectorAll("li[data-event]")).map(
       (e) => (e as HTMLElement).dataset.event,
     );
-    expect(notes).toEqual(["compacted", "compacted", "wrap_up", "finished"]);
+    expect(notes).toEqual(["compacted", "compacted", "wrap_up", "skipped", "finished"]);
+    expect(within(detail).getByText("Self-review skipped, the answer kept")).toBeVisible();
+    expect(within(detail).getByText(/did not submit a critique/)).toBeVisible();
     expect(
       within(detail).getByText(/8 messages folded, 2 old results cleared \(≈101k → 21k tokens\)/),
     ).toBeVisible();

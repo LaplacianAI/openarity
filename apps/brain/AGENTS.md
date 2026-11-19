@@ -140,7 +140,7 @@ apps/brain/
     execute.go         one run: claim, heartbeat, run to the end, finish
     transcript.go      where a run starts in its session's transcript, or resumes, and its open calls closed
     graphtool.go       graph(query, kinds, hops, server), bound to every run; how the run finds its MCP tools
-    hub.go             the hub: the built-in orchestrator, or the team's chosen agent, reaching the whole team
+    hub.go             the hub: the built-in orchestrator, or the team's chosen agent, reaching every agent and its own tools
     builder.go         the builder: team(), find_mcp_servers(), list_mcp_tools() and propose(), nothing that writes; its prompt and its turns
     job.go             the run queue, the sweep that takes over stale runs and expires unanswered requests, the Enqueuer
     narrow.go          a child built with fewer than its grants, for the outfitter

@@ -223,16 +223,24 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   statement, or none for the built-in orchestrator, so the hub is decided
   once per run: changing the setting mid-run does not change who answers,
   and a hub agent deleted since resumes as the orchestrator. The same agent
-  delegated to is only itself — hub prompt, `plan` and the whole team's
-  reach come from the run's flag, never from the agent's row, and a check
-  keeps the flag on roots only. The web tools come from either: a run has
+  delegated to is only itself — hub prompt, `plan` and the hub's reach come
+  from the run's flag, never from the agent's row, and a check keeps the flag
+  on roots only.
+- **The hub's graph finds every agent, and only its own tools and skills.**
+  Its reach is the team's other agents, to hand work to, and the tools and
+  skills the hub agent holds, since those are all it can call or load; the
+  built-in orchestrator holds none. A tool another agent holds is still found
+  by hops, with that agent as the hit, because a walk filters only its result
+  by the reach. Before, the hub was offered every tool in the team, and a
+  tool on a server granted to nobody was ranked, picked and failed at the call.
+  The builder keeps the whole team: it designs the team and calls none of it. The web tools come from either: a run has
   them when it is the hub's or its agent has `web: true`, so a delegate has
   them only by its own grant.
 - **The built-in orchestrator is no agent row.** It is built in `hub.go` with
   `uuid.Nil` for an id, react for 24 steps, on the team's model; with none
   set it is refused at `POST /runs` with a 409 and fails at build with the
   same sentence. `uuid.Nil` is what keeps it holding no grants, excluding
-  nothing from the team's reach, and never matching a real agent in the
+  no agent from the hub's reach, and never matching a real agent in the
   delegate checks. A team's agent may be named `orchestrator` too; the hub
   badge, not the name, is what says which ran.
 - **Deleting the hub agent nulls the setting, and the API keeps the hub in

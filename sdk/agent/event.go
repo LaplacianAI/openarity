@@ -43,12 +43,22 @@ type UsageEvent struct {
 
 type StepEvent struct{ Step int }
 
+// SkippedEvent is a pattern's own step left out, and why, with the run going
+// on from what it had: a review that came back unreadable keeps the answer it
+// was reviewing, a plan that could not be read is answered without one.
+type SkippedEvent struct {
+	Step   int
+	What   string // "critique", "rewrite" or "plan"
+	Reason string
+}
+
 func (TextEvent) event()       {}
 func (ReasoningEvent) event()  {}
 func (ToolCallEvent) event()   {}
 func (ToolResultEvent) event() {}
 func (UsageEvent) event()      {}
 func (StepEvent) event()       {}
+func (SkippedEvent) event()    {}
 
 type Result struct {
 	Output          string

@@ -242,6 +242,36 @@ func TestEachSDKEventBecomesItsRow(t *testing.T) {
 	}
 }
 
+// A pattern's own step left out is a row of its own, saying what and why, so
+// the trace can show that the answer stood without its review. Against the
+// real table, whose check names every kind a row may be.
+func TestASkippedStepBecomesItsRow(t *testing.T) {
+	t.Parallel()
+
+	h := newHeldRun(t)
+	long := strings.Repeat("x", maxEventText+100)
+	st := feed(t, h.store, h.id,
+		agent.SkippedEvent{Step: 2, What: "critique", Reason: "reflecting on cycle 1: the reflecting call did not submit a critique"},
+		agent.SkippedEvent{Step: 1, What: "plan", Reason: long},
+	)
+	wantNoStop(t, st)
+
+	got := h.events(t)
+	if want := []string{"skipped", "skipped"}; !slices.Equal(kinds(got), want) {
+		t.Fatalf("kinds = %v, want %v", kinds(got), want)
+	}
+	first := payload[map[string]any](t, got[0])
+	if first["step"] != 2.0 || first["what"] != "critique" ||
+		first["reason"] != "reflecting on cycle 1: the reflecting call did not submit a critique" {
+		t.Errorf("skipped payload = %s", got[0].Payload)
+	}
+	// A reason is the model client's words, and may be long: it is cut as a
+	// tool's output is.
+	if reason, _ := payload[map[string]any](t, got[1])["reason"].(string); len(reason) >= len(long) {
+		t.Errorf("a %d-byte reason was stored whole", len(reason))
+	}
+}
+
 // Text arrives a token at a time; storing it would be a row per token for
 // what the transcript already holds whole.
 func TestTextIsNotStored(t *testing.T) {

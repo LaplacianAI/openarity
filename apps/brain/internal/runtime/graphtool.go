@@ -225,6 +225,32 @@ func agentReach(s ReachStore, team, agentID uuid.UUID) ReachSource {
 	}
 }
 
+// hubReach is what the hub may find: every other agent in the team, to hand
+// work to, and only the tools and skills the hub itself holds, since those are
+// all it can call or load. The built-in hub holds none. A tool another agent
+// holds is still found through that agent, by hops, and the agent is the hit.
+func hubReach(s ReachStore, team uuid.UUID, hub *uuid.UUID) ReachSource {
+	return func(ctx context.Context) (graph.Reach, error) {
+		r, err := s.ListTeamReach(ctx, db.ListTeamReachParams{TeamID: team, Exclude: hub})
+		if err != nil {
+			return graph.Reach{}, fmt.Errorf("reading the agents the hub may reach: %w", err)
+		}
+		reach := graph.Reach{Agents: r.AgentIds}
+		if hub == nil {
+			return reach, nil
+		}
+		if reach.Tools, err = s.ListGrantedToolIDs(ctx, *hub); err != nil {
+			return graph.Reach{}, fmt.Errorf("reading the tools the hub holds: %w", err)
+		}
+		if reach.Skills, err = s.ListAgentSkills(ctx, *hub); err != nil {
+			return graph.Reach{}, fmt.Errorf("reading the skills the hub holds: %w", err)
+		}
+		return reach, nil
+	}
+}
+
+// teamReach is everything in the team: the builder's, which designs the team
+// and calls none of it.
 func teamReach(s ReachStore, team uuid.UUID, exclude *uuid.UUID) ReachSource {
 	return func(ctx context.Context) (graph.Reach, error) {
 		r, err := s.ListTeamReach(ctx, db.ListTeamReachParams{TeamID: team, Exclude: exclude})
