@@ -137,6 +137,14 @@ type target struct {
 	class  approval.Class
 }
 
+// actorOf is who the run acts for; none when there is no policy.
+func (p *policy) actorOf() approval.Actor {
+	if p == nil {
+		return approval.Actor{}
+	}
+	return p.actor
+}
+
 // gate is t as the policy has it. The verdict rests only on what is known
 // when the run is built, so it is decided once: a tool that is allowed is
 // returned as it was, one that is denied says why, and one that asks is

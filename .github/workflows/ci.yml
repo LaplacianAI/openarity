@@ -134,6 +134,18 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # The browser tools' tests drive a real browser and skip without it. The
+      # image is the one docker-compose.headless-shell.yml ships. Its pages are
+      # served by the tests on the runner, which the container reaches as
+      # host.docker.internal. The image has no shell tools for a health check,
+      # so a step waits for it instead.
+      headless-shell:
+        image: chromedp/headless-shell:159.0.8154.13
+        ports:
+          - 9222:9222
+        options: >-
+          --add-host=host.docker.internal:host-gateway
+
     env:
       BRAIN_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/openarity_test?sslmode=disable
       BRAIN_TEST_FALKOR_URL: redis://localhost:6379
@@ -143,6 +155,8 @@ jobs:
       BRAIN_TEST_S3_BUCKET: openarity
       BRAIN_TEST_S3_ACCESS_KEY: openarity
       BRAIN_TEST_S3_SECRET_KEY: openarity-ci-secret
+      BRAIN_TEST_BROWSER_URL: http://localhost:9222
+      BRAIN_TEST_BROWSER_HOST: host.docker.internal
 
     steps:
       - uses: actions/checkout@v7
@@ -245,6 +259,15 @@ jobs:
 
       - name: Build
         run: make build
+
+      - name: Wait for the browser
+        run: |
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:9222/json/version >/dev/null && exit 0
+            sleep 2
+          done
+          echo "headless-shell did not answer on 9222" >&2
+          exit 1
 
       # Race detector on; fails below the threshold set in the Makefile.
       - name: Test and coverage

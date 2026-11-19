@@ -242,6 +242,18 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   pause every request for the brain to allow. The staging browser is
   Lightpanda, about 63 MiB after a page against 300 to 980 MiB for the
   Chrome-based three.
+- **The brain dials the browser itself, and a browser of the team's own must
+  let its requests be checked.** chromedp dials with a websocket dialer of
+  its own that nothing can sit in front of, so `internal/browser` hands it a
+  connection made with `coder/websocket` over the guarded client
+  `MCP_PRIVATE_NETWORKS` builds, through an allocator shaped as chromedp's
+  remote one. Then `Fetch.enable` pauses every request the page makes, and
+  only a host whose every address is public goes on. A self-hosted browser
+  that refuses to pause is not used, since it sits on the team's network; a
+  hosted one is used anyway, since what it reaches is its provider's. The
+  page is read by one script, not the accessibility tree, because Lightpanda
+  runs scripts but lays nothing out; a control is found by the
+  `data-oa-ref` the read stamped on it.
 - **The hub's graph finds every agent, and only its own tools and skills.**
   Its reach is the team's other agents, to hand work to, and the tools and
   skills the hub agent holds, since those are all it can call or load; the

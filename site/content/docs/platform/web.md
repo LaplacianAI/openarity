@@ -70,8 +70,34 @@ In a transcript, `oa runs events` shows a page as
 A team can also give its runs a browser: one that opens a page, runs its
 scripts, and can be clicked and typed into. The team's hub has it; any other
 agent has it when it is defined with `browser: true`, which is a grant of its
-own, apart from `web`. The tools that drive it come in a later release; this
-sets up the browser they use.
+own, apart from `web`.
+
+| Tool | What it does |
+| --- | --- |
+| `browser_open(url)` | opens a page and reads it |
+| `browser_snapshot()` | reads the open page again, as it is now |
+| `browser_click(ref)` | clicks a control, then reads the page it leaves |
+| `browser_type(ref, text, submit)` | puts text in a field, sends its form when `submit` is true, then reads the page |
+| `browser_screenshot()` | the page as a picture, for what its text does not say |
+
+A read is the page's text with every link, button and field numbered:
+
+```text
+# Flights
+[1 field text] "to" = ""  [2 button] Search
+[3 link] Deals (/deals)
+```
+
+`ref` is that number, good until the next read. Each call follows the team's
+approval rule for reaching the internet, as `web_fetch` does. A run opens the
+browser at its first call and lets it go when the run ends, so a run that
+stops to wait for an approval opens a fresh page when it carries on.
+
+Every request a page makes, its scripts, images and redirects included, is
+paused for the brain to allow, and one to an address that is not public is
+blocked; the read says what was. A browser of the team's own that will not let
+its requests be paused is not used. A hosted one that will not is used all the
+same: what it reaches is its provider's network, not the team's.
 
 The browser is set once per team, in **Settings › Browser** or with `oa`:
 
@@ -109,13 +135,21 @@ machine, after opening one page:
 | Browserless | 4 GB | about 600 MiB |
 | Steel | 3.8 GB | about 980 MiB |
 
-Lightpanda is a browser built for automation and draws nothing, so a few sites
-do not work in it yet; the others are Chrome. headless-shell answers only at
+Lightpanda is a browser built for automation, and draws a plain version of a
+page without its styles, so a few sites do not work in it yet; the others are
+Chrome. headless-shell answers only at
 an address, never a name, so a team saves `http://172.31.255.218:9222`. None
 of the self-hosted ones but Browserless asks for a key, so whatever reaches
 their port drives them: keep them on the network the overlay gives them.
 
 ## Not built
+
+- **DNS rebinding through the browser.** The browser resolves a name itself,
+  after the brain judged it. A self-hosted browser's network, which reaches
+  only the worker and the internet, is what stands behind the check.
+- **A page's own websockets, server-sent events and WebRTC** are not paused
+  by the browser, so the check never sees them; the same network does.
+- **Uploads, downloads, a second tab, and a page kept across an approval.**
 
 - **DNS rebinding through Firecrawl.** Firecrawl resolves the name itself, so a
   name whose answer changes between the brain's check and Firecrawl's lookup is

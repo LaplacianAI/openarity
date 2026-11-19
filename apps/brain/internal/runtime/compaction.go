@@ -52,7 +52,9 @@ type wrapUpPayload struct {
 func (b *Builder) teamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error) {
 	s, err := b.store.GetTeamSettings(ctx, teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return db.TeamSetting{SearchProvider: noSearchProvider, CompactionMessages: defaultCompactionMessages}, nil
+		return db.TeamSetting{
+			SearchProvider: noSearchProvider, BrowserProvider: noBrowserProvider, CompactionMessages: defaultCompactionMessages,
+		}, nil
 	}
 	if err != nil {
 		return db.TeamSetting{}, fmt.Errorf("reading the team's settings: %w", err)
