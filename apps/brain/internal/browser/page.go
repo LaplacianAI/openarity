@@ -2,25 +2,46 @@ package browser
 
 import (
 	"context"
+	"crypto/rand"
 	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chromedp/chromedp"
 )
 
+// The limits are variables so a test can shorten them.
+var (
+	// startTimeout is how long a tab may take to open and be guarded.
+	startTimeout = 20 * time.Second
+	// callTimeout is the most one call on the page may take, whatever its
+	// caller allows: a page that never finishes loading, or a script that
+	// never returns, does not hold the run.
+	callTimeout = 30 * time.Second
+	// quiet is how long a page that has not begun to leave must stay quiet
+	// after an action before it is read; settleTimeout is the most a page
+	// that is leaving may take to arrive.
+	quiet         = 900 * time.Millisecond
+	settleTimeout = 15 * time.Second
+	poll          = 150 * time.Millisecond
+)
+
 const (
-	// settle is how long an action may take to finish loading what it
-	// started; poll is how often it is asked.
-	settle = 5 * time.Second
-	poll   = 150 * time.Millisecond
 	// releaseTimeout is how long letting a session go may take, on a context
 	// of its own: the run's is done by then.
 	releaseTimeout = 10 * time.Second
+	// maxText is the most of a page's text a read keeps, in characters: the
+	// script stops there, and it is held here too, as the page could say
+	// otherwise.
+	maxText = 200_000
+	// maxScreenshot is the largest picture handed to the model.
+	maxScreenshot = 8 << 20
 )
 
 //go:embed snapshot.js
@@ -33,30 +54,48 @@ type Snapshot struct {
 	Text  string `json:"text"`
 	Cut   bool   `json:"cut"`
 	Refs  int    `json:"refs"`
-	// Blocked is every request refused since the last snapshot.
+	// Blocked names requests refused since the last read, at most a hundred;
+	// Refused counts them all.
 	Blocked []string `json:"-"`
+	Refused int      `json:"-"`
 }
 
 // A Page is one tab in a session's browser, every request it makes checked.
 type Page struct {
 	tab     context.Context
-	cancel  func()
+	abort   func()
 	guard   *guard
 	release func(context.Context) error
+	once    sync.Once
 }
 
 // Start opens a tab in s's browser, reached over client. Its requests reach
 // only hosts public accepts; required says whether a browser that will not
-// have them checked is refused.
+// have them checked is refused, and a browser that is required to be checked
+// is the team's own, so the tab gets a browser context of its own: cookies
+// and storage are not carried from one run to the next.
 func Start(ctx context.Context, s Session, client *http.Client, public Public, required bool) (*Page, error) {
 	// The tab outlives the call that opened it, until Close.
 	alloc, cancelAlloc := NewAllocator(context.WithoutCancel(ctx), s.URL, client)
-	tab, cancelTab := chromedp.NewContext(alloc)
-	p := &Page{tab: tab, release: s.Release, cancel: func() {
+	var opts []chromedp.ContextOption
+	if required {
+		opts = append(opts, chromedp.WithNewBrowserContext())
+	}
+	tab, cancelTab := chromedp.NewContext(alloc, opts...)
+	p := &Page{tab: tab, release: s.Release, abort: func() {
 		cancelTab()
 		cancelAlloc()
 	}}
+
+	watch := time.AfterFunc(startTimeout, p.abort)
+	unhook := context.AfterFunc(ctx, p.abort)
 	g, err := startGuard(tab, public, required)
+	// The watchdog firing cancels the tab, so tab.Err says so.
+	watch.Stop()
+	unhook()
+	if err == nil && (ctx.Err() != nil || tab.Err() != nil) {
+		err = errors.New("the browser did not start in time")
+	}
 	if err != nil {
 		p.Close()
 		return nil, err
@@ -65,22 +104,28 @@ func Start(ctx context.Context, s Session, client *http.Client, public Public, r
 	return p, nil
 }
 
-// Close shuts the tab and lets the session go. Safe on a nil Page.
+// Close shuts the tab and lets the session go, once. Safe on a nil Page.
 func (p *Page) Close() {
 	if p == nil {
 		return
 	}
-	p.cancel()
-	if p.release != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
-		defer cancel()
-		_ = p.release(ctx)
-	}
+	p.once.Do(func() {
+		p.abort()
+		if p.release != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+			defer cancel()
+			_ = p.release(ctx)
+		}
+	})
 }
 
-// within is the tab, stopped when ctx is: chromedp runs on the tab's context.
+// Unguarded is a hosted browser that would not pause its requests.
+func (p *Page) Unguarded() bool { return p.guard != nil && p.guard.unguarded }
+
+// within is the tab, stopped when ctx is or when the call has taken its
+// limit: chromedp runs on the tab's context.
 func (p *Page) within(ctx context.Context) (context.Context, func()) {
-	c, cancel := context.WithCancel(p.tab)
+	c, cancel := context.WithTimeout(p.tab, callTimeout)
 	stop := context.AfterFunc(ctx, cancel)
 	return c, func() {
 		stop()
@@ -93,12 +138,19 @@ func (p *Page) Open(ctx context.Context, address string) (Snapshot, error) {
 	c, done := p.within(ctx)
 	defer done()
 	if err := chromedp.Do(c, chromedp.Navigate(address)); err != nil {
-		if strings.Contains(err.Error(), "ERR_BLOCKED_BY_CLIENT") {
-			return Snapshot{}, errors.New("the page is not at a public address, so it is not opened")
-		}
-		return Snapshot{}, fmt.Errorf("the page could not be opened: %w", err)
+		return Snapshot{}, navigationError(err)
 	}
 	return p.read(c)
+}
+
+func navigationError(err error) error {
+	if strings.Contains(err.Error(), "ERR_BLOCKED_BY_CLIENT") {
+		return errors.New("the page is not at a public address, so it is not opened")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return errors.New("the page did not finish loading in time")
+	}
+	return fmt.Errorf("the page could not be opened: %w", err)
 }
 
 // Snapshot reads the page as it is now.
@@ -108,13 +160,43 @@ func (p *Page) Snapshot(ctx context.Context) (Snapshot, error) {
 	return p.read(c)
 }
 
+// markJS marks the document an action starts in, and notes when it begins to
+// leave it: settle tells a page that is going somewhere from one that stays.
+const markJS = `window.__oaMark = %s; window.__oaLeaving = false;
+addEventListener("beforeunload", () => { window.__oaLeaving = true; }, {once: true});`
+
+// leaves notes that the action is starting a navigation, for a browser that
+// fires no beforeunload: a link to another page, or a form, whose event no
+// script of the page's cancelled.
+const leavesJS = `const leaves = (el, kind) => {
+  let prevented = false;
+  addEventListener(kind, (e) => { prevented = e.defaultPrevented; }, {once: true});
+  return () => {
+    if (prevented) return;
+    const a = el.closest && el.closest("a[href]");
+    if (kind === "submit" || el.form && (el.type === "submit" || el.tagName === "BUTTON")) {
+      window.__oaLeaving = true;
+    } else if (a) {
+      const to = new URL(a.href, location.href);
+      if ((to.protocol === "http:" || to.protocol === "https:") &&
+        (to.origin + to.pathname + to.search) !== (location.origin + location.pathname + location.search)) {
+        window.__oaLeaving = true;
+      }
+    }
+  };
+};`
+
 const clickJS = `((ref) => {
+  ` + leavesJS + `
   const el = document.querySelector('[data-oa-ref="' + ref + '"]');
-  if (!el) return false;
+  if (!el) return "missing";
+  if (el.target) el.target = "_self";
   if (el.scrollIntoView) el.scrollIntoView({block: "center"});
   if (el.focus) el.focus();
+  const noted = leaves(el, "click");
   el.click();
-  return true;
+  noted();
+  return "done";
 })(%d)`
 
 // Click clicks the control numbered ref, waits for what it starts, and reads
@@ -124,15 +206,21 @@ func (p *Page) Click(ctx context.Context, ref int) (Snapshot, error) {
 }
 
 const typeJS = `((ref, text, submit) => {
+  ` + leavesJS + `
   const el = document.querySelector('[data-oa-ref="' + ref + '"]');
-  if (!el) return false;
+  if (!el) return "missing";
   if (el.focus) el.focus();
-  if (el.isContentEditable) {
+  if (el.tagName === "SELECT") {
+    const want = text.trim().toLowerCase();
+    const i = Array.from(el.options).findIndex((o) =>
+      o.textContent.trim().toLowerCase() === want || o.value.toLowerCase() === want);
+    if (i < 0) return "no option";
+    el.selectedIndex = i;
+  } else if (el.isContentEditable) {
     el.textContent = text;
   } else {
     // React and its kind watch the native setter, not the property.
-    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype :
-      el.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const set = Object.getOwnPropertyDescriptor(proto, "value");
     if (set && set.set) set.set.call(el, text); else el.value = text;
   }
@@ -140,66 +228,112 @@ const typeJS = `((ref, text, submit) => {
   el.dispatchEvent(new Event("change", {bubbles: true}));
   if (submit) {
     const form = el.form || (el.closest && el.closest("form"));
-    if (form && form.requestSubmit) form.requestSubmit();
-    else if (form) form.submit();
-    else {
+    if (form && form.target) form.target = "_self";
+    if (form) {
+      const noted = leaves(form, "submit");
+      if (form.requestSubmit) form.requestSubmit(); else form.submit();
+      noted();
+    } else {
       el.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", code: "Enter", bubbles: true}));
       el.dispatchEvent(new KeyboardEvent("keyup", {key: "Enter", code: "Enter", bubbles: true}));
     }
   }
-  return true;
+  return "done";
 })(%d, %s, %t)`
 
-// Type puts text in the field numbered ref, and submits its form when
-// submit says so, then reads the page.
+// Type puts text in the field numbered ref, choosing the option it names in
+// a select, and submits its form when submit says so, then reads the page.
 func (p *Page) Type(ctx context.Context, ref int, text string, submit bool) (Snapshot, error) {
 	return p.act(ctx, ref, fmt.Sprintf(typeJS, ref, jsString(text), submit))
 }
 
-// Screenshot is the visible page as a PNG.
-func (p *Page) Screenshot(ctx context.Context) ([]byte, error) {
+// A Picture is the visible page as a PNG, and where it is.
+type Picture struct {
+	PNG        []byte
+	URL, Title string
+}
+
+// Screenshot is the visible page as a picture.
+func (p *Page) Screenshot(ctx context.Context) (Picture, error) {
 	c, done := p.within(ctx)
 	defer done()
 	png, err := chromedp.Run(c, chromedp.CaptureScreenshot())
 	if err != nil {
-		return nil, fmt.Errorf("the browser took no screenshot: %w", err)
+		return Picture{}, fmt.Errorf("the browser took no screenshot: %w", err)
 	}
-	return png, nil
+	if len(png) > maxScreenshot {
+		return Picture{}, fmt.Errorf("the screenshot is %d MiB, more than the %d MiB a picture may be", len(png)>>20, maxScreenshot>>20)
+	}
+	at, err := chromedp.Run(c, chromedp.Evaluate[[]string](`[location.href, document.title]`))
+	if err != nil || len(at) != 2 {
+		at = []string{"", ""}
+	}
+	return Picture{PNG: png, URL: at[0], Title: at[1]}, nil
 }
 
 func (p *Page) act(ctx context.Context, ref int, js string) (Snapshot, error) {
 	c, done := p.within(ctx)
 	defer done()
-	found, err := chromedp.Run(c, chromedp.Evaluate[bool](js))
+	mark := rand.Text()
+	if _, err := chromedp.Run(c, chromedp.Evaluate[any](fmt.Sprintf(markJS, jsString(mark)))); err != nil {
+		return Snapshot{}, fmt.Errorf("the page did not take the action: %w", err)
+	}
+	said, err := chromedp.Run(c, chromedp.Evaluate[string](js))
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("the page did not take the action: %w", err)
 	}
-	if !found {
+	switch said {
+	case "missing":
 		return Snapshot{}, fmt.Errorf("no control %d on this page: take a snapshot to see what is there", ref)
+	case "no option":
+		return Snapshot{}, fmt.Errorf("control %d has no option by that name or value", ref)
 	}
-	p.settle(c)
+	p.settle(c, mark)
 	return p.read(c)
 }
 
-// settle waits, up to its limit, for the page to finish loading anything an
-// action started: complete on two asks in a row, after the first poll. An
-// ask that fails is a page between documents.
-func (p *Page) settle(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, settle)
+// settle waits for what an action started. A page still in the document it
+// marked, and not leaving it, is read once it has been quiet a moment. One
+// that began to leave, or has arrived in another document, is read once the
+// new one has loaded, up to settleTimeout. An ask that fails is a page
+// between documents.
+func (p *Page) settle(ctx context.Context, mark string) {
+	ctx, cancel := context.WithTimeout(ctx, settleTimeout)
 	defer cancel()
 	t := time.NewTicker(poll)
 	defer t.Stop()
+	began := time.Now()
 	ready := 0
-	for ready < 2 {
+	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		}
-		state, err := chromedp.Run(ctx, chromedp.Evaluate[string]("document.readyState"))
-		if err == nil && state == "complete" {
-			ready++
-		} else {
+		var s struct {
+			Same    bool   `json:"same"`
+			Leaving bool   `json:"leaving"`
+			State   string `json:"state"`
+		}
+		raw, err := chromedp.Run(ctx, chromedp.Evaluate[string](fmt.Sprintf(
+			`JSON.stringify({same: window.__oaMark === %s, leaving: !!window.__oaLeaving, state: document.readyState})`,
+			jsString(mark))))
+		if err != nil || json.Unmarshal([]byte(raw), &s) != nil {
+			ready = 0
+			continue
+		}
+		switch {
+		case s.Same && !s.Leaving:
+			if s.State == "complete" && time.Since(began) >= quiet {
+				return
+			}
+		case s.Same:
+			// Leaving, not yet arrived.
+		case s.State == "complete":
+			if ready++; ready >= 2 {
+				return
+			}
+		default:
 			ready = 0
 		}
 	}
@@ -210,10 +344,19 @@ func (p *Page) read(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("the page could not be read: %w", err)
 	}
+	s = clamp(s)
 	if p.guard != nil {
-		s.Blocked = p.guard.Blocked()
+		s.Blocked, s.Refused = p.guard.Blocked()
 	}
 	return s, nil
+}
+
+// clamp holds a read to maxText characters, whatever the page's script said.
+func clamp(s Snapshot) Snapshot {
+	if utf8.RuneCountInString(s.Text) > maxText {
+		s.Text, s.Cut = string([]rune(s.Text)[:maxText]), true
+	}
+	return s
 }
 
 // jsString is s as a JavaScript string literal: JSON's string is one.

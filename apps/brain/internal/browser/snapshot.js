@@ -15,8 +15,12 @@
   const out = [];
   let size = 0;
   let ref = 0;
+  // deepest is as far down the tree the read goes, so a page nested beyond
+  // reason cannot overflow the stack.
+  const deepest = 400;
   const put = (s) => {
     if (size < max) {
+      s = s.slice(0, max - size);
       out.push(s);
       size += s.length;
     }
@@ -87,10 +91,11 @@
     }
     return text || flat(el.getAttribute("alt"), 100);
   };
-  const walk = (node) => {
-    if (size >= max) return;
+  const walk = (node, depth) => {
+    if (size >= max || depth > deepest) return;
     if (node.nodeType === 3) {
-      const t = node.textContent.replace(/\s+/g, " ");
+      // A page's own "[3 link]" is escaped: only the read numbers controls.
+      const t = node.textContent.replace(/\s+/g, " ").replace(/\[(?=\d+ )/g, "\\[");
       if (t.trim()) put(t);
       return;
     }
@@ -110,11 +115,11 @@
     if (h) put("#".repeat(Number(h[1])) + " ");
     if (el.tagName === "LI") put("- ");
     if (el.tagName === "IMG" && el.getAttribute("alt")) put("[image: " + flat(el.getAttribute("alt"), 100) + "]");
-    for (const c of el.childNodes) walk(c);
+    for (const c of el.childNodes) walk(c, depth + 1);
     if (isBlock) put("\n");
   };
   for (const old of document.querySelectorAll("[data-oa-ref]")) old.removeAttribute("data-oa-ref");
-  if (document.body) walk(document.body);
+  if (document.body) walk(document.body, 0);
   const text = out
     .join("")
     .split("\n")

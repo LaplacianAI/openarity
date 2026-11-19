@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,11 @@ import (
 // the protocol for chromedp to open a tab in it.
 type fakeCDP struct {
 	refuse map[string]bool
+	// silent are methods it never answers.
+	silent map[string]bool
+	// loadsCanary is a browser that says it pauses requests and does not:
+	// it tries the canary as it would anywhere.
+	loadsCanary bool
 	// version is what /json/version says; "" is a 404, as Browserless's is.
 	version string
 	// send is one message the browser sends first, unasked.
@@ -65,13 +71,28 @@ func (f *fakeCDP) serve(t *testing.T) *httptest.Server {
 				ID        int64  `json:"id"`
 				Method    string `json:"method"`
 				SessionID string `json:"sessionId"`
+				Params    struct {
+					URL string `json:"url"`
+				} `json:"params"`
 			}
 			_ = json.Unmarshal(data, &m)
 			f.mu.Lock()
 			f.asked = append(f.asked, m.Method)
 			f.mu.Unlock()
+			if f.silent[m.Method] {
+				continue
+			}
 			reply := map[string]any{"id": m.ID, "result": map[string]any{}}
 			switch {
+			case m.Method == "Page.navigate" && strings.Contains(m.Params.URL, canaryHost) && !f.loadsCanary:
+				reply["result"] = map[string]any{"frameId": "T1", "errorText": "net::ERR_BLOCKED_BY_CLIENT"}
+			case m.Method == "Page.navigate" && strings.Contains(m.Params.URL, canaryHost):
+				// Not paused, so tried: .invalid names nothing.
+				reply["result"] = map[string]any{"frameId": "T1", "errorText": "net::ERR_NAME_NOT_RESOLVED"}
+			case m.Method == "Target.createBrowserContext":
+				reply["result"] = map[string]any{"browserContextId": "B1"}
+			case m.Method == "Page.addScriptToEvaluateOnNewDocument":
+				reply["result"] = map[string]any{"identifier": "1"}
 			case f.refuse[m.Method]:
 				reply = map[string]any{"id": m.ID, "error": map[string]any{"code": -32601, "message": "not supported"}}
 			case m.Method == "Target.createTarget":
@@ -131,8 +152,8 @@ func TestABrowserThatRefusesTheCheckIsNotUsedWhenItMustBe(t *testing.T) {
 }
 
 // A hosted browser sits on its provider's network, so one that refuses the
-// check is used all the same.
-func TestAHostedBrowserThatRefusesTheCheckIsUsed(t *testing.T) {
+// check is used all the same, and says so.
+func TestAHostedBrowserThatRefusesTheCheckIsUsedAndSaysSo(t *testing.T) {
 	f := &fakeCDP{refuse: map[string]bool{"Fetch.enable": true}}
 	srv := f.serve(t)
 
@@ -140,7 +161,86 @@ func TestAHostedBrowserThatRefusesTheCheckIsUsed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start = %v", err)
 	}
+	defer p.Close()
+	if !p.Unguarded() {
+		t.Error("an unguarded browser is not said to be")
+	}
+}
+
+// A browser of the team's own that says it pauses its requests and loads the
+// canary anyway is not pausing them.
+func TestABrowserThatLoadsTheCanaryIsNotUsed(t *testing.T) {
+	f := &fakeCDP{loadsCanary: true}
+	srv := f.serve(t)
+
+	if p, err := startOn(t, srv.URL, true); !errors.Is(err, ErrNoGuard) {
+		p.Close()
+		t.Fatalf("Start = %v, want ErrNoGuard", err)
+	}
+	if !f.wasAsked("Page.navigate") {
+		t.Error("the canary was never tried")
+	}
+}
+
+// The team's own browser gets a browser context for the tab, so nothing a
+// run leaves behind is there for the next; a hosted one makes its own.
+func TestOnlyASelfHostedBrowserGetsAContextOfItsOwn(t *testing.T) {
+	for _, required := range []bool{true, false} {
+		f := &fakeCDP{}
+		srv := f.serve(t)
+		p, err := startOn(t, srv.URL, required)
+		if err != nil {
+			t.Fatalf("Start = %v", err)
+		}
+		p.Close()
+		if got := f.wasAsked("Target.createBrowserContext"); got != required {
+			t.Errorf("required %v: a browser context made %v", required, got)
+		}
+	}
+}
+
+// A browser that takes the connection and never answers is a failure in
+// bounded time, not a refusal: a hosted one must not be used unguarded
+// because it was slow.
+func TestABrowserThatNeverAnswersFailsInTime(t *testing.T) {
+	was := startTimeout
+	startTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { startTimeout = was })
+
+	for _, required := range []bool{true, false} {
+		f := &fakeCDP{silent: map[string]bool{"Fetch.enable": true}}
+		srv := f.serve(t)
+		began := time.Now()
+		p, err := startOn(t, srv.URL, required)
+		if err == nil {
+			p.Close()
+			t.Fatalf("required %v: a browser that never answered was used", required)
+		}
+		if errors.Is(err, ErrNoGuard) || time.Since(began) > 5*time.Second {
+			t.Errorf("required %v: Start = %v after %s, want a failure in time", required, err, time.Since(began))
+		}
+	}
+}
+
+// Close lets the session go once, however often it is called.
+func TestClosingTwiceReleasesOnce(t *testing.T) {
+	f := &fakeCDP{}
+	srv := f.serve(t)
+	var released atomic.Int32
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	p, err := Start(ctx, Session{URL: srv.URL, Release: func(context.Context) error {
+		released.Add(1)
+		return nil
+	}}, http.DefaultClient, anyHost, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p.Close()
+	p.Close()
+	if n := released.Load(); n != 1 {
+		t.Errorf("released %d times, want once", n)
+	}
 }
 
 // Chrome serves its websocket at a path /json/version names; only the path is

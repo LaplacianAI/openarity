@@ -115,7 +115,8 @@ func TestAnAddressIsJudgedWithoutALookup(t *testing.T) {
 	if err := public(t.Context(), "216.239.32.21"); err != nil {
 		t.Errorf("a public address: %v", err)
 	}
-	for _, host := range []string{"127.0.0.1", "169.254.169.254", "fe80::1", "10.1.2.3"} {
+	// An IPv4 address written as IPv6 is judged as the IPv4 it is.
+	for _, host := range []string{"127.0.0.1", "169.254.169.254", "fe80::1", "10.1.2.3", "::ffff:10.0.0.5", "::ffff:127.0.0.1", "::1"} {
 		if err := public(t.Context(), host); err == nil || err.Error() != host+" is not a public address" {
 			t.Errorf("%s: err = %v", host, err)
 		}

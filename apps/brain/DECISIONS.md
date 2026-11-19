@@ -254,6 +254,20 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   page is read by one script, not the accessibility tree, because Lightpanda
   runs scripts but lays nothing out; a control is found by the
   `data-oa-ref` the read stamped on it.
+- **What Fetch cannot see, a page may not do, and the guard is proved.**
+  Fetch pauses the requests of the page's own tab, its frames and its
+  workers, but no websocket and no other tab. So a script run before the
+  page's own, in every frame, takes away `WebSocket` and `window.open`, and
+  sends a link or form aimed at another window into its own. Measured on
+  headless-shell and Lightpanda, with an address the browser can reach and
+  the guard refuses: only a worker's own websocket in Chrome still gets
+  there, so that, and DNS rebinding, are left to the browser's network. A
+  browser of the team's own is sent to an address that is always refused
+  before it is used, so one that acknowledges `Fetch.enable` and pauses
+  nothing is found out, and each run gets a browser context of its own. A
+  browser that does not answer in time is a failure, never a refusal, so a
+  hosted one is not used unguarded for being slow; one that refuses is, and
+  every read says so.
 - **The hub's graph finds every agent, and only its own tools and skills.**
   Its reach is the team's other agents, to hand work to, and the tools and
   skills the hub agent holds, since those are all it can call or load; the

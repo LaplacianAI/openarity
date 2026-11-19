@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamsettings"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/webfetch"
@@ -741,5 +742,32 @@ func TestTheModelSeesALongPagesEndsAndCanReadTheRest(t *testing.T) {
 	}
 	if kept := result.Messages[2].Text(); !strings.Contains(kept, middle) {
 		t.Errorf("the transcript kept %d bytes; the whole page belongs there, for read_output", len(kept))
+	}
+}
+
+// The web tools follow the egress rule as the browser's do: a run nobody is
+// present for is refused each call, and an attended one is let through.
+func TestTheWebToolsFollowTheEgressRule(t *testing.T) {
+	for _, unattended := range []bool{true, false} {
+		w := newWebFixture("brave", "k")
+		w.store.settings.ApprovalMode = string(approval.All)
+		w.run.Unattended = unattended
+		w.builder.WithApprovals(&desk{})
+
+		got := w.build(t)
+
+		for name, args := range map[string]string{
+			WebSearchToolName: `{"query":"go"}`, WebFetchToolName: `{"url":"https://go.dev/"}`,
+		} {
+			tools := toolsNamed(got, name)
+			if len(tools) != 1 {
+				t.Fatalf("%s tools = %d", name, len(tools))
+			}
+			_, _, err := tools[0].Call(t.Context(), json.RawMessage(args))
+			refused := err != nil && strings.Contains(err.Error(), "Nobody is present")
+			if refused != unattended {
+				t.Errorf("unattended %v: %s = %v", unattended, name, err)
+			}
+		}
 	}
 }

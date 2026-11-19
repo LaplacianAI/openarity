@@ -88,16 +88,35 @@ A read is the page's text with every link, button and field numbered:
 [3 link] Deals (/deals)
 ```
 
-`ref` is that number, good until the next read. Each call follows the team's
-approval rule for reaching the internet, as `web_fetch` does. A run opens the
-browser at its first call and lets it go when the run ends, so a run that
-stops to wait for an approval opens a fresh page when it carries on.
+`ref` is that number, good until the next read; a page's own text that looks
+like one is escaped. A read keeps at most 200,000 characters of the page, and
+leaves out what a password field holds. `browser_type` takes at most 4,000
+characters, and in a select it chooses the option with that name or value.
+After a click or a submit the read waits for the page it goes to, up to 15
+seconds; what a page fetches for itself later may come only with
+`browser_snapshot`. No call takes more than 30 seconds.
 
-Every request a page makes, its scripts, images and redirects included, is
+Each call follows the team's approval rule for reaching the internet, as
+`web_fetch` does. A run opens the browser at its first call and lets it go
+when the run ends. A run that stops to wait for an approval comes back to a
+fresh page, so a click asked about after the page was opened has nothing to
+click: approve `browser_open` for the rest of the run (`--for-run`) rather
+than one call at a time.
+
+**What a page may reach.** Every request the page's tab makes, its scripts,
+images, frames, styles, fetches, a worker's fetches and redirects included, is
 paused for the brain to allow, and one to an address that is not public is
-blocked; the read says what was. A browser of the team's own that will not let
-its requests be paused is not used. A hosted one that will not is used all the
-same: what it reaches is its provider's network, not the team's.
+blocked; the read says what was. A page may open no popup and no websocket,
+and a link or form that targets another window opens in its own. A browser of
+the team's own is proved at start: it is sent to an address that is always
+refused, and one that loads it is not used. It also gets a browser context of
+its own for each run, so no cookie or storage is carried from one run to the
+next. A hosted browser that will not let its requests be paused is used all
+the same, since what it reaches is its provider's network, and every read
+says so.
+
+On Bright Data a session takes one page: each `browser_open` makes a new one,
+and a click that would go to another page may fail.
 
 The browser is set once per team, in **Settings › Browser** or with `oa`:
 
@@ -145,12 +164,15 @@ their port drives them: keep them on the network the overlay gives them.
 ## Not built
 
 - **DNS rebinding through the browser.** The browser resolves a name itself,
-  after the brain judged it. A self-hosted browser's network, which reaches
-  only the worker and the internet, is what stands behind the check.
-- **A page's own websockets, server-sent events and WebRTC** are not paused
-  by the browser, so the check never sees them; the same network does.
+  after the brain judged it, so a name whose answer changes in between is out
+  of the check's reach. For a browser of the team's own, its network is the
+  boundary that holds: the deployment guide's "A browser" gives the host
+  rules that keep it off private and link-local addresses.
+- **A worker's own websocket in Chrome.** Fetch pauses no websocket, and no
+  script reaches into a worker, so a worker could open one; WebRTC is not
+  checked either. The same network rules stand behind them. Lightpanda runs
+  neither.
 - **Uploads, downloads, a second tab, and a page kept across an approval.**
-
 - **DNS rebinding through Firecrawl.** Firecrawl resolves the name itself, so a
   name whose answer changes between the brain's check and Firecrawl's lookup is
   out of the brain's reach. A self-hosted Firecrawl needs network rules of its
