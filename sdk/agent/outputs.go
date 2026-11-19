@@ -163,7 +163,7 @@ func matching(head string, lines []string, pattern string) (string, error) {
 		b.WriteString(out)
 	}
 	if next > 0 {
-		fmt.Fprintf(&b, "[stopped at %s: %d of the %d matching lines shown. Narrow the expression, or read a range from line %d]\n",
+		fmt.Fprintf(&b, "[stopped at %s: %d of the %d matching lines shown. Narrow the expression, or read a range from the next match, line %d]\n",
 			size(readBytes), shown, found, next)
 	}
 	if found == 0 {

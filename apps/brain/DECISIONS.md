@@ -292,10 +292,12 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   reads, with a line saying so when it stopped there; it was cut at 32 KiB
   until `read_output` could reach the rest. A page is previewed like any
   result, past 48 KiB as its first 4 KiB and last 2 KiB, so the model always
-  sees both ends of the envelope. Its own 32 KiB preview went when results
-  that size, resent on every call, turned out to be most of a run's spend. A line the page wrote
-  that starts like the brain's is escaped with a backslash, so only the
-  brain's says the page was cut. The url must be http or https, carry no
+  sees both ends of the envelope, and the opening tag's url and title are cut
+  so the tag fits in that head. Its own 32 KiB preview went with the SDK's
+  smaller sizes (#255), when large results resent on every call, read_output's
+  most, turned out to drive a run's spend; a page is not special. A line the
+  page wrote that starts like the brain's is escaped with a backslash, so
+  only the brain's says the page was cut. The url must be http or https, carry no
   user, name a host and fit in 2,048 bytes, and a host a browser would read
   as a number (`2130706433`, `0x7f.1`, `127.1`) is refused unless it is an IP
   address as written: resolvers and scrapers disagree on what it names.

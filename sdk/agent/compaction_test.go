@@ -298,8 +298,8 @@ func TestALargeResultIsPreviewedWithAHandle(t *testing.T) {
 	sent := r.send(t, msgs)
 
 	got := text(sent[2])
-	if len(got) > 16<<10 {
-		t.Fatalf("the preview is %d bytes, want about 12 KiB", len(got))
+	if len(got) > 7<<10 {
+		t.Fatalf("the preview is %d bytes, want about 6 KiB", len(got))
 	}
 	for _, want := range []string{"call_7", "get_diff", ReadOutputToolName, "from_line", "match"} {
 		if !strings.Contains(got, want) {

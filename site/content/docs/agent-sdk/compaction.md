@@ -100,11 +100,14 @@ under a line saying only part of it is shown and over one saying how to read
 the rest. The transcript keeps it whole. Those three sizes are the defaults; a
 run sets its own, and a tool its own over that.
 
-The results of one turn's calls are shown in 192 KiB at most: past it the
-largest is previewed as if it were over its threshold, then the next, until
-they fit. Six 45 KiB results, each under 48 KiB, would otherwise reach the
-model whole. Both defaults are Claude Code's own: 50,000 characters a result,
-200,000 a turn. `TurnResults` sets the limit. The choice depends only on the
+The results of one turn's calls are held to 192 KiB as near as previews can:
+past it the result a preview shortens most is previewed as if it were over its
+threshold, then the next, until they fit or none is left to shorten. Six 45 KiB
+results, each under 48 KiB, would otherwise reach the model whole. A
+`read_output` result or a skill is never previewed, so a turn of reads can stay
+over. Both defaults are modelled on Claude Code's, 50,000 characters a result
+and 200,000 a message, here in bytes; the 4 KiB and 2 KiB ends are this SDK's
+own. `TurnResults` sets the limit. The choice depends only on the
 transcript, so every request shows a turn the same way and a cached prefix
 holds.
 

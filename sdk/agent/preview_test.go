@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 var pagePreview = Preview{Over: 32 << 10, Head: 24 << 10, Tail: 8 << 10}
@@ -38,11 +39,11 @@ func twoResults(size int) []Message {
 }
 
 func TestAToolsOwnPreviewAppliesToItsResultsAlone(t *testing.T) {
-	r := rig(Compaction{AfterMessages: 100, Preview: Preview{Over: 64 << 10}, TurnResults: 1 << 20})
+	r := rig(Compaction{AfterMessages: 100})
 	sent := r.sendWith(t, twoResults(40<<10), named("web_fetch", pagePreview), named("get_diff", Preview{}))
 
 	page, diff := ends(text(sent[2])), text(sent[4])
-	if !strings.Contains(page, "Read the rest with read_output") {
+	if !strings.Contains(page, "read the rest with read_output") {
 		t.Fatalf("a 40 KiB page over web_fetch's 32 KiB was sent whole")
 	}
 	if !strings.HasPrefix(page, "<page>") || !strings.Contains(page, "</page>") {
@@ -52,7 +53,7 @@ func TestAToolsOwnPreviewAppliesToItsResultsAlone(t *testing.T) {
 		t.Fatalf("the preview's head is %d bytes, want web_fetch's 24 KiB", len(head))
 	}
 	if diff != text(twoResults(40 << 10)[4]) {
-		t.Fatalf("get_diff's 40 KiB result was previewed; it is under the run's 64 KiB")
+		t.Fatalf("get_diff's 40 KiB result was previewed; it is under the default 48 KiB")
 	}
 }
 
@@ -239,5 +240,107 @@ func TestABroadMatchSaysHowMuchItLeftOut(t *testing.T) {
 	}
 	if len(out) > readBytes+1024 || !strings.Contains(out, "of the 2000 matching lines shown") {
 		t.Fatalf("a broad match returned %d bytes, ending %q", len(out), out[max(0, len(out)-200):])
+	}
+}
+
+// A head and tail cut back to a rune are still named by the sizes asked for.
+func TestAPreviewOfMultibyteTextNamesItsSizes(t *testing.T) {
+	got := text(rig(Compaction{AfterMessages: 10}).client.shown(result("c", strings.Repeat("é", 30_000)), "t"))
+	if !strings.Contains(got, "its first 4 KiB and last 2 KiB of 59 KiB") || !utf8.ValidString(got) {
+		t.Fatalf("the header reads %.160q", got)
+	}
+}
+
+// turnOf is one turn's results, each named by the tool that made it.
+func turnOf(results ...[2]string) []Message {
+	calls := Message{Role: RoleAssistant}
+	msgs := []Message{say(RoleUser, "task"), calls}
+	for i, r := range results {
+		id := fmt.Sprintf("t%d", i)
+		msgs[1].ToolCalls = append(msgs[1].ToolCalls, ToolCall{ID: id, Name: r[0]})
+		msgs = append(msgs, result(id, r[1]))
+	}
+	return msgs
+}
+
+func sameResults(n int, tool string, size int) [][2]string {
+	out := make([][2]string, n)
+	for i := range out {
+		out[i] = [2]string{tool, strings.Repeat("x", size)}
+	}
+	return out
+}
+
+func TestATurnIsHeldAsNearItsLimitAsPreviewsCan(t *testing.T) {
+	page := Tool{Name: "page", Preview: Preview{Over: 100 << 10, Head: 1 << 10, Tail: 1 << 10}}
+	for name, c := range map[string]struct {
+		cfg     Compaction
+		results [][2]string
+		cleared int
+		tools   []Tool
+		cut     []int // indexes into the results previewed
+		check   func(t *testing.T, sent []Message)
+	}{
+		"a limit of the run's own": {
+			cfg: Compaction{AfterMessages: 100, TurnResults: 64 << 10}, results: sameResults(3, "get_diff", 30<<10), cut: []int{0, 1},
+		},
+		"a tool's own preview, in a turn": {
+			cfg:     Compaction{AfterMessages: 100},
+			results: append(sameResults(4, "get_diff", 45<<10), [2]string{"page", strings.Repeat("p", 45<<10)}),
+			tools:   []Tool{named("get_diff", Preview{}), page},
+			cut:     []int{4},
+			check: func(t *testing.T, sent []Message) {
+				if head, _, _ := strings.Cut(ends(text(sent[6])), "\n…\n"); len(head) != 1<<10 {
+					t.Errorf("the page's head is %d bytes, want its own 1 KiB", len(head))
+				}
+			},
+		},
+		"a cleared result beside large ones": {
+			cfg:     Compaction{AfterMessages: 100},
+			results: append([][2]string{{"get_diff", strings.Repeat("c", 100<<10)}}, sameResults(5, "get_diff", 45<<10)...),
+			cleared: 3, cut: []int{0, 1},
+			check: func(t *testing.T, sent []Message) {
+				if !strings.Contains(text(sent[2]), "cleared to save room") {
+					t.Errorf("the cleared result was shown as %.80q, not its handle", text(sent[2]))
+				}
+			},
+		},
+		"a cleared result in a turn that cannot fit": {
+			cfg:     Compaction{AfterMessages: 100},
+			results: append([][2]string{{"get_diff", strings.Repeat("c", 100<<10)}}, sameResults(40, "get_diff", 6<<10)...),
+			cleared: 3, cut: []int{0},
+			check: func(t *testing.T, sent []Message) {
+				if !strings.Contains(text(sent[2]), "cleared to save room") {
+					t.Errorf("the cleared result was swapped for a longer preview: %.80q", text(sent[2]))
+				}
+			},
+		},
+		"reads, which are never previewed": {
+			cfg: Compaction{AfterMessages: 100}, results: sameResults(7, ReadOutputToolName, 32<<10),
+		},
+		"results too small to preview": {
+			cfg: Compaction{AfterMessages: 100}, results: sameResults(40, "get_diff", 6<<10),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := rig(c.cfg)
+			msgs := turnOf(c.results...)
+			// As prepare would: each tool's own preview, and what is cleared.
+			r.client.previews = previewsOf(c.tools, c.cfg.Preview.or(defaultPreview))
+			r.client.state.cleared = c.cleared
+			sent := r.client.view(msgs)
+			var cut []int
+			for i := range c.results {
+				if text(sent[2+i]) != text(msgs[2+i]) {
+					cut = append(cut, i)
+				}
+			}
+			if fmt.Sprint(cut) != fmt.Sprint(c.cut) {
+				t.Errorf("changed %v, want %v", cut, c.cut)
+			}
+			if c.check != nil {
+				c.check(t, sent)
+			}
+		})
 	}
 }

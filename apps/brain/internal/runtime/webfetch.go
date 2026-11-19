@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/webfetch"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/websearch"
@@ -156,7 +157,27 @@ func pageResult(p webfetch.Page, end string) string {
 	}
 	title := strings.Join(strings.Fields(p.Title), " ")
 	return fmt.Sprintf("<page url=\"%s\" title=\"%s\" end=\"%s\">\n%s\n</page end=\"%s\">",
-		html.EscapeString(p.URL), html.EscapeString(title), end, body, end)
+		attribute(p.URL, maxTagURL), attribute(title, maxTagTitle), end, body, end)
+}
+
+// The opening tag, its end included, must fit in a preview's 4 KiB head, or
+// the model is shown a page it cannot tell the close of.
+const (
+	maxTagURL   = 1 << 10
+	maxTagTitle = 512
+)
+
+// attribute is s escaped, then cut on a rune to at most n bytes: a cut after
+// escaping can split an entity, never leave a quote.
+func attribute(s string, n int) string {
+	s = html.EscapeString(s)
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
 }
 
 func (b *Builder) fetchTool(p websearch.Provider, address, key string, keyed bool) agent.Tool {

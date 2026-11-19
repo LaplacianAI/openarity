@@ -40,8 +40,9 @@ type Compaction struct {
 	// of its own; zero fields take the defaults.
 	Preview Preview
 	// TurnResults is how many bytes the results of one turn's calls are shown
-	// in all; past it the largest are previewed as if over their Over, until
-	// they fit. 192 KiB when zero.
+	// in all; past it the results a preview shortens most are previewed as if
+	// over their Over, until they fit or none is left to shorten: read_output
+	// results and skills never are. 192 KiB when zero.
 	TurnResults int
 }
 
@@ -57,7 +58,7 @@ type Preview struct {
 	Tail int
 }
 
-// Claude Code's own: 50,000 characters whole, 200,000 a turn.
+// Modelled on Claude Code's 50,000 characters a result and 200,000 a message.
 var defaultPreview = Preview{Over: 48 << 10, Head: 4 << 10, Tail: 2 << 10}
 
 const defaultTurnResults = 192 << 10
@@ -578,9 +579,9 @@ func (c *compactingClient) view(msgs []Message) []Message {
 }
 
 // fitTurns holds each turn's results, a run of tool messages, to TurnResults
-// in all: the one a preview shortens most is previewed, then the next, until
-// they fit or none is left that a preview would shorten, as one already
-// previewed is not. sent is what view made of
+// in all, as near as previews can: a read_output result or a skill is never
+// previewed, nor one a preview would not shorten, so a turn of them may stay
+// over. sent is what view made of
 // msgs, message for message; it depends only on msgs, so a request repeats
 // the view before it and the cached prefix holds.
 func (c *compactingClient) fitTurns(msgs, sent []Message, names map[string]string) {
@@ -597,26 +598,40 @@ func (c *compactingClient) fitTurns(msgs, sent []Message, names map[string]strin
 		for ; j < len(sent) && sent[j].Role == RoleTool; j++ {
 			total += len(sent[j].Text())
 		}
-		for total > most {
-			k, gain := -1, 0
-			for x := i; x < j; x++ {
-				name := names[msgs[x].ToolCallID]
-				if !previewable(name) {
-					continue
-				}
-				cut := c.cut(msgs[x], name, c.preview(name))
-				if g := len(sent[x].Text()) - len(cut.Text()); g > gain {
-					k, gain = x, g
-				}
-			}
-			if k < 0 {
-				break
-			}
-			name := names[msgs[k].ToolCallID]
-			sent[k] = c.cut(msgs[k], name, c.preview(name))
-			total -= gain
+		if total > most {
+			c.fitTurn(msgs[i:j], sent[i:j], names, total-most)
 		}
 		i = j
+	}
+}
+
+// fitTurn previews one turn's results, the one that gains most first and the
+// earlier of two that gain alike, until over bytes are saved or none is left.
+// A preview of one result does not change another's gain, so each is cut once.
+func (c *compactingClient) fitTurn(msgs, sent []Message, names map[string]string, over int) {
+	type candidate struct {
+		at   int
+		cut  Message
+		gain int
+	}
+	var cs []candidate
+	for x := range msgs {
+		name := names[msgs[x].ToolCallID]
+		if !previewable(name) {
+			continue
+		}
+		cut := c.cut(msgs[x], name, c.preview(name))
+		if g := len(sent[x].Text()) - len(cut.Text()); g > 0 {
+			cs = append(cs, candidate{x, cut, g})
+		}
+	}
+	slices.SortStableFunc(cs, func(a, b candidate) int { return b.gain - a.gain })
+	for _, cand := range cs {
+		if over <= 0 {
+			return
+		}
+		sent[cand.at] = cand.cut
+		over -= cand.gain
 	}
 }
 
@@ -743,10 +758,10 @@ func (c *compactingClient) cut(m Message, name string, p Preview) Message {
 	who, whole := m.ToolCallID+nameNote(name), fmt.Sprintf("%s, %d lines", size(len(text)), len(splitLines(text)))
 	m.Content = []Content{{Type: ContentText, Text: fmt.Sprintf(
 		"[only part of the output of %s is shown: its first %s and last %s of %s. The rest is not shown]\n"+
-			"%s\n…\n%s\n[output of %s: %s; %s shown. Read the rest with %s "+
+			"%s\n…\n%s\n[read the rest with %s "+
 			"{\"call\":%q,\"from_line\":N,\"lines\":M} or {\"call\":%q,\"match\":\"regex\"}]",
-		who, size(len(head)), size(len(tail)), whole, head, tail, who, whole,
-		size(len(head)+len(tail)), ReadOutputToolName, m.ToolCallID, m.ToolCallID)}}
+		who, size(len(head)), size(len(tail)), whole, head, tail,
+		ReadOutputToolName, m.ToolCallID, m.ToolCallID)}}
 	return m
 }
 
@@ -762,7 +777,8 @@ func size(n int) string {
 	case n >= 1<<20:
 		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
 	case n >= 1<<10:
-		return fmt.Sprintf("%d KiB", n>>10)
+		// Rounded: a head cut back to a rune is still its 4 KiB.
+		return fmt.Sprintf("%d KiB", (n+1<<9)>>10)
 	default:
 		return fmt.Sprintf("%d bytes", n)
 	}

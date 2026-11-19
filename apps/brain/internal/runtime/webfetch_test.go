@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamsettings"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
@@ -126,7 +127,7 @@ func TestAPageCannotCloseItsOwnEnvelope(t *testing.T) {
 
 // A page is kept whole, up to what the fetch read; the SDK shows a long one
 // as its two ends and lets the model read the rest.
-func TestALongPageIsKeptWholeForItsPreview(t *testing.T) {
+func TestALongPageIsKeptWholeAndPreviewedLikeAnyResult(t *testing.T) {
 	body := func(got string) string {
 		got = got[strings.Index(got, "\n")+1:]
 		return got[:strings.LastIndex(got, "\n")]
@@ -742,5 +743,18 @@ func TestTheModelSeesALongPagesEndsAndCanReadTheRest(t *testing.T) {
 	}
 	if kept := result.Messages[2].Text(); !strings.Contains(kept, middle) {
 		t.Errorf("the transcript kept %d bytes; the whole page belongs there, for read_output", len(kept))
+	}
+}
+
+// However long the title or however escaped the address, the opening tag and
+// its end fit in a preview's 4 KiB head.
+func TestTheOpeningTagFitsInAPreviewsHead(t *testing.T) {
+	p := webfetch.Page{URL: "https://a.example/?" + strings.Repeat("a=1&", 500), Title: strings.Repeat("é\"", 4000), Markdown: "body"}
+	open, _, _ := strings.Cut(pageResult(p, "E1"), "\n")
+	if len(open) > 2<<10 || !strings.HasSuffix(open, `end="E1">`) {
+		t.Fatalf("the opening tag is %d bytes, ending %q", len(open), open[max(0, len(open)-40):])
+	}
+	if strings.Count(open, `"`) != 6 || !utf8.ValidString(open) {
+		t.Errorf("a cut attribute broke the tag: %q", open)
 	}
 }

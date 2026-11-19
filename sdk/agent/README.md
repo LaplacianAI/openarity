@@ -255,7 +255,8 @@ run.WrapUp("Your token budget is nearly spent. Stop calling tools and answer now
 
 A tool result past 48 KiB is shown as its first 4 KiB and last 2 KiB, under a
 line saying it is only a part, with `read_output` for the rest; one turn's
-results are shown in 192 KiB at most, the largest previewed first.
+results are held to 192 KiB as near as previews can, the result a preview
+shortens most going first (a `read_output` result or a skill never is).
 `Compaction.Preview` and `Compaction.TurnResults` set the run's sizes, and a
 tool's own `Preview` sets its.
 
