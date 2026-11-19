@@ -347,7 +347,10 @@ oa channels update platform support --reply-url https://support.example.com/open
 oa channels update platform support --no-reply-url
 ```
 
-`--no-reply-url` stops replies, and gives up any that were still waiting. In
+`--no-reply-url` stops replies, and gives up any that were still waiting. A
+`custom` channel with no reply URL takes messages in only: its runs still
+answer, in the conversation, but nothing is written to send, so no reply is
+ever given up for want of an address. In
 the dashboard, open the channel and use **Set where replies go**; the sheet
 shows it as **Replies to**. Both need `channel:write`.
 

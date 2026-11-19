@@ -191,8 +191,7 @@ RETURNING *;
 -- the database's clock, from when the root first started, less the time the
 -- tree spent waiting for a person: that time is not the task's.
 -- name: TreeUsage :one
-SELECT coalesce(sum(r.input_tokens + r.output_tokens), 0)::bigint AS tokens,
-       count(*)::bigint AS runs,
+SELECT count(*)::bigint AS runs,
        coalesce((SELECT extract(epoch FROM now() - root.started_at) - root.waited_seconds
                  FROM runs root WHERE root.id = sqlc.arg('root_id')::uuid), 0)::float8 AS elapsed_seconds
 FROM runs r

@@ -1040,7 +1040,7 @@ func (f *execFixture) delegation(t *testing.T, callID string) Delegation {
 	}
 	return Delegation{
 		Parent: f.row(t), Agent: a, Brief: childBrief, CallID: callID,
-		Lineage: Lineage{Worker: worker, Chain: []uuid.UUID{f.agent}}, Budget: maxTreeTokens,
+		Lineage: Lineage{Worker: worker, Chain: []uuid.UUID{f.agent}}, Budget: maxTokens,
 	}
 }
 
@@ -1300,7 +1300,7 @@ func TestAResumedParentReapsItsChildren(t *testing.T) {
 		t.Helper()
 		r, err := f.store.StartChildRun(t.Context(), db.StartChildRunParams{
 			ID: uuid.New(), ParentID: parent, AgentID: f.agent, TeamID: f.team,
-			ParentToolCall: call, Input: "the work asked for before", Worker: "w-dead", TokenBudget: maxTreeTokens,
+			ParentToolCall: call, Input: "the work asked for before", Worker: "w-dead", TokenBudget: maxTokens,
 		})
 		if err != nil {
 			t.Fatalf("StartChildRun: %v", err)
@@ -1350,7 +1350,7 @@ func TestAFreshRunReapsNothing(t *testing.T) {
 		WHERE id = $1`, other)
 	sibling, err := f.store.StartChildRun(t.Context(), db.StartChildRunParams{
 		ID: uuid.New(), ParentID: other, AgentID: f.agent, TeamID: f.team,
-		ParentToolCall: "call_1#x", Input: "not ours", Worker: "w-other", TokenBudget: maxTreeTokens,
+		ParentToolCall: "call_1#x", Input: "not ours", Worker: "w-other", TokenBudget: maxTokens,
 	})
 	if err != nil {
 		t.Fatalf("StartChildRun: %v", err)
@@ -1636,7 +1636,7 @@ func (f *execFixture) startUnder(t *testing.T, parent uuid.UUID, call, holder st
 
 	r, err := f.store.StartChildRun(t.Context(), db.StartChildRunParams{
 		ID: uuid.New(), ParentID: parent, AgentID: f.agent, TeamID: f.team,
-		ParentToolCall: call, Input: "the work asked for before", Worker: holder, TokenBudget: maxTreeTokens,
+		ParentToolCall: call, Input: "the work asked for before", Worker: holder, TokenBudget: maxTokens,
 	})
 	if err != nil {
 		t.Fatalf("StartChildRun: %v", err)

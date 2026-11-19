@@ -26,6 +26,9 @@ const (
 
 	budgetWrapUp = "Your token budget is nearly spent. Stop calling tools and answer now with what you have."
 	timeWrapUp   = "Your time is nearly up. Stop calling tools and answer now with what you have."
+	// minReserve is the least the wrap-up keeps for the run's answer, before
+	// it has written anything to measure.
+	minReserve = 16_000
 	// timeWrapBefore is how long before a run's wall clock it is asked to finish.
 	timeWrapBefore = 2 * time.Minute
 )
@@ -81,6 +84,11 @@ type handle interface {
 type softLines struct {
 	budget int64
 	maxOut int64
+	// wrote is the most one of the run's calls has written: what an answer
+	// is measured by, rather than the model's max_tokens, which is often far
+	// more than any answer and would wrap a run up with much of its budget
+	// unspent.
+	wrote int64
 
 	mu  sync.Mutex
 	run handle
@@ -119,14 +127,24 @@ func (l *softLines) spent(spent int64, e agent.UsageEvent) *wrapUpPayload {
 		run.CompactNow()
 	}
 	// A summary call read the whole context, so its size says nothing of the
-	// next call's.
-	if e.Summary || left >= 2*int64(e.Usage.InputTokens)+l.maxOut {
+	// next call's, and what it wrote is no answer.
+	if e.Summary {
+		return nil
+	}
+	l.wrote = max(l.wrote, int64(e.Usage.OutputTokens))
+	if left >= 2*int64(e.Usage.InputTokens)+l.reserve() {
 		return nil
 	}
 	if !l.wrap(budgetWrapUp) {
 		return nil
 	}
 	return &wrapUpPayload{Reason: "budget", Left: left}
+}
+
+// reserve is what one more call is kept for its answer: twice the most the
+// run has written, at least minReserve, never more than max_tokens.
+func (l *softLines) reserve() int64 {
+	return min(l.maxOut, max(2*l.wrote, minReserve))
 }
 
 // wrap asks the run to finish, once, whichever line asks first.

@@ -175,7 +175,7 @@ func TestAParentThatEndsTakesItsWaitingChildWithIt(t *testing.T) {
 	d := f.delegation(t, "call_7")
 	child, err := f.store.StartChildRun(t.Context(), db.StartChildRunParams{
 		ID: uuid.New(), ParentID: f.run, AgentID: d.Agent.ID, TeamID: f.team,
-		ParentToolCall: "call_7#x", Input: childBrief, Worker: worker, TokenBudget: maxTreeTokens,
+		ParentToolCall: "call_7#x", Input: childBrief, Worker: worker, TokenBudget: maxTokens,
 	})
 	if err != nil {
 		t.Fatalf("StartChildRun: %v", err)

@@ -6,7 +6,8 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
 
 - **A budget has two soft lines before its cap, and they measure different
   things.** With a tenth of the budget left the run compacts; when one more
-  call would not fit (twice the last call's input plus `max_tokens`) it is
+  call would not fit (twice the last call's input plus room for an answer:
+  twice the most it has written, at least 16k, at most `max_tokens`) it is
   asked to wrap up, and its tools refuse. One line at a tenth would stay
   crossed, so the wrap-up would follow on the next call and compacting would
   buy nothing. The cap still stops a run, which then keeps its latest summary
@@ -202,13 +203,14 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   the run's recorder as notes (`Executor.note`), and the agent's channel is
   unbuffered, so a tool starts only once the recorder holds its call: a
   note written from inside the tool always lands after it.
-- **A child's budget is what the tree has left, at most.** The delegate call
-  gives the child `min(its agent's budget, 1,000,000 − the tree's tokens)`,
-  written on the child's row. That bounds each child, not the tree: a parent
-  keeps its own budget and spends after its child returns, so a deep tree
-  can still pass 1,000,000 by what its parents spend afterwards. A cap on the
-  whole tree means checking the tree on every usage event, which is left for
-  the fan-out slice that needs it.
+- **A child's budget is its own agent's, and tokens are not shared by the
+  task.** The delegate call gives the child its agent's budget, or the
+  default, written on the child's row, however much the task has spent. A
+  child starts from nothing and its context is its own; the parent pays only
+  for reading the report, which comes back as a tool result. A shared token
+  cap made a child started late in a task near-useless, and compaction keeps
+  each run's calls bounded anyway. What a task still shares is a runaway's
+  limits: 50 runs and six hours, besides the depth of 3.
 - **A report is data in an envelope only the brain can close.** The child's
   output goes back as `<report agent run status end>` … `</report end>`, where
   `end` is `rand.Text()`, fresh per report and never shown to the child.

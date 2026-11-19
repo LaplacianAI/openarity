@@ -399,10 +399,8 @@ func TestEachTreeLimitIsRefusedAtItsLimit(t *testing.T) {
 		usage db.TreeUsageRow
 		want  string
 	}{
-		"tokens at the limit": {db.TreeUsageRow{Tokens: 1_000_000, Runs: 1}, "the task has used its 1,000,000 tokens"},
-		"tokens past it":      {db.TreeUsageRow{Tokens: 1_200_000, Runs: 1}, "the task has used its 1,000,000 tokens"},
-		"runs at the limit":   {db.TreeUsageRow{Runs: 50}, "the task has used its 50 runs"},
-		"six hours":           {db.TreeUsageRow{Runs: 1, ElapsedSeconds: 6 * 3600}, "the task has used its 6 hours"},
+		"runs at the limit": {db.TreeUsageRow{Runs: 50}, "the task has used its 50 runs"},
+		"six hours":         {db.TreeUsageRow{Runs: 1, ElapsedSeconds: 6 * 3600}, "the task has used its 6 hours"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newDelegateFixture()
@@ -417,7 +415,7 @@ func TestEachTreeLimitIsRefusedAtItsLimit(t *testing.T) {
 
 func TestATreeJustUnderEachLimitMayDelegate(t *testing.T) {
 	f := newDelegateFixture()
-	f.store.usage = db.TreeUsageRow{Tokens: 999_999, Runs: 49, ElapsedSeconds: 6*3600 - 1}
+	f.store.usage = db.TreeUsageRow{Runs: 49, ElapsedSeconds: 6*3600 - 1}
 
 	if _, err := f.invoke(t, toBilling); err != nil {
 		t.Fatalf("a tree under every limit was refused: %v", err)
@@ -427,7 +425,7 @@ func TestATreeJustUnderEachLimitMayDelegate(t *testing.T) {
 // The usage query sums a whole tree; nothing cheaper may be skipped for it.
 func TestTheChecksRunCheapestFirst(t *testing.T) {
 	f := newDelegateFixture()
-	f.store.usage = db.TreeUsageRow{Tokens: 2_000_000, Runs: 99}
+	f.store.usage = db.TreeUsageRow{Runs: 99}
 	f.triage.Delegation = "listed"
 
 	f.refused(t, `{"agent":"nobody","objective":"x","output":"y"}`, `no agent in this team is named "nobody"`)
@@ -456,24 +454,21 @@ func TestAChildThatNeverRanIsAToolError(t *testing.T) {
 	}
 }
 
-// A child may spend what its own budget allows, but never more than the tree
-// has left of its 1,000,000.
-func TestAChildGetsNoMoreThanTheTreeHasLeft(t *testing.T) {
+// A child starts from nothing on its own agent's budget, however much its
+// parent and the rest of the task have spent: tokens are each run's own.
+func TestAChildStartsOnItsOwnBudget(t *testing.T) {
 	own := func(n int64) *int64 { return &n }
 	for name, c := range map[string]struct {
-		own        *int64
-		used, want int64
+		own  *int64
+		want int64
 	}{
-		"the default, in a fresh tree": {nil, 0, 1_000_000},
-		"the default, near the limit":  {nil, 900_000, 100_000},
-		"its own, under what is left":  {own(50_000), 900_000, 50_000},
-		"its own, over what is left":   {own(500_000), 900_000, 100_000},
-		"its own, over the whole tree": {own(5_000_000), 0, 1_000_000},
-		"one token left":               {nil, 999_999, 1},
+		"the default":      {nil, 1_000_000},
+		"its own, smaller": {own(50_000), 50_000},
+		"its own, larger":  {own(5_000_000), 5_000_000},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newDelegateFixture()
-			f.store.usage = db.TreeUsageRow{Tokens: c.used, Runs: 1}
+			f.store.usage = db.TreeUsageRow{Runs: 1}
 			f.store.agents[1].TokenBudget = c.own
 			if _, err := f.invoke(t, toBilling); err != nil {
 				t.Fatalf("invoke: %v", err)

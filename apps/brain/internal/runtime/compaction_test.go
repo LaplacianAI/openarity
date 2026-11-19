@@ -68,6 +68,68 @@ func TestTheSoftLinesCompactFirstThenWrapUpEachOnce(t *testing.T) {
 	}
 }
 
+func wrote(input, output int) agent.UsageEvent {
+	return agent.UsageEvent{Usage: agent.Usage{InputTokens: input, OutputTokens: output}}
+}
+
+// The wrap-up keeps room for the answer the run writes, not for the model's
+// max_tokens: an agent allowed 200k of output that writes 3k answers is not
+// told to stop with a fifth of its budget unspent.
+func TestTheWrapUpKeepsRoomForWhatTheRunWrites(t *testing.T) {
+	t.Parallel()
+	run := &fakeRun{}
+	l := newSoftLines(1_000_000, 200_000)
+	l.hold(run)
+
+	// 300k left, 50k a call, 3k answers: room for many more calls.
+	if w := l.spent(700_000, wrote(50_000, 3_000)); w != nil {
+		t.Fatalf("wrapped up with 300k left and 3k answers: %+v", w)
+	}
+	// 115k left: one call is 2 × 50k + the 16k floor; it fits no longer.
+	if w := l.spent(885_000, wrote(50_000, 3_000)); w == nil || w.Left != 115_000 {
+		t.Fatalf("wrap %+v, want the wrap-up with 115k left", w)
+	}
+}
+
+func TestTheReserveFollowsTheLargestAnswer(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct {
+		maxOut int64
+		writes []int
+		want   int64
+	}{
+		"nothing written yet":      {200_000, nil, 16_000},
+		"small answers":            {200_000, []int{1_000, 3_000, 2_000}, 16_000},
+		"a long answer":            {200_000, []int{2_000, 40_000, 5_000}, 80_000},
+		"never past max_tokens":    {200_000, []int{150_000}, 200_000},
+		"a small max_tokens rules": {4_000, []int{1_000}, 4_000},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := newSoftLines(1_000_000, c.maxOut)
+			l.hold(&fakeRun{})
+			for _, w := range c.writes {
+				l.spent(0, wrote(1_000, w))
+			}
+			if got := l.reserve(); got != c.want {
+				t.Errorf("reserve = %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// A summary's output is a summary, not an answer: it does not grow the reserve.
+func TestASummaryDoesNotGrowTheReserve(t *testing.T) {
+	t.Parallel()
+	l := newSoftLines(1_000_000, 200_000)
+	l.hold(&fakeRun{})
+	summary := wrote(300_000, 60_000)
+	summary.Summary = true
+	l.spent(400_000, summary)
+	if got := l.reserve(); got != minReserve {
+		t.Errorf("reserve = %d after a summary, want %d", got, minReserve)
+	}
+}
+
 func TestASummaryCallsSizeDoesNotWrapUpTheRun(t *testing.T) {
 	t.Parallel()
 	run := &fakeRun{}

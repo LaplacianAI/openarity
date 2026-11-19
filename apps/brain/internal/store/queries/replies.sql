@@ -5,7 +5,9 @@
 -- the first such steer was written, keeps this reply from quoting it. A message
 -- and its steer share a transaction, so they share now(). A run that does not
 -- answer a channel, or whose session came from none, inserts nothing and the
--- caller gets pgx.ErrNoRows.
+-- caller gets pgx.ErrNoRows. So does a custom channel with no reply URL: it
+-- takes messages in and has nowhere to post back to, and a reply written for
+-- it could only be given up.
 -- name: InsertReply :one
 INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text)
 SELECT r.team_id, r.id, r.session_id, s.channel_id,
@@ -15,7 +17,9 @@ SELECT r.team_id, r.id, r.session_id, s.channel_id,
        sqlc.arg('kind')::text, sqlc.arg('text')::text
 FROM runs r
 JOIN sessions s ON s.id = r.session_id
-WHERE r.id = sqlc.arg('run_id')::uuid AND r.reply_to_channel AND s.channel_id IS NOT NULL
+JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = sqlc.arg('run_id')::uuid AND r.reply_to_channel
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
 RETURNING *;
 
 -- The replies due now, at most one per conversation: the oldest still pending.
@@ -106,7 +110,8 @@ SELECT EXISTS (
     JOIN channels ch ON ch.id = s.channel_id
     WHERE r.id = sqlc.arg('run_id')::uuid
       AND r.reply_to_channel
-      AND ch.reply_mode = 'events')::bool;
+      AND ch.reply_mode = 'events'
+      AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL))::bool;
 
 -- One step of a run, sent to its conversation. Only for a run RunShowsEvents
 -- holds for, read again here so a channel switched to final since the run
@@ -121,6 +126,7 @@ JOIN channels ch ON ch.id = s.channel_id
 WHERE r.id = sqlc.arg('run_id')::uuid
   AND r.reply_to_channel
   AND ch.reply_mode = 'events'
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
 ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING;
 
 -- name: RunTriggerWord :one
