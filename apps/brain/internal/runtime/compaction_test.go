@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/LaplacianAI/openarity/sdk/agent"
@@ -200,5 +201,42 @@ func TestOnlyALimitKeepsWhatARunHad(t *testing.T) {
 		if got := stopped(cause); got != want {
 			t.Errorf("stopped(%v) = %v, want %v", cause, got, want)
 		}
+	}
+}
+
+// A run is asked to finish stepsLeft before its last step, once; a run too
+// short to spare the steps is never asked.
+func TestARunNearItsLastStepIsAskedToWrapUpOnce(t *testing.T) {
+	t.Parallel()
+	run := &fakeRun{}
+	l := newSoftLines(1_000_000, 4_000)
+	l.steps = 30
+	l.hold(run)
+
+	if w := l.stepped(27); w != nil {
+		t.Fatalf("at step 27 of 30: %+v, want nothing", w)
+	}
+	w := l.stepped(28)
+	if w == nil || w.Reason != "steps" || len(run.wrapped) != 1 || run.wrapped[0] != fmt.Sprintf(stepsWrapUp, 28, 30) {
+		t.Fatalf("at step 28 of 30: %+v, asked %v; want the steps' wrap-up", w, run.wrapped)
+	}
+	if w := l.stepped(29); w != nil || len(run.wrapped) != 1 {
+		t.Fatalf("asked %d times; once is the line", len(run.wrapped))
+	}
+
+	short := &fakeRun{}
+	s := newSoftLines(1_000_000, 4_000)
+	s.steps = 3
+	s.hold(short)
+	for step := 1; step <= 3; step++ {
+		if w := s.stepped(step); w != nil {
+			t.Fatalf("a run of 3 steps was asked at step %d", step)
+		}
+	}
+	four := newSoftLines(1_000_000, 4_000)
+	four.steps = 4
+	four.hold(&fakeRun{})
+	if four.stepped(1) != nil || four.stepped(2) == nil {
+		t.Fatal("a run of 4 steps should be asked at step 2, not before")
 	}
 }

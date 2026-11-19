@@ -149,7 +149,7 @@ apps/brain/
     plan.go            plan(items), the hub's checklist, each change a run event
     report.go          a child's answer, wrapped as data for the parent to read
     websearch.go       web_search(query, limit) and webTools, from the settings Build read
-    webfetch.go        web_fetch(url), the page in an envelope, kept whole and previewed past 32 KiB
+    webfetch.go        web_fetch(url), the page in an envelope, kept whole and previewed like any result
     browser.go         browser_open, _snapshot, _click, _type, _screenshot: one page a run, opened by its first call
   internal/websearch/  the port: Provider, Hit, Searcher, and the one guarded client
     <provider>/        searxng, brave, tavily, firecrawl: each exports New

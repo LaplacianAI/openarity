@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamsettings"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
@@ -127,7 +128,7 @@ func TestAPageCannotCloseItsOwnEnvelope(t *testing.T) {
 
 // A page is kept whole, up to what the fetch read; the SDK shows a long one
 // as its two ends and lets the model read the rest.
-func TestALongPageIsKeptWholeForItsPreview(t *testing.T) {
+func TestALongPageIsKeptWholeAndPreviewedLikeAnyResult(t *testing.T) {
 	body := func(got string) string {
 		got = got[strings.Index(got, "\n")+1:]
 		return got[:strings.LastIndex(got, "\n")]
@@ -143,9 +144,9 @@ func TestALongPageIsKeptWholeForItsPreview(t *testing.T) {
 		t.Errorf("body = %q, want the fetcher's cut said as the fetcher's", got)
 	}
 
-	want := agent.Preview{Over: 32 << 10, Head: 24 << 10, Tail: 8 << 10}
-	if got := WebFetchTool(nil, nil).Preview; got != want {
-		t.Errorf("web_fetch's preview = %+v, want %+v", got, want)
+	// A page is previewed like any result: a whole one filled the context.
+	if got := WebFetchTool(nil, nil).Preview; got != (agent.Preview{}) {
+		t.Errorf("web_fetch's preview = %+v, want the run's", got)
 	}
 }
 
@@ -734,14 +735,28 @@ func TestTheModelSeesALongPagesEndsAndCanReadTheRest(t *testing.T) {
 
 	sent := model.requests()[1].Messages
 	shown := sent[len(sent)-1].Text()
-	if !strings.HasPrefix(shown, `<page url="https://example.com/doc"`) || !strings.Contains(shown, "</page end=") {
+	_, ends, _ := strings.Cut(shown, "\n")
+	if !strings.HasPrefix(ends, `<page url="https://example.com/doc"`) || !strings.Contains(ends, "</page end=") {
 		t.Errorf("the model was not sent both ends of the page's envelope")
 	}
-	if !strings.Contains(shown, "read_output") || len(shown) > 33<<10 {
-		t.Errorf("the model was sent %d bytes of a 66 KiB page; want its 24 KiB and 8 KiB ends and a handle", len(shown))
+	if !strings.Contains(shown, "read_output") || len(shown) > 7<<10 {
+		t.Errorf("the model was sent %d bytes of a 66 KiB page; want its 4 KiB and 2 KiB ends and a handle", len(shown))
 	}
 	if kept := result.Messages[2].Text(); !strings.Contains(kept, middle) {
 		t.Errorf("the transcript kept %d bytes; the whole page belongs there, for read_output", len(kept))
+	}
+}
+
+// However long the title or however escaped the address, the opening tag and
+// its end fit in a preview's 4 KiB head.
+func TestTheOpeningTagFitsInAPreviewsHead(t *testing.T) {
+	p := webfetch.Page{URL: "https://a.example/?" + strings.Repeat("a=1&", 500), Title: strings.Repeat("é\"", 4000), Markdown: "body"}
+	open, _, _ := strings.Cut(pageResult(p, "E1"), "\n")
+	if len(open) > 2<<10 || !strings.HasSuffix(open, `end="E1">`) {
+		t.Fatalf("the opening tag is %d bytes, ending %q", len(open), open[max(0, len(open)-40):])
+	}
+	if strings.Count(open, `"`) != 6 || !utf8.ValidString(open) {
+		t.Errorf("a cut attribute broke the tag: %q", open)
 	}
 }
 

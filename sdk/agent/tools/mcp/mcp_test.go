@@ -362,6 +362,37 @@ func TestNonTextContentIsCountedRatherThanDropped(t *testing.T) {
 	}
 }
 
+func TestAnEmbeddedTextResourceIsShownAndABlobIsCounted(t *testing.T) {
+	t.Parallel()
+
+	url := serve(t, tool{
+		name: "get_file_contents",
+		handler: func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			return &sdk.CallToolResult{Content: []sdk.Content{
+				&sdk.TextContent{Text: "successfully downloaded text file"},
+				&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{
+					URI: "repo://o/r/main.go", MIMEType: "text/x-go", Text: "package main",
+				}},
+				&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{
+					URI: "repo://o/r/logo.png", MIMEType: "image/png", Blob: []byte{1, 2, 3},
+				}},
+			}}, nil
+		},
+	})
+
+	session := connect(t, Server{Name: "github", URL: url})
+	out, err := find(t, session, "github__get_file_contents")(t.Context(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if !strings.Contains(out, "package main") {
+		t.Errorf("the file's text was dropped: %q", out)
+	}
+	if !strings.Contains(out, "[1 non-text content block(s) omitted]") {
+		t.Errorf("the blob was not counted as the one block omitted: %q", out)
+	}
+}
+
 func TestSeveralTextBlocksAreJoined(t *testing.T) {
 	t.Parallel()
 
